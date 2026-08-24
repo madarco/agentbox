@@ -1314,6 +1314,56 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/custody/blob/{path}': {
+        parameters: [
+          {
+            name: 'path',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Custody path, e.g. `projects/acme__web/seed/carry.tar.gz`.',
+          },
+        ],
+        get: {
+          tags: ['Custody'],
+          summary: 'Stream a stored blob (ELEVATED — admin token required on a control box)',
+          description:
+            'Raw `application/octet-stream` counterpart of GET /custody/{path}, for values too large to buffer as base64. Same elevated gate, for the same reason (custody holds credentials and SSH private keys) — streaming changes the transport, never the trust. `X-Agentbox-Sha256` carries the digest.',
+          responses: {
+            '200': {
+              description: 'The stored bytes',
+              content: {
+                'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Custody'],
+          summary: 'Stream bytes into a custody path',
+          description:
+            "Raw `application/octet-stream` counterpart of PUT /custody/{path}. The JSON route stays the simple, general-purpose API for small values (credentials, .env, SSH keys); this one exists for payloads where base64-in-JSON costs several times the payload in peak memory on both ends — chiefly a project's `carry:` material, which can run to `box.cpMaxBytes` (100 MiB). Capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES and enforced mid-stream, so an over-cap upload is cut off rather than landed. Returns metadata only, and is content-addressed (`changed: false` when the bytes were already stored).",
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Stored (metadata only)',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CustodyPutResult' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+      },
       '/system': {
         get: {
           tags: ['System'],

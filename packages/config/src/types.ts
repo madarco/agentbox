@@ -234,6 +234,16 @@ export interface UserConfig {
      * blob and continues, so raise both to actually admit a bigger seed.
      */
     custodyMaxBodyBytes?: number;
+    /**
+     * Cap for the streaming custody blob surface (`/admin/custody-blob/*`),
+     * which carries the objects too big for the JSON API — a project's `carry:`
+     * material above all. Defaults to 100 MiB to match `box.cpMaxBytes`, so an
+     * entry the carry gate accepted can actually be stored.
+     *
+     * Same two-sided rule as `custodyMaxBodyBytes`: a control box enforces its
+     * own via `AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, so raise both.
+     */
+    custodyMaxBlobBytes?: number;
   };
   git?: {
     pushMode?: GitPushMode;
@@ -406,6 +416,7 @@ export interface EffectiveConfig {
     port: number;
     controlPlaneUrl: string | undefined;
     custodyMaxBodyBytes: number;
+    custodyMaxBlobBytes: number;
   };
   git: {
     pushMode: GitPushMode;
@@ -602,6 +613,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     port: 8787,
     controlPlaneUrl: undefined,
     custodyMaxBodyBytes: 32 * 1024 * 1024,
+    custodyMaxBlobBytes: 100 * 1024 * 1024,
   },
   git: {
     pushMode: 'auto',
@@ -1048,7 +1060,14 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.custodyMaxBodyBytes',
     type: 'int',
     description:
-      "Per-request body cap (bytes) for custody PUTs (default 33554432 = 32 MiB). Custody carries a project's untracked-files seed tar, which the relay's 1 MiB control-plane body cap is too small for; this cap applies only to custody, so every other relay route keeps the smaller one. On a PC it governs how large a seed blob the client will upload; a control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BODY_BYTES, so raise both to admit a bigger seed (a blob the control box refuses is dropped and the rest of the seed still pushes).",
+      'Per-request body cap (bytes) for custody JSON PUTs (default 33554432 = 32 MiB). This is the simple base64-in-JSON API, used for small values (credentials, .env files, SSH keys); large payloads go to the streaming blob API governed by relay.custodyMaxBlobBytes. It applies only to custody, so every other relay route keeps the 1 MiB control-plane cap. On a PC it governs how large a blob the client will upload; a control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BODY_BYTES, so raise both.',
+    advanced: true,
+  },
+  {
+    key: 'relay.custodyMaxBlobBytes',
+    type: 'int',
+    description:
+      "Per-request cap (bytes) for the streaming custody blob API (default 104857600 = 100 MiB), which carries payloads too large to buffer as base64 — chiefly a project's `carry:` material. Defaults to the same value as box.cpMaxBytes so an entry the carry gate accepted at resolve time can actually be stored on a control box; if the two disagree the CLI promises a copy the transport then refuses. Enforced mid-stream (an over-cap upload is cut off, not landed). A control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BLOB_BYTES, so raise both.",
     advanced: true,
   },
   {

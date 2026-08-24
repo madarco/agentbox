@@ -13,6 +13,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import type { Readable } from 'node:stream';
 
 /**
  * Top-level custody scopes. Anything else is rejected by {@link normalizeCustodyPath}.
@@ -57,6 +58,36 @@ export interface CustodyStore {
   list(prefix?: string): Promise<CustodyEntry[]>;
   /** Remove one entry. Returns false when it wasn't there. */
   delete(path: string): Promise<boolean>;
+
+  /**
+   * Streaming counterparts of {@link put} / {@link get}, for payloads too large
+   * to hold in memory twice.
+   *
+   * The rest of this seam is deliberately path-and-bytes shaped, and for
+   * credentials / `.env` / SSH keys — all small by construction — that is the
+   * right contract. A project's `carry:` material breaks the assumption: it is
+   * whatever the user asked to be copied into their box, bounded only by
+   * `box.cpMaxBytes` (100 MiB). Buffering that as base64 inside a JSON envelope
+   * costs roughly six times the payload in peak memory on both ends, which a
+   * 4 GB control box does not have to spare.
+   *
+   * So this pair is the explicit escape hatch rather than a replacement:
+   * `put`/`get` stay the simple API, these carry the big objects.
+   */
+  putStream(path: string, body: Readable, opts?: { maxBytes?: number }): Promise<CustodyPutResult>;
+  /**
+   * Stream bytes out. Returns the metadata plus a readable, or null when absent.
+   * The caller MUST consume or destroy `data`.
+   */
+  getStream(path: string): Promise<{ entry: CustodyEntry; data: Readable } | null>;
+}
+
+/** Thrown by {@link CustodyStore.putStream} when the body exceeds `maxBytes`. */
+export class CustodyTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`payload exceeds the custody blob cap of ${String(maxBytes)} bytes`);
+    this.name = 'CustodyTooLargeError';
+  }
 }
 
 /** A rejected custody path (bad scope, traversal, illegal segment). Handlers map this to 400. */

@@ -41,8 +41,12 @@ import {
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
 } from '@agentbox/sandbox-core';
-import { applyProjectSeed, startDetachedCloudAgent } from '@agentbox/sandbox-cloud';
-import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
+import {
+  applyProjectSeed,
+  startDetachedCloudAgent,
+  type MaterializedCarryEntry,
+} from '@agentbox/sandbox-cloud';
+import { resolveAgentLauncher, type AgentKind, type ResolvedCarryEntry } from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { IMPORTERS } from './provider-importers.js';
@@ -167,7 +171,12 @@ async function applySeedFromCustody(
   repoUrl: string,
   dest: string,
   log: (l: string) => void,
-): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null> {
+): Promise<{
+  files: number;
+  capturedAt?: string;
+  repoHeadSha?: string;
+  carry?: MaterializedCarryEntry[];
+} | null> {
   const slug = projectSlugFromOriginUrl(repoUrl);
   if (!slug) return null;
   // The hub IS the custody host, so it reads the store directly rather than
@@ -177,6 +186,10 @@ async function applySeedFromCustody(
       get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
     },
     dest,
+    // `carry:` payloads land BESIDE the checkout, not inside it: a carry entry's
+    // destination is an arbitrary in-box path, so the provider copies them from
+    // here rather than the workspace overlaying them. Removed with the clone.
+    carryStageDir: `${dest}.carry`,
     log,
   });
 }
@@ -273,6 +286,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       workspacePath,
       name,
       repoUrl,
+      carry,
       provider,
       agent,
       prompt,
@@ -303,6 +317,11 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         workspacePath,
         name,
         ...(nameBasis ? { nameBasis } : {}),
+        // Approved `carry:` entries, staged from custody beside the clone. The
+        // provider's own applyCarry takes it from here — placeholder rendering
+        // included, now with a real box context — so a hub-built box gets the
+        // same files a locally-built one would.
+        ...(carry?.length ? { carry: carry as ResolvedCarryEntry[] } : {}),
         projectRoot: workspacePath,
         // Registered on the plane so an adopting PC relaunches the right agent.
         agent: normalizeCreateAgent(agent),
@@ -368,7 +387,12 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     },
     fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
     tmpDir: (jobId) => join(tmpdir(), `${HUB_WORKER_CLONE_PREFIX}${jobId}`),
-    cleanup: (dir) => rm(dir, { recursive: true, force: true }),
+    cleanup: async (dir) => {
+      // The carry staging dir is a sibling of the clone (see applySeedFromCustody),
+      // so it needs its own sweep or an approved payload lingers in $TMPDIR.
+      await rm(dir, { recursive: true, force: true });
+      await rm(`${dir}.carry`, { recursive: true, force: true });
+    },
     log,
     logFor: makeJobLogger(log),
   });

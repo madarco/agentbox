@@ -62,7 +62,11 @@ import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
 import { adminGateAllows } from './admin-gate.js';
-import { handleCustodyRequest } from './custody/routes.js';
+import {
+  handleCustodyBlobRequest,
+  handleCustodyRequest,
+  isCustodyBlobPath,
+} from './custody/routes.js';
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
@@ -152,6 +156,14 @@ export interface RelayServerOptions {
    */
   custodyMaxBodyBytes?: number;
   /**
+   * Cap for the streaming blob surface (`relay.custodyMaxBlobBytes`). Defaults
+   * to 100 MiB to match `box.cpMaxBytes`, so a `carry:` entry the CLI accepted
+   * at resolve time can actually be stored — the two caps disagreeing is what
+   * let an approved 25.7 MiB file be promised to the user and then dropped.
+   * Enforced mid-stream, so an over-cap body is cut off rather than landed.
+   */
+  custodyMaxBlobBytes?: number;
+  /**
    * Admin bearer that gates `/admin/custody/*` (the ONLY proof accepted — the
    * loopback bypass that covers the other `/admin/*` routes does not apply to
    * custody, since a control box behind Caddy makes every request look
@@ -213,6 +225,8 @@ const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plan
  * with `relay.custodyMaxBodyBytes`.
  */
 const DEFAULT_CUSTODY_MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
+/** Matches `box.cpMaxBytes` — see the `custodyMaxBlobBytes` option doc. */
+const DEFAULT_CUSTODY_MAX_BLOB_BYTES = 100 * 1024 * 1024; // 100 MiB
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
 const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees can be slow.
 const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
@@ -407,6 +421,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     typeof opts.custodyMaxBodyBytes === 'number' && opts.custodyMaxBodyBytes > 0
       ? opts.custodyMaxBodyBytes
       : DEFAULT_CUSTODY_MAX_BODY_BYTES;
+  const custodyMaxBlobBytes =
+    typeof opts.custodyMaxBlobBytes === 'number' && opts.custodyMaxBlobBytes > 0
+      ? opts.custodyMaxBlobBytes
+      : DEFAULT_CUSTODY_MAX_BLOB_BYTES;
   const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
@@ -527,6 +545,37 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       send(res, 404, { error: 'not found', route });
       return;
+    }
+
+    // The blob surface must be dispatched BEFORE the JSON one, because it is the
+    // only path that does not buffer the body — handing a 100 MiB carry payload
+    // to `readRawBody` below is exactly what this route exists to avoid. The
+    // request object IS the stream; nothing has consumed it yet.
+    if (isCustodyBlobPath(url.pathname)) {
+      const blobRes = await handleCustodyBlobRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          body: req.method === 'PUT' ? req : undefined,
+          maxBytes: custodyMaxBlobBytes,
+        },
+        { custody, adminToken: custodyAdminToken, log },
+      );
+      if (blobRes) {
+        if (blobRes.stream) {
+          res.writeHead(blobRes.status, {
+            'content-type': 'application/octet-stream',
+            ...(blobRes.entry ? { 'content-length': String(blobRes.entry.size) } : {}),
+            ...(blobRes.entry ? { 'x-agentbox-sha256': blobRes.entry.sha256 } : {}),
+          });
+          blobRes.stream.pipe(res);
+          blobRes.stream.on('error', () => res.destroy());
+        } else {
+          send(res, blobRes.status, blobRes.body ?? null);
+        }
+        return;
+      }
     }
 
     // Custody (`/admin/custody/*`) is admin-bearer-gated, NOT loopback-gated:

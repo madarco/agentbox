@@ -470,6 +470,10 @@ agentbox hub project push
 
 Re-pushes are hash-skipped: an unchanged working tree uploads nothing. When the control box creates a box, it overlays the seed onto the fresh clone — the **clone wins** on any conflict, so a file that has since been committed keeps the repo's version, and the job log records how old the seed is.
 
+The seed captures files that are **untracked but not ignored** (`git ls-files --others --exclude-standard`), plus your `.env`/secret files. A **gitignored** path — a database dump under an ignored `backups/`, say — is deliberately not swept up. To send one, list it in your `agentbox.yaml` `carry:` block: approved `carry:` entries travel with the seed, so a control-box-built box gets exactly the files a locally-built one would.
+
+Because `carry:` payloads can be large, they use custody's streaming API and are bounded by `relay.custodyMaxBlobBytes` (100 MiB by default, matching `box.cpMaxBytes`). If an approved entry doesn't fit, the create **fails** rather than quietly building a box without it — raise the cap on both sides, or drop the entry.
+
 ## Manage control-box boxes from your laptop
 
 These commands speak the control box's public REST API (`/api/v1`) — the same surface the web UI and

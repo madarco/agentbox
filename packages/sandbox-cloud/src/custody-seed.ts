@@ -26,9 +26,9 @@
  * create in front of the user.
  */
 import { createHash } from 'node:crypto';
-import { rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
 import { scanHostEnvFiles } from '@agentbox/sandbox-core';
@@ -75,13 +75,23 @@ export interface BuildProjectSeedArgs {
    */
   envPatterns?: string[];
   /**
-   * The control box's custody body cap (`relay.custodyMaxBodyBytes`). The
-   * untracked tar is dropped when it wouldn't fit (env + manifest still go) —
-   * an oversized upload would fail the whole push, and a partial seed beats
-   * none. Passing the effective config value is what makes raising that key
-   * actually admit a bigger seed. Defaults to the same 32 MiB the relay does.
+   * The control box's streaming-blob cap (`relay.custodyMaxBlobBytes`, default
+   * 100 MiB). The untracked tar is dropped when it wouldn't fit (env + manifest
+   * still go) — an oversized upload would fail the whole push, and a partial
+   * seed beats none.
+   *
+   * This is the BLOB cap, not the JSON one: tars go over the streaming API now,
+   * so they are bounded by what the store will accept rather than by what fits
+   * in a base64 envelope. The old 0.7 fudge for base64 inflation does not apply.
    */
   maxBodyBytes?: number;
+  /**
+   * The approved `carry:` entries for this create. Packed into `carry.tar.gz` +
+   * `carry.json` so a hub-built box gets the same files a locally-built one
+   * would — including gitignored paths, which the untracked tar excludes by
+   * design and which `carry:` exists to opt in.
+   */
+  carry?: CarrySeedSource[];
   log?: (line: string) => void;
 }
 
@@ -97,15 +107,27 @@ export interface BuildProjectSeedResult {
   envFiles: string[];
 }
 
-/** Mirrors the relay's own default custody body cap. */
+/** Mirrors the relay's own default custody body cap (the JSON API). */
 const DEFAULT_MAX_BODY_BYTES = 32 * 1024 * 1024;
 
+/** Mirrors the relay's default streaming-blob cap; matches `box.cpMaxBytes`. */
+export const DEFAULT_MAX_BLOB_BYTES = 100 * 1024 * 1024;
+
+/** Above this, a seed item takes the streaming blob API. See `adminCustodySink`. */
+const DEFAULT_BLOB_THRESHOLD_BYTES = 1024 * 1024;
+
+/** Seed items carrying user-approved `carry:` material — never dropped silently. */
+export const CARRY_SEED_ITEMS = ['carry.tar.gz', 'carry.json'];
+
 /**
- * Largest raw blob that still fits a `maxBodyBytes` custody PUT. The value is
- * sent as base64 inside a JSON envelope, so it inflates by 4/3; the 0.7 factor
- * is that plus headroom for the envelope itself.
+ * Largest raw payload that still fits a `maxBodyBytes` **JSON** custody PUT. The
+ * value is sent as base64 inside a JSON envelope, so it inflates by 4/3; the 0.7
+ * factor is that plus headroom for the envelope itself.
+ *
+ * Only the JSON API needs this. The streaming blob API sends raw bytes, so its
+ * cap is the cap.
  */
-function maxBlobBytes(maxBodyBytes: number): number {
+function maxJsonPayloadBytes(maxBodyBytes: number): number {
   return Math.floor(maxBodyBytes * 0.7);
 }
 
@@ -121,7 +143,7 @@ export async function buildProjectSeed(
   args: BuildProjectSeedArgs,
 ): Promise<BuildProjectSeedResult> {
   const log = args.log ?? (() => {});
-  const maxTarBytes = maxBlobBytes(args.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
+  const maxTarBytes = args.maxBodyBytes ?? DEFAULT_MAX_BLOB_BYTES;
   const items: SeedItem[] = [];
   let skippedTarBytes: number | undefined;
 
@@ -131,7 +153,7 @@ export async function buildProjectSeed(
       skippedTarBytes = tar.length;
       log(
         `seed: untracked tar is ${formatBytes(tar.length)} (> ${formatBytes(maxTarBytes)}) — skipping it; ` +
-          'env files still pushed. Raise `relay.custodyMaxBodyBytes` to include it.',
+          'env files still pushed. Raise `relay.custodyMaxBlobBytes` to include it.',
       );
     } else {
       items.push({ relPath: 'untracked.tar.gz', data: tar });
@@ -147,6 +169,26 @@ export async function buildProjectSeed(
     : [];
   const envTar = await buildTarOf(args.projectRoot, envRelPaths);
   if (envTar) items.push({ relPath: 'env.tar.gz', data: envTar });
+
+  // Approved `carry:` entries. Unlike the untracked tar, an over-cap carry is
+  // NOT silently dropped: the user was shown these paths and said yes, so a
+  // payload we can't ship has to fail the create rather than produce a box that
+  // is quietly missing the file they asked for.
+  const carry = args.carry?.length ? await buildCarrySeed(args.carry) : null;
+  if (carry) {
+    if (carry.tar.length > maxTarBytes) {
+      throw new Error(
+        `carry: the approved entries pack to ${formatBytes(carry.tar.length)}, over this control box's ` +
+          `${formatBytes(maxTarBytes)} custody blob cap. Raise \`relay.custodyMaxBlobBytes\` here and ` +
+          'AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box, or drop the entry from `carry:`.',
+      );
+    }
+    items.push({ relPath: 'carry.tar.gz', data: carry.tar });
+    items.push({
+      relPath: 'carry.json',
+      data: Buffer.from(JSON.stringify(carry.manifest), 'utf8'),
+    });
+  }
 
   const manifest: SeedManifest = {
     ...(await readSeedRepoMeta(args.projectRoot)),
@@ -205,6 +247,123 @@ async function buildUntrackedTar(repo: string): Promise<Buffer | null> {
 async function buildTarOf(repo: string, relPaths: string[]): Promise<Buffer | null> {
   if (relPaths.length === 0) return null;
   return tarNulList(repo, relPaths.join('\0') + '\0');
+}
+
+/**
+ * What a carried entry needs to be reconstructed on the control box. A subset of
+ * `ResolvedCarryEntry` minus `absSrc` (a path on the PC, meaningless there) and
+ * `bytes`; the worker fills `absSrc` in from the extracted staging dir.
+ */
+export interface CarrySeedEntry {
+  /** Index into the tar's top-level dirs — `<index>/<basename>` holds the payload. */
+  index: number;
+  rawSrc: string;
+  rawDest: string;
+  absDest: string;
+  kind: 'file' | 'dir';
+  basename: string;
+  mode?: number;
+  user?: number;
+  optional: boolean;
+  exclude?: string[];
+  replaceEnvs?: boolean;
+  replace?: unknown[];
+  symlinkInfo?: 'safe' | 'outside-home';
+}
+
+/** The `carry.json` sidecar. */
+export interface CarrySeedManifest {
+  version: 1;
+  entries: CarrySeedEntry[];
+}
+
+/**
+ * Pack the approved `carry:` entries so a control box can apply them.
+ *
+ * The seed's untracked tar deliberately uses `git ls-files --others
+ * --exclude-standard`, i.e. untracked-but-NOT-ignored. `carry:` is the mechanism
+ * for opting an *ignored* path in (a DB dump under an ignored `backups/`, say),
+ * so it needs its own transport — filtering it into the untracked tar would
+ * quietly change what "untracked" means for every project.
+ *
+ * Payloads ride RAW, not rendered. `renderCarryEntries` substitutes
+ * `{{AGENTBOX_*}}` placeholders from a box context (name, id) that does not
+ * exist until the hub mints the box, so rendering here would bake in the wrong
+ * values. The provider still renders at apply time, exactly as for a local create.
+ *
+ * Returns null when there is nothing to carry. Throws when an entry cannot be
+ * packed — a carry the user explicitly approved must never be dropped quietly.
+ */
+export async function buildCarrySeed(
+  entries: CarrySeedSource[],
+): Promise<{ tar: Buffer; manifest: CarrySeedManifest } | null> {
+  // `missing` entries are the resolver's record of an optional path that wasn't
+  // there; nothing to pack, and the box is meant to come up without them.
+  const present = entries.filter(
+    (e): e is CarrySeedSource & { kind: 'file' | 'dir' } => e.kind === 'file' || e.kind === 'dir',
+  );
+  if (present.length === 0) return null;
+
+  const stage = await mkdtemp(join(tmpdir(), 'agentbox-carry-seed-'));
+  try {
+    const manifest: CarrySeedManifest = { version: 1, entries: [] };
+    const relPaths: string[] = [];
+    for (const [index, entry] of present.entries()) {
+      const name = basename(entry.absSrc) || `entry-${String(index)}`;
+      const destDir = join(stage, String(index));
+      await mkdir(destDir, { recursive: true });
+      // `cp -R` preserves modes and nested structure, and follows the same
+      // semantics the local carry path uses when it stages a directory.
+      const args = ['-R', entry.absSrc, join(destDir, name)];
+      const r = await execa('cp', args, { reject: false });
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `carry: could not stage ${entry.rawSrc} for upload: ${(r.stderr || r.stdout || '').trim()}`,
+        );
+      }
+      relPaths.push(`${String(index)}/${name}`);
+      manifest.entries.push({
+        index,
+        rawSrc: entry.rawSrc,
+        rawDest: entry.rawDest,
+        absDest: entry.absDest,
+        kind: entry.kind,
+        basename: name,
+        ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
+        ...(entry.user !== undefined ? { user: entry.user } : {}),
+        optional: entry.optional,
+        ...(entry.exclude ? { exclude: entry.exclude } : {}),
+        ...(entry.replaceEnvs !== undefined ? { replaceEnvs: entry.replaceEnvs } : {}),
+        ...(entry.replace ? { replace: entry.replace } : {}),
+        ...(entry.symlinkInfo ? { symlinkInfo: entry.symlinkInfo } : {}),
+      });
+    }
+    const tar = await tarNulList(stage, relPaths.join('\0') + '\0');
+    if (!tar) {
+      throw new Error(
+        `carry: could not pack ${String(present.length)} approved entry/entries for upload`,
+      );
+    }
+    return { tar, manifest };
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** The `ResolvedCarryEntry` fields {@link buildCarrySeed} reads. */
+export interface CarrySeedSource {
+  rawSrc: string;
+  rawDest: string;
+  absSrc: string;
+  absDest: string;
+  kind: 'file' | 'dir' | 'missing';
+  mode?: number;
+  user?: number;
+  optional: boolean;
+  exclude?: string[];
+  replaceEnvs?: boolean;
+  replace?: unknown[];
+  symlinkInfo?: 'safe' | 'outside-home';
 }
 
 /**
@@ -272,28 +431,67 @@ export function adminCustodySink(opts: {
   controlPlaneUrl: string;
   adminToken: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Payloads at or above this go to the streaming blob API instead of the
+   * base64 JSON one. Well under the JSON cap on purpose: base64 costs 4/3 on
+   * the wire and several times the payload in peak memory on a 4 GB control
+   * box, so there is no reason to send anything sizeable that way.
+   */
+  blobThresholdBytes?: number;
 }): SeedCustodySink {
   const base = opts.controlPlaneUrl.replace(/\/+$/, '');
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${opts.adminToken}`,
-  };
+  const threshold = opts.blobThresholdBytes ?? DEFAULT_BLOB_THRESHOLD_BYTES;
+  const auth = { Authorization: `Bearer ${opts.adminToken}` };
+  const jsonHeaders = { 'Content-Type': 'application/json', ...auth };
+
+  async function putJson(path: string, data: Buffer): Promise<Response> {
+    return fetchImpl(`${base}/admin/custody/${encodeCustodyPath(path)}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ data: data.toString('base64') }),
+    });
+  }
+
   return {
     async list(prefix) {
       const res = await fetchImpl(`${base}/admin/custody?prefix=${encodeURIComponent(prefix)}`, {
-        headers,
+        headers: jsonHeaders,
       });
       if (!res.ok) return [];
       return ((await res.json()) as { entries: { path: string; sha256: string }[] }).entries;
     },
     async put(path, data) {
-      const res = await fetchImpl(`${base}/admin/custody/${encodeCustodyPath(path)}`, {
+      if (data.length < threshold) {
+        const res = await putJson(path, data);
+        if (!res.ok) throw new Error(`custody put ${path} → ${String(res.status)}`);
+        return;
+      }
+      const res = await fetchImpl(`${base}/admin/custody-blob/${encodeCustodyPath(path)}`, {
         method: 'PUT',
-        headers,
-        body: JSON.stringify({ data: data.toString('base64') }),
+        headers: { 'Content-Type': 'application/octet-stream', ...auth },
+        body: new Uint8Array(data),
       });
-      if (!res.ok) throw new Error(`custody put ${path} → ${String(res.status)}`);
+      if (res.ok) return;
+      // A hub predating the blob surface 404s the whole prefix. Fall back only
+      // when the payload would actually fit the JSON API — otherwise say so,
+      // because the alternative is dropping a file the user approved.
+      if (res.status === 404) {
+        if (data.length <= maxJsonPayloadBytes(DEFAULT_MAX_BODY_BYTES)) {
+          const legacy = await putJson(path, data);
+          if (!legacy.ok) throw new Error(`custody put ${path} → ${String(legacy.status)}`);
+          return;
+        }
+        throw new Error(
+          `custody put ${path}: this control box has no streaming blob API and ${formatBytes(data.length)} ` +
+            'is too large for the JSON one — run `agentbox hub update` to update it',
+        );
+      }
+      const detail = await res
+        .text()
+        .then((t) => t.slice(0, 300))
+        .catch(() => '');
+      throw new Error(`custody put ${path} → ${String(res.status)}${detail ? `: ${detail}` : ''}`);
     },
   };
 }
@@ -379,11 +577,22 @@ export async function pushProjectSeedToCustody(
     try {
       await put(item.relPath, item.data);
     } catch (err) {
+      // ...with ONE exception: the carry blobs. Untracked/env material is a
+      // best-effort convenience, but `carry:` paths were shown to the user and
+      // explicitly approved. Degrading those to a log line is how an approved
+      // 25.7 MiB dump silently failed to reach a box in the first place.
+      if (CARRY_SEED_ITEMS.includes(item.relPath)) {
+        throw new Error(
+          `carry: the control box refused ${item.relPath} (${formatBytes(item.data.length)}): ` +
+            `${err instanceof Error ? err.message : String(err)}. These files were approved for ` +
+            'this box, so the create is stopping rather than building one without them.',
+        );
+      }
       dropped.push(item.relPath);
       log(
         `seed: the control box refused ${item.relPath} (${formatBytes(item.data.length)}): ` +
           `${err instanceof Error ? err.message : String(err)} — continuing without it. ` +
-          'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box.',
+          'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box.',
       );
     }
   }
@@ -442,6 +651,12 @@ export interface ApplyProjectSeedResult {
   files: number;
   capturedAt?: string;
   repoHeadSha?: string;
+  /**
+   * Approved `carry:` entries, staged on this machine and rewritten to point at
+   * the staging dir. Handed to `provider.create({ carry })` so the control box
+   * applies them exactly as a local create would.
+   */
+  carry?: MaterializedCarryEntry[];
 }
 
 /**
@@ -461,6 +676,13 @@ export async function applyProjectSeed(args: {
   source: SeedSource;
   /** Absolute path of the fresh checkout to overlay onto. */
   dest: string;
+  /**
+   * Where to unpack `carry:` payloads. Distinct from `dest` on purpose: a carry
+   * entry's destination is an arbitrary in-box path (`~/.config/...`), not
+   * necessarily inside the workspace, so it cannot just be overlaid onto the
+   * checkout. Omitted → carry material is ignored.
+   */
+  carryStageDir?: string;
   log?: (line: string) => void;
 }): Promise<ApplyProjectSeedResult | null> {
   const log = args.log ?? (() => {});
@@ -494,7 +716,94 @@ export async function applyProjectSeed(args: {
       await rm(tmp, { force: true }).catch(() => {});
     }
   }
-  return { files, capturedAt: manifest.createdAt, repoHeadSha: manifest.repoHeadSha };
+  const carry = await materializeCarrySeed(args.source, args.carryStageDir, log);
+  return {
+    files,
+    capturedAt: manifest.createdAt,
+    repoHeadSha: manifest.repoHeadSha,
+    ...(carry ? { carry } : {}),
+  };
+}
+
+/**
+ * Unpack `carry.tar.gz` + `carry.json` into `stageDir` and rebuild the entries
+ * with `absSrc` pointing at the extracted copies.
+ *
+ * The result is fed straight to `provider.create({ carry })`, so from there the
+ * control box runs the SAME `applyCarry` a local create does — placeholder
+ * rendering included, now with a real box context. Nothing about carry semantics
+ * is reimplemented here; this only moves the bytes to where the provider expects
+ * them.
+ *
+ * Returns null when the project has no carry material (the common case).
+ */
+async function materializeCarrySeed(
+  source: SeedSource,
+  stageDir: string | undefined,
+  log: (line: string) => void,
+): Promise<MaterializedCarryEntry[] | null> {
+  if (!stageDir) return null;
+  const metaBlob = await source.get('carry.json').catch(() => null);
+  if (!metaBlob) return null;
+  let meta: CarrySeedManifest;
+  try {
+    meta = JSON.parse(metaBlob.toString('utf8')) as CarrySeedManifest;
+  } catch (err) {
+    throw new Error(
+      `carry: the stored carry.json is unreadable (${err instanceof Error ? err.message : String(err)}); ` +
+        're-run the create from the PC to refresh it',
+    );
+  }
+  if (!Array.isArray(meta.entries) || meta.entries.length === 0) return null;
+
+  const tarBlob = await source.get('carry.tar.gz').catch(() => null);
+  if (!tarBlob) {
+    // Metadata without payload means a partial push. Loud, not silent: the box
+    // would otherwise come up missing files the user approved.
+    throw new Error(
+      'carry: carry.json is stored but carry.tar.gz is missing — the seed push was incomplete. ' +
+        'Re-run the create from the PC.',
+    );
+  }
+
+  await mkdir(stageDir, { recursive: true });
+  const tmp = join(stageDir, 'carry.tar.gz');
+  await writeFile(tmp, tarBlob);
+  await execa('tar', ['-C', stageDir, '-xzf', tmp]);
+  await rm(tmp, { force: true }).catch(() => {});
+
+  const entries = meta.entries.map((e) => ({
+    rawSrc: e.rawSrc,
+    rawDest: e.rawDest,
+    absSrc: join(stageDir, String(e.index), e.basename),
+    absDest: e.absDest,
+    kind: e.kind,
+    ...(e.mode !== undefined ? { mode: e.mode } : {}),
+    ...(e.user !== undefined ? { user: e.user } : {}),
+    optional: e.optional,
+    ...(e.exclude ? { exclude: e.exclude } : {}),
+    ...(e.replaceEnvs !== undefined ? { replaceEnvs: e.replaceEnvs } : {}),
+    ...(e.replace ? { replace: e.replace } : {}),
+    ...(e.symlinkInfo ? { symlinkInfo: e.symlinkInfo } : {}),
+  }));
+  log(`carry: staged ${String(entries.length)} approved entry/entries from custody`);
+  return entries;
+}
+
+/** A carry entry rebuilt against the control box's staging dir. */
+export interface MaterializedCarryEntry {
+  rawSrc: string;
+  rawDest: string;
+  absSrc: string;
+  absDest: string;
+  kind: 'file' | 'dir';
+  mode?: number;
+  user?: number;
+  optional: boolean;
+  exclude?: string[];
+  replaceEnvs?: boolean;
+  replace?: unknown[];
+  symlinkInfo?: 'safe' | 'outside-home';
 }
 
 function encodeCustodyPath(path: string): string {

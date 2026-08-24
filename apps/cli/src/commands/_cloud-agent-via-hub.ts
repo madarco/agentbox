@@ -16,7 +16,7 @@
  *     submit on. No adopt/attach here; it's fire-and-forget.
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
-import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import { readGitOriginUrl, type CarrySeedSource } from '@agentbox/sandbox-cloud';
 import {
   resolveCustodyTarget,
   resolveHubApiTarget,
@@ -83,6 +83,15 @@ export interface CloudAgentViaHubArgs {
   fromBranch?: string;
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
+  /**
+   * Approved `carry:` entries, from the gate the caller already ran. Pushed to
+   * custody with the rest of the seed so the hub worker can apply them.
+   *
+   * Not optional in spirit: the user was shown these paths and said yes, and a
+   * hub create that ignores them produces a box quietly missing files a local
+   * create would have copied.
+   */
+  carry?: CarrySeedSource[];
   /** Progress lines (enqueue + poll transitions + the hub worker's own log). */
   onStatus?: (line: string) => void;
   /** Full transcript: the hub worker's log lines, then the adopt log. */
@@ -122,7 +131,8 @@ export function hubLogSink(
 export async function createCloudBoxViaHubAndAdopt(
   args: CloudAgentViaHubArgs,
 ): Promise<BoxRecord | null> {
-  const { providerName, projectRoot, agent, name, fromBranch, urlFlag, onStatus, onLog } = args;
+  const { providerName, projectRoot, agent, name, fromBranch, urlFlag, carry, onStatus, onLog } =
+    args;
   // Both the `/api/v1` client (createBox) and the admin custody target (seed push
   // + SSH-key pull) must be present — a fully-configured control box has both. If
   // either is missing the box isn't hub-buildable from here, so fall back to local.
@@ -138,7 +148,13 @@ export async function createCloudBoxViaHubAndAdopt(
   await syncAgentCredentialsIfChanged(urlFlag);
   // Push the project seed so the clone-side worker overlays .env / untracked files
   // a fresh clone can't provide (best-effort, hash-skipped).
-  await pushCreateSeed({ custody, repoUrl, projectRoot, onLog: onLog ?? (() => {}) });
+  await pushCreateSeed({
+    custody,
+    repoUrl,
+    projectRoot,
+    ...(carry?.length ? { carry } : {}),
+    onLog: onLog ?? (() => {}),
+  });
 
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({
@@ -227,6 +243,7 @@ export async function enqueueAgentJobViaHub(
     prompt,
     agentArgs,
     urlFlag,
+    carry,
     onStatus,
     onLog,
   } = args;
@@ -240,7 +257,13 @@ export async function enqueueAgentJobViaHub(
   // comes up logged out with whatever was last pushed (a Claude refresh rotates
   // the token, so a stale copy is dead, not merely expired).
   await syncAgentCredentialsIfChanged(urlFlag);
-  await pushCreateSeed({ custody, repoUrl, projectRoot, onLog: onLog ?? (() => {}) });
+  await pushCreateSeed({
+    custody,
+    repoUrl,
+    projectRoot,
+    ...(carry?.length ? { carry } : {}),
+    onLog: onLog ?? (() => {}),
+  });
 
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({

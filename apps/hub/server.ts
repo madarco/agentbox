@@ -157,6 +157,9 @@ async function main(): Promise<void> {
     // untracked seeds can be raised without a rebuild (`relay.custodyMaxBodyBytes`
     // is the PC-side spelling; the hub reads its own env).
     custodyMaxBodyBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BODY_BYTES),
+    // The streaming blob surface's own cap (`relay.custodyMaxBlobBytes`), which
+    // governs `carry:` payloads rather than seed tars.
+    custodyMaxBlobBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES),
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {
@@ -209,6 +212,11 @@ async function main(): Promise<void> {
   // a route that constructed `new FsCustodyStore()` itself would ERR_MODULE_NOT_FOUND
   // on execa in the standalone build.
   globalThis.__AGENTBOX_HUB_CUSTODY = custody;
+  // The blob route enforces the same cap the relay's own blob surface does, so a
+  // payload can't sneak past by arriving on `/api/v1` instead of `/admin`.
+  globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES = positiveIntFromEnv(
+    process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES,
+  );
 
   // System / Build facts for the /api/v1/system route, read from @agentbox/sandbox-core
   // HERE (the custom server's scope, outside Next's bundle) and handed across as plain

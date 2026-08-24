@@ -727,12 +727,23 @@ export const claudeCommand = new Command('claude')
         urlFlag: opts.url,
       });
       if (iRouting.where === 'hub') {
+        // Resolve + approve `carry:` BEFORE enqueuing: the hub worker builds the
+        // box from a clone plus custody, so anything the user wants copied has to
+        // ride the seed. Skipping this is how an approved file silently failed to
+        // reach a hub-created box.
+        const carryForHub = await runQueuedCarryGate({
+          projectRoot,
+          opts,
+          onLog: (line) => cmdLog.write(line),
+          onClose: () => cmdLog.close(),
+        });
         const res = await withHubJobLine(
           (onStatus) =>
             enqueueAgentJobViaHub({
               providerName,
               projectRoot,
               agent: 'claude',
+              carry: carryForHub,
               name: opts.name,
               fromBranch: opts.fromBranch,
               urlFlag: opts.url,
@@ -1032,6 +1043,10 @@ export const claudeCommand = new Command('claude')
               providerName,
               projectRoot,
               agent: 'claude',
+              // The gate above already resolved + approved these; the hub path
+              // used to discard them, so a hub-built box came up without files
+              // the user had explicitly said yes to.
+              carry: carryEntries,
               name: opts.name,
               fromBranch,
               urlFlag: opts.url,

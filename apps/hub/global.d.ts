@@ -79,9 +79,32 @@ declare global {
           changed: boolean;
         }>;
         delete(path: string): Promise<boolean>;
+        // Streaming counterparts, for payloads too large to buffer as base64
+        // inside a JSON envelope (a project's `carry:` material). `Readable` is
+        // spelled structurally so this file needs no node:stream import.
+        putStream(
+          path: string,
+          body: NodeJS.ReadableStream,
+          opts?: { maxBytes?: number },
+        ): Promise<{
+          path: string;
+          size: number;
+          sha256: string;
+          mode: number;
+          updatedAt: string;
+          changed: boolean;
+        }>;
+        getStream(path: string): Promise<{
+          entry: { path: string; size: number; sha256: string; mode: number; updatedAt: string };
+          data: NodeJS.ReadableStream;
+        } | null>;
       }
     | null
     | undefined;
+
+  /** Streaming-blob cap the hub enforces (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`). */
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES: number | undefined;
 
   // System / Build facts, read from @agentbox/sandbox-core in the custom server's
   // scope and handed across as PLAIN data. The System page's /api/v1/system route

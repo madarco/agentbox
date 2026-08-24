@@ -22,6 +22,11 @@ services:
       AGENTBOX_HUB_PORT: '8787'
       AGENTBOX_HUB_WORKER: ${AGENTBOX_HUB_WORKER:-on}
       HOME: /root
+      # Custody caps. Without these the container can only ever run the built-in
+      # defaults, no matter what the docs say about raising them — the hub reads
+      # them from its own env, and nothing was passing them through.
+      AGENTBOX_CUSTODY_MAX_BODY_BYTES: ${AGENTBOX_CUSTODY_MAX_BODY_BYTES:-}
+      AGENTBOX_CUSTODY_MAX_BLOB_BYTES: ${AGENTBOX_CUSTODY_MAX_BLOB_BYTES:-}
       # Secrets (from the compose env-file / shell). Login is secret-gated: with
       # no BETTER_AUTH_SECRET the UI stays open; the deploy sets these so a
       # network-reachable hub is gated.

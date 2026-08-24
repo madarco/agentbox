@@ -13,7 +13,7 @@ import {
 import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { runCarryGate } from '../lib/carry-gate.js';
+import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -188,18 +188,31 @@ async function runCreateViaHubApi(
   // Always push seed material first (hash-skipped so an unchanged tree costs
   // nothing). This is the fix for hub-routed creates coming up missing .env /
   // untracked files — the clone-side worker overlays what we push to custody.
+  // Resolve + approve `carry:` here rather than on the local path below: this
+  // branch returns before that gate ever runs, so without this a hub-routed
+  // create silently ignores the block. Carry is the only route by which a
+  // GITIGNORED file reaches a box — the untracked seed excludes ignored paths by
+  // design — so dropping it is not a cosmetic gap.
+  const carryForHub = await runQueuedCarryGate({
+    projectRoot,
+    opts,
+    onLog: (line) => cmdLog.write(line),
+    onClose: () => cmdLog.close(),
+  });
   await pushCreateSeed({
     custody: target.custody,
     repoUrl: target.repoUrl,
     projectRoot,
+    ...(carryForHub.length > 0 ? { carry: carryForHub } : {}),
     onLog: (line) => cmdLog.write(line),
   });
 
   // Cloud-relevant box-shaping flags the user passed. The control box applies the
   // direct `provider.create` args (snapshot/image/env/vnc/bundle-depth/build/
   // credential-sync) and falls back to its own config for the rest (VM sizing) —
-  // consistent with `prepare`. Docker/agent-only knobs (carry/portless/limits) are
-  // inapplicable to a control-box clone build, so they aren't sent.
+  // consistent with `prepare`. `carry:` does NOT ride here: its payloads are
+  // files, not flags, so they travel with the seed above. Docker-only knobs
+  // (portless/limits) are inapplicable to a control-box clone build.
   const remoteOpts = {
     ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
     ...(opts.image ? { image: opts.image } : {}),

@@ -158,7 +158,8 @@
       "properties": {
         "port": { "type": "integer" },
         "controlPlaneUrl": { "type": "string" },
-        "custodyMaxBodyBytes": { "type": "integer" }
+        "custodyMaxBodyBytes": { "type": "integer" },
+        "custodyMaxBlobBytes": { "type": "integer" }
       }
     },
     "ssh": {

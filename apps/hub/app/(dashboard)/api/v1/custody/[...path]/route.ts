@@ -31,53 +31,10 @@ import { custodyByteReadAuthorized } from '@/lib/custody-auth';
 import { PEER_LOOPBACK_HEADER } from '@/lib/peer';
 import { fail, ok } from '../../lib/envelope';
 import { readJson } from '../../lib/validate';
+import { normalizeCustodyPathSegments as normalizeCustodyPath } from '../../lib/custody-path';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-// A faithful copy of @agentbox/relay's normalizeCustodyPath (store.ts): validating
-// here gives a clean 400 rather than forwarding a bad path to the store. Duplicated
-// (not imported) for the bundle reason above; the store re-validates as the real
-// enforcement, so a drift can only ever reject earlier, never let a bad path
-// through. Keep in sync with store.ts if the scopes/segment rules change.
-const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared'];
-const AGENT_IDS = ['claude', 'codex', 'opencode'];
-const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
-const MAX_SEGMENTS = 6;
-const MAX_PATH_LENGTH = 256;
-
-function normalizeCustodyPath(
-  segments: string[],
-): { ok: true; path: string } | { ok: false; message: string } {
-  const trimmed = segments.filter((s) => s.length > 0);
-  const joined = trimmed.join('/');
-  if (joined.length === 0) return { ok: false, message: 'empty custody path' };
-  if (joined.length > MAX_PATH_LENGTH) {
-    return { ok: false, message: `custody path too long (max ${String(MAX_PATH_LENGTH)} chars)` };
-  }
-  if (trimmed.length < 2) return { ok: false, message: 'custody path needs a scope and a name' };
-  if (trimmed.length > MAX_SEGMENTS) {
-    return { ok: false, message: `custody path too deep (max ${String(MAX_SEGMENTS)} segments)` };
-  }
-  for (const seg of trimmed) {
-    if (seg === '.' || seg === '..' || !SEGMENT_RE.test(seg)) {
-      return { ok: false, message: `illegal custody path segment: '${seg}'` };
-    }
-  }
-  if (!CUSTODY_SCOPES.includes(trimmed[0]!)) {
-    return {
-      ok: false,
-      message: `unknown custody scope '${trimmed[0]!}' (expected ${CUSTODY_SCOPES.join(' | ')})`,
-    };
-  }
-  if (trimmed[0] === 'agents' && !AGENT_IDS.includes(trimmed[1]!)) {
-    return {
-      ok: false,
-      message: `unknown agent '${trimmed[1]!}' (expected ${AGENT_IDS.join(' | ')})`,
-    };
-  }
-  return { ok: true, path: joined };
-}
 
 /**
  * Whether this request may read a stored blob's bytes. The proxy has already gated

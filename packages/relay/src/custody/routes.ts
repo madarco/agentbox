@@ -15,7 +15,15 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
-import { CustodyPathError, normalizeCustodyPath, normalizeCustodyPrefix, type CustodyStore } from './store.js';
+import type { Readable } from 'node:stream';
+import {
+  CustodyPathError,
+  CustodyTooLargeError,
+  normalizeCustodyPath,
+  normalizeCustodyPrefix,
+  type CustodyEntry,
+  type CustodyStore,
+} from './store.js';
 
 /** Structurally identical to `RelayResponse` in `core/handler.ts` (kept local to avoid a cycle). */
 export interface CustodyResponse {
@@ -135,6 +143,112 @@ export async function handleCustodyRequest(
     if (err instanceof CustodyPathError) return { status: 400, body: { error: err.message } };
     const msg = err instanceof Error ? err.message : String(err);
     log(`custody error: ${msg}`);
+    return { status: 500, body: { error: `custody: ${msg}` } };
+  }
+}
+
+/**
+ * The BLOB surface: the same store, addressed the same way, but moving raw
+ * `application/octet-stream` bytes instead of base64 inside a JSON envelope.
+ *
+ * Deliberately a second endpoint rather than a content-type branch on the first.
+ * The JSON API is the easy, general-purpose one — a curl and a base64 is all any
+ * consumer needs for a credential or a `.env`, and it stays exactly as it was.
+ * This one is the advanced path for objects big enough that buffering them twice
+ * matters: a project's `carry:` material can run to `box.cpMaxBytes` (100 MiB),
+ * where the JSON envelope costs ~6x the payload in peak memory across both ends.
+ *
+ * Keeping them separate also means there is no wire to break: an older hub
+ * simply 404s this prefix, which a client can detect and report precisely.
+ */
+export const CUSTODY_BLOB_PATH_PREFIX = '/admin/custody-blob';
+
+/** True when `path` addresses the blob surface. Disjoint from {@link isCustodyPath}. */
+export function isCustodyBlobPath(path: string): boolean {
+  return path.startsWith(`${CUSTODY_BLOB_PATH_PREFIX}/`);
+}
+
+export interface CustodyBlobRequest {
+  method: string;
+  /** URL pathname, e.g. `/admin/custody-blob/projects/acme__web/seed/carry.tar.gz`. */
+  path: string;
+  bearer: string;
+  /** Request body for PUT. Absent for GET/DELETE. */
+  body?: Readable;
+  /** Cap enforced while streaming (`relay.custodyMaxBlobBytes`). */
+  maxBytes?: number;
+}
+
+/**
+ * A blob response. `stream` is set only for a successful GET, and the caller
+ * owns piping it; everything else is a small JSON `body` exactly like the JSON
+ * surface, so error handling is identical on both.
+ */
+export interface CustodyBlobResponse {
+  status: number;
+  body?: unknown;
+  stream?: Readable;
+  /** Metadata for a GET, so the host router can set content-length / digest headers. */
+  entry?: CustodyEntry;
+}
+
+export async function handleCustodyBlobRequest(
+  req: CustodyBlobRequest,
+  deps: CustodyRouteDeps,
+): Promise<CustodyBlobResponse | null> {
+  if (!isCustodyBlobPath(req.path)) return null;
+  const log = deps.log ?? (() => {});
+
+  // Same gate as the JSON surface, for the same reason: on the control box every
+  // proxied request looks loopback, so the admin bearer is the only proof.
+  const adminToken = deps.adminToken ?? '';
+  if (adminToken.length === 0) {
+    return { status: 503, body: { error: 'custody not configured: admin token unset' } };
+  }
+  if (!timingSafeEqualStr(req.bearer, adminToken)) {
+    return { status: 401, body: { error: 'invalid admin token' } };
+  }
+  const store = deps.custody;
+  if (!store) {
+    return { status: 503, body: { error: 'custody store not enabled on this relay' } };
+  }
+
+  try {
+    const path = normalizeCustodyPath(
+      decodeURIComponent(req.path.slice(`${CUSTODY_BLOB_PATH_PREFIX}/`.length)),
+    );
+
+    if (req.method === 'PUT') {
+      if (!req.body) return { status: 400, body: { error: 'expected a request body' } };
+      const result = await store.putStream(path, req.body, { maxBytes: req.maxBytes });
+      log(
+        `custody blob put ${path} (${String(result.size)} bytes, ${result.changed ? 'changed' : 'unchanged'})`,
+      );
+      return { status: 200, body: result };
+    }
+
+    if (req.method === 'GET') {
+      const found = await store.getStream(path);
+      if (!found) return { status: 404, body: { error: 'no such custody entry' } };
+      log(`custody blob get ${path} (${String(found.entry.size)} bytes)`);
+      return { status: 200, stream: found.data, entry: found.entry };
+    }
+
+    return { status: 405, body: { error: 'method not allowed' } };
+  } catch (err) {
+    if (err instanceof CustodyPathError) return { status: 400, body: { error: err.message } };
+    if (err instanceof CustodyTooLargeError) {
+      // 413, and the message names the key — an operator hitting this needs to
+      // know it is a configured cap, not a broken upload.
+      return {
+        status: 413,
+        body: {
+          error: `${err.message}. Raise \`relay.custodyMaxBlobBytes\` here and AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box.`,
+        },
+      };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`custody blob error: ${msg}`);
     return { status: 500, body: { error: `custody: ${msg}` } };
   }
 }

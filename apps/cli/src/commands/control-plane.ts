@@ -1426,7 +1426,7 @@ const projectPushSub = new Command('push')
         // actually gets captured is reported below.
         envPatterns: DEFAULT_ENV_PATTERNS,
         // Honour the configured cap, so raising it actually admits a bigger seed.
-        maxBodyBytes: cfg?.effective.relay.custodyMaxBodyBytes,
+        maxBodyBytes: cfg?.effective.relay.custodyMaxBlobBytes,
         force: opts.force,
         log: (line) => log.info(line),
       });
@@ -1450,14 +1450,14 @@ const projectPushSub = new Command('push')
       if (res.skippedTarBytes !== undefined) {
         log.warn(
           `The untracked-files tar (${String(Math.round(res.skippedTarBytes / 1024 / 1024))}MB) exceeded this machine's custody body cap and was NOT pushed — ` +
-            'hub-created boxes will miss those files. To include it, raise `relay.custodyMaxBodyBytes` here AND ' +
-            'AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box (it enforces its own cap).',
+            'hub-created boxes will miss those files. To include it, raise `relay.custodyMaxBlobBytes` here AND ' +
+            'AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box (it enforces its own cap).',
         );
       }
       if (res.dropped.length > 0) {
         log.warn(
           `The control box refused ${res.dropped.join(', ')} — hub-created boxes will miss those files. ` +
-            'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BODY_BYTES on the control box.',
+            'If it is a size limit, raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the control box.',
         );
       }
     } catch (err) {

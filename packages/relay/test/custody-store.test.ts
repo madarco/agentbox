@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FsCustodyStore } from '../src/custody/fs-store.js';
@@ -105,7 +106,9 @@ describe('FsCustodyStore', () => {
     await expect(store.put('agents/../../etc/passwd', Buffer.from('x'))).rejects.toBeInstanceOf(
       CustodyPathError,
     );
-    await expect(store.put('secrets/foo', Buffer.from('x'))).rejects.toBeInstanceOf(CustodyPathError);
+    await expect(store.put('secrets/foo', Buffer.from('x'))).rejects.toBeInstanceOf(
+      CustodyPathError,
+    );
     await expect(store.put('agents/gemini/auth.json', Buffer.from('x'))).rejects.toBeInstanceOf(
       CustodyPathError,
     );
@@ -132,5 +135,85 @@ describe('normalizeCustodyPath', () => {
     expect(() => normalizeCustodyPath('agents')).toThrow(CustodyPathError);
     expect(() => normalizeCustodyPath('agents/claude/..')).toThrow(CustodyPathError);
     expect(() => normalizeCustodyPath('agents/claude/a b')).toThrow(CustodyPathError);
+  });
+});
+
+/**
+ * The streaming pair exists so a `carry:` payload — bounded only by
+ * `box.cpMaxBytes` (100 MiB) — never has to be held twice as base64. These pin
+ * the properties that make it a safe substitute for `put`/`get`, not just a
+ * faster one.
+ */
+describe('FsCustodyStore streaming', () => {
+  let root: string;
+  let store: FsCustodyStore;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'custody-stream-test-'));
+    store = new FsCustodyStore({ root });
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const streamOf = (data: Buffer): Readable => Readable.from([data]);
+
+  it('round-trips bytes and agrees with put() on the digest', async () => {
+    const data = Buffer.from('carry payload contents');
+    const res = await store.putStream('projects/acme__web/seed/carry.tar.gz', streamOf(data));
+    expect(res.changed).toBe(true);
+    expect(res.size).toBe(data.length);
+    expect(res.sha256).toBe(custodyDigest(data));
+
+    const got = await store.getStream('projects/acme__web/seed/carry.tar.gz');
+    expect(got).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const c of got!.data) chunks.push(c as Buffer);
+    expect(Buffer.concat(chunks).toString()).toBe(data.toString());
+  });
+
+  it('keeps the content-addressed skip', async () => {
+    const data = Buffer.from('same bytes');
+    await store.putStream('projects/acme__web/seed/carry.tar.gz', streamOf(data));
+    const second = await store.putStream('projects/acme__web/seed/carry.tar.gz', streamOf(data));
+    expect(second.changed).toBe(false);
+  });
+
+  it('is interchangeable with put(): same path, same digest', async () => {
+    const data = Buffer.from('written two ways');
+    await store.put('projects/acme__web/seed/env.tar.gz', data);
+    const viaStream = await store.putStream('projects/acme__web/seed/env.tar.gz', streamOf(data));
+    expect(viaStream.changed).toBe(false);
+    expect(viaStream.sha256).toBe(custodyDigest(data));
+  });
+
+  it('cuts off an over-cap body mid-stream and leaves nothing behind', async () => {
+    const data = Buffer.alloc(4096, 0x61);
+    await expect(
+      store.putStream('projects/acme__web/seed/carry.tar.gz', streamOf(data), { maxBytes: 1024 }),
+    ).rejects.toThrow(/exceeds the custody blob cap/);
+    // No entry, and no `.tmp` litter — an aborted upload must not leave a
+    // half-written payload where a later read could find it.
+    expect(await store.getStream('projects/acme__web/seed/carry.tar.gz')).toBeNull();
+    const leftovers = (await readdir(join(root, 'projects/acme__web/seed'))).filter((f) =>
+      f.endsWith('.tmp'),
+    );
+    expect(leftovers).toEqual([]);
+  });
+
+  it('does not clobber an existing entry when the new upload is rejected', async () => {
+    const good = Buffer.from('the good copy');
+    await store.put('projects/acme__web/seed/carry.tar.gz', good);
+    await expect(
+      store.putStream('projects/acme__web/seed/carry.tar.gz', streamOf(Buffer.alloc(4096)), {
+        maxBytes: 16,
+      }),
+    ).rejects.toThrow();
+    const still = await store.get('projects/acme__web/seed/carry.tar.gz');
+    expect(still?.data.toString()).toBe(good.toString());
+  });
+
+  it('returns null for a missing entry rather than throwing', async () => {
+    expect(await store.getStream('projects/acme__web/seed/nope.tar.gz')).toBeNull();
   });
 });

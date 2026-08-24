@@ -19,17 +19,26 @@ function req(over: Partial<Parameters<typeof handleRemoteBoxesRequest>[0]>) {
 
 describe('handleRemoteBoxesRequest', () => {
   it('returns null for non-remote paths (router falls through)', async () => {
-    const res = await handleRemoteBoxesRequest(req({ path: '/events' }), { store: store(), adminToken: ADMIN });
+    const res = await handleRemoteBoxesRequest(req({ path: '/events' }), {
+      store: store(),
+      adminToken: ADMIN,
+    });
     expect(res).toBeNull();
   });
 
   it('fail-closes 503 when the admin token is unset', async () => {
-    const res = await handleRemoteBoxesRequest(req({ bearer: '' }), { store: store(), adminToken: '' });
+    const res = await handleRemoteBoxesRequest(req({ bearer: '' }), {
+      store: store(),
+      adminToken: '',
+    });
     expect(res?.status).toBe(503);
   });
 
   it('401s a wrong bearer', async () => {
-    const res = await handleRemoteBoxesRequest(req({ bearer: 'nope' }), { store: store(), adminToken: ADMIN });
+    const res = await handleRemoteBoxesRequest(req({ bearer: 'nope' }), {
+      store: store(),
+      adminToken: ADMIN,
+    });
     expect(res?.status).toBe(401);
   });
 
@@ -44,21 +53,30 @@ describe('handleRemoteBoxesRequest', () => {
   it('enqueues (202) and round-trips via GET /remote/boxes/:id', async () => {
     const s = store();
     const enq = await handleRemoteBoxesRequest(
-      req({ method: 'POST', bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'e2b', branch: 'main' }) }),
+      req({
+        method: 'POST',
+        bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'e2b', branch: 'main' }),
+      }),
       { store: s, adminToken: ADMIN },
     );
     expect(enq?.status).toBe(202);
     const jobId = (enq?.body as { jobId: string }).jobId;
     expect(jobId).toBeTruthy();
 
-    const get = await handleRemoteBoxesRequest(req({ path: `/remote/boxes/${jobId}` }), { store: s, adminToken: ADMIN });
+    const get = await handleRemoteBoxesRequest(req({ path: `/remote/boxes/${jobId}` }), {
+      store: s,
+      adminToken: ADMIN,
+    });
     expect(get?.status).toBe(200);
     expect((get?.body as { request: { provider: string } }).request.provider).toBe('e2b');
     expect((get?.body as { status: string }).status).toBe('queued');
   });
 
   it('404s an unknown job id', async () => {
-    const res = await handleRemoteBoxesRequest(req({ path: '/remote/boxes/missing' }), { store: store(), adminToken: ADMIN });
+    const res = await handleRemoteBoxesRequest(req({ path: '/remote/boxes/missing' }), {
+      store: store(),
+      adminToken: ADMIN,
+    });
     expect(res?.status).toBe(404);
   });
 
@@ -142,7 +160,10 @@ describe('handleRemoteBoxesRequest', () => {
 
   it('rejects a provider outside the allowlist', async () => {
     const res = await handleRemoteBoxesRequest(
-      req({ method: 'POST', bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'hetzner' }) }),
+      req({
+        method: 'POST',
+        bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'hetzner' }),
+      }),
       { store: store(), adminToken: ADMIN, createProviders: ['e2b', 'vercel'] },
     );
     expect(res?.status).toBe(400);
@@ -154,7 +175,10 @@ describe('handleRemoteBoxesRequest', () => {
       typeof handleRemoteBoxesRequest
     >[1]['store'];
     const res = await handleRemoteBoxesRequest(
-      req({ method: 'POST', bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'e2b' }) }),
+      req({
+        method: 'POST',
+        bodyText: JSON.stringify({ repoUrl: 'https://x/r.git', provider: 'e2b' }),
+      }),
       { store: bare, adminToken: ADMIN },
     );
     expect(res?.status).toBe(501);
@@ -167,6 +191,8 @@ describe('handleRemoteBoxesRequest', () => {
       return {
         put: () => Promise.reject(new Error('unused')),
         get: () => Promise.resolve(null),
+        putStream: () => Promise.reject(new Error('unused')),
+        getStream: () => Promise.resolve(null),
         stat: () => Promise.resolve(null),
         list: (prefix?: string) =>
           Promise.resolve(
@@ -191,7 +217,11 @@ describe('handleRemoteBoxesRequest', () => {
         sandboxId: 'sb-99',
       });
       await s.setStatus('box-1', 'box-1', 1, { schema: 1, boxId: 'box-1', phase: 'ready' });
-      const custody = fakeCustody(['boxes/sb-99/ssh/id_ed25519', 'boxes/sb-99/ssh/known_hosts', 'boxes/other/ssh/k']);
+      const custody = fakeCustody([
+        'boxes/sb-99/ssh/id_ed25519',
+        'boxes/sb-99/ssh/known_hosts',
+        'boxes/other/ssh/k',
+      ]);
 
       const res = await handleRemoteBoxesRequest(
         req({ method: 'DELETE', path: '/remote/boxes/box-1' }),
@@ -207,7 +237,12 @@ describe('handleRemoteBoxesRequest', () => {
 
     it('falls back to the boxId key when no sandboxId is registered', async () => {
       const s = store();
-      await s.registerBox({ boxId: 'box-2', token: 't', name: 'box-2', registeredAt: new Date().toISOString() });
+      await s.registerBox({
+        boxId: 'box-2',
+        token: 't',
+        name: 'box-2',
+        registeredAt: new Date().toISOString(),
+      });
       const custody = fakeCustody(['boxes/box-2/ssh/id_ed25519']);
       const res = await handleRemoteBoxesRequest(
         req({ method: 'DELETE', path: '/remote/boxes/box-2' }),

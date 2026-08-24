@@ -1,6 +1,26 @@
 import type { CreateJobRequest, Store } from './store/store.js';
 
 /**
+ * A resolved `carry:` entry, spelled structurally so the relay core stays free
+ * of a dependency on @agentbox/core's `ResolvedCarryEntry`. The provider on the
+ * other end takes the real type; this is only a pass-through.
+ */
+export interface CarryEntryLike {
+  rawSrc: string;
+  rawDest: string;
+  absSrc: string;
+  absDest: string;
+  kind: 'file' | 'dir';
+  optional: boolean;
+  mode?: number;
+  user?: number;
+  exclude?: string[];
+  replaceEnvs?: boolean;
+  replace?: unknown[];
+  symlinkInfo?: 'safe' | 'outside-home';
+}
+
+/**
  * The actual box-creation step, injected by the deploy target. On a self-host
  * worker / Vercel cron this provisions a cloud box and seeds its workspace by
  * cloning `request.repoUrl` with a leased GitHub-App token (origin-clone — no
@@ -37,6 +57,8 @@ export interface CreateBoxDeps {
   createBox(opts: {
     workspacePath: string;
     name: string | undefined;
+    /** Approved `carry:` entries, staged locally by {@link CreateBoxDeps.fetchSeedMaterial}. */
+    carry?: CarryEntryLike[];
     /**
      * The repo this checkout came from. `workspacePath` is a per-job temp clone
      * the worker deletes on the way out, so it is the only durable identity the
@@ -78,7 +100,17 @@ export interface CreateBoxDeps {
   fetchSeedMaterial?(
     repoUrl: string,
     dest: string,
-  ): Promise<{ files: number; capturedAt?: string; repoHeadSha?: string } | null>;
+  ): Promise<{
+    files: number;
+    capturedAt?: string;
+    repoHeadSha?: string;
+    /**
+     * Approved `carry:` entries staged on this machine, with `absSrc` pointing
+     * at the staging dir. Passed straight to {@link CreateBoxDeps.createBox} so
+     * the provider applies them exactly as it does for a local create.
+     */
+    carry?: CarryEntryLike[];
+  } | null>;
   log?: (line: string) => void;
   /**
    * Per-job logger, preferred over {@link log} when present. The hub web UI
@@ -170,9 +202,11 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
       const authedUrl = await deps.leaseRemoteUrl(request.repoUrl);
       log(`cloning ${request.repoUrl}${request.branch ? `@${request.branch}` : ''} into ${dir}`);
       await deps.cloneRepo(authedUrl, request.repoUrl, dir, request.branch);
+      let carry: CarryEntryLike[] | undefined;
       if (deps.fetchSeedMaterial) {
         try {
           const seed = await deps.fetchSeedMaterial(request.repoUrl, dir);
+          carry = seed?.carry?.length ? seed.carry : undefined;
           if (seed && seed.files > 0) {
             // Report what the seed was captured from: it can lag the branch tip
             // (the PC pushes it on create), and a surprising box is much easier
@@ -188,11 +222,14 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
             );
           }
         } catch (err) {
-          // The box is still usable without the user's local files — say so and
-          // carry on rather than failing a create the user is waiting on.
-          log(
-            `seed material unavailable (continuing with a bare clone): ${err instanceof Error ? err.message : String(err)}`,
-          );
+          // Untracked/env material is a convenience: the box is still usable
+          // without it, so say so and carry on rather than failing a create the
+          // user is waiting on. `carry:` is NOT in that category — those paths
+          // were shown to the user and approved, so applyProjectSeed throws for
+          // them and that throw must not be swallowed here.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.startsWith('carry:')) throw err;
+          log(`seed material unavailable (continuing with a bare clone): ${msg}`);
         }
       }
       log(`provisioning ${request.provider} box from the clone`);
@@ -201,6 +238,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         name: request.name,
         repoUrl: request.repoUrl,
         provider: request.provider,
+        ...(carry ? { carry } : {}),
         // Carry the job's agent through to the box record + its plane
         // registration, so an adopting PC relaunches the right agent instead of
         // guessing. Without this a hub-created box adopts with no `lastAgent`.

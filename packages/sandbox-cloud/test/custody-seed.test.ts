@@ -338,3 +338,136 @@ describe('pushProjectSeedToCustody', () => {
     expect(res.uploaded).toBe(built.items.length + 1);
   });
 });
+
+/**
+ * `carry:` is the ONLY route by which a GITIGNORED file reaches a hub-created
+ * box: the untracked tar is built from `git ls-files --others
+ * --exclude-standard`, which excludes ignored paths by design. A user who
+ * approves `./backups/dump.bin` and gets a box without it has been lied to, so
+ * these pin both halves — that it travels, and that a failure to make it travel
+ * is loud.
+ */
+describe('carry seed', () => {
+  async function carryEntry(repo: string, rel: string, dest: string) {
+    return {
+      rawSrc: `./${rel}`,
+      rawDest: dest,
+      absSrc: join(repo, rel),
+      absDest: dest,
+      kind: 'file' as const,
+      optional: false,
+    };
+  }
+
+  /** A SeedSource backed by whatever buildProjectSeed produced. */
+  function sourceOf(items: { relPath: string; data: Buffer }[], manifest: unknown) {
+    const map = new Map(items.map((i) => [i.relPath, i.data]));
+    map.set('manifest.json', Buffer.from(JSON.stringify(manifest), 'utf8'));
+    return { get: (rel: string) => Promise.resolve(map.get(rel) ?? null) };
+  }
+
+  it('carries a gitignored file the untracked tar deliberately excludes', async () => {
+    const repo = await makeRepo();
+    const entry = await carryEntry(repo, 'ignored-build/out.js', '/workspace/ignored-build/out.js');
+    const built = await buildProjectSeed({ projectRoot: repo, carry: [entry] });
+
+    const names = built.items.map((i) => i.relPath);
+    expect(names).toContain('carry.tar.gz');
+    expect(names).toContain('carry.json');
+    // Still absent from the untracked tar — carry opts it in, it does not change
+    // what "untracked" captures.
+    const untracked = built.items.find((i) => i.relPath === 'untracked.tar.gz');
+    expect(await tarPaths(untracked!.data)).not.toContain('ignored-build/out.js');
+  });
+
+  it('round-trips: the applied entry points at real bytes on the other side', async () => {
+    const repo = await makeRepo();
+    const entry = await carryEntry(repo, 'ignored-build/out.js', '/workspace/out.js');
+    const built = await buildProjectSeed({ projectRoot: repo, carry: [entry] });
+
+    const dest = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-dest-')));
+    const stage = realpathSync(mkdtempSync(join(tmpdir(), 'agentbox-seed-stage-')));
+    scratch.push(dest, stage);
+    const applied = await applyProjectSeed({
+      source: sourceOf(built.items, built.manifest),
+      dest,
+      carryStageDir: stage,
+    });
+
+    expect(applied?.carry).toHaveLength(1);
+    const out = applied!.carry![0]!;
+    // The destination is preserved verbatim; only the SOURCE is rewritten to the
+    // staging dir, which is what lets the provider apply it unchanged.
+    expect(out.absDest).toBe('/workspace/out.js');
+    expect(await readFile(out.absSrc, 'utf8')).toBe('junk');
+  });
+
+  it('ignores a `missing` optional entry rather than failing', async () => {
+    const repo = await makeRepo();
+    const built = await buildProjectSeed({
+      projectRoot: repo,
+      carry: [
+        {
+          rawSrc: './not-there',
+          rawDest: '/workspace/not-there',
+          absSrc: join(repo, 'not-there'),
+          absDest: '/workspace/not-there',
+          kind: 'missing' as const,
+          optional: true,
+        },
+      ],
+    });
+    expect(built.items.map((i) => i.relPath)).not.toContain('carry.tar.gz');
+  });
+
+  it('FAILS rather than silently dropping an over-cap approved entry', async () => {
+    const repo = await makeRepo();
+    const entry = await carryEntry(repo, 'ignored-build/out.js', '/workspace/out.js');
+    await expect(
+      buildProjectSeed({ projectRoot: repo, carry: [entry], maxBodyBytes: 8 }),
+    ).rejects.toThrow(/custody blob cap/);
+  });
+
+  it('FAILS rather than continuing when the control box refuses the carry blob', async () => {
+    const repo = await makeRepo();
+    const entry = await carryEntry(repo, 'ignored-build/out.js', '/workspace/out.js');
+    const sink: SeedCustodySink = {
+      list: () => Promise.resolve([]),
+      put: (path) => {
+        if (path.endsWith('carry.tar.gz')) return Promise.reject(new Error('413 too large'));
+        return Promise.resolve();
+      },
+    };
+    await expect(
+      pushProjectSeedToCustody({
+        sink,
+        probeUrl: 'http://unused',
+        probe: () => Promise.resolve(true),
+        slug: 'o__r',
+        projectRoot: repo,
+        carry: [entry],
+      }),
+    ).rejects.toThrow(/approved for this box/);
+  });
+
+  it('still degrades gracefully when a NON-carry blob is refused', async () => {
+    // The contrast that makes the rule legible: seed material is best-effort,
+    // carry is not.
+    const repo = await makeRepo();
+    const sink: SeedCustodySink = {
+      list: () => Promise.resolve([]),
+      put: (path) => {
+        if (path.endsWith('untracked.tar.gz')) return Promise.reject(new Error('413 too large'));
+        return Promise.resolve();
+      },
+    };
+    const res = await pushProjectSeedToCustody({
+      sink,
+      probeUrl: 'http://unused',
+      probe: () => Promise.resolve(true),
+      slug: 'o__r',
+      projectRoot: repo,
+    });
+    expect(res.dropped).toContain('untracked.tar.gz');
+  });
+});

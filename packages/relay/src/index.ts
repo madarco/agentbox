@@ -100,6 +100,7 @@ export {
   type CustodyEntry,
   type CustodyPutResult,
   CustodyPathError,
+  CustodyTooLargeError,
   normalizeCustodyPath,
   normalizeCustodyPrefix,
   custodyDigest,
@@ -108,10 +109,15 @@ export {
 export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';
 export {
   handleCustodyRequest,
+  handleCustodyBlobRequest,
   isCustodyPath,
+  isCustodyBlobPath,
   CUSTODY_PATH_PREFIX,
+  CUSTODY_BLOB_PATH_PREFIX,
   type CustodyRequest,
   type CustodyResponse,
+  type CustodyBlobRequest,
+  type CustodyBlobResponse,
   type CustodyRouteDeps,
 } from './custody/routes.js';
 export {

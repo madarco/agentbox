@@ -23,6 +23,7 @@ import {
   adminCustodySink,
   pushProjectSeedToCustody,
   readGitOriginUrl,
+  type CarrySeedSource,
 } from '@agentbox/sandbox-cloud';
 import { remoteHubConfigured } from './remote-hub.js';
 
@@ -118,6 +119,13 @@ export async function pushCreateSeed(args: {
   repoUrl: string;
   projectRoot: string;
   maxBodyBytes?: number;
+  /**
+   * Approved `carry:` entries for this create. A hub-built box gets these from
+   * custody; without them it silently comes up missing files the user was shown
+   * and said yes to — and, because the untracked tar excludes ignored paths by
+   * design, `carry:` is the ONLY way a gitignored file ever reaches one.
+   */
+  carry?: CarrySeedSource[];
   onLog: (line: string) => void;
 }): Promise<void> {
   const slug = projectSlugFromOriginUrl(args.repoUrl);
@@ -141,6 +149,7 @@ export async function pushCreateSeed(args: {
       projectRoot: args.projectRoot,
       envPatterns: DEFAULT_ENV_PATTERNS,
       maxBodyBytes: args.maxBodyBytes,
+      ...(args.carry?.length ? { carry: args.carry } : {}),
       log: args.onLog,
     });
     if (res.unreachable) {
