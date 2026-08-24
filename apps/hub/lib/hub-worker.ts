@@ -28,6 +28,7 @@ import {
   queueLogPath,
   QUEUE_LOGS_DIR,
   toAuthedHttpsUrl,
+  toHttpsUrl,
   type CreateBoxFn,
   type Store,
 } from '@agentbox/relay/control-plane';
@@ -242,21 +243,31 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
      * state. Now a missing credential fails one job with an actionable message
      * and the queue keeps draining.
      *
-     * With no App, hand back the bare URL: the hub authenticates via git's
-     * credential helper (`gh auth setup-git` + `GH_TOKEN`), the same way it
-     * authenticates the pushes it makes on a box's behalf.
+     * With no App, hand back the URL over HTTPS: the hub authenticates via
+     * git's credential helper (`gh auth setup-git` + `GH_TOKEN`), the same way
+     * it authenticates the pushes it makes on a box's behalf. Normalizing the
+     * scheme is load-bearing, not cosmetic — a `git@github.com:` origin (what
+     * the PC registered, because that is how the user cloned it) would take the
+     * ssh transport, which has no key and no `known_hosts` here and so dies at
+     * host-key verification before the helper is ever consulted.
      */
     leaseRemoteUrl: async (repoUrl) => {
       const appCfg = loadGitHubAppConfig();
-      if (!appCfg) return repoUrl;
+      if (!appCfg) return toHttpsUrl(repoUrl);
       const { path } = parseGitRemote(repoUrl);
       const [owner, repo] = path.replace(/\.git$/, '').split('/');
       if (!owner || !repo) throw new Error(`cannot derive owner/repo from ${repoUrl}`);
       const { token } = await new GitHubAppLeaser(appCfg).leaseRepoToken(owner, repo);
       return toAuthedHttpsUrl(repoUrl, token);
     },
+    // The third argument is what `origin` is scrubbed back to once the leased
+    // token has been used, and it becomes the box's registered `originUrl` —
+    // which on a control box IS the push target (`host-actions.ts` trusts only
+    // the registered origin when there is no host checkout). Leave it on HTTPS
+    // for the same reason the clone URL is: the hub can authenticate that, and
+    // cannot authenticate ssh.
     cloneRepo: (authedUrl, repoUrl, dest, branch) =>
-      cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, log),
+      cloneRepoWithLfs(runGit, authedUrl, toHttpsUrl(repoUrl), dest, branch, log),
     createBox: async ({
       workspacePath,
       name,

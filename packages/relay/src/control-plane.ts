@@ -40,7 +40,7 @@ export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
 // queue writes; a control-plane create job reuses the same path so one job-log
 // contract covers both create paths.
 export { QUEUE_LOGS_DIR, queueLogPath } from './queue.js';
-export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
+export { toAuthedHttpsUrl, toHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {
   type CustodyStore,
   type CustodyEntry,
