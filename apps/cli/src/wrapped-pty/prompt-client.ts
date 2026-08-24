@@ -203,6 +203,12 @@ export function subscribePrompts(opts: SubscribeOptions): PromptStream {
 
   function connect(): void {
     if (closed) return;
+    // Start every connection with a clean parse buffer. A drop mid-frame leaves
+    // a partial message behind, and the next connection's `open` would be
+    // concatenated onto it — the two would parse as one garbage event, so the
+    // `open` is swallowed and the reconnect resync never fires. That is exactly
+    // the stale-prompt failure this client is meant to fix.
+    buffer = '';
     req = transport({
       host: url.hostname,
       port,

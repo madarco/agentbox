@@ -187,6 +187,55 @@ describe('prompt-client auth', () => {
     expect(errors[0]?.fatal).toBe(false);
   });
 
+  it('resyncs after a mid-frame drop (the parse buffer does not leak across connects)', async () => {
+    // The hub can vanish mid-event when its container is replaced. The leftover
+    // partial frame used to be concatenated onto the next connection's `open`,
+    // parsing as one garbage event — so `onReconnect` never fired and a prompt
+    // answered during the outage stayed pinned forever, which is the exact
+    // failure this client's resync exists to prevent.
+    let conn = 0;
+    const server = createServer((_req, res) => {
+      conn += 1;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (conn === 1) {
+        res.write('event: open\ndata: {}\n\n');
+        res.write('event: box-status\ndata: {"schema":1'); // truncated: no \n\n
+        // Let those reach the client before killing the socket — destroying
+        // synchronously discards the buffered writes, and then there is no
+        // leftover partial frame to regress on.
+        setTimeout(() => res.destroy(), 50);
+        return;
+      }
+      res.write('event: open\ndata: {}\n\n'); // held open
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const { port } = server.address() as AddressInfo;
+    servers.push(
+      () =>
+        new Promise<void>((done) => {
+          server.closeAllConnections?.();
+          server.close(() => done());
+        }),
+    );
+
+    let reconnects = 0;
+    streams.push(
+      subscribePrompts({
+        hubBaseUrl: `http://127.0.0.1:${String(port)}`,
+        boxId: 'box-drop',
+        onPrompt: () => {},
+        onResolved: () => {},
+        onReconnect: () => {
+          reconnects += 1;
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 600));
+
+    expect(conn).toBeGreaterThan(1); // it did reconnect
+    expect(reconnects).toBeGreaterThan(0); // and told the caller to resync
+  });
+
   it('omits the header on the answer POST without a key', async () => {
     const hub = await hubStub();
     servers.push(hub.close);

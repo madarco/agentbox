@@ -873,7 +873,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     // say), and the backlog flush that immediately follows re-sends everything
     // still live — so clear first and let it repopulate.
     onReconnect: () => {
-      if (capturingPrompt) {
+      // Only hub-backed prompts are the hub's to invalidate. The synthetic
+      // `local:` confirms (Ctrl+a k's destroy guard) never appear in the backlog,
+      // so dropping one here would silently dismiss a dialog the user is
+      // mid-answer on because the hub happened to blip.
+      if (capturingPrompt && !capturingPrompt.id.startsWith('local:')) {
         capturingPrompt = null;
         router.abort('stream-reconnected');
       }
