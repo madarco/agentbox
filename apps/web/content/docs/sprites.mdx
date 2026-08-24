@@ -8,9 +8,8 @@ environment that hibernates when idle — using the same AgentBox commands as a 
 **Sprites is a community provider** published as its own package
 (`agentbox-provider-sprites`), not bundled into the AgentBox CLI.
 
-Switch per box with `--provider sprites`, or pin it project-wide with
-`defaults.box.provider: sprites` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See
-the built-ins [local-docker](/docs/local-docker), [remote-docker](/docs/remote-docker),
+Select it per box with `--provider sprites`. Comparing options? See the built-ins
+[local-docker](/docs/local-docker), [remote-docker](/docs/remote-docker),
 [hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean), [daytona](/docs/daytona),
 [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
@@ -137,14 +136,9 @@ recovery across host-process restarts.
 
 ## Configuration
 
-The provider reads AgentBox's generic provider setting:
-
-```yaml
-# agentbox.yaml
-defaults:
-  box:
-    provider: sprites
-```
+Select the plugin with `--provider sprites` on each create or agent command. AgentBox's current
+configuration schema restricts `defaults.box.provider` to built-in providers, so an external
+plugin cannot yet be pinned project-wide in `agentbox.yaml`.
 
 Sprites resources are platform-managed. AgentBox `--cpus`, `--memory`, `--disk`, `--size`, and
 `--location` options do not resize a Sprite.
