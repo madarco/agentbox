@@ -38,6 +38,7 @@ import {
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateHasExplicitHead,
   prCreateNeedsHead,
+  ghRunContext,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -1971,7 +1972,8 @@ async function handleGhPrRpc(
   const finalArgs = injectPrCreateHead(op, worktree.sanctionedBranch ?? worktree.branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
+  const prRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
+  return runHostGh(['pr', op, ...prRun.args], prRun.cwd);
 }
 
 /**
@@ -2030,7 +2032,8 @@ async function handleGhRunRpc(
       }
     }
   }
-  return runHostGh(['run', op, ...args], worktree.hostMainRepo);
+  const runRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, args);
+  return runHostGh(['run', op, ...runRun.args], runRun.cwd);
 }
 
 /**
@@ -2061,7 +2064,8 @@ async function handleGhApiRpc(
   if (callRefusal) return callRefusal;
   const ghReady = await assertGhReady();
   if (ghReady) return ghReady;
-  return runHostGh(['api', endpoint, ...args], worktree.hostMainRepo);
+  const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
+  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd);
 }
 
 /**

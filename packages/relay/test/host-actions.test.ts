@@ -4,12 +4,8 @@ import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  executeCloudAction,
-  ghRunContext,
-  resolveHostGitRepo,
-  resolveHostPath,
-} from '../src/host-actions.js';
+import { executeCloudAction, resolveHostGitRepo, resolveHostPath } from '../src/host-actions.js';
+import { ghRunContext } from '../src/gh.js';
 import type { HostAction } from '../src/types.js';
 
 /**
