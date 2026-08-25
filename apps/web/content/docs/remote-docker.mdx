@@ -26,7 +26,7 @@ agentbox remote-docker add buildbox marco@10.0.0.9      # alias `buildbox` → m
 agentbox remote-docker add mini dev@10.0.0.9:2222       # a custom port works too
 ```
 
-`add` probes the connection end to end — SSH reachable, `docker` found, daemon answering — then **bakes the box image on the host** so your first `create` is instant (pass `--no-bake` to skip; it builds lazily on first create). Pass `--default` (or `--global`) to also make it the default host, so you can drop the `docker:<alias>` prefix. Check a host any time with:
+`add` probes the connection end to end — SSH reachable, `docker` found, daemon answering — then **bakes the box image on the host** so your first `create` is instant (pass `--no-bake` to skip; it builds lazily on first create). The build is driven by your [hub](/docs/hub) — this machine's, or your [control box](/docs/deployed-hub) once the host has been shared with it (which `add` does for you) — never inline by the CLI, so it runs in the same place `agentbox prepare` would put it. Pass `--default` (or `--global`) to also make it the default host, so you can drop the `docker:<alias>` prefix. Check a host any time with:
 
 ```bash
 agentbox remote-docker doctor buildbox
@@ -141,7 +141,7 @@ Once shared:
 
 - `agentbox docker:buildbox claude` is **built by the control box** (it clones the
   repo itself), so the box keeps running with your laptop closed.
-- `agentbox prepare --provider docker:buildbox` bakes from there too.
+- `agentbox prepare --provider docker:buildbox` bakes from there too — as does the bake `agentbox remote-docker add` runs for you.
 - The engine shows up in the hub's web UI create picker as `Docker (buildbox)`.
 
 `agentbox remote-docker unshare buildbox` reverses it: the control box forgets the

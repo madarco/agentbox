@@ -72,8 +72,12 @@ spec; `hub expose` / `set-url` are covered too.
       self-key and seeds the hub's registry; the PC registers `hub`; `box.provider` is
       widened to accept a `docker:<alias>` spec and flipped to `docker:hub`; a
       co-located hub stops hiding local docker.
-- [ ] **7. Bake routing polish.** `remote-docker add` should bake through the hub for a
-      shared host; `preparePrecheck` should probe the aliased engine.
+- [ ] **7. Bake routing polish.** `remote-docker add` now bakes through the hub
+      (a `RemoteHostBaker` hook -> `runPrepare` -> `POST /api/v1/hosts/:alias/bake`),
+      so a shared host is built by the control box. Left: `preparePrecheck` should
+      probe the aliased engine — though note the per-host bake route never calls it
+      (`bakeRemoteDockerHost` enqueues straight from the alias lookup), so that is a
+      fix for `POST /providers/:id/prepare`, not for this path.
 - [ ] **8. Docs, backlog, tests.** User-facing pages, `cloud-providers.md`, the
       backlog and the changelog are done; `hub-testing.md` has a `docker:hub`
       section and `hub-docker-target.test.ts` pins the flip's truth table. Left:

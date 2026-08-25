@@ -351,7 +351,7 @@ omit from the control box's own config pins (`box.sizeDaytona`, `box.daytonaClas
 
 **`docker` always bakes locally** — its base is an image on _this_ machine, so building it anywhere
 else would leave this one untouched. **`remote-docker` does route to the control box**, when that box
-has the same host alias registered: the image lands on your remote host, which both machines reach,
+has the same host alias registered — including the bake `agentbox remote-docker add` runs for you: the image lands on your remote host, which both machines reach,
 and "is this host baked?" is answered by asking that engine rather than by a local file — so there is
 nothing to sync back. (Its _creates_ still run from your machine, over your own `~/.ssh/config`.) If
 the control box doesn't know the alias, the bake stays here with a notice.
@@ -360,15 +360,15 @@ the control box doesn't know the alias, the bake stays here with a notice.
 agentbox prepare --provider docker:buildbox   # baked from the control box if it knows `buildbox`
 ```
 
-<Callout type="warn" title="Host aliases do not propagate — register them on both sides">
-  `agentbox docker add` writes the alias to `~/.agentbox/remote-docker-hosts.json` on **that machine
-  only**; nothing syncs it to a control box. So a host you added on your laptop keeps baking there
-  until you also register it on the control box (its Settings → Remote Docker, or `POST
-  /api/v1/hosts`) **and** authorize the control box's SSH key on the host — it connects _as itself_,
-  not as you. This is deliberate: an alias is just a name for an SSH destination, so copying it
-  across without the key would route a bake that then fails, in place of a local one that worked.
-  The fallback is safe — the bake stays on your machine with a notice — and the local hub's Remote
-  Docker settings list only ever shows **this** machine's hosts, since that is what its creates use.
+<Callout type="info" title="The control box has to be able to reach the engine">
+  `agentbox remote-docker add` registers the alias in `~/.agentbox/remote-docker-hosts.json` here
+  **and hands it to the control box** — connection plus a key minted for it, since it dials the
+  machine _as itself_, not as you. So the bake it runs right after lands on the control box, and so
+  do that host's later bakes and creates. What doesn't travel is reachability: a control box on a
+  VPS cannot dial an engine behind your home NAT. When it can't, the bake falls back to your machine
+  with a printed reason rather than failing. `--no-share` keeps a host to yourself, and the local
+  hub's Remote Docker settings list only ever shows **this** machine's hosts, since that is what its
+  creates use.
 </Callout>
 
 The sync runs the other way too: `agentbox self-update` (and `agentbox hub setup` / `update`) now

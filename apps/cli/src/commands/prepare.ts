@@ -33,6 +33,7 @@ import {
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { UserFacingError } from '@agentbox/core';
 import type { Provider } from '@agentbox/core';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
@@ -493,7 +494,8 @@ async function runPrepareViaHub(args: {
   // Auto-starts a local hub when that is the target (Step 0). A remote control
   // box with no API key returns null after printing why.
   const client = await resolveHubApiClient(undefined, { preferLocal: target.local });
-  if (!client) process.exit(1);
+  // resolveHubApiClient already printed why (no API key, hub wouldn't start).
+  if (!client) throw new UserFacingError('could not reach a hub to run the bake');
   // The local hub's worker writes the prepared-state straight to this machine, so
   // choosing local IS the co-located signal — no custody round-trip to adopt.
   const coLocated = target.local;
@@ -579,11 +581,15 @@ export async function runPrepare(
   providerSpec: string,
   opts: RunPrepareOptions = {},
 ): Promise<void> {
+  // Throw, never exit: `runPrepare` is called from the install wizard, the
+  // create-time stale-base rebuild and `remote-docker add` — a bare exit would
+  // kill those mid-flow instead of letting them report. The `prepare` command
+  // itself is unchanged: printCliError renders a UserFacingError's message bare
+  // and exits 1, exactly what these did.
   if (!isKnownProvider(providerSpec)) {
-    process.stderr.write(
-      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}\n`,
+    throw new UserFacingError(
+      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}`,
     );
-    process.exit(1);
   }
   // `--provider docker:<host>` bakes the image on that machine's engine. Split
   // the spec: the bare name drives every provider lookup, the host is baked via
@@ -600,8 +606,7 @@ export async function runPrepare(
 
   const provider = await getProvider(providerName);
   if (typeof provider.prepare !== 'function') {
-    log.error(`provider '${providerName}' does not implement prepare`);
-    process.exit(1);
+    throw new UserFacingError(`provider '${providerName}' does not implement prepare`);
   }
 
   const cwd = opts.cwd ?? process.cwd();
@@ -610,10 +615,7 @@ export async function runPrepare(
   // image when a control box owns the fleet. `local` mode (or no cfg) keeps it on.
   if (cfg) {
     const refusal = await dockerProviderRefusal(cfg.effective, providerName, remoteHost, 'prepare');
-    if (refusal) {
-      log.error(refusal);
-      process.exit(1);
-    }
+    if (refusal) throw new UserFacingError(refusal);
   }
   // Bake-time Claude install method: CLI flag wins over the config key. The
   // remaining bake INPUTS (`build` / `size` / `location` / `name`) are passed

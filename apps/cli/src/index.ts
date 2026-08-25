@@ -57,7 +57,7 @@ import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
 import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
 import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
 import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd.js';
-import { setRemoteHostSharer } from '@agentbox/sandbox-remote-docker';
+import { setRemoteHostBaker, setRemoteHostSharer } from '@agentbox/sandbox-remote-docker';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
@@ -143,6 +143,16 @@ setCredentialPublisher(async (providerId, fields) => {
 setRemoteHostSharer(async (alias) => {
   const { shareAfterAdd } = await import('./control-plane/remote-docker-share.js');
   await shareAfterAdd(alias);
+});
+
+// And its bake: `remote-docker add` must not build the image inline, or a host
+// the control box was just given would still be baked from this laptop.
+// `runPrepare` owns the local-hub-vs-control-box choice and drives the hub's
+// `/hosts/:alias/bake` route, so `add`, `agentbox prepare` and the install
+// wizard all bake in the same place.
+setRemoteHostBaker(async (alias) => {
+  const { runPrepare } = await import('./commands/prepare.js');
+  await runPrepare(`docker:${alias}`, { yes: true, suppressStatus: true });
 });
 
 // The hub lifecycle lives in `@agentbox/sandbox-core` (Step 12) so a docker-free

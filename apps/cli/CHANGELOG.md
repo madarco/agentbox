@@ -32,7 +32,9 @@ CLI, not the raw commits.
   `agentbox remote-docker add` now hands the engine over automatically: the
   control box gets a connection and a key of its own for it (your key never
   leaves this machine), after which creates and bakes for that host are built
-  there — so the box outlives your laptop. `--no-share` opts out,
+  there — so the box outlives your laptop. That includes the image bake `add`
+  runs: it now goes through the hub like every other bake, so a shared host is
+  built by the control box instead of your laptop. `--no-share` opts out,
   `agentbox remote-docker share/unshare <alias>` do it after the fact. See
   https://agent-box.sh/docs/remote-docker.
 - **`docker:hub` — your control box's own Docker.** Setting up, deploying or

@@ -17,7 +17,7 @@ import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox
 import { statusBadge, type CheckResult } from '@agentbox/sandbox-core';
 import { probeRemoteEngine } from './remote-docker.js';
 import { prepareRemoteDocker } from './prepare.js';
-import { shareRegisteredHost } from './share-hook.js';
+import { bakeRegisteredHost, shareRegisteredHost } from './share-hook.js';
 import { readPreparedState, removePreparedHost } from './prepared-state.js';
 import {
   assertValidAlias,
@@ -105,20 +105,33 @@ export const remoteDockerCommand = new Command('remote-docker')
           // create is instant. A GHCR pull is fast; a registry-miss build is slow.
           // Best-effort: a failure leaves the alias registered and the image
           // builds lazily on first create.
+          //
+          // The bake goes through the CLI's hook, which drives the hub's
+          // `/hosts/:alias/bake` route — the control box when it has this host
+          // (shared just above), this machine's hub otherwise. Same path
+          // `agentbox prepare --provider docker:<alias>` takes, so the two can
+          // never disagree about where the build runs. The inline call below is
+          // only for this package used without the CLI.
           if (opts.bake !== false) {
-            const cfg = await loadEffectiveConfig(process.cwd());
-            const claudeInstall = cfg.effective.box.claudeInstall;
-            const bs = p.spinner();
-            bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
             try {
-              await prepareRemoteDocker({
-                host: alias,
-                ...(claudeInstall ? { claudeInstall } : {}),
-                onLog: (line) => bs.message(line.slice(0, 80)),
-              });
-              bs.stop(`box image ready on ${alias}`);
+              if (!(await bakeRegisteredHost(alias))) {
+                const cfg = await loadEffectiveConfig(process.cwd());
+                const claudeInstall = cfg.effective.box.claudeInstall;
+                const bs = p.spinner();
+                bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
+                try {
+                  await prepareRemoteDocker({
+                    host: alias,
+                    ...(claudeInstall ? { claudeInstall } : {}),
+                    onLog: (line) => bs.message(line.slice(0, 80)),
+                  });
+                  bs.stop(`box image ready on ${alias}`);
+                } catch (err) {
+                  bs.stop('box image bake failed');
+                  throw err;
+                }
+              }
             } catch (err) {
-              bs.stop('box image bake failed');
               p.log.warn(
                 `${err instanceof Error ? err.message : String(err)} — it will build on first create, or run \`agentbox prepare --provider docker:${alias}\``,
               );
