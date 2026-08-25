@@ -52,5 +52,11 @@ services:
       # the web UI can create boxes from them; container-local paths would be
       # lost on every image rebuild).
       - ${AGENTBOX_HUB_PROJECTS_DIR:-/opt/agentbox-projects}:/root/projects
+    extra_hosts:
+      # The control box's own docker engine is a REMOTE engine to a hub running
+      # inside a container: it reaches it over the bridge gateway with the key the
+      # deploy minted (the `hub` remote-docker host). Without this the container
+      # has no name for the machine it is running on.
+      - 'host.docker.internal:host-gateway'
     ports:
       - '8787:8787'

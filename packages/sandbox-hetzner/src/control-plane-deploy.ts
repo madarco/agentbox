@@ -504,7 +504,9 @@ export async function applyControlPlaneConfig(opts: ApplyControlPlaneOptions): P
     (source.kind === 'package' ? `AGENTBOX_SPEC=${source.spec}\n` : '');
   const providerSecrets = await collectProviderSecrets();
   if (!providerSecrets) {
-    log('warning: no provider credentials found in ~/.agentbox/secrets.env — the worker can only create boxes for providers whose creds you push later');
+    log(
+      'warning: no provider credentials found in ~/.agentbox/secrets.env — the worker can only create boxes for providers whose creds you push later',
+    );
   }
   // The hub's own git credential travels with the provider secrets, not in the
   // compose env — see `splitHubGitToken`.
@@ -570,6 +572,8 @@ export async function applyControlPlaneConfig(opts: ApplyControlPlaneOptions): P
     await rm(staging, { recursive: true, force: true });
   }
 
+  await ensureSelfDockerHost(target, log);
+
   log(
     source.kind === 'package'
       ? 'installing + starting the control plane (docker compose up --build)…'
@@ -581,7 +585,9 @@ export async function applyControlPlaneConfig(opts: ApplyControlPlaneOptions): P
     { timeoutMs: 25 * 60_000, onLine: log },
   );
   if (up.exitCode !== 0) {
-    throw new Error(`docker compose up failed (exit ${String(up.exitCode)}): ${up.stderr || up.stdout}`);
+    throw new Error(
+      `docker compose up failed (exit ${String(up.exitCode)}): ${up.stderr || up.stdout}`,
+    );
   }
 
   log(`waiting for HTTPS at ${url} …`);
@@ -633,6 +639,81 @@ async function assertAppStable(
       `so the version you deployed cannot stay up with this configuration.\n` +
       `--- app logs (last 25) ---\n${logs.stdout.trim()}`,
   );
+}
+
+/**
+ * Register the control box's OWN docker engine as the remote-docker host `hub`.
+ *
+ * The hub runs in a container, so "its own engine" is still a remote engine to
+ * it: it reaches the VPS through the docker bridge (`host.docker.internal`, via
+ * the compose `extra_hosts` entry) with a key minted here and trusted by root.
+ * That buys the entire remote-docker path — ControlMaster, `docker build`, port
+ * forwards, ProxyJump — with no local-exec transport inside the provider, and it
+ * is the one engine a control box can always run boxes on.
+ *
+ * Idempotent, and re-asserted on every `hub update`: the key is only minted when
+ * absent, the `authorized_keys` line is deduped, and the registry entry is merged
+ * into whatever hosts the hub already knows.
+ */
+/**
+ * Merge the `hub` entry into the control box's own host registry, preserving any
+ * hosts a PC has shared with it. Runs on the VPS as a one-liner argument, so it
+ * must stay free of single quotes (see `quoteForRemote`).
+ */
+const MERGE_SELF_HOST_PY = [
+  'import json,os,datetime',
+  'p=os.environ["AGENTBOX_REG"]',
+  'now=datetime.datetime.now(datetime.timezone.utc).isoformat()',
+  'd={"schema":1,"hosts":{}}',
+  'try:',
+  '    r=json.load(open(p))',
+  '    if isinstance(r,dict) and r.get("schema")==1 and isinstance(r.get("hosts"),dict): d=r',
+  'except Exception: pass',
+  'e=d["hosts"].get("hub",{"createdAt":now})',
+  'e["ssh"]="root@host.docker.internal"',
+  'e["connection"]={"host":"host.docker.internal","user":"root","identityFile":os.environ["AGENTBOX_SELF_KEY"]}',
+  'e["updatedAt"]=now',
+  'd["hosts"]["hub"]=e',
+  'f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)',
+  'os.write(f,(json.dumps({"schema":1,"hosts":d["hosts"]},indent=2)+"\\n").encode())',
+  'os.close(f)',
+].join('\n');
+
+/** Single-quote a string for a remote `sh -c` argument. */
+function quoteForRemote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+async function ensureSelfDockerHost(
+  target: SshTargetArgs,
+  log: (line: string) => void,
+): Promise<void> {
+  const keyDir = `${REMOTE_DATA_DIR}/ssh-self`;
+  // Paths as the CONTAINER sees them: hub-data is mounted at /root/.agentbox, and
+  // the registry it writes stores container paths.
+  const containerKey = '/root/.agentbox/ssh-self/id_ed25519';
+  const registry = `${REMOTE_DATA_DIR}/remote-docker-hosts.json`;
+  const script = [
+    `mkdir -p ${keyDir} && chmod 700 ${keyDir}`,
+    `test -f ${keyDir}/id_ed25519 || ssh-keygen -t ed25519 -N '' -C agentbox-hub-self -f ${keyDir}/id_ed25519 -q`,
+    `chmod 600 ${keyDir}/id_ed25519`,
+    'mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys',
+    `grep -qxF "$(cat ${keyDir}/id_ed25519.pub)" ~/.ssh/authorized_keys || cat ${keyDir}/id_ed25519.pub >> ~/.ssh/authorized_keys`,
+    // Merge, never clobber: the hub writes this file too (hosts shared from a PC).
+    // python3 (stock on Ubuntu) rather than node — the VPS host runs docker, not
+    // a node runtime, and the hub container is not up yet at this point.
+    `AGENTBOX_SELF_KEY=${containerKey} AGENTBOX_REG=${registry} python3 -c ${quoteForRemote(MERGE_SELF_HOST_PY)}`,
+  ].join(' && ');
+  const res = await sshExec(target, script, { timeoutMs: 60_000 });
+  if (res.exitCode !== 0) {
+    // Not fatal: everything else about the control box works without it, and a
+    // deploy that dies here would be far more surprising than a missing host.
+    log(
+      `warning: could not register the control box's own docker engine as \`hub\`: ${res.stderr.trim() || `exit ${String(res.exitCode)}`}`,
+    );
+    return;
+  }
+  log("registered the control box's own docker engine as the `hub` host");
 }
 
 export async function deployControlPlaneToHetzner(
@@ -688,7 +769,9 @@ export async function deployControlPlaneToHetzner(
         user_data: controlPlaneCloudInit({
           sshPubkey: key.publicKey,
           // Package mode needs no repo on the VPS at all.
-          ...(source.kind === 'source' ? { repo: { url: source.repoUrl, ref: source.repoRef } } : {}),
+          ...(source.kind === 'source'
+            ? { repo: { url: source.repoUrl, ref: source.repoRef } }
+            : {}),
         }),
         firewalls: [{ firewall: firewall.id }],
         labels: { 'agentbox.managed': 'true', 'agentbox.role': 'control-plane' },
@@ -726,7 +809,10 @@ export async function deployControlPlaneToHetzner(
       ? 'waiting for cloud-init (Docker)…'
       : 'waiting for cloud-init (Docker + repo clone)…',
   );
-  await sshExec(target, 'cloud-init status --wait || true', { timeoutMs: 12 * 60_000, onLine: log });
+  await sshExec(target, 'cloud-init status --wait || true', {
+    timeoutMs: 12 * 60_000,
+    onLine: log,
+  });
 
   await applyControlPlaneConfig({
     target,
@@ -765,9 +851,7 @@ export interface ControlPlaneUpdateOptions {
  * The data volume (`/opt/agentbox/hub-data`) is never touched, so the store,
  * logins, custody and box SSH keys survive.
  */
-export async function updateControlPlaneOnHetzner(
-  opts: ControlPlaneUpdateOptions,
-): Promise<void> {
+export async function updateControlPlaneOnHetzner(opts: ControlPlaneUpdateOptions): Promise<void> {
   const log = opts.onLog ?? (() => {});
   const { record, source } = opts;
   const stamp = Date.now().toString(36);
@@ -882,7 +966,9 @@ export async function destroyControlPlaneOnHetzner(opts: {
       await client().deleteServer(opts.serverId);
       serverDeleted = true;
     } catch (e) {
-      warnings.push(`server ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`);
+      warnings.push(
+        `server ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
