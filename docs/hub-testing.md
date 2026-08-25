@@ -170,6 +170,36 @@ agentbox hub destroy     # VPS + firewall + this machine's control-plane state
 `hub update --package <older-version>` is a good deliberate-downgrade test: a build that can't run
 with the current config must **fail**, not report success.
 
+### The control box's own engine (`docker:hub`)
+
+A control box turns local docker off on your PC (a box built on the laptop dies with the laptop),
+so setup hands you the VPS's own engine instead: the deploy registers it hub-side as the
+remote-docker host `hub`, the PC registers `hub` -> the `agentbox-hub` ssh alias, and a
+`box.provider` that was still plain `docker` (or unset) moves to `docker:hub`.
+
+`hub expose` is **not** the way to test this. There the hub is this machine, so `ensureHubDockerTarget`
+deliberately does nothing and plain local docker stays enabled — the honest test needs a real VPS.
+
+```sh
+agentbox config get box.provider                # docker:hub after setup/deploy/update
+agentbox remote-docker list                     # hub -> agentbox-hub
+ssh agentbox-hub cat /opt/agentbox/hub-data/remote-docker-hosts.json   # hub-side entry
+agentbox create -y -n hubsmoke                  # built by the control box
+ssh agentbox-hub docker ps                      # the container is on the VPS
+agentbox ls -j | jq -r '.[]|select(.name=="hubsmoke")|.cloud.sandboxId'  # hub/agentbox-hubsmoke
+```
+
+All three of `hub setup`, `hub deploy` and `hub update` re-assert both halves, and they are
+idempotent — so the way to re-test the flip is to undo it and run one of them again:
+
+```sh
+agentbox config unset box.provider --global && agentbox remote-docker rm hub -y
+agentbox hub update
+```
+
+`hub destroy` / `hub unexpose` / `hub unset-url` revert it: the alias goes, and `box.provider`
+is cleared if (and only if) it still read `docker:hub`.
+
 ### Gotchas specific to the VPS
 
 - **Let's Encrypt rate limits bite on recycled IPs.** An sslip.io hostname is derived from the IP,

@@ -74,9 +74,19 @@ spec; `hub expose` / `set-url` are covered too.
       co-located hub stops hiding local docker.
 - [ ] **7. Bake routing polish.** `remote-docker add` should bake through the hub for a
       shared host; `preparePrecheck` should probe the aliased engine.
-- [ ] **8. Docs, backlog, tests.**
+- [ ] **8. Docs, backlog, tests.** User-facing pages, `cloud-providers.md`, the
+      backlog and the changelog are done; `hub-testing.md` has a `docker:hub`
+      section and `hub-docker-target.test.ts` pins the flip's truth table. Left:
+      a remote-docker row in `test-plan.md` (the file has no remote-docker
+      provider tag at all yet).
 
 ## Verified live (2026-08-25, control box on Hetzner, docker 29.7.2)
+
+- `agentbox hub update` re-asserts the PC side too (it used to re-register the
+  engine hub-side via `ensureSelfDockerHost` but never run `ensureHubDockerTarget`,
+  so a control box deployed by an older AgentBox left this machine with no `hub`
+  alias and still on plain `docker`). It now calls `finalizeControlBoxState`, the
+  same four idempotent steps setup/deploy run.
 
 - Forced `--build` bake on the control box's engine: passes with the temp-dir
   context (it failed outright before, and again on a bare `-f Dockerfile.box`

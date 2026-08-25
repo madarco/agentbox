@@ -2214,9 +2214,13 @@ const updateSub = new Command('update')
             : `Control box is healthy (${record.url}/healthz).`,
         );
       }
-      // A version change is exactly when a shared bake record starts (or stops)
-      // matching the control box's fingerprint, so re-share.
-      await syncBakesWithControlBox(record.url);
+      // Re-assert everything a fresh setup would have put in place. A version
+      // change is exactly when a shared bake record starts (or stops) matching
+      // the control box's fingerprint — and an update is also how a box deployed
+      // by an older AgentBox first learns about its own docker engine, so the PC
+      // side (the `hub` host alias + the `docker:hub` default) has to be brought
+      // up with it. All of it is idempotent and best-effort.
+      await finalizeControlBoxState(record.url);
     } catch (err) {
       cmdLog.write(`FAILED: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       handleLifecycleError(err);

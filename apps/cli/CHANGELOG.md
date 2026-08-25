@@ -35,9 +35,9 @@ CLI, not the raw commits.
   there — so the box outlives your laptop. `--no-share` opts out,
   `agentbox remote-docker share/unshare <alias>` do it after the fact. See
   https://agent-box.sh/docs/remote-docker.
-- **`docker:hub` — your control box's own Docker.** Setting up a control box
-  registers its engine as the host `hub` and, when your default was still plain
-  `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`
+- **`docker:hub` — your control box's own Docker.** Setting up, deploying or
+  updating a control box registers its engine as the host `hub` and, when your
+  default was still plain `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`
   keeps making a docker-shaped box, on a machine that stays on. `box.provider` now
   accepts any `docker:<alias>` engine spec.
 - `agentbox install portless` sets Portless up for good: it installs the CLI if
