@@ -762,6 +762,12 @@ const setUrlSub = new Command('set-url')
     try {
       const trimmed = await applyControlPlaneUrl(url);
       log.success(`Set relay.controlPlaneUrl = ${trimmed}`);
+      // No ssh key to that box necessarily — but if IT knows its own engine, the
+      // default can still move there, because the create is routed over the API.
+      const { ensureHubDockerTarget } = await import('../control-plane/hub-docker-target.js');
+      await ensureHubDockerTarget((line) => {
+        log.info(line);
+      });
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -784,6 +790,12 @@ const unsetUrlSub = new Command('unset-url')
       if (!g.existed && !p.existed) {
         log.info('No control plane was configured (relay.controlPlaneUrl not set).');
       } else {
+        // Whatever this machine defaults to, it must not be the engine of a
+        // control box it no longer talks to.
+        const { removeHubDockerTarget } = await import('../control-plane/hub-docker-target.js');
+        await removeHubDockerTarget((line) => {
+          log.info(line);
+        });
         const where = [g.existed ? 'global' : null, p.existed ? 'project' : null]
           .filter(Boolean)
           .join(' + ');
@@ -2626,6 +2638,19 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   await syncSharedHosts(url, (line) => {
     log.info(line);
   });
+  // The control box's own engine: register it here as `hub` and, if this machine
+  // was still defaulting to plain docker (which a control box turns off), make it
+  // the default. Best-effort — a hub that came up is not undone by this failing.
+  try {
+    const { ensureHubDockerTarget } = await import('../control-plane/hub-docker-target.js');
+    await ensureHubDockerTarget((line) => {
+      log.info(line);
+    });
+  } catch (err) {
+    log.warn(
+      `could not set up the control box's docker engine as a target: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 const deployCmd = new Command('deploy')

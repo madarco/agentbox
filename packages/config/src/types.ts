@@ -94,7 +94,13 @@ export interface UserConfig {
    */
   schema?: number;
   box?: {
-    provider?: ProviderKind;
+    /**
+     * A provider name, or a host-qualified engine spec (`docker:<alias>`) that
+     * resolves to remote-docker — see `provider-spec.ts`. Typed loosely for the
+     * spec form; `parseProviderSpec` + the KEY_REGISTRY validation are what keep
+     * an arbitrary string out.
+     */
+    provider?: ProviderKind | (string & {});
     hostSnapshot?: boolean;
     defaultCheckpoint?: string;
     /** Per-provider override of `defaultCheckpoint`. Resolved before falling back to the global. */
@@ -315,7 +321,8 @@ export interface UserConfig {
  */
 export interface EffectiveConfig {
   box: {
-    provider: ProviderKind;
+    /** A provider name, or a `docker:<alias>` engine spec (see `UserConfig`). */
+    provider: ProviderKind | (string & {});
     hostSnapshot: boolean | undefined;
     defaultCheckpoint: string;
     defaultCheckpointDocker: string;
@@ -669,6 +676,14 @@ export interface KeyDescriptor {
   description: string;
   /** True for keys most users shouldn't touch (image, ports). Hidden from `list` by default. */
   advanced?: boolean;
+  /**
+   * `enum` only: also accept a host-qualified provider spec (`docker:<alias>`).
+   * `box.provider` is an enum of provider NAMES, but `docker:<host>` names an
+   * engine and resolves to the same remote-docker provider — and it is what a
+   * control box's own engine is spelled as, so it has to be settable as a
+   * default. The membership check stays exact for everything else.
+   */
+  allowProviderSpec?: boolean;
 }
 
 /** Join blurbs into "a, b, c, or d" for the enum description. */
@@ -721,7 +736,10 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.provider',
     type: 'enum',
     enumValues: PROVIDER_NAMES,
-    description: `Sandbox backend new boxes are created on: ${joinOr(PROVIDERS.map((p) => p.blurb))}.`,
+    allowProviderSpec: true,
+    description:
+      `Sandbox backend new boxes are created on: ${joinOr(PROVIDERS.map((p) => p.blurb))}. ` +
+      'Also accepts a host-qualified `docker:<alias>` spec naming a registered remote-docker engine (e.g. `docker:hub` for your control box).',
   },
   {
     key: 'box.hostSnapshot',

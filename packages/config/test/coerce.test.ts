@@ -57,3 +57,25 @@ describe('coerceFromString', () => {
     expect(() => coerceFromString('box.snorshot', 'true')).toThrow(UserConfigError);
   });
 });
+
+describe('box.provider accepts an engine spec', () => {
+  // `docker:<alias>` names an engine, not a provider — but it resolves to
+  // remote-docker, and a control box's own engine (`docker:hub`) has to be
+  // settable as the default. Everything else stays an exact enum match.
+  it('coerces a docker:/remote-docker: spec', () => {
+    expect(coerceFromString('box.provider', 'docker:hub')).toBe('docker:hub');
+    expect(coerceFromString('box.provider', 'remote-docker:buildbox')).toBe(
+      'remote-docker:buildbox',
+    );
+  });
+
+  it('still accepts the plain provider names', () => {
+    expect(coerceFromString('box.provider', 'e2b')).toBe('e2b');
+  });
+
+  it('rejects a non-provider base, an unknown name, and an empty host', () => {
+    expect(() => coerceFromString('box.provider', 'hetzner:nbg1')).toThrow(UserConfigError);
+    expect(() => coerceFromString('box.provider', 'nonsense')).toThrow(UserConfigError);
+    expect(() => coerceFromString('box.provider', 'docker:')).toThrow(UserConfigError);
+  });
+});

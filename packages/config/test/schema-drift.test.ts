@@ -236,7 +236,18 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
       it(`${desc.key} enum matches the registry`, () => {
         // A drifted enum is worse than a missing key: the editor rejects a value
         // the parser accepts, with no hint as to which side is wrong.
-        expect(node(desc.key)?.['enum']).toEqual([...(desc.enumValues ?? [])]);
+        //
+        // A key that also accepts a provider spec (`box.provider`) is a `oneOf`
+        // in the schema — the enum branch is what must match the registry, and
+        // the second branch is the pattern the parser widens to.
+        const n = node(desc.key);
+        const oneOf = n?.['oneOf'] as Array<Record<string, unknown>> | undefined;
+        if (desc.allowProviderSpec) {
+          expect(oneOf?.[0]?.['enum']).toEqual([...(desc.enumValues ?? [])]);
+          expect(oneOf?.[1]?.['pattern']).toBeTruthy();
+          return;
+        }
+        expect(n?.['enum']).toEqual([...(desc.enumValues ?? [])]);
       });
     }
   });

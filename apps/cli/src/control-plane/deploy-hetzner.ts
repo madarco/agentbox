@@ -218,4 +218,12 @@ export async function purgeLocalControlPlaneState(opts: {
   } catch {
     // Best-effort, exactly as when the record is written.
   }
+  // The control box's own docker engine goes with it: leaving `box.provider` on
+  // `docker:hub` would point every later create at an engine that is gone.
+  try {
+    const { removeHubDockerTarget } = await import('./hub-docker-target.js');
+    await removeHubDockerTarget(() => {});
+  } catch {
+    /* best-effort */
+  }
 }

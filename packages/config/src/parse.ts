@@ -1,10 +1,6 @@
 import { parse as parseYaml } from 'yaml';
-import {
-  KEY_REGISTRY,
-  type KeyDescriptor,
-  type UserConfig,
-  UserConfigError,
-} from './types.js';
+import { parseProviderSpec } from './provider-spec.js';
+import { KEY_REGISTRY, type KeyDescriptor, type UserConfig, UserConfigError } from './types.js';
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -80,12 +76,28 @@ function coerceTypedValue(raw: unknown, desc: KeyDescriptor, where: string): unk
       }
       return raw;
     case 'enum':
-      if (typeof raw !== 'string' || !desc.enumValues!.includes(raw)) {
+      if (typeof raw !== 'string' || !enumValueAllowed(desc, raw)) {
         throw new UserConfigError(
-          `${where} must be one of: ${desc.enumValues!.join(', ')} (got ${String(raw)})`,
+          `${where} must be one of: ${desc.enumValues!.join(', ')}${desc.allowProviderSpec ? ' (or a `docker:<host>` spec)' : ''} (got ${String(raw)})`,
         );
       }
       return raw;
+  }
+}
+
+/**
+ * Enum membership, plus the one deliberate widening: a `box.provider` may hold a
+ * host-qualified `docker:<alias>` spec. Parsed rather than pattern-matched so the
+ * accepted shapes cannot drift from what the CLI and hub actually resolve.
+ */
+function enumValueAllowed(desc: KeyDescriptor, raw: string): boolean {
+  if (desc.enumValues!.includes(raw)) return true;
+  if (!desc.allowProviderSpec) return false;
+  try {
+    const spec = parseProviderSpec(raw);
+    return spec.remoteHost !== undefined && desc.enumValues!.includes(spec.name);
+  } catch {
+    return false;
   }
 }
 
@@ -141,7 +153,9 @@ export function parseUserConfigObject(
     if (branchName === 'schema') {
       if (branchRaw !== undefined && branchRaw !== null) {
         if (typeof branchRaw !== 'number' || !Number.isInteger(branchRaw)) {
-          throw new UserConfigError(`${where}.schema: must be an integer (got ${String(branchRaw)})`);
+          throw new UserConfigError(
+            `${where}.schema: must be an integer (got ${String(branchRaw)})`,
+          );
         }
         out.schema = branchRaw;
       }
@@ -247,9 +261,9 @@ export function coerceFromString(key: string, raw: string): unknown {
       return n;
     }
     case 'enum':
-      if (!desc.enumValues!.includes(raw)) {
+      if (!enumValueAllowed(desc, raw)) {
         throw new UserConfigError(
-          `${key}: expected one of ${desc.enumValues!.join(', ')}, got "${raw}"`,
+          `${key}: expected one of ${desc.enumValues!.join(', ')}${desc.allowProviderSpec ? ' (or a \`docker:<host>\` spec)' : ''}, got "${raw}"`,
         );
       }
       return raw;

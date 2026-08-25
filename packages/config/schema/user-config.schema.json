@@ -11,16 +11,25 @@
       "additionalProperties": false,
       "properties": {
         "provider": {
-          "enum": [
-            "docker",
-            "daytona",
-            "hetzner",
-            "vercel",
-            "e2b",
-            "digitalocean",
-            "remote-docker"
+          "oneOf": [
+            {
+              "enum": [
+                "docker",
+                "daytona",
+                "hetzner",
+                "vercel",
+                "e2b",
+                "digitalocean",
+                "remote-docker"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:docker|remote-docker):[A-Za-z0-9][A-Za-z0-9._@:-]*$",
+              "description": "A host-qualified engine spec, e.g. `docker:hub`."
+            }
           ],
-          "description": "Sandbox backend new boxes are created on. Overridden per-run by --provider."
+          "description": "Sandbox backend new boxes are created on. Overridden per-run by --provider. Also accepts a `docker:<host>` spec naming a registered remote-docker engine."
         },
         "hostSnapshot": { "type": "boolean" },
         "defaultCheckpoint": { "type": "string", "minLength": 1 },
