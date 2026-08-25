@@ -193,6 +193,18 @@ CLI, not the raw commits.
   stranger there, and a 0600 one (like the credentials
   `--dangerously-with-credentials` copies) was unreadable by the agent meant to
   use it. An explicit `user:` in `agentbox.yaml` still means a literal uid.
+- **Files you approved in the carry prompt never reached a hub-created box.** The
+  approved list was dropped on the way to the control box, so a gitignored path
+  you explicitly opted in — a `.env`, a database dump — simply wasn't there. The
+  transport couldn't have carried it either: the prompt offered up to
+  `box.cpMaxBytes` (100 MiB) while the wire capped out around 22 MiB. Entries now
+  ride the seed, and custody streams raw bytes instead of base64-in-JSON. A carry
+  that can't be delivered now fails the create loudly rather than building the box
+  without the files.
+- **`gh pr create` from a box on a control box failed with `spawn gh ENOENT`** —
+  which reads as "gh isn't installed", but was the hub spawning it in a workspace
+  path that doesn't exist there. `gh` now runs from a real directory and targets
+  the repo explicitly. Restart the relay to pick this up.
 - **The attach footer shows real status for boxes a control box created.** It
   read a status file only the local relay writes, so a hub-created box always
   showed `(unknown)` and never the `starting N/M…` service count. Status now
