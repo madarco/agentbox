@@ -141,6 +141,10 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **`agentbox hub` opens your control box when one is configured**, instead of
+  starting a second, empty hub on this machine. `agentbox hub start --local`
+  forces the local one; `hub stop`/`hub restart` still act on it, and an exposed
+  machine (`hub expose`) is its own control box, so it still starts.
 - **A create routed to the control box now shows its real progress.** The hub's
   own steps — clone, seed, the provider's create output — stream back to your
   terminal instead of a static "remote hub: running", with `-v` for the full log

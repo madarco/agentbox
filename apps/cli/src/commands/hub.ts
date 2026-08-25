@@ -65,6 +65,14 @@ export interface HubTarget {
   mode: 'local' | 'remote';
   url: string;
   token: string;
+  /**
+   * Whether that hub is a process on THIS machine. `mode` alone can't answer it:
+   * a `hub expose`-d machine is its own control box, so it is `remote`-shaped
+   * (password profile, keyed by `AGENTBOX_HUB_API_KEY`) while still running
+   * here. Callers that need to *start* or *stop* the hub — rather than merely
+   * call it — have to branch on this, not on `mode`.
+   */
+  onThisMachine: boolean;
 }
 
 /**
@@ -104,16 +112,31 @@ export async function resolveHubTarget(
   const loopback = urlFlag ? null : await localExposedLoopbackUrl();
   if (loopback) {
     loadControlPlaneEnv();
-    return { mode: 'remote', url: loopback, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+    return {
+      mode: 'remote',
+      url: loopback,
+      token: process.env.AGENTBOX_HUB_API_KEY ?? '',
+      onThisMachine: true,
+    };
   }
   // The configured REMOTE control box — skipped under preferLocal so the caller
   // gets this machine's plain local hub instead (the not-exposed local case).
   if (url && !opts.preferLocal) {
     loadControlPlaneEnv();
-    return { mode: 'remote', url, token: process.env.AGENTBOX_HUB_API_KEY ?? '' };
+    return {
+      mode: 'remote',
+      url,
+      token: process.env.AGENTBOX_HUB_API_KEY ?? '',
+      onThisMachine: false,
+    };
   }
   const s = await getHubStatus();
-  return { mode: 'local', url: `http://127.0.0.1:${String(s.port)}`, token: s.token ?? '' };
+  return {
+    mode: 'local',
+    url: `http://127.0.0.1:${String(s.port)}`,
+    token: s.token ?? '',
+    onThisMachine: true,
+  };
 }
 
 interface StatusOpts {
@@ -360,13 +383,52 @@ const targetSub = new Command('target')
 
 interface StartOpts {
   open?: boolean;
+  local?: boolean;
+}
+
+/**
+ * With a remote control box configured, `agentbox hub` opens THAT hub instead of
+ * starting one here: it is the hub this CLI already talks to, it holds the boxes,
+ * and booting a second empty UI on 127.0.0.1 only invites acting on the wrong
+ * one. Nothing is lost by not starting it — every local operation that needs the
+ * hub on this machine auto-starts it (`resolveHubApiClient`), and `--local`
+ * forces it explicitly.
+ *
+ * A `hub expose`-d machine is excluded: it *is* the control box, so the hub to
+ * open is the one to start (hence `onThisMachine`, not `mode`).
+ */
+async function openRemoteHub(target: HubTarget, opts: StartOpts): Promise<void> {
+  const s = spinner();
+  s.start(`reaching the control box at ${target.url}`);
+  const st = await probeControlPlaneStatus(target.url);
+  s.stop(
+    st.healthy ? `control box reachable — ${st.detail}` : `control box UNREACHABLE (${st.detail})`,
+  );
+  process.stdout.write(`\n  Open: ${target.url}\n\n`);
+  if (!st.healthy) {
+    log.warn(
+      'Opening it anyway. `agentbox hub status` has the detail; ' +
+        '`agentbox hub start --local` runs a hub on this machine instead.',
+    );
+  }
+  if (opts.open !== false) openInBrowser(target.url);
 }
 
 const startSub = new Command('start')
-  .description('Start the hub (relay + Web UI on port 8787) and open it')
+  .description(
+    'Open the hub — the remote control box when one is configured, else start the local hub (relay + Web UI on port 8787) and open it',
+  )
   .option('--no-open', "don't open the browser, just print the URL")
+  .option('--local', 'start the hub on this machine even when a control box is configured')
   .action(async (opts: StartOpts) => {
     try {
+      if (opts.local !== true) {
+        const target = await resolveHubTarget();
+        if (!target.onThisMachine) {
+          await openRemoteHub(target, opts);
+          return;
+        }
+      }
       const s = spinner();
       s.start('starting hub');
       // If this machine is an exposed control box with a tunnel, (re)establish it

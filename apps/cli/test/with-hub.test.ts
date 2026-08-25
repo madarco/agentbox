@@ -9,12 +9,22 @@ import {
 
 describe('hubApiTargetFrom (target resolution, all three shapes)', () => {
   it('remote configured control box → apiKey is its token', () => {
-    const t: HubTarget = { mode: 'remote', url: 'https://plane.example', token: 'KEY' };
+    const t: HubTarget = {
+      mode: 'remote',
+      url: 'https://plane.example',
+      token: 'KEY',
+      onThisMachine: false,
+    };
     expect(hubApiTargetFrom(t)).toEqual({ ok: true, url: 'https://plane.example', apiKey: 'KEY' });
   });
 
   it('remote exposed loopback (hub expose) → apiKey is AGENTBOX_HUB_API_KEY', () => {
-    const t: HubTarget = { mode: 'remote', url: 'http://127.0.0.1:8787', token: 'EXPOSED_KEY' };
+    const t: HubTarget = {
+      mode: 'remote',
+      url: 'http://127.0.0.1:8787',
+      token: 'EXPOSED_KEY',
+      onThisMachine: true,
+    };
     expect(hubApiTargetFrom(t)).toEqual({
       ok: true,
       url: 'http://127.0.0.1:8787',
@@ -23,7 +33,12 @@ describe('hubApiTargetFrom (target resolution, all three shapes)', () => {
   });
 
   it('local hub → apiKey is the local hub token', () => {
-    const t: HubTarget = { mode: 'local', url: 'http://127.0.0.1:8787', token: 'LOCAL_TOKEN' };
+    const t: HubTarget = {
+      mode: 'local',
+      url: 'http://127.0.0.1:8787',
+      token: 'LOCAL_TOKEN',
+      onThisMachine: true,
+    };
     expect(hubApiTargetFrom(t)).toEqual({
       ok: true,
       url: 'http://127.0.0.1:8787',
@@ -32,12 +47,22 @@ describe('hubApiTargetFrom (target resolution, all three shapes)', () => {
   });
 
   it('local hub with no token (not running yet) → the autostart signal', () => {
-    const t: HubTarget = { mode: 'local', url: 'http://127.0.0.1:8787', token: '' };
+    const t: HubTarget = {
+      mode: 'local',
+      url: 'http://127.0.0.1:8787',
+      token: '',
+      onThisMachine: true,
+    };
     expect(hubApiTargetFrom(t)).toEqual({ ok: false, reason: 'no-token', mode: 'local' });
   });
 
   it('remote hub with no key configured → not ok, remote', () => {
-    const t: HubTarget = { mode: 'remote', url: 'https://plane.example', token: '' };
+    const t: HubTarget = {
+      mode: 'remote',
+      url: 'https://plane.example',
+      token: '',
+      onThisMachine: false,
+    };
     expect(hubApiTargetFrom(t)).toEqual({ ok: false, reason: 'no-token', mode: 'remote' });
   });
 });

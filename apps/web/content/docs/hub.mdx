@@ -97,6 +97,7 @@ a cookie (30 days) and strips it from the address, so from then on a plain
 ```bash
 agentbox hub              # start + open in the browser (default)
 agentbox hub --no-open    # start without opening a browser, just print the URL
+agentbox hub start --local  # start the hub HERE even with a control box configured
 agentbox hub status       # is it running? (add --json)
 agentbox hub stop         # stop the hub process
 agentbox hub restart      # stop then start
@@ -104,7 +105,9 @@ agentbox hub adopt <box>  # make a control-box-created box usable from this lapt
 agentbox hub pull <box>   # download only its SSH keys (adopt does this too)
 ```
 
-Both need a configured [control box](/docs/deployed-hub). `hub adopt` writes the local box record **and** downloads the box's SSH keys, so `agentbox attach` / `cp` / `url` / `screen` work exactly as for a box you created here — you rarely need to run it by hand, because referring to a control-box box by name adopts it automatically. `hub pull` is the keys-only half, writing `~/.agentbox/boxes/<sandboxId>/ssh/`.
+With a [control box](/docs/deployed-hub) configured, `agentbox hub` opens **that** hub rather than starting one here — it is the hub the CLI already talks to and the one holding your boxes. Nothing on this machine is lost: local commands that need the hub here start it themselves, `agentbox hub start --local` forces it, and `hub stop`/`hub restart` still act on the local process. An exposed machine (`agentbox hub expose`) _is_ its own control box, so `agentbox hub` still starts it.
+
+`hub adopt` and `hub pull` both need a configured control box. `hub adopt` writes the local box record **and** downloads the box's SSH keys, so `agentbox attach` / `cp` / `url` / `screen` work exactly as for a box you created here — you rarely need to run it by hand, because referring to a control-box box by name adopts it automatically. `hub pull` is the keys-only half, writing `~/.agentbox/boxes/<sandboxId>/ssh/`.
 
 ## How it relates to the relay
 

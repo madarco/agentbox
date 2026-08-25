@@ -50,23 +50,70 @@ describe('resolveHubTarget preferLocal', () => {
     state.loopback = 'http://127.0.0.1:8787';
     state.controlPlaneUrl = 'https://cp.example';
     const t = await resolveHubTarget(undefined, { preferLocal: true });
-    expect(t).toEqual({ mode: 'remote', url: 'http://127.0.0.1:8787', token: 'API_KEY' });
+    expect(t).toEqual({
+      mode: 'remote',
+      url: 'http://127.0.0.1:8787',
+      token: 'API_KEY',
+      onThisMachine: true,
+    });
   });
 
   it('not exposed + a control box configured: preferLocal falls back to the plain local hub', async () => {
     state.controlPlaneUrl = 'https://cp.example';
     const t = await resolveHubTarget(undefined, { preferLocal: true });
-    expect(t).toEqual({ mode: 'local', url: 'http://127.0.0.1:8787', token: 'LOCAL_TOKEN' });
+    expect(t).toEqual({
+      mode: 'local',
+      url: 'http://127.0.0.1:8787',
+      token: 'LOCAL_TOKEN',
+      onThisMachine: true,
+    });
   });
 
   it('without preferLocal, a configured control box wins (the default remote target)', async () => {
     state.controlPlaneUrl = 'https://cp.example';
     const t = await resolveHubTarget(undefined);
-    expect(t).toEqual({ mode: 'remote', url: 'https://cp.example', token: 'API_KEY' });
+    expect(t).toEqual({
+      mode: 'remote',
+      url: 'https://cp.example',
+      token: 'API_KEY',
+      onThisMachine: false,
+    });
   });
 
   it('no control box and not exposed: the plain local hub regardless of preferLocal', async () => {
     const t = await resolveHubTarget(undefined, { preferLocal: true });
-    expect(t).toEqual({ mode: 'local', url: 'http://127.0.0.1:8787', token: 'LOCAL_TOKEN' });
+    expect(t).toEqual({
+      mode: 'local',
+      url: 'http://127.0.0.1:8787',
+      token: 'LOCAL_TOKEN',
+      onThisMachine: true,
+    });
+  });
+});
+
+describe('onThisMachine (what `agentbox hub` branches on)', () => {
+  beforeEach(() => {
+    state.controlPlaneUrl = '';
+    state.loopback = null;
+    delete process.env.AGENTBOX_HUB_API_KEY;
+  });
+
+  it('is false only for a control box that is somewhere else', async () => {
+    state.controlPlaneUrl = 'https://cp.example';
+    expect((await resolveHubTarget()).onThisMachine).toBe(false);
+  });
+
+  it('is true for a `hub expose`-d machine, though the target is remote-shaped', async () => {
+    // The distinction `mode` cannot make: this hub IS the control box AND is a
+    // process here, so `agentbox hub` must start it rather than open it.
+    state.loopback = 'http://127.0.0.1:8787';
+    state.controlPlaneUrl = 'https://cp.example';
+    const t = await resolveHubTarget();
+    expect(t.mode).toBe('remote');
+    expect(t.onThisMachine).toBe(true);
+  });
+
+  it('is true for the plain local hub', async () => {
+    expect((await resolveHubTarget()).onThisMachine).toBe(true);
   });
 });
