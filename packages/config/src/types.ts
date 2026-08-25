@@ -903,7 +903,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.remoteDockerHost',
     type: 'string',
     description:
-      'Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes entirely from your own `~/.ssh/config` + agent. remote-docker-only; ignored by other providers.',
+      'Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes from your own `~/.ssh/config` + agent, unless the host was shared with a control box (`agentbox remote-docker share`), which registers an explicit key. remote-docker-only; ignored by other providers.',
   },
   {
     key: 'box.vercelTimeoutMs',

@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { parseGitRemote } from '@agentbox/relay';
+import { resolveSshConfigTarget } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { log, select } from './prompt.js';
 
@@ -136,19 +137,8 @@ async function fillHttpsToken(
 /** Resolve the SSH identity file ssh would use for `host` (via `ssh -G`). */
 async function resolveSshIdentity(host: string): Promise<string | null> {
   const home = homedir();
-  try {
-    const r = await execa('ssh', ['-G', host], { reject: false });
-    if (r.exitCode === 0) {
-      for (const line of (r.stdout ?? '').split('\n')) {
-        const m = /^identityfile\s+(.+)$/i.exec(line.trim());
-        if (!m) continue;
-        const p = m[1]!.replace(/^~(?=\/)/, home);
-        if (await fileExists(p)) return p;
-      }
-    }
-  } catch {
-    /* fall through to defaults */
-  }
+  const resolved = await resolveSshConfigTarget(host);
+  if (resolved?.identityFile) return resolved.identityFile;
   for (const name of ['id_ed25519', 'id_rsa', 'id_ecdsa']) {
     const p = join(home, '.ssh', name);
     if (await fileExists(p)) return p;

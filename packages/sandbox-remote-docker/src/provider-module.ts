@@ -2,7 +2,8 @@
  * Doctor probes for the remote-docker provider.
  *
  * There is no credential to check — the provider authenticates as you, through
- * your own `~/.ssh/config` and agent. What *can* be wrong is the destination:
+ * your own `~/.ssh/config` and agent (or, for a host shared with a control box,
+ * the key registered for it). What *can* be wrong is the destination:
  * unset, unreachable, or reachable but with no docker on the login-shell PATH.
  * So the checks are exactly those three, run against the configured default.
  */

@@ -964,10 +964,18 @@ answered by asking the engine (`docker image inspect`), not by trusting a local
 file that could disagree with it — and it is answered **per host**, which a
 single `~/.agentbox/remote-docker-prepared.json` could never be. Ensure order:
 present → pull the fingerprint-tagged GHCR image (published multi-arch, so an
-amd64 remote gets amd64 from an arm64 laptop) → stream the local build context to
-`docker build -` on the remote. `prepare` is therefore **optional** (unlike the
-VPS providers': a remote engine can build from a Dockerfile), and only records
-history for `prepare --status` / `doctor`.
+amd64 remote gets amd64 from an arm64 laptop) → stream the local build context
+into a temp dir on the remote and `docker build` it from there. `prepare` is
+therefore **optional** (unlike the VPS providers': a remote engine can build from
+a Dockerfile), and only records history for `prepare --status` / `doctor`.
+
+The build deliberately does **not** use `docker build -` (the tar-on-stdin form).
+Docker 29 dropped the classic builder, and buildx rejects a stdin context
+combined with `-f` outright — `ambiguous Dockerfile source: both stdin and flag
+correspond to Dockerfiles` — which killed every bake and every registry-miss
+create on a current engine. Our context always names its Dockerfile
+`Dockerfile.box`, so `-f` is not negotiable; the temp dir is, and it is removed
+whether the build succeeds or fails.
 
 **Checkpoints.** `docker commit` on the engine. The snapshot name carries the
 host, because `deleteSnapshot`/`snapshotExists` are handed nothing but that string
@@ -1004,6 +1012,14 @@ as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
 CLI and hub show no login row. A named host-alias registry
 (`~/.agentbox/remote-docker-hosts.json`) driven by `agentbox remote-docker
 add|update|list|doctor|remove` replaces it.
+
+The one exception is a host **shared with a control box**. A registry entry may
+carry a `connection` — the `ssh -G` expansion (host / user / port) plus an
+explicit `identityFile` — and when it does, that wins over the `ssh` string at
+dial time (`dialTarget`). It has to: an `~/.ssh/config` alias means whatever the
+registering user's config says and nothing at all on another machine, and the hub
+container has no `~/.ssh` and no agent. An entry without a `connection` behaves
+exactly as before.
 
 **Known limits.** Published ports are fixed at `docker run` (same constraint as
 Vercel): a service added to `agentbox.yaml` after create is reachable through the

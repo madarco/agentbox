@@ -146,6 +146,8 @@ export class SshTunnelManager {
         '-i',
         opts.identity,
         '-o',
+        'IdentitiesOnly=yes',
+        '-o',
         'StrictHostKeyChecking=accept-new',
         '-o',
         `UserKnownHostsFile=${knownHosts}`,

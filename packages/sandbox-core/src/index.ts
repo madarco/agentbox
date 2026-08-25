@@ -46,6 +46,7 @@ export {
   type CloudSshOptions,
 } from './cloud-ssh.js';
 export { mintSshKey, type MintedSshKey } from './ssh-key.js';
+export { resolveSshConfigTarget, type SshConfigTarget } from './ssh-config-probe.js';
 export {
   scpDownload,
   scpUpload,

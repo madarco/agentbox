@@ -70,6 +70,9 @@ describe('sandbox ids', () => {
 });
 
 describe('sshTargetFor', () => {
+  // Still identity-free by construction: a key, when there is one, comes from
+  // the host registry and is folded on at dial time (`dialTarget`), not derived
+  // from the destination string. A bare destination means "read my ssh config".
   it("emits no identity and no known_hosts — the user's ~/.ssh/config owns both", () => {
     const t = sshTargetFor(parseRemoteTarget('buildbox'));
     expect(t.identity).toBeUndefined();

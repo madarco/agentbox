@@ -52,7 +52,11 @@ export function sshDestination(target: SshTargetArgs): string {
 export function sshOptArgs(target: SshTargetArgs): string[] {
   const out: string[] = [];
   if (target.identity) {
-    out.push('-i', target.identity);
+    // `IdentitiesOnly` so a loaded agent can't offer its keys first: sshd counts
+    // every offer against MaxAuthTries (6 by default), so a developer with a
+    // handful of keys in their agent gets "Too many authentication failures"
+    // before the key we explicitly passed is ever tried.
+    out.push('-i', target.identity, '-o', 'IdentitiesOnly=yes');
   }
   if (target.knownHosts) {
     // A dedicated known_hosts only makes sense when we also isolate the global
