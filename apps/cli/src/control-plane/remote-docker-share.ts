@@ -21,7 +21,9 @@
 
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { quoteShellArg } from '@agentbox/sandbox-cloud';
+import { confirm, log } from '../lib/prompt.js';
 import {
   mintSshKey,
   resolveSshConfigTarget,
@@ -251,12 +253,12 @@ export async function locallySharedAliases(): Promise<string[]> {
  * nothing here may turn that into a failure.
  */
 export async function offerShareAfterAdd(alias: string): Promise<void> {
-  const [{ localExposedLoopbackUrl, resolveHubApiClient }, { loadEffectiveConfig }, prompts] =
-    await Promise.all([
-      import('../commands/control-plane.js'),
-      import('@agentbox/config'),
-      import('../lib/prompt.js'),
-    ]);
+  // control-plane.js is lazy (it sits in a module cycle with hub.js); the prompt
+  // module is NOT — a dynamic import of it makes esbuild give up on the
+  // `export * from '@clack/prompts'` re-export and the bundle fails to build.
+  const { localExposedLoopbackUrl, resolveHubApiClient } = await import(
+    '../commands/control-plane.js'
+  );
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   const url = cfg?.effective.relay.controlPlaneUrl;
   if (!url) return;
@@ -264,31 +266,31 @@ export async function offerShareAfterAdd(alias: string): Promise<void> {
   if ((await localExposedLoopbackUrl().catch(() => null)) !== null) return;
 
   if (!process.stdin.isTTY) {
-    prompts.log.info(
+    log.info(
       `Your control box does not know "${alias}" — share it with \`agentbox remote-docker share ${alias}\`.`,
     );
     return;
   }
-  const yes = await prompts.confirm({
+  const yes = await confirm({
     message: `Let your control box (${url}) run boxes on "${alias}" too? It mints a key for the hub and installs it on the host.`,
     initialValue: true,
   });
   if (!yes) {
-    prompts.log.info(
+    log.info(
       `Not shared. Change your mind with \`agentbox remote-docker share ${alias}\`.`,
     );
     return;
   }
   const client = await resolveHubApiClient(undefined, { quiet: true });
   if (!client) {
-    prompts.log.warn(
+    log.warn(
       `No control-box API key here, so "${alias}" was not shared. Run \`agentbox remote-docker share ${alias}\` from the machine that ran \`agentbox hub setup\`.`,
     );
     return;
   }
   const outcome = await shareHostWith(alias, { client });
-  if (outcome.ok) prompts.log.success(outcome.message);
-  else prompts.log.warn(outcome.message);
+  if (outcome.ok) log.success(outcome.message);
+  else log.warn(outcome.message);
 }
 
 /**
