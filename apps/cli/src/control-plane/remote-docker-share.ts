@@ -193,14 +193,24 @@ export async function shareHostWith(
     if (err instanceof HubApiError && /already exists/i.test(err.message)) {
       return { ok: true, skipped: true, message: `the control box already knows "${alias}"` };
     }
-    // Roll the grant back. A minted key left on disk is not inert: it is exactly
-    // what `locallySharedAliases` reads as "the control box has this engine", so
-    // a refused share would otherwise route every later create to a hub that
-    // does not know the alias. Best-effort on the engine, exact on our disk.
-    if (opts.useExistingKey !== true) await revokeMintedKey(alias, entry.ssh);
+    const detail = err instanceof Error ? err.message : String(err);
+    // Roll the grant back ONLY on a definitive refusal. A 4xx means the hub
+    // probed the engine, declined, and saved nothing — and a minted key left
+    // behind is not inert: `locallySharedAliases` reads it as "the control box
+    // has this engine", so every later create would route to a hub with no such
+    // alias, with local docker gated off.
+    //
+    // A timeout or a 5xx is ambiguous, and `syncSharedHosts` replays this on
+    // every hub setup / deploy / update — so an unreachable hub must be INERT
+    // here. Revoking then would delete a working grant for a host the control
+    // box still holds, breaking exactly the creates the share enabled.
+    const refused = err instanceof HubApiError && err.status >= 400 && err.status < 500;
+    if (refused && opts.useExistingKey !== true) await revokeMintedKey(alias, entry.ssh);
     return {
       ok: false,
-      message: `the control box refused "${alias}": ${err instanceof Error ? err.message : String(err)}`,
+      message: refused
+        ? `the control box refused "${alias}": ${detail}`
+        : `could not reach the control box to share "${alias}": ${detail} — the key stays in place; re-run \`agentbox remote-docker share ${alias}\` once it is up`,
     };
   }
   return {

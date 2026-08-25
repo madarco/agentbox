@@ -40,6 +40,16 @@ vi.mock('../src/lib/prompt.js', () => ({
 
 const { shareHostWith, locallySharedAliases } =
   await import('../src/control-plane/remote-docker-share.js');
+const { HubApiError } = await import('../src/control-plane/hub-api-client.js');
+
+/** What the hub sends when its own ssh+docker probe of the engine fails. */
+function refusal(): Error {
+  return new HubApiError(
+    'probe failed: engine unreachable from the control box',
+    'bad_request',
+    400,
+  );
+}
 
 function deps(addHost: () => Promise<void>) {
   return { client: { addHost, removeHost: async () => ({}) } };
@@ -66,7 +76,7 @@ describe('shareHostWith', () => {
     const res = await shareHostWith(
       ALIAS,
       deps(async () => {
-        throw new Error('probe failed: engine unreachable from here');
+        throw refusal();
       }),
     );
     expect(res.ok).toBe(false);
@@ -81,7 +91,7 @@ describe('shareHostWith', () => {
     await shareHostWith(
       ALIAS,
       deps(async () => {
-        throw new Error('nope');
+        throw refusal();
       }),
     );
     const commands = sshExec.mock.calls.map((c) => String((c as unknown[])[1]));
@@ -90,13 +100,41 @@ describe('shareHostWith', () => {
     );
   });
 
+  it('leaves the grant alone when the control box is merely unreachable', async () => {
+    // `syncSharedHosts` replays a share on every hub setup / deploy / update. A
+    // timeout there says nothing about whether the hub holds the host — and it
+    // usually does — so revoking would break the creates the share enabled.
+    const res = await shareHostWith(
+      ALIAS,
+      deps(async () => {
+        throw new Error('fetch failed: ETIMEDOUT');
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain('the key stays in place');
+    expect(existsSync(join(hostKeyDir(ALIAS), 'id_ed25519.pub'))).toBe(true);
+    const commands = sshExec.mock.calls.map((c) => String((c as unknown[])[1]));
+    expect(commands.some((c) => c.includes('grep -vxF'))).toBe(false);
+  });
+
+  it('leaves the grant alone on a hub 5xx', async () => {
+    const res = await shareHostWith(
+      ALIAS,
+      deps(async () => {
+        throw new HubApiError('bad gateway', 'upstream', 502);
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(existsSync(join(hostKeyDir(ALIAS), 'id_ed25519.pub'))).toBe(true);
+  });
+
   it('leaves the user their own key with --use-existing-key', async () => {
     mkdirSync(hostKeyDir(ALIAS), { recursive: true });
     writeFileSync(join(hostKeyDir(ALIAS), 'id_ed25519.pub'), 'pre-existing');
     const res = await shareHostWith(
       ALIAS,
       deps(async () => {
-        throw new Error('nope');
+        throw refusal();
       }),
       { useExistingKey: true },
     );
