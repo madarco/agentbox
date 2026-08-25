@@ -932,12 +932,29 @@ async function loadRemoteDockerHostViews(): Promise<RemoteDockerHostView[]> {
     const baked = prepared?.hosts[alias];
     return {
       alias,
-      ssh: entry.ssh,
+      // Report the connection when there is one: the ssh string can be an alias
+      // from the machine that shared the host, which reads as nonsense here.
+      ssh: entry.connection ? describeHostConnection(entry.connection) : entry.ssh,
       baked: Boolean(baked),
       ...(baked ? { bakedImageRef: baked.imageRef } : {}),
       default: alias === dflt,
+      ...(entry.connection?.identityFile ? { managedKey: true } : {}),
     };
   });
+}
+
+/** How the hub dials a shared host: the `ssh -G` expansion plus our own key. */
+interface HostDialConnection {
+  host: string;
+  user?: string;
+  port?: number;
+  identityFile?: string;
+}
+
+/** `[user@]host[:port]` for a resolved connection. IPv6 keeps its brackets. */
+function describeHostConnection(conn: HostDialConnection): string {
+  const host = conn.host.includes(':') ? `[${conn.host}]` : conn.host;
+  return `${conn.user ? `${conn.user}@` : ''}${host}${conn.port !== undefined ? `:${String(conn.port)}` : ''}`;
 }
 
 /**
@@ -2839,11 +2856,43 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (rd.getHostAlias(alias)) {
           return { ok: false, error: `host alias "${alias}" already exists` };
         }
+        // A shared host arrives with its own key. Write it before probing — the
+        // probe has to run as the registered entry will, or a 201 would only
+        // prove that whatever ssh picked by default happened to work.
+        // Structural, not the package's exported type: the remote-docker package
+        // is only ever dynamically imported here, to keep it out of the bundle.
+        let connection: HostDialConnection | undefined = opts?.connection
+          ? { ...opts.connection }
+          : undefined;
+        if (opts?.identity) {
+          if (!connection) {
+            return { ok: false, error: 'identity requires connection (the ssh -G expansion)' };
+          }
+          const dir = rd.hostKeyDir(alias);
+          await mkdir(dir, { recursive: true, mode: 0o700 });
+          const keyPath = path.join(dir, 'id_ed25519');
+          const body = opts.identity.endsWith('\n') ? opts.identity : `${opts.identity}\n`;
+          await writeFile(keyPath, body, { mode: 0o600 });
+          // writeFile's mode is umask-masked; ssh refuses a group-readable key.
+          await chmod(keyPath, 0o600);
+          connection = { ...connection, identityFile: keyPath };
+        }
         // Probe before saving so an unreachable host / missing docker is rejected.
-        const probe = await rd.probeRemoteEngine(trimmedSsh);
+        // With a connection, probe THAT — the ssh string may be an alias only the
+        // sharing machine can resolve.
+        const probeSpec = connection ? describeHostConnection(connection) : trimmedSsh;
+        const probe = await rd.probeRemoteEngine(
+          probeSpec,
+          connection?.identityFile
+            ? {
+                identity: connection.identityFile,
+                knownHosts: path.join(rd.hostKeyDir(alias), 'known_hosts'),
+              }
+            : undefined,
+        );
         if (!probe.ok)
-          return { ok: false, error: probe.error ?? `${trimmedSsh}: remote engine unusable` };
-        rd.upsertHostAlias(alias, trimmedSsh);
+          return { ok: false, error: probe.error ?? `${probeSpec}: remote engine unusable` };
+        rd.upsertHostAlias(alias, trimmedSsh, connection);
         if (opts?.default) {
           await setConfigValue('global', 'box.remoteDockerHost', alias, os.homedir(), {
             raw: true,

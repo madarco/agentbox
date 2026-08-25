@@ -128,6 +128,20 @@ export interface HubApiHost {
   ssh?: string;
   baked?: boolean;
   default?: boolean;
+  /** The hub holds its own key for this host (it was shared with it). */
+  managedKey?: boolean;
+}
+
+/** What a PC sends to share one of its own engines with a control box. */
+export interface HubApiHostShare {
+  alias: string;
+  /** Human-facing connection string, as the sharer wrote it. */
+  ssh: string;
+  /** The `ssh -G` expansion — what the hub actually dials. */
+  connection: { host: string; user?: string; port?: number };
+  /** PEM of the key minted for the hub. Never returned by the API. */
+  identity?: string;
+  default?: boolean;
 }
 
 /** A pending host-action approval as `/api/v1/approvals` returns it. */
@@ -449,6 +463,23 @@ export class HubApiClient {
   /** The remote-docker host aliases the hub itself has registered. */
   async listHosts(): Promise<HubApiHost[]> {
     return (await this.request<{ hosts: HubApiHost[] }>('GET', '/hosts')).hosts;
+  }
+
+  /**
+   * Register one of THIS machine's remote-docker engines on the hub, with the
+   * connection + key it needs to reach it itself. The hub probes ssh + docker
+   * before saving, so a resolved promise means the hub really got there.
+   */
+  async addHost(body: HubApiHostShare): Promise<void> {
+    await this.request<{ ok: true }>('POST', '/hosts', body);
+  }
+
+  /** Forget a host on the hub. Boxes already created against it are reported. */
+  async removeHost(alias: string): Promise<{ boxesAffected?: string[] }> {
+    return await this.request<{ boxesAffected?: string[] }>(
+      'DELETE',
+      `/hosts/${encodeURIComponent(alias)}`,
+    );
   }
 
   /**

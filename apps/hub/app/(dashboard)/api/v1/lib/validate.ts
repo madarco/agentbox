@@ -301,11 +301,29 @@ export function isValidHostAlias(v: string): boolean {
   return HOST_ALIAS_RE.test(v);
 }
 
-export function parseHostUpsert(
-  body: unknown,
-): Parsed<{ alias: string; ssh: string; default?: boolean }> {
+/** A private key large enough to be one, small enough not to be an upload. */
+const MAX_IDENTITY_BYTES = 16 * 1024;
+
+export interface HostUpsert {
+  alias: string;
+  ssh: string;
+  default?: boolean;
+  /**
+   * The portable expansion of `ssh`, for a host shared BY another machine: an
+   * `~/.ssh/config` alias means nothing here, so a sharing client sends what
+   * `ssh -G` resolved.
+   */
+  connection?: { host: string; user?: string; port?: number };
+  /**
+   * PEM of the private key this hub should dial with. Written to the hub's own
+   * key dir; never stored in the registry and never echoed back.
+   */
+  identity?: string;
+}
+
+export function parseHostUpsert(body: unknown): Parsed<HostUpsert> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { alias, ssh, default: dflt } = body;
+  const { alias, ssh, default: dflt, connection, identity } = body;
   if (typeof alias !== 'string' || !isValidHostAlias(alias)) {
     return {
       ok: false,
@@ -317,7 +335,51 @@ export function parseHostUpsert(
   }
   const db = optionalBool(dflt, 'default');
   if (!db.ok) return db;
-  return { ok: true, value: { alias, ssh: ssh.trim(), default: db.value } };
+
+  const value: HostUpsert = { alias, ssh: ssh.trim(), default: db.value };
+
+  if (connection !== undefined) {
+    if (!isObject(connection)) return { ok: false, message: 'connection must be an object' };
+    const { host, user, port } = connection;
+    if (typeof host !== 'string' || host.trim().length === 0) {
+      return { ok: false, message: 'connection.host is required when connection is given' };
+    }
+    // A host that is itself an alias would defeat the point of sending one.
+    if (/[@/\s]/.test(host.trim())) {
+      return { ok: false, message: 'connection.host must be a hostname or IP' };
+    }
+    const conn: NonNullable<HostUpsert['connection']> = { host: host.trim() };
+    if (user !== undefined) {
+      if (typeof user !== 'string' || user.trim().length === 0) {
+        return { ok: false, message: 'connection.user must be a non-empty string' };
+      }
+      conn.user = user.trim();
+    }
+    if (port !== undefined) {
+      if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return { ok: false, message: 'connection.port must be a port number' };
+      }
+      conn.port = port;
+    }
+    value.connection = conn;
+  }
+
+  if (identity !== undefined) {
+    if (typeof identity !== 'string' || !identity.includes('PRIVATE KEY')) {
+      return { ok: false, message: 'identity must be a PEM-encoded private key' };
+    }
+    if (Buffer.byteLength(identity, 'utf8') > MAX_IDENTITY_BYTES) {
+      return { ok: false, message: 'identity is too large to be a private key' };
+    }
+    if (!value.connection) {
+      // Without the expansion the key has nothing to authenticate against: the
+      // `ssh` string may be an alias this machine cannot resolve.
+      return { ok: false, message: 'identity requires connection (send the ssh -G expansion)' };
+    }
+    value.identity = identity;
+  }
+
+  return { ok: true, value };
 }
 
 // ── git operations ──

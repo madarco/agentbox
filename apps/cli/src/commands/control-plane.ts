@@ -2611,14 +2611,21 @@ export async function syncAgentCredentialsIfChanged(url?: string): Promise<void>
 
 /**
  * The end-of-setup/deploy step for a control box that just came up: get its
- * agent logins and bake records in place so its first hub-created box is signed
- * in and boots a baked base rather than re-baking. Both steps are best-effort
+ * agent logins, bake records and shared docker hosts in place so its first
+ * hub-created box is signed in and boots a baked base rather than re-baking. Both steps are best-effort
  * and self-reporting; neither fails the setup. `url` is undefined for a local
  * exposed hub (resolved to loopback by the custody target).
  */
 async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   await syncAgentCredentials(url, { announce: true });
   await syncBakesWithControlBox(url);
+  // Re-register any remote-docker host this machine has shared before. A fresh
+  // control box knows none of them, and the user should not have to remember
+  // which engines they had handed over.
+  const { syncSharedHosts } = await import('../control-plane/remote-docker-share.js');
+  await syncSharedHosts(url, (line) => {
+    log.info(line);
+  });
 }
 
 const deployCmd = new Command('deploy')

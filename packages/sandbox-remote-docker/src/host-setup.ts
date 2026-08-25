@@ -15,7 +15,13 @@
 import * as p from '@clack/prompts';
 import { setConfigValue } from '@agentbox/config';
 import { probeRemoteEngine } from './remote-docker.js';
-import { assertValidAlias, getHostAlias, listHostAliases, upsertHostAlias } from './hosts-registry.js';
+import { offerHostShare } from './share-hook.js';
+import {
+  assertValidAlias,
+  getHostAlias,
+  listHostAliases,
+  upsertHostAlias,
+} from './hosts-registry.js';
 
 /**
  * Prompt for an alias + SSH connection, probe it, register it, and set it as the
@@ -78,6 +84,8 @@ export async function interactiveRegisterHost(): Promise<string | null> {
     p.log.success(`registered '${name}' → ${conn}`);
     // Machine-level default, matching how the wizard pins box.provider global.
     await setConfigValue('global', 'box.remoteDockerHost', name, process.cwd(), { raw: true });
+    // A control box can't read this machine's ssh config; offer to share now.
+    await offerHostShare(name);
     // With more than one host registered, remind how to target a specific one.
     const hostCount = listHostAliases().length;
     if (hostCount > 1) {

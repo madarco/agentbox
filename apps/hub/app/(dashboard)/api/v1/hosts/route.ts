@@ -3,6 +3,12 @@
 // alias: validates + probes the host (ssh + docker) before saving. No image bake
 // (that would block for minutes; the image builds on first create, or via
 // POST /providers/remote-docker/prepare). Mutations need the in-process backend.
+//
+// A POST may carry `connection` (the sender's `ssh -G` expansion) and `identity`
+// (a private key minted FOR this hub). That is how a PC shares one of its own
+// engines with a control box, which has neither the sender's `~/.ssh/config` nor
+// their agent. The probe then runs with that key, so a 201 means this machine can
+// really reach the engine — not that the sender could.
 import { backendOrNull } from '../lib/backend';
 import { fail, ok } from '../lib/envelope';
 import { parseHostUpsert } from '../lib/validate';
@@ -31,6 +37,8 @@ export async function POST(req: Request): Promise<Response> {
 
   const res = await backend.addRemoteDockerHost(parsed.value.alias, parsed.value.ssh, {
     default: parsed.value.default,
+    ...(parsed.value.connection ? { connection: parsed.value.connection } : {}),
+    ...(parsed.value.identity ? { identity: parsed.value.identity } : {}),
   });
   if (!res.ok) {
     // "already exists" is a conflict; an unreachable host / missing docker is a

@@ -536,10 +536,20 @@ export interface HubBackend {
   // Register an alias -> SSH connection: validates + probes the host (ssh + docker)
   // before saving. Does NOT bake the image (would block for minutes). `default`
   // also pins it as box.remoteDockerHost (global).
+  //
+  // `connection` + `identity` arrive when another machine SHARES one of its
+  // engines with this hub: the ssh string may be an alias only that machine can
+  // resolve, so the sender includes the `ssh -G` expansion and a private key
+  // minted for us. The key is written to this hub's own key dir (0600) and the
+  // probe runs with it, so success means WE can reach the engine.
   addRemoteDockerHost(
     alias: string,
     ssh: string,
-    opts?: { default?: boolean },
+    opts?: {
+      default?: boolean;
+      connection?: { host: string; user?: string; port?: number };
+      identity?: string;
+    },
   ): Promise<ActionResult>;
   // Forget an alias: drops it from the registry + baked-image record, clears the
   // global default if it pointed here. Returns the box names created against the
@@ -563,4 +573,9 @@ export interface RemoteDockerHostView {
   bakedImageRef?: string;
   /** Whether this alias is the configured default (box.remoteDockerHost). */
   default: boolean;
+  /**
+   * True when this hub holds its own key for the host — i.e. the entry was
+   * shared with it rather than registered from its own `~/.ssh/config`.
+   */
+  managedKey?: boolean;
 }

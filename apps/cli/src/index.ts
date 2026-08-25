@@ -56,6 +56,8 @@ import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
 import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
 import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
+import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd.js';
+import { setRemoteHostShareOffer } from '@agentbox/sandbox-remote-docker';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
@@ -132,6 +134,15 @@ installConfigWarningSink();
 setCredentialPublisher(async (providerId, fields) => {
   const { publishProviderCredentials } = await import('./control-plane/publish-credentials.js');
   await publishProviderCredentials(providerId, fields);
+});
+
+// Same seam for remote-docker hosts: registering one locally tells a control box
+// nothing (it cannot resolve this machine's ~/.ssh/config), so `remote-docker
+// add` and the install wizard offer to share it. Installed here because it needs
+// the hub client; lazy inner import for the same module-cycle reason.
+setRemoteHostShareOffer(async (alias) => {
+  const { offerShareAfterAdd } = await import('./control-plane/remote-docker-share.js');
+  await offerShareAfterAdd(alias);
 });
 
 // The hub lifecycle lives in `@agentbox/sandbox-core` (Step 12) so a docker-free
@@ -217,6 +228,9 @@ program.addCommand(hetznerCommand);
 program.addCommand(vercelCommand);
 program.addCommand(e2bCommand);
 program.addCommand(digitaloceanCommand);
+// The provider package owns the local registry commands; `share`/`unshare` need
+// the hub client, which lives here — so the CLI folds them into the same group.
+for (const sub of remoteDockerShareSubcommands) remoteDockerCommand.addCommand(sub);
 program.addCommand(remoteDockerCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);

@@ -17,6 +17,7 @@ import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox
 import { statusBadge, type CheckResult } from '@agentbox/sandbox-core';
 import { probeRemoteEngine } from './remote-docker.js';
 import { prepareRemoteDocker } from './prepare.js';
+import { offerHostShare } from './share-hook.js';
 import { readPreparedState, removePreparedHost } from './prepared-state.js';
 import {
   assertValidAlias,
@@ -33,9 +34,18 @@ export const remoteDockerCommand = new Command('remote-docker')
       .description('Register a host alias (name → SSH connection) for `--provider docker:<alias>`')
       .argument('<alias>', 'a short name for the host (letters, digits, `.`, `_`, `-`)')
       .argument('<ssh>', 'the SSH connection: `~/.ssh/config` alias or `[user@]host[:port]`')
-      .option('-d, --default', 'also set it as the default host (box.remoteDockerHost) for this project')
-      .option('-g, --global', 'set it as the default host, written to global config (implies --default)')
-      .option('-n, --no-bake', 'skip baking the box image on the host (it builds lazily on first create)')
+      .option(
+        '-d, --default',
+        'also set it as the default host (box.remoteDockerHost) for this project',
+      )
+      .option(
+        '-g, --global',
+        'set it as the default host, written to global config (implies --default)',
+      )
+      .option(
+        '-n, --no-bake',
+        'skip baking the box image on the host (it builds lazily on first create)',
+      )
       .action(
         async (
           alias: string,
@@ -68,6 +78,10 @@ export const remoteDockerCommand = new Command('remote-docker')
           s.stop(`${ssh}: docker ${res.version} (${res.os}/${res.arch})`);
           upsertHostAlias(alias, ssh);
           p.log.success(`registered '${alias}' → ${ssh}`);
+
+          // A control box cannot resolve this machine's ssh config, so a host is
+          // useless to it until it is shared. Ask now, while the user is here.
+          await offerHostShare(alias);
 
           if (opts.default || opts.global) {
             const scope = opts.global ? 'global' : 'project';
@@ -248,7 +262,10 @@ export const remoteDockerCommand = new Command('remote-docker')
   .addCommand(
     new Command('doctor')
       .description('Check whether a host can run boxes (ssh reachable + docker present)')
-      .argument('[host]', 'a registered alias OR a raw `[user@]host[:port]` (default: box.remoteDockerHost)')
+      .argument(
+        '[host]',
+        'a registered alias OR a raw `[user@]host[:port]` (default: box.remoteDockerHost)',
+      )
       .action(async (host?: string) => {
         const name = (host ?? (await configuredHost())).trim();
         if (!name) {

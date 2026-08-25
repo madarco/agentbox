@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseCheckpointCreate,
   parseCreateBox,
+  parseHostUpsert,
   parsePrune,
 } from '../app/(dashboard)/api/v1/lib/validate';
 
@@ -132,5 +133,72 @@ describe('parsePrune', () => {
   it('rejects wrong-typed fields', () => {
     expect(parsePrune({ all: 'yes' }).ok).toBe(false);
     expect(parsePrune({ provider: 3 }).ok).toBe(false);
+  });
+});
+
+describe('parseHostUpsert', () => {
+  it('accepts a plain alias + ssh string (a host registered on this machine)', () => {
+    const r = parseHostUpsert({ alias: 'buildbox', ssh: 'dev@10.0.0.9:2222' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value).toEqual({ alias: 'buildbox', ssh: 'dev@10.0.0.9:2222', default: undefined });
+  });
+
+  it('carries the sharer’s ssh -G expansion', () => {
+    const r = parseHostUpsert({
+      alias: 'engine',
+      ssh: 'buildbox',
+      connection: { host: '10.0.0.9', user: 'dev', port: 2222 },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.connection).toEqual({ host: '10.0.0.9', user: 'dev', port: 2222 });
+  });
+
+  it('rejects a connection.host that is itself an alias-shaped string', () => {
+    for (const host of ['dev@10.0.0.9', 'a b', 'x/y']) {
+      const r = parseHostUpsert({ alias: 'engine', ssh: 'x', connection: { host } });
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  // The key is useless without somewhere to point it: `ssh` may be an alias only
+  // the sending machine can resolve, so a key alone would authenticate nothing.
+  it('refuses an identity with no connection', () => {
+    const r = parseHostUpsert({
+      alias: 'engine',
+      ssh: 'buildbox',
+      identity: '-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toMatch(/requires connection/);
+  });
+
+  it('refuses something that is not a private key, and one that is absurdly large', () => {
+    const conn = { host: '10.0.0.9' };
+    expect(
+      parseHostUpsert({ alias: 'e', ssh: 'x', connection: conn, identity: 'hunter2' }).ok,
+    ).toBe(false);
+    expect(
+      parseHostUpsert({
+        alias: 'e',
+        ssh: 'x',
+        connection: conn,
+        identity: `-----BEGIN OPENSSH PRIVATE KEY-----${'A'.repeat(20000)}`,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('accepts a well-formed share', () => {
+    const r = parseHostUpsert({
+      alias: 'engine',
+      ssh: 'buildbox',
+      connection: { host: '10.0.0.9', user: 'dev' },
+      identity: '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----',
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.identity).toContain('PRIVATE KEY');
   });
 });
