@@ -176,6 +176,16 @@ export function cleanupContextCommand(remoteDir: string): string {
 }
 
 /**
+ * Distinguishes two builds started inside the same millisecond — `Date.now()`
+ * alone is not enough resolution for a fan-out that kicks several off at once.
+ */
+let contextSeq = 0;
+function nextContextSeq(): number {
+  contextSeq += 1;
+  return contextSeq;
+}
+
+/**
  * Stream the local build context to the remote engine and build it there.
  *
  * The tar is unpacked into a remote temp dir and built as a **directory**
@@ -192,10 +202,14 @@ async function buildOnRemote(
   opts: EnsureRemoteImageOptions,
 ): Promise<void> {
   const log = opts.onLog ?? ((): void => {});
-  const tarPath = join(tmpdir(), `agentbox-box-ctx-${String(process.pid)}.tar`);
-  // Unique per invocation so two concurrent builds against the same engine (two
-  // laptops, or a bake racing a create) can't unpack into each other's context.
-  const remoteDir = `/tmp/agentbox-box-ctx-${String(process.pid)}-${String(Date.now())}`;
+  // One token for both ends, unique per invocation: two concurrent builds (two
+  // laptops against one engine, or a bake racing a registry-miss create inside
+  // the hub worker) must neither unpack into each other's remote context nor
+  // share the local tar — the first to finish deletes it in its `finally` while
+  // the other is still streaming from it.
+  const token = `${String(process.pid)}-${String(Date.now())}-${String(nextContextSeq())}`;
+  const tarPath = join(tmpdir(), `agentbox-box-ctx-${token}.tar`);
+  const remoteDir = `/tmp/agentbox-box-ctx-${token}`;
   try {
     // COPYFILE_DISABLE stops macOS tar from emitting ._* AppleDouble entries,
     // which would land in the image as junk files.

@@ -91,6 +91,19 @@ async function removeAuthorizedKey(ssh: string, publicKey: string): Promise<bool
   return res?.exitCode === 0;
 }
 
+/**
+ * Undo {@link identityForHub}: drop the `agentbox-hub-<alias>` line from the
+ * engine and delete our copy of the key. Returns whether the engine line went.
+ */
+async function revokeMintedKey(alias: string, ssh: string): Promise<boolean> {
+  const publicKey = await readFile(join(hostKeyDir(alias), 'id_ed25519.pub'), 'utf8').catch(
+    () => null,
+  );
+  const revoked = publicKey ? await removeAuthorizedKey(ssh, publicKey) : false;
+  await rm(hostKeyDir(alias), { recursive: true, force: true });
+  return revoked;
+}
+
 /** The private key PEM to hand the hub, minting one for it unless told otherwise. */
 async function identityForHub(
   alias: string,
@@ -180,6 +193,11 @@ export async function shareHostWith(
     if (err instanceof HubApiError && /already exists/i.test(err.message)) {
       return { ok: true, skipped: true, message: `the control box already knows "${alias}"` };
     }
+    // Roll the grant back. A minted key left on disk is not inert: it is exactly
+    // what `locallySharedAliases` reads as "the control box has this engine", so
+    // a refused share would otherwise route every later create to a hub that
+    // does not know the alias. Best-effort on the engine, exact on our disk.
+    if (opts.useExistingKey !== true) await revokeMintedKey(alias, entry.ssh);
     return {
       ok: false,
       message: `the control box refused "${alias}": ${err instanceof Error ? err.message : String(err)}`,
@@ -207,11 +225,10 @@ export async function unshareHostFrom(alias: string, deps: ShareHostDeps): Promi
   // Revoke the grant, then forget the key. Order matters: the public half is
   // what identifies the line to remove.
   const entry = getHostAlias(alias);
-  const pubPath = join(hostKeyDir(alias), 'id_ed25519.pub');
-  const publicKey = await readFile(pubPath, 'utf8').catch(() => null);
-  let revoked = false;
-  if (entry && publicKey) revoked = await removeAuthorizedKey(entry.ssh, publicKey);
-  await rm(hostKeyDir(alias), { recursive: true, force: true });
+  const publicKey = await readFile(join(hostKeyDir(alias), 'id_ed25519.pub'), 'utf8').catch(
+    () => null,
+  );
+  const revoked = entry ? await revokeMintedKey(alias, entry.ssh) : false;
   const affected =
     boxesAffected && boxesAffected.length > 0
       ? ` (${String(boxesAffected.length)} box(es) created there are now unreachable from the hub)`
@@ -369,7 +386,9 @@ export async function hubCanRunEngine(
   if (providerName !== 'remote-docker' || !remoteHost) return false;
   // Fast path, no network: if THIS machine shared the engine, the control box
   // has it. Saves a round-trip on the common case and keeps the answer honest
-  // offline — the routing that follows re-checks and falls back if it is wrong.
+  // offline. It is load-bearing that a FAILED share leaves nothing behind
+  // (`shareHostWith` rolls the minted key back) — nothing downstream re-checks,
+  // so a stale key here would route creates to a hub that has no such alias.
   if ((await locallySharedAliases()).includes(remoteHost)) return true;
   return await controlBoxKnowsHost(remoteHost, effective);
 }
