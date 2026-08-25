@@ -57,7 +57,7 @@ import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
 import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
 import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
 import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd.js';
-import { setRemoteHostShareOffer } from '@agentbox/sandbox-remote-docker';
+import { setRemoteHostSharer } from '@agentbox/sandbox-remote-docker';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
@@ -138,11 +138,11 @@ setCredentialPublisher(async (providerId, fields) => {
 
 // Same seam for remote-docker hosts: registering one locally tells a control box
 // nothing (it cannot resolve this machine's ~/.ssh/config), so `remote-docker
-// add` and the install wizard offer to share it. Installed here because it needs
-// the hub client; lazy inner import for the same module-cycle reason.
-setRemoteHostShareOffer(async (alias) => {
-  const { offerShareAfterAdd } = await import('./control-plane/remote-docker-share.js');
-  await offerShareAfterAdd(alias);
+// add` and the install wizard hand it over. Installed here because it needs the
+// hub client; lazy inner import for the same module-cycle reason.
+setRemoteHostSharer(async (alias) => {
+  const { shareAfterAdd } = await import('./control-plane/remote-docker-share.js');
+  await shareAfterAdd(alias);
 });
 
 // The hub lifecycle lives in `@agentbox/sandbox-core` (Step 12) so a docker-free

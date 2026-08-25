@@ -131,9 +131,11 @@ That does three things:
 3. sends both to the control box, which probes ssh **and** docker with that key
    before saving. If it can't reach the engine, nothing is registered.
 
-`agentbox remote-docker add` offers to do this for you when a control box is
-configured, and a `hub setup` / `hub deploy` re-shares every host you had shared
-before — a rebuilt control box doesn't lose them.
+`agentbox remote-docker add` does this **automatically** when a control box is
+configured — a host only this laptop can reach is a half-registered host — and a
+`hub setup` / `hub deploy` re-shares every host you had shared before, so a
+rebuilt control box doesn't lose them. Pass `--no-share` to keep an engine to
+yourself; nothing is installed on it then.
 
 Once shared:
 

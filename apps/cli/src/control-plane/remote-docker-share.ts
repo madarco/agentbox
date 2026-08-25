@@ -23,7 +23,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { quoteShellArg } from '@agentbox/sandbox-cloud';
-import { confirm, log } from '../lib/prompt.js';
+import { log } from '../lib/prompt.js';
 import {
   mintSshKey,
   resolveSshConfigTarget,
@@ -242,55 +242,51 @@ export async function locallySharedAliases(): Promise<string[]> {
 }
 
 /**
- * Offer to share a just-registered host with the configured control box.
+ * Share a just-registered host with the configured control box, automatically.
  *
- * Interactive only, and deliberately a question rather than a reflex: unlike a
- * provider credential (which is already the hub's to hold), sharing MUTATES a
- * third machine — it installs a key in the engine's `authorized_keys`. A
- * non-TTY run just prints the command to run.
+ * Not a prompt: a host registered while a control box is configured but never
+ * handed to it is a half-configured host — it works from this laptop and
+ * silently nowhere else, which is exactly the confusion this whole feature
+ * exists to remove. `remote-docker add --no-share` opts out.
  *
- * Best-effort throughout: registering the host locally already succeeded, and
- * nothing here may turn that into a failure.
+ * It does mutate the engine (one `authorized_keys` line, tagged
+ * `agentbox-hub-<alias>`), so it says so rather than doing it quietly.
+ *
+ * Best-effort throughout: the host IS registered locally by the time this runs,
+ * and nothing here may turn that into a failure.
  */
-export async function offerShareAfterAdd(alias: string): Promise<void> {
+export async function shareAfterAdd(alias: string): Promise<void> {
   // control-plane.js is lazy (it sits in a module cycle with hub.js); the prompt
   // module is NOT — a dynamic import of it makes esbuild give up on the
   // `export * from '@clack/prompts'` re-export and the bundle fails to build.
-  const { localExposedLoopbackUrl, resolveHubApiClient } = await import(
-    '../commands/control-plane.js'
-  );
+  const { localExposedLoopbackUrl, resolveHubApiClient } =
+    await import('../commands/control-plane.js');
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   const url = cfg?.effective.relay.controlPlaneUrl;
   if (!url) return;
   // A control box that IS this machine already reads this registry.
   if ((await localExposedLoopbackUrl().catch(() => null)) !== null) return;
 
-  if (!process.stdin.isTTY) {
-    log.info(
-      `Your control box does not know "${alias}" — share it with \`agentbox remote-docker share ${alias}\`.`,
-    );
-    return;
-  }
-  const yes = await confirm({
-    message: `Let your control box (${url}) run boxes on "${alias}" too? It mints a key for the hub and installs it on the host.`,
-    initialValue: true,
-  });
-  if (!yes) {
-    log.info(
-      `Not shared. Change your mind with \`agentbox remote-docker share ${alias}\`.`,
-    );
-    return;
-  }
   const client = await resolveHubApiClient(undefined, { quiet: true });
   if (!client) {
     log.warn(
-      `No control-box API key here, so "${alias}" was not shared. Run \`agentbox remote-docker share ${alias}\` from the machine that ran \`agentbox hub setup\`.`,
+      `Your control box (${url}) does not know "${alias}" — no API key here to tell it. Run \`agentbox remote-docker share ${alias}\` from the machine that ran \`agentbox hub setup\`.`,
     );
     return;
   }
+  log.info(`sharing "${alias}" with your control box (${url})…`);
   const outcome = await shareHostWith(alias, { client });
-  if (outcome.ok) log.success(outcome.message);
-  else log.warn(outcome.message);
+  if (outcome.ok) {
+    log.success(
+      outcome.skipped
+        ? outcome.message
+        : `${outcome.message} — it authorizes a key named \`agentbox-hub-${alias}\` on the host; \`agentbox remote-docker unshare ${alias}\` takes it back`,
+    );
+  } else {
+    log.warn(
+      `${outcome.message}\nThe host is registered here, so \`agentbox docker:${alias} …\` still works from this machine. Retry the hand-off with \`agentbox remote-docker share ${alias}\`.`,
+    );
+  }
 }
 
 /**

@@ -28,11 +28,13 @@ CLI, not the raw commits.
 
 ### Added
 
-- **Remote-docker boxes can run on your control box.** `agentbox remote-docker
-  share <alias>` gives the control box a connection and a key of its own for one
-  of your engines (your key never leaves this machine), after which creates and
-  bakes for it are built there — so the box outlives your laptop. `unshare`
-  revokes it. See https://agent-box.sh/docs/remote-docker.
+- **Remote-docker boxes can run on your control box.** With one configured,
+  `agentbox remote-docker add` now hands the engine over automatically: the
+  control box gets a connection and a key of its own for it (your key never
+  leaves this machine), after which creates and bakes for that host are built
+  there — so the box outlives your laptop. `--no-share` opts out,
+  `agentbox remote-docker share/unshare <alias>` do it after the fact. See
+  https://agent-box.sh/docs/remote-docker.
 - **`docker:hub` — your control box's own Docker.** Setting up a control box
   registers its engine as the host `hub` and, when your default was still plain
   `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`

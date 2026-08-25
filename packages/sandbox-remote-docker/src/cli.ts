@@ -17,7 +17,7 @@ import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox
 import { statusBadge, type CheckResult } from '@agentbox/sandbox-core';
 import { probeRemoteEngine } from './remote-docker.js';
 import { prepareRemoteDocker } from './prepare.js';
-import { offerHostShare } from './share-hook.js';
+import { shareRegisteredHost } from './share-hook.js';
 import { readPreparedState, removePreparedHost } from './prepared-state.js';
 import {
   assertValidAlias,
@@ -46,11 +46,15 @@ export const remoteDockerCommand = new Command('remote-docker')
         '-n, --no-bake',
         'skip baking the box image on the host (it builds lazily on first create)',
       )
+      .option(
+        '--no-share',
+        "don't hand this host to the configured control box (no key is installed on it)",
+      )
       .action(
         async (
           alias: string,
           ssh: string,
-          opts: { default?: boolean; global?: boolean; bake?: boolean },
+          opts: { default?: boolean; global?: boolean; bake?: boolean; share?: boolean },
         ) => {
           try {
             assertValidAlias(alias);
@@ -80,8 +84,10 @@ export const remoteDockerCommand = new Command('remote-docker')
           p.log.success(`registered '${alias}' → ${ssh}`);
 
           // A control box cannot resolve this machine's ssh config, so a host is
-          // useless to it until it is shared. Ask now, while the user is here.
-          await offerHostShare(alias);
+          // useless to it until it is shared — and a half-registered host that
+          // silently only works from this laptop is the worse outcome. Do it now;
+          // `--no-share` opts out.
+          if (opts.share !== false) await shareRegisteredHost(alias);
 
           if (opts.default || opts.global) {
             const scope = opts.global ? 'global' : 'project';
