@@ -111,6 +111,67 @@ agentbox checkpoint create my-box --name setup --set-default
   Checkpoints don't follow you between machines.
 </Callout>
 
+## Share a host with your control box
+
+With a [control box](/docs/deployed-hub) configured, your laptop stops being the
+machine that runs boxes — which is the point, but an engine registered here means
+nothing there: the alias resolves through _your_ `~/.ssh/config`, and the hub has
+neither that config nor your ssh agent.
+
+```bash
+agentbox remote-docker share buildbox
+```
+
+That does three things:
+
+1. expands the alias with `ssh -G` into a real host / user / port,
+2. **mints a dedicated key for the hub** and installs its public half in the
+   engine's `~/.ssh/authorized_keys` (over the access you already have — your own
+   key never leaves this machine), and
+3. sends both to the control box, which probes ssh **and** docker with that key
+   before saving. If it can't reach the engine, nothing is registered.
+
+`agentbox remote-docker add` offers to do this for you when a control box is
+configured, and a `hub setup` / `hub deploy` re-shares every host you had shared
+before — a rebuilt control box doesn't lose them.
+
+Once shared:
+
+- `agentbox docker:buildbox claude` is **built by the control box** (it clones the
+  repo itself), so the box keeps running with your laptop closed.
+- `agentbox prepare --provider docker:buildbox` bakes from there too.
+- The engine shows up in the hub's web UI create picker as `Docker (buildbox)`.
+
+`agentbox remote-docker unshare buildbox` reverses it: the control box forgets the
+host and the key it was given is removed from the engine's `authorized_keys`.
+
+<Callout type="warn">
+  The control box dials the engine **directly**, so it has to be reachable from the internet (or
+  over a VPN both share) — a laptop behind NAT is not. The one engine that always works is your
+  control box's own: see `docker:hub` below.
+</Callout>
+
+## `docker:hub` — your control box's own engine
+
+A control box runs docker; that is what the hub itself runs on. Setup registers
+that engine as the host **`hub`** on both sides, so:
+
+```bash
+agentbox docker:hub claude          # a box on the control box's own docker
+```
+
+and — because a control box otherwise leaves you with no docker-shaped provider
+at all — if your default was still plain `docker`, setup moves it:
+
+```
+box.provider: docker:hub
+```
+
+Plain `agentbox create` then keeps making the same kind of box, on a machine that
+stays on. Pin something else any time with `agentbox config set box.provider
+
+<name>`; `agentbox hub destroy` puts it back to `docker`.
+
 ## Good to know
 
 - **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
@@ -118,7 +179,7 @@ agentbox checkpoint create my-box --name setup --set-default
 - **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
 - **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
-- **Host aliases are per machine — they do not propagate to a [control box](/docs/deployed-hub).** `agentbox docker add` writes `~/.agentbox/remote-docker-hosts.json` on the machine you ran it on, and nothing syncs it. That matters for **bakes**: with a control box configured, `agentbox prepare --provider docker:<alias>` runs there — the image lands on your remote host, which both machines reach — but only if the control box has that alias registered itself. Register it separately (its Settings → Remote Docker, or `POST /api/v1/hosts`), and authorize the control box's SSH key on the host, since it connects **as itself**, not as you. Until then the bake simply stays on your machine with a notice. Creates are unaffected either way: they always run from your machine over your own `~/.ssh/config`.
+- **Host aliases are per machine until you share them.** `agentbox remote-docker add` writes `~/.agentbox/remote-docker-hosts.json` on the machine you ran it on. A [control box](/docs/deployed-hub) has neither that file nor your `~/.ssh/config`, so it knows nothing about your engines until you run `agentbox remote-docker share <alias>` — see below.
 
 ## Configuration
 
@@ -137,6 +198,8 @@ agentbox remote-docker update <alias> <ssh>  # re-point an alias (existing boxes
 agentbox remote-docker list                  # your host aliases (alias: ls)
 agentbox remote-docker doctor [alias]        # is this host usable? (ssh + docker)
 agentbox remote-docker remove <alias>        # forget an alias (+ default + bake record; asks to confirm, -y to skip; alias: rm)
+agentbox remote-docker share <alias>         # let your control box run boxes here (--use-existing-key)
+agentbox remote-docker unshare <alias>       # take that back, and revoke the key it was given
 agentbox prepare --provider docker:<host>
 agentbox prune --provider remote-docker   # reap containers with no local record
 ```

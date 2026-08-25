@@ -3,7 +3,7 @@ title: Herdr
 description: AgentBox in Herdr — boxes appear as normal agents, Herdr handles needs-input natively, AgentBox approval prompts get their own highlight, and boxes open as Herdr splits/tabs/workspaces
 ---
 
-[Herdr](https://herdr.dev) is a terminal multiplexer with a local JSON-RPC socket API. When you run AgentBox inside Herdr, a box behaves like a *normal* agent pane:
+[Herdr](https://herdr.dev) is a terminal multiplexer with a local JSON-RPC socket API. When you run AgentBox inside Herdr, a box behaves like a _normal_ agent pane:
 
 - the box agent (Claude / Codex / OpenCode) shows up with Herdr's native agent treatment — working / blocked / idle
 - Herdr's own **needs-input** handling fires when the agent asks a question, because AgentBox reports the state transparently
@@ -30,9 +30,9 @@ While you're attached to a box inside Herdr, AgentBox reports the agent's live a
 Because the box reports as a normal agent, **Herdr handles needs-input itself** from the `blocked` state — its usual badge / notification, the same as a local agent. On detach the pane resets to idle. This is controlled by [`attach.herdrStatus`](/docs/configuration) (default `true`); set it to `false` to turn it off. It's a no-op outside Herdr.
 
 <Callout title="Why this is the inverse of the cmux integration">
-  cmux won't draw its agent pill for a box (it sees a container process), so AgentBox there drives the
-  workspace colour by hand. Herdr has a first-class agent model and an open socket, so AgentBox simply
-  reports the state and lets Herdr do the rest — including needs-input.
+  cmux won't draw its agent pill for a box (it sees a container process), so AgentBox there drives
+  the workspace colour by hand. Herdr has a first-class agent model and an open socket, so AgentBox
+  simply reports the state and lets Herdr do the rest — including needs-input.
 </Callout>
 
 ## A highlight for AgentBox's own prompts
@@ -44,10 +44,10 @@ Some prompts don't come from the agent at all — they come from AgentBox's **ho
 The [`attach.openIn`](/docs/configuration) config key (CLI flag `--attach-in`) decides where an attached session lands. **Under Herdr the default is a new tab** (a split pane is cramped for an attached agent), but you can pick any mode:
 
 | Mode              | What happens                                               |
-| ----------------- | --------------------------------------------------------- |
-| `tab` _(default)_ | New tab in the current workspace (`tab.create`)           |
-| `split`           | New split beside the current pane (`pane.split`)          |
-| `window`          | Separate Herdr workspace (`workspace.create`)             |
+| ----------------- | ---------------------------------------------------------- |
+| `tab` _(default)_ | New tab in the current workspace (`tab.create`)            |
+| `split`           | New split beside the current pane (`pane.split`)           |
+| `window`          | Separate Herdr workspace (`workspace.create`)              |
 | `same`            | Inline in the current pane (no spawn) — same as `--inline` |
 
 The global default is `split` (for tmux/cmux/iTerm2); Herdr overrides it to `tab` only when you haven't set `attach.openIn` yourself. Setting it explicitly — globally or per run — is always honored:
@@ -95,10 +95,10 @@ Both produce the same plugin. Plugin commands route through a small `agentbox-sh
 
 Under Herdr's prefix (default `Ctrl+b`):
 
-| Keys | What it does |
-| --- | --- |
-| `prefix a` | Open the **boxes overlay** — a live list of *all* your boxes (`agentbox list --herdr --watch`), grouped by project. |
-| `prefix shift a` | **New box** — open `agentbox` in a new Herdr tab for the current project. |
+| Keys             | What it does                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `prefix a`       | Open the **boxes overlay** — a live list of _all_ your boxes (`agentbox list --herdr --watch`), grouped by project. |
+| `prefix shift a` | **New box** — open `agentbox` in a new Herdr tab for the current project.                                           |
 
 The overlay lists every box (global), including paused/background ones. To open it from anywhere, just press `prefix a` again — it works from any workspace.
 
@@ -113,7 +113,7 @@ In the overlay, each box name is a link. **Ctrl+click** it to open the box's web
 
 ### Boxes in the native sidebar (no plugin needed)
 
-Herdr's own sidebar has an **agent panel**. Set its scope to **all** (`agent_panel_scope = "all"` in `~/.config/herdr/config.toml`, or toggle it in the sidebar) and every box you're *attached to* shows up there globally — across all workspaces — because AgentBox already reports each box as an agent (see above). That's the most "always visible" view of active boxes.
+Herdr's own sidebar has an **agent panel**. Set its scope to **all** (`agent_panel_scope = "all"` in `~/.config/herdr/config.toml`, or toggle it in the sidebar) and every box you're _attached to_ shows up there globally — across all workspaces — because AgentBox already reports each box as an agent (see above). That's the most "always visible" view of active boxes.
 
 <Callout title="Why an overlay, not a pinned sidebar panel">
   Herdr v1 plugins can't add panels to the sidebar or menus — plugin panes are only terminal panes

@@ -198,16 +198,16 @@ Two mechanisms do that, and both key off the same `base.contextSha256`:
   `parseProviderPrepare` doesn't carry them.
 
   The bake-side predicate is `isHubBakeableProvider`, **not**
-  `isHubRoutableProvider` — they answer different questions and differ on
-  **remote-docker**. Its creates can't go to the hub (they run over your
-  own `~/.ssh/config`), but its base is an image on a *third* machine
-  both sides reach, and readiness is read off that engine rather than a
-  local file — so the control box can bake it via
-  `POST /api/v1/hosts/:alias/bake` and there is nothing to sync back.
-  Gated at runtime on the control box having that alias in its own
-  registry (`GET /api/v1/hosts`); it SSHes there as itself, so your local
-  alias list says nothing about whether it can. Only plain `docker` is
-  never hub-bakeable.
+  `isHubRoutableProvider` — they answer different questions, and both
+  turn on the same runtime fact for **remote-docker**: whether the
+  control box has that alias in its OWN registry (`GET /api/v1/hosts`,
+  via `controlBoxKnowsHost`). It SSHes there as itself, so your local
+  alias list says nothing about whether it can — which is what
+  `agentbox remote-docker share <alias>` exists to change. Once shared,
+  BOTH its bakes and its creates go to the control box; until then both
+  stay on this machine, with a reason printed. Only plain `docker` is
+  never hub-bakeable or hub-routable: it bind-mounts a checkout that
+  exists only here.
 
   **Known gap:** the alias registry is per machine and nothing propagates
   it — every writer (`upsertHostAlias`, from `docker add` / `host-setup`

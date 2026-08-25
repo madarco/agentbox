@@ -258,15 +258,18 @@ The control box's resident worker provisions boxes with **your provider credenti
 
 ## What runs where — and what the control box can drive
 
-A provider can be driven **by the control box** only if its credential is a **portable secret** the box can hold. Cloud API tokens qualify; a host bind-mount (local docker) and your SSH identity (remote-docker) don't.
+A provider can be driven **by the control box** only if it can reach the machine the box runs on. A cloud API token is a portable secret it can hold; a host bind-mount (local docker) is not, and your `~/.ssh/config` is not — but a remote-docker engine can be **shared** with it, which mints a key of its own for exactly this.
 
-| Command                                           | Where the box runs                                      | Control box role                                                                                       |
-| ------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `agentbox claude` (docker, default)               | **Your PC's Docker**                                    | none — never a control-box target                                                                      |
-| `agentbox docker:<host> …` (remote-docker)        | **Your** remote machine, over **your** SSH from your PC | git-push custodian only; **can't** be built on the control box (your SSH isn't a portable secret)      |
-| `agentbox <cloud> …` (e2b/daytona/hetzner/vercel) | The cloud provider                                      | full custody — registers automatically; **built on the control box by default** when one is configured |
+| Command                                           | Where the box runs               | Control box role                                                                                        |
+| ------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `agentbox claude` (docker, default)               | **Your PC's Docker**             | none — never a control-box target                                                                       |
+| `agentbox docker:<host> …` (remote-docker)        | **Your** remote machine          | **built there** once the host is shared (`agentbox remote-docker share <host>`); otherwise from your PC |
+| `agentbox docker:hub …`                           | The control box's **own** Docker | full custody — registered by setup, and the default when your default was plain docker                  |
+| `agentbox <cloud> …` (e2b/daytona/hetzner/vercel) | The cloud provider               | full custody — registers automatically; **built on the control box by default** when one is configured  |
 
-So running `agentbox claude` in a folder always runs on **your PC's Docker** — a control box changes nothing. `remote-docker` connects to your own machine over your `~/.ssh/config`, which the control box has no access to, so it's always built from your PC. **Cloud** providers, by contrast, are built **on the control box by default** once one is configured (see below).
+A control box **turns local docker boxes off** on your machine (one built on your laptop dies with your laptop), so setup gives you a docker-shaped box that doesn't: it registers the control box's own Docker engine as the host `hub` and, if your default was still plain `docker`, sets `box.provider: docker:hub`. Plain `agentbox create` then keeps making the same kind of box, on the always-on machine. `agentbox hub destroy` puts the default back.
+
+Your **own** remote machines can join the same model: `agentbox remote-docker share <alias>` gives the control box a connection and a key for that engine (see [Remote Docker](/docs/remote-docker)), after which those creates are built there too. **Cloud** providers are built on the control box by default once one is configured (see below).
 
 ## Inspect custody and build state
 

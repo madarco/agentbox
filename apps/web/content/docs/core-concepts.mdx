@@ -15,7 +15,11 @@ Six ideas cover how it works. Each section below explains one, with links to the
 details.
 
 {/* DIAGRAM /diagrams/core-concepts.png — generated with the nano-banana-pro skill (Gemini 3 Pro Image), home-page diagram as a style reference. Recipe in apps/web/images.md → Phase D. */}
-<Figure src="/diagrams/core-concepts.png" caption="One isolated box per agent run. Your credentials and git stay on the host; boxes call back through the relay." />
+
+<Figure
+  src="/diagrams/core-concepts.png"
+  caption="One isolated box per agent run. Your credentials and git stay on the host; boxes call back through the relay."
+/>
 
 ## A full computer per agent — and it can't break your machine
 
@@ -34,8 +38,8 @@ command the agent runs. The worst an agent can do is break its own box, which
 you delete and recreate.
 
 <Callout title="WHY">
-Auto-approve is safe here. The agent can't reach your files, keys, or network,
-so it runs without stopping to ask for permission.
+  Auto-approve is safe here. The agent can't reach your files, keys, or network, so it runs without
+  stopping to ask for permission.
 </Callout>
 
 The box keeps everything it built until you `destroy` it; `stop` and `pause`
@@ -59,8 +63,8 @@ CPU while their memory stays in place. `unpause` resumes in under a second, and
 editors and language servers continue where they left off.
 
 <Callout title="TIP">
-Detach with `Ctrl+a d` and start more boxes. Reattach to any of them; switching
-pauses the box you leave and resumes the one you open.
+  Detach with `Ctrl+a d` and start more boxes. Reattach to any of them; switching pauses the box you
+  leave and resumes the one you open.
 </Callout>
 
 Per-agent detail and auth: [Run an agent](/docs/run-an-agent). Many boxes and
@@ -90,12 +94,12 @@ provider. This helps when a build is too heavy for your laptop, a teammate needs
 to attach, or you want a URL you can share. The cloud providers give each box a
 public HTTPS URL for its dev server.
 
-| Provider | Where the box lives | Reach for it when |
-| --- | --- | --- |
-| `docker` (default) | Local Docker container | Fast, free, and fully local. The best default. |
-| `hetzner` | A Hetzner VPS, one per box | You want a real VM you control: root, full kernel, your region. |
-| `daytona` | A managed Daytona sandbox | The work outgrows the laptop or a teammate needs to attach. |
-| `vercel` | A Firecracker microVM | Fast snapshots, public URLs, free pause/resume. No in-box Docker. |
+| Provider           | Where the box lives        | Reach for it when                                                 |
+| ------------------ | -------------------------- | ----------------------------------------------------------------- |
+| `docker` (default) | Local Docker container     | Fast, free, and fully local. The best default.                    |
+| `hetzner`          | A Hetzner VPS, one per box | You want a real VM you control: root, full kernel, your region.   |
+| `daytona`          | A managed Daytona sandbox  | The work outgrows the laptop or a teammate needs to attach.       |
+| `vercel`           | A Firecracker microVM      | Fast snapshots, public URLs, free pause/resume. No in-box Docker. |
 
 ```bash
 agentbox claude --provider hetzner     # run this agent on a Hetzner VPS
@@ -139,7 +143,7 @@ and returns the output.
 
 Anything that writes to your remotes — a `git push` or a pull request the agent
 initiates — **pauses for your explicit approval on the host**. A prompt appears
-in your attached session; it defaults to *no*, so nothing reaches your remotes
+in your attached session; it defaults to _no_, so nothing reaches your remotes
 unless you say yes.
 
 ```console
@@ -149,9 +153,8 @@ $ git push   # the box's git shim routes this through the relay (or: agentbox-ct
 ```
 
 <Callout title="WHY">
-The safety model: the agent runs unsupervised inside an isolated box, and every
-push to a remote runs on your machine, as you, only when you allow it. No secrets
-enter the box.
+  The safety model: the agent runs unsupervised inside an isolated box, and every push to a remote
+  runs on your machine, as you, only when you allow it. No secrets enter the box.
 </Callout>
 
 Push, pull, PRs, and approvals: [Sync &amp; git](/docs/sync-and-git).

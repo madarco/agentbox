@@ -103,9 +103,9 @@ The largest group. A pattern runs through it: a generic key plus per-provider ov
 
 ### Provider
 
-| Key            | Type                                                                            | Default  | Meaning                          |
-| -------------- | ------------------------------------------------------------------------------- | -------- | -------------------------------- |
-| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker` | `docker` | backend new boxes are created on |
+| Key            | Type                                                                                                               | Default  | Meaning                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ | -------- | -------------------------------- |
+| `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker`, or a `docker:<alias>` engine spec | `docker` | backend new boxes are created on |
 
 This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
 
@@ -115,6 +115,17 @@ agentbox config set box.provider hetzner             # this project only
 ```
 
 A per-run `--provider docker` (or the `agentbox docker claude` prefix) still overrides it.
+
+It also accepts a **host-qualified engine spec** — `docker:<alias>` — naming a
+registered [Remote Docker](/docs/remote-docker) host rather than a provider:
+
+```bash
+agentbox config set box.provider docker:hub --global      # your control box's own engine
+agentbox config set box.provider docker:buildbox          # a machine of yours
+```
+
+Setting up a [control box](/docs/deployed-hub) does the first one for you when your
+default was still plain `docker`, since a control box turns local docker boxes off.
 
 See [local Docker](/docs/local-docker), [Remote Docker](/docs/remote-docker), [Hetzner](/docs/hetzner), [Daytona](/docs/daytona), [Vercel](/docs/vercel), and [core concepts](/docs/core-concepts).
 

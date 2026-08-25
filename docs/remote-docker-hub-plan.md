@@ -1,6 +1,7 @@
 # Remote-docker through the control box — implementation plan
 
 > Working doc. One session per phase; tick the boxes as they land.
+> Phases 1-6 landed on `feat/remote-docker-via-hub`; 7-8 are the remainder.
 > Companion to [`cloud-providers.md`](./cloud-providers.md) §3e (the remote-docker
 > shape) and [`hub-testing.md`](./hub-testing.md) (how to exercise a control box).
 
@@ -45,35 +46,56 @@ spec; `hub expose` / `set-url` are covered too.
 
 ## Phases
 
-- [ ] **1. Unbreak the remote build on docker 29** (prerequisite). `buildOnRemote`
+- [x] **1. Unbreak the remote build on docker 29** (prerequisite). `buildOnRemote`
       streams a tar to `docker build -` *with* `-f Dockerfile.box`; docker 29 is
       buildx-only and rejects that pairing (`ambiguous Dockerfile source`). Unpack the
       streamed tar into a remote temp dir and build from a **directory context**, as
       the local docker provider already does.
-- [ ] **2. A registry entry another machine can dial.** Extend `RemoteHostEntry` with
+- [x] **2. A registry entry another machine can dial.** Extend `RemoteHostEntry` with
       an optional resolved connection (`{host,user?,port?,identityFile?,knownHosts?}`),
       thread it through both ssh chokepoints (`dialTarget`/`ensureTunnel`/`tunnels.open`
       and `sshTargetFor`/`sshOptArgs`), emit `IdentitiesOnly=yes` with an explicit key,
       and add an `ssh -G` resolver so the PC can expand a local alias into something the
       hub can dial.
-- [ ] **3. Share the hosts with the control box.** Mirror the provider-credential RPC
+- [x] **3. Share the hosts with the control box.** Mirror the provider-credential RPC
       (`POST /api/v1/providers/:id/credentials`): extend `POST /api/v1/hosts` to carry
       the resolved connection + an identity, mint a dedicated per-host keypair on the PC
       and install its public half on the target, add `remote-docker share|unshare`, and
       re-assert from `finalizeControlBoxState`.
-- [ ] **4. The hub can create a remote-docker box.** Clone path accepts `docker:<alias>`
+- [x] **4. The hub can create a remote-docker box.** Clone path accepts `docker:<alias>`
       (bare `docker` still refused); hub worker resolves the spec and passes
       `providerOptions.remoteHost`; the web-UI picker and OpenAPI follow.
-- [ ] **5. The PC routes a remote-docker create to the control box** when the box knows
+- [x] **5. The PC routes a remote-docker create to the control box** when the box knows
       the alias (reusing `prepare`'s `controlBoxKnowsHost` probe), and stops hiding a
       remote-docker host the control box can run.
-- [ ] **6. `hub` — the control box's own engine, and the new default.** Deploy mints a
+- [x] **6. `hub` — the control box's own engine, and the new default.** Deploy mints a
       self-key and seeds the hub's registry; the PC registers `hub`; `box.provider` is
       widened to accept a `docker:<alias>` spec and flipped to `docker:hub`; a
       co-located hub stops hiding local docker.
 - [ ] **7. Bake routing polish.** `remote-docker add` should bake through the hub for a
       shared host; `preparePrecheck` should probe the aliased engine.
 - [ ] **8. Docs, backlog, tests.**
+
+## Verified live (2026-08-25, control box on Hetzner, docker 29.7.2)
+
+- Forced `--build` bake on the control box's engine: passes with the temp-dir
+  context (it failed outright before, and again on a bare `-f Dockerfile.box`
+  until the path was made absolute — buildx resolves `--file` against the
+  client's cwd).
+- Deploy registers `hub` on the VPS; the hub container reaches
+  `host.docker.internal` and reads `docker version` there.
+- `hub set-url` registers `hub` on the PC and moves `box.provider` to
+  `docker:hub`.
+- `agentbox create` from the PC with that default → built by the control box,
+  container running on its engine, box registered as `remote-docker` with
+  `sandboxId: hub/agentbox-<name>`.
+- `POST /api/v1/boxes {provider: "docker:hub"}` (what the web UI sends) → same
+  result; `GET /providers?hosts=expand` lists `Docker (hub)`.
+- In-box `agentbox-ctl git push` reaches the hub relay, which leases a token and
+  pushes from a scratch repo (`git.push: no host checkout … using a scratch
+  repo`). It got to GitHub and was declined only by the test repo's own LFS
+  pre-receive hook; a second attempt on a big repo hit the pre-existing
+  shallow-clone/bundle limitation (see the backlog).
 
 ## Verification
 

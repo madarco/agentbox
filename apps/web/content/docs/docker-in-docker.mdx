@@ -21,7 +21,9 @@ agentbox shell mybox -- bash -lc 'cd /workspace && docker compose up -d'
 The inner daemon never touches your host Docker daemon. Use [`agentbox shell`](/docs/access-your-box) to drive it, let an [agent](/docs/run-an-agent) use it directly, or prefer the supervisor for long-lived processes — see [services-and-tasks](/docs/services-and-tasks) for Compose vs the supervisor.
 
 <Callout title="WHY">
-AgentBox never runs the outer container with `--privileged`. It grants only the capabilities DinD needs, which is exactly why the same setup works on cloud providers that reject privileged containers.
+  AgentBox never runs the outer container with `--privileged`. It grants only the capabilities DinD
+  needs, which is exactly why the same setup works on cloud providers that reject privileged
+  containers.
 </Callout>
 
 ## Storage driver
@@ -35,7 +37,10 @@ agentbox shell mybox -- docker info --format '{{.Driver}}'
 That prints `overlay2` on most hosts, but the result is host-dependent.
 
 <Callout type="warn" title="HEADS UP">
-Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably Docker Desktop's 6.x linuxkit kernel), where inner `docker run` fails at `execve()`. AgentBox auto-selects `overlay2` whenever the kernel supports it for exactly this reason. The host engine matters here — see [local-docker](/docs/local-docker).
+  Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably Docker Desktop's 6.x
+  linuxkit kernel), where inner `docker run` fails at `execve()`. AgentBox auto-selects `overlay2`
+  whenever the kernel supports it for exactly this reason. The host engine matters here — see
+  [local-docker](/docs/local-docker).
 </Callout>
 
 ## Shared build cache
@@ -43,7 +48,14 @@ Don't try to force `fuse-overlayfs` — it's broken on recent kernels (notably D
 By default the data root `/var/lib/docker` is a per-box named volume, `agentbox-docker-<id>`, wiped on `agentbox destroy` — a clean slate per box.
 
 <Callout type="warn" title="HEADS UP">
-This volume is **not** captured by [checkpoints](/docs/checkpoints-and-pausing). A checkpoint is a `docker commit` of the writable layer (`/workspace` + system); the inner `dockerd`'s storage lives outside it. So a database or cache you run as a **container** starts **empty on every new box** created from a checkpoint — even though `/workspace` and any marker files were restored. It *does* survive `stop`/`start` (same volume), but not a fresh box. Gate migrate/seed tasks on the actual data (query the DB for a sentinel row), not on a filesystem marker — see [services & tasks](/docs/services-and-tasks). To persist the data itself, run the DB as a native process with its data dir on the box filesystem, or bind a `/workspace` path in as the container's data volume.
+  This volume is **not** captured by [checkpoints](/docs/checkpoints-and-pausing). A checkpoint is a
+  `docker commit` of the writable layer (`/workspace` + system); the inner `dockerd`'s storage lives
+  outside it. So a database or cache you run as a **container** starts **empty on every new box**
+  created from a checkpoint — even though `/workspace` and any marker files were restored. It *does*
+  survive `stop`/`start` (same volume), but not a fresh box. Gate migrate/seed tasks on the actual
+  data (query the DB for a sentinel row), not on a filesystem marker — see [services &
+  tasks](/docs/services-and-tasks). To persist the data itself, run the DB as a native process with
+  its data dir on the box filesystem, or bind a `/workspace` path in as the container's data volume.
 </Callout>
 
 To make pulled image layers and build cache persist across boxes, opt into the shared cache. This swaps to the shared `agentbox-docker-cache` volume, which is preserved on `destroy` and allowlisted in `prune --all`.
@@ -57,7 +69,9 @@ agentbox config set box.dockerCacheShared true --global
 `box.dockerCacheShared` works in any config layer — see [configuration](/docs/configuration) for precedence and [CLI commands](/docs/cli) for all flags.
 
 <Callout type="warn" title="HEADS UP">
-The shared cache is mutually exclusive at runtime: only one box can mount `agentbox-docker-cache` at a time. It's great for serial workflows but will conflict if you run boxes in [parallel](/docs/background-and-parallel).
+  The shared cache is mutually exclusive at runtime: only one box can mount `agentbox-docker-cache`
+  at a time. It's great for serial workflows but will conflict if you run boxes in
+  [parallel](/docs/background-and-parallel).
 </Callout>
 
 ## Cloud parity & limits
@@ -68,18 +82,19 @@ The shared cache is mutually exclusive at runtime: only one box can mount `agent
 The compose + buildx plugins land in the base at bake time. If you prepared a hetzner/vercel/e2b base before they were added, re-run `agentbox prepare --provider <name>` to pick them up (docker-provider boxes get them with the next image pull/build automatically).
 </Callout>
 
-| Provider | DinD |
-|----------|------|
-| docker (default) | Yes — per-box volume; `--shared-docker-cache` available |
-| daytona | Yes — auto-launched; no shared-cache option |
-| hetzner | Yes — runs inside the VPS, baked into the prepare snapshot |
-| vercel | Yes — baked into the prepare snapshot; auto-launched on create/resume |
-| e2b | Yes — baked into the prepare template; auto-launched on create/resume |
+| Provider         | DinD                                                                  |
+| ---------------- | --------------------------------------------------------------------- |
+| docker (default) | Yes — per-box volume; `--shared-docker-cache` available               |
+| daytona          | Yes — auto-launched; no shared-cache option                           |
+| hetzner          | Yes — runs inside the VPS, baked into the prepare snapshot            |
+| vercel           | Yes — baked into the prepare snapshot; auto-launched on create/resume |
+| e2b              | Yes — baked into the prepare template; auto-launched on create/resume |
 
 ```bash
 agentbox shell <cloud-box> -- docker info
 ```
 
 <Callout title="NOTE">
-`--shared-docker-cache` is a docker-provider feature only. Every other provider (daytona, hetzner, vercel, e2b) still gets a working in-box `docker` — just without the shared-cache volume.
+  `--shared-docker-cache` is a docker-provider feature only. Every other provider (daytona, hetzner,
+  vercel, e2b) still gets a working in-box `docker` — just without the shared-cache volume.
 </Callout>

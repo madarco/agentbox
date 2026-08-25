@@ -24,7 +24,8 @@ agentbox install
 `agentbox install` is the interactive wizard. Verify your host is ready with `agentbox doctor`.
 
 <Callout title="TIP">
-On macOS, OrbStack is recommended — it's lighter than Docker Desktop and enables per-box `.orb.local` web URLs and Portless integration with no extra setup.
+  On macOS, OrbStack is recommended — it's lighter than Docker Desktop and enables per-box
+  `.orb.local` web URLs and Portless integration with no extra setup.
 </Callout>
 
 Installation basics are also covered in [teleport-a-project](/docs/teleport-a-project); override the engine with `engine.kind` in [configuration](/docs/configuration).
@@ -60,7 +61,9 @@ agentbox unpause 1
 ```
 
 <Callout title="TIP">
-Switching agents? Just attach to another box — AgentBox pauses the one you leave and unpauses the one you enter. See [background-and-parallel](/docs/background-and-parallel) and [access-your-box](/docs/access-your-box).
+  Switching agents? Just attach to another box — AgentBox pauses the one you leave and unpauses the
+  one you enter. See [background-and-parallel](/docs/background-and-parallel) and
+  [access-your-box](/docs/access-your-box).
 </Callout>
 
 ## Shared docker cache
@@ -72,7 +75,8 @@ agentbox claude --shared-docker-cache
 ```
 
 <Callout type="warn" title="HEADS UP">
-With `--shared-docker-cache`, only one box may run at a time — the shared volume can't be safely mounted by concurrent boxes.
+  With `--shared-docker-cache`, only one box may run at a time — the shared volume can't be safely
+  mounted by concurrent boxes.
 </Callout>
 
 In-box docker details live in [docker-in-docker](/docs/docker-in-docker).
@@ -95,12 +99,12 @@ The bind-mounted host `.git/` means commits land on the host immediately; pushes
 
 ## Specs
 
-| Spec | |
-| --- | --- |
-| Base image | `agentbox/box:dev` (Debian-based) |
-| Build method | Pulled from GHCR by build-context fingerprint; built locally on a pull miss (`--build` forces) |
-| Docker-in-Docker | Yes (always-on in-box `dockerd`) |
-| SSH | Always-on sshd, published on `127.0.0.1` only (powers `agentbox open` sshfs + Codex); attach still uses Docker exec + TTY bridge |
-| Arch | Host-native (arm64 on Apple Silicon, amd64 on Intel/Linux) |
-| Live snapshots | Instant `docker pause`/`unpause` (cgroup freezer); checkpoints are layered `docker commit` |
-| Preview URL | `https://<box-name>.localhost` (Portless) + mapped loopback ports |
+| Spec             |                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Base image       | `agentbox/box:dev` (Debian-based)                                                                                                |
+| Build method     | Pulled from GHCR by build-context fingerprint; built locally on a pull miss (`--build` forces)                                   |
+| Docker-in-Docker | Yes (always-on in-box `dockerd`)                                                                                                 |
+| SSH              | Always-on sshd, published on `127.0.0.1` only (powers `agentbox open` sshfs + Codex); attach still uses Docker exec + TTY bridge |
+| Arch             | Host-native (arm64 on Apple Silicon, amd64 on Intel/Linux)                                                                       |
+| Live snapshots   | Instant `docker pause`/`unpause` (cgroup freezer); checkpoints are layered `docker commit`                                       |
+| Preview URL      | `https://<box-name>.localhost` (Portless) + mapped loopback ports                                                                |

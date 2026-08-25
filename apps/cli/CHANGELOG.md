@@ -15,11 +15,12 @@ CLI, not the raw commits.
 
 - **Docker boxes are gated off when a control box is configured.** A docker box
   built on your laptop can't run with the laptop closed — the whole point of a
-  control box — so `create`, the agent launchers and `prepare` refuse
-  `docker` / `docker:<host>` there, `doctor` and the install picker drop those
-  rows, and `ls` marks existing docker boxes inactive (they stay destroyable by
-  name). New `hub.mode` config key (`auto` | `thin` | `local`) — set `local` to
-  keep using docker anyway. With no control box configured, nothing changes.
+  control box — so `create`, the agent launchers and `prepare` refuse `docker`
+  there, `doctor` and the install picker drop those rows, and `ls` marks existing
+  docker boxes inactive (they stay destroyable by name). New `hub.mode` config key
+  (`auto` | `thin` | `local`) — set `local` to keep using docker anyway. Not gated:
+  a `docker:<host>` engine the control box can run, and a control box that IS this
+  machine (`hub expose`). With no control box configured, nothing changes.
 - **`--dangerously-with-credentials` (`git.pushMode=direct`) is refused when a
   control box is configured.** Token leasing (`git.pushMode=auto`) already gives
   a box laptop-off push without copying a git credential into it — and into every
@@ -27,6 +28,16 @@ CLI, not the raw commits.
 
 ### Added
 
+- **Remote-docker boxes can run on your control box.** `agentbox remote-docker
+  share <alias>` gives the control box a connection and a key of its own for one
+  of your engines (your key never leaves this machine), after which creates and
+  bakes for it are built there — so the box outlives your laptop. `unshare`
+  revokes it. See https://agent-box.sh/docs/remote-docker.
+- **`docker:hub` — your control box's own Docker.** Setting up a control box
+  registers its engine as the host `hub` and, when your default was still plain
+  `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`
+  keeps making a docker-shaped box, on a machine that stays on. `box.provider` now
+  accepts any `docker:<alias>` engine spec.
 - `agentbox install portless` sets Portless up for good: it installs the CLI if
   missing and registers Portless's own OS startup service, so the proxy serving
   `https://<box>.localhost` is back after a reboot instead of staying down until
@@ -165,6 +176,12 @@ CLI, not the raw commits.
   `status`.
 
 ### Fixed
+
+- **Remote Docker builds work on Docker 29.** The box image was streamed to
+  `docker build -` alongside `-f`, which Docker 29's buildx rejects outright
+  ("ambiguous Dockerfile source") — that broke every bake and every registry-miss
+  create on a current engine. It now stages the context in a temp dir on the
+  remote and builds from there.
 
 - **`carry:` files are owned by the box user on every provider.** They were
   chowned to a hardcoded uid 1000, which is `vscode` on docker/hetzner/
