@@ -141,6 +141,10 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **`agentbox app` now starts the menu-bar app** instead of only reporting
+  whether it is running. It is idempotent, `agentbox app status` still reports
+  (`--json` moved with it), and the not-installed hint now names the command
+  that exists (`agentbox install app`).
 - **`agentbox hub` opens your control box when one is configured**, instead of
   starting a second, empty hub on this machine. `agentbox hub start --local`
   forces the local one; `hub stop`/`hub restart` still act on it, and an exposed

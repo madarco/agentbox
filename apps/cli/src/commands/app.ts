@@ -1,5 +1,6 @@
 /**
  * `agentbox app` — start / stop / restart / status for the AgentBox macOS menu-bar app.
+ * Bare `agentbox app` starts it.
  *
  * Drives the running process directly (`open` / `pkill` / `pgrep`) without touching the installed
  * bundle — the lightweight lifecycle control the tray otherwise lacks (only `agentbox install app`
@@ -40,7 +41,7 @@ function ensureMac(): boolean {
 /** True only when the bundle is present; guard `start`/`restart` and point at the installer. */
 function ensureInstalled(): boolean {
   if (existsSync(APP_PATH)) return true;
-  log.error(`${APP_PATH} is not installed. Run \`agentbox install tray\` first.`);
+  log.error(`${APP_PATH} is not installed. Run \`agentbox install app\` first.`);
   process.exitCode = 1;
   return false;
 }
@@ -161,7 +162,7 @@ const statusSub = new Command('status')
   });
 
 const startSub = new Command('start')
-  .description('Launch the AgentBox app if it is not already running')
+  .description('Launch the AgentBox app if it is not already running (the default)')
   .action(async () => {
     if (!ensureMac()) return;
     intro('Starting AgentBox…');
@@ -324,9 +325,15 @@ async function writeBugReportBundle(outPath: string, last: string): Promise<void
 }
 
 export const appCommand = new Command('app')
-  .description('Control the AgentBox menu-bar app (status / start / stop / restart / log)')
-  .addCommand(statusSub, { isDefault: true })
-  .addCommand(startSub)
+  .description(
+    'Control the AgentBox menu-bar app — bare `agentbox app` starts it (status / start / stop / restart / log)',
+  )
+  // `start` is the default, mirroring `agentbox hub`: the bare command DOES the
+  // thing. It is idempotent (already-running is an `Already running` no-op), so
+  // it is a safe default in a way `status` was merely a useless one — reporting
+  // "installed but not running" while leaving the app not running.
+  .addCommand(startSub, { isDefault: true })
+  .addCommand(statusSub)
   .addCommand(stopSub)
   .addCommand(restartSub)
   .addCommand(logSub);
