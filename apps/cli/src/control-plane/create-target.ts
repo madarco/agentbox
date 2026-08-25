@@ -6,7 +6,8 @@
  *
  *   - **local** — a co-located hub builds from the local workspace (file queue).
  *     Send `projectId`; no seed push (the worker reads the local tree directly).
- *     docker / remote-docker / no control box / `cloud.viaHub=false` / `--local`.
+ *     docker / an unshared remote-docker engine / no control box /
+ *     `cloud.viaHub=false` / `--local`.
  *   - **remote** — a control box clones the repo VPS-side (control-plane queue).
  *     Send `repoUrl`; **push the project seed first** so `.env`/untracked files a
  *     fresh clone can't provide reach the box. cloud + control box + `cloud.viaHub`
@@ -17,7 +18,6 @@
  * a surfaced reason) rather than failing.
  */
 import type { EffectiveConfig } from '@agentbox/config';
-import { isHubRoutableProvider } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
   adminCustodySink,
@@ -27,11 +27,14 @@ import {
   readGitOriginUrl,
   type CarrySeedSource,
 } from '@agentbox/sandbox-cloud';
+import { hubCanRunEngine, unsharedHostReason } from './remote-docker-share.js';
 import { remoteHubConfigured } from './remote-hub.js';
 
 export interface CreateTargetInput {
   /** Bare provider name (post `parseProviderSpec`). */
   providerName: string;
+  /** remote-docker only: the engine alias the spec named. */
+  remoteHost?: string;
   effective: EffectiveConfig;
   /** Absolute project root — the repo whose `origin` the control box clones. */
   projectRoot: string;
@@ -50,21 +53,24 @@ export type CreateTarget =
   | { where: 'error'; message: string };
 
 export async function resolveCreateTarget(input: CreateTargetInput): Promise<CreateTarget> {
-  const { providerName, effective, projectRoot, forceHub, forceLocal, urlFlag } = input;
+  const { providerName, remoteHost, effective, projectRoot, forceHub, forceLocal, urlFlag } = input;
   if (forceLocal) return { where: 'local' };
 
-  // docker / remote-docker always build locally — a docker box bind-mounts / a
-  // remote-docker box is driven over YOUR ssh config, neither of which a control
-  // box can do. `--via-hub` for them is a naming mistake worth surfacing.
-  if (!isHubRoutableProvider(providerName)) {
+  // A bare docker box bind-mounts this machine's checkout, so it can only ever be
+  // built here. A remote-docker box can go either way: the control box can build
+  // it iff that engine has been SHARED with it (`agentbox remote-docker share`),
+  // since otherwise the alias resolves only through the user's own ssh config.
+  if (!(await hubCanRunEngine(providerName, remoteHost, effective))) {
     if (forceHub) {
       const msg =
         providerName === 'remote-docker'
-          ? '--via-hub cannot run a remote-docker box: it connects to your remote host over your own ~/.ssh/config, which the control box has no access to. Run `agentbox docker:<host> …` from this machine instead.'
+          ? `--via-hub cannot run this remote-docker box: the control box has no \`${remoteHost ?? '<host>'}\` engine registered. Share it with \`agentbox remote-docker share ${remoteHost ?? '<alias>'}\`, or run \`agentbox docker:${remoteHost ?? '<host>'} …\` from this machine.`
           : '--via-hub needs a cloud provider (a docker box runs on this machine). Try --provider hetzner|e2b|vercel|daytona.';
       return { where: 'error', message: msg };
     }
-    return { where: 'local' };
+    return providerName === 'remote-docker' && remoteHubConfigured(effective)
+      ? { where: 'local', fellBackReason: unsharedHostReason(remoteHost) }
+      : { where: 'local' };
   }
 
   if (!forceHub) {

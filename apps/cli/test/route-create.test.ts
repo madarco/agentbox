@@ -42,10 +42,24 @@ describe('resolveCreateRouting — gating (no IO branches)', () => {
     expect(r).toEqual({ where: 'local' });
   });
 
-  it('remote-docker never routes to the hub (the control box cannot reach it)', async () => {
+  // A remote-docker create names an ENGINE; with no alias there is nothing the
+  // control box could be asked to reach, so it stays local and says why. (The
+  // shared-engine case does IO — the live smoke covers it.)
+  it('remote-docker with no engine alias stays local, with a reason', async () => {
     const r = await resolveCreateRouting({
       providerName: 'remote-docker',
       effective: cfg('https://hub.example', true),
+      projectRoot: ROOT,
+    });
+    expect(r.where).toBe('local');
+    expect(r.where === 'local' && r.fellBackReason).toMatch(/no remote-docker host/);
+  });
+
+  it('cloud.viaHub=false keeps a remote-docker engine local without probing', async () => {
+    const r = await resolveCreateRouting({
+      providerName: 'remote-docker',
+      remoteHost: 'buildbox',
+      effective: cfg('https://hub.example', false),
       projectRoot: ROOT,
     });
     expect(r).toEqual({ where: 'local' });

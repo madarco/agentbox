@@ -21,6 +21,7 @@ import {
   resolveDefaultCheckpoint,
   setConfigValue,
   unregisterProject,
+  parseProviderSpec,
   unsetConfigValue,
   type ProviderKind,
 } from '@agentbox/config';
@@ -2141,9 +2142,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // A host-qualified `docker:<alias>` / `remote-docker:<alias>` spec targets a
         // registered remote-docker host — validate the alias (the worker parses the
         // spec out of providerName). Bare names take the configured-provider gate.
-        const hostSpec = provider.match(/^(?:docker|remote-docker):(.+)$/);
-        if (hostSpec) {
-          const alias = hostSpec[1];
+        const spec = parseProviderSpec(provider);
+        if (spec.remoteHost) {
+          const alias = spec.remoteHost;
           const rd = await import('@agentbox/sandbox-remote-docker');
           if (!rd.getHostAlias(alias)) {
             return {

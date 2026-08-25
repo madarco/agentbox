@@ -33,6 +33,12 @@ export {
   perProviderConfigKey,
   type ProviderMeta,
 } from './providers.js';
+export {
+  parseProviderSpec,
+  providerNameOf,
+  REMOTE_DOCKER,
+  type ProviderSpec,
+} from './provider-spec.js';
 
 export {
   coerceFromString,
@@ -65,10 +71,7 @@ export {
   type LoadEffectiveConfigOptions,
 } from './load.js';
 
-export {
-  defaultCheckpointConfigKey,
-  resolveDefaultCheckpoint,
-} from './checkpoint.js';
+export { defaultCheckpointConfigKey, resolveDefaultCheckpoint } from './checkpoint.js';
 
 export { resolveBoxSize } from './size.js';
 
@@ -81,10 +84,7 @@ export {
   type DaytonaSandboxClass,
 } from './daytona.js';
 
-export {
-  boxImageConfigKey,
-  resolveBoxImage,
-} from './image.js';
+export { boxImageConfigKey, resolveBoxImage } from './image.js';
 
 export { withFileLock } from './file-lock.js';
 

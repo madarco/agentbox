@@ -70,9 +70,23 @@ export async function withHubJobLine<T>(
   }
 }
 
+/**
+ * What to put in the hub's `provider` field. A remote-docker create must name its
+ * ENGINE — the hub keys its own host registry by alias — so it goes over the wire
+ * as `docker:<alias>`, the same spec the CLI accepts.
+ */
+function hubProviderSpec(providerName: string, remoteHost: string | undefined): string {
+  return providerName === 'remote-docker' && remoteHost ? `docker:${remoteHost}` : providerName;
+}
+
 export interface CloudAgentViaHubArgs {
   /** Bare provider name (post `parseProviderSpec`). */
   providerName: string;
+  /**
+   * remote-docker only: the engine alias. The hub is sent `docker:<alias>`, not
+   * the bare name — a bare `remote-docker` there would name no engine at all.
+   */
+  remoteHost?: string;
   /** Absolute project root — its `origin` is what the hub worker clones. */
   projectRoot: string;
   /** Agent this box is for; rides the registration so an adopt relaunches it. */
@@ -131,8 +145,18 @@ export function hubLogSink(
 export async function createCloudBoxViaHubAndAdopt(
   args: CloudAgentViaHubArgs,
 ): Promise<BoxRecord | null> {
-  const { providerName, projectRoot, agent, name, fromBranch, urlFlag, carry, onStatus, onLog } =
-    args;
+  const {
+    providerName,
+    remoteHost,
+    projectRoot,
+    agent,
+    name,
+    fromBranch,
+    urlFlag,
+    carry,
+    onStatus,
+    onLog,
+  } = args;
   // Both the `/api/v1` client (createBox) and the admin custody target (seed push
   // + SSH-key pull) must be present — a fully-configured control box has both. If
   // either is missing the box isn't hub-buildable from here, so fall back to local.
@@ -159,7 +183,7 @@ export async function createCloudBoxViaHubAndAdopt(
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({
     repoUrl,
-    provider: providerName,
+    provider: hubProviderSpec(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,
@@ -236,6 +260,7 @@ export async function enqueueAgentJobViaHub(
 ): Promise<AgentJobViaHubResult | null> {
   const {
     providerName,
+    remoteHost,
     projectRoot,
     agent,
     name,
@@ -268,7 +293,7 @@ export async function enqueueAgentJobViaHub(
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({
     repoUrl,
-    provider: providerName,
+    provider: hubProviderSpec(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,

@@ -50,13 +50,21 @@ describe('controlPlaneCreateRequest', () => {
     expect(m.request).toEqual({ repoUrl: REPO, provider: 'e2b' });
   });
 
-  it('rejects docker — it needs the host folder a control box does not have', () => {
-    for (const provider of ['docker', 'docker:workshop']) {
-      const m = controlPlaneCreateRequest({ provider }, REPO);
-      expect(m.ok).toBe(false);
-      if (m.ok) return;
-      expect(m.error).toMatch(/local checkout/);
-    }
+  it('rejects bare docker — it needs the host folder a control box does not have', () => {
+    const m = controlPlaneCreateRequest({ provider: 'docker' }, REPO);
+    expect(m.ok).toBe(false);
+    if (m.ok) return;
+    expect(m.error).toMatch(/local checkout/);
+  });
+
+  // `docker:<alias>` is remote-docker: it bind-mounts nothing and seeds the box
+  // from a bundle over SSH, exactly like a cloud provider, so the clone path is
+  // how a control box SHOULD build it.
+  it('accepts a docker:<alias> engine spec and passes it through verbatim', () => {
+    const m = controlPlaneCreateRequest({ provider: 'docker:workshop', agent: 'none' }, REPO);
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request).toEqual({ repoUrl: REPO, provider: 'docker:workshop' });
   });
 
   it('drops a whitespace-only name, branch and prompt rather than sending them', () => {

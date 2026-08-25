@@ -317,3 +317,68 @@ export async function syncSharedHosts(
     onLog(outcome.message);
   }
 }
+
+/** Bound on every control-box probe: this runs inside interactive create paths. */
+const CONTROL_BOX_STATUS_MS = 5000;
+
+/**
+ * Whether the configured control box has `alias` registered — i.e. whether it
+ * can SSH to that engine as itself.
+ *
+ * The one question that decides both halves of the feature: `prepare` uses it to
+ * pick which hub bakes, and `create` uses it to decide whether the box can be
+ * built on the control box at all. Best-effort by design: an unreachable control
+ * box answers "no", and the caller falls back to this machine — which still
+ * reaches the same engine, just with the laptop in the loop.
+ */
+export async function controlBoxKnowsHost(
+  alias: string | undefined,
+  effective: { relay?: { controlPlaneUrl?: string } },
+): Promise<boolean> {
+  if (!alias || !effective.relay?.controlPlaneUrl) return false;
+  const [{ resolveHubApiTarget }, { HubApiClient }, { deadlineFetch, hostReachable }] =
+    await Promise.all([
+      import('../commands/control-plane.js'),
+      import('./hub-api-client.js'),
+      import('@agentbox/sandbox-cloud'),
+    ]);
+  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return false;
+  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) return false;
+  const client = new HubApiClient({
+    ...target,
+    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+  });
+  const hosts = await client.listHosts().catch(() => null);
+  return !!hosts?.some((h) => h.alias === alias);
+}
+
+/**
+ * Can the control box build this create itself?
+ *
+ * True for the real clouds, as before. Also true for a `docker:<alias>` engine
+ * the control box has REGISTERED: a remote-docker box bind-mounts nothing and is
+ * seeded over SSH, so the only question was ever "can the hub reach that
+ * machine" — and a shared host is exactly the answer being yes.
+ */
+export async function hubCanRunEngine(
+  providerName: string,
+  remoteHost: string | undefined,
+  effective: { relay?: { controlPlaneUrl?: string } },
+): Promise<boolean> {
+  const { isHubRoutableProvider } = await import('@agentbox/config');
+  if (isHubRoutableProvider(providerName)) return true;
+  if (providerName !== 'remote-docker' || !remoteHost) return false;
+  // Fast path, no network: if THIS machine shared the engine, the control box
+  // has it. Saves a round-trip on the common case and keeps the answer honest
+  // offline — the routing that follows re-checks and falls back if it is wrong.
+  if ((await locallySharedAliases()).includes(remoteHost)) return true;
+  return await controlBoxKnowsHost(remoteHost, effective);
+}
+
+/** Why a remote-docker create stayed local, in words the user can act on. */
+export function unsharedHostReason(remoteHost: string | undefined): string {
+  return remoteHost
+    ? `the control box has no \`${remoteHost}\` host registered — building from this machine (share it with \`agentbox remote-docker share ${remoteHost}\`)`
+    : 'no remote-docker host to hand the control box';
+}

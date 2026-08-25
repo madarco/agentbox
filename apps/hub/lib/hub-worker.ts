@@ -16,7 +16,7 @@ import { readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { isProviderKind, loadEffectiveConfig } from '@agentbox/config';
+import { isProviderKind, loadEffectiveConfig, parseProviderSpec } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -295,8 +295,20 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       opts: createOpts,
       onLog,
     }) => {
-      if (!isProviderKind(provider)) throw new Error(`unknown provider ${provider}`);
-      const mod = (await IMPORTERS[provider]()).providerModule;
+      // A `docker:<alias>` / `remote-docker:<alias>` request names an engine, not
+      // a provider: the provider is remote-docker and the alias is threaded to it
+      // as a provider option (the CLI does the same, via buildProviderOptions).
+      const { name: providerName, remoteHost } = parseProviderSpec(provider);
+      if (!isProviderKind(providerName)) throw new Error(`unknown provider ${provider}`);
+      if (remoteHost) {
+        const rd = await import('@agentbox/sandbox-remote-docker');
+        if (!rd.getHostAlias(remoteHost)) {
+          throw new Error(
+            `unknown remote-docker host '${remoteHost}' on this hub — share it from the machine that owns it (\`agentbox remote-docker share ${remoteHost}\`)`,
+          );
+        }
+      }
+      const mod = (await IMPORTERS[providerName]()).providerModule;
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.
@@ -307,7 +319,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       const claudeInstall =
         (await loadEffectiveConfig(workspacePath).catch(() => null))?.effective.box.claudeInstall ??
         'native';
-      await hydratePreparedFromCustody(custody, provider, mod.provider, claudeInstall, log);
+      await hydratePreparedFromCustody(custody, providerName, mod.provider, claudeInstall, log);
       // `workspacePath` is the per-job clone deleted on the way out, so leaving
       // the provider to derive a default name from it produces
       // `agentbox-hub-worker-<uuid>-<id>` — a box named after a directory that no
@@ -346,10 +358,17 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.credentialSync !== undefined
           ? { credentialSync: createOpts.credentialSync }
           : {}),
-        ...(extraInboundCidrs ? { providerOptions: { extraInboundCidrs } } : {}),
+        ...(extraInboundCidrs || remoteHost
+          ? {
+              providerOptions: {
+                ...(extraInboundCidrs ? { extraInboundCidrs } : {}),
+                ...(remoteHost ? { remoteHost } : {}),
+              },
+            }
+          : {}),
         onLog,
       });
-      await mirrorBoxSshToCustody(custody, provider, created.record.cloud?.sandboxId, log);
+      await mirrorBoxSshToCustody(custody, providerName, created.record.cloud?.sandboxId, log);
 
       // Background `-i`: a seed prompt means run the agent fully on the control
       // box (create + start detached), so the laptop can be off from submit on.

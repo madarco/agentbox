@@ -22,7 +22,7 @@
  */
 
 import { intro, log, spinner } from '@clack/prompts';
-import { loadEffectiveConfig, unsetConfigValue, type EffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, unsetConfigValue } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
   SHARED_CLAUDE_VOLUME,
@@ -38,12 +38,9 @@ import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
+import { controlBoxKnowsHost } from '../control-plane/remote-docker-share.js';
 import { bakeViaHub } from '../control-plane/hub-prepare.js';
-import {
-  isDockerProvider,
-  dockerProvidersHidden,
-  dockerHiddenMessage,
-} from '../control-plane/remote-hub.js';
+import { dockerProviderRefusal } from '../control-plane/remote-hub.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import {
   localExposedLoopbackUrl,
@@ -391,29 +388,6 @@ async function hubIsCoLocated(): Promise<boolean> {
 }
 
 /**
- * Whether a configured control box has a remote-docker host alias registered (so
- * it can SSH to it as itself). The bake would otherwise 404 on
- * `POST /api/v1/hosts/:alias/bake` — but the LOCAL hub, running on this machine,
- * DOES know the alias, so the caller routes there instead. Read from the control
- * box's `GET /api/v1/hosts`, best-effort (unreachable → treat as unknown).
- */
-async function controlBoxKnowsHost(
-  alias: string | undefined,
-  effective: EffectiveConfig,
-): Promise<boolean> {
-  if (!alias || !effective.relay.controlPlaneUrl) return false;
-  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
-  if (!target) return false;
-  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) return false;
-  const client = new HubApiClient({
-    ...target,
-    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
-  });
-  const hosts = await client.listHosts().catch(() => null);
-  return !!hosts?.some((h) => h.alias === alias);
-}
-
-/**
  * Pure decision: does a bake target the LOCAL hub (`local: true`) or the remote
  * control box (`false`)? This is target selection only — the bake always runs
  * through the same `POST /api/v1/providers/:id/prepare` (or `/hosts/:alias/bake`)
@@ -634,9 +608,12 @@ export async function runPrepare(
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
   // Docker off under a remote hub (Step 12): don't bake a local docker/remote-docker
   // image when a control box owns the fleet. `local` mode (or no cfg) keeps it on.
-  if (cfg && isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
-    log.error(dockerHiddenMessage(cfg.effective, 'prepare'));
-    process.exit(1);
+  if (cfg) {
+    const refusal = await dockerProviderRefusal(cfg.effective, providerName, remoteHost, 'prepare');
+    if (refusal) {
+      log.error(refusal);
+      process.exit(1);
+    }
   }
   // Bake-time Claude install method: CLI flag wins over the config key. The
   // remaining bake INPUTS (`build` / `size` / `location` / `name`) are passed

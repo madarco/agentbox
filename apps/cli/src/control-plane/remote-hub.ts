@@ -58,6 +58,7 @@ export function dockerHiddenReason(effective: EffectiveConfig): string {
 export function dockerHiddenMessage(
   effective: EffectiveConfig,
   context: 'create' | 'prepare' | 'setup',
+  remoteHost?: string,
 ): string {
   const reason = dockerHiddenReason(effective);
   const lead =
@@ -66,5 +67,56 @@ export function dockerHiddenMessage(
       : context === 'prepare'
         ? `docker images are not baked on this machine because ${reason}.`
         : `docker is unavailable on this machine because ${reason}.`;
-  return `${lead} Set \`hub.mode=local\` (\`agentbox config set hub.mode local\`) to use docker here anyway.`;
+  // For a remote-docker engine the better answer is almost never "turn the gate
+  // off" — it is "let the control box drive that engine", which makes the box
+  // laptop-independent instead of merely allowed.
+  const fix = remoteHost
+    ? `Share the engine with the control box (\`agentbox remote-docker share ${remoteHost}\`) so it runs there, or set \`hub.mode=local\` to build from this machine anyway.`
+    : 'Set `hub.mode=local` (`agentbox config set hub.mode local`) to use docker here anyway.';
+  return `${lead} ${fix}`;
+}
+
+/**
+ * True when the configured control box IS this machine (`agentbox hub expose`).
+ *
+ * The docker gate exists because a box built here dies with the laptop — which
+ * is not true when the laptop is the always-on machine. Without this, exposing
+ * your own hub (or pointing `set-url` at it) switched local docker off for no
+ * reason at all. Reads only the deploy record, so it is offline and cheap.
+ */
+export async function controlBoxIsThisMachine(): Promise<boolean> {
+  try {
+    const [{ readFile }, { controlPlaneDeployPath }] = await Promise.all([
+      import('node:fs/promises'),
+      import('@agentbox/sandbox-core'),
+    ]);
+    const raw = await readFile(controlPlaneDeployPath(), 'utf8');
+    return (JSON.parse(raw) as { provider?: string }).provider === 'local';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The message to print when a docker-family create/bake must be refused here, or
+ * null when it may proceed. The one place the exceptions live:
+ *
+ *   - a control box that is this machine — its engine IS this engine;
+ *   - a `docker:<alias>` engine the control box can reach, which the caller then
+ *     routes there (the box outlives the laptop, so the gate's premise is void).
+ */
+export async function dockerProviderRefusal(
+  effective: EffectiveConfig,
+  providerName: string,
+  remoteHost: string | undefined,
+  context: 'create' | 'prepare' | 'setup',
+): Promise<string | null> {
+  if (!isDockerProvider(providerName)) return null;
+  if (!dockerProvidersHidden(effective)) return null;
+  if (await controlBoxIsThisMachine()) return null;
+  if (providerName === 'remote-docker') {
+    const { hubCanRunEngine } = await import('./remote-docker-share.js');
+    if (await hubCanRunEngine(providerName, remoteHost, effective)) return null;
+  }
+  return dockerHiddenMessage(effective, context, remoteHost);
 }

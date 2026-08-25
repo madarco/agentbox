@@ -44,9 +44,13 @@ export type ControlPlaneCreateMapping =
  * A docker box bind-mounts a host folder, so it can only ever be built where that
  * folder is. On a control box there is no such folder — the request is a mistake
  * worth naming rather than a clone to attempt.
+ *
+ * BARE `docker` only. A `docker:<alias>` spec is remote-docker, which bind-mounts
+ * nothing: it seeds the box from a git bundle over SSH exactly like the cloud
+ * providers, so the clone path is precisely how it should be built here.
  */
 function isDocker(provider: string): boolean {
-  return provider === 'docker' || provider.startsWith('docker:');
+  return provider === 'docker';
 }
 
 export function controlPlaneCreateRequest(
@@ -57,7 +61,8 @@ export function controlPlaneCreateRequest(
   if (isDocker(provider)) {
     return {
       ok: false,
-      error: 'docker boxes need a local checkout — pick a cloud provider for a hub-created box',
+      error:
+        'docker boxes need a local checkout — pick a cloud provider, or a `docker:<host>` engine this hub can reach',
     };
   }
   const noAgent = input.agent === 'none';

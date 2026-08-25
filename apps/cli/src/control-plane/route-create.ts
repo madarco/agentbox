@@ -1,12 +1,14 @@
 import type { EffectiveConfig } from '@agentbox/config';
-import { isHubRoutableProvider } from '@agentbox/config';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
+import { hubCanRunEngine, unsharedHostReason } from './remote-docker-share.js';
 import { remoteHubConfigured } from './remote-hub.js';
 
 export interface CreateRoutingInput {
   /** Bare provider name (e.g. `e2b`, `docker`), post `parseProviderSpec`. */
   providerName: string;
+  /** remote-docker only: the engine alias the spec named. */
+  remoteHost?: string;
   effective: EffectiveConfig;
   /** Absolute project root — the repo whose `origin` the hub worker clones. */
   projectRoot: string;
@@ -27,8 +29,9 @@ export type CreateRouting =
 /**
  * Decide whether a cloud create runs on the remote hub (the control box) or on
  * this machine. When a control box is configured, cloud creates default to the
- * hub (so the box keeps running with the laptop off); docker / remote-docker
- * always stay local, and `--local` / `cloud.viaHub=false` force local.
+ * hub (so the box keeps running with the laptop off); docker always stays local,
+ * as does a remote-docker engine the control box has not been given access to,
+ * and `--local` / `cloud.viaHub=false` force local.
  *
  * An explicit `--via-hub` returns `hub` unconditionally — the caller
  * (`runCreateViaHub`) validates the prerequisites and hard-fails on a missing
@@ -37,12 +40,18 @@ export type CreateRouting =
  * a git `origin` to clone and a control-box admin token — aren't present.
  */
 export async function resolveCreateRouting(input: CreateRoutingInput): Promise<CreateRouting> {
-  const { providerName, effective, projectRoot, forceHub, forceLocal, urlFlag } = input;
+  const { providerName, remoteHost, effective, projectRoot, forceHub, forceLocal, urlFlag } = input;
   if (forceLocal) return { where: 'local' };
   if (forceHub) return { where: 'hub' };
-  if (!isHubRoutableProvider(providerName)) return { where: 'local' };
+  // Cheap, local answers first: the engine check below can cost a round-trip to
+  // the control box, and there is no point paying it when no hub is in play.
   if (!remoteHubConfigured(effective)) return { where: 'local' };
   if (!effective.cloud.viaHub) return { where: 'local' };
+  if (!(await hubCanRunEngine(providerName, remoteHost, effective))) {
+    return providerName === 'remote-docker'
+      ? { where: 'local', fellBackReason: unsharedHostReason(remoteHost) }
+      : { where: 'local' };
+  }
 
   const origin = await readGitOriginUrl(projectRoot).catch(() => undefined);
   if (!origin)

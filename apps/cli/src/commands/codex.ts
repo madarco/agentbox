@@ -69,12 +69,7 @@ import {
   withHubJobLine,
 } from './_cloud-agent-via-hub.js';
 import { resolveCreateRouting } from '../control-plane/route-create.js';
-import {
-  remoteHubConfigured,
-  isDockerProvider,
-  dockerProvidersHidden,
-  dockerHiddenMessage,
-} from '../control-plane/remote-hub.js';
+import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
@@ -552,8 +547,14 @@ export const codexCommand = new Command('codex')
 
     // Docker off under a remote hub (Step 12): a docker box built here can't run
     // with the laptop off, so it's refused under a control box unless hub.mode=local.
-    if (isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
-      log.error(dockerHiddenMessage(cfg.effective, 'create'));
+    const dockerRefusal = await dockerProviderRefusal(
+      cfg.effective,
+      providerName,
+      remoteHost,
+      'create',
+    );
+    if (dockerRefusal) {
+      log.error(dockerRefusal);
       cmdLog.close();
       process.exit(1);
     }
@@ -615,6 +616,7 @@ export const codexCommand = new Command('codex')
       // creds aren't needed for the hub path (custody seeds them).
       const iRouting = await resolveCreateRouting({
         providerName,
+        remoteHost,
         effective: cfg.effective,
         projectRoot,
         forceHub: opts.viaHub,
@@ -636,6 +638,7 @@ export const codexCommand = new Command('codex')
           (onStatus) =>
             enqueueAgentJobViaHub({
               providerName,
+              remoteHost,
               projectRoot,
               agent: 'codex',
               carry: carryForHub,
@@ -771,6 +774,7 @@ export const codexCommand = new Command('codex')
       // create time, which the worker path can't do, so they stay local.
       const routing = await resolveCreateRouting({
         providerName,
+        remoteHost,
         effective: cfg.effective,
         projectRoot,
         forceHub: opts.viaHub,
@@ -791,6 +795,7 @@ export const codexCommand = new Command('codex')
           (onStatus) =>
             createCloudBoxViaHubAndAdopt({
               providerName,
+              remoteHost,
               projectRoot,
               agent: 'codex',
               // The gate above already resolved + approved these; the hub path

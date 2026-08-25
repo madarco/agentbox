@@ -40,12 +40,7 @@ import {
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient } from '../control-plane/with-hub.js';
-import {
-  remoteHubConfigured,
-  isDockerProvider,
-  dockerProvidersHidden,
-  dockerHiddenMessage,
-} from '../control-plane/remote-hub.js';
+import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 
@@ -179,6 +174,12 @@ async function runCreateViaHubApi(
   target: Extract<CreateTarget, { where: 'remote' }>,
   opts: CreateOptions,
   providerName: string,
+  /**
+   * remote-docker only: the engine alias. The control box keys its own host
+   * registry by alias, so the request must name `docker:<alias>` — a bare
+   * `remote-docker` would name no engine at all.
+   */
+  remoteHost: string | undefined,
   projectRoot: string,
   cmdLog: ReturnType<typeof openCommandLog>,
 ): Promise<void> {
@@ -226,7 +227,8 @@ async function runCreateViaHubApi(
   const outcome = await withHubClient({ url: opts.url }, async (client) => {
     const { jobId } = await client.createBox({
       repoUrl: target.repoUrl,
-      provider: providerName,
+      provider:
+        providerName === 'remote-docker' && remoteHost ? `docker:${remoteHost}` : providerName,
       agent: 'none',
       name: opts.name?.trim() || undefined,
       fromBranch: opts.fromBranch?.trim() || undefined,
@@ -402,8 +404,14 @@ export const createCommand = new Command('create')
     // Docker off under a remote hub (Step 12): with a control box configured a
     // docker box built here can't run with the laptop off, so it's refused unless
     // hub.mode=local. Runs BEFORE routing so a control-box create can't slip past.
-    if (isDockerProvider(providerName) && dockerProvidersHidden(cfg.effective)) {
-      log.error(dockerHiddenMessage(cfg.effective, 'create'));
+    const dockerRefusal = await dockerProviderRefusal(
+      cfg.effective,
+      providerName,
+      remoteHost,
+      'create',
+    );
+    if (dockerRefusal) {
+      log.error(dockerRefusal);
       cmdLog.close();
       process.exit(1);
     }
@@ -441,6 +449,7 @@ export const createCommand = new Command('create')
     // missing prereq); the DEFAULT path falls back to local with a notice.
     const target = await resolveCreateTarget({
       providerName,
+      remoteHost,
       effective: cfg.effective,
       projectRoot,
       forceHub: opts.viaHub,
@@ -453,7 +462,7 @@ export const createCommand = new Command('create')
       process.exit(1);
     }
     if (target.where === 'remote') {
-      await runCreateViaHubApi(target, opts, providerName, projectRoot, cmdLog);
+      await runCreateViaHubApi(target, opts, providerName, remoteHost, projectRoot, cmdLog);
       return;
     }
     if (target.fellBackReason) {
