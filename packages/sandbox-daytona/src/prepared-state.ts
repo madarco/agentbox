@@ -36,6 +36,17 @@ const SCHEMA = 1 as const;
  *  class, so this is what `provision` records on the box record. */
 export interface DaytonaPreparedExtras {
   size?: string;
+  /**
+   * The resources the snapshot ACTUALLY has, including when they came from a
+   * default rather than an explicit `--size`. Separate from `size` on purpose:
+   * `size` is the REQUESTED spec and feeds both `defaultSnapshotName` and
+   * `preparedMatches`, so populating it for a default bake would rename every
+   * existing snapshot and re-bake the world. This field is advisory only — it
+   * lets the "your size is ignored" warning name real numbers instead of
+   * "the default size". Absent when the bake could not know them (a container
+   * snapshot created with no resources takes Daytona's server-side default).
+   */
+  effectiveSize?: string;
   class?: DaytonaSandboxClass;
   /**
    * The box image's `ENV` (`KEY=VALUE` strings), recorded by the linux-vm bake.
@@ -180,6 +191,8 @@ export function writePreparedDaytonaState(opts: {
   contextSha256: string;
   /** Normalized `cpu-memory-disk` size the snapshot was baked with (absent = default). */
   size?: string;
+  /** Resources the snapshot actually has, default included (see DaytonaPreparedExtras). */
+  effectiveSize?: string;
   /** Sandbox class the snapshot was baked as. Absent on pre-class bakes = container. */
   class?: DaytonaSandboxClass;
   /** The image env the linux-vm bake had to restore (see DaytonaPreparedExtras). */
@@ -188,6 +201,7 @@ export function writePreparedDaytonaState(opts: {
   const stamp = readCliStamp();
   const extras: DaytonaPreparedExtras = {
     ...(opts.size ? { size: opts.size } : {}),
+    ...(opts.effectiveSize ? { effectiveSize: opts.effectiveSize } : {}),
     ...(opts.class ? { class: opts.class } : {}),
     ...(opts.env && opts.env.length > 0 ? { env: opts.env } : {}),
   };

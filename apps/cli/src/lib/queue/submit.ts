@@ -7,6 +7,8 @@ import {
   type QueueJobOpenTerminal,
 } from '@agentbox/relay';
 import { DEFAULT_RELAY_PORT, ensureRelay } from '@agentbox/sandbox-docker';
+import { loadEffectiveConfig, resolveBoxSize } from '@agentbox/config';
+import { sizeIgnoredReason } from '../size-advisory.js';
 
 export interface SubmitQueueJobInput {
   agent: QueueAgentKind;
@@ -44,12 +46,16 @@ export interface SubmitQueueJobResult {
  * if the relay is unreachable the manifest still lives on disk and the next
  * tick (after the relay starts) will see it.
  */
-export async function submitQueueJob(
-  input: SubmitQueueJobInput,
-): Promise<SubmitQueueJobResult> {
+export async function submitQueueJob(input: SubmitQueueJobInput): Promise<SubmitQueueJobResult> {
   // Build + persist the manifest via the shared relay core (no transport there),
   // then ensure the relay is up and poke its scheduler so the job starts without
   // waiting for the next periodic tick.
+  // Warn BEFORE queueing. The backend warns too, but a detached job's log is
+  // `~/.agentbox/logs/queue-<id>.log` — which nobody reads for a box that came
+  // up fine, so the size looked silently ignored. Resolve the same effective
+  // value the worker will (flag > box.size<Provider> > box.size).
+  await warnIfSizeIgnored(input);
+
   const { job, runningCount, maxConcurrent } = await enqueueQueueJob(input);
 
   let pokedRelay = false;
@@ -96,4 +102,22 @@ function postEnqueue(id: string): Promise<void> {
     req.write(json);
     req.end();
   });
+}
+
+/** Advisory only — never blocks the submit, never throws. */
+async function warnIfSizeIgnored(input: SubmitQueueJobInput): Promise<void> {
+  try {
+    const flagSize = input.createOpts.size?.trim();
+    const size =
+      flagSize && flagSize.length > 0
+        ? flagSize
+        : resolveBoxSize(
+            (await loadEffectiveConfig(input.createOpts.workspace)).effective,
+            input.providerName,
+          );
+    const why = await sizeIgnoredReason(input.providerName, size);
+    if (why) process.stderr.write(`note: ${why}\n`);
+  } catch {
+    /* advisory */
+  }
 }

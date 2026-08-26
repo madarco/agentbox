@@ -6,6 +6,7 @@
 
 import { loadEffectiveConfig, resolveDaytonaClass } from '@agentbox/config';
 import { errSummary, type CheckResult, type CredStatusSummary } from '@agentbox/sandbox-core';
+import { parseDaytonaSize } from './backend.js';
 import { readPreparedDaytonaState } from './prepared-state.js';
 import { getDaytonaStatus, hasDaytonaCredentials } from './status.js';
 
@@ -81,4 +82,32 @@ async function baseSnapshotCheck(snapshotCount: number): Promise<CheckResult> {
     status: 'ok',
     detail: `${String(snapshotCount)} agentbox snapshot(s)${bakedClass ? ` (base: ${bakedClass})` : ''}`,
   };
+}
+
+/**
+ * Daytona fixes resources when the SNAPSHOT is baked and rejects them on the
+ * create call (`backend.ts` deletes `resources` on the snapshot path), so a
+ * size that disagrees with the bake is discarded. Same comparison the backend
+ * makes at provision — kept in step so the two can't drift.
+ */
+export function sizeIgnoredReason(size: string): string | null {
+  const parsed = parseDaytonaSize(size);
+  // A foreign spec (a hetzner server type sitting in the generic `box.size`)
+  // isn't ours to judge — `prepare` surfaces that. Stay quiet.
+  if (!parsed) return null;
+  const requested = `${String(parsed.cpu)}-${String(parsed.memory)}-${String(parsed.disk)}`;
+  const prepared = readPreparedDaytonaState();
+  // Nothing baked yet: `prepare` will bake AT this size, so there is no
+  // mismatch to report. Warning here would tell a first-run user their brand
+  // new setting is ignored, which is the opposite of true.
+  if (!prepared?.base) return null;
+  // `effectiveSize` names real numbers even for a default bake; `size` (the
+  // requested spec) is the fallback for snapshots baked before it was recorded.
+  const baked = prepared.extras?.effectiveSize ?? prepared.extras?.size;
+  if (requested === baked) return null;
+  return (
+    `daytona: size '${requested}' is ignored on the snapshot path; this snapshot was baked at ` +
+    `${baked ?? 'the default size'}. Daytona resources are fixed at bake time — re-bake with ` +
+    `\`agentbox prepare --provider daytona --size ${requested} --force\` to change them.`
+  );
 }

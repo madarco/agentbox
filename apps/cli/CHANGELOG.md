@@ -9,6 +9,21 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Fixed
+
+- A `box.size` / `box.size<Provider>` that Daytona or E2B will ignore (both fix
+  resources when the base image is baked) is now called out when you set it and
+  when you queue a `-i` create, instead of only in a detached job's log where
+  nobody sees it. Daytona also records the resources a snapshot actually has, so
+  the warning names real numbers rather than "the default size".
+
+### Changed
+
+- Provider SDK 2.6.0 adds an optional `ProviderModule.sizeIgnoredReason` so a
+  provider can explain when a requested box size cannot take effect.
+
 ## [0.28.2] - 2026-08-26
 
 ### Fixed
