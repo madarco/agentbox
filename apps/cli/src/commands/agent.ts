@@ -1,7 +1,6 @@
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
 import { type BoxStatusClaude } from '@agentbox/ctl';
-import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import {
@@ -217,26 +216,26 @@ const agentApprovalsCommand = new Command('approvals')
         }
       }
       const rows = gathered.rows;
+      const missing = missingHalves(gathered);
+      const where = source.remote ? 'control box' : 'hub';
 
       if (opts.json === true) {
         // Array shape is a contract (orchestration reads it) — keep stdout pure
-        // and put the degraded-mailbox warning on stderr.
-        if (gathered.relayError !== undefined) {
+        // and put the degraded-read warning on stderr.
+        if (missing.length > 0) {
           process.stderr.write(
-            `warning: could not read the ${source.remote ? 'control box' : 'hub'} approval mailbox (${gathered.relayError}); host-action rows may be missing\n`,
+            `warning: could not read ${missing.join(' or ')} from the ${where}; those rows may be missing\n`,
           );
         }
         process.stdout.write(JSON.stringify(rows) + '\n');
-        if (gathered.relayError !== undefined) process.exitCode = 1;
+        if (missing.length > 0) process.exitCode = 1;
         return;
       }
-      if (gathered.relayError !== undefined) {
-        // The in-TUI rows below are still trustworthy — they come from the box's
-        // own status — so show them, but never let a missing mailbox read as
-        // "nothing pending".
+      if (missing.length > 0) {
+        // Whatever the other half DID answer is still shown — but a half we
+        // could not read must never render as "nothing pending".
         log.warn(
-          `could not read the ${source.remote ? 'control box' : 'hub'} approval mailbox (${gathered.relayError}) — ` +
-            'host-action approvals are not shown.',
+          `could not read ${missing.join(' or ')} from the ${where} — those rows are not shown.`,
         );
         process.exitCode = 1;
       }
@@ -251,7 +250,7 @@ const agentApprovalsCommand = new Command('approvals')
           process.exitCode = 1;
           return;
         }
-        if (gathered.relayError === undefined) {
+        if (missing.length === 0) {
           log.info(
             'nothing pending for this box (no host-action approvals, agent not parked on a prompt)',
           );
@@ -389,8 +388,16 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
     process.exit(2);
   }
   const box = await resolveBoxOrExit(parsed.boxId);
-  const status = await readBoxStatus(box);
-  const claude = status?.claude;
+  // Through the OWNING hub, for the same reason `state`/`wait-for` do: the
+  // snapshot is written by whichever relay the box reports to, so a control-box
+  // box has none on this laptop. Reading the local file here made every such
+  // prompt fail the race guard below as "it changed or was answered".
+  const claude = await fetchAgentClaude(box);
+  if (claude === HUB_ERROR) return; // withOwningHub reported + set the exit code
+  if (claude === HUB_NOT_FOUND) {
+    reportAgentBoxNotFound(box, false);
+    return;
+  }
   // Race guard: the prompt must still be the one this id was minted for.
   const current = claude ? mintTuiId(box.id, claude) : null;
   if (!current || current.id !== id) {
@@ -482,28 +489,49 @@ type ApprovalRow =
   | { id: string; kind: 'question'; message: string; options: string[] }
   | { id: string; kind: 'permission'; message: string; state: string };
 
-interface GatheredApprovals {
+export interface GatheredApprovals {
   rows: ApprovalRow[];
   /** Set when the relay mailbox couldn't be read; its rows are missing, not absent. */
   relayError?: string;
+  /** Set when the agent snapshot couldn't be read; in-TUI rows are missing, not absent. */
+  tuiError?: string;
+}
+
+/**
+ * What a partial read could not answer for, phrased for the user. Empty when
+ * both halves succeeded — the ONLY case in which an empty row list is allowed to
+ * be reported as "nothing pending".
+ */
+export function missingHalves(g: GatheredApprovals): string[] {
+  const missing: string[] = [];
+  if (g.relayError !== undefined) missing.push(`host-action approvals (${g.relayError})`);
+  if (g.tuiError !== undefined) missing.push(`the agent's in-TUI prompts (${g.tuiError})`);
+  return missing;
 }
 
 /**
  * Merge the hub's host-action approvals with the box's current in-TUI block (if
- * any).
+ * any). Both come from the hub that OWNS the box — for a local box a loopback
+ * `/api/v1` call, for a hub box a WAN request to the control box.
  *
- * The hub half is allowed to fail without taking the command down. For a local
- * box it is a loopback `/api/v1` call; for a hub box it is a WAN request to the
- * control box, and a blip there must not hide the in-TUI plan/question/permission
- * rows, which come from the box's own status and are entirely independent.
+ * The in-TUI half used to read `~/.agentbox/boxes/<box>/status.json` directly.
+ * That file is written by whichever relay the box reports to, so it never exists
+ * for a control-box box and those rows silently vanished — a box parked on a plan
+ * approval read as "agent not parked on a prompt". `getAgentState` returns the
+ * hub's own copy of that snapshot (falling back to its in-memory status store),
+ * which for a local box is exactly what the file read returned.
+ *
+ * Each half is allowed to fail on its own without taking the command down, and
+ * reports separately: a partial answer must never render as "nothing pending".
  * `listApprovals` returns every box's pending approvals; filter to this box.
  */
-async function gatherApprovals(
+export async function gatherApprovals(
   source: BoxPromptSource,
   box: BoxRecord,
 ): Promise<GatheredApprovals> {
   const rows: ApprovalRow[] = [];
   let relayError: string | undefined;
+  let tuiError: string | undefined;
 
   try {
     const approvals = await source.client.listApprovals();
@@ -524,7 +552,12 @@ async function gatherApprovals(
     relayError = err instanceof Error ? err.message : String(err);
   }
 
-  const claude = (await readBoxStatus(box))?.claude;
+  let claude: BoxStatusClaude | null = null;
+  try {
+    claude = ((await source.client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;
+  } catch (err) {
+    tuiError = err instanceof Error ? err.message : String(err);
+  }
   const tui = claude ? mintTuiId(box.id, claude) : null;
   if (claude && tui) {
     if (tui.kind === 'plan') {
@@ -551,7 +584,7 @@ async function gatherApprovals(
       });
     }
   }
-  return { rows, relayError };
+  return { rows, relayError, tuiError };
 }
 
 function approvalDisplay(row: ApprovalRow): string {
@@ -606,8 +639,9 @@ async function fetchAgentClaude(
 
 /**
  * Report a box no hub owns, for the snapshot readers (`state` /
- * `get-plan-question`) — exit 2, matching `wait-for`. Distinct from a null
- * snapshot: the box is genuinely unknown, not merely un-reported-on yet.
+ * `get-plan-question` / `approve`'s race guard) — exit 2, matching `wait-for`.
+ * Distinct from a null snapshot: the box is genuinely unknown, not merely
+ * un-reported-on yet.
  */
 function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
   if (asJson) {

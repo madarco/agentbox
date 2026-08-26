@@ -189,6 +189,12 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`agentbox agent approvals` missed the in-TUI prompts of a control-box box.**
+  Plan, question and tool-permission rows were read from a status file only the
+  local relay writes, so a box parked on a plan approval reported "agent not
+  parked on a prompt" — and `agent approve` refused the same prompt as already
+  changed. Both now read the snapshot from the hub that owns the box, and a half
+  that could not be read is reported instead of rendering as "nothing pending".
 - **Remote Docker builds work on Docker 29.** The box image was streamed to
   `docker build -` alongside `-f`, which Docker 29's buildx rejects outright
   ("ambiguous Dockerfile source") — that broke every bake and every registry-miss
