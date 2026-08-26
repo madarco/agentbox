@@ -208,6 +208,7 @@ export {
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
   setRelayNotice,
+  stopBoxPollerOnRelay,
   stopRelay,
   type EnsureRelayOptions,
   type RegisterBoxArgs,

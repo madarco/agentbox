@@ -891,14 +891,21 @@ brief:
   next inbound request revives it with a fresh window. The hour mark is a brief
   stall, not a lost box. (The SDK default is `onTimeout: 'kill'` — leaving it
   there was why boxes were observed dying at exactly 60 min.)
-- **Host-owned idle policy (`timeoutModel: 'inactivity'`).** Auto-resume means
-  any inbound request revives a paused box, and the relay's `CloudBoxPoller`
-  long-polls every cloud box forever — so E2B falls into the same trap Daytona
-  does (see §3, "Idle handling") and the host must do the stopping itself. The
-  keepalive loop pauses a box whose agent has been idle for a full
-  `box.e2bTimeoutMs`, **and stops that box's poller** (`stopCloudPoller`) so the
-  pause actually sticks. A later wake re-registers the box and a fresh poller
-  starts.
+- **Any pause must also stop the box's poller.** Auto-resume means inbound
+  traffic revives a paused box, and the relay's `CloudBoxPoller` long-polls
+  every cloud box's preview URL every ~25 s — so a pause that leaves the poller
+  running is undone within seconds. Measured 2026-08-26: `agentbox stop` on an
+  e2b box read back `running` on every sample for two minutes; with the poller
+  stopped first, the pause held on every sample. So **both** pause paths stop
+  the poller — the user-initiated one (`provider.pause`/`stop` →
+  `stopBoxPollerOnRelay` → `POST /admin/stop-poller`, which unlike
+  `/admin/forget-box` keeps the registration and status) and the host idle one
+  (the keepalive loop's `stopCloudPoller`). A later wake re-registers the box,
+  which starts a fresh poller, so neither needs a restart counterpart.
+- **Host-owned idle policy (`timeoutModel: 'inactivity'`).** Because any request
+  revives a paused box, E2B falls into the same trap Daytona does (see §3, "Idle
+  handling") and the host must do the stopping itself: the keepalive loop pauses
+  a box whose agent has been idle for a full `box.e2bTimeoutMs`.
 - **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
   auto-resumes lazily on the next op. The provider's `state()`/`get()` use
   the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and

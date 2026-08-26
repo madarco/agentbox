@@ -144,6 +144,22 @@ describe('relay server', () => {
     expect(post.status).toBe(401);
   });
 
+  it('/admin/stop-poller keeps the registration alive (unlike forget-box)', async () => {
+    // A pause silences the poller but must NOT deregister the box: `list` and
+    // the hub keep showing it, and the box token still works on wake.
+    await register(handle, 'b', 't', 'name');
+    const stop = await fetchJson(handle, 'POST', '/admin/stop-poller', { body: { boxId: 'b' } });
+    expect(stop.status).toBe(204);
+
+    const post = await fetchJson(handle, 'POST', '/events', { token: 't', body: { type: 'x' } });
+    expect(post.status).toBe(202); // accepted — not the 401 forget-box would give
+  });
+
+  it('/admin/stop-poller rejects a missing boxId', async () => {
+    const r = await fetchJson(handle, 'POST', '/admin/stop-poller', { body: {} });
+    expect(r.status).toBe(400);
+  });
+
   it('/rpc returns 501 for unknown methods', async () => {
     await register(handle, 'b', 't', 'name');
     const r = await fetchJson(handle, 'POST', '/rpc', {

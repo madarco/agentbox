@@ -632,6 +632,28 @@ export async function forgetBoxFromRelay(boxId: string): Promise<void> {
 }
 
 /**
+ * Silence a box's host poller without dropping its registration — what a
+ * PAUSE wants, where `forgetBoxFromRelay` (which also drops the record and
+ * status) would be far too much.
+ *
+ * Load-bearing on a backend whose paused sandboxes auto-resume on inbound
+ * traffic (e2b): the poller long-polls the box's preview URL every ~25s, so a
+ * pause that leaves it running is undone within seconds. Measured — an
+ * `agentbox stop` on an e2b box read back `running` on every sample until the
+ * poller was stopped, after which the pause held.
+ *
+ * The wake path re-registers the box, which starts a fresh poller, so this
+ * needs no restart counterpart.
+ */
+export async function stopBoxPollerOnRelay(boxId: string): Promise<void> {
+  try {
+    await adminPost('/admin/stop-poller', { boxId });
+  } catch {
+    // best-effort — a relay that isn't running has no poller to stop.
+  }
+}
+
+/**
  * Best-effort: register an informational notice for a box so attached
  * `agentbox claude` footers / the dashboard show it (e.g. a spinner while a
  * checkpoint freezes the box). Returns the notice id, or null when the relay

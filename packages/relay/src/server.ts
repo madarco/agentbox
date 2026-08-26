@@ -331,6 +331,7 @@ function isLoopbackAddress(addr: string | undefined): boolean {
  *   POST /rpc                   — bearer auth; dispatches git.push/fetch, cp.*, download.*, checkpoint.create on the host.
  *   POST /admin/register-box    — loopback only.
  *   POST /admin/forget-box      — loopback only.
+ *   POST /admin/stop-poller     — loopback only; stops one box's CloudBoxPoller, keeps the registration.
  *   GET  /admin/box-status      — loopback only; query `box`; latest snapshot.
  *   GET  /admin/events          — loopback only; query `box`, `since`.
  *   GET  /admin/registry        — loopback only; list registered boxes (token redacted).
@@ -1405,6 +1406,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       await store.deleteStatus(body.boxId);
       if (pollers) await pollers.stop(body.boxId);
       log(`forgot box ${body.boxId} (existed=${String(existed)})`);
+      send(res, 204, null);
+      return;
+    }
+
+    if (route === 'POST /admin/stop-poller') {
+      const body = await readJsonBody<{ boxId?: string }>(req);
+      if (!body || typeof body.boxId !== 'string' || body.boxId.length === 0) {
+        send(res, 400, { error: 'expected {boxId}' });
+        return;
+      }
+      // Deliberately NOT forget-box: the registration and status survive, so
+      // `list`/the hub keep showing the box. This only silences the poller,
+      // which has nothing to talk to while the box is paused — and on an
+      // auto-resuming backend (e2b) would otherwise wake it right back up.
+      if (pollers) await pollers.stop(body.boxId);
       send(res, 204, null);
       return;
     }

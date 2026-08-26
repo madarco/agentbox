@@ -56,6 +56,7 @@ import {
   buildTmuxConfigShellSnippet,
   ensureRelay,
   forgetBoxFromRelay,
+  stopBoxPollerOnRelay,
   generateRelayToken,
   generateVncPassword,
   portlessAlias,
@@ -1455,6 +1456,11 @@ export function createCloudProvider(
 
     async pause(box: BoxRecord): Promise<void> {
       await backend.pause(handleFor(box));
+      // Silence the poller: a paused box has no in-box relay to talk to, and on
+      // an auto-resuming backend (e2b) the next long-poll would wake the box we
+      // just paused — measured, `agentbox stop` did not stick without this. The
+      // wake path re-registers and starts a fresh poller.
+      await stopBoxPollerOnRelay(box.id);
       await persistLastState(box, 'paused');
     },
 
@@ -1471,6 +1477,8 @@ export function createCloudProvider(
 
     async stop(box: BoxRecord): Promise<void> {
       await backend.stop(handleFor(box));
+      // Same as pause — on e2b, stop IS pause, and a live poller undoes it.
+      await stopBoxPollerOnRelay(box.id);
       await persistLastState(box, 'paused');
     },
 
