@@ -854,6 +854,12 @@ snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
   agent's `updatedAt`, which freezes during a long single `working` op). Bounded
   by the plan's max session (mainly benefits Pro+). Same mechanism on E2B. Uses
   `CloudBackend.renewTimeout` (vercel `extendTimeout`, e2b `setTimeout`).
+  The loop seeds its tracked death-time from `cloud.sessionDeadlineEpochMs` —
+  the deadline the provider last actually applied, re-written on every
+  start/resume — rather than deriving it from `createdAt + sessionTimeoutMs`,
+  which is stale for any box that has been paused and woken. **The session
+  window is re-armed on resume** (`reEnsureCloudBox` calls `renewTimeout`): a
+  woken sandbox does not come back with the timeout it was created with.
 
 ## 3c. The E2B shape
 
@@ -877,10 +883,29 @@ brief:
   base template bakes the docker engine and the provider passes
   `launchDockerd: true`, so `dockerd` auto-launches on create/resume (same as
   daytona/hetzner/vercel). Pulled images carry across pause/resume.
+- **The session cap pauses, it does not kill.** E2B's max sandbox lifetime is a
+  hard plan limit — **1 h on Hobby**, 24 h on Pro — and no amount of renewing
+  gets past it. Boxes are therefore created with
+  `lifecycle: { onTimeout: 'pause', autoResume: true }`, so reaching the cap
+  freezes the box (filesystem **and** memory) instead of destroying it, and the
+  next inbound request revives it with a fresh window. The hour mark is a brief
+  stall, not a lost box. (The SDK default is `onTimeout: 'kill'` — leaving it
+  there was why boxes were observed dying at exactly 60 min.)
+- **Host-owned idle policy (`timeoutModel: 'inactivity'`).** Auto-resume means
+  any inbound request revives a paused box, and the relay's `CloudBoxPoller`
+  long-polls every cloud box forever — so E2B falls into the same trap Daytona
+  does (see §3, "Idle handling") and the host must do the stopping itself. The
+  keepalive loop pauses a box whose agent has been idle for a full
+  `box.e2bTimeoutMs`, **and stops that box's poller** (`stopCloudPoller`) so the
+  pause actually sticks. A later wake re-registers the box and a fresh poller
+  starts.
 - **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
   auto-resumes lazily on the next op. The provider's `state()`/`get()` use
   the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and
-  bill) a paused sandbox. `previewUrl()` is also resume-free — it constructs
+  bill) a paused sandbox. Every `Sandbox.connect` passes an explicit
+  `timeoutMs`: the SDK's `connect` always posts a sandbox deadline and defaults
+  it to **5 minutes**, so an auto-resumed box would otherwise wake with five
+  minutes to live. `previewUrl()` is also resume-free — it constructs
   the URL locally from `sandboxId + port + E2B_DOMAIN` rather than going
   through `Sandbox.connect`.
 - **Preview URLs are public HTTPS.** `getHost(port)` returns
@@ -908,7 +933,8 @@ brief:
   `Template.build()` time via `agentbox prepare --provider e2b --size
   <cpu-mem>`; E2B has no disk knob, and a per-create `--size` that differs
   from the baked size just logs a warning — E2B rejects per-create
-  resources), 1-hour session cap on Hobby, max upload chunk constraints
+  resources), 1-hour session cap on Hobby / 24-hour on Pro — unextendable, but
+  survived by pausing rather than killing (above) — max upload chunk constraints
   from the SDK (handled by the cloud scaffold). E2B itself runs in multiple
   regions; the SDK chooses one transparently.
 

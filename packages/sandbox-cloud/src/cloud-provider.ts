@@ -457,6 +457,26 @@ export function createCloudProvider(
       }
     }
 
+    // Re-apply the box's configured session window. A resumed sandbox does NOT
+    // come back with the timeout it was created with: E2B's `Sandbox.connect`
+    // always posts a deadline and defaults it to 5 minutes, so without this the
+    // box would die minutes after waking. Best-effort and only forward — a
+    // backend without `renewTimeout` (hetzner/digitalocean VPS) has no session
+    // to renew, and a failed renew must not fail the wake.
+    const sessionTimeoutMs = box.cloud?.sessionTimeoutMs;
+    let sessionDeadlineEpochMs = box.cloud?.sessionDeadlineEpochMs;
+    if (backend.renewTimeout && sessionTimeoutMs != null && sessionTimeoutMs > 0) {
+      const now = Date.now();
+      const target = now + sessionTimeoutMs;
+      try {
+        await backend.renewTimeout(h, target, now);
+        sessionDeadlineEpochMs = target;
+      } catch {
+        // Plan-cap rejection or a transient SDK error. Leave the recorded
+        // deadline alone rather than claiming a window we didn't get.
+      }
+    }
+
     const next: BoxRecord = {
       ...box,
       portlessAlias: portlessAliasName,
@@ -466,6 +486,7 @@ export function createCloudProvider(
       cloud: {
         ...(box.cloud ?? { backend: providerName, sandboxId: h.sandboxId }),
         webPort,
+        sessionDeadlineEpochMs,
         previewUrls: Object.keys(mergedPreviews).length > 0 ? mergedPreviews : undefined,
         relayPreviewUrl: relayPreview?.url ?? box.cloud?.relayPreviewUrl,
         relayPreviewToken: relayPreview?.token ?? box.cloud?.relayPreviewToken,
@@ -1285,6 +1306,8 @@ export function createCloudProvider(
             snapshotRef: resolvedCheckpointRef,
             lastState: 'running',
             sessionTimeoutMs: timeoutMs,
+            sessionDeadlineEpochMs:
+              timeoutMs != null && timeoutMs > 0 ? Date.now() + timeoutMs : undefined,
             // Real resources the backend reported (Hetzner: the plan's actual
             // cores/memory/disk). Absent → readers fall back to defaultResources.
             resources: handle.resources,

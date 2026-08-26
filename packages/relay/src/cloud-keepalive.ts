@@ -14,25 +14,28 @@
  *   - idle agent   -> let it lapse a window after it went idle, then stop.
  *
  * "Let it lapse" only works when the provider's timeout is an absolute deadline
- * (vercel, e2b). Daytona's is an INACTIVITY window that any request resets —
- * and this host polls every cloud box's preview URL continuously, so its clock
- * never runs out and an idle box would bill forever. For those backends
+ * (vercel). Daytona's is an INACTIVITY window that any request resets, and e2b's
+ * paused sandboxes auto-resume on any inbound request — and this host polls
+ * every cloud box's preview URL continuously, so on both the clock never runs
+ * out and an idle box would bill forever. For those backends
  * (`CloudBackend.timeoutModel === 'inactivity'`) the loop performs the stop
- * itself: see `selectBoxesToIdlePause`.
+ * itself: it pauses the box AND stops that box's poller, without which the very
+ * next long-poll would revive what we just paused.
  *
  * The additive-vs-absolute SDK split (vercel `extendTimeout` adds to the
  * current deadline and can't read remaining; e2b `setTimeout` sets TTL from
  * now) is resolved by tracking each box's intended deadline in memory and
  * handing the backend BOTH the absolute target and our tracked current
  * deadline. See `CloudBackend.renewTimeout`. The tracked deadline is seeded
- * from the box's RECORDED effective create timeout (`cloud.sessionTimeoutMs`)
- * so a project/workspace override doesn't desync the seed.
+ * from the deadline the provider last actually applied
+ * (`cloud.sessionDeadlineEpochMs`, re-written on every start/resume), falling
+ * back to `createdAt + cloud.sessionTimeoutMs` for pre-feature records.
  *
- * Plan caps (vercel Hobby ~45m, Pro+ ~5h; e2b team plan) bound how far a box
- * can be extended — a renew past the cap throws and is swallowed here, after
- * which the box is briefly backed off (so we don't hammer the API / log) and
- * lapses normally. The feature mainly benefits Pro+ plans, where the
- * conservative 45-min create default otherwise kills long sessions early.
+ * Plan caps (vercel Hobby ~45m, Pro+ ~5h; e2b 1h Hobby, 24h Pro) bound how far
+ * a box can be extended — a renew past the cap throws and is swallowed here,
+ * after which the box is briefly backed off (so we don't hammer the API / log)
+ * and lapses normally. On e2b that lapse is a PAUSE, not a kill
+ * (`lifecycle.onTimeout`), so hitting the cap costs a stall rather than the box.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -133,11 +136,7 @@ export function selectBoxesToRenew(
  * attached human is exactly the case we must not pull the floor out from under.
  * An `active` agent (incl. waiting/question) is never a candidate.
  */
-export function shouldIdlePause(
-  e: KeepaliveScanEntry,
-  idleWindowMs: number,
-  now: number,
-): boolean {
+export function shouldIdlePause(e: KeepaliveScanEntry, idleWindowMs: number, now: number): boolean {
   if (e.agentState !== 'idle' || e.lastActivityMs == null) return false;
   return now - e.lastActivityMs >= idleWindowMs;
 }
@@ -172,6 +171,13 @@ export interface CloudBoxLookup {
   /** Recorded effective create timeout (ms), or null when not recorded. */
   createTimeoutMs: number | null;
   /**
+   * Absolute death-time last applied to the sandbox, or null when not recorded.
+   * Preferred over `createdAt + createTimeoutMs` for seeding: the provider
+   * re-applies the session window on every start/resume, so the create-derived
+   * value is stale for any box that has been paused and woken.
+   */
+  sessionDeadlineEpochMs?: number | null;
+  /**
    * Provider-specific sandbox class, when the record carries one. Daytona needs
    * it to pause: a `linux-vm` freezes, a `container` archives, and each call is
    * rejected for the other class. Without it the backend has to guess.
@@ -191,6 +197,14 @@ export interface CloudKeepaliveLoopDeps {
   lookupBox?: (boxId: string) => Promise<CloudBoxLookup | null>;
   /** Injectable for tests; defaults to writing `cloud.lastState: 'paused'`. */
   persistPaused?: (boxId: string) => Promise<void>;
+  /**
+   * Stop the box's `CloudBoxPoller` after an idle pause. Load-bearing on a
+   * backend whose paused sandboxes auto-resume on inbound traffic (e2b): the
+   * poller long-polls the preview URL forever, so without this it revives the
+   * box we just paused on its very next request. Defaults to a no-op (tests,
+   * and relays that never started a poller).
+   */
+  stopPoller?: (boxId: string) => Promise<void>;
   /** Injectable for tests; fallback create timeout when a record lacks one. */
   fallbackCreateTimeoutMs?: (backend: string) => Promise<number>;
   /** Injectable for tests; defaults to `Date.now`. */
@@ -207,13 +221,12 @@ const DEFAULT_INTERVAL_MS = 60_000;
 /** After a failed renew, skip the box for this long (avoid cap hammering / log spam). */
 const FAILURE_BACKOFF_MS = 5 * 60_000;
 
-export function startCloudKeepaliveLoop(
-  deps: CloudKeepaliveLoopDeps,
-): CloudKeepaliveLoopHandle {
+export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeepaliveLoopHandle {
   const loadConfig = deps.loadConfig ?? loadAutopauseConfig;
   const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
   const lookupBox = deps.lookupBox ?? defaultLookupBox;
   const persistPaused = deps.persistPaused ?? defaultPersistPaused;
+  const stopPoller = deps.stopPoller ?? (async () => {});
   const fallbackCreateTimeoutMs = deps.fallbackCreateTimeoutMs ?? defaultFallbackCreateTimeoutMs;
   const nowFn = deps.now ?? Date.now;
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -286,14 +299,22 @@ export function startCloudKeepaliveLoop(
         const lookup = await lookupBox(d.boxId);
         if (!lookup) continue;
 
-        // Seed the tracked deadline from the recorded effective create timeout
-        // (falls back to a provider default for pre-feature records).
+        // Seed the tracked deadline. Prefer the deadline the provider actually
+        // applied (re-written on every start/resume) — deriving it from
+        // `createdAt + createTimeoutMs` is wrong for any box that has been
+        // paused and woken, and after a relay restart mid-session it points
+        // into the past. Fall back to the create-derived value for pre-feature
+        // records, and to a provider default when even the timeout is absent.
         let current = tracked.get(d.boxId);
         if (current == null) {
-          const createMs = lookup.createdAtMs ?? now;
-          const createTimeoutMs =
-            lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(d.backend));
-          current = createMs + createTimeoutMs;
+          if (lookup.sessionDeadlineEpochMs != null) {
+            current = lookup.sessionDeadlineEpochMs;
+          } else {
+            const createMs = lookup.createdAtMs ?? now;
+            const createTimeoutMs =
+              lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(d.backend));
+            current = createMs + createTimeoutMs;
+          }
           tracked.set(d.boxId, current);
         }
         // Only renew when the target meaningfully exceeds the tracked deadline,
@@ -304,7 +325,11 @@ export function startCloudKeepaliveLoop(
         try {
           const backend = await resolveCached(d.backend);
           if (!backend?.renewTimeout) continue;
-          await backend.renewTimeout({ sandboxId: lookup.sandboxId }, d.targetDeadlineEpochMs, current);
+          await backend.renewTimeout(
+            { sandboxId: lookup.sandboxId },
+            d.targetDeadlineEpochMs,
+            current,
+          );
           // Only advance the tracked deadline on SUCCESS — a failed extend did
           // not actually move the real deadline, so we must not record it.
           tracked.set(d.boxId, d.targetDeadlineEpochMs);
@@ -345,8 +370,7 @@ export function startCloudKeepaliveLoop(
         // The box's OWN idle timeout (box.daytonaTimeoutMs), not the renewal
         // window — we're standing in for the provider's timer, so we wait as
         // long as the user told the provider to wait. `0` disables it.
-        const idleWindowMs =
-          lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(e.backend));
+        const idleWindowMs = lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(e.backend));
         if (idleWindowMs <= 0) continue;
         if (!shouldIdlePause(e, idleWindowMs, now)) continue;
         try {
@@ -358,10 +382,21 @@ export function startCloudKeepaliveLoop(
           });
           idlePaused.set(boxId, e.lastActivityMs);
           backoffUntil.delete(boxId);
+          // Stop polling the box we just paused. On a backend with auto-resume
+          // (e2b) the poller's next long-poll would wake it straight back up,
+          // and the pause would never stick. A later wake re-registers the box
+          // (`/admin/register-box`), which starts a fresh poller — so this is
+          // symmetric and needs no restart path here. Best-effort: a failure
+          // here must not look like a failed pause and re-arm the box.
+          await stopPoller(boxId).catch(() => {});
+          // The tracked deadline belongs to a session that no longer exists;
+          // drop it so the next wake re-seeds from the record.
+          tracked.delete(boxId);
           // Best-effort, and deliberately after the pause is already a fact: a
           // failed record write must not look like a failed pause and re-arm.
           await persistPaused(boxId).catch(() => {});
-          const mins = e.lastActivityMs != null ? Math.round((now - e.lastActivityMs) / 60_000) : null;
+          const mins =
+            e.lastActivityMs != null ? Math.round((now - e.lastActivityMs) / 60_000) : null;
           log(
             `cloud-keepalive: paused idle box ${boxId} (${e.backend})` +
               (mins != null ? ` after ~${String(mins)}m idle` : '') +
@@ -417,6 +452,7 @@ async function defaultLookupBox(boxId: string): Promise<CloudBoxLookup | null> {
     sandboxId,
     createdAtMs: toEpoch(hit.box.createdAt),
     createTimeoutMs: hit.box.cloud?.sessionTimeoutMs ?? null,
+    sessionDeadlineEpochMs: hit.box.cloud?.sessionDeadlineEpochMs ?? null,
     ...(sandboxClass ? { sandboxClass } : {}),
   };
 }

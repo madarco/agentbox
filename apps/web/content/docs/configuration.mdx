@@ -219,7 +219,7 @@ See [teleport a project](/docs/teleport-a-project), [environment](/docs/environm
 | ------------------------- | ------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `box.vercelTimeoutMs`     | int    | `2700000` (45 min)  | max session length before auto-snapshot; persistent mode auto-resumes                                                                                                                         |
 | `box.vercelNetworkPolicy` | string | empty (`allow-all`) | egress lock: `allow-all`, `deny-all`, or a comma-separated domain allowlist (`github.com,*.npmjs.org`)                                                                                        |
-| `box.e2bTimeoutMs`        | int    | `2700000` (45 min)  | session timeout a new `--provider e2b` box is created with before E2B auto-pauses it on inactivity; the host keepalive holds it open while the agent works (Hobby caps total session at ~1 h) |
+| `box.e2bTimeoutMs`        | int    | `2700000` (45 min)  | session window a `--provider e2b` box is created with and re-armed with on resume; the host keepalive holds it open while the agent works, and pauses the box once the agent has been idle that long. Boxes pause rather than die at the window — and at E2B's own cap (~1 h Hobby, 24 h Pro) — keeping filesystem and memory |
 
 See [Vercel](/docs/vercel).
 

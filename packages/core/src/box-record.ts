@@ -124,6 +124,15 @@ export interface CloudBoxFields {
    */
   sessionTimeoutMs?: number;
   /**
+   * Absolute death-time (epoch ms) last applied to the sandbox — written on
+   * create and re-written on every start/resume, where the session window is
+   * re-applied from scratch. The keepalive loop seeds its tracked deadline from
+   * this in preference to `createdAt + sessionTimeoutMs`, which goes stale the
+   * moment a box is paused and resumed (and after a relay restart mid-session).
+   * Absent on backends without a session timeout / pre-feature records.
+   */
+  sessionDeadlineEpochMs?: number;
+  /**
    * Actual resources the backend provisioned, read back from the create
    * response (Hetzner reports the real `server_type` cores/memory/disk). Shown
    * by `agentbox status --inspect`. Absent on backends that can't report it and

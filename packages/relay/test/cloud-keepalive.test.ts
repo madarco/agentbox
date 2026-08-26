@@ -26,9 +26,7 @@ function entry(p: Partial<KeepaliveScanEntry> & { boxId: string }): KeepaliveSca
 describe('selectBoxesToRenew', () => {
   it('renews an active box, anchoring the target at now + window', () => {
     const out = selectBoxesToRenew([entry({ boxId: 'a', lastActivityMs: NOW })], WINDOW, NOW);
-    expect(out).toEqual([
-      { boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
-    ]);
+    expect(out).toEqual([{ boxId: 'a', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW }]);
   });
 
   it('renews an active box even when updatedAt is very stale (now + window, not stale + window)', () => {
@@ -159,7 +157,9 @@ describe('startCloudKeepaliveLoop', () => {
 
     const loop = startCloudKeepaliveLoop({
       registry,
-      statusStore: statusFor({ claude: { state: 'working', updatedAt: new Date(NOW).toISOString() } }),
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
       log: () => {},
       intervalMs: 5,
       now: () => NOW,
@@ -172,6 +172,83 @@ describe('startCloudKeepaliveLoop', () => {
     await loop.stop();
 
     expect(calls).toEqual([{ id: 'sb-123', target: NOW + WINDOW, current: NOW }]);
+  });
+
+  it('seeds the tracked deadline from the recorded one, not from createdAt + timeout', async () => {
+    // `createdAt + sessionTimeoutMs` is stale for any box that has been paused
+    // and woken (the provider re-arms the window on resume) and points into the
+    // past after a relay restart mid-session. The recorded deadline wins.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1');
+    const calls: Array<{ target: number; current: number }> = [];
+    const got = deferred<void>();
+    const backend: CloudBackend = {
+      name: 'vercel',
+      renewTimeout: async (_h: CloudHandle, target: number, current: number) => {
+        calls.push({ target, current });
+        got.resolve();
+      },
+    } as unknown as CloudBackend;
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: async (): Promise<CloudBoxLookup> => ({
+        sandboxId: 'sb-123',
+        // Long past: this box was created an hour ago and resumed since.
+        createdAtMs: NOW - 60 * 60_000,
+        createTimeoutMs: 45 * 60_000,
+        sessionDeadlineEpochMs: NOW,
+      }),
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(calls).toEqual([{ target: NOW + WINDOW, current: NOW }]);
+  });
+
+  it('falls back to createdAt + timeout when no deadline was recorded', async () => {
+    // Pre-feature records carry no `sessionDeadlineEpochMs`.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1');
+    const calls: Array<{ target: number; current: number }> = [];
+    const got = deferred<void>();
+    const backend: CloudBackend = {
+      name: 'vercel',
+      renewTimeout: async (_h: CloudHandle, target: number, current: number) => {
+        calls.push({ target, current });
+        got.resolve();
+      },
+    } as unknown as CloudBackend;
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: async (): Promise<CloudBoxLookup> => ({
+        sandboxId: 'sb-123',
+        createdAtMs: NOW - 60_000,
+        createTimeoutMs: 60_000,
+        sessionDeadlineEpochMs: null,
+      }),
+    });
+
+    await got.promise;
+    await loop.stop();
+    expect(calls).toEqual([{ target: NOW + WINDOW, current: NOW }]);
   });
 
   it('skips docker boxes and backends without renewTimeout', async () => {
@@ -191,7 +268,9 @@ describe('startCloudKeepaliveLoop', () => {
 
     const loop = startCloudKeepaliveLoop({
       registry,
-      statusStore: statusFor({ claude: { state: 'working', updatedAt: new Date(NOW).toISOString() } }),
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
       log: () => {},
       intervalMs: 5,
       now: () => NOW,
@@ -224,7 +303,9 @@ describe('startCloudKeepaliveLoop', () => {
 
     const loop = startCloudKeepaliveLoop({
       registry,
-      statusStore: statusFor({ claude: { state: 'working', updatedAt: new Date(NOW).toISOString() } }),
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
       log: () => {},
       intervalMs: 5,
       now: () => NOW,
@@ -256,7 +337,9 @@ describe('startCloudKeepaliveLoop', () => {
 
     const loop = startCloudKeepaliveLoop({
       registry,
-      statusStore: statusFor({ claude: { state: 'working', updatedAt: new Date(NOW).toISOString() } }),
+      statusStore: statusFor({
+        claude: { state: 'working', updatedAt: new Date(NOW).toISOString() },
+      }),
       log: () => {},
       intervalMs: 5,
       now: () => NOW,
@@ -402,6 +485,100 @@ describe('startCloudKeepaliveLoop', () => {
       lookupBox: lookupIdleWindow,
       persistPaused: async () => {
         throw new Error('state.json is locked');
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 60)); // many ticks
+    await loop.stop();
+    expect(pauses).toBe(1);
+  });
+
+  it('stops the box poller after an idle pause, so an auto-resuming backend cannot revive it', async () => {
+    // e2b's paused sandboxes auto-resume on ANY inbound request, and the relay
+    // long-polls every cloud box's preview URL forever — so without stopping
+    // that poller the pause we just performed is undone on the next poll.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'e2b');
+    const stopped: string[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend(() => {});
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+      stopPoller: async (boxId: string) => {
+        stopped.push(boxId);
+        got.resolve();
+      },
+    });
+
+    await got.promise;
+    await new Promise((r) => setTimeout(r, 40)); // many more ticks
+    await loop.stop();
+    expect(stopped).toEqual(['b1']); // once, not per tick
+  });
+
+  it('does not stop the poller when the pause itself fails', async () => {
+    // The box is still running, so it must keep being polled.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'e2b');
+    const stopped: string[] = [];
+    const attempted = deferred<void>();
+    const backend = {
+      name: 'e2b',
+      timeoutModel: 'inactivity',
+      renewTimeout: async () => {},
+      pause: async () => {
+        attempted.resolve();
+        throw new Error('sandbox mid-transition');
+      },
+    } as unknown as CloudBackend;
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+      stopPoller: async (boxId: string) => {
+        stopped.push(boxId);
+      },
+    });
+
+    await attempted.promise;
+    await loop.stop();
+    expect(stopped).toEqual([]);
+  });
+
+  it('keeps the box paused even if stopping the poller fails', async () => {
+    // Same rule as a failed record write: the pause is already a fact.
+    const registry = new BoxRegistry();
+    registerCloud(registry, 'b1', 'e2b');
+    let pauses = 0;
+    const backend = inactivityBackend(() => {
+      pauses++;
+    });
+
+    const loop = startCloudKeepaliveLoop({
+      registry,
+      statusStore: idleStatus(WINDOW + 60_000),
+      log: () => {},
+      intervalMs: 5,
+      now: () => NOW,
+      loadConfig: async () => CFG,
+      resolveBackend: async () => backend,
+      lookupBox: lookupIdleWindow,
+      stopPoller: async () => {
+        throw new Error('poller already gone');
       },
     });
 

@@ -44,6 +44,9 @@ export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayD
     registry: handle.registry,
     statusStore: handle.statusStore,
     log,
+    // An idle pause must also silence that box's poller, or an auto-resuming
+    // backend (e2b) revives the box on the poller's next long-poll.
+    stopPoller: (boxId) => handle.stopCloudPoller(boxId),
   });
   const queue = startQueueLoop({
     log,

@@ -933,7 +933,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.e2bTimeoutMs',
     type: 'int',
     description:
-      'Session timeout (ms) a new --provider e2b box is created with, before E2B auto-pauses it on inactivity. The host keepalive loop pushes this forward while the agent is working. Default 2700000 (45 min); the Hobby tier caps total session at ~1 h regardless. E2B-only.',
+      'Session window (ms) a --provider e2b box is created with and re-armed with on every resume; the host keepalive pushes it forward while the agent is working, and doubles as the idle window after which the host pauses the box. Boxes pause rather than die at the window (and at E2B’s own ~1 h Hobby / 24 h Pro cap), keeping filesystem and memory. Default 2700000 (45 min). E2B-only.',
   },
   {
     key: 'box.cpMaxBytes',

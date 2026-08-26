@@ -67,7 +67,7 @@
         "imageDigitalocean": { "type": "string", "minLength": 1 },
         "imageRemoteDocker": { "type": "string", "minLength": 1 },
         "imageRegistry": { "type": "string" },
-        "e2bTimeoutMs": { "type": "integer" },
+        "e2bTimeoutMs": { "type": "integer", "minimum": 1 },
         "credentialSync": { "type": "boolean" },
         "dockerCacheShared": { "type": "boolean" },
         "memory": { "type": "integer", "minimum": 0 },

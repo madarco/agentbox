@@ -63,12 +63,32 @@ const BOX_OWNER = 'vscode:vscode';
 const DEFAULT_E2B_DOMAIN = 'e2b.app';
 
 /**
- * Per-box session timeout the SDK enforces at create. Past it, E2B
- * auto-terminates the sandbox. The host keepalive loop renews it while the
- * agent is active via `renewTimeout` (static `Sandbox.setTimeout`), so a
- * long-running session isn't killed mid-work. 45 min default mirrors vercel.
+ * Per-box session timeout the SDK enforces at create. The host keepalive loop
+ * renews it while the agent is active via `renewTimeout` (static
+ * `Sandbox.setTimeout`), so a long-running session isn't cut mid-work. 45 min
+ * default mirrors vercel.
+ *
+ * Renewal cannot outrun the PLAN CAP: per the SDK's own typings, a sandbox may
+ * be kept alive at most 1 h on Hobby and 24 h on Pro. That cap is why boxes
+ * were observed dying at exactly 60 min — not a missing keepalive. We survive
+ * it with `lifecycle.onTimeout: 'pause'` (see `provision`) rather than trying
+ * to extend past it.
  */
 const DEFAULT_TIMEOUT_MS = 45 * 60_000;
+
+/**
+ * Connect options for every `Sandbox.connect` call.
+ *
+ * `timeoutMs` here is the SANDBOX deadline, not a request timeout, and the SDK
+ * always sends it — omitting it means `DEFAULT_SANDBOX_TIMEOUT_MS` (5 min).
+ * On a running sandbox the API only ever extends, so this can't shorten a live
+ * box; it exists so a box AUTO-RESUMED by one of these calls comes back with a
+ * real session window instead of five minutes. Auto-resume is the common path
+ * now that `provision` sets `lifecycle.autoResume`.
+ */
+function connectOpts(apiKey: string, timeoutMs: number = DEFAULT_TIMEOUT_MS) {
+  return { apiKey, timeoutMs };
+}
 
 const E2B_WEB_PORT = 8080;
 
@@ -112,7 +132,9 @@ function isNotFound(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const name = err instanceof Error ? err.name : '';
   if (name === 'SandboxNotFoundError' || name === 'NotFoundError') return true;
-  const status = (err as { statusCode?: unknown; status?: unknown }).statusCode ?? (err as { status?: unknown }).status;
+  const status =
+    (err as { statusCode?: unknown; status?: unknown }).statusCode ??
+    (err as { status?: unknown }).status;
   return status === 404;
 }
 
@@ -189,9 +211,24 @@ export const e2bBackend: CloudBackend = {
           template,
           // Friendly name (so prune can see it) + the 'agentbox' marker so
           // `list()` can filter out sandboxes provisioned by other tooling.
-          metadata: { agentbox: 'true', 'agentbox.name': safeMetadataName(req.name), name: safeMetadataName(req.name) },
+          metadata: {
+            agentbox: 'true',
+            'agentbox.name': safeMetadataName(req.name),
+            name: safeMetadataName(req.name),
+          },
           envs: req.env,
           timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          // Survive the plan cap instead of being destroyed by it. The cap
+          // (1 h Hobby / 24 h Pro) is not extendable, so the SDK default of
+          // `onTimeout: 'kill'` loses work the keepalive is powerless to save.
+          // `pause` preserves filesystem AND memory, and `autoResume` brings
+          // the box back on the next inbound request with a fresh window — so
+          // the hour mark becomes a brief freeze rather than a dead box.
+          //
+          // autoResume is also why this backend declares
+          // `timeoutModel: 'inactivity'`: once any request revives a paused
+          // box, the host must own the idle decision (see below).
+          lifecycle: { onTimeout: 'pause', autoResume: true },
         }),
     );
     log(`e2b: created sandbox ${sb.sandboxId} (template ${template})`);
@@ -225,8 +262,7 @@ export const e2bBackend: CloudBackend = {
           const page = await paginator.nextItems();
           for (const info of page) {
             if (info.metadata?.['agentbox'] !== 'true') continue;
-            const friendly =
-              info.metadata?.['agentbox.name'] ?? info.metadata?.['name'];
+            const friendly = info.metadata?.['agentbox.name'] ?? info.metadata?.['name'];
             const summary: CloudSandboxSummary = { sandboxId: info.sandboxId, state };
             if (friendly) summary.name = friendly;
             const startedAt = info.startedAt;
@@ -247,7 +283,7 @@ export const e2bBackend: CloudBackend = {
     await withE2bRetry(
       { method: 'start', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
       async () => {
-        await Sandbox.connect(h.sandboxId, { apiKey });
+        await Sandbox.connect(h.sandboxId, connectOpts(apiKey));
       },
     );
   },
@@ -283,6 +319,15 @@ export const e2bBackend: CloudBackend = {
       await Sandbox.setTimeout(h.sandboxId, ttlMs, { apiKey });
     });
   },
+
+  // E2B's raw timer is absolute, but `provision` sets `lifecycle.autoResume`,
+  // and once a paused box revives on ANY inbound request the relay's own
+  // `CloudBoxPoller` — which long-polls every cloud box's preview URL forever —
+  // becomes an infinite resurrection loop. That is exactly the condition
+  // `timeoutModel: 'inactivity'` describes, so the host must own the idle
+  // decision (pause the box itself once its agent has been idle a full window)
+  // and stop the poller when it does. Same treatment daytona gets.
+  timeoutModel: 'inactivity',
 
   async destroy(h: CloudHandle): Promise<void> {
     const apiKey = resolveApiKey();
@@ -328,7 +373,7 @@ export const e2bBackend: CloudBackend = {
       async () => {
         // Connect for the live handle — auto-resumes a paused box, which is
         // the correct semantics for exec (caller wants the command to run).
-        const sb = await Sandbox.connect(h.sandboxId, { apiKey });
+        const sb = await Sandbox.connect(h.sandboxId, connectOpts(apiKey));
         // E2B's `commands.run` accepts only 'root' | 'user' | 'vscode'…; any
         // unix username we create in the fixup is valid. Pass through.
         const user = (opts?.user ?? BOX_USER) as 'root' | 'user';
@@ -365,7 +410,7 @@ export const e2bBackend: CloudBackend = {
       { method: 'uploadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
       async () => {
         const data = await readFile(localPath);
-        const sb = await Sandbox.connect(h.sandboxId, { apiKey });
+        const sb = await Sandbox.connect(h.sandboxId, connectOpts(apiKey));
         await sb.files.write([{ path: remotePath, data: bufferToArrayBuffer(data) }]);
         // files.write writes as the default user; chown to vscode so reads
         // from the scaffold's `sudo -u vscode …` exec calls succeed. Best-
@@ -387,7 +432,7 @@ export const e2bBackend: CloudBackend = {
     await withE2bRetry(
       { method: 'downloadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
       async () => {
-        const sb = await Sandbox.connect(h.sandboxId, { apiKey });
+        const sb = await Sandbox.connect(h.sandboxId, connectOpts(apiKey));
         const bytes = await sb.files.read(remotePath, { format: 'bytes' });
         const { writeFile } = await import('node:fs/promises');
         await writeFile(localPath, Buffer.from(bytes));
@@ -398,7 +443,7 @@ export const e2bBackend: CloudBackend = {
   async listFiles(h: CloudHandle, remoteDir: string): Promise<CloudFileEntry[]> {
     const apiKey = resolveApiKey();
     return withE2bRetry({ method: 'listFiles', retryOnAmbiguous: true }, async () => {
-      const sb = await Sandbox.connect(h.sandboxId, { apiKey });
+      const sb = await Sandbox.connect(h.sandboxId, connectOpts(apiKey));
       const entries = await sb.files.list(remoteDir);
       return entries.map((e) => ({ name: e.name, isDir: e.type === 'dir' }));
     });

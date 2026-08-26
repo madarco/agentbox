@@ -211,6 +211,14 @@ export interface RelayServerHandle {
    * `setQueuePoke` has wired the scheduler.
    */
   pokeQueue: () => void;
+  /**
+   * Stop the host-mode `CloudBoxPoller` for one box. The keepalive loop calls
+   * this after it idle-pauses a box, because on a backend whose paused
+   * sandboxes auto-resume on inbound traffic (e2b) the poller would otherwise
+   * wake the box on its next long-poll. A no-op when no poller is running for
+   * that box; a later `/admin/register-box` starts a fresh one.
+   */
+  stopCloudPoller: (boxId: string) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -1706,6 +1714,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     },
     pokeQueue: () => {
       queuePoke?.();
+    },
+    stopCloudPoller: async (boxId) => {
+      if (pollers) await pollers.stop(boxId);
     },
     close: async () => {
       if (pollers) await pollers.stopAll();
