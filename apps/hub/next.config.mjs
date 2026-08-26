@@ -21,7 +21,18 @@ const config = {
     },
   },
   ...(standalone
-    ? { output: 'standalone', outputFileTracingRoot: path.join(import.meta.dirname, '..', '..') }
+    ? {
+        output: 'standalone',
+        outputFileTracingRoot: path.join(import.meta.dirname, '..', '..'),
+        // The tracer walks from the MONOREPO ROOT, so without this it sweeps the
+        // previous build's `dist-standalone` into `.next/standalone` — which the
+        // assemble step then copies back into `dist-standalone`, one level deeper
+        // every build. Thirteen builds took the published tarball from 25MB to
+        // 107MB before anyone noticed. `.next` is excluded for the same reason.
+        outputFileTracingExcludes: {
+          '*': ['**/dist-standalone/**', '**/.next/standalone/**'],
+        },
+      }
     : {}),
   // Server-only packages that must not be bundled into Next's server output:
   // pg (dynamic require), and the AgentBox box-runtime packages (they shell out

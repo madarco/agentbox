@@ -9,6 +9,14 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.28.1] - 2026-08-26
+
+### Fixed
+
+- The published package was 4x too big (107MB unpacked, vs 25MB for 0.27.2). Next's
+  file tracer was sweeping the previous standalone build into the next one, nesting
+  a copy one level deeper on every build. Back to 35MB.
+
 ## [0.28.0] - 2026-08-26
 
 ### Breaking
