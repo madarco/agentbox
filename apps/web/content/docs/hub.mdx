@@ -131,6 +131,15 @@ stores it in an httpOnly cookie and redirects to the clean URL. Direct access
 without the token is refused (401). This protects the loopback bind from other
 local processes and DNS-rebinding. `AGENTBOX_HUB_AUTH=off` disables the gate.
 
+That same `?token=` handshake is what makes the `(VNC)` link in `agentbox ls`
+clickable: the link points at the hub's `/boxes/{id}/vnc` redirect, which mints a
+fresh viewer URL and `302`s to it. A terminal click carries no `Authorization`
+header, so the token rides the query string, is swapped for the cookie, and the
+clean URL is what the box's desktop sees (the redirect also sends
+`Referrer-Policy: no-referrer` so the token is never forwarded on). On a
+**password-profile** hub — a deployed control box — page routes require a real
+login instead, so the first such click of a session lands on `/signin`.
+
 <Callout type="info" title="Requirements">
   The hub server needs **Node ≥ 22.5** (the lean relay and the rest of the CLI keep a lower floor).
   If you're below that, `agentbox hub` prints a clear error — use `agentbox relay` instead.

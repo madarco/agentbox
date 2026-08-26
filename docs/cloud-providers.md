@@ -1146,7 +1146,7 @@ override per invocation.
 | `shell` (incl. `-- <cmd>`) | `provider.buildAttach('shell')` over SSH; `--name`/`--new` map sessions via `tmux ls`. |
 | `cp` / `download` | `provider.uploadPath` / `downloadPath` / `downloadDirContents`. |
 | `url` (incl. `--print`, `--ttl`) | Signed preview URL via `provider.resolveUrl`. |
-| `screen` | Signed preview URL on port 6080 (in-sandbox VNC stack started at create+start). |
+| `screen` | Signed preview URL on port 6080 (in-sandbox VNC stack started at create+start), minted on demand by the hub's `GET /api/v1/boxes/:id/vnc`. It is never persisted: a cloud signed URL expires (default 3600s). Only providers whose preview URL is *loopback* register a Portless VNC alias (`registerHostPortlessAlias`, `cloud-provider.ts`) and so carry a static `vncUrl` on the box payload — hetzner does, daytona/vercel/e2b don't. Clients gate the affordance on `vncEnabled`, not `vncUrl`. |
 | `code` | SSH alias in `~/.ssh/config` + `vscode-remote://`. |
 | `open` | Reuses the SSH alias to `sshfs`-mount `/workspace`; `--unmount` tears down. |
 | `wait` / `logs` (incl. `--daemon`, `-f`) | `provider.exec` (non-follow) / `provider.buildAttach('logs')` (follow). |

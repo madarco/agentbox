@@ -65,29 +65,60 @@ function middleTruncate(s: string, n: number): string {
  * still works. Both endpoints come off the hub's Box payload (Step 3), not a
  * client-side provider probe.
  */
-function urlCell(b: HubApiBox, stream: NodeJS.WriteStream): Cell {
+function urlCell(b: HubApiBox, stream: NodeJS.WriteStream, hub: HubLinkTarget | undefined): Cell {
   const web = b.webUrl ?? undefined;
-  const vnc = b.vncUrl ?? undefined;
-  const primary = web ?? vnc;
-  if (!primary) return plain('');
+  const vnc = vncLinkTarget(b, hub) ?? undefined;
+  // The DISPLAYED host is always a direct box URL — never the hub's own host,
+  // which a minted `(VNC)` link points at.
+  const primary = web ?? b.vncUrl ?? undefined;
 
-  let display: string;
-  try {
-    display = new URL(primary).host;
-  } catch {
-    display = primary;
+  const parts: Cell[] = [];
+  if (primary) {
+    let display: string;
+    try {
+      display = new URL(primary).host;
+    } catch {
+      display = primary;
+    }
+    parts.push({ text: hyperlink(display, primary, stream), width: display.length });
   }
-
-  const parts: Cell[] = [{ text: hyperlink(display, primary, stream), width: display.length }];
   if (vnc && vnc !== primary) {
     const label = '(VNC)';
     parts.push({ text: hyperlink(label, vnc, stream), width: label.length });
   }
+  if (parts.length === 0) return plain('');
   const sep = ' ';
   return {
     text: parts.map((p) => p.text).join(sep),
     width: parts.reduce((a, p) => a + p.width, 0) + sep.length * (parts.length - 1),
   };
+}
+
+export type HubLinkTarget = NonNullable<BoxListing['target']>;
+
+/**
+ * The `(VNC)` link target for a box: its static `vncUrl` when the payload has
+ * one (docker / hetzner, which register a Portless alias), else a link into the
+ * OWNING hub's `/boxes/:id/vnc` redirect, which mints a fresh signed URL
+ * server-side at click time.
+ *
+ * That indirection is the whole point: a cloud provider's signed preview URL
+ * expires within the hour, so a URL printed into a table row would be dead by
+ * the time it's clicked. Null when VNC is off, the box isn't running, or we have
+ * no live hub to link into (a stale/cached listing).
+ */
+export function vncLinkTarget(b: HubApiBox, hub: HubLinkTarget | undefined): string | null {
+  if (b.vncUrl) return b.vncUrl;
+  if (!hub || b.vncEnabled !== true) return null;
+  if (effectiveState(b) !== 'running') return null;
+  // `?token=` is how proxy.ts authorizes a click on a token-gated localhost hub:
+  // it swaps the param for the session cookie and redirects to the clean URL.
+  // A remote control box runs the password profile, where the API key gates only
+  // /api/v1 — so omit it there rather than printing a secret that buys nothing,
+  // and let the click land on /signin instead.
+  const base = hub.url.replace(/\/+$/, '');
+  const q = hub.mode === 'local' && hub.apiKey ? `?token=${encodeURIComponent(hub.apiKey)}` : '';
+  return `${base}/boxes/${encodeURIComponent(b.id)}/vnc${q}`;
 }
 
 /** Workspace path truncated to `target` and linked to its `file://` URL. */
@@ -337,6 +368,7 @@ function renderTable(
   boxes: HubApiBox[],
   stream: NodeJS.WriteStream,
   mutedIds: ReadonlySet<string> = new Set(),
+  hub?: HubLinkTarget,
 ): string {
   const color = !!stream.isTTY && !process.env.NO_COLOR;
   const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
@@ -351,7 +383,7 @@ function renderTable(
     // non-docker box, which carries no shell count).
     plain(b.shellCount && b.shellCount > 0 ? String(b.shellCount) : '-'),
     providerCell(b, mutedIds.has(b.id), color),
-    urlCell(b, stream),
+    urlCell(b, stream, hub),
   ]);
   const leadHeader = header.slice(0, wsCol).map(plain);
 
@@ -494,7 +526,7 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
     }
     return `no boxes — run \`agentbox create\` to make one${note}`;
   }
-  const table = renderTable(boxes, process.stdout, muted.ids);
+  const table = renderTable(boxes, process.stdout, muted.ids, listing.target);
   if (!scoped) return table + note;
   // basename of projectRoot — matches dashboard sidebar's projectLabel().
   const name = projectRoot.split('/').filter(Boolean).pop() ?? projectRoot;

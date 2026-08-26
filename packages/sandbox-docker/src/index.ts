@@ -399,9 +399,11 @@ export {
   buildVncUrls,
   generateVncPassword,
   launchVncDaemon,
+  resolveVncViewerUrl,
   VNC_CONTAINER_PORT,
   type VncLaunchResult,
   type VncUrls,
+  type VncViewerOptions,
 } from './vnc.js';
 export {
   installAuthorizedKey,

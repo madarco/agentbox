@@ -141,7 +141,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: 'Run a lifecycle action',
           description:
-            'One of start | pause | resume | stop | destroy | screen. start brings a stopped box back up (resumes if paused, no-op if already running); it does not restart the agent session — that happens on the next attach. screen is the open-VNC prep step: it points the in-box browser at the box’s web app so the VNC desktop shows the app instead of a blank X screen — call it right before opening the box’s vncUrl.',
+            'One of start | pause | resume | stop | destroy | screen. start brings a stopped box back up (resumes if paused, no-op if already running); it does not restart the agent session — that happens on the next attach. screen is the open-VNC prep step: it points the in-box browser at the box’s web app so the VNC desktop shows the app instead of a blank X screen — call it right before opening the viewer. It does not return a URL; get that from GET /boxes/{id}/vnc.',
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
             {
@@ -282,6 +282,50 @@ export function buildOpenApi(): Record<string, unknown> {
               content: {
                 'application/json': {
                   schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/vnc': {
+        get: {
+          tags: ['Boxes'],
+          summary: "Mint the box's noVNC viewer URL",
+          description:
+            'A ready-to-open noVNC URL (autoconnect, password in the query). Cloud boxes get a freshly SIGNED preview URL on port 6080 that expires — which is why the Box payload\'s `vncUrl` is null for daytona/vercel/e2b and this must be called at click time. Docker/hetzner boxes return their stable Portless/OrbStack/loopback URL. Read-only: refused with 409 when the box is not running, has VNC disabled, or has no recorded password. Pair with POST /boxes/{id}/screen to point the in-box browser at the web app first.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'ttl',
+              in: 'query',
+              required: false,
+              description: 'Cloud only: signed-URL lifetime in seconds (provider default 3600).',
+              schema: { type: 'integer', minimum: 1, maximum: 86400 },
+            },
+            {
+              name: 'loopback',
+              in: 'query',
+              required: false,
+              description: 'Docker only: prefer the 127.0.0.1 host-port URL over OrbStack/Portless.',
+              schema: { type: 'string', enum: ['1'] },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Viewer URL',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { url: { type: 'string' }, ttl: { type: 'integer' } },
+                    required: ['url'],
+                  },
                 },
               },
             },

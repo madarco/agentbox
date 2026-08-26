@@ -192,7 +192,9 @@ export interface HubApiServices {
   error?: string;
 }
 
-export type HubLifecycleAction = 'start' | 'pause' | 'resume' | 'stop' | 'destroy';
+// `screen` is the open-VNC prep step (points the in-box browser at the web app),
+// not a state transition — it rides the same route as the lifecycle actions.
+export type HubLifecycleAction = 'start' | 'pause' | 'resume' | 'stop' | 'destroy' | 'screen';
 export type HubGitOp = 'checkout' | 'branch' | 'pull' | 'push' | 'push-host';
 
 /** Result of `POST /boxes/:id/checkpoint` (a captured project checkpoint). */
@@ -387,6 +389,20 @@ export class HubApiClient {
   /** One box by id (throws HubApiError 'not_found' when absent). */
   getBox(id: string): Promise<HubApiBox> {
     return this.request<HubApiBox>('GET', `/boxes/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Mint the box's ready-to-open noVNC viewer URL. Resolves live rather than
+   * reading the Box payload's `vncUrl`, which is null for daytona/vercel/e2b:
+   * their signed preview URLs expire, so they can't ride a listing. Throws
+   * HubApiError 'conflict' when the box isn't running or has VNC disabled.
+   */
+  vncUrl(id: string, opts: { ttl?: number } = {}): Promise<{ url: string; ttl?: number }> {
+    const q = opts.ttl === undefined ? '' : `?ttl=${String(opts.ttl)}`;
+    return this.request<{ url: string; ttl?: number }>(
+      'GET',
+      `/boxes/${encodeURIComponent(id)}/vnc${q}`,
+    );
   }
 
   /**

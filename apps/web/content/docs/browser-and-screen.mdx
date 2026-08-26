@@ -66,7 +66,16 @@ agentbox create --no-vnc
   caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown."
 />
 
-This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL.
+This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL. The desktop is reachable from every surface — the `(VNC)` link in `agentbox ls`, the tray's **Open VNC**, and the hub UI — not just `agentbox screen`.
+
+<Callout type="info">
+  On daytona, vercel and e2b the viewer URL is **minted per click** rather than
+  stored: those providers' signed preview URLs expire (an hour by default), so a
+  URL printed into a box listing would be dead by the time you clicked it. The
+  hub mints a fresh one on demand (`GET /api/v1/boxes/{id}/vnc`), which is why
+  the box payload's `vncUrl` is `null` for them while `vncEnabled` is `true`.
+  Docker and hetzner boxes have a stable Portless URL and carry it directly.
+</Callout>
 
 ## Screen sharing
 

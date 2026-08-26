@@ -4,10 +4,9 @@ import type { BoxRecord } from '@agentbox/core';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import { openWebAppOnVncScreen } from '@agentbox/sandbox-cloud';
 import {
-  buildVncUrls,
-  detectEngine,
   ensureBoxBrowserShowingApp,
   inspectBox,
+  resolveVncViewerUrl,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
@@ -71,8 +70,10 @@ async function dockerBrowserPrep(box: BoxRecord): Promise<void> {
  * in-box browser prep, same as the historical behavior.
  */
 async function resolveViaProvider(box: BoxRecord, opts: ScreenOptions): Promise<string> {
-  const provider = box.provider ?? 'docker';
-  if (provider === 'docker') {
+  const ttl = parseTtlOrExit(opts.ttl);
+  const p = await providerForBox(box);
+
+  if ((box.provider ?? 'docker') === 'docker') {
     const insp = await inspectBox(box.id);
     if (insp.state === 'paused') {
       log.info('box is paused; unpausing');
@@ -83,61 +84,33 @@ async function resolveViaProvider(box: BoxRecord, opts: ScreenOptions): Promise<
     } else if (insp.state === 'missing') {
       throw new Error(`box ${box.name} has no container; was it destroyed?`);
     }
-
     await dockerBrowserPrep(box);
-
-    const engine = await detectEngine();
-    const urls = buildVncUrls(box, engine);
-    // Preference when --loopback is off: portless > orb.local > loopback.
-    // Portless gives a stable name across box restarts (loopback port rerolls
-    // every `docker run`); orb.local is OrbStack-only; loopback is the
-    // always-available fallback. `--loopback` forces the raw port.
-    const resolved = opts.loopback
-      ? urls.loopbackUrl
-      : (urls.portlessUrl ?? urls.orbUrl ?? urls.loopbackUrl);
-    if (!resolved) {
-      throw new Error(
-        `VNC URL unavailable (daemon may not be up); try \`agentbox inspect ${box.name}\``,
-      );
+  } else {
+    const state = await p.probeState(box);
+    if (state === 'paused') {
+      log.info('box is paused; resuming');
+      await p.resume(box);
+    } else if (state === 'stopped') {
+      log.info('box is stopped; starting');
+      await p.start(box);
+    } else if (state === 'missing') {
+      throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
     }
-    return resolved;
+
+    // Open the box's web app *inside* the VNC desktop, mirroring the docker path.
+    // Best-effort, never fails `screen`.
+    const br = await openWebAppOnVncScreen(box, p);
+    if (br.opened) {
+      log.info(`opened ${br.target ?? ''} in the in-box browser (visible in the VNC view)`);
+    } else if (br.reason && br.reason !== 'no web service') {
+      log.warn(`could not open in-box browser (continuing): ${br.reason}`);
+    }
   }
 
-  // Cloud provider: lifecycle handled by the provider; URL is a signed preview
-  // URL for the in-box noVNC port (6080) — the host browser can open it directly.
-  if (!box.vncPassword) {
-    throw new Error(
-      `cloud box ${box.name} has no VNC password recorded — recreate it to enable \`agentbox screen\``,
-    );
-  }
-  const ttl = parseTtlOrExit(opts.ttl);
-  const p = await providerForBox(box);
-  const state = await p.probeState(box);
-  if (state === 'paused') {
-    log.info('box is paused; resuming');
-    await p.resume(box);
-  } else if (state === 'stopped') {
-    log.info('box is stopped; starting');
-    await p.start(box);
-  } else if (state === 'missing') {
-    throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
-  }
-
-  // Open the box's web app *inside* the VNC desktop, mirroring the docker path.
-  // Best-effort, never fails `screen`.
-  const br = await openWebAppOnVncScreen(box, p);
-  if (br.opened) {
-    log.info(`opened ${br.target ?? ''} in the in-box browser (visible in the VNC view)`);
-  } else if (br.reason && br.reason !== 'no web service') {
-    log.warn(`could not open in-box browser (continuing): ${br.reason}`);
-  }
-
-  const base = await p.resolveUrl(box, { kind: 'vnc', ttl });
-  // Append noVNC's auto-connect query so the browser jumps straight to the
-  // desktop without prompting for a password — same shape Docker's
-  // `buildVncUrls` produces. Strip any trailing slash from the signed host so
-  // the path concatenation stays canonical.
-  return `${base.replace(/\/$/, '')}/vnc.html?autoconnect=1&password=${encodeURIComponent(box.vncPassword)}`;
+  return resolveVncViewerUrl(box, p, {
+    ...(opts.loopback ? { loopback: true } : {}),
+    ...(ttl === undefined ? {} : { ttl }),
+  });
 }
 
 function emitUrl(url: string, opts: ScreenOptions): void {
@@ -169,16 +142,17 @@ export const screenCommand = new Command('screen')
         throw new Error(`VNC is disabled for box ${box.name} — recreate without \`--no-vnc\``);
       }
 
-      // Default VNC URL comes off the enriched Box payload (the docker `vnc`
-      // endpoint is the complete noVNC URL, autoconnect + password included).
-      // `--loopback` / `--ttl` need provider-level URL computation the payload
-      // can't express, so they take the provider path. Cloud boxes have no `vnc`
-      // endpoint on the payload, so they fall through and resolve a live signed URL.
-      if (!opts.loopback && opts.ttl === undefined && (box.provider ?? 'docker') === 'docker') {
+      // The hub is the default path for every provider: a docker box's URL is
+      // already complete on the Box payload, and a cloud box's is minted live by
+      // `GET /boxes/:id/vnc` (its signed URL expires, so it can't ride a payload).
+      // `--loopback` is the one escape hatch — it means "the 127.0.0.1 URL on THIS
+      // machine", which a remote control box cannot answer.
+      if (!opts.loopback) {
+        const ttl = parseTtlOrExit(opts.ttl);
         // Box-scoped → the box's OWNING hub (withOwningHub); a plain withHubClient
         // would send a docker box's `getBox` to a configured remote control box that
-        // never owned it → `not_found`. Payload URL captured via closure.
-        let payloadUrl: string | null = null;
+        // never owned it → `not_found`. Resolved URL captured via closure.
+        let hubUrl: string | null = null;
         const r = await withOwningHub(box, async (client) => {
           let b = await client.getBox(box.id);
           if (b.state && b.state !== 'running') {
@@ -188,17 +162,19 @@ export const screenCommand = new Command('screen')
             await client.lifecycle(box.id, 'start');
             b = await client.getBox(box.id);
           }
-          payloadUrl = b.vncUrl ?? null;
+          // Point the in-box browser at the box's web app so the desktop isn't a
+          // blank X screen. The hub does this for docker AND cloud, and it is the
+          // only spelling that also works against a remote control box.
+          // Best-effort: an older hub 400s on the action; the viewer still works.
+          await client.lifecycle(box.id, 'screen').catch(() => {});
+          hubUrl = b.vncUrl ?? (b.vncEnabled ? (await client.vncUrl(box.id, { ttl })).url : null);
         });
         if (r === undefined) return; // hub error; withOwningHub set the exit code
-        if (payloadUrl) {
-          // The VNC URL is authoritative, but still point the in-box browser at
-          // the app so the desktop isn't blank (genuine box IO — stays direct).
-          await dockerBrowserPrep(box);
-          emitUrl(payloadUrl, opts);
+        if (hubUrl) {
+          emitUrl(hubUrl, opts);
           return;
         }
-        // No `vnc` endpoint on the payload — fall through to the provider.
+        // No hub owns this box (or it reports no VNC) — fall through to the provider.
       }
 
       emitUrl(await resolveViaProvider(box, opts), opts);

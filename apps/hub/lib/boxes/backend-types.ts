@@ -73,6 +73,11 @@ export interface ServicesResult {
   error?: string;
 }
 
+// A minted, ready-to-open noVNC viewer URL. Cloud signed URLs carry a TTL
+// (default 3600s), so this is resolved ON DEMAND and never persisted onto the
+// Box payload — which is why its `vncUrl` is null for daytona/vercel/e2b.
+export type VncUrlResult = { ok: true; url: string; ttl?: number } | { ok: false; error: string };
+
 // Live git summary for the box detail panel. `box.branch` from getData() goes
 // stale after a checkout, so the panel reads this instead.
 export interface GitInfo {
@@ -392,6 +397,12 @@ export interface HubBackend {
   // by open-VNC surfaces (hub UI, tray) right before opening the viewer URL.
   // Best-effort on the browser launch; only errors when the box is unusable.
   screen(id: string): Promise<ActionResult>;
+  // Mint the host-openable noVNC viewer URL for a box. Docker/hetzner boxes
+  // resolve to their stable Portless/OrbStack/loopback URL; cloud boxes to a
+  // freshly signed preview URL on 6080, because those expire and so can never
+  // ride the Box payload. Read-only: it never starts or resumes the box, so a
+  // non-running box is refused rather than silently woken.
+  vncUrl(id: string, opts?: { ttl?: number; loopback?: boolean }): Promise<VncUrlResult>;
   // Answer a pending host-action approval; resolves the parked in-box RPC.
   // `cancelled` marks a dismissal distinctly from a plain deny in the audit
   // trail (the `agent approve --cancel` capability); both resolve as not-approved.

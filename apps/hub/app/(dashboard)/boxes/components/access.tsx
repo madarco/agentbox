@@ -101,7 +101,9 @@ function useOpenIn(box: Box) {
           body: JSON.stringify({ app }),
         });
         if (!r.ok) {
-          const detail = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
+          const detail = (await r.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
           window.alert(`Open in ${app} failed: ${detail?.error?.message ?? `HTTP ${r.status}`}`);
         }
       } catch (err) {
@@ -145,7 +147,17 @@ export function Access({ box }: { box: Box }) {
         ? 'Box is stopped — start to access'
         : null;
   const webReason = webUrl ? null : (unreachableReason ?? 'No web service exposed');
-  const vncReason = vncUrl
+
+  // A cloud box carries no static vncUrl — its signed preview URL expires — so
+  // link at the hub's own redirect, which mints one server-side on navigation.
+  // An <a href> navigates synchronously; a fetch-then-window.open would lose the
+  // user-activation token across the await and be popup-blocked.
+  const vncHref =
+    vncUrl ??
+    (box.vncEnabled && box.status === 'running'
+      ? `/boxes/${encodeURIComponent(box.id)}/vnc`
+      : null);
+  const vncReason = vncHref
     ? null
     : box.vncEnabled === false
       ? 'VNC is not enabled for this box'
@@ -153,7 +165,7 @@ export function Access({ box }: { box: Box }) {
 
   // Hosted/remote profile with no reachable endpoint: everything would render
   // permanently disabled — hide the card instead.
-  if (!supported && !webUrl && !vncUrl) return null;
+  if (!supported && !webUrl && !vncHref) return null;
 
   return (
     <>
@@ -161,9 +173,9 @@ export function Access({ box }: { box: Box }) {
       <Card className="divide-y divide-border/60 overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 px-4.5 p-3.5">
           <div className="min-w-[150px] flex-1">
-            <div className="text-[13.5px] font-medium">{webUrl || !vncUrl ? 'Web' : 'VNC'}</div>
+            <div className="text-[13.5px] font-medium">{webUrl || !vncHref ? 'Web' : 'VNC'}</div>
             <div className="mt-0.5 break-all font-mono text-[11.5px] text-muted-foreground">
-              {webUrl ?? (vncUrl ? 'Remote desktop' : webReason)}
+              {webUrl ?? (vncHref ? 'Remote desktop' : webReason)}
             </div>
           </div>
           <div className="flex flex-none flex-wrap gap-1.5">
@@ -181,18 +193,21 @@ export function Access({ box }: { box: Box }) {
               </DisabledTip>
             )}
             {webUrl ? <CopyButton url={webUrl} /> : null}
-            {vncUrl ? (
+            {vncHref ? (
               <Button
                 variant="outline"
                 size="sm"
-                href={vncUrl}
+                href={vncHref}
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => {
                   // Fire-and-forget prep: point the in-box browser at the web
                   // app so the VNC desktop isn't a blank X screen. The link
                   // opens synchronously (no popup-blocker risk); Chromium
-                  // appears in the view a moment later.
+                  // appears in the view a moment later. Only needed on the
+                  // static-URL path — the /boxes/:id/vnc redirect fires the same
+                  // prep itself, and doing both would launch the browser twice.
+                  if (!vncUrl) return;
                   void fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/screen`, {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -216,7 +231,9 @@ export function Access({ box }: { box: Box }) {
           <div className="flex flex-wrap items-center gap-3 px-4.5 p-3.5">
             <div className="min-w-[150px] flex-1">
               <div className="text-[13.5px] font-medium">Apps</div>
-              <div className="mt-0.5 text-[11.5px] text-muted-foreground">Open the box project from the host</div>
+              <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                Open the box project from the host
+              </div>
             </div>
             <div className="flex flex-none flex-wrap justify-end gap-1.5">
               {apps.map(({ app, label, icon, disabledReason }) => {

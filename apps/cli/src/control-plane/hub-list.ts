@@ -83,6 +83,16 @@ export interface BoxListing {
    * listing at all, rather than an old one.
    */
   fetchedAt?: string;
+  /**
+   * The hub this listing actually came from. `ls` needs it to build box-scoped
+   * hub links — the `(VNC)` OSC-8 target, which the hub redirects to a freshly
+   * minted signed URL at click time.
+   *
+   * Undefined on the stale/cache path by design: the token is deliberately never
+   * written to hub-boxes-cache.json, and a link into a hub we just failed to
+   * reach would only fail again on click.
+   */
+  target?: { url: string; apiKey: string; mode: 'local' | 'remote' };
 }
 
 interface BoxCacheFile {
@@ -136,8 +146,13 @@ export async function fetchBoxListing(
         });
         const boxes = await client.listBoxes({ live: opts.live });
         const fetchedAt = new Date().toISOString();
+        // The cache file stays token-free — only the in-memory listing carries
+        // the target.
         await writeBoxCache({ version: 1, fetchedAt, boxes }).catch(() => {});
-        return remember({ boxes, stale: false, fetchedAt }, opts.live);
+        return remember(
+          { boxes, stale: false, fetchedAt, target: { ...target, mode: probe?.mode ?? 'local' } },
+          opts.live,
+        );
       }
     } catch {
       // fall through to the cache

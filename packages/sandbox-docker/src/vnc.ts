@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { buildNoVncUrl, type BoxRecord, type Provider } from '@agentbox/core';
 import { execInBox } from './docker.js';
+import { detectEngine } from './sync/host-export.js';
 
 export interface VncLaunchResult {
   up: boolean;
@@ -64,6 +66,13 @@ export function generateVncPassword(): string {
  */
 export const VNC_CONTAINER_PORT = 6080;
 
+export interface VncViewerOptions {
+  /** Docker only: prefer the raw `127.0.0.1:<host port>` URL over Portless/OrbStack. */
+  loopback?: boolean;
+  /** Cloud only: signed-URL lifetime in seconds (the provider's default when unset). */
+  ttl?: number;
+}
+
 export interface VncUrls {
   /** OrbStack name-based URL, e.g. http://agentbox-foo.orb.local:6080/... Present only on OrbStack hosts. */
   orbUrl?: string;
@@ -94,17 +103,65 @@ export function buildVncUrls(
 ): VncUrls {
   if (!record.vncEnabled || !record.vncPassword) return {};
   const containerPort = record.vncContainerPort ?? VNC_CONTAINER_PORT;
-  const qs = `autoconnect=1&password=${encodeURIComponent(record.vncPassword)}`;
+  const pw = record.vncPassword;
   const urls: VncUrls = {};
   if (engine === 'orbstack' && record.container) {
-    urls.orbUrl = `http://${record.container}.orb.local:${String(containerPort)}/vnc.html?${qs}`;
+    urls.orbUrl = buildNoVncUrl(
+      `http://${record.container}.orb.local:${String(containerPort)}`,
+      pw,
+    );
   }
   if (record.vncHostPort) {
-    urls.loopbackUrl = `http://127.0.0.1:${String(record.vncHostPort)}/vnc.html?${qs}`;
+    urls.loopbackUrl = buildNoVncUrl(`http://127.0.0.1:${String(record.vncHostPort)}`, pw);
   }
   if (record.portlessVncAlias) {
-    const base = record.portlessVncUrl ?? `https://${record.portlessVncAlias}.localhost`;
-    urls.portlessUrl = `${base}/vnc.html?${qs}`;
+    urls.portlessUrl = buildNoVncUrl(
+      record.portlessVncUrl ?? `https://${record.portlessVncAlias}.localhost`,
+      pw,
+    );
   }
   return urls;
+}
+
+/**
+ * The host-openable noVNC viewer URL for ANY box — the one place that knows a
+ * docker box's URL comes off its record while a cloud box's must be minted.
+ *
+ * Pure URL resolution: no lifecycle side effects, no in-box browser prep (the
+ * callers layer those on). Cloud signed URLs expire, so this is called at click
+ * time rather than persisted on the record.
+ *
+ * The docker branch can't go through `provider.resolveUrl({ kind: 'vnc' })` —
+ * the docker provider ignores `kind` and always returns the box's *web* URL.
+ */
+export async function resolveVncViewerUrl(
+  box: BoxRecord,
+  provider: Provider,
+  opts: VncViewerOptions = {},
+): Promise<string> {
+  if (!box.vncEnabled) {
+    throw new Error(`VNC is disabled for box ${box.name} — recreate without \`--no-vnc\``);
+  }
+  if (!box.vncPassword) {
+    throw new Error(
+      `box ${box.name} has no VNC password recorded — recreate it to enable the desktop`,
+    );
+  }
+
+  if ((box.provider ?? 'docker') === 'docker') {
+    const urls = buildVncUrls(box, await detectEngine());
+    const resolved = opts.loopback
+      ? urls.loopbackUrl
+      : (urls.portlessUrl ?? urls.orbUrl ?? urls.loopbackUrl);
+    if (!resolved) {
+      throw new Error(`VNC URL unavailable for box ${box.name} — the daemon may not be up`);
+    }
+    return resolved;
+  }
+
+  const base = await provider.resolveUrl(box, {
+    kind: 'vnc',
+    ...(opts.ttl ? { ttl: opts.ttl } : {}),
+  });
+  return buildNoVncUrl(base, box.vncPassword);
 }

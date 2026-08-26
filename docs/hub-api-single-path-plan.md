@@ -64,8 +64,15 @@ swap and nothing else.
 ### Explicitly out of scope
 
 The **IO plane stays direct**: `shell`, `attach`, `cp`, `download*`, `code`, `open`, `url`,
-`screen`, `drive` keep talking to the provider/box from the laptop. Two consequences, both
+`drive` keep talking to the provider/box from the laptop. Two consequences, both
 intentional:
+
+> **`screen` has since moved behind the API on every provider** (it was originally
+> hub-served for docker only). `GET /api/v1/boxes/:id/vnc` mints the viewer URL —
+> a cloud box's signed preview URL expires, so it cannot ride the box payload and
+> must be resolved per click. The provider-direct path survives only for
+> `--loopback`, which by definition means "this machine", and as the fallback when
+> no hub owns the box.
 
 - **Local adoption for cloud boxes stays.** The CLI still materializes a local `BoxRecord` so
   the direct IO path can resolve a box. Step 4 keeps it, but re-sources it from `/api/v1`.
