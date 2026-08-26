@@ -9,7 +9,7 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
-## [Unreleased]
+## [0.28.0] - 2026-08-26
 
 ### Breaking
 
@@ -186,6 +186,11 @@ CLI, not the raw commits.
 - `agentbox services` on a paused or stopped box reports the hub's last known
   snapshot instead of failing to reach the supervisor — it now agrees with
   `status`.
+- `@madarco/agentbox-provider-sdk` 2.5.0: cloud provisioning gained
+  `extraInboundCidrs` (extra firewall sources for a control-box-provisioned box)
+  and `CloudHandle.publicHost` (so an adopting PC can rebuild an SSH target
+  without a provider API call). `box.provider` now also accepts a
+  `docker:<alias>` engine spec.
 
 ### Fixed
 
