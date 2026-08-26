@@ -1,6 +1,6 @@
 # AgentBox test plan
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). For the feature surface this exercises, see [`features.md`](./features.md).
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). For the feature surface this exercises, see [`features.md`](./architecture.md#what-works-today). Anything hub- or control-box-shaped is covered separately in [`hub-testing.md`](./hub-testing.md).
 
 A regression checklist that an AI (or human) can drive end-to-end to declare AgentBox healthy for a given provider. Each entry lists the **exact command** to run, a **machine-checkable signal** for success, and a one-sentence **note** on what the check is really proving.
 
@@ -328,16 +328,20 @@ A regression checklist that an AI (or human) can drive end-to-end to declare Age
   - **Signal:** retry wrapper absorbs up to 3 attempts; create still succeeds.
   - **Note:** Edge-proxy intermittent failures shouldn't break create. *(Manual fault injection required; skip if unable.)*
 
-- [ ] **CREATE-013** `carry:` block + `--carry-yes` copies host files into the box at declared destinations.
-  - **Providers:** [docker, hetzner, daytona]
+- [ ] **CREATE-013** `carry:` block + `--carry-yes` copies host files into the box at declared destinations, owned by the box user.
+  - **Providers:** [docker, hetzner, daytona, e2b, vercel, digitalocean]
   - **Setup:** `mkdir -p ~/.agentbox/carry-smoke && echo marker > ~/.agentbox/carry-smoke/m.txt && mkdir -p /tmp/cbtest && cat > /tmp/cbtest/agentbox.yaml <<'EOF'
 carry:
   - src: ~/.agentbox/carry-smoke/m.txt
     dest: ~/carried.txt
     mode: 0o600
+  - src: ~/.agentbox/carry-smoke/m.txt
+    dest: ~/.ssh/carry-probe
+    mode: 0o600
 EOF`
   - **Run:** `node apps/cli/dist/index.js create -w /tmp/cbtest -y -n carry-smoke --carry-yes`.
-  - **Signal:** `agentbox shell carry-smoke -- stat -c '%a %U:%G %n' /home/vscode/carried.txt` returns `600 vscode:vscode /home/vscode/carried.txt`; `agentbox shell carry-smoke -- cat /home/vscode/carried.txt` returns `marker`; `~/.agentbox/state.json` shows `carry: {count:1, entries:[…]}` on the BoxRecord.
+  - **Signal:** `agentbox shell carry-smoke -- stat -c '%a %U:%G %n' /home/vscode/carried.txt /home/vscode/.ssh/carry-probe /home/vscode/.ssh` returns `vscode:vscode` for all three; `agentbox shell carry-smoke -- sudo -u vscode cat /home/vscode/.ssh/carry-probe` returns `marker`; `~/.agentbox/state.json` shows `carry: {count:2, entries:[…]}` on the BoxRecord.
+  - **Note:** both halves of this are load-bearing and neither was covered before. **The provider list must include e2b/vercel** — `vscode` is uid 1000 on docker/hetzner/daytona/digitalocean but provider-assigned there, and a run limited to the 1000-providers passes while carry is chowning to a stranger. **The nested `~/.ssh/` dest** is what exercises the parent-chain chown; a dest directly under `$HOME` skips that walk entirely. Assert `%U:%G` (names), never a uid. Reading it back **as `vscode`** is the check that matters: 0600 plus a wrong owner is a file the agent cannot open.
 
 - [ ] **CREATE-014** `carry:` + `AGENTBOX_CARRY=skip` creates the box but copies nothing.
   - **Providers:** [docker]
@@ -743,12 +747,12 @@ EOF`
 - [ ] **UPDATE-001** `self-update --dry-run` shows plan.
   - **Providers:** [all]
   - **Run:** `node apps/cli/dist/index.js self-update --dry-run`.
-  - **Signal:** lists steps: npm self-upgrade, image wipe, relay restart; nothing executed.
+  - **Signal:** lists steps: npm self-upgrade, image re-check (left in place, not deleted), relay restart; nothing executed.
 
-- [ ] **UPDATE-002** `self-update --skip-self -y` refreshes image + relay only.
+- [ ] **UPDATE-002** `self-update --skip-self -y` re-checks the image + reloads the relay only.
   - **Providers:** [docker]
   - **Run:** `self-update --skip-self -y`.
-  - **Signal:** local `agentbox/box:dev` rebuilt; relay restarted; npm step skipped.
+  - **Signal:** `agentbox/box:dev` reported as current or stale (never deleted); relay restarted; npm step skipped.
 
 ---
 

@@ -1,12 +1,14 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
 import { isValidBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
-import { applyStoreOp, isStoreRpcMethod, type StoreRpcRequest } from '../store/store-rpc.js';
+import { handleStoreRpcRequest } from '../store/store-rpc-routes.js';
 import { resolveWorktree } from '../worktree.js';
-import type { CreateJobRequest } from '../store/store.js';
+import { handleCustodyRequest, type CustodyRouteDeps } from '../custody/routes.js';
+import { handleRemoteBoxesRequest } from '../remote-boxes.js';
+import type { CustodyStore } from '../custody/store.js';
 import { isScratchBranch } from '@agentbox/core';
 import type {
   BoxRegistration,
@@ -60,6 +62,11 @@ export interface ControlPlaneDeps {
    * whose `create()` needs host execution (e.g. hetzner).
    */
   createProviders?: string[];
+  /**
+   * Custody store (agent creds / project secrets / box SSH keys). Absent →
+   * `/admin/custody/*` fail-closes with 503. See `../custody/routes.ts`.
+   */
+  custody?: CustodyStore | null;
   log?: (line: string) => void;
 }
 
@@ -129,6 +136,10 @@ export async function handleRelayRequest(
     return err(401, 'invalid admin token');
   }
 
+  const custodyDeps: CustodyRouteDeps = { custody: deps.custody, adminToken: deps.adminToken, log };
+  const custody = await handleCustodyRequest(req, custodyDeps);
+  if (custody) return custody.body === undefined ? { status: custody.status } : ok(custody.body, custody.status);
+
   // --- box endpoints (per-box bearer) ---
   if (req.method === 'POST' && req.path === '/events') {
     const reg = await store.authenticateBox(req.bearer);
@@ -190,6 +201,7 @@ export async function handleRelayRequest(
       name: body.name,
       kind: body.kind === 'cloud' ? 'cloud' : 'docker',
       backend: body.backend || undefined,
+      sandboxId: body.sandboxId || undefined,
       registeredAt: new Date().toISOString(),
       containerName: body.containerName || undefined,
       createdAt: body.createdAt || undefined,
@@ -273,57 +285,26 @@ export async function handleRelayRequest(
     return hit ? ok(null, 204) : err(404, 'no pending prompt with that id');
   }
 
-  if (req.method === 'POST' && req.path === '/admin/store') {
-    // Generic Store RPC for a federated laptop relay's RemoteStore. Admin-gated
-    // (checked above); the method name is an explicit allow-list.
-    const body = parseJson<StoreRpcRequest>(req.bodyText);
-    if (!body || typeof body.method !== 'string' || !Array.isArray(body.args)) {
-      return err(400, 'expected {method, args}');
-    }
-    if (!isStoreRpcMethod(body.method)) return err(400, `unknown store op: ${body.method}`);
-    const result = await applyStoreOp(store, body.method, body.args);
-    return ok({ result: result ?? null });
+  // Generic Store RPC for a federated laptop relay's RemoteStore — a shared
+  // dispatcher mounted in both this hosted-plane handler and the relay daemon
+  // (`server.ts`), so a PC's RemoteStore works against the control box and the
+  // Vercel plane identically.
+  const storeRpc = await handleStoreRpcRequest(req, { store, adminToken: deps.adminToken, log });
+  if (storeRpc) {
+    return storeRpc.body === undefined ? { status: storeRpc.status } : ok(storeRpc.body, storeRpc.status);
   }
 
-  if (req.method === 'POST' && req.path === '/remote/boxes') {
-    // Enqueue a durable create job; a worker (self-host loop / Vercel cron)
-    // drains it and clones the repo into a fresh cloud box via a leased token.
-    if (!store.enqueueCreateJob) return err(501, 'create-job queue not available on this store');
-    const body = parseJson<CreateJobRequest>(req.bodyText);
-    if (!body || typeof body.repoUrl !== 'string' || typeof body.provider !== 'string') {
-      return err(400, 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}');
-    }
-    const allowed = deps.createProviders;
-    if (allowed && allowed.length > 0 && !allowed.includes(body.provider)) {
-      return err(
-        400,
-        `provider '${body.provider}' is not supported by this control plane (allowed: ${allowed.join(', ')})`,
-      );
-    }
-    const id = randomUUID();
-    await store.enqueueCreateJob({
-      id,
-      status: 'queued',
-      request: {
-        repoUrl: body.repoUrl,
-        provider: body.provider,
-        branch: body.branch,
-        name: body.name,
-        agent: body.agent,
-        prompt: body.prompt,
-      },
-      createdAt: new Date().toISOString(),
-    });
-    log(`enqueued create job ${id} (${body.provider} ${body.repoUrl})`);
-    return ok({ jobId: id }, 202);
-  }
-
-  if (req.method === 'GET' && req.path.startsWith('/remote/boxes/')) {
-    if (!store.getCreateJob) return err(501, 'create-job queue not available on this store');
-    const id = decodeURIComponent(req.path.slice('/remote/boxes/'.length));
-    const job = await store.getCreateJob(id);
-    return job ? ok(job) : err(404, 'no such job');
-  }
+  // Create-queue surface (`/remote/boxes`) — a shared dispatcher mounted in both
+  // this hosted-plane handler and the relay daemon (`server.ts`), so the control
+  // box and the Vercel plane serve identical enqueue/status semantics.
+  const remote = await handleRemoteBoxesRequest(req, {
+    store,
+    adminToken: deps.adminToken,
+    createProviders: deps.createProviders,
+    custody: deps.custody,
+    log,
+  });
+  if (remote) return remote.body === undefined ? { status: remote.status } : ok(remote.body, remote.status);
 
   return err(404, 'not found');
 }

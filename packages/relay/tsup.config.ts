@@ -4,21 +4,21 @@ import { defineConfig } from 'tsup';
 //   dist/index.js — library entry consumed by other workspace packages.
 //   dist/bin.cjs  — self-contained CJS bin baked into the relay docker image.
 //
-// Runtime contract: `@agentbox/sandbox-daytona` and `@agentbox/sandbox-cloud`
-// (and their transitive `@daytona/sdk`) are resolved at runtime via
-// dynamic `import()` from host-actions.ts. Both are excluded from the
-// relay bundle here to avoid:
+// Runtime contract: the `@agentbox/sandbox-*` packages are NOT in this bundle.
+// Keeping them out avoids
 //   1. a `relay → sandbox-{daytona,cloud} → sandbox-docker → relay`
 //      dependency cycle in package.json declarations,
 //   2. eager loading of the heavy Daytona SDK CJS tree in box-mode relays
 //      that never touch cloud,
 //   3. bloating relay/bin.cjs with code only the host relay ever uses.
 //
-// The runtime owner (the `@madarco/agentbox` CLI) MUST make these packages
-// resolvable from `node_modules` next to the relay bin. The CLI's own
-// `tsup` config uses `noExternal: [/^@agentbox\//]` and the published
-// `agent-box` npm package ships them inlined. See the long note on
-// `resolveCloudBackend` in src/host-actions.ts for the full story.
+// Instead the host process INJECTS them: `setCloudBackendLoader` (see the long
+// note on `resolveCloudBackend` in src/host-actions.ts). The CLI's relay bin
+// side-loads `apps/cli/dist/cloud-backends.js` via AGENTBOX_CLOUD_BACKENDS; the
+// hub registers its own map in-process. The `import()`-by-computed-specifier
+// fallback in host-actions.ts only ever resolves in the pnpm dev tree — an npm
+// install has no `@agentbox/*` in node_modules at all, which is exactly the bug
+// the injection fixed.
 const externalAtRuntime = [
   '@agentbox/sandbox-daytona',
   '@agentbox/sandbox-cloud',
@@ -26,6 +26,9 @@ const externalAtRuntime = [
   // `pg` is only used by the Postgres store on the hosted control plane, loaded
   // via a lazy dynamic `import('pg')`. Keep it out of both relay bundles (esp.
   // the self-contained bin.cjs) so the laptop relay never carries it.
+  // (The SQLite store's driver is `node:sqlite`, a builtin — external by
+  // definition — and is likewise only imported lazily, so a Node < 22.5 host
+  // never touches it unless it asks for a SQLite store.)
   'pg',
 ];
 
@@ -34,7 +37,11 @@ export default defineConfig([
     // `index` is the full library (consumed by the CLI / sandbox packages).
     // `control-plane` is the lean hosted-plane entry (the Next.js app) — no
     // server.ts/host-actions, so its graph carries none of the cloud SDKs.
-    entry: { index: 'src/index.ts', 'control-plane': 'src/control-plane.ts', daemon: 'src/daemon.ts' },
+    entry: {
+      index: 'src/index.ts',
+      'control-plane': 'src/control-plane.ts',
+      daemon: 'src/daemon.ts',
+    },
     format: ['esm'],
     target: 'node20',
     clean: true,

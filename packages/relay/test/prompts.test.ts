@@ -51,7 +51,12 @@ describe('PendingPrompts', () => {
     void p.add('a', { id: 'a1', kind: 'confirm', message: 'a1' });
     void p.add('b', { id: 'b1', kind: 'confirm', message: 'b1' });
     void p.add('a', { id: 'a2', kind: 'confirm', message: 'a2' });
-    expect(p.forBox('a').map((e) => e.id).sort()).toEqual(['a1', 'a2']);
+    expect(
+      p
+        .forBox('a')
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(['a1', 'a2']);
     expect(p.forBox('b').map((e) => e.id)).toEqual(['b1']);
   });
 
@@ -140,6 +145,54 @@ describe('PromptSubscribers', () => {
     };
     subs.add('box-A', fake as never);
     expect(() => subs.broadcast('box-A', 'prompt-ask', { id: 'q1' })).not.toThrow();
+  });
+
+  it('delivers broadcasts to callback listeners with the raw (event, data)', () => {
+    const subs = new PromptSubscribers();
+    const seen: Array<[string, unknown]> = [];
+    const unsub = subs.addListener('box-1', (event, data) => seen.push([event, data]));
+    subs.broadcast('box-1', 'prompt-ask', { id: 'q1' });
+    subs.broadcast('box-1', 'notice-set', { id: 'n1', kind: 'checkpoint' });
+    // A different box is not delivered.
+    subs.broadcast('box-2', 'prompt-ask', { id: 'q2' });
+    expect(seen).toEqual([
+      ['prompt-ask', { id: 'q1' }],
+      ['notice-set', { id: 'n1', kind: 'checkpoint' }],
+    ]);
+    unsub();
+    subs.broadcast('box-1', 'prompt-ask', { id: 'q3' });
+    expect(seen).toHaveLength(2); // no delivery after unsubscribe
+  });
+
+  it('isolates a throwing listener from its peers and the broadcast', () => {
+    const subs = new PromptSubscribers();
+    const seen: string[] = [];
+    subs.addListener('box-1', () => {
+      throw new Error('boom');
+    });
+    subs.addListener('box-1', (event) => seen.push(event));
+    expect(() => subs.broadcast('box-1', 'prompt-ask', { id: 'q1' })).not.toThrow();
+    expect(seen).toEqual(['prompt-ask']);
+  });
+
+  it('count sums SSE writers, callback listeners, and the durable floor', () => {
+    const subs = new PromptSubscribers();
+    expect(subs.count('box-1')).toBe(0);
+    const a = makeSink();
+    subs.add('box-1', a.res as never);
+    expect(subs.count('box-1')).toBe(1);
+    const unsub = subs.addListener('box-1', () => {});
+    expect(subs.count('box-1')).toBe(2);
+    // The durable floor lifts every box's count (the hub as durable subscriber),
+    // so a box with nothing attached still reads as answerable.
+    subs.setDurableFloor(1);
+    expect(subs.count('box-1')).toBe(3);
+    expect(subs.count('box-2')).toBe(1);
+    unsub();
+    subs.remove('box-1', a.res as never);
+    expect(subs.count('box-1')).toBe(1); // just the floor
+    subs.setDurableFloor(0);
+    expect(subs.count('box-1')).toBe(0);
   });
 });
 

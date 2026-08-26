@@ -8,7 +8,10 @@ A box is a full computer, not just an agent REPL. Once it's running you can reac
 Every command below takes an optional `<box>`. Omit it for the project's only box, or pass a project index (`1`, `2`, …), a name, an id prefix, or the container name. Run [`agentbox list`](/docs/cli) to see indices and names.
 
 <Callout title="NOTE">
-Most access commands auto-unpause a paused box and start a stopped one before connecting — `shell`, `code`, `url`, `screen`, and `open` all wake the box for you. See [Core concepts](/docs/core-concepts) for what a box actually is, and [Run an agent](/docs/run-an-agent) for the agent session specifically.
+  Most access commands auto-unpause a paused box and start a stopped one before connecting —
+  `shell`, `code`, `url`, `screen`, and `open` all wake the box for you. See [Core
+  concepts](/docs/core-concepts) for what a box actually is, and [Run an agent](/docs/run-an-agent)
+  for the agent session specifically.
 </Callout>
 
 ## Shell
@@ -31,12 +34,13 @@ agentbox shell mybox -- npm run build
 A one-shot `-- <cmd>` is never tmux-wrapped, so stdout stays clean for scripts. See [CLI commands](/docs/cli) for all flags.
 
 <Callout title="TIP">
-Same detach chord as the agent: `Ctrl+a d`. See [Background and parallel](/docs/background-and-parallel) for juggling many boxes.
+  Same detach chord as the agent: `Ctrl+a d`. See [Background and
+  parallel](/docs/background-and-parallel) for juggling many boxes.
 </Callout>
 
 The footer's `(<state>)` slot — next to the box name — shows your `agentbox.yaml` **service status**: `starting N/M…` while services boot in the background, `service error` if one crashed, `ready` once they're all up. (Boxes with no services show the agent's activity there instead.) It's the answer to "are my services up yet?" without leaving the session.
 
-While attached to any box session, **`Ctrl+a t` opens a fresh shell in the *same* box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach). For per-terminal setup — where sessions open, the full chord list, and the cmux sidebar — see the integration pages for [iTerm2](/docs/integrations-iterm2), [tmux](/docs/integrations-tmux), and [cmux](/docs/integrations-cmux).
+While attached to any box session, **`Ctrl+a t` opens a fresh shell in the _same_ box in a new tab** — a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab, depending on your terminal. **`Ctrl+a k` destroys the box** (after a confirmation) — the same key the dashboard uses, so it never collides with `Ctrl+a d` (detach). For per-terminal setup — where sessions open, the full chord list, and the cmux sidebar — see the integration pages for [iTerm2](/docs/integrations-iterm2), [tmux](/docs/integrations-tmux), and [cmux](/docs/integrations-cmux).
 
 ## Web app URL
 
@@ -71,7 +75,11 @@ agentbox screen mybox --print
 This is distinct from `agentbox url`: `url` opens the web app, while `screen` opens the desktop. A box created with `--no-vnc` has no screen. The shared `--loopback` / `--ttl` flags are in [CLI commands](/docs/cli).
 
 {/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot the ~1044x800 canvas, then wrap that capture in a fake browser chrome (browser-in-browser). Full recipe in apps/web/images.md → Phase A. */}
-<Figure src="/screenshots/novnc-desktop.png" caption="noVNC view of a box's desktop, with the in-box Chromium open." />
+
+<Figure
+  src="/screenshots/novnc-desktop.png"
+  caption="noVNC view of a box's desktop, with the in-box Chromium open."
+/>
 
 The deeper VNC and agent-browser story lives in [Browser and screen](/docs/browser-and-screen).
 
@@ -90,10 +98,17 @@ agentbox dashboard --project
 Switch boxes with `Control+Option+↑/↓`. Everything else is a `Ctrl+a` leader chord — press `Ctrl+a` to show the which-key menu in the footer, then a single key (`c` code, `s` screen, `u` url, `p` pause, and so on). These shell out to the same commands above, so they inherit the same behavior.
 
 {/* SCREENSHOT /screenshots/dashboard.png — REPRO: drive the TUI via the PTY harness — pnpm drive start --cols 96 --rows 19 --cwd <project> -- agentbox dashboard <box> ; pnpm drive screen <id> ; strip the pnpm/tsx wrapper lines ; render via /tmp/gen-term.js and screenshot headlessly. */}
-<Figure src="/screenshots/dashboard.png" caption="The dashboard: box sidebar on the left, actions for the selected box on the right, chord hints in the footer." />
+
+<Figure
+  src="/screenshots/dashboard.png"
+  caption="The dashboard: box sidebar on the left, actions for the selected box on the right, chord hints in the footer."
+/>
 
 <Callout title="TIP">
-The dashboard is the cockpit for parallel work — see [Background and parallel](/docs/background-and-parallel) for running many boxes at once, and [Run an agent](/docs/run-an-agent) for the agent session shown on the right. The full command reference is in the [CLI](/docs/cli) page.
+  The dashboard is the cockpit for parallel work — see [Background and
+  parallel](/docs/background-and-parallel) for running many boxes at once, and [Run an
+  agent](/docs/run-an-agent) for the agent session shown on the right. The full command reference is
+  in the [CLI](/docs/cli) page.
 </Callout>
 
 ## VS Code / Cursor
@@ -111,10 +126,14 @@ agentbox code mybox --ide cursor
 It also writes `/workspace/.vscode/tasks.json` so the IDE auto-opens terminal panels tailing each service's log, from the [services and tasks](/docs/services-and-tasks) you declare in `agentbox.yaml`.
 
 <Callout type="warn" title="HEADS UP">
-The first attach to a fresh box downloads the IDE server (~70MB, keyed to your desktop IDE version). It's a one-time cost per box; later attaches are instant.
+  The first attach to a fresh box downloads the IDE server (~70MB, keyed to your desktop IDE
+  version). It's a one-time cost per box; later attaches are instant.
 </Callout>
 
-<Figure src="/screenshots/cursor.png" caption="Cursor attached to a box's /workspace via Dev Containers, with service-log terminal panels auto-opened" />
+<Figure
+  src="/screenshots/cursor.png"
+  caption="Cursor attached to a box's /workspace via Dev Containers, with service-log terminal panels auto-opened"
+/>
 
 ## Open files
 
@@ -169,5 +188,7 @@ agentbox connect mybox --add-key @~/phone.pub
 Already have a box running? Flip it live instead: `agentbox inbound mybox open`, then `agentbox connect mybox --dangerously-git-credentials`. Close it back down with `agentbox inbound mybox lock` when you're done. See [independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
 
 <Callout type="warn" title="open exposes SSH to the internet">
-`agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords, and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner and DigitalOcean only.
+  `agentbox inbound open` makes port 22 publicly reachable. Access stays key-only — no passwords,
+  and only the `vscode` user. Run `agentbox inbound mybox lock` when you no longer need it. Hetzner
+  and DigitalOcean only.
 </Callout>

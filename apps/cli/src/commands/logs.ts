@@ -1,8 +1,7 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { spawn } from 'node:child_process';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface LogsOptions {
@@ -11,8 +10,13 @@ interface LogsOptions {
   daemon?: boolean;
 }
 
-const DAEMON_LOG_PATH = '/var/log/agentbox/ctl-daemon.log';
-
+/**
+ * `agentbox logs [box] <service>` — tail a box service log (or the ctl-daemon log
+ * with `--daemon`). Runs through the hub's public `/api/v1`
+ * (`GET /boxes/:id/logs`, snapshot or SSE for `-f`) via {@link withOwningHub}, so
+ * it works identically against a local hub and a remote control box — the hub
+ * spawns the in-box `agentbox-ctl logs` and returns / streams its output.
+ */
 export const logsCommand = new Command('logs')
   .description('Print recent log lines from a box service; -f to stream')
   // Both args optional so we can support `agentbox logs <service>` (auto-pick
@@ -53,86 +57,63 @@ export const logsCommand = new Command('logs')
       }
 
       const box = await resolveBoxOrExit(idOrName);
-      const provider = await providerForBox(box);
-      const isCloud = (box.provider ?? 'docker') !== 'docker';
-
-      const tail = String(Number.parseInt(opts.tail, 10) || 200);
-      // For --daemon: tail the raw file (the daemon log isn't managed by
-      // the in-box ctl's structured logs pipeline — it's stdout/stderr).
-      const args = opts.daemon
-        ? opts.follow
-          ? ['tail', '-n', tail, '-F', DAEMON_LOG_PATH]
-          : ['tail', '-n', tail, DAEMON_LOG_PATH]
-        : opts.follow
-          ? ['agentbox-ctl', 'logs', service!, '--tail', tail, '--follow']
-          : ['agentbox-ctl', 'logs', service!, '--tail', tail];
+      const tail = Number.parseInt(opts.tail, 10) || 200;
+      const params = { service, tail, daemon: opts.daemon === true };
 
       if (!opts.follow) {
-        // Non-follow returns once the snapshot dump is done — safe to round-trip
-        // through provider.exec on both docker and cloud.
-        const proc = await provider.exec(box, args, { user: 'vscode' });
-        if (proc.exitCode !== 0) {
-          log.error(
-            `${opts.daemon ? 'daemon log' : 'agentbox-ctl logs'} failed: ${proc.stderr || proc.stdout}`,
-          );
-          process.exit(1);
-        }
-        process.stdout.write(proc.stdout);
-        if (!proc.stdout.endsWith('\n')) process.stdout.write('\n');
-        return;
-      }
-
-      // Streaming. Docker keeps the spawn-docker-exec fast path so Ctrl-C
-      // tears both ends down cleanly. Cloud goes through `provider.buildAttach`
-      // which mints a fresh SSH token and runs `agentbox-ctl logs --follow`
-      // directly (no tmux wrap — `kind: 'logs'` skips the tmux render).
-      if (!isCloud) {
-        const child = spawn('docker', ['exec', '--user', 'vscode', box.container, ...args], {
-          stdio: ['ignore', 'inherit', 'inherit'],
+        const r = await withOwningHub(box, async (client) => {
+          const { output } = await client.getBoxLogs(box.id, params);
+          process.stdout.write(output);
+          if (!output.endsWith('\n')) process.stdout.write('\n');
         });
-        child.on('exit', (code) => process.exit(code ?? 0));
+        if (r === 'not-found') {
+          log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
+          process.exit(2);
+        }
         return;
       }
 
-      if (!provider.buildAttach) {
-        throw new Error(
-          `provider '${provider.name}' does not support follow-mode log streaming`,
-        );
+      // Follow: stream SSE from the owning hub. Ctrl-C aborts the request (so the
+      // hub sees the dropped connection and kills its spawned tail) and exits —
+      // 130 for SIGINT, the shell convention. A hard exit is deliberate: a
+      // half-open SSE read doesn't always unwind promptly on signal-abort, and
+      // follow's whole contract is "run until the user stops it".
+      const controller = new AbortController();
+      const onSignal = (): void => {
+        controller.abort();
+        process.exit(130);
+      };
+      process.on('SIGINT', onSignal);
+      process.on('SIGTERM', onSignal);
+      let status = 'gone';
+      try {
+        const r = await withOwningHub(box, async (client) => {
+          const res = await client.streamBoxLog(
+            box.id,
+            params,
+            (line) => process.stdout.write(line + '\n'),
+            controller.signal,
+          );
+          status = res.status;
+        });
+        if (r === 'not-found') {
+          log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
+          process.exit(2);
+        }
+        if (r === undefined) return; // hub error; withHubClient reported + set exit code
+      } finally {
+        process.removeListener('SIGINT', onSignal);
+        process.removeListener('SIGTERM', onSignal);
       }
-      // For --daemon over cloud we don't have a `logs` kind that maps to
-      // tail-file. Use the `shell` kind in non-tmux mode and run the tail
-      // argv directly via SSH.
-      const spec = opts.daemon
-        ? await provider.buildAttach(box, 'shell', {
-            sessionName: 'daemon-logs',
-            user: 'vscode',
-            command: `tail -n ${tail} -F ${DAEMON_LOG_PATH}`,
-            noTmux: true,
-          })
-        : await provider.buildAttach(box, 'logs', {
-            service: service!,
-            tail: Number.parseInt(tail, 10),
-            follow: true,
-            user: 'vscode',
-          });
-      const [argv0, ...rest] = spec.argv;
-      if (!argv0) throw new Error('provider.buildAttach returned an empty argv');
-      const child = spawn(argv0, rest, {
-        stdio: ['ignore', 'inherit', 'inherit'],
-        env: spec.env ? { ...process.env, ...spec.env } : process.env,
-      });
-      const cleanup = async (): Promise<void> => {
-        if (spec.cleanup) await spec.cleanup();
-      };
-      child.on('exit', async (code) => {
-        await cleanup();
-        process.exit(code ?? 0);
-      });
-      const term = (): void => {
-        child.kill('SIGTERM');
-      };
-      process.on('SIGINT', term);
-      process.on('SIGTERM', term);
+      // Hard-exit: a half-open SSE socket to the hub can keep the event loop alive
+      // after the stream ends, so exit explicitly (the old docker-exec follow did
+      // the same via child.on('exit')). Only a CLEAN end is 0: 'done' (the in-box
+      // tail exited 0) or 'aborted' (the hub tore the stream down on request). A
+      // 'gone' status means the SSE closed with NO terminal `end` event — a dropped
+      // connection or a tail that died — so it exits 1 alongside 'failed'/'error',
+      // letting a script tell a clean follow from a broken one. (User Ctrl-C exits
+      // 130 in onSignal above, before reaching here.)
+      process.exit(status === 'done' || status === 'aborted' ? 0 : 1);
     } catch (err) {
       handleLifecycleError(err);
     }

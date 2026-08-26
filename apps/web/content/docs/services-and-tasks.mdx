@@ -17,8 +17,8 @@ tasks:
 services:
   web:
     command: pnpm dev
-    cwd: apps/web              # relative to /workspace
-    needs: [install]          # waits for the install task to finish
+    cwd: apps/web # relative to /workspace
+    needs: [install] # waits for the install task to finish
     ready_when:
       http: http://127.0.0.1:3000/health
 ```
@@ -26,19 +26,21 @@ services:
 For the full set of service and task fields, see the [agentbox.yaml reference](/docs/agentbox-yaml).
 
 <Callout title="TIP">
-The setup wizard writes a starter `agentbox.yaml` for you on first create — see [teleport a project](/docs/teleport-a-project). Hand-edit it afterward.
+  The setup wizard writes a starter `agentbox.yaml` for you on first create — see [teleport a
+  project](/docs/teleport-a-project). Hand-edit it afterward.
 </Callout>
 
 ## Services vs tasks
 
 **Services** are long-running processes — dev servers, workers, databases. They get a restart policy, backoff, autostart, readiness probes, and `expose`.
 
-**Tasks** are one-shot units that run to completion, intended to run *before* dependent services via `needs:`. A task supports only `command`, `cwd`, `env`, and `needs`. The canonical task is a setup step like rebuilding `node_modules` inside the Linux box so host binaries don't leak in.
+**Tasks** are one-shot units that run to completion, intended to run _before_ dependent services via `needs:`. A task supports only `command`, `cwd`, `env`, and `needs`. The canonical task is a setup step like rebuilding `node_modules` inside the Linux box so host binaries don't leak in.
 
 Crashed services restart with exponential backoff, and per-service output is captured to `/var/log/agentbox/<service>.log`. A blocked unit sits in `waiting` and surfaces its `blockedOn` in `agentbox status`.
 
 <Callout type="warn" title="HEADS UP">
-`restart`, `autostart`, `backoff`, and `ready_when` belong on services only — putting them under a task is a config error and fails validation.
+  `restart`, `autostart`, `backoff`, and `ready_when` belong on services only — putting them under a
+  task is a config error and fails validation.
 </Callout>
 
 ## Readiness
@@ -46,7 +48,8 @@ Crashed services restart with exponential backoff, and per-service output is cap
 Gate dependents on a service being live with a `ready_when:` probe (`port`, `log_match`, or `http`) — see [agentbox.yaml](/docs/agentbox-yaml). A `needs:` dependent won't start until the service is `ready`, and readiness also gates the published web URL.
 
 <Callout title="TIP">
-Slow first compile? Use `on_timeout: mark_unhealthy` (or raise `timeout_ms`) instead of letting the probe kill and restart the service.
+  Slow first compile? Use `on_timeout: mark_unhealthy` (or raise `timeout_ms`) instead of letting
+  the probe kill and restart the service.
 </Callout>
 
 The `expose:` key turns a ready service into the box's web URL — see [web apps & tunnels](/docs/web-apps-and-tunnels).
@@ -69,14 +72,19 @@ services:
       port: 5432
   web:
     command: pnpm dev
-    needs: [migrate, db]      # waits for the migrate task AND the db service
+    needs: [migrate, db] # waits for the migrate task AND the db service
 ```
 
 {/* DIAGRAM /diagrams/services-and-tasks.png — nano-banana-pro, home-diagram style ref. Recipe + prompt in apps/web/images.md → Phase D. */}
-<Figure src="/diagrams/services-and-tasks.png" caption="needs forms a DAG: install → migrate, db runs in parallel, and web waits on both." />
+
+<Figure
+  src="/diagrams/services-and-tasks.png"
+  caption="needs forms a DAG: install → migrate, db runs in parallel, and web waits on both."
+/>
 
 <Callout type="warn" title="HEADS UP">
-A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config load — `agentbox create` aborts before touching Docker.
+  A `needs:` referencing a name that doesn't exist, or a dependency cycle, is rejected at config
+  load — `agentbox create` aborts before touching Docker.
 </Callout>
 
 ## Seeding & stateful data
@@ -121,7 +129,9 @@ install  done
 The supervisor also posts `service-state` / `task-state` events to the host relay on transitions; see [background & parallel](/docs/background-and-parallel) for how those surface.
 
 <Callout title="TIP">
-After editing `agentbox.yaml` in a running box, `agentbox-ctl reload` applies the diff in place — no `stop`/`start`, no box restart. This is also how a freshly-added `expose:` web service goes live.
+  After editing `agentbox.yaml` in a running box, `agentbox-ctl reload` applies the diff in place —
+  no `stop`/`start`, no box restart. This is also how a freshly-added `expose:` web service goes
+  live.
 </Callout>
 
 ## Schema & editor support

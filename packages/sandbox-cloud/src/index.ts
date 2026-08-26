@@ -8,7 +8,56 @@ export {
   renderInnerCommand,
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
+export {
+  buildCloudAttachInnerCommand,
+  startDetachedCloudAgent,
+  startDetachedSession,
+  verifyDetachedSession,
+  type StartDetachedCloudAgentArgs,
+} from './detached-agent.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';
+export {
+  registerBoxWithPlane,
+  readGitOriginUrl,
+  type RegisterBoxWithPlaneArgs,
+} from './plane-register.js';
+export { pushBoxSshToCustody, type PushBoxSshArgs } from './custody-ssh.js';
+export { deadlineFetch, hostReachable, DEFAULT_REACHABLE_PROBE_MS } from './reachability.js';
+export {
+  preparedCustodyPath,
+  pullPreparedFromCustody,
+  pushPreparedToCustody,
+  writePreparedToCustodyStore,
+  type PreparedCustodyWriter,
+  type PreparedRecord,
+  type PreparedSyncTarget,
+  type PullPreparedResult,
+} from './prepared-sync.js';
+export {
+  adminCustodySink,
+  applyProjectSeed,
+  buildCarrySeed,
+  buildProjectSeed,
+  CarrySeedError,
+  isCarrySeedError,
+  pushProjectSeedToCustody,
+  CARRY_SEED_ITEMS,
+  DEFAULT_MAX_BLOB_BYTES,
+  SEED_PUSH_MS,
+  type ApplyProjectSeedResult,
+  type CarrySeedSource,
+  type CarrySeedManifest,
+  type MaterializedCarryEntry,
+  type SeedCustodySink,
+  type SeedSource,
+  type BuildProjectSeedArgs,
+  type BuildProjectSeedResult,
+  type PushProjectSeedArgs,
+  type PushProjectSeedResult,
+  type SeedItem,
+  type SeedManifest,
+  type SeedManifestFile,
+} from './custody-seed.js';
 export {
   seedCloudWorkspace,
   type SeedCloudWorkspaceArgs,
@@ -34,14 +83,15 @@ export {
   type SeedAgentStaticOptions,
   type SeedAgentStaticResult,
 } from './sync/agent-static.js';
-export { uploadEnvFiles, type UploadEnvFilesArgs, type UploadEnvFilesResult } from './sync/env-files.js';
+export {
+  uploadEnvFiles,
+  type UploadEnvFilesArgs,
+  type UploadEnvFilesResult,
+} from './sync/env-files.js';
 export { createCloudSyncTransport, type CloudSyncTransportInit } from './sync/sync-transport.js';
 export { makeCloudSync, type CloudSyncOptions } from './sync/cloud-sync.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './sync/dynamic-sync.js';
-export {
-  seedClaudeJsonAtCreate,
-  type SeedClaudeJsonOptions,
-} from './sync/claude-json-overlay.js';
+export { seedClaudeJsonAtCreate, type SeedClaudeJsonOptions } from './sync/claude-json-overlay.js';
 export {
   seedGitIdentity,
   seedGitCredentials,
@@ -116,11 +166,14 @@ export {
 // hetzner where the box is the VPS).
 export {
   detectPortless,
+  ensurePortlessProxy,
   installPortless,
   portlessAlias,
   portlessBrowserEnv,
   portlessGetUrl,
   portlessInstallHint,
+  portlessServiceHint,
+  portlessServiceStatus,
   portlessStartHint,
   portlessDoctorRow,
   portlessUnalias,
@@ -129,5 +182,6 @@ export {
   startPortlessProxy,
   PORTLESS_PROXY_PORT,
   type PortlessBrowserEnvOptions,
+  type PortlessServiceState,
   type PortlessState,
 } from '@agentbox/sandbox-docker';

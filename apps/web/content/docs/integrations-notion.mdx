@@ -47,12 +47,12 @@ If you see `[warn]  not logged in`, run `ntn login` on the host. If you see `[wa
 
 The in-box shim exposes a strict allowlist. Anything outside the list is rejected with a clear message — start conservative, widen as flows surface.
 
-| In-box command | Class | What happens |
-| --- | --- | --- |
-| `ntn whoami` | read | Passes through; prints the authed host user. |
-| `ntn api v1/<path>` | read | `GET` to any endpoint, plus the read-only POSTs `v1/search`, `v1/databases/<id>/query`, and `v1/data_sources/<id>/query` (pass the JSON body inline with `-d '<json>'`). Every other method/endpoint — writes like `v1/pages`/`v1/comments`, `-X PATCH`/`DELETE`, and the host-file `--input`/`--file` body sources — is refused with exit 65. Use `pages create`/`pages update` for writes. |
-| `ntn pages create …` | write | **Prompts** the host for approval; on `y` the host runs `ntn pages create` and ships back the result. |
-| `ntn pages update …` | write | **Prompts** the host for approval; covers props and archive. |
+| In-box command       | Class | What happens                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ntn whoami`         | read  | Passes through; prints the authed host user.                                                                                                                                                                                                                                                                                                                                                 |
+| `ntn api v1/<path>`  | read  | `GET` to any endpoint, plus the read-only POSTs `v1/search`, `v1/databases/<id>/query`, and `v1/data_sources/<id>/query` (pass the JSON body inline with `-d '<json>'`). Every other method/endpoint — writes like `v1/pages`/`v1/comments`, `-X PATCH`/`DELETE`, and the host-file `--input`/`--file` body sources — is refused with exit 65. Use `pages create`/`pages update` for writes. |
+| `ntn pages create …` | write | **Prompts** the host for approval; on `y` the host runs `ntn pages create` and ships back the result.                                                                                                                                                                                                                                                                                        |
+| `ntn pages update …` | write | **Prompts** the host for approval; covers props and archive.                                                                                                                                                                                                                                                                                                                                 |
 
 `notion` is a symlink to `ntn` — either name works. Reads are unprompted; every write raises a one-line confirm in your attached terminal (or in `agentbox agent approvals` for orchestrators driving boxes headlessly — see [Background & parallel](/docs/background-and-parallel)).
 
@@ -67,24 +67,29 @@ ntn pages create -p <db-id> -t "Draft from the box" # prompts on the host
 ```
 
 <Callout type="warn" title="comment creation isn't supported yet">
-`ntn` has no top-level `comment` subcommand, and posting to `v1/comments` is a write — refused by the read-only `api` gate. There's no approved write op for comments yet, so the box can't create them.
+  `ntn` has no top-level `comment` subcommand, and posting to `v1/comments` is a write — refused by
+  the read-only `api` gate. There's no approved write op for comments yet, so the box can't create
+  them.
 </Callout>
 
 ## Security model
 
-| Concern | What AgentBox does |
-| --- | --- |
-| Where the Notion token lives | **Host only** — in the macOS keychain (or `ntn`'s configured file-auth on Linux). The box has no access to either. |
-| What the box can do unprompted | **Reads only** (`whoami`, `ntn api` GETs, and the read-only query/search POSTs). |
-| What needs your approval | **Every write** (`page.create`, `page.update`). Any `api` call that isn't a read — a write method, or a POST to a non-read endpoint — is refused outright with exit 65. |
-| Where the approval lives | The host relay raises a confirm prompt; you answer in the attached terminal (`y` / `n`) or via `agentbox agent approve <id>` from an orchestrator. |
-| Inside the box, does the agent ever see the token? | **No.** `printenv \| grep -i notion` inside a box returns nothing — only `AGENTBOX_RELAY_TOKEN`, which only authenticates to the box-local relay endpoint. |
-| Auditability | Every approved write is logged as a relay event (visible via `/admin/events`, `agentbox agent`, the dashboard). |
+| Concern                                            | What AgentBox does                                                                                                                                                      |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where the Notion token lives                       | **Host only** — in the macOS keychain (or `ntn`'s configured file-auth on Linux). The box has no access to either.                                                      |
+| What the box can do unprompted                     | **Reads only** (`whoami`, `ntn api` GETs, and the read-only query/search POSTs).                                                                                        |
+| What needs your approval                           | **Every write** (`page.create`, `page.update`). Any `api` call that isn't a read — a write method, or a POST to a non-read endpoint — is refused outright with exit 65. |
+| Where the approval lives                           | The host relay raises a confirm prompt; you answer in the attached terminal (`y` / `n`) or via `agentbox agent approve <id>` from an orchestrator.                      |
+| Inside the box, does the agent ever see the token? | **No.** `printenv \| grep -i notion` inside a box returns nothing — only `AGENTBOX_RELAY_TOKEN`, which only authenticates to the box-local relay endpoint.              |
+| Auditability                                       | Every approved write is logged as a relay event (visible via `/admin/events`, `agentbox agent`, the dashboard).                                                         |
 
 The integration is **off by default** for every new project. You flip it on per project once you've installed and authed `ntn` on the host.
 
 <Callout title="WHY this shape">
-The box is the untrusted side. Tokens in the box would survive `agentbox download`, leak into commits if the agent mishandles them, and undermine the entire sandbox premise. Keeping the token on the host and putting the gate at the host boundary is the same model AgentBox already uses for `git push` and `gh pr create` — one model, audited in one place.
+  The box is the untrusted side. Tokens in the box would survive `agentbox download`, leak into
+  commits if the agent mishandles them, and undermine the entire sandbox premise. Keeping the token
+  on the host and putting the gate at the host boundary is the same model AgentBox already uses for
+  `git push` and `gh pr create` — one model, audited in one place.
 </Callout>
 
 ## Limitations and roadmap

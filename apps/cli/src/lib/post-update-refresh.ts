@@ -14,22 +14,26 @@
 
 import {
   DEFAULT_BOX_IMAGE,
-  ensureHub,
   ensureRelay,
   evaluateDockerBaseFreshness,
-  getHubStatus,
-  stopHub,
   stopRelay,
 } from '@agentbox/sandbox-docker';
+import { ensureHub, getHubStatus, stopHub } from '@agentbox/sandbox-core';
 import { installHostSkills } from '../commands/install.js';
 import {
+  bestTrayRelease,
+  decideTrayBounce,
   decideTrayUpdate,
   fetchTraySidecarSha,
   installTray,
   readInstalledTrayVersion,
+  restartTray,
   trayInstalled,
+  trayRunning,
 } from '../commands/install-app.js';
+import { STABLE_TRAY_TAG, resolveChannel } from './channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
+import { ensurePortlessProxyQuietly, resolvePortlessEnabled } from '../portless-prompt.js';
 import { log } from './prompt.js';
 import { readUpdateState, remoteCheckFresh, writeUpdateState } from './update-state.js';
 
@@ -38,37 +42,64 @@ export interface PostUpdateRefreshOptions {
   quiet?: boolean;
 }
 
+/** What the tray step did, so the caller knows whether the app still needs a bounce. */
+export interface TrayUpdateOutcome {
+  /** `installTray` was called — note it pkills the app before deciding anything. */
+  installAttempted: boolean;
+  /** `installTray` succeeded, which means it also relaunched the app. */
+  reinstalled: boolean;
+  /**
+   * What happened to the bundle. Returned rather than printed so the caller can
+   * fold it and the restart into ONE line — they are one step to the reader.
+   */
+  note: string | null;
+}
+
 /** Update the tray app iff the published zip sha differs from the installed one. */
-export async function maybeUpdateTray(say: (msg: string) => void): Promise<void> {
-  if (!trayInstalled()) return;
+export async function maybeUpdateTray(): Promise<TrayUpdateOutcome> {
+  const idle: TrayUpdateOutcome = { installAttempted: false, reinstalled: false, note: null };
+  if (!trayInstalled()) return idle;
   const state = readUpdateState();
   // Reuse today's cached sidecar sha when we have one; otherwise fetch the
   // ~80-byte sidecar now (5s cap) — still never the 450KB zip unless it changed.
-  const latestSha =
+  //
+  // The sha MUST come from the release the channel actually resolves to. Reading
+  // it untagged always meant `tray-latest`, so a nightly user with an empty cache
+  // (a fresh install — exactly when this branch runs) compared their installed
+  // nightly tray against the STABLE sha, saw a difference, and re-downloaded on
+  // every refresh. The cached value is already channel-correct: the daily check
+  // resolves the winning tag before storing it.
+  const cachedSha =
     remoteCheckFresh(state) && state.remoteCheck?.trayLatestSha !== undefined
       ? state.remoteCheck.trayLatestSha
-      : await fetchTraySidecarSha();
+      : undefined;
+  const winner = cachedSha === undefined ? await bestTrayRelease(await resolveChannel()) : null;
+  const latestSha = cachedSha ?? (await fetchTraySidecarSha(winner?.tag ?? STABLE_TRAY_TAG));
   const decision = decideTrayUpdate({
     installed: true,
     stampedSha: state.traySha,
     latestSha,
     installedVersion: await readInstalledTrayVersion(),
-    latestVersion: state.remoteCheck?.trayLatestVersion,
+    // Same release as the sha above, so the two can't describe different builds.
+    latestVersion: winner?.version ?? state.remoteCheck?.trayLatestVersion,
   });
   if (!decision.update) {
-    say(
-      decision.reason === 'no-latest-sha'
-        ? 'menu-bar app: release sha unavailable — skipped'
-        : 'menu-bar app already current',
-    );
-    return;
+    return {
+      ...idle,
+      note:
+        decision.reason === 'no-latest-sha'
+          ? 'menu-bar app: release sha unavailable — skipped'
+          : 'menu-bar app already current',
+    };
   }
   const res = await installTray({ quiet: true });
-  say(
-    res.ran
+  return {
+    installAttempted: true,
+    reinstalled: res.ran,
+    note: res.ran
       ? 'menu-bar app updated'
       : `menu-bar app not updated (${res.reason ?? 'unknown'}) — run \`agentbox install app\` manually`,
-  );
+  };
 }
 
 /**
@@ -76,9 +107,7 @@ export async function maybeUpdateTray(say: (msg: string) => void): Promise<void>
  * version in the stamp so the startup prompt stays quiet until the next
  * package update.
  */
-export async function runPostUpdateRefresh(
-  opts: PostUpdateRefreshOptions = {},
-): Promise<void> {
+export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}): Promise<void> {
   const say = (msg: string) => {
     if (!opts.quiet) log.info(msg);
   };
@@ -130,6 +159,26 @@ export async function runPostUpdateRefresh(
     warn('box image check', err);
   }
 
+  // An update moves the build context, which stales every CLOUD base at once.
+  // Those bases are provider-side snapshots any machine with the API key can
+  // boot, and the control box may already hold one for the new context — so
+  // adopt rather than report the staleness and leave the user to spend minutes
+  // re-baking. No control box configured → a no-op.
+  //
+  // In `self-update` this runs BEFORE step 3's `hub update`, so it only lands
+  // when the control box was updated ahead of this machine (the multi-PC case).
+  // The other ordering is covered by `syncBakesWithControlBox`, which `hub
+  // update` runs once the box is on the new build.
+  try {
+    const { adoptPreparedBases } = await import('../control-plane/prepared-custody.js');
+    const res = await adoptPreparedBases();
+    if (res.adopted.length > 0) {
+      say(`adopted the control box's ${res.adopted.join(', ')} base bake(s) — no re-bake needed`);
+    }
+  } catch (err) {
+    warn('cloud base adoption', err);
+  }
+
   // The hub and the relay are separate long-lived processes with separate pid
   // files, and BOTH must be restarted here. An update replaces the installed
   // package directory underneath whichever one is still running, which leaves it
@@ -152,7 +201,14 @@ export async function runPostUpdateRefresh(
     if (hub.ui || hub.pidAlive) {
       const stop = await stopHub();
       say(stop.stopped ? `stopped hub (pid ${String(stop.pid)})` : 'hub was not running');
-      const ep = await ensureHub();
+      // Pass the preference explicitly. Omitting it resolves to `undefined`,
+      // which `syncHubPortless` reads as "register best-effort" — so an update
+      // used to re-register `agentbox.localhost` for a user who had opted out.
+      // And bring the proxy back first when they opted *in*: an update is one
+      // of the moments a host most often finds itself with routes but no proxy.
+      const portlessEnabled = await resolvePortlessEnabled();
+      if (portlessEnabled === true) await ensurePortlessProxyQuietly();
+      const ep = await ensureHub({ portlessEnabled });
       say(`hub back up on ${ep.hostUrl}`);
     } else {
       const stop = await stopRelay();
@@ -164,11 +220,42 @@ export async function runPostUpdateRefresh(
     warn('relay/hub reload', err);
   }
 
+  // Read this BEFORE the tray step: `installTray` pkills the app up front, so
+  // afterwards "no pid" can't be told apart from "we just killed it".
+  const trayWasRunning = await trayRunning().catch(() => false);
+  let trayOutcome: TrayUpdateOutcome = { installAttempted: false, reinstalled: false, note: null };
   try {
-    await maybeUpdateTray(say);
+    trayOutcome = await maybeUpdateTray();
   } catch (err) {
     warn('menu-bar app update', err);
   }
+
+  // Bounce the app even when it needed no update of its own. It reads the
+  // installed CLI version once at launch and only re-derives its "Update
+  // available — agentbox X" row behind a 24h throttle, so a CLI update leaves it
+  // advertising the version you just installed, for up to a day. It has no
+  // reload signal, so a restart is the only way to clear that from here.
+  let trayRestarted = false;
+  try {
+    const bounce = decideTrayBounce({
+      installed: trayInstalled(),
+      running: trayWasRunning,
+      installAttempted: trayOutcome.installAttempted,
+      reinstalled: trayOutcome.reinstalled,
+    });
+    if (bounce.bounce) {
+      await restartTray((m) => log.warn(m));
+      trayRestarted = true;
+    }
+  } catch (err) {
+    warn('menu-bar app restart', err);
+  }
+  // One line for the whole tray step: what happened to the bundle, and whether
+  // the app was bounced. Two lines read as two things happening.
+  const trayLine = [trayOutcome.note, trayRestarted ? 'restarted' : null]
+    .filter(Boolean)
+    .join(' — ');
+  if (trayLine) say(trayLine);
 
   writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
 }

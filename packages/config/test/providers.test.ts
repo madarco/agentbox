@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PROVIDERS, PROVIDER_NAMES, CLOUD_PROVIDER_NAMES, perProviderConfigKey } from '../src/providers.js';
+import {
+  PROVIDERS,
+  PROVIDER_NAMES,
+  CLOUD_PROVIDER_NAMES,
+  HUB_ROUTABLE_PROVIDER_NAMES,
+  isHubRoutableProvider,
+  perProviderConfigKey,
+} from '../src/providers.js';
 import { BUILT_IN_DEFAULTS, lookupKey } from '../src/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,6 +64,30 @@ describe('provider table is the single source of truth', () => {
         .map((p) => p.name)
         .sort(),
     );
+  });
+
+  it('hub-routable providers are the clouds MINUS remote-docker (the control box can reach them)', () => {
+    // remote-docker is kind:'cloud' for staging/sync, but its box runs on YOUR
+    // machine over YOUR ssh config — the control box can't reach it, so a create
+    // must never route to the hub for it (nor for docker).
+    expect(HUB_ROUTABLE_PROVIDER_NAMES).not.toContain('docker');
+    expect(HUB_ROUTABLE_PROVIDER_NAMES).not.toContain('remote-docker');
+    expect([...HUB_ROUTABLE_PROVIDER_NAMES].sort()).toEqual(
+      CLOUD_PROVIDER_NAMES.filter((n) => n !== 'remote-docker')
+        .slice()
+        .sort(),
+    );
+    expect(isHubRoutableProvider('e2b')).toBe(true);
+    expect(isHubRoutableProvider('hetzner')).toBe(true);
+    expect(isHubRoutableProvider('docker')).toBe(false);
+    expect(isHubRoutableProvider('remote-docker')).toBe(false);
+    expect(isHubRoutableProvider('nonsense')).toBe(false);
+  });
+
+  it('cloud.viaHub defaults on (remote hub is the default for cloud creates)', () => {
+    const cloud = BUILT_IN_DEFAULTS.cloud as unknown as { viaHub: boolean };
+    expect(cloud.viaHub).toBe(true);
+    expect(lookupKey('cloud.viaHub')?.type).toBe('bool');
   });
 
   // `loginHint` is what the install wizard shows next to each provider, so it has

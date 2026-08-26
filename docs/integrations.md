@@ -1,6 +1,6 @@
 # Integrations — relay-gated service connectors
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). Planning context: [`integrations_backlog.md`](./integrations_backlog.md) (the four-service plan). Per-task tracker for Notion: [`notion_backlog.md`](./notion_backlog.md). The user-facing page is `apps/web/content/docs/integrations-notion.mdx` (published at https://agent-box.sh/docs/integrations-notion).
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). The user-facing page is `apps/web/content/docs/integrations-notion.mdx` (published at https://agent-box.sh/docs/integrations-notion).
 
 This is the design / reference doc for the host-side integrations spine — the box-to-host bridge that lets an in-box agent read tickets/docs from Notion (and, in future, Linear / Trello / ClickUp) and make a small, prompted set of writes, without ever holding the service's credentials inside the box. The shape mirrors the existing `gh` and `git` relay flows exactly.
 
@@ -9,7 +9,7 @@ This is the design / reference doc for the host-side integrations spine — the 
 The host owns the credentials. The box is the untrusted side. A box agent should be able to **read** tickets/docs freely (a search, a `GET`) and **write** with the user's per-call approval (a `page.create`, a `comment.add`), but **the token must never enter the box**. The model is the one we already proved with `gh`:
 
 - An in-box shim (`gh-shim`) intercepts a strict subcommand allowlist and forwards through `agentbox-ctl`.
-- `agentbox-ctl` POSTs `/rpc` on the box-local relay (bearer-authed, see [`host-relay.md`](./host-relay.md)).
+- `agentbox-ctl` POSTs `/rpc` on the box-local relay (bearer-authed, see [`host-relay.md`](./architecture.md#host-relay-agentboxrelay)).
 - The relay classifies the op as **read** or **write**. Reads pass; writes go through `askPrompt` (host approval), then shell out to the host's authenticated CLI. The token stays on the host.
 
 Integrations generalize this for any host CLI: each service is one **connector descriptor** in `@agentbox/integrations`, and the relay's `integration.<service>.<op>` dispatcher walks the same path.
@@ -81,7 +81,7 @@ For `integration.<service>.<op>`:
 | `page.create` | write | `ntn pages create <args>` | gated by `askPrompt`. (User-facing shim form: `ntn pages create …`.)                   |
 | `page.update` | write | `ntn pages update <args>` | gated; covers archive + props. (User-facing shim form: `ntn pages update …`.)         |
 
-`comment.add` is intentionally absent — `ntn` exposes no top-level `comment` subcommand. The only path is `ntn api v1/comments -X POST -d …`, which the `api` op refuses (POST is allowed only for the read endpoints — search + database/data-source query — not `v1/comments`). Comment creation needs a Notion-API-aware payload assembler that maps CLI flags to the structured `POST /v1/comments` body; tracked as a follow-up in [`notion_backlog.md`](./notion_backlog.md). The in-box shim rejects `notion comment add …` with a clear "deferred" message.
+`comment.add` is intentionally absent — `ntn` exposes no top-level `comment` subcommand. The only path is `ntn api v1/comments -X POST -d …`, which the `api` op refuses (POST is allowed only for the read endpoints — search + database/data-source query — not `v1/comments`). Comment creation needs a Notion-API-aware payload assembler that maps CLI flags to the structured `POST /v1/comments` body — a follow-up, not built. The in-box shim rejects `notion comment add …` with a clear "deferred" message.
 
 ## The enable flag
 
@@ -122,7 +122,7 @@ The live `ntn` host probe is the orchestrator's post-merge check — it can't be
 
 For the nested-box dev path (box → box, exercise the integration from inside a box), the host's `ntn` auth is carried into the box as a **file**. `agentbox.yaml`'s `carry:` block ships `~/.config/notion/auth.json` into the box; the host must have been logged in file-mode (`NOTION_KEYRING=0 ntn login`) for that file to exist, and the in-box `ntn` may need `NOTION_KEYRING=0` exported to read it (the connector no longer forces the env — see [`docs/development.md`](./development.md)). This is **internal-dev only**; normal boxes carry no Notion credential and reach `ntn` purely through the host relay. Even on the nested path the token lives only at the leaf hop, never in the agent's process env (`printenv | grep -i notion` shows nothing).
 
-Carry is host→box and one-prompt-approved (see [`features.md`](./features.md) → `carry:`). T4 wires the actual e2e verification.
+Carry is host→box and one-prompt-approved (see [`features.md`](./architecture.md#what-works-today) → `carry:`). T4 wires the actual e2e verification.
 
 ## Verification / live e2e results
 
@@ -178,7 +178,7 @@ tracked under "Open follow-ups" below.
 
 ## Linear
 
-The Linear path of the integrations foundation, shipped under LT1 (descriptor-only — no relay/ctl core change, validating the abstraction the Notion work built). The connector descriptor lives in `packages/integrations/src/connectors/linear.ts`; in-box shim at `packages/sandbox-docker/scripts/linear-shim`. Backed by `@schpet/linear-cli` (the `linear` binary, v2). Tracker: [`linear_backlog.md`](./linear_backlog.md).
+The Linear path of the integrations foundation, shipped under LT1 (descriptor-only — no relay/ctl core change, validating the abstraction the Notion work built). The connector descriptor lives in `packages/integrations/src/connectors/linear.ts`; in-box shim at `packages/sandbox-docker/scripts/linear-shim`. Backed by `@schpet/linear-cli` (the `linear` binary, v2).
 
 ### Op surface
 
@@ -255,7 +255,7 @@ The nested-box scenario (a box-inside-a-box running a `linear` op through this b
 
 ## Open follow-ups
 
-- **Trello / ClickUp** — see [`integrations_backlog.md`](./integrations_backlog.md). Each is a new descriptor + a small shim; no relay change. ClickUp will be the one custom REST connector (no good CLI on PyPI / npm).
+- **Trello / ClickUp** — not built. Each would be a new descriptor + a small shim; no relay change. ClickUp will be the one custom REST connector (no good CLI on PyPI / npm).
 - **`comment.add`** — deferred; needs a Notion-API-aware payload translator that maps CLI flags to the structured `POST /v1/comments` body.
 - **Least-privilege tokens** — Notion capability toggles for the host token; Trello supports `scope=read` (when we add it); Linear personal keys inherit full user perms (OAuth-only for read-scope tokens). Document on each service's user-facing page.
 - **Host-initiated tokens** — the relay already accepts `params.hostInitiated` and validates it against `HostInitiatedTokens` (scope + params-hash bound). The host-CLI mint path that issues those tokens isn't wired yet for integrations; once it is, a host-typed `agentbox-ctl integration notion page.create …` can skip the prompt by minting a token first (same shape as the existing `gh.pr.*` and `cp.*` host-initiated paths).

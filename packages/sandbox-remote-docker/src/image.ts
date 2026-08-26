@@ -14,7 +14,8 @@
  *
  * Ensure order: already present → pull the fingerprint-tagged image from GHCR
  * (published multi-arch, so an amd64 remote gets amd64 even though the laptop
- * is arm64) → stream the local build context to a remote `docker build -`.
+ * is arm64) → stream the local build context to a temp dir on the remote and
+ * build it there.
  */
 
 import { createReadStream } from 'node:fs';
@@ -22,7 +23,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { quoteShellArgv } from '@agentbox/sandbox-cloud';
+import { quoteShellArg } from '@agentbox/sandbox-cloud';
 import {
   BOX_IMAGE_REGISTRY,
   BUILD_CONTEXT_DIR,
@@ -140,11 +141,60 @@ export async function ensureRemoteImage(
 }
 
 /**
- * Stream the local build context to `docker build -` on the remote.
+ * The remote shell command that receives the streamed tar. Split out (with its
+ * two siblings below) so the docker-29 contract — a directory context, never a
+ * `-` stdin context alongside `-f` — is pinned by a pure unit test.
+ */
+export function stageContextCommand(remoteDir: string): string {
+  const dir = quoteShellArg(remoteDir);
+  return `mkdir -p ${dir} && tar -xf - -C ${dir}`;
+}
+
+/**
+ * `docker build` argv for a context already staged at `remoteDir`.
  *
- * `docker build -` reads a tar of the context from stdin, so the whole build
- * happens on the remote engine with no files staged on its disk beforehand —
- * and no dependency on the remote having a checkout of anything.
+ * `-f` is ABSOLUTE on purpose: buildx resolves `--file` against the client's
+ * working directory, not against the context (the classic builder resolved it
+ * against the context, which is why a bare `Dockerfile.box` used to work). With
+ * a login shell that cwd is the remote user's home, so a relative name fails
+ * with `failed to read dockerfile: open Dockerfile.box: no such file`.
+ */
+export function remoteBuildArgv(
+  ref: string,
+  remoteDir: string,
+  claudeInstall?: ClaudeInstall,
+): string[] {
+  const argv = ['build', '-t', ref, '-f', `${remoteDir}/Dockerfile.box`];
+  if (claudeInstall) argv.push('--build-arg', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall}`);
+  argv.push(remoteDir);
+  return argv;
+}
+
+/** Remove a staged context, whatever the build did. */
+export function cleanupContextCommand(remoteDir: string): string {
+  return `rm -rf ${quoteShellArg(remoteDir)}`;
+}
+
+/**
+ * Distinguishes two builds started inside the same millisecond — `Date.now()`
+ * alone is not enough resolution for a fan-out that kicks several off at once.
+ */
+let contextSeq = 0;
+function nextContextSeq(): number {
+  contextSeq += 1;
+  return contextSeq;
+}
+
+/**
+ * Stream the local build context to the remote engine and build it there.
+ *
+ * The tar is unpacked into a remote temp dir and built as a **directory**
+ * context. The older `docker build -` (tar on stdin) form is unusable from
+ * docker 29 on: the classic builder is gone, and buildx refuses a stdin context
+ * combined with `-f` — `ambiguous Dockerfile source: both stdin and flag
+ * correspond to Dockerfiles`. Our context always names its Dockerfile
+ * `Dockerfile.box`, so `-f` is not optional; the temp dir is. Nothing is left
+ * behind: it is removed even when the build fails.
  */
 async function buildOnRemote(
   target: SshTargetArgs,
@@ -152,7 +202,14 @@ async function buildOnRemote(
   opts: EnsureRemoteImageOptions,
 ): Promise<void> {
   const log = opts.onLog ?? ((): void => {});
-  const tarPath = join(tmpdir(), `agentbox-box-ctx-${String(process.pid)}.tar`);
+  // One token for both ends, unique per invocation: two concurrent builds (two
+  // laptops against one engine, or a bake racing a registry-miss create inside
+  // the hub worker) must neither unpack into each other's remote context nor
+  // share the local tar — the first to finish deletes it in its `finally` while
+  // the other is still streaming from it.
+  const token = `${String(process.pid)}-${String(Date.now())}-${String(nextContextSeq())}`;
+  const tarPath = join(tmpdir(), `agentbox-box-ctx-${token}.tar`);
+  const remoteDir = `/tmp/agentbox-box-ctx-${token}`;
   try {
     // COPYFILE_DISABLE stops macOS tar from emitting ._* AppleDouble entries,
     // which would land in the image as junk files.
@@ -160,26 +217,28 @@ async function buildOnRemote(
       env: { ...process.env, COPYFILE_DISABLE: '1' },
     });
 
-    const buildArgs = ['build', '-t', ref, '-f', 'Dockerfile.box'];
-    if (opts.claudeInstall) {
-      buildArgs.push('--build-arg', `AGENTBOX_CLAUDE_INSTALL=${opts.claudeInstall}`);
-    }
-    buildArgs.push('-');
-
-    log(`[image] building ${ref} on the remote (streaming the build context)`);
-    const res = await execa(
+    log(`[image] streaming the build context to ${remoteDir}`);
+    const staged = await execa(
       'ssh',
-      [
-        ...sshOptArgs(target),
-        sshDestination(target),
-        loginShell(`docker ${quoteShellArgv(buildArgs)}`),
-      ],
+      [...sshOptArgs(target), sshDestination(target), loginShell(stageContextCommand(remoteDir))],
       { reject: false, input: createReadStream(tarPath), stdout: 'pipe', stderr: 'pipe' },
     );
-    const out = `${typeof res.stdout === 'string' ? res.stdout : ''}${typeof res.stderr === 'string' ? res.stderr : ''}`;
-    for (const line of out.split(/\r?\n/)) {
-      if (line.trim().length > 0) log(`[image] ${line}`);
+    if (staged.exitCode !== 0) {
+      const err = typeof staged.stderr === 'string' ? staged.stderr.trim() : '';
+      throw new Error(
+        `remote-docker: could not stage the build context in ${remoteDir} (exit ${String(staged.exitCode)})${err ? `: ${err}` : ''}`,
+      );
     }
+
+    const buildArgs = remoteBuildArgv(ref, remoteDir, opts.claudeInstall);
+
+    log(`[image] building ${ref} on the remote`);
+    const res = await dockerOnRemote(target, buildArgs, {
+      timeoutMs: 1_800_000,
+      onLine: (line) => {
+        if (line.trim().length > 0) log(`[image] ${line}`);
+      },
+    });
     if (res.exitCode !== 0) {
       throw new Error(
         `remote-docker: remote \`docker build\` failed (exit ${String(res.exitCode)}). See the build output above.`,
@@ -188,5 +247,12 @@ async function buildOnRemote(
     log(`[image] built ${ref}`);
   } finally {
     await rm(tarPath, { force: true });
+    // Best-effort: a leftover context dir is junk on someone else's disk, not a
+    // reason to fail a build that otherwise succeeded.
+    await execa(
+      'ssh',
+      [...sshOptArgs(target), sshDestination(target), loginShell(cleanupContextCommand(remoteDir))],
+      { reject: false },
+    ).catch(() => undefined);
   }
 }

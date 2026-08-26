@@ -1,28 +1,66 @@
-# AgentBox hub — self-host image.
-# Build context is the REPO ROOT (the app needs its workspace dep @agentbox/relay):
-#   docker build -f apps/hub/Dockerfile -t agentbox-hub .
+# AgentBox hub — self-host / control-box image.
+# Build context is the REPO ROOT (the app needs its workspace deps):
+#   docker build --network=host -f apps/hub/Dockerfile -t agentbox-hub .
 # Or via the bundled compose: `docker compose up` from apps/hub/.
+#
+# Ships the FULL hub: server.ts (relay daemon + Next UI + resident create worker)
+# from the standalone build — the same artifact `agentbox hub` spawns — NOT the
+# `next start` [...path] plane. SQLite store (no Postgres container).
 
 FROM node:22-slim AS build
 WORKDIR /repo
 RUN corepack enable
 COPY . .
 RUN pnpm install --frozen-lockfile
-# Build the app + its workspace deps in dependency order via turbo. The relay
-# bundles @agentbox/config / sandbox-core / integrations, so those packages must
-# build (emit dist/) before the relay does — `--filter` pulls in `^build` deps.
+# Build the app's workspace deps (dist/) in dependency order, then assemble the
+# spawnable standalone hub (next build + esbuild-bundled server.ts + chunks).
 RUN pnpm turbo run build --filter=@agentbox/hub
+RUN pnpm --filter @agentbox/hub build:standalone
+# The agentbox CLI too: the hub's queue (web-UI creates, queued agent runs) and
+# the host-app launchers spawn `node $AGENTBOX_CLI_ENTRY …` — without a built
+# CLI the control box can list boxes but never create one from the UI.
+RUN pnpm turbo run build --filter=@madarco/agentbox
 
 FROM node:22-slim AS runtime
 WORKDIR /repo
 RUN corepack enable
+# git + git-lfs + openssh-client: the resident create worker clones the repo
+# VPS-side (git-lfs so an LFS repo's objects fetch over HTTPS with the leased
+# token instead of hard-failing the checkout — `git lfs pull` needs the binary
+# on PATH), and a hetzner box needs ssh/scp on PATH for its ControlMaster.
+# `gh` is what makes the hub's own git work in `hub.gitAuth=gh` mode: it backs
+# the credential helper for clone/push (via `gh auth setup-git`) and serves the
+# `gh.pr.*` / `gh.api` host actions, which exited 127 here before. Installed from
+# GitHub's apt repo — Debian's own package lags badly.
+RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs openssh-client ca-certificates curl gnupg \
+  && mkdir -p -m 755 /etc/apt/keyrings \
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update && apt-get install -y --no-install-recommends gh \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
-ENV PORT=3000
-# The whole built monorepo (reliable for a pnpm workspace; not size-optimized).
+# Queue worker + host-app spawns re-exec the CLI from this entry.
+ENV AGENTBOX_CLI_ENTRY=/repo/apps/cli/dist/index.js
+# The standalone hub bundle lives under apps/hub/dist-standalone/**, far from the
+# staged runtime tree at apps/cli/runtime, so each provider's own
+# findStagedCliRuntimeRoot (which only probes next to its bundle) misses it and
+# falls back to hashing packages/** source — a DIFFERENT base fingerprint than
+# the CLI baked with, so the hub rejects every PC-baked custody record. Pointing
+# AGENTBOX_RUNTIME_ROOT at the staged tree makes the hub compute the same
+# fingerprint the CLI does, so shared bake records are recognized as baked.
+ENV AGENTBOX_RUNTIME_ROOT=/repo/apps/cli/runtime
+# resolveDockerBuild does NOT read AGENTBOX_RUNTIME_ROOT (only daytona's copy
+# does), so the docker provider needs its own pointer at the same staged tree.
+ENV AGENTBOX_DOCKER_CONTEXT=/repo/apps/cli/runtime/docker
+# The whole built monorepo: the standalone bundle ships no node_modules, so its
+# externals (next, react, pg, better-auth, the cloud SDKs) resolve from the
+# workspace node_modules present here. Not size-optimized; fine for a VPS.
 COPY --from=build /repo .
-WORKDIR /repo/apps/hub
-EXPOSE 3000
-# Create/upgrade the auth tables + seed the admin (self-skips when auth is off,
-# i.e. no BETTER_AUTH_SECRET), then serve the production build. Runs at boot (not
-# build) so it sees the container's POSTGRES_URL + auth env.
-CMD ["sh", "-c", "pnpm run db:auth-migrate && pnpm exec next start -p 3000"]
+EXPOSE 8787
+# server.ts self-migrates auth (ensureAuthReady) + the store on boot, so there is
+# no separate migrate step. It anchors its own cwd from required-server-files.json.
+# AGENTBOX_CLI_VERSION is what the relay reports on /healthz, and so what
+# `agentbox hub status` shows. Same rule as Dockerfile.package: read the version
+# that is actually built here, not the ref that was asked for.
+CMD ["sh", "-c", "export AGENTBOX_CLI_VERSION=\"$(node -p \"require('/repo/apps/cli/package.json').version\")\"; exec node apps/hub/dist-standalone/apps/hub/server.js"]

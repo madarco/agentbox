@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
+import type { BoxRecord } from '@agentbox/core';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 import {
   detectEngine,
@@ -11,6 +12,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -27,12 +29,95 @@ const SIGNED_URL_TTL_MAX = 86400;
 function parseTtlOrExit(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < SIGNED_URL_TTL_MIN || n > SIGNED_URL_TTL_MAX) {
+  if (
+    !Number.isFinite(n) ||
+    !Number.isInteger(n) ||
+    n < SIGNED_URL_TTL_MIN ||
+    n > SIGNED_URL_TTL_MAX
+  ) {
     throw new Error(
       `--ttl must be an integer between ${String(SIGNED_URL_TTL_MIN)} and ${String(SIGNED_URL_TTL_MAX)} seconds`,
     );
   }
   return n;
+}
+
+/**
+ * Provider-direct URL resolution — the path for `--loopback` / `--ttl` (which the
+ * enriched Box payload can't express: a loopback URL, the docker host port, or a
+ * custom-TTL signed URL) and the fallback when the payload carries no `web` endpoint.
+ * Handles its own auto-unpause/start, same as the historical behavior.
+ */
+async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<string> {
+  const provider = box.provider ?? 'docker';
+  if (provider === 'docker') {
+    const insp = await inspectBox(box.id);
+    if (insp.state === 'paused') {
+      log.info('box is paused; unpausing');
+      await unpauseBox(box.id);
+    } else if (insp.state === 'stopped') {
+      log.info('box is stopped; starting');
+      await startBox(box.id);
+    } else if (insp.state === 'missing') {
+      throw new Error(`box ${box.name} has no container; was it destroyed?`);
+    }
+
+    // Re-read after a possible start: startBox re-resolves & persists the
+    // reallocated webHostPort (lifecycle.ts).
+    const { record } = await getBoxHostPaths(box.id);
+    if (record.webContainerPort === undefined) {
+      throw new Error(
+        `box ${box.name} predates the reserved web port; recreate it to use \`agentbox url\``,
+      );
+    }
+
+    const engine = await detectEngine();
+    if (engine === 'orbstack' && !opts.loopback) {
+      // OrbStack auto-routes <container>.orb.local to the container; :80 is
+      // declared (EXPOSE 80) so no port suffix is needed.
+      return `http://${record.container}.orb.local`;
+    }
+    if (record.portlessAlias && !opts.loopback) {
+      // A Portless route was registered — use the URL resolved at
+      // create/start; fall back to a live `portless get` for older records.
+      return record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
+    }
+    if (record.webHostPort === undefined) {
+      throw new Error(
+        `web port not resolved for box ${box.name}; is the container running? try \`agentbox inspect ${box.name}\``,
+      );
+    }
+    return `http://127.0.0.1:${String(record.webHostPort)}`;
+  }
+
+  // Cloud provider: probeState + lifecycle handled by the provider; URL is a
+  // signed preview URL (token embedded in the URL itself) so the host browser
+  // can open it without a custom header.
+  const ttl = parseTtlOrExit(opts.ttl);
+  const p = await providerForBox(box);
+  const state = await p.probeState(box);
+  if (state === 'paused') {
+    log.info('box is paused; resuming');
+    await p.resume(box);
+  } else if (state === 'stopped') {
+    log.info('box is stopped; starting');
+    await p.start(box);
+  } else if (state === 'missing') {
+    throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
+  }
+  return p.resolveUrl(box, { kind: 'web', ttl });
+}
+
+function emitUrl(url: string, opts: UrlOptions): void {
+  if (opts.print) {
+    process.stdout.write(`${url}\n`);
+    return;
+  }
+  const opened = spawnSync(hostOpenCommand(), [url], { stdio: 'inherit' });
+  if (opened.status !== 0) {
+    throw new Error(`open ${url} failed (exit ${String(opened.status ?? 'n/a')})`);
+  }
+  process.stdout.write(`opened ${url}\n`);
 }
 
 export const urlCommand = new Command('url')
@@ -48,83 +133,50 @@ export const urlCommand = new Command('url')
     '--loopback',
     'use the 127.0.0.1 URL instead of the OrbStack .orb.local / Portless .localhost URL',
   )
-  .option(
-    '--ttl <seconds>',
-    'cloud only: signed-URL expiry in seconds (default 3600, max 86400)',
-  )
+  .option('--ttl <seconds>', 'cloud only: signed-URL expiry in seconds (default 3600, max 86400)')
   .action(async (idOrName: string | undefined, opts: UrlOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      const provider = box.provider ?? 'docker';
 
-      let url: string;
-      if (provider === 'docker') {
-        const insp = await inspectBox(box.id);
-        if (insp.state === 'paused') {
-          log.info('box is paused; unpausing');
-          await unpauseBox(box.id);
-        } else if (insp.state === 'stopped') {
-          log.info('box is stopped; starting');
-          await startBox(box.id);
-        } else if (insp.state === 'missing') {
-          throw new Error(`box ${box.name} has no container; was it destroyed?`);
-        }
-
-        // Re-read after a possible start: startBox re-resolves & persists the
-        // reallocated webHostPort (lifecycle.ts).
-        const { record } = await getBoxHostPaths(box.id);
-        if (record.webContainerPort === undefined) {
-          throw new Error(
-            `box ${box.name} predates the reserved web port; recreate it to use \`agentbox url\``,
-          );
-        }
-
-        const engine = await detectEngine();
-        if (engine === 'orbstack' && !opts.loopback) {
-          // OrbStack auto-routes <container>.orb.local to the container; :80 is
-          // declared (EXPOSE 80) so no port suffix is needed.
-          url = `http://${record.container}.orb.local`;
-        } else if (record.portlessAlias && !opts.loopback) {
-          // A Portless route was registered — use the URL resolved at
-          // create/start; fall back to a live `portless get` for older records.
-          url = record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
-        } else {
-          if (record.webHostPort === undefined) {
-            throw new Error(
-              `web port not resolved for box ${box.name}; is the container running? try \`agentbox inspect ${box.name}\``,
+      // The default docker URL comes off the enriched Box payload the hub already
+      // computes (the same field the web UI links to), so `url` doesn't probe the
+      // provider from the laptop. Cloud stays on the provider path: a cloud box's
+      // payload `webUrl` is the NON-signed `previewUrl` (a header-token URL for
+      // Daytona — not openable from a browser click), while `resolveUrl` mints a
+      // browser-safe SIGNED URL. `--loopback` / `--ttl` also need provider-level
+      // URL computation the payload can't express, so they take the provider path.
+      if (!opts.loopback && opts.ttl === undefined && (box.provider ?? 'docker') === 'docker') {
+        // Box-scoped, so it goes to the box's OWNING hub (withOwningHub); a plain
+        // withHubClient would send a docker box's `getBox` to a configured remote
+        // control box that never owned it → `not_found`. Capture the payload URL
+        // via closure (the op returns void); `null` means "no web endpoint, fall
+        // through to the provider", and a `not-found` outcome falls through too.
+        let payloadUrl: string | null = null;
+        const r = await withOwningHub(box, async (client) => {
+          let b = await client.getBox(box.id);
+          if (b.state && b.state !== 'running') {
+            // A paused/stopped box serves nothing and a cached preview URL can be
+            // stale, so start it (idempotent) — the hub's start refreshes the
+            // box's endpoints server-side. Notice on STDERR so `--print` stays
+            // pipeable while the side effect stays visible.
+            process.stderr.write(
+              `box ${box.name} was ${b.state}; started it to resolve a live URL\n`,
             );
+            await client.lifecycle(box.id, 'start');
+            b = await client.getBox(box.id);
           }
-          url = `http://127.0.0.1:${String(record.webHostPort)}`;
+          payloadUrl = b.webUrl ?? null;
+        });
+        if (r === undefined) return; // hub error; withOwningHub set the exit code
+        if (payloadUrl) {
+          emitUrl(payloadUrl, opts);
+          return;
         }
-      } else {
-        // Cloud provider: probeState + lifecycle handled by the provider;
-        // URL is a signed preview URL (token embedded in the URL itself) so
-        // the host browser can open it without a custom header.
-        const ttl = parseTtlOrExit(opts.ttl);
-        const p = await providerForBox(box);
-        const state = await p.probeState(box);
-        if (state === 'paused') {
-          log.info('box is paused; resuming');
-          await p.resume(box);
-        } else if (state === 'stopped') {
-          log.info('box is stopped; starting');
-          await p.start(box);
-        } else if (state === 'missing') {
-          throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
-        }
-        url = await p.resolveUrl(box, { kind: 'web', ttl });
+        // The payload carried no web endpoint (or no hub owns the box) — fall
+        // through to the provider path.
       }
 
-      if (opts.print) {
-        process.stdout.write(`${url}\n`);
-        return;
-      }
-
-      const opened = spawnSync(hostOpenCommand(), [url], { stdio: 'inherit' });
-      if (opened.status !== 0) {
-        throw new Error(`open ${url} failed (exit ${String(opened.status ?? 'n/a')})`);
-      }
-      process.stdout.write(`opened ${url}\n`);
+      emitUrl(await resolveViaProvider(box, opts), opts);
     } catch (err) {
       handleLifecycleError(err);
     }

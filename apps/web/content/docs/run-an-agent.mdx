@@ -31,13 +31,16 @@ Starting Claude in a box...
 attaching — Control+a d to detach, leaves claude running
 ```
 
-<Figure src="/screenshots/claude-tui.png" caption="Claude Code running inside a box, attached over tmux." />
+<Figure
+  src="/screenshots/claude-tui.png"
+  caption="Claude Code running inside a box, attached over tmux."
+/>
 
 ## Detach and reattach
 
 The agent runs in a detachable tmux session whose prefix is **`Control+a`** (not the usual `Ctrl-b`). Press `Control+a` then `d` to detach — the agent keeps running in the box.
 
-`Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), **`t` (a fresh shell in the *same* box, opened in a new tab)**, and **`k` (destroy the box, after a confirmation)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
+`Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), **`t` (a fresh shell in the _same_ box, opened in a new tab)**, and **`k` (destroy the box, after a confirmation)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
 
 Reattach with `agentbox attach` — it picks the running agent session in the box automatically. Resync your host config and (re)start a session with `agentbox claude start` (or `codex start` / `opencode start`).
 
@@ -50,7 +53,9 @@ agentbox claude start mybox           # start a session (resyncs host ~/.claude)
 `agentbox attach` is agent-agnostic — if multiple agent sessions live in the same box it prompts you to pick. It never auto-starts: when nothing is running it prints a warning and exits non-zero. To start a fresh session use the agent's own command (`agentbox claude`, `codex`, `opencode`) — `start` also resyncs your host config so new skills, plugins, or a fresh login flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
 
 <Callout type="warn" title="HEADS UP">
-`attach` never resyncs your host `~/.claude` (skills, plugins, login). After installing a new skill or signing in on the host, use `claude start` (or a fresh `agentbox claude`) so the box picks it up.
+  `attach` never resyncs your host `~/.claude` (skills, plugins, login). After installing a new
+  skill or signing in on the host, use `claude start` (or a fresh `agentbox claude`) so the box
+  picks it up.
 </Callout>
 
 ## Switch agents
@@ -68,7 +73,8 @@ Auto-approve is on by default because the box is isolated from your host; pass `
 You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude and Codex resume sessions; OpenCode does not yet (resume starts a fresh box).
 
 <Callout title="WHY">
-Auto-approve is safe to default on because the box can't touch your machine — it's isolated from the host. The agent works without stopping to ask, and you keep your laptop clean.
+  Auto-approve is safe to default on because the box can't touch your machine — it's isolated from
+  the host. The agent works without stopping to ask, and you keep your laptop clean.
 </Callout>
 
 ## First-run auth
@@ -98,10 +104,11 @@ Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_
 
 Claude's OAuth refresh **rotates** the refresh token: the moment any box refreshes, every other copy of that login (the host backup, other boxes) stops working and 401s. AgentBox handles this automatically: the in-box supervisor watches each agent's credential file (`~/.claude/.credentials.json`, codex/opencode `auth.json`) and reports a refreshed blob to the host relay, which keeps the newest one (for Claude, `expiresAt` decides; codex/opencode are last-writer-wins) and pushes it into all your other running boxes — docker boxes via their config volumes (paused ones included), cloud boxes over the provider transport. A paused cloud box is reconciled when it wakes: `resume`/`start` compares the box's blobs with the host backup and pushes or captures whichever is newer.
 
-This is on by default; disable it per box with `agentbox create --no-credential-sync` or globally with `agentbox config set box.credentialSync false`. A long-*running* agent session may hold the old token in memory and ask you to `/login` once even after the file was fixed — restart the session and it picks up the fresh login.
+This is on by default; disable it per box with `agentbox create --no-credential-sync` or globally with `agentbox config set box.credentialSync false`. A long-_running_ agent session may hold the old token in memory and ask you to `/login` once even after the file was fixed — restart the session and it picks up the fresh login.
 
 <Callout title="TIP">
-Sign in once on the host. Install a skill or sign in there, and the next box picks it up automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).
+  Sign in once on the host. Install a skill or sign in there, and the next box picks it up
+  automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).
 </Callout>
 
 ## Next steps
@@ -109,5 +116,6 @@ Sign in once on the host. Install a skill or sign in there, and the next box pic
 - [Access your box](/docs/access-your-box) — shell, VS Code/Cursor (`agentbox code`), the dashboard.
 - [Web apps and tunnels](/docs/web-apps-and-tunnels) — `agentbox url` for the box's dev server.
 - [Background and parallel](/docs/background-and-parallel) — `-i/--initial-prompt`, `--no-attach`, and running many boxes at once.
+- [Run boxes from a deployed hub](/docs/deployed-hub) — deploy the hub to a VPS so cloud boxes keep working, and spawn them from a browser, with your laptop off.
 - [Checkpoints and pausing](/docs/checkpoints-and-pausing) — `--snapshot`, pause/unpause.
 - [Teleport a project](/docs/teleport-a-project) — `-c/--continue`, `--resume`, and how the workspace and git reach the box.

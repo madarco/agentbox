@@ -14,6 +14,10 @@
  * name)` would not inline and would `MODULE_NOT_FOUND` in the published CLI.
  * `Record<ProviderKind, …>` makes this map exhaustive: adding a provider to the
  * config `PROVIDERS` table forces a matching entry here (a TS error otherwise).
+ *
+ * Second consumer: `src/relay/cloud-backends.ts` re-exports this map's cloud
+ * backends as the loader the spawned relay side-loads, so the literal-specifier
+ * rule above is what keeps cloud `git push` working in a published install.
  */
 
 import { pathToFileURL } from 'node:url';

@@ -1,8 +1,11 @@
 name: CI
 
+# `nightly` is included because nightly builds are published from that branch:
+# without it, a nightly could be cut from a tip whose tests never ran (pushes to
+# it got no CI at all, only its open PRs did).
 on:
   push:
-    branches: [main]
+    branches: [main, nightly]
   pull_request:
 
 jobs:
@@ -22,5 +25,11 @@ jobs:
       - run: pnpm check:plugin-skill
       - run: pnpm lint
       - run: pnpm build
+      # `turbo run build` stops at the hub's plain `next build`; the standalone
+      # bundle (what `agentbox hub` actually spawns) is only produced here, and
+      # the wiring check needs it — the relay's cloud-backend injection can only
+      # be verified against built bundles, never from the symlinked dev tree.
+      - run: pnpm --filter @agentbox/hub build:standalone
+      - run: pnpm check:cloud-backends
       - run: pnpm typecheck
       - run: pnpm test

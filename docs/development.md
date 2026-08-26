@@ -63,7 +63,7 @@ node apps/cli/dist/index.js destroy smoke -y
 node apps/cli/dist/index.js destroy cc -y
 ```
 
-For the full lifecycle command list see [`docs/features.md`](./features.md).
+For the full lifecycle command list see [`docs/features.md`](./architecture.md#what-works-today).
 
 ### Notion integration — nested-box dev only
 
@@ -99,6 +99,46 @@ published build pulls cleanly; one that doesn't (a locally edited baked file)
 404s and the CLI builds locally. `ensureImage()` / `DockerProvider.prepare()`
 go through `pullOrBuild()`.
 
+### Diagnosing this from the hub
+
+The hub's **System** page (`https://agentbox.localhost/system`) surfaces the facts
+this section describes, so the usual investigation needs no terminal:
+
+- **Box image** — the registry, the *exact* `sha-<16>` tag this host will pull, and
+  the fingerprint it last stamped.
+- **Providers** — each base's freshness. A `stale` row opens to show **which files
+  changed** (`~ rel  from → to`), diffed against the per-file manifest recorded at
+  bake time. A base baked before manifests existed says so instead of guessing.
+- **Carried from this machine** — the agent configs and skills a box actually gets.
+  Present-only: a path missing from that list is one no box will receive.
+
+### When a pull is skipped, and why it says so
+
+A failed pull is **not** automatically "the tag isn't published". `pullImage()`
+classifies docker's stderr (`registry-auth.ts`) into `rate-limit` /
+`unauthorized` / `not-found` / `network`, and only `not-found` genuinely means
+"build locally".
+
+GHCR rate-limits **anonymous** pulls per IP, and a machine that has just baked a
+few times trips it. So on a `rate-limit` or `unauthorized` failure against
+`ghcr.io`, AgentBox borrows the host's `gh` token, `docker login`s, and retries
+once — the difference between a retag and a ~10-minute rebuild of an image that
+was already published.
+
+That retry needs the **`read:packages`** scope, which `gh auth login` does *not*
+grant by default. Without it, authenticating is worse than staying anonymous
+(GHCR then evaluates an identity that cannot read packages and answers 403), so
+the login is skipped and the reason is reported. To enable it:
+
+```sh
+gh auth refresh -h github.com -s read:packages
+```
+
+Every one of these decisions is logged with an `[image]` prefix and now lands in
+`~/.agentbox/logs/<command>.log` as well as the spinner — previously the pull
+progress was wired *only* to the self-overwriting spinner, so a throttled pull
+was indistinguishable from an unpublished tag when reading the logs afterwards.
+
 Force a local build (skip the pull):
 
 ```sh
@@ -106,29 +146,43 @@ agentbox prepare --provider docker --build   # or: agentbox create --build
 agentbox config set --global box.imageRegistry ""   # disable pulling everywhere
 ```
 
-After **any** change that bakes into the image, wipe the cached copy so the next
-create rebuilds:
+After **any** change that bakes into the image, the next create rebuilds on its
+own: the image is content-addressed by a fingerprint of its build context, so a
+changed context is detected and rebuilt automatically — no manual wipe needed
+(`agentbox self-update` no longer deletes the image either; it just reports the
+freshness comparison). To force the rebuild up front, drop the cached copy:
 
 ```sh
 docker rmi agentbox/box:dev
 ```
 
-`agentbox self-update` does this for you. Anything `COPY`'d in
-`packages/sandbox-docker/Dockerfile.box`, or listed as a context file in
-`apps/cli/scripts/stage-runtime.mjs`, needs a rebuild — the Dockerfile and the
-stage script are the authoritative list.
+Anything `COPY`'d in `packages/sandbox-docker/Dockerfile.box`, or listed as a
+context file in `apps/cli/scripts/stage-runtime.mjs`, is part of that context —
+the Dockerfile and the stage script are the authoritative list.
 
 Wipe everything if state drifts: `agentbox prune --all -y`.
 
 ### Publishing the prebuilt image
 
 `.github/workflows/box-image.yml` builds a multi-arch (amd64 + arm64) manifest
-and pushes it to GHCR, tagged `sha-<fingerprint>`, `<cliVersion>`, and `latest`.
-It runs on `workflow_dispatch`, on `v*` tags, and on `main` pushes that touch the
-build context (`Dockerfile.box`, the docker scripts, `packages/ctl/**`,
-`apps/cli/share/**`). The fingerprint is computed by
-`apps/cli/scripts/print-box-context-sha.mjs` (same inputs as the runtime
+and pushes it to GHCR, tagged `sha-<fingerprint>` (plus `<cliVersion>` and
+`latest` on release refs only — see below). It runs on `workflow_dispatch`, on
+`v*` tags, and on every push to `main` and `nightly`. The fingerprint is computed
+by `apps/cli/scripts/print-box-context-sha.mjs` (same inputs as the runtime
 fingerprint — verified equal locally).
+
+There is deliberately **no `paths:` filter**: the context contains
+`packages/ctl/dist/bin.cjs`, which tsup builds with `noExternal`, so it inlines
+`@agentbox/core`, `sandbox-core`, `relay` and `integrations` — an edit to any of
+ctl's transitive deps shifts the fingerprint, and a path filter would have to
+track that whole graph. Instead the job runs every time and skips the ~10-minute
+two-arch buildx when the fingerprint tag is already published (the tag *is* the
+content identity, so "already there" means "nothing to build").
+
+The floating `latest` / `<cliVersion>` tags are claimed only by the `native` leg
+**on `main` or a `v*` tag**. They name the default *stable* image, so a
+nightly-branch run must not move them; the CLI never resolves them anyway (it
+pulls the fingerprint tag), they exist for humans.
 
 **One-time setup:** after the first successful publish, make the GHCR package
 public (repo → Packages → `box` → Package settings → Change visibility →
@@ -167,3 +221,39 @@ commit history — there is no Changesets step.
 
 The first tracked release is tagged `v0.9.0`; earlier history lives in the git
 log.
+
+### Branches
+
+`nightly` is the integration branch — features land there and are fast-forwarded
+in; `main` carries the released code and is where the `release:` commit + `vX.Y.Z`
+tag go. Both run CI and the box-image publish.
+
+### Cutting a nightly
+
+Nightly pre-releases let testers run what's on `nightly` before it ships. Design
+and rationale: [`nightly-channel-plan.md`](./nightly-channel-plan.md); the
+user-facing page is [`apps/web/content/docs/nightly.mdx`](../apps/web/content/docs/nightly.mdx).
+
+From the `nightly` branch, run `/release-notes nightly`. It curates the notes into
+the changelog's `## [Unreleased]` section (no version heading — those bullets get
+promoted verbatim at the real release), versions the package
+`<next-minor>-nightly.<YYYYMMDDHHmm UTC>`, commits, pushes, and hands you:
+
+```sh
+cd apps/cli && npm publish --tag nightly --auth-type=web
+```
+
+**`--tag nightly` is not optional.** Without it npm moves the `latest` dist-tag
+onto the pre-release and every stable user gets a nightly on their next install.
+npm versions cannot be replaced, so verify afterwards with
+`npm view @madarco/agentbox dist-tags` — `latest` must be unchanged.
+
+The version base comes from the published release, not from `package.json`: after
+a nightly the branch reads `0.28.0-nightly.<old>`, whose minor-bump merely *ties*
+the shipped `0.28.0` instead of outranking it, producing a nightly nobody is
+offered.
+
+The menu-bar app is optional here — a nightly CLI falls back to the stable tray
+when `tray-nightly` is absent or older. To publish one:
+`cd ../agentbox-tray && ./scripts/publish-release.sh <ver>-nightly.<stamp>` (the
+script derives the channel from the version).

@@ -8,12 +8,7 @@
  *   cli > workspace > project > global > built-in defaults.
  */
 
-import {
-  PROVIDERS,
-  PROVIDER_NAMES,
-  perProviderConfigKey,
-  type ProviderKind,
-} from './providers.js';
+import { PROVIDERS, PROVIDER_NAMES, perProviderConfigKey, type ProviderKind } from './providers.js';
 
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
 export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
@@ -39,11 +34,47 @@ export type ClaudeInstallMethod = 'native' | 'npm';
  *   laptop off and needs no hub. Selected via `--with-credentials`, which copies
  *   the credentials in behind a confirmation prompt. Dangerous: the credentials
  *   live inside the box and in any snapshot/checkpoint of it. Cloud boxes only.
+ *   REFUSED when a control box is configured (`relay.controlPlaneUrl`): leasing
+ *   already gives the box laptop-off push without the credential copy, so the
+ *   copy is pure downside there. It stays available only without a control box.
  * - `auto` (default) — lease when a control plane is configured for the box
  *   (`relay.controlPlaneUrl`), else relay. Today's behavior.
  * Docker boxes ignore this (always `relay` — they bind-mount the host `.git`).
  */
 export type GitPushMode = 'auto' | 'relay' | 'lease' | 'direct';
+/**
+ * Which git credential a deployed hub (control box) uses on your behalf.
+ *
+ * - `gh` (default) — the hub holds a GitHub token (taken from your own `gh`
+ *   login at `hub setup`) and does the git work itself: boxes ask it to push via
+ *   the relay's bundle path and never receive a credential at all. Nothing has to
+ *   be installed or approved on the GitHub side, so it works on repos you only
+ *   collaborate on and in orgs where you can't install an App.
+ * - `app` — the hub holds a GitHub App private key and leases a 1-hour,
+ *   single-repo installation token to each box on every push. Tighter (the token
+ *   is narrow and short-lived) but it requires the repo OWNER to install the App,
+ *   which in most work orgs is an admin decision.
+ *
+ * This is deploy intent: it selects what `hub setup` / `hub deploy` provisions,
+ * and which push mode a cloud box is given. It cannot reconfigure a hub that is
+ * already running — change it there and redeploy, or set the token on the hub.
+ */
+export type HubGitAuthMode = 'gh' | 'app';
+/**
+ * How this machine relates to a hub, and specifically whether the local docker
+ * engine is offered here.
+ *
+ * - `auto` (default) — docker / remote-docker are available when there is no
+ *   control box, and gated OFF once one is configured (`relay.controlPlaneUrl`):
+ *   a docker box built on the laptop can't run with the laptop off, which is the
+ *   whole reason a control box exists, so the pickers, `doctor`, `prepare`,
+ *   `create` and `ls` stop offering it and route the fleet through the hub.
+ * - `thin` — force the gated behavior even without a configured control box (for
+ *   a machine driven purely as a thin `/api/v1` client, e.g. via `--url`).
+ * - `local` — keep docker on regardless of a control box. This is the escape
+ *   hatch every "docker is hidden here" message names.
+ */
+export type HubMode = 'auto' | 'thin' | 'local';
 /** Where `agentbox claude|codex|opencode` opens the attached session when the host
  *  shell is running inside tmux, cmux, Herdr, or iTerm2. `same` keeps today's inline behavior. */
 export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
@@ -63,7 +94,13 @@ export interface UserConfig {
    */
   schema?: number;
   box?: {
-    provider?: ProviderKind;
+    /**
+     * A provider name, or a host-qualified engine spec (`docker:<alias>`) that
+     * resolves to remote-docker — see `provider-spec.ts`. Typed loosely for the
+     * spec form; `parseProviderSpec` + the KEY_REGISTRY validation are what keep
+     * an arbitrary string out.
+     */
+    provider?: ProviderKind | (string & {});
     hostSnapshot?: boolean;
     defaultCheckpoint?: string;
     /** Per-provider override of `defaultCheckpoint`. Resolved before falling back to the global. */
@@ -187,12 +224,39 @@ export interface UserConfig {
      * centralized concerns — git-token leasing, permission state, the box
      * registry/events — and push to GitHub directly with a leased token, so
      * they keep working with the laptop off. Empty/unset = laptop-local relay
-     * (the default). Set via `agentbox control-plane set-url`.
+     * (the default). Set via `agentbox hub set-url`.
      */
     controlPlaneUrl?: string;
+    /**
+     * Per-request body cap (bytes) for custody PUTs. Defaults to 32 MiB.
+     * Custody carries a project's untracked-files seed tarball, which the
+     * relay's 1 MiB control-plane body cap is far too small for; this is scoped
+     * to custody so every other route keeps that cap.
+     *
+     * Two sides enforce it independently: on a PC this governs how large a seed
+     * blob the client will try to upload, while a **control box** enforces its
+     * own cap from `AGENTBOX_CUSTODY_MAX_BODY_BYTES`. Raising only this one lets
+     * the client offer a blob the control box then refuses — the push drops that
+     * blob and continues, so raise both to actually admit a bigger seed.
+     */
+    custodyMaxBodyBytes?: number;
+    /**
+     * Cap for the streaming custody blob surface (`/admin/custody-blob/*`),
+     * which carries the objects too big for the JSON API — a project's `carry:`
+     * material above all. Defaults to 100 MiB to match `box.cpMaxBytes`, so an
+     * entry the carry gate accepted can actually be stored.
+     *
+     * Same two-sided rule as `custodyMaxBodyBytes`: a control box enforces its
+     * own via `AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, so raise both.
+     */
+    custodyMaxBlobBytes?: number;
   };
   git?: {
     pushMode?: GitPushMode;
+  };
+  hub?: {
+    gitAuth?: HubGitAuthMode;
+    mode?: HubMode;
   };
   vnc?: {
     containerPort?: number;
@@ -215,6 +279,7 @@ export interface UserConfig {
   };
   cloud?: {
     useCurrentBranch?: boolean;
+    viaHub?: boolean;
   };
   maintenance?: {
     pruneProjectConfigs?: boolean;
@@ -228,6 +293,13 @@ export interface UserConfig {
      * both the probe and the nudge.
      */
     check?: boolean;
+    /**
+     * Release channel. `auto` (default) follows the installed build — a
+     * `-nightly.` version means nightly. `nightly` pins membership so it
+     * survives a stable version being installed from the nightly channel;
+     * `stable` is the opt-out. See docs/nightly-channel-plan.md.
+     */
+    channel?: 'auto' | 'stable' | 'nightly';
   };
   integrations?: {
     notion?: {
@@ -249,7 +321,8 @@ export interface UserConfig {
  */
 export interface EffectiveConfig {
   box: {
-    provider: ProviderKind;
+    /** A provider name, or a `docker:<alias>` engine spec (see `UserConfig`). */
+    provider: ProviderKind | (string & {});
     hostSnapshot: boolean | undefined;
     defaultCheckpoint: string;
     defaultCheckpointDocker: string;
@@ -349,9 +422,15 @@ export interface EffectiveConfig {
   relay: {
     port: number;
     controlPlaneUrl: string | undefined;
+    custodyMaxBodyBytes: number;
+    custodyMaxBlobBytes: number;
   };
   git: {
     pushMode: GitPushMode;
+  };
+  hub: {
+    gitAuth: HubGitAuthMode;
+    mode: HubMode;
   };
   vnc: {
     containerPort: number;
@@ -374,6 +453,7 @@ export interface EffectiveConfig {
   };
   cloud: {
     useCurrentBranch: boolean;
+    viaHub: boolean;
   };
   maintenance: {
     pruneProjectConfigs: boolean;
@@ -381,6 +461,7 @@ export interface EffectiveConfig {
   };
   update: {
     check: boolean;
+    channel: 'auto' | 'stable' | 'nightly';
   };
   integrations: {
     notion: {
@@ -538,9 +619,15 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   relay: {
     port: 8787,
     controlPlaneUrl: undefined,
+    custodyMaxBodyBytes: 32 * 1024 * 1024,
+    custodyMaxBlobBytes: 100 * 1024 * 1024,
   },
   git: {
     pushMode: 'auto',
+  },
+  hub: {
+    gitAuth: 'gh',
+    mode: 'auto',
   },
   vnc: {
     containerPort: 6080,
@@ -563,6 +650,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   cloud: {
     useCurrentBranch: false,
+    viaHub: true,
   },
   maintenance: {
     pruneProjectConfigs: true,
@@ -570,6 +658,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   update: {
     check: true,
+    channel: 'auto',
   },
   integrations: {
     notion: { enabled: false },
@@ -587,6 +676,14 @@ export interface KeyDescriptor {
   description: string;
   /** True for keys most users shouldn't touch (image, ports). Hidden from `list` by default. */
   advanced?: boolean;
+  /**
+   * `enum` only: also accept a host-qualified provider spec (`docker:<alias>`).
+   * `box.provider` is an enum of provider NAMES, but `docker:<host>` names an
+   * engine and resolves to the same remote-docker provider — and it is what a
+   * control box's own engine is spelled as, so it has to be settable as a
+   * default. The membership check stays exact for everything else.
+   */
+  allowProviderSpec?: boolean;
 }
 
 /** Join blurbs into "a, b, c, or d" for the enum description. */
@@ -639,7 +736,10 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.provider',
     type: 'enum',
     enumValues: PROVIDER_NAMES,
-    description: `Sandbox backend new boxes are created on: ${joinOr(PROVIDERS.map((p) => p.blurb))}.`,
+    allowProviderSpec: true,
+    description:
+      `Sandbox backend new boxes are created on: ${joinOr(PROVIDERS.map((p) => p.blurb))}. ` +
+      'Also accepts a host-qualified `docker:<alias>` spec naming a registered remote-docker engine (e.g. `docker:hub` for your control box).',
   },
   {
     key: 'box.hostSnapshot',
@@ -707,7 +807,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.autoApproveSafeHostActions',
     type: 'bool',
     description:
-      'Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box\'s scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.',
+      "Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.",
   },
   {
     key: 'box.isolateClaudeConfig',
@@ -727,7 +827,8 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.image',
     type: 'string',
-    description: 'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
+    description:
+      'Generic box image ref (fallback). Used as fallback when no per-provider override is set; the default `agentbox/box:dev` is treated as a sentinel by cloud backends (boot from their prepared base snapshot instead).',
     advanced: true,
   },
   ...perProviderImageKeys(),
@@ -820,7 +921,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.remoteDockerHost',
     type: 'string',
     description:
-      "Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes entirely from your own `~/.ssh/config` + agent. remote-docker-only; ignored by other providers.",
+      'Default SSH destination new --provider remote-docker boxes run their container on — an `~/.ssh/config` alias or `[user@]host[:port]`. Overridable per-create with `agentbox docker:<host> …` or `--remote-host`. SSH auth comes from your own `~/.ssh/config` + agent, unless the host was shared with a control box (`agentbox remote-docker share`), which registers an explicit key. remote-docker-only; ignored by other providers.',
   },
   {
     key: 'box.vercelTimeoutMs',
@@ -945,19 +1046,21 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'ssh.autoConfig',
     type: 'bool',
     description:
-      'Automatically write a `~/.agentbox/ssh/config` entry (Include\'d from `~/.ssh/config`) for SSH-capable cloud boxes on create and start/resume, so `ssh <box>` just works. On by default; set false if you manage `~/.ssh/config` yourself. Explicit `agentbox shell --ssh-config`/`code`/`open` still write on demand regardless.',
+      "Automatically write a `~/.agentbox/ssh/config` entry (Include'd from `~/.ssh/config`) for SSH-capable cloud boxes on create and start/resume, so `ssh <box>` just works. On by default; set false if you manage `~/.ssh/config` yourself. Explicit `agentbox shell --ssh-config`/`code`/`open` still write on demand regardless.",
   },
   {
     key: 'engine.kind',
     type: 'enum',
     enumValues: ['orbstack', 'docker-desktop', 'other', 'auto'] as const,
-    description: 'Override the docker-engine auto-detection (used for OrbStack-only optimisations).',
+    description:
+      'Override the docker-engine auto-detection (used for OrbStack-only optimisations).',
   },
   {
     key: 'browser.default',
     type: 'enum',
     enumValues: ['agent-browser', 'playwright', 'both'] as const,
-    description: 'Default browser stack inside the box. "playwright" or "both" implies box.withPlaywright.',
+    description:
+      'Default browser stack inside the box. "playwright" or "both" implies box.withPlaywright.',
   },
   {
     key: 'relay.port',
@@ -969,14 +1072,42 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.controlPlaneUrl',
     type: 'string',
     description:
-      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox control-plane set-url`.',
+      'Public HTTPS URL of a deployed control plane (hosted Next.js + Postgres app). When set, new cloud boxes point at it for git-token leasing, permission state, and the box registry/events, and push to GitHub directly with a leased token so they keep working with the laptop off. Set via `agentbox hub set-url`.',
+  },
+  {
+    key: 'relay.custodyMaxBodyBytes',
+    type: 'int',
+    description:
+      'Per-request body cap (bytes) for custody JSON PUTs (default 33554432 = 32 MiB). This is the simple base64-in-JSON API, used for small values (credentials, .env files, SSH keys); large payloads go to the streaming blob API governed by relay.custodyMaxBlobBytes. It applies only to custody, so every other relay route keeps the 1 MiB control-plane cap. On a PC it governs how large a blob the client will upload; a control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BODY_BYTES, so raise both.',
+    advanced: true,
+  },
+  {
+    key: 'relay.custodyMaxBlobBytes',
+    type: 'int',
+    description:
+      "Per-request cap (bytes) for the streaming custody blob API (default 104857600 = 100 MiB), which carries payloads too large to buffer as base64 — chiefly a project's `carry:` material. Defaults to the same value as box.cpMaxBytes so an entry the carry gate accepted at resolve time can actually be stored on a control box; if the two disagree the CLI promises a copy the transport then refuses. Enforced mid-stream (an over-cap upload is cut off, not landed). A control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BLOB_BYTES, so raise both.",
+    advanced: true,
   },
   {
     key: 'git.pushMode',
     type: 'enum',
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
     description:
-      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time.",
+      "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time, and is REFUSED when a control box is configured (`relay.controlPlaneUrl`) — use leasing (the `auto` default) instead.",
+  },
+  {
+    key: 'hub.mode',
+    type: 'enum',
+    enumValues: ['auto', 'thin', 'local'] as const,
+    description:
+      "Whether the local docker engine is offered on this machine: `auto` (default — docker and remote-docker are available until a control box is configured (`relay.controlPlaneUrl`), then gated off since a laptop-built docker box can't run with the laptop off), `thin` (force the gated behavior even without a configured control box), or `local` (keep docker on regardless of a control box). When gated, `create --provider docker` is refused, docker rows are dropped from the provider pickers / `doctor` / `prepare`, and docker boxes are shown as inactive in `ls`; set `hub.mode=local` to use docker here anyway.",
+  },
+  {
+    key: 'hub.gitAuth',
+    type: 'enum',
+    enumValues: ['gh', 'app'] as const,
+    description:
+      'Which git credential a deployed hub (control box) uses: `gh` (default — the hub holds a GitHub token taken from your own `gh` login and does the git work itself, so boxes never receive a credential and nothing needs installing or approving on GitHub) or `app` (the hub holds a GitHub App private key and leases a 1-hour, single-repo token to each box, which is tighter but requires the repo owner to install the App). Deploy intent: it selects what `agentbox hub setup` / `hub deploy` provisions and which push mode a cloud box gets — it cannot reconfigure a hub that is already running.',
   },
   {
     key: 'vnc.containerPort',
@@ -1053,6 +1184,12 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       "On cloud providers (daytona/hetzner), start new boxes on the host's current branch instead of forking a new agentbox/<box-name> branch. Overridden by an explicit --use-branch / --from-branch.",
   },
   {
+    key: 'cloud.viaHub',
+    type: 'bool',
+    description:
+      'When a control box is configured (relay.controlPlaneUrl), create cloud boxes ON the control box by default instead of on this machine (so they keep running with the laptop off). On by default; set false to always build cloud boxes locally. Overridden per-command by --via-hub / --local. Docker and remote-docker always build locally regardless.',
+  },
+  {
     key: 'maintenance.pruneProjectConfigs',
     type: 'bool',
     description:
@@ -1068,6 +1205,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       'Daily background check for a newer published agentbox (npm registry) and menu-bar app (release sha sidecar), plus the "newer version available" nudge. At most one network probe per 24h; false disables both.',
+  },
+  {
+    key: 'update.channel',
+    type: 'enum',
+    enumValues: ['auto', 'stable', 'nightly'] as const,
+    description:
+      'Which release channel `agentbox self-update` and `install app` follow: `auto` (default) follows the installed build, `nightly` opts into pre-release builds cut from the nightly branch, `stable` opts back out. Nightly always installs the newest build of EITHER channel, so a stable release supersedes the nightlies that preceded it.',
   },
   {
     key: 'integrations.notion.enabled',

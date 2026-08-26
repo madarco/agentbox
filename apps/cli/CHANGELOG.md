@@ -9,6 +9,419 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.28.0] - 2026-08-26
+
+### Breaking
+
+- **Docker boxes are gated off when a control box is configured.** A docker box
+  built on your laptop can't run with the laptop closed — the whole point of a
+  control box — so `create`, the agent launchers and `prepare` refuse `docker`
+  there, `doctor` and the install picker drop those rows, and `ls` marks existing
+  docker boxes inactive (they stay destroyable by name). New `hub.mode` config key
+  (`auto` | `thin` | `local`) — set `local` to keep using docker anyway. Not gated:
+  a `docker:<host>` engine the control box can run, and a control box that IS this
+  machine (`hub expose`). With no control box configured, nothing changes.
+- **`--dangerously-with-credentials` (`git.pushMode=direct`) is refused when a
+  control box is configured.** Token leasing (`git.pushMode=auto`) already gives
+  a box laptop-off push without copying a git credential into it — and into every
+  snapshot of it. Unchanged without a control box.
+
+### Added
+
+- **Remote-docker boxes can run on your control box.** With one configured,
+  `agentbox remote-docker add` now hands the engine over automatically: the
+  control box gets a connection and a key of its own for it (your key never
+  leaves this machine), after which creates and bakes for that host are built
+  there — so the box outlives your laptop. That includes the image bake `add`
+  runs: it now goes through the hub like every other bake, so a shared host is
+  built by the control box instead of your laptop. `--no-share` opts out,
+  `agentbox remote-docker share/unshare <alias>` do it after the fact. See
+  https://agent-box.sh/docs/remote-docker.
+- **`docker:hub` — your control box's own Docker.** Setting up, deploying or
+  updating a control box registers its engine as the host `hub` and, when your
+  default was still plain `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`
+  keeps making a docker-shaped box, on a machine that stays on. `box.provider` now
+  accepts any `docker:<alias>` engine spec.
+- `agentbox install portless` sets Portless up for good: it installs the CLI if
+  missing and registers Portless's own OS startup service, so the proxy serving
+  `https://<box>.localhost` is back after a reboot instead of staying down until
+  you start it by hand. `--uninstall` removes the service again.
+- **Deployed hub (control box).** `agentbox hub setup` (or `hub deploy hetzner |
+  digitalocean`) puts a full hub — relay, web UI, and a create worker — on a VPS you
+  own. Cloud boxes are then built and run **there**, so they keep going with your
+  laptop closed, including background `-i` agent runs. Create them from the web
+  UI, or `agentbox create --via-hub`. See https://agent-box.sh/docs/deployed-hub.
+- **Base images are baked on the control box.** `agentbox prepare --provider
+  <cloud>` now runs the bake there — the machine that actually builds your cloud
+  boxes — streams its log, and adopts the record back. `docker:<host>` routes
+  there too when the control box knows that host, since the image lands on the
+  shared remote machine. `--local` bakes here instead.
+- **Bake records sync both ways.** `self-update` (and `hub setup` / `update`) adopt
+  a base the control box already baked for your build context instead of telling
+  you to re-bake it.
+- **The local hub UI mirrors the control box** for cloud providers, so
+  `agentbox.localhost` stops reporting bakes nothing will boot. Docker stays local.
+- **Your laptop works as a thin client of it.** `agentbox ls` and `dashboard`
+  list hub-created boxes, and `attach`/`cp`/`url`/`destroy` adopt one on first
+  use — no manual step. SSH keys are fetched from the hub's custody store on
+  demand, and bake records are shared, so the PC and the control box stop
+  re-baking the same base into two snapshots.
+- **Nightly release channel.** `npm i -g @madarco/agentbox@nightly` (or
+  `agentbox self-update --channel nightly`) opts into pre-release builds; the
+  channel always installs the newest build of either channel, so stable releases
+  still reach you automatically. `--channel stable` opts back out. New
+  `update.channel` config key. See https://agent-box.sh/docs/nightly.
+- `agentbox queue list` now also shows the control box's box-creation queue —
+  where background `-i` cloud runs actually go when a hub is configured. New
+  `agentbox hub jobs list` / `hub jobs show <id>` inspect it directly.
+- `ssh agentbox-hub` opens a shell on a deployed control box — the deploy adds a
+  `Host` entry for its VPS to AgentBox's managed SSH config, alongside your boxes.
+- **`agentbox hub expose` turns this machine into the control box — no VPS.** Same
+  deployed profile, login and create worker as a real deploy, so it is the cheapest
+  way to run (or try) the remote hub. Add `--tunnel cloudflare` (or `tailscale`) and
+  cloud boxes reach it from anywhere, so they register, push and run background `-i`
+  jobs against your laptop. `agentbox hub unexpose` restores the plain local hub.
+- **`agentbox hub deploy digitalocean`** deploys the control box to a DigitalOcean
+  Droplet, alongside the Hetzner target: same docker-compose hub, HTTPS on
+  `<ip>.sslip.io` via Caddy, and a firewall locked to your egress IP from the moment
+  the Droplet boots.
+- `agentbox hub update` moves a deployed control box to a new build in place (keeping
+  its data volume) and `agentbox hub destroy` tears down the VPS, its firewall and
+  this machine's control-plane state. `hub status` reports the build actually running,
+  and nudges you when the CLI has drifted from it.
+- `agentbox hub deploy --domain hub.example.com` serves the control box on a hostname
+  you control instead of the IP-derived `sslip.io` one.
+- The control box installs the published npm package by default, pinned to your CLI's
+  version so shared bake fingerprints line up; `--package <spec>` picks another, and
+  `--ref` still builds from source.
+- **The System page now says WHY a provider base is stale.** A stale row opens to show
+  the files that actually changed (`~ path  old → new`), diffed against a per-file
+  manifest now recorded at bake time. A base baked before manifests existed says so and
+  points at a re-bake rather than guessing.
+- **The System page shows what your machine hands to a box** — agent configs, your
+  skills (by name), and `~/.gitconfig` — replacing the old list of AgentBox's own baked
+  files, which said nothing about your setup. Present-only, so a path missing from that
+  list is one no box will receive. On a control box, where that home directory is the
+  VPS's, it instead reports what a hub-created box really gets — the agent logins held in
+  custody, with a link across to Custody. The **Docker** row carries the registry, the exact
+  `sha-…` tag this host pulls, and the fingerprint it last stamped — the facts a "why
+  didn't it use the prebuilt image?" question otherwise needs a terminal to answer.
+- **Web UI: a Custody page and a System page.** Custody lists what the control box
+  holds — agent logins, project seeds, bake records, box SSH keys — with sizes and
+  hashes, never values. System answers "what is running here, and do I need to
+  re-bake?": version, channel, build source, the deploy record, and each provider's
+  bake with its fingerprint and freshness.
+- A project's detail page now shows its origin URL, branch and provider plus its
+  seed/custody status — whether a seed is registered, at which commit, and which
+  env files it captured (names and hashes only).
+- The local hub shows a banner when it is linked to a remote control box, with a link
+  to it.
+- **`agentbox hub setup` now finishes the job.** It pushes your agent logins to the
+  control box (so a hub-created cloud box is never launched without a Claude login,
+  re-pushing only when a token actually changes) and shares your local bake records.
+  When a bake cannot transfer — a different build context, or a version-skewed hub —
+  setup says so per provider instead of leaving you to discover it on the first create.
+- **A control box no longer needs a GitHub App.** `agentbox hub setup` now reuses
+  the token from your own `gh auth login`, so nothing has to be installed or
+  approved on GitHub — it works on repos you only collaborate on, and in orgs
+  where installing an App is an admin decision you can't make. The hub does the
+  git work itself, so boxes never receive a credential at all. New `hub.gitAuth`
+  key; `--git-auth app` keeps the old per-repo App tokens.
+
+- **Every box command now runs through the hub's public `/api/v1`** — `ls`,
+  `create`, the queue and jobs, `start`/`stop`/`pause`/`unpause`/`destroy`,
+  `git push|pull|checkout|branch`, `services`, `rename`, `url`/`screen`,
+  `checkpoint`/`prune`/`agent`/`logs`, approvals and custody. One server-side
+  implementation, so each behaves identically against a local hub and a remote
+  control box.
+- The hub's API is documented and browsable: `/api/v1/docs` renders it and
+  `/api/v1/openapi.json` serves the spec, so the menu-bar app, the web UI and
+  your own scripts can drive a hub directly.
+- `agentbox ls --live` now probes live box state server-side.
+
+### Changed
+
+- **`agentbox app` now starts the menu-bar app** instead of only reporting
+  whether it is running. It is idempotent, `agentbox app status` still reports
+  (`--json` moved with it), and the not-installed hint now names the command
+  that exists (`agentbox install app`).
+- **`agentbox hub` opens your control box when one is configured**, instead of
+  starting a second, empty hub on this machine. `agentbox hub start --local`
+  forces the local one; `hub stop`/`hub restart` still act on it, and an exposed
+  machine (`hub expose`) is its own control box, so it still starts.
+- **A create routed to the control box now shows its real progress.** The hub's
+  own steps — clone, seed, the provider's create output — stream back to your
+  terminal instead of a static "remote hub: running", with `-v` for the full log
+  and the whole transcript kept in `~/.agentbox/logs/<command>.log`.
+- `agentbox self-update` now offers to update a deployed control box as its last
+  step, so your machine and the hub don't drift onto different builds. Skipped
+  when the control box is already current; `--skip-hub` declines it.
+- Image bakes started from the hub UI or the tray now run one **per provider**
+  instead of one at a time, so several providers set themselves up in parallel
+  (each remote-docker host counts as its own provider).
+- **`agentbox hub setup` is quieter and checks its prerequisites.** It fails
+  immediately with an install hint when `gh` is missing (it is mandatory for the
+  remote hub) rather than partway through a deploy, no longer offers the GitHub App
+  or Vercel paths in its prompts (`--git-auth app` / `--deploy vercel` still work if
+  you ask for them), and reports a healthy deploy as one line instead of echoing a
+  `/healthz` URL.
+- Projects registered on a remote hub are listed by their repo name, matching the
+  local hub, instead of a derived key.
+- The browser pages of the GitHub App flow (the redirect and the callback) are
+  styled and light/dark aware instead of bare HTML.
+- The startup "agentbox was updated" prompt and `self-update`'s plan say what the
+  refresh actually does (the box image is re-checked, not deleted) instead of
+  offering to "download new version now?" — nothing is downloaded.
+- **With a control box configured, cloud creates now go to it by default** —
+  `agentbox create` and foreground `claude`/`codex`/`opencode` on a cloud
+  provider. `--local` or `cloud.viaHub=false` keeps them on this machine; docker
+  and remote-docker are unaffected.
+- The hosted-hub commands moved from `agentbox control-plane *` into the one
+  `agentbox hub *` group (`hub setup`/`deploy`/`boxes`/`approvals`/`credentials`/
+  `custody`/…). `agentbox hub status` now reports the configured remote control
+  box when one is set, else the local hub process.
+
+- An interactive `agentbox create` runs in its own scheduler lane, so it starts
+  immediately instead of queueing behind background `-i` jobs.
+- `agentbox services` on a paused or stopped box reports the hub's last known
+  snapshot instead of failing to reach the supervisor — it now agrees with
+  `status`.
+- `@madarco/agentbox-provider-sdk` 2.5.0: cloud provisioning gained
+  `extraInboundCidrs` (extra firewall sources for a control-box-provisioned box)
+  and `CloudHandle.publicHost` (so an adopting PC can rebuild an SSH target
+  without a provider API call). `box.provider` now also accepts a
+  `docker:<alias>` engine spec.
+
+### Fixed
+
+- **`agentbox agent approvals` missed the in-TUI prompts of a control-box box.**
+  Plan, question and tool-permission rows were read from a status file only the
+  local relay writes, so a box parked on a plan approval reported "agent not
+  parked on a prompt" — and `agent approve` refused the same prompt as already
+  changed. Both now read the snapshot from the hub that owns the box, and a half
+  that could not be read is reported instead of rendering as "nothing pending".
+- **`agent` commands were silent about a control box they could not authenticate
+  to.** They fell back to this machine's hub, whose empty answer for a box it
+  never held was reported as "no snapshot" — they now name the plane and the
+  missing `AGENTBOX_HUB_API_KEY`, as `agent approvals` already did.
+- **`agent state`, `wait-for` and `get-plan-question` reported no snapshot for a
+  box the control box created.** They asked this machine's hub first, and a hub
+  box the local registry knows answers "no snapshot" rather than "no such box" —
+  so the fallback to the control box never happened. All five `agent` readers now
+  resolve the owning hub the same way.
+- **A remote-docker box's approvals were looked for on the wrong hub** when a
+  control box was configured. It registers with the local relay, but an inline
+  provider check treated only `docker` as local, so its host-action mailbox was
+  read from the control box. Ownership is now decided in one place for both.
+- **Remote Docker builds work on Docker 29.** The box image was streamed to
+  `docker build -` alongside `-f`, which Docker 29's buildx rejects outright
+  ("ambiguous Dockerfile source") — that broke every bake and every registry-miss
+  create on a current engine. It now stages the context in a temp dir on the
+  remote and builds from there.
+
+- **`carry:` files are owned by the box user on every provider.** They were
+  chowned to a hardcoded uid 1000, which is `vscode` on docker/hetzner/
+  digitalocean/daytona but not on vercel/e2b — so carried files landed on a
+  stranger there, and a 0600 one (like the credentials
+  `--dangerously-with-credentials` copies) was unreadable by the agent meant to
+  use it. An explicit `user:` in `agentbox.yaml` still means a literal uid.
+- **Files you approved in the carry prompt never reached a hub-created box.** The
+  approved list was dropped on the way to the control box, so a gitignored path
+  you explicitly opted in — a `.env`, a database dump — simply wasn't there. The
+  transport couldn't have carried it either: the prompt offered up to
+  `box.cpMaxBytes` (100 MiB) while the wire capped out around 22 MiB. Entries now
+  ride the seed, and custody streams raw bytes instead of base64-in-JSON. A carry
+  that can't be delivered now fails the create loudly rather than building the box
+  without the files.
+- **`gh pr create` from a box on a control box failed with `spawn gh ENOENT`** —
+  which reads as "gh isn't installed", but was the hub spawning it in a workspace
+  path that doesn't exist there. `gh` now runs from a real directory and targets
+  the repo explicitly. Restart the relay to pick this up.
+- **The attach footer shows real status for boxes a control box created.** It
+  read a status file only the local relay writes, so a hub-created box always
+  showed `(unknown)` and never the `starting N/M…` service count. Status now
+  rides the stream the footer already holds open.
+- **The footer recovers on its own after a hub restart.** Its stream gave up
+  permanently on any error response — including the ones a hub returns while it
+  restarts — so approvals stopped arriving until you detached and reattached.
+- **Boxes a control box creates are named after the repo** (`optima-a1b2c3d4`),
+  not after the throwaway clone directory it built them in. `agentbox ls` shows
+  the repo in WORKSPACE for those boxes too.
+- **A control box can now build boxes from repos cloned over SSH.** A project
+  whose origin is `git@github.com:owner/repo` failed every hub-side create with
+  `Host key verification failed` — the hub authenticates git over HTTPS and has
+  no SSH key. Those repos are now cloned (and pushed to) over HTTPS.
+- **`agentbox self-update` no longer stops to ask for cloud credentials.** Its
+  bake-adoption step walked every cloud provider through the first-run credential
+  gate, so an update popped a "Vercel setup" (or Daytona, E2B, …) wizard for a
+  provider you never asked about — and cancelling it skipped the rest of the
+  refresh. Adoption needs no credential.
+- **Boxes created through a remote hub came up signed out of Claude.** A create
+  re-seeded the control box's credential from custody without checking which copy
+  was newer, overwriting a freshly refreshed token with an hours-old one — and a
+  Claude refresh rotates the token, so the older copy is dead rather than merely
+  expired. Custody is now kept current (a box that refreshes its own token
+  records it there, and every hub create path pushes yours before enqueuing) and
+  a create never replaces a credential with an older one.
+- **A box destroyed from your PC no longer lingers on the control box.** The reap
+  now also drops the control box's own record and per-box SSH key dir, so the box
+  stops showing as `running` in `hub boxes list`, the dashboard and the tray.
+- Hetzner servers are no longer named `agentbox-agentbox-…` when the box name
+  already starts with the prefix.
+- **A base baked on the control box stayed invisible to your machine**, which
+  kept reporting it as stale and offering a multi-minute re-bake. The control box
+  now records its bakes in its own custody (it was trying to upload them to a
+  control plane it doesn't have), and a PC can adopt a shared base over an
+  outdated local record instead of only over a missing one.
+- **A cloud create routed to the control box no longer prompts to re-bake the
+  local base** — it builds on the hub, from the hub's base, so this machine's was
+  never going to be used.
+- **The menu-bar app kept offering the update you just installed.** `self-update`
+  now restarts a running app, which is what makes it re-read the installed CLI
+  version; before, the row could sit stale for up to a day.
+- **Creating a box from a control box's web UI failed** with a `tar: Cannot open`
+  error. The control box has no working copy to build from, so those creates now
+  go through the same clone-and-seed path as `create --via-hub`. A create no
+  longer needs a repo cloned on the VPS first.
+- **A control box listed a project named after a deleted temp directory**
+  (`agentbox-hub-worker-<uuid>`) with no seed and no `agentbox.yaml`. Its boxes
+  now group under their repo, named after it. A cloud create also fails up front,
+  rather than after provisioning, when its workspace is missing.
+- **Creating a hetzner box through a control box failed** with
+  `invalid input in field 'labels[agentbox.box]'` — the derived box name exceeded
+  Hetzner's 63-character limit. Names and labels are now bounded.
+- **Creating a daytona box on a deployed hub failed** with
+  `Module "ObjectStorage" is not available` — the hub bundle inlined the Daytona
+  SDK instead of leaving it external.
+- **`git push` from a cloud box failed on an npm-installed AgentBox** with
+  `Cannot find package '@agentbox/sandbox-<provider>'`. The relay resolved
+  provider backends from `node_modules`, which the published package doesn't
+  ship; the CLI and the hub now hand it their own bundled providers. Downloads
+  and `gh pr create` from a cloud box were hit too. Restart the relay (any
+  `agentbox` command does it) after upgrading.
+- **On an npm install, every cloud provider showed as "baked · unverified"** and shared
+  bake records were silently ignored — which on a control box failed creates with "run
+  `agentbox prepare` first". The hub bundle sits three levels below the staged runtime
+  root, so the self-relative lookup never found it and no provider could compute a live
+  fingerprint. The hub child is now told where that root is.
+- **Editing eight of the files baked into the box image never rebuilt it.** `gh-shim`,
+  `git-shim`, `ntn-shim`, `linear-shim`, `chromium-resolver`, `agentbox-sshd-start`,
+  `agentbox-portless-trust` and `opencode-agentbox-plugin.js` are all COPY'd by the
+  Dockerfile but were missing from the fingerprint's file list, so a change to any of
+  them left every machine on the old image indefinitely. The guard test now derives
+  the expected list from the Dockerfile's own COPY lines rather than spot-checking a
+  few names, which is why it never caught this. **Every provider's stored fingerprint
+  changes once as a result** — expect a single re-bake (or re-pull) per machine.
+- **A rate-limited image pull rebuilt the box image from scratch instead.** GHCR
+  throttles anonymous pulls per IP, so a machine that had just baked a few times got
+  a 429 — and because the pull only reported a bare pass/fail, that was
+  indistinguishable from an unpublished tag and fell straight through to a
+  ~10-minute local build of an image already sitting in the registry. AgentBox now
+  tells the failures apart (rate limit / rejected credentials / genuinely missing /
+  network) and, on a throttle, retries once authenticated with your own `gh` token.
+  That retry needs the `read:packages` scope, which `gh auth login` does not grant by
+  default; without it AgentBox stays anonymous rather than making things worse (a
+  token that cannot read packages turns a working anonymous pull into a 403) and
+  tells you the one command that fixes it:
+  `gh auth refresh -h github.com -s read:packages`.
+- The pull-vs-rebuild decision is now in `~/.agentbox/logs/<command>.log`. It went
+  only to a self-overwriting spinner for `claude` / `codex` / `opencode`, so the most
+  expensive branch of a create left no trace and there was no way to tell afterwards
+  why a prebuilt image had not been used.
+- The sign-in page of a deployed hub rendered no logo — the auth redirect swallowed
+  the asset request.
+- A deploy that landed on a recycled IP already at its Let's Encrypt certificate limit
+  was reported as a wrong upstream port. The two are now told apart by probing, so the
+  advice matches the actual cause.
+- **Box and hub `.localhost` URLs stopped working after a reboot.** A Portless
+  proxy dies with the machine while the routes it serves persist on disk, and
+  nothing restarted it — so `agentbox hub` kept printing
+  `https://agentbox.localhost:1355` with nothing listening. AgentBox now brings
+  the proxy back whenever it is about to hand out one of these URLs (create,
+  agent start, `hub start`/`restart`, `self-update`). It restarts the mode your
+  host already uses and never switches: a host on the clean HTTPS proxy is
+  pointed at `agentbox install portless` rather than silently downgraded, since
+  the scheme and port are part of the URL a box mirrors internally.
+- `agentbox doctor` reported the Portless proxy as running on hosts that had
+  none — the check matched any command line merely mentioning `portless proxy`.
+- The hub no longer advertises a Portless URL unless a proxy is actually
+  serving it (it falls back to `http://127.0.0.1:8787`), and re-resolves the URL
+  so switching proxy modes can't leave a stale one behind.
+- A box's Portless URL no longer depends on the directory the command ran from
+  (inside a git worktree it picked up a worktree-scoped hostname that was never
+  registered).
+- `agentbox self-update` again honors `portless.enabled: false` instead of
+  re-registering `agentbox.localhost` for users who had opted out.
+- On the nightly channel, the menu-bar app was re-downloaded on every refresh:
+  the installed build was compared against the **stable** release's checksum.
+- `agentbox self-update` no longer reinstalls an older published version when the
+  running build is already newer than anything on the registry.
+- A control box now uses a base image you baked with `box.claudeInstall: npm`.
+  That setting is folded into the bake fingerprint but lives in `config.yaml`, so
+  it never reached the control box — which defaulted to `native`, rejected the
+  shared bake, and failed every cloud create with "run `agentbox prepare` first".
+  A record baked in either mode is now accepted, and `hub deploy` carries the
+  setting across.
+- A box's host-action approvals are now visible wherever the box lives: the
+  attach footer, `agentbox agent approvals`/`approve`, and the dashboard all ask
+  the box's own relay instead of always this laptop's. Hub-box approvals
+  previously showed up only in the web UI or tray.
+- `agentbox destroy` and `agentbox prune --provider <cloud>` now reap the
+  control box's registration + SSH-key custody, so destroyed boxes stop
+  lingering as ghosts in `agentbox ls`, the web UI, and the tray.
+- `agentbox prune` no longer deletes the state record of live **cloud** boxes
+  (it judged every box by `docker inspect`, which a cloud box can never pass);
+  with `--all` this also took the per-box dir holding its private SSH key.
+- `agentbox dashboard` lists boxes created on the control box, like
+  `agentbox ls` already did; selecting one adopts it.
+- `agentbox hub deploy hetzner` now migrates the Daytona JWT org id to the
+  control box under its correct key (`DAYTONA_ORGANIZATION_ID`, was
+  `DAYTONA_ORG_ID`), and also carries provider endpoint/region overrides — so a
+  JWT-mode Daytona (or custom-endpoint) provider works on the control box.
+- A cloud create could finish with a healthy box and no agent running in it: the
+  detached agent start fired a single ssh with no retry, and Daytona's SSH
+  gateway hangs up on an attach token minted seconds earlier. It now retries with
+  a fresh token, and reports what ssh actually said instead of a bare `exit 255`.
+- **`agentbox hub setup` / `hub deploy hetzner` deployed the wrong version and
+  failed with a 502.** The git ref was hardcoded to `main`, so the CLI configured
+  the VPS for a hub it never built — the deploy timed out against a control box
+  that was actually healthy. The ref now defaults to the one matching your CLI,
+  and an incompatible `--ref` is rejected before the build instead of after it.
+- A failed control-box deploy is now debuggable: both commands write
+  `~/.agentbox/logs/hub-{setup,deploy}.log`, the VPS is recorded as soon as it
+  boots (it is left running), and the failure prints how to reach it and read the
+  hub's own logs.
+- A control box with no GitHub App configured failed to boot at all, so it could
+  never come up far enough for you to configure one.
+- `gh pr create` (and the other `gh` commands) from a box on a control box exited
+  127 — `gh` wasn't installed on the hub.
+- Config keys AgentBox accepts were flagged as invalid by editors: 15 registered
+  keys were missing from the published JSON schema, including `git.pushMode`,
+  `cloud.viaHub`, `update.channel`, and the whole `ssh`/`git`/`cloud`/
+  `integrations` branches. `box.provider` also rejected `remote-docker`.
+- **Stored credentials could be read over the network.** Once the local hub began
+  binding all interfaces so docker boxes could reach it, anything holding the hub
+  token could fetch stored bytes — agent credentials, `.env` files, per-box SSH
+  private keys. That read is now restricted to loopback (and to the admin token
+  on a control box), and fails closed.
+- A hub-routed create came up without your `.env` and other untracked files; the
+  seed push now always runs.
+- A hub-routed `claude -i` silently dropped its agent arguments
+  (`--dangerously-skip-permissions` and friends).
+- `destroy --keep-snapshot` was a silent no-op on docker.
+- A failed create now reports the failure in `queue list` / `hub jobs show`
+  instead of reading as done, and `queue list` prints the full job id so
+  `queue show` / `queue cancel` accept it.
+- Destroying a cloud box from the dashboard could hit the wrong hub and leave
+  both the sandbox and its registration in place.
+
+### Removed
+
+- `agentbox hub boxes start|stop|pause|resume|rm` — use the plain `agentbox
+  start|stop|pause|unpause|destroy`, which now drive the hub themselves.
+  `hub boxes list` stays as the hub's admin view.
+
+
 ## [0.27.1] - 2026-07-25
 
 ### Fixed

@@ -1,12 +1,17 @@
 ---
-description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, and push the tag — then hand the npm publish to the user (they publish manually). Also flags when the separately-published provider SDK needs a republish.
-argument-hint: "[patch|minor|major]"
+description: Curate a CHANGELOG.md entry from commits since the last release; with a bump arg, also version, commit, and push the tag — then hand the npm publish to the user (they publish manually). `nightly` instead cuts a pre-release from the nightly branch. Also flags when the separately-published provider SDK needs a republish.
+argument-hint: "[patch|minor|major|nightly]"
 allowed-tools: Bash(git describe:*), Bash(git log:*), Bash(git tag:*), Bash(git rev-list:*), Bash(git rev-parse:*), Bash(git status:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(git push:*), Bash(node:*), Bash(npm version:*), Bash(npm view:*), Bash(npm pack:*), Bash(cp:*), Bash(mktemp:*), Bash(tar:*), Bash(rm:*), Bash(pnpm:*), Read, Edit
 ---
 
 You are writing the next release-notes entry for `@madarco/agentbox`. The
 changelog is at `apps/cli/CHANGELOG.md` (Keep a Changelog format). Produce
 **short, user-facing notes — not a commit dump.**
+
+**If `$ARGUMENTS` is `nightly`, skip to section 9** — a nightly is a different
+flow (pre-release version, `[Unreleased]` instead of a version heading, no git
+tag, `--tag nightly` on the publish). Sections 1-3 still apply for gathering and
+curating the notes; 4, 5, 6 and 8 do not.
 
 ## 1. Find the range
 
@@ -148,6 +153,15 @@ users on the old app. Run this check every time:
      straight to the tray repo's main (no PR flow there).
    - Verify: `gh release view tray-latest -R madarco/agentbox --json body`
      shows the new version.
+   - **Nightly runs** publish to the separate `tray-nightly` release instead, so
+     `tray-latest` is untouched. Pass a pre-release version and the script derives
+     the channel from it (and skips the source git tag):
+     ```
+     cd ../agentbox-tray && AGENTBOX_NOTARY_PROFILE=AGENTBOX_NOTARY \
+       ./scripts/publish-release.sh <next-app-version>-nightly.<YYYYMMDDHHmm>
+     ```
+     Nightly tray publishes are optional — a nightly CLI falls back to the stable
+     tray automatically when `tray-nightly` doesn't exist or is older.
 
 ## 8. Release (only when `$ARGUMENTS` named a bump)
 
@@ -218,3 +232,76 @@ when it passes through the tool-output channel (and piping the command to
 5. **Optionally confirm afterward.** If the user reports the publish succeeded,
    `npm view @madarco/agentbox version` should show <next-version>. Report the
    published version, the pushed tag, and the commit.
+
+## 9. Nightly (only when `$ARGUMENTS` is `nightly`)
+
+A nightly is a **pre-release** published under the `nightly` dist-tag so testers
+can run what's on the `nightly` branch before it ships. Design and rationale:
+[`docs/nightly-channel-plan.md`](../../docs/nightly-channel-plan.md).
+
+Do sections 1-3 first (find the range, gather, curate), with one difference in
+section 1: the anchor is the **last nightly**, not the last release —
+`git log --grep='^chore(release): nightly' -1 --pretty=%H`. Fall back to
+`git describe --tags --abbrev=0` when there has never been a nightly.
+
+Then:
+
+1. **Refuse to run from the wrong branch.** `git rev-parse --abbrev-ref HEAD`
+   must be `nightly`. If it isn't, stop and tell the user — a nightly cut from a
+   feature branch publishes code that was never integrated.
+
+2. **Compute the version: `<next-minor>-nightly.<YYYYMMDDHHmm UTC>`.**
+   ```
+   base=$(npm view @madarco/agentbox version)            # the published STABLE release
+   stamp=$(date -u +%Y%m%d%H%M)
+   ```
+   Bump `base`'s **minor** (`0.27.0` → `0.28.0`) and append `-nightly.$stamp`.
+
+   **Take the base from the published release, NOT from `apps/cli/package.json`.**
+   After a previous nightly the branch's own version reads `0.28.0-nightly.<old>`,
+   whose minor-bump is `0.28.0` — which merely *ties* the stable release instead of
+   outranking it, producing a nightly that no tester is ever offered. The
+   published release is the only stable anchor.
+
+   Naming a nightly for the version it *precedes* is what makes a stable release
+   supersede it automatically (`0.28.0` > `0.28.0-nightly.x`), so nightly testers
+   get releases with no second publish under the `nightly` tag.
+
+3. **Write the notes into `## [Unreleased]`** — do **not** create a version
+   heading. Nightly notes accumulate there and are promoted verbatim when the real
+   release is cut. Add bullets under the usual `### Added` / `### Changed` /
+   `### Fixed` sub-headings, merging with whatever is already there.
+
+4. **Commit the changelog + the version bump, and do NOT tag.**
+   ```
+   cd apps/cli && npm version <version> --no-git-tag-version && cd ../..
+   git add apps/cli/CHANGELOG.md apps/cli/package.json
+   git commit -m "chore(release): nightly v<version>"
+   git push
+   ```
+   Tags are a stable-release artifact — a `v*` tag here would also trigger the
+   box-image workflow's release path.
+
+5. **Hand the publish to the user** (same 2FA/redaction reasons as section 8 — do
+   **not** run it yourself):
+   ```
+   ! cd apps/cli && npm publish --tag nightly --auth-type=web
+   ```
+   **`--tag nightly` is load-bearing.** Without it npm moves the `latest`
+   dist-tag onto the pre-release, and *every stable user* gets a nightly on their
+   next install or `self-update`. npm versions cannot be replaced, so this is the
+   one irreversible mistake in the flow — restate the exact command with the flag,
+   and never offer a form without it.
+
+6. **Verify afterwards, and check `latest` did not move:**
+   ```
+   npm view @madarco/agentbox@nightly version     # the new pre-release
+   npm view @madarco/agentbox dist-tags           # `latest` must be UNCHANGED
+   ```
+   The second is the regression check for step 5. Report both.
+
+7. **Skip the provider-SDK check (section 6)** — the SDK has its own semver line
+   and no nightly channel. **Do run the tray check (section 7)** if the app
+   changed; its nightly command is
+   `TRAY_TAG=tray-nightly ./scripts/publish-release.sh <version>-nightly.<stamp>`
+   (the script derives the nightly channel from the version string).

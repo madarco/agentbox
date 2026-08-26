@@ -5,7 +5,7 @@ description: Run your agents on a DigitalOcean Droplet with full root and Docker
 
 Run your agents on a DigitalOcean Droplet you fully control — no local Docker needed. Each box is its own Droplet (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: a Droplet is a real VM that bills by the hour even while stopped — pause is power-off/power-on, not free — and its Cloud Firewall locks to your current egress IP.
 
-Switch per box with `--provider digitalocean`, or pin it project-wide with `box.provider: digitalocean` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick DigitalOcean for bare-VM control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly $24/mo per *running* `s-2vcpu-4gb` box (~$0.036/hr). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+Switch per box with `--provider digitalocean`, or pin it project-wide with `box.provider: digitalocean` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick DigitalOcean for bare-VM control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly $24/mo per _running_ `s-2vcpu-4gb` box (~$0.036/hr). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
 ## Set up
 
@@ -15,7 +15,7 @@ The easiest path is the interactive wizard — it signs you in and bakes the bas
 agentbox install        # then select digitalocean
 ```
 
-Paste a DigitalOcean **Personal Access Token** when prompted — a token with **read + write** scope from the *API → Tokens* page of your DigitalOcean Console. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider digitalocean` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
+Paste a DigitalOcean **Personal Access Token** when prompted — a token with **read + write** scope from the _API → Tokens_ page of your DigitalOcean Console. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider digitalocean` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
 
 For CI or scripted setup, run the explicit equivalents:
 
@@ -25,7 +25,8 @@ agentbox prepare --provider digitalocean    # bake the base snapshot
 ```
 
 <Callout title="NOTE">
-The token needs **write** scope — read-only tokens can't create Droplets. Auth is a single API token; there's no OAuth app or `doctl` to install.
+  The token needs **write** scope — read-only tokens can't create Droplets. Auth is a single API
+  token; there's no OAuth app or `doctl` to install.
 </Callout>
 
 ## Use it
@@ -62,10 +63,11 @@ agentbox prepare --provider digitalocean --claude-install npm
 `npm` installs `@anthropic-ai/claude-code` and symlinks it into the same
 `~/.local/bin/claude` path the native installer uses, so the box behaves
 identically. Bake-time only — changing it re-bakes the snapshot.
+
 </Callout>
 
 <Callout type="warn" title="HEADS UP">
-The bake costs a few minutes and a few cents, but you only do it once per account.
+  The bake costs a few minutes and a few cents, but you only do it once per account.
 </Callout>
 
 ## Create a box and run an agent
@@ -106,11 +108,14 @@ Before AgentBox creates any billable resource (firewall, SSH key, Droplet), it v
 
 - **Unknown size** (`--size s-99vcpu`) → lists valid available size slugs.
 - **Unavailable size** → rejected, with available alternatives.
-- **Size not offered in the region** (`--size s-4vcpu-8gb --location <where it isn't sold>`) → lists where it *is* offered and reminds you of `--location`.
+- **Size not offered in the region** (`--size s-4vcpu-8gb --location <where it isn't sold>`) → lists where it _is_ offered and reminds you of `--location`.
 - **Disk too small** for the base snapshot → asks for a larger size.
 
 <Callout type="warn" title="Account Droplet limits">
-New DigitalOcean accounts start with a low Droplet limit. If DigitalOcean refuses the create because you've hit it, AgentBox surfaces the limits explanation and points you at the DigitalOcean Console (**Account → your team → Droplet limit**) to request an increase. An out-of-capacity error suggests trying another `--location`.
+  New DigitalOcean accounts start with a low Droplet limit. If DigitalOcean refuses the create
+  because you've hit it, AgentBox surfaces the limits explanation and points you at the DigitalOcean
+  Console (**Account → your team → Droplet limit**) to request an increase. An out-of-capacity error
+  suggests trying another `--location`.
 </Callout>
 
 ## Projects
@@ -137,10 +142,13 @@ Leave it unset for today's behavior (the account default project). A name that d
 agentbox config unset box.digitaloceanProject
 ```
 
-(The settings form's **Project** field can set or change the project, but not clear it — a blank field there means "leave unchanged", since the form doesn't show the saved value. `agentbox digitalocean login` can clear it, by choosing *Skip*.)
+(The settings form's **Project** field can set or change the project, but not clear it — a blank field there means "leave unchanged", since the form doesn't show the saved value. `agentbox digitalocean login` can clear it, by choosing _Skip_.)
 
 <Callout title="Placement is best-effort">
-DigitalOcean has no project field on Droplet-create, so AgentBox assigns the box to its project immediately *after* creating it. If that one call fails (an API blip, a token without project write), the box is still created and fully usable — it just stays in the default project, and the create log says so. A working box is never torn down over a grouping error.
+  DigitalOcean has no project field on Droplet-create, so AgentBox assigns the box to its project
+  immediately *after* creating it. If that one call fails (an API blip, a token without project
+  write), the box is still created and fully usable — it just stays in the default project, and the
+  create log says so. A working box is never torn down over a grouping error.
 </Callout>
 
 The temporary Droplet that `agentbox prepare` bakes the base snapshot on is placed in the same project, so it doesn't show up in the default one for the few minutes it lives.
@@ -176,29 +184,30 @@ agentbox checkpoint create smoke setup
 ```
 
 <Callout title="TIP">
-Because DigitalOcean checkpoints are full-disk snapshots, capturing one after your project's setup lets later boxes boot ready-to-go and skip workspace seeding.
+  Because DigitalOcean checkpoints are full-disk snapshots, capturing one after your project's setup
+  lets later boxes boot ready-to-go and skip workspace seeding.
 </Callout>
 
 ## Specs
 
-| Spec | |
-| --- | --- |
-| Base image | Ubuntu 24.04 snapshot |
-| Build method | Baked snapshot — install script on a throwaway Droplet then `snapshot` (`agentbox prepare --provider digitalocean`); no Dockerfile |
-| Docker-in-Docker | Yes (full root, unmodified) |
-| SSH | Yes — one persistent OpenSSH ControlMaster per box |
-| Arch | x86_64 (amd64) |
-| Live snapshots | Droplet snapshots; pause = power-off/power-on and a stopped Droplet still bills |
-| Preview URL | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless) |
+| Spec             |                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Base image       | Ubuntu 24.04 snapshot                                                                                                              |
+| Build method     | Baked snapshot — install script on a throwaway Droplet then `snapshot` (`agentbox prepare --provider digitalocean`); no Dockerfile |
+| Docker-in-Docker | Yes (full root, unmodified)                                                                                                        |
+| SSH              | Yes — one persistent OpenSSH ControlMaster per box                                                                                 |
+| Arch             | x86_64 (amd64)                                                                                                                     |
+| Live snapshots   | Droplet snapshots; pause = power-off/power-on and a stopped Droplet still bills                                                    |
+| Preview URL      | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless)                                 |
 
 ## Caveats
 
-- **Pause still bills.** DigitalOcean charges the full hourly rate even for a *stopped* (powered-off) Droplet — the resources stay reserved. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the Droplet, its firewall, and the per-box SSH key.
+- **Pause still bills.** DigitalOcean charges the full hourly rate even for a _stopped_ (powered-off) Droplet — the resources stay reserved. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the Droplet, its firewall, and the per-box SSH key.
 - **No live stats.** `agentbox top` and `dashboard` render `—` for CPU/mem; the create/list API doesn't stream per-Droplet metrics.
 - **No shared credential volume.** Agent credentials are pushed to each box via scp at create time (DigitalOcean has no shared-volume primitive).
 - **IPv4 only.** SSH targets the Droplet's public IPv4 address; IPv6-only host networks aren't exercised yet.
 - **Clean up orphans** with `agentbox prune --provider digitalocean` (lists Droplets not tracked in this CLI's state and offers to delete them); the `DIGITALOCEAN_TOKEN` also lives in `~/.agentbox/secrets.env` if you prefer the DigitalOcean dashboard or REST API.
 
 <Callout type="warn" title="HEADS UP">
-Destroying is the only way to stop billing. A stopped box keeps accruing the hourly charge.
+  Destroying is the only way to stop billing. A stopped box keeps accruing the hourly charge.
 </Callout>

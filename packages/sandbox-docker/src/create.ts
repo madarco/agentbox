@@ -12,7 +12,11 @@ import {
   resolveCodexVolume,
   type CodexMountResult,
 } from './sync/agents/codex.js';
-import { buildAgentsMounts, resolveAgentsVolume, type AgentsMountResult } from './sync/agents/skills.js';
+import {
+  buildAgentsMounts,
+  resolveAgentsVolume,
+  type AgentsMountResult,
+} from './sync/agents/skills.js';
 import {
   buildOpencodeMounts,
   resolveOpencodeVolume,
@@ -71,10 +75,7 @@ import {
 import { generateBoxId, type ResolvedCarryEntry, type ResyncResult } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
-import {
-  computeDockerContextFingerprint,
-  readPreparedDockerState,
-} from './prepared-state.js';
+import { computeDockerContextFingerprint, readPreparedDockerState } from './prepared-state.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
@@ -100,6 +101,12 @@ export interface CreateBoxOptions {
   credentialSync?: boolean;
   workspacePath: string;
   name?: string;
+  /**
+   * Basis for the default name when `name` is absent and `workspacePath` isn't a
+   * meaningful identity — see {@link defaultBoxName}. Mirrors `nameBasis` on
+   * `CreateBoxRequest`.
+   */
+  nameBasis?: string;
   /**
    * Take a `cp -c` APFS clone of the host workspace into
    * `~/.agentbox/snapshots/<id>/` before seeding `/workspace`. Stabilizes the
@@ -258,9 +265,7 @@ export interface CreatedBox {
  * actually constrain the box (>0 / non-empty). Returns undefined when nothing
  * was applied so legacy/unlimited boxes stay free of the field.
  */
-function persistableLimits(
-  lim: BoxLimitSpec | undefined,
-): BoxRecord['resourceLimits'] | undefined {
+function persistableLimits(lim: BoxLimitSpec | undefined): BoxRecord['resourceLimits'] | undefined {
   if (!lim) return undefined;
   const out: NonNullable<BoxRecord['resourceLimits']> = {};
   if (lim.memoryBytes && lim.memoryBytes > 0) out.memoryBytes = Math.floor(lim.memoryBytes);
@@ -270,8 +275,8 @@ function persistableLimits(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-export function sanitizeBasename(workspacePath: string): string {
-  const raw = basename(resolve(workspacePath));
+/** Reduce an arbitrary token to the box-name charset. Not path-aware. */
+function sanitizeNameToken(raw: string): string {
   return raw
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
@@ -281,8 +286,18 @@ export function sanitizeBasename(workspacePath: string): string {
     .replace(/[-._]+$/, '');
 }
 
-export function defaultBoxName(workspacePath: string, id: string): string {
-  const base = sanitizeBasename(workspacePath);
+export function sanitizeBasename(workspacePath: string): string {
+  return sanitizeNameToken(basename(resolve(workspacePath)));
+}
+
+/**
+ * `nameBasis` replaces the workspace basename when the caller knows the path
+ * isn't a meaningful identity — a control box builds every box from a per-job
+ * clone dir it then deletes, so without it the box is named after a directory
+ * that no longer exists and says nothing about the project.
+ */
+export function defaultBoxName(workspacePath: string, id: string, nameBasis?: string): string {
+  const base = nameBasis ? sanitizeNameToken(nameBasis) : sanitizeBasename(workspacePath);
   return base.length > 0 ? `${base}-${id}` : id;
 }
 
@@ -303,19 +318,14 @@ async function pathExists(p: string): Promise<boolean> {
  * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
  * for Node-based agents. Best-effort: never throws.
  */
-async function trustInBoxPortlessCa(
-  container: string,
-  log: (line: string) => void,
-): Promise<void> {
+async function trustInBoxPortlessCa(container: string, log: (line: string) => void): Promise<void> {
   const script =
     'agentbox-portless-trust /home/vscode/.portless/ca.pem >/dev/null 2>&1 || true; ' +
     "echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' " +
     '> /etc/profile.d/agentbox-portless-ca.sh 2>/dev/null || true';
-  const r = await execa(
-    'docker',
-    ['exec', '--user', 'root', container, 'bash', '-lc', script],
-    { reject: false },
-  );
+  const r = await execa('docker', ['exec', '--user', 'root', container, 'bash', '-lc', script], {
+    reject: false,
+  });
   if (r.exitCode === 0) log('portless: trusted host CA in box (system store + NSS)');
   else log('portless: in-box CA trust failed (best-effort) — in-box https may warn');
 }
@@ -412,13 +422,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     } else {
       const prepared = readPreparedDockerState();
       const currentFingerprint =
-        prepared?.base?.contextSha256 ??
-        (await computeDockerContextFingerprint())?.contextSha256;
-      if (
-        ckptFingerprint &&
-        currentFingerprint &&
-        ckptFingerprint !== currentFingerprint
-      ) {
+        prepared?.base?.contextSha256 ?? (await computeDockerContextFingerprint())?.contextSha256;
+      if (ckptFingerprint && currentFingerprint && ckptFingerprint !== currentFingerprint) {
         log(
           `WARNING: checkpoint '${opts.checkpointRef}' was captured against an older base image.\n` +
             `  captured: cli ${ckptCliVersion}, fingerprint ${ckptFingerprint.slice(0, 12)}\n` +
@@ -435,7 +440,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // and must already exist (they were created by `agentbox checkpoint`).
   const ensureRef = checkpointImage ? (opts.image ?? DEFAULT_BOX_IMAGE) : imageRef;
   const { built } = await ensureImage(ensureRef, {
-    onProgress: (line) => log(`[image] ${line}`),
+    // `ensureImage`'s own decision lines already carry the `[image]` tag; only
+    // docker's raw per-layer output needs it added, or they read `[image] [image] …`.
+    onProgress: (line) => log(line.startsWith('[image]') ? line : `[image] ${line}`),
     allowPull: opts.allowPull,
     registry: opts.imageRegistry,
   });
@@ -457,7 +464,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
 
   const id = generateBoxId();
-  const name = opts.name ?? defaultBoxName(workspace, id);
+  const name = opts.name ?? defaultBoxName(workspace, id, opts.nameBasis);
   const containerName = `agentbox-${name}`;
   const createdAt = new Date().toISOString();
   if (await containerExists(containerName)) {
@@ -530,7 +537,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     if (repos.length > 0) {
       log(
         `detected ${String(repos.length)} git repo(s): ` +
-          repos.map((r) => `${r.kind}${r.relPathFromWorkspace ? '@' + r.relPathFromWorkspace : ''}`).join(', '),
+          repos
+            .map((r) => `${r.kind}${r.relPathFromWorkspace ? '@' + r.relPathFromWorkspace : ''}`)
+            .join(', '),
       );
     }
     for (const r of repos) {
@@ -601,14 +610,18 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     const snap = await createSnapshot({ source: workspace, destination: snapshotDir });
     log(`pruned ${snap.prunedPaths.length} platform-dependent dirs from snapshot`);
   } else if (opts.useSnapshot && !checkpointImage) {
-    log('skipping --host-snapshot: git worktree path reads content from .git, not from a workspace clone');
+    log(
+      'skipping --host-snapshot: git worktree path reads content from .git, not from a workspace clone',
+    );
   }
 
   await ensureIdeVolumes(id);
   const dockerCacheShared = opts.docker?.sharedCache === true;
   const dockerVolume = dockerVolumeName(id, dockerCacheShared);
   await ensureVolume(dockerVolume);
-  log(`prepared volumes ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`);
+  log(
+    `prepared volumes ${vscodeServerVolumeName(id)}, ${cursorServerVolumeName(id)}, ${dockerVolume}`,
+  );
   const ide = buildIdeMounts(id);
 
   // Agent config volumes (claude/codex/agents/opencode). Each is
@@ -625,8 +638,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // Codex: wanted when the caller passes `codexConfig` (`agentbox codex`) OR the
   // host already uses codex (`~/.codex` exists) — so a plain create for a Codex
   // user still gets a working box.
-  const wantCodex =
-    opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex')));
+  const wantCodex = opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex')));
   const codexSpec = wantCodex
     ? resolveCodexVolume({ isolate: opts.codexConfig?.isolate ?? false, boxId: id })
     : undefined;
@@ -760,6 +772,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
   // the box still works, it just won't deliver events to the host.
   const relayToken = generateRelayToken();
+  // Repo identity, so a thin client can map this box to a local project by
+  // origin URL (cross-machine), not just by folder path — the registration-side
+  // half of Step 4's box resolution. Best-effort: a box without a git origin
+  // simply registers none.
+  const originRepo = gitWorktreeRecords[0]?.hostMainRepo ?? opts.projectRoot ?? workspace;
+  const originUrl = await execa('git', ['-C', originRepo, 'remote', 'get-url', 'origin'], {
+    reject: false,
+  })
+    .then((r) => (r.exitCode === 0 ? r.stdout.trim() || undefined : undefined))
+    .catch(() => undefined);
   if (relayUp) {
     try {
       await registerBoxWithRelay({
@@ -772,6 +794,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
         autoApproveSafeHostActions,
+        originUrl,
       });
       log(`registered box token with relay`);
     } catch (err) {
@@ -799,9 +822,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // create time (env survives stop/start; port mappings are immutable).
   const vncEnabled = opts.vnc?.enabled !== false;
   const vncPassword = vncEnabled ? generateVncPassword() : undefined;
-  const vncEnv: Record<string, string> = vncEnabled && vncPassword
-    ? { AGENTBOX_VNC_PASSWORD: vncPassword }
-    : {};
+  const vncEnv: Record<string, string> =
+    vncEnabled && vncPassword ? { AGENTBOX_VNC_PASSWORD: vncPassword } : {};
   const vncPortMappings = vncEnabled
     ? [{ hostPort: 0, containerPort: VNC_CONTAINER_PORT, hostIp: '127.0.0.1' }]
     : [];
@@ -810,17 +832,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // `expose:`-flagged service is usually only known after the in-box wizard
   // writes agentbox.yaml. The supervisor forwards :80 to it later; here we just
   // guarantee a published host port exists for whenever that happens.
-  const webPortMappings = [
-    { hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' },
-  ];
+  const webPortMappings = [{ hostPort: 0, containerPort: WEB_CONTAINER_PORT, hostIp: '127.0.0.1' }];
 
   // sshd is always-on: publish container :22 on an ephemeral loopback host port
   // so `agentbox open` (sshfs) and the Codex app can reach the box over SSH. Like
   // the web/VNC mappings this must be set at `docker run` (port maps are immutable)
   // and re-resolved on every start (the host port is reassigned).
-  const sshPortMappings = [
-    { hostPort: 0, containerPort: SSH_CONTAINER_PORT, hostIp: '127.0.0.1' },
-  ];
+  const sshPortMappings = [{ hostPort: 0, containerPort: SSH_CONTAINER_PORT, hostIp: '127.0.0.1' }];
 
   // Identity vars that make the box self-aware. `projectIndex` was allocated
   // earlier (right after `id`/`name`) so dir-segment helpers could see it; we
@@ -836,9 +854,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ? { AGENTBOX_CREDENTIAL_SYNC: '0' }
       : {}),
     ...(opts.projectRoot ? { AGENTBOX_PROJECT_ROOT: opts.projectRoot } : {}),
-    ...(projectIndex !== undefined
-      ? { AGENTBOX_PROJECT_INDEX: String(projectIndex) }
-      : {}),
+    ...(projectIndex !== undefined ? { AGENTBOX_PROJECT_INDEX: String(projectIndex) } : {}),
   };
   const boxEnvForFile: Record<string, string> = {
     AGENTBOX_BOX_ID: id,
@@ -1093,7 +1109,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
 
   if (opts.envFilesToImport && opts.envFilesToImport.length > 0) {
-    log(`copying ${String(opts.envFilesToImport.length)} selected env/config file(s) into /workspace`);
+    log(
+      `copying ${String(opts.envFilesToImport.length)} selected env/config file(s) into /workspace`,
+    );
     const { copied } = await copyHostFilesToBox({
       container: containerName,
       workspaceDir: workspace,
@@ -1101,7 +1119,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       onLog: log,
     });
     if (copied !== opts.envFilesToImport.length) {
-      log(`copied ${String(copied)}/${String(opts.envFilesToImport.length)} selected env/config file(s)`);
+      log(
+        `copied ${String(copied)}/${String(opts.envFilesToImport.length)} selected env/config file(s)`,
+      );
     }
   }
 
@@ -1145,15 +1165,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // dir lives inside boxDir so `destroy` (which rm -rf's boxRunDirFor) wipes the
   // private key with it. Best-effort — a failed bring-up leaves the box usable
   // over `docker exec`, just without `agentbox open`/SSH.
-  const ssh = await setUpBoxSshd(
-    containerName,
-    join(boxDir, 'ssh'),
-    `agentbox-${name}-${id}`,
-  );
+  const ssh = await setUpBoxSshd(containerName, join(boxDir, 'ssh'), `agentbox-${name}-${id}`);
   if (ssh.up && ssh.sshHostPort) {
     log(`sshd up on host 127.0.0.1:${String(ssh.sshHostPort)} (loopback-only)`);
   } else {
-    log(`sshd did not come up: ${ssh.reason ?? 'unknown'} (open/SSH unavailable; docker exec still works)`);
+    log(
+      `sshd did not come up: ${ssh.reason ?? 'unknown'} (open/SSH unavailable; docker exec still works)`,
+    );
   }
 
   // Portless: register `https://<box-name>.localhost -> 127.0.0.1:<webHostPort>`
@@ -1203,7 +1221,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
               portlessVncUrl = await portlessGetUrl(vncAlias);
               log(`portless alias ${portlessVncUrl} -> 127.0.0.1:${String(vncHostPort)}`);
             } else {
-              log('portless vnc alias failed (best-effort) — VNC still reachable on the loopback URL');
+              log(
+                'portless vnc alias failed (best-effort) — VNC still reachable on the loopback URL',
+              );
             }
           }
           if (!portless.proxyRunning && (portlessAliasName || portlessVncAliasName)) {
@@ -1230,7 +1250,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // start. A later `start`/`open` re-runs setUpBoxSshd and records it once up.
     ssh:
       ssh.up && ssh.sshHostPort
-        ? { host: '127.0.0.1', user: 'vscode', identityFile: ssh.identityFile, port: ssh.sshHostPort }
+        ? {
+            host: '127.0.0.1',
+            user: 'vscode',
+            identityFile: ssh.identityFile,
+            port: ssh.sshHostPort,
+          }
         : undefined,
     portlessAlias: portlessAliasName,
     portlessUrl,
@@ -1245,7 +1270,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     try {
       await syncAgentboxSshConfig();
     } catch (err) {
-      log(`ssh-config sync failed (best-effort): ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `ssh-config sync failed (best-effort): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

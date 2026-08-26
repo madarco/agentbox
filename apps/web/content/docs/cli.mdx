@@ -55,7 +55,7 @@ agentbox fork --agent codex --attach-in background
 agentbox claude -- --model sonnet
 ```
 
-Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud VM size — hetzner server type `cx33`, digitalocean Droplet slug `s-4vcpu-8gb`, daytona `4-8-20`, vercel vCPUs `4`), `--location <name>` (hetzner datacenter e.g. `fsn1`, or digitalocean region e.g. `fra1`), `--remote-host <dest>` (remote-docker: the SSH destination whose Docker engine runs the box — same as `--provider docker:<dest>`), `--inbound <spec>` (VPS firewall access: `locked` / `open` / a CIDR list — reach a box from a phone with the laptop off; see [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline)), `--carry-yes` / `--carry <mode>`, and `--dangerously-with-credentials` (copy a git credential into a cloud box so it pushes/pulls with your PC off — an interactive prompt asks token vs SSH; token pushes over HTTPS/unsigned, ssh copies your SSH key and signs. Interactive-only, no CI path; see [Independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials)).
+Shared create/agent flags include `-n, --name`, `-w, --workspace <path>`, `--provider <name>`, `--snapshot <ref>` (start from a checkpoint), `--image <ref>`, `--build` (build the base image locally instead of pulling), `-y, --yes`, `--with-env`, `--with-playwright`, `--no-vnc`, `--portless` / `--no-portless`, `--from-branch <ref>`, `-b, --use-branch <name>`, `--memory`, `--cpus`, `--disk`, `--size <spec>` (cloud VM size — hetzner server type `cx33`, digitalocean Droplet slug `s-4vcpu-8gb`, daytona `4-8-20`, vercel vCPUs `4`), `--location <name>` (hetzner datacenter e.g. `fsn1`, or digitalocean region e.g. `fra1`), `--remote-host <dest>` (remote-docker: the SSH destination whose Docker engine runs the box — same as `--provider docker:<dest>`), `--inbound <spec>` (VPS firewall access: `locked` / `open` / a CIDR list — reach a box from a phone with the laptop off; see [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline)), `--carry-yes` / `--carry <mode>`, `--via-hub` / `--local` (build a cloud box on a configured control box vs on this machine — cloud creates default to the control box when one is set, see [deployed hub](/docs/deployed-hub#create-a-box-from-your-laptop--that-runs-with-the-laptop-off)), and `--dangerously-with-credentials` (copy a git credential into a cloud box so it pushes/pulls with your PC off — an interactive prompt asks token vs SSH; token pushes over HTTPS/unsigned, ssh copies your SSH key and signs. Interactive-only, no CI path; **refused when a control box is configured** — token leasing replaces it there; see [Independent boxes](/docs/sync-and-git#independent-boxes--dangerously-with-credentials)).
 
 Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, --initial-prompt <text>` (background queue), and for `claude` only `-c, --continue`, `--resume <id>`, `--plan <path>`, and `--dangerously-skip-permissions` (on by default in boxes). `fork` adds `--agent`, `--session <id>`, `--attach-in` (default `tab`), and a positional `[provider]` (`agentbox fork hetzner` is shorthand for `--provider hetzner`). When `--agent`/`--session` are omitted, `fork` autodetects the launching agent and current session from its env vars (Claude via `CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`, Codex via `CODEX_THREAD_ID`), so a bare `agentbox fork` forks whichever agent you ran it from.
 
@@ -113,6 +113,8 @@ agentbox dashboard
 
 Add `--print` to `url`, `screen`, or `code` to print the URL instead of opening it. `url`/`screen` accept `--loopback` (docker: use `127.0.0.1` instead of the OrbStack/Portless URL) and `--ttl <seconds>` (cloud signed-URL expiry). `shell` has `attach`, `ls`, and `kill` subcommands.
 
+`url` and `screen` resolve the box's live endpoint through the hub, so they work the same against a local hub and a remote control box. If the box is **paused or stopped**, they start it first (a stale preview URL would 404 and a stopped box serves nothing) and print a one-line notice to **stderr** — so `--print` output on stdout stays clean and pipeable while the side effect stays visible.
+
 `open --in <app>` opens the box in a host app instead of Finder: `claude` writes the box's SSH alias into the Claude desktop app's own settings (`~/.claude/settings.json` → `sshConfigs`) and launches it — the box appears in the app's Environment dropdown, where it can also list and resume the box's existing Claude sessions over SSH; `codex` writes the box's SSH alias and auto-opens Codex's add-SSH-connection deep link (both need a persistent SSH key, so docker + Hetzner boxes); `herdr`, `cmux`, and `iterm2` open a new workspace/window in that terminal app running `agentbox attach <box>` (the box is auto-started first); `vscode` is equivalent to `agentbox code`. `open --targets [--json]` reports which of these apps are installed on the host, with a `reason` explaining any that aren't (Finder counts as installed only when `sshfs` is on PATH, since the mount needs it) — the AgentBox Tray app and the hub's box page use it to render their "Open In…" entries, disabling unavailable ones with the reason as a tooltip. cmux rejects control connections from outside the app by default: enable `socketControlMode: automation` (or set a socket password) in cmux's settings for `--in cmux` to work.
 
 A one-shot command after `--` is run under the box's login shell. A single quoted argument is treated as a shell snippet (so `&&`, pipes, redirections, and `$VAR` are interpreted by the box); multiple tokens are passed through verbatim as a literal argv (like `docker exec`), so quoting and format strings such as `curl -w '%{http_code}'` reach the command intact — no double-parsing.
@@ -157,7 +159,7 @@ agentbox logs 1 web -f
 agentbox wait 1
 ```
 
-`list` (alias `ls`) lists boxes in the current project; `-g` spans all projects. `status` shows live service/task state from the in-box `agentbox-ctl` daemon, and `status --inspect` adds detailed box info (volumes, limits, paths). `status --set-name <name>` (and `--clear-name`) **renames** a box — it sets a cosmetic display label shown in `list`, the hub, and the tray. The label is display-only: the container, git branch, and web/VNC URL keep the box's original name, and you can still address the box by either name. Works for every provider and any box state. `top` is a live resource monitor, `logs` tails a service log, and `wait` blocks until autostart units are ready.
+`list` (alias `ls`) lists boxes in the current project; `-g` spans all projects. `status` shows live service/task state from the in-box `agentbox-ctl` daemon, and `status --inspect` adds detailed box info (volumes, limits, paths). `status --set-name <name>` (and `--clear-name`) **renames** a box — it sets a cosmetic display label shown in `list`, the hub, and the tray. The label is display-only: the container, git branch, and web/VNC URL keep the box's original name, and you can still address the box by either name. Works for every provider and any box state. `top` is a live resource monitor, `logs` tails a service log, and `wait` blocks until autostart units are ready. `logs` runs through the hub (the hub reaches into the box), so it tails a box on a configured [control box](/docs/deployed-hub) the same way it tails a local one; `--daemon` tails the supervisor's own log instead of a service.
 
 | Command       | Useful flags                                                   |
 | ------------- | -------------------------------------------------------------- |
@@ -167,7 +169,7 @@ agentbox wait 1
 | `logs`        | `-n, --tail <n>`, `-f, --follow`, `--daemon`                   |
 | `wait`        | `--timeout <ms>`, `--units <names...>`, `-j, --json`           |
 
-The `agent` group is a scripting surface for the agent's live state: `agent state`, `agent wait-for <state>`, and `agent get-plan-question`, all with `--json`. It also unifies **approvals** an orchestrator answers on a box's behalf: `agent approvals [box]` lists everything the box is blocked on — relay host-action confirms (git push, cp, gh PR writes, checkpoint) **and** the agent's in-TUI prompts (plan approval, question, tool permission) — each with an id, and `agent approve <id>` (with `--option`/`--deny`) answers that exact one. The id is a safety token: a prompt that changed since you listed it is refused, not mis-answered. Pair it with `agentbox drive` (snapshot the screen / send keystrokes) to drive one agent from another — see [Orchestration & queue boxes](/docs/background-and-parallel).
+The `agent` group is a scripting surface for the agent's live state: `agent state`, `agent wait-for <state>`, and `agent get-plan-question`, all with `--json` (read through the hub, so they work against a local hub and a configured control box alike). It also unifies **approvals** an orchestrator answers on a box's behalf: `agent approvals [box]` lists everything the box is blocked on — relay host-action confirms (git push, cp, gh PR writes, checkpoint) **and** the agent's in-TUI prompts (plan approval, question, tool permission) — each with an id, and `agent approve <id>` (with `--option`/`--deny`) answers that exact one. The id is a safety token: a prompt that changed since you listed it is refused, not mis-answered. Pair it with `agentbox drive` (snapshot the screen / send keystrokes) to drive one agent from another — see [Orchestration & queue boxes](/docs/background-and-parallel).
 
 <Callout title="TIP">
   Most inspect commands take `-j/--json` for scripting; `top` and `list` also offer `--live` to
@@ -201,7 +203,7 @@ agentbox inbound 1 open             # open the firewall (0.0.0.0/0, key-only)
 agentbox connect 1 --add-key @phone.pub   # authorize a device's key; print the ssh line
 ```
 
-`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
+`pause`/`unpause` is the cheap context switch (docker freezes the cgroup, sub-second resume; cloud archives and rehydrates, slower). `stop`/`start` is a full stop that preserves the upper volume, including `node_modules`. These all run through the hub's `/api/v1` (a local hub, or a configured control box), so they behave the same in both modes. `destroy` (alias `rm`) wipes the box and its writable layer; `--keep-snapshot` leaves the snapshot dir under `~/.agentbox/snapshots/` in place. `destroy` only drops a box's local record once a hub has actually torn the box down — if no hub AgentBox knows about owns the box (so it may still be running), it refuses rather than silently deleting the record, and `--force` drops the stale record deliberately. If the name/id matches no tracked box but a leftover `agentbox-<name>` container exists, `destroy` removes that orphan container directly (then suggests `prune -y` for any leftover volumes).
 
 `recover` re-establishes a box's **host-side** connectivity without power-cycling it — for after a host reboot, a relay restart, or a fresh CLI process on another machine. It ensures the host relay is up and re-registers every box with it, re-opens the host transport (the Hetzner SSH tunnel + port forwards), re-registers the Portless aliases, relaunches the in-box daemons, and brings back the agent the box was last running (`claude`/`codex`/`opencode` — resuming its session, or starting fresh), then attaches. With no argument it recovers the current project's box; `--all` recovers every box in state (and skips the attach); `--no-attach` restores without attaching. `agentbox recover --provider <cloud> --adopt [id|name]` first rebuilds local state for a running sandbox that this host has no record of (e.g. one created on another machine), minting fresh relay tokens from what the box exposes. For Hetzner, adoption needs the box's per-host SSH key — a box created on a different host can't be controlled and `recover` says so.
 
@@ -210,7 +212,7 @@ agentbox connect 1 --add-key @phone.pub   # authorize a device's key; print the 
   instantly on docker. Use `stop` when you want the box off but kept.
 </Callout>
 
-`inbound`/`connect` (Hetzner/DigitalOcean) let you drive a box from a phone with the laptop off. `agentbox inbound <box> open|lock|<cidr…>` sets the per-box firewall's inbound policy (`--show` prints it); `agentbox connect <box>` prints the SSH connection bundle, `--add-key <pubkey>` authorizes another device's key (the box's own key stays on the host), and `--export-key` prints the box key for a mobile client, and `--dangerously-git-credentials` copies a git credential into an already-running box so it pushes on its own (the post-create equivalent of `create --dangerously-with-credentials`; restart the agent afterward). See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) and [sync & git](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
+`inbound`/`connect` (Hetzner/DigitalOcean) let you drive a box from a phone with the laptop off. `agentbox inbound <box> open|lock|<cidr…>` sets the per-box firewall's inbound policy (`--show` prints it); `agentbox connect <box>` prints the SSH connection bundle, `--add-key <pubkey>` authorizes another device's key (the box's own key stays on the host), and `--export-key` prints the box key for a mobile client, and `--dangerously-git-credentials` copies a git credential into an already-running box so it pushes on its own (the post-create equivalent of `create --dangerously-with-credentials`; restart the agent afterward; **refused when a control box is configured** — leasing replaces it). See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline) and [sync & git](/docs/sync-and-git#independent-boxes--dangerously-with-credentials).
 
 See [Checkpoints & pausing](/docs/checkpoints-and-pausing) and the provider pages for cloud pause/stop semantics.
 
@@ -294,7 +296,7 @@ agentbox create --snapshot warm
 agentbox claude --snapshot warm
 ```
 
-Checkpoints are per-project and provider-aware. `set-default --provider <name>` pins for one provider; otherwise it sets the cross-provider fallback. Docker stacks `docker commit` layers; cloud providers use native snapshots.
+Checkpoints are per-project and provider-aware. `set-default --provider <name>` pins for one provider; otherwise it sets the cross-provider fallback. Docker stacks `docker commit` layers; cloud providers use native snapshots. `create`, `ls`, and `rm` run through the hub, so they capture and manage checkpoints on whichever hub owns the box — a local hub or a configured [control box](/docs/deployed-hub) — the same command in both modes.
 
 <Callout type="warn" title="HEADS UP">
   `--merged` (flatten layers) is docker-only — cloud snapshots are always flattened. On vercel,
@@ -328,6 +330,7 @@ agentbox install
 agentbox install --skills-only   # just (re)install the host /agentbox skill
 agentbox install cmux            # add a box-list panel to the cmux sidebar dock
 agentbox install herdr           # install the Herdr plugin (boxes overlay, shortcuts, Ctrl+click)
+agentbox install portless        # start the Portless proxy at boot, so <box>.localhost URLs survive a restart
 agentbox install codex           # install + enable the AgentBox Codex plugin (drive AgentBox from Codex)
 agentbox install app             # install the AgentBox menu-bar app (macOS)
 
@@ -338,14 +341,14 @@ agentbox doctor -p hetzner
 # Prepare base images / snapshots, or just show status
 agentbox prepare
 agentbox prepare -p hetzner
-agentbox prepare -p docker --build
+agentbox prepare -p docker --build                 # build locally instead of pulling the registry base
 agentbox prepare -p hetzner --claude-install npm   # install Claude via npm (native-CDN 403 fallback)
 agentbox prepare -p daytona --size 4-8-20          # bake daytona resources (cpu-mem-disk GB)
 agentbox prepare -p e2b --size 4-8                 # bake e2b resources (cpu-mem GB)
 agentbox prepare -p hetzner --location fsn1        # datacenter for the bake VPS
 ```
 
-`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, offer to make it the default backend for new boxes via [`box.provider`](/docs/configuration#provider), install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `install app` installs the **AgentBox** macOS menu-bar app into `/Applications` and launches it (a live view of every box with one-click actions); once installed, `agentbox app start|stop|restart|status` controls the running process (see [Maintenance](#maintenance)). `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s. For the bake-time-sized providers, `--size <spec>` bakes the box resources into the snapshot/template (daytona `cpu-memory-disk` GB, e2b `cpu-memory` GB) — a changed size re-bakes; `--location <name>` sets the hetzner bake VPS datacenter.
+`install` is the first-run setup wizard (system check, pick a provider, log in, prepare its base image, offer to make it the default backend for new boxes via [`box.provider`](/docs/configuration#provider), install the host skill). `install cmux` pins a live `agentbox list` panel (all your boxes) to the [cmux](https://cmux.com) sidebar dock — see [cmux integration](/docs/integrations-cmux#the-agentbox-dock-right-sidebar). `install herdr` installs a [Herdr](https://herdr.dev) plugin with a boxes overlay, shortcuts, and Ctrl+click — see [Herdr integration](/docs/integrations-herdr#the-herdr-plugin). `install portless` sets up [Portless](https://portless.sh) properly: it installs the CLI if missing and registers Portless's own OS startup service, so the proxy that serves `https://<box>.localhost` is back after a reboot instead of staying down until you start it by hand. It asks for your password once (the service runs HTTPS on port 443 — the same `https://<box>.localhost` URL that works _inside_ a box, which is why that mode is the target), and `--uninstall` removes it again. `install codex` registers the AgentBox [Codex](https://openai.com/index/introducing-codex/) plugin (marketplace + `codex plugin add`) and enables it by default in `~/.codex/config.toml`, so the `/agentbox` skill works in Codex with no manual toggle — it also runs automatically during `install` when Codex is detected. `install app` installs the **AgentBox** macOS menu-bar app into `/Applications` and launches it (a live view of every box with one-click actions); once installed, `agentbox app start|stop|restart|status` controls the running process — bare `agentbox app` starts it, and is a no-op when it is already running (see [Maintenance](#maintenance)). `doctor` diagnoses system and provider readiness — including a per-provider **base freshness** check that warns when an already-baked snapshot is out of date (a CLI upgrade changed a baked file) and should be re-run through `agentbox prepare --provider <name>` — and reports each service integration ([Notion](/docs/integrations-notion), [Linear](/docs/integrations-linear)): host CLI installed? authed? enabled per project? `prepare` builds base images or snapshots — omit `--provider` for status only; `--claude-install <native|npm>` (or the `box.claudeInstall` config key) switches how Claude Code is installed into the base, with `npm` as a fallback for cloud egress IPs the native installer's CDN 403s. `--build` forces a local docker build instead of pulling the prebuilt registry base. For the bake-time-sized providers, `--size <spec>` bakes the box resources into the snapshot/template (daytona `cpu-memory-disk` GB, e2b `cpu-memory` GB) — a changed size re-bakes; `--location <name>` sets the hetzner/digitalocean bake datacenter; `--name` names the daytona snapshot. Each of these bake inputs falls back to its config pin (`box.size<Provider>`, `box.hetznerLocation` / `box.digitaloceanRegion`, `box.daytonaClass`) when the flag is omitted. The bake **always runs on the hub**: with only a local hub that is this machine (a local hub is auto-started if it isn't already up); with a [control box](/docs/deployed-hub) configured a **cloud** bake runs **there** (that is where cloud boxes are built, so a local bake would produce a snapshot nothing boots) and the resulting record is adopted back onto this machine. The bake inputs travel with the request, so `--size`/`--location`/`--name`/`--build` work the same in both modes (a remote bake fills any you omit from the control box's own config). `docker` always bakes on _this_ machine (its base is a local image); `docker:<host>` routes to that host when the control box knows the alias, since the image lands on the shared remote host.
 
 <Callout title="TIP">`agentbox config get <key> --all` shows which layer each value comes from. See the full key reference in [Configuration](/docs/configuration).</Callout>
 
@@ -395,7 +398,7 @@ agentbox prune --provider hetzner
 agentbox prune --provider remote-docker   # sweeps every engine it knows about
 
 # Background jobs (agentbox claude|codex|opencode -i)
-agentbox queue list
+agentbox queue list                   # your local background -i queue (a control box's create queue is `agentbox hub jobs`)
 agentbox queue show <id>
 agentbox queue cancel <id>
 agentbox queue clear --all
@@ -405,11 +408,18 @@ agentbox relay status
 agentbox relay restart
 
 # Web UI — the relay + a dashboard at https://agentbox.localhost
-agentbox hub                 # start + open it in the browser (carries the token)
+agentbox hub                 # open the hub — the control box when one is configured,
+                             # else start the local one and open it (carries the token)
+agentbox hub start --local   # start the hub on THIS machine even with a control box configured
 agentbox hub status
+agentbox hub target          # which hub the CLI/tray talk to (local, or a remote control box)
+agentbox hub target --json   # {mode, url, token} — the seam the macOS tray reads
 agentbox hub stop
+agentbox hub adopt <box>     # make a control-box-created box usable here (record + SSH keys)
+agentbox hub pull <box>      # download only its SSH keys
 
 # Menu-bar app (macOS) — control the running AgentBox process
+agentbox app                     # start it (the default)
 agentbox app status
 agentbox app start
 agentbox app stop
@@ -421,40 +431,83 @@ agentbox app log --out report.txt  # bundle everything into one file for a bug r
 # reloads the relay, and updates the menu-bar app if a new build is published)
 agentbox self-update
 agentbox self-update --dry-run
+agentbox self-update --channel nightly   # opt into pre-release builds
+agentbox self-update --channel stable    # opt back out
+agentbox self-update --skip-hub          # leave the deployed control box alone
 ```
 
-`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them. `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `app` controls the macOS menu-bar app (`status`, `start`, `stop`, `restart`) — install it first with `agentbox install app`. `app log` collects the app's diagnostics for a bug report: it reads the app's macOS unified-log entries (`--last <window>`, `-f` to stream live, `--crashes` for just the crash reports) and lists its crash reports from `~/Library/Logs/DiagnosticReports`; `--open` reveals that folder in Finder, and `--out <file>` writes a single self-contained bundle (versions, log, newest crash report) to attach. The app keeps no log file of its own — these are macOS-native surfaces.
+`prune` cleans up orphan state records; `--all` also removes orphan docker resources, and `--provider <cloud>` lists untracked cloud sandboxes and offers to delete them (and reaps their control-box registrations). It runs through the hub — a docker/general prune on the local hub, a cloud-provider prune on the configured [control box](/docs/deployed-hub) — and never touches checkpoint images (they are durable project assets, kept even under `--all`). `queue` manages background `-i` jobs. `relay` manages the host relay (`status`, `stop`, `start`, `restart`). `app` controls the macOS menu-bar app (`start`, `status`, `stop`, `restart`) — bare `agentbox app` starts it; install it first with `agentbox install app`. `app log` collects the app's diagnostics for a bug report: it reads the app's macOS unified-log entries (`--last <window>`, `-f` to stream live, `--crashes` for just the crash reports) and lists its crash reports from `~/Library/Logs/DiagnosticReports`; `--open` reveals that folder in Finder, and `--out <file>` writes a single self-contained bundle (versions, log, newest crash report) to attach. The app keeps no log file of its own — these are macOS-native surfaces.
 
-`self-update` updates the CLI, then refreshes everything that depends on it: the host skill files, the relay, and the menu-bar app (reinstalled only when the published build's checksum differs from the installed one — a matching build is left running). The box image is **checked, not deleted**: it is content-addressed by a hash of its build context, so an update that changes none of those files leaves it in place and costs nothing. When the context _has_ changed, the image rebuilds on the next create, `agentbox doctor` flags it as `base freshness: stale`, and the hub/menu-bar app show a **stale — re-bake** pill; `agentbox prepare --provider docker` re-bakes it up front. If you update the package yourself (`npm update -g @madarco/agentbox`), the next interactive command notices the version change and offers the same refresh with a one-line prompt. Independently, at most once per day, an interactive command kicks off a small background check of the npm registry and prints "a newer agentbox is available — run `agentbox self-update`" when one is; normal CLI calls never hit the network outside that daily probe. Disable the check and the nudge with `agentbox config set update.check false` (see [configuration](/docs/configuration)).
+`self-update` updates the CLI, then refreshes everything that depends on it: the host skill files, the relay, and the menu-bar app (re-downloaded only when the published build's checksum differs from the installed one). A running menu-bar app is **restarted either way**, so it picks up the new CLI version — it reads that version once at launch, so without the restart it would keep offering the update you just installed. The box image is **checked, not deleted**: it is content-addressed by a hash of its build context, so an update that changes none of those files leaves it in place and costs nothing. When the context _has_ changed, the image rebuilds on the next create, `agentbox doctor` flags it as `base freshness: stale`, and the hub/menu-bar app show a **stale — re-bake** pill; `agentbox prepare --provider docker` re-bakes it up front. If you update the package yourself (`npm update -g @madarco/agentbox`), the next interactive command notices the version change and offers the same refresh with a one-line prompt. Independently, at most once per day, an interactive command kicks off a small background check of the npm registry and prints "a newer agentbox is available — run `agentbox self-update`" when one is; normal CLI calls never hit the network outside that daily probe. Disable the check and the nudge with `agentbox config set update.check false` (see [configuration](/docs/configuration)).
+
+When you have a [deployed control box](/docs/deployed-hub), `self-update` offers to update it too — it runs its own copy of AgentBox, and updating only your machine leaves the two on different builds. The step is listed in the plan (`hub: update the control box at … (0.27.1 → 0.28.0)`), asks before it runs, and is skipped when the control box already runs the target build. `-y` accepts it along with everything else; `--skip-hub` declines it. An exposed hub (`hub expose`) needs nothing extra — it is this machine's own hub, and the refresh already restarts it.
+
+`self-update --channel <stable|nightly>` switches **release channel** and remembers the choice in `update.channel`. The nightly channel installs pre-release builds cut from the development branch, and always picks the newest build of _either_ channel — so a stable release supersedes the nightlies that preceded it and reaches you automatically. See [nightly channel](/docs/nightly).
 
 The **menu-bar app is versioned and released separately from the CLI**, so an app release does not bump the CLI (and vice versa). Both channels watch for it: the same daily probe compares the published app build against the installed one and, when only the app is behind, the next interactive command offers to install it — answering "no" remembers that build, so you are asked once, not on every command. The app checks for itself too: **Check for Updates…** reports the CLI _and_ the app, and offers `agentbox install app` when only the app is stale (a full `self-update` would needlessly bounce the relay). You can always update it directly with `agentbox install app`, which reinstalls the latest published build regardless of what is installed.
 
-`hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) at `https://agentbox.localhost` (registered by [Portless](https://portless.sh); it falls back to `http://127.0.0.1:8787` when Portless isn't in play), gated by a per-machine token. Start it with the command rather than by typing the URL: `agentbox hub` opens the page with the token, which the hub then remembers in a cookie. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Needs Node ≥ 22.5.
+`hub` runs the **AgentBox hub** — the host relay plus a local Web UI (dashboard, box detail, live approvals) at `https://agentbox.localhost` (registered by [Portless](https://portless.sh); it falls back to `http://127.0.0.1:8787` when Portless isn't in play, or when its proxy isn't currently running), gated by a per-machine token. Start it with the command rather than by typing the URL: `agentbox hub` opens the page with the token, which the hub then remembers in a cookie. With a [control box](/docs/deployed-hub) configured, `agentbox hub` opens **that** hub instead — it is the one the CLI already talks to and the one holding your boxes, so booting a second, empty UI here would only invite acting on the wrong one. Nothing is lost: local commands that need the hub on this machine start it themselves, and `agentbox hub start --local` forces it. It's a superset of the relay on the same port: `agentbox hub` takes over from a bare relay, and normal box commands reuse it. Like the bare relay it replaces, the hub binds `0.0.0.0` so your Docker boxes can reach it (their host-action RPCs — git push, `cp`, and the attach footer's approval stream — go to `host.docker.internal:8787`); its Web UI and `/api/v1` stay token-gated, and the internal `/admin/*` relay routes stay loopback-only by peer address, so the LAN-reachable surface is the same shape the relay already exposed. Needs Node ≥ 22.5.
 
-## Control plane
+## Deployed hub (control box)
+
+The **same `agentbox hub` group** also sets up and drives a _remote_ hub — a full hub deployed on a VPS as your always-on control box. When one is configured, `agentbox hub` opens it and `agentbox hub status` reports it (reachability + box/event counts) instead of the local process, and cloud creates route to it by default (see [Deployed hub](/docs/deployed-hub)).
 
 ```bash
-# Create the GitHub App, deploy the plane, and point the CLI at it
-agentbox control-plane setup
-agentbox control-plane setup --deploy hetzner   # or vercel | none (non-interactive)
-agentbox control-plane setup --deploy vercel --ref main   # auto-forks via gh if you don't own the repo
+# Set up the hub's git credential, deploy it, and point the CLI at it.
+# On success it also pushes your agent logins and shares your local base-image
+# bake records with the control box (and names any provider it must re-bake).
+agentbox hub setup                    # reuse your own gh token (gh is required)
+agentbox hub setup --deploy hetzner   # or digitalocean | local | none (non-interactive)
+agentbox hub deploy hetzner           # deploy a full hub to a new VPS, reusing the setup creds
+agentbox hub deploy digitalocean      # same deploy on a DigitalOcean Droplet (--region / --size)
 
-# Authorize the current project's repo on the plane's GitHub App
-agentbox control-plane add
+# Which build the control box runs (default: this CLI's own published version)
+agentbox hub deploy hetzner --package nightly   # a different npm spec (version or dist-tag)
+agentbox hub deploy hetzner --ref my-branch     # build from source on the VPS instead
+agentbox hub deploy hetzner --repo me/fork      # clone a fork (implies building from source)
+agentbox hub deploy hetzner --domain hub.example.com   # your own hostname instead of <ip>.sslip.io
 
-# Point boxes + the CLI at an already-deployed plane (sets relay.controlPlaneUrl)
-agentbox control-plane set-url https://<your-plane-url>
+# Update the deployed control box in place, or tear it down
+agentbox hub update                     # move it to this CLI's version
+agentbox hub update --channel nightly   # or the newest published nightly | stable
+agentbox hub destroy                    # VPS + firewall + this machine's state
 
-# Check whether the configured plane is reachable
-agentbox control-plane status
+# Or make THIS machine the control box, with no VPS at all
+agentbox hub expose                     # flip the local hub into the control box
+agentbox hub expose --tunnel cloudflare # let cloud boxes reach it (or: tailscale)
+agentbox hub unexpose                   # stop; the plain localhost hub returns
+
+# Point boxes + the CLI at an already-deployed hub (sets relay.controlPlaneUrl)
+agentbox hub set-url https://<your-hub-url>
+
+# Status of the configured remote hub (or the local hub when none is set)
+agentbox hub status
+
+# Lifecycle runs through the hub's /api/v1 in both modes (a remote control box —
+# laptop can be off — or the local hub, started automatically if not running), so
+# the top-level commands ARE the hub commands: `agentbox start|stop|pause|unpause`
+# and `agentbox destroy <box>` drive a hub box directly, no `hub boxes` subcommand.
+agentbox hub boxes list                 # the PC's admin view of the hub's registry
+agentbox hub approvals list
+agentbox hub approvals answer <id> y
+
+# The hub's box-creation queue (where background `-i` cloud runs go)
+agentbox hub jobs list
+agentbox hub jobs show <jobId>
+
+# Seed material into the control box's custody store
+agentbox hub credentials push        # host agent logins → custody (hub setup does this for you; re-pushed on change)
+agentbox hub secrets push [--project] # a project's .env → custody
+agentbox hub project push             # untracked files + env → custody
+agentbox hub custody list [prefix]    # manifest (paths + hashes)
 
 # Drain the box-creation queue and provision boxes (long-running worker)
-agentbox control-plane worker --store "$POSTGRES_URL"
-agentbox control-plane worker --store "$POSTGRES_URL" --once
+agentbox hub worker --store "$POSTGRES_URL"
+agentbox hub worker --store "$POSTGRES_URL" --once
 ```
 
-The optional control plane is a hosted service (Next.js + Postgres) that holds the centralized concerns — git-token leasing via a GitHub App, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` creates the GitHub App, deploys the plane **from GitHub** (Vercel or a Hetzner VPS at `https://<ip>.sslip.io`; `--repo`/`--ref` choose the source, default `madarco/agentbox`@`main`), and wires `relay.controlPlaneUrl`; `add` authorizes a repo on the App; `set-url` points boxes at an existing deployment; `worker` provisions boxes from the plane's queue. For Vercel, AgentBox auto-forks via `gh` (or the Deploy Button forks in-browser) so you don't need to own the repo; Hetzner clones it on the VPS so no ownership is needed either.
+The deployed hub is a full hub (Next.js + Postgres/SQLite) that holds the centralized concerns — the git credential your boxes push through, permission state, the box registry/events — so cloud boxes keep pushing and opening PRs with your laptop off. `setup` provisions the hub's git credential (your own `gh` token — `gh` is required and `setup` fails fast with an install hint if it's missing), deploys the hub (a Hetzner VPS at `https://<ip>.sslip.io`, or this machine via `expose`), and wires `relay.controlPlaneUrl`. On Hetzner the VPS installs **`@madarco/agentbox` from npm pinned to your CLI's version** — the package already ships the hub — so the two sides always run the identical build; `--package <spec>` picks a different one, and `--ref`/`--repo` switch to cloning + building the monorepo on the VPS (for unreleased code, and what a self-built CLI falls back to). `agentbox hub status` reports which build a control box is actually running (version, channel, and a nudge when it has drifted from your CLI); `update` moves it to a new build in place, keeping its data volume; `destroy` tears down the VPS, its firewall and this machine's control-plane state, refusing while the hub still has boxes registered unless `--force`. `expose` is the no-VPS alternative — it flips **this** machine's own hub into the control box, optionally behind a cloudflare/tailscale tunnel so cloud boxes can reach it, with a launchd/systemd unit so it survives a reboot; `unexpose` reverses it. `set-url` points boxes at an existing deployment; `boxes`/`approvals`/`jobs` drive + inspect it from the PC; `credentials`/`secrets`/`project`/`custody` seed its custody store; `worker` provisions boxes from the hub's queue. Hetzner clones the repo on the VPS, so you don't need to own it.
 
-<Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
+<Callout type="warn" title="HEADS UP">`agentbox queue cancel` only cancels *queued* jobs — a job that's already running is not killed; destroy its box (`agentbox destroy <box>`) to stop it. It also only covers the **local** queue: a control box's create queue is listed *and* managed with `agentbox hub jobs` (both read the hub's `/api/v1/jobs`). And `prune --all` removes docker containers, volumes, and snapshots — run `--dry-run` first.</Callout>
 
 See [Background & parallel](/docs/background-and-parallel), [Core concepts](/docs/core-concepts), and [Configuration](/docs/configuration).

@@ -27,7 +27,7 @@
 import { join } from 'node:path';
 import type { Provider } from '@agentbox/core';
 import { UserFacingError } from '@agentbox/core';
-import { claudeInstallFingerprint, computeContextSha256, readCliStamp } from '@agentbox/sandbox-core';
+import { claudeInstallFingerprint, computeContextManifest, readCliStamp } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
@@ -137,10 +137,12 @@ export async function prepareDigitalOcean(
   const claudeInstall = opts.claudeInstall ?? 'native';
   // Fold the Claude install mode into the fingerprint so switching native<->npm
   // re-bakes even though the staged asset files are identical (matches Hetzner).
-  const contextSha = claudeInstallFingerprint(
-    await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-    claudeInstall,
+  // Keep the per-file digests, not just the fold: a later `stale` verdict can
+  // then name the files that changed instead of only reporting a moved hash.
+  const contextManifest = await computeContextManifest(
+    assets.map((a) => ({ rel: a.name, abs: a.localPath })),
   );
+  const contextSha = claudeInstallFingerprint(contextManifest.contextSha256, claudeInstall);
 
   if (!opts.force && existingState.base) {
     const remote = await snapshotStillExists(client, existingState.base.imageId);
@@ -373,6 +375,7 @@ export async function prepareDigitalOcean(
       description,
       createdAt: new Date().toISOString(),
       contextSha256: contextSha,
+      files: contextManifest.files,
       cliVersion: cliStamp.cliVersion,
       cliCommit: cliStamp.cliCommit,
     };

@@ -14,10 +14,19 @@ import { GLOBAL_CONFIG_FILE, loadEffectiveConfig, parseUserConfig } from '@agent
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import {
+  bestTrayRelease,
   fetchTrayLatestVersion,
   fetchTraySidecarSha,
   trayInstalled,
 } from '../commands/install-app.js';
+import {
+  NPM_PACKAGE,
+  bestOf,
+  isPrerelease,
+  npmDistTags,
+  resolveChannel,
+  type UpdateChannel,
+} from './channel.js';
 import { isNewer } from './semver-lite.js';
 import {
   readUpdateState,
@@ -27,8 +36,8 @@ import {
   type UpdateState,
 } from './update-state.js';
 
-const PKG = '@madarco/agentbox';
-const REGISTRY_URL = `https://registry.npmjs.org/${PKG}/latest`;
+const PKG = NPM_PACKAGE;
+const registryUrl = (distTag: string) => `https://registry.npmjs.org/${PKG}/${distTag}`;
 
 /**
  * The nudge (and the registry check feeding it) only makes sense when
@@ -65,15 +74,47 @@ export async function updateCheckEnabled(): Promise<boolean> {
   }
 }
 
-async function fetchNpmLatest(): Promise<string | undefined> {
+async function fetchDistTag(distTag: string): Promise<string | undefined> {
   try {
-    const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(registryUrl(distTag), { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return undefined;
     const body = (await res.json()) as { version?: unknown };
     return typeof body.version === 'string' ? body.version : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The newest published CLI on `channel`. Stable probes one dist-tag; nightly
+ * probes both and takes the greater, so a shipped release supersedes the
+ * nightlies that preceded it without needing a second publish under `nightly`.
+ */
+export async function fetchNpmBest(channel: UpdateChannel): Promise<string | undefined> {
+  const tags = npmDistTags(channel);
+  const found = await Promise.all(
+    tags.map(async (tag) => ({ tag, version: await fetchDistTag(tag) })),
+  );
+  return bestOf(found)?.version;
+}
+
+/**
+ * Same shape for the tray. `bestTrayRelease` returns null for stable (and when
+ * nothing comparable came back), in which case this falls back to the stable
+ * tag's sha — exactly the behavior that existed before channels.
+ */
+interface TrayProbe {
+  sha?: string | undefined;
+  version?: string | undefined;
+}
+
+async function fetchTrayBest(channel: UpdateChannel): Promise<TrayProbe> {
+  const winner = await bestTrayRelease(channel);
+  if (!winner) {
+    const [sha, version] = await Promise.all([fetchTraySidecarSha(), fetchTrayLatestVersion()]);
+    return { sha, version };
+  }
+  return { sha: await fetchTraySidecarSha(winner.tag), version: winner.version };
 }
 
 /**
@@ -129,11 +170,16 @@ export function maybeStartRemoteCheck(): Promise<void> | null {
     let trayLatestSha: string | undefined;
     let trayLatestVersion: string | undefined;
     if (await updateCheckEnabled()) {
-      [npmLatest, trayLatestSha, trayLatestVersion] = await Promise.all([
-        nudgeEligible(method, AGENTBOX_VERSION) ? fetchNpmLatest() : Promise.resolve(undefined),
-        trayInstalled() ? fetchTraySidecarSha() : Promise.resolve(undefined),
-        trayInstalled() ? fetchTrayLatestVersion() : Promise.resolve(undefined),
+      const channel = await resolveChannel();
+      const [npm, tray] = await Promise.all([
+        nudgeEligible(method, AGENTBOX_VERSION)
+          ? fetchNpmBest(channel)
+          : Promise.resolve(undefined),
+        trayInstalled() ? fetchTrayBest(channel) : Promise.resolve<TrayProbe>({}),
       ]);
+      npmLatest = npm;
+      trayLatestSha = tray.sha;
+      trayLatestVersion = tray.version;
     }
     // Stamp checkedAt even when disabled or offline — the daily gate must
     // throttle regardless, or every command re-schedules this probe.
@@ -178,5 +224,10 @@ export function nudgeMessage(
   if (!nudgeEligible(method, version)) return null;
   const latest = state.remoteCheck?.npmLatest;
   if (!isNewer(latest, version)) return null;
-  return `a newer agentbox (${latest as string}) is available — run \`agentbox self-update\``;
+  // On the nightly channel the newest build is regularly a plain release that
+  // supersedes the nightlies before it. `0.28.0` offered to someone running
+  // `0.28.0-nightly.5` reads like a downgrade without this hint.
+  const crossover = isPrerelease(version) && !isPrerelease(latest as string);
+  const what = crossover ? `${latest as string}, the stable release` : (latest as string);
+  return `a newer agentbox (${what}) is available — run \`agentbox self-update\``;
 }

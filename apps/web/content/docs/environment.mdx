@@ -3,27 +3,27 @@ title: Environment variables
 description: In-box AGENTBOX_* variables and host-side tokens and control knobs
 ---
 
-AgentBox uses environment variables in two distinct places: *inside* the box (what a box knows about itself) and *on the host* (cloud tokens, agent-auth forwarding, and control knobs the relay reads). For persistent, layered settings prefer the typed [config keys](/docs/configuration) — env vars are for credentials and one-off control.
+AgentBox uses environment variables in two distinct places: _inside_ the box (what a box knows about itself) and _on the host_ (cloud tokens, agent-auth forwarding, and control knobs the relay reads). For persistent, layered settings prefer the typed [config keys](/docs/configuration) — env vars are for credentials and one-off control.
 
 ## In-box variables
 
 Every box is stamped at launch with identity vars so an agent — or the in-box `agentbox` CLI — knows it is sandboxed and which box it is.
 
-| Variable | Meaning |
-| --- | --- |
-| `AGENTBOX=1` | Presence flag. The canonical "am I inside a box?" signal. |
-| `AGENTBOX_BOX_ID` | The box's internal id. |
-| `AGENTBOX_BOX_NAME` | The box name. |
+| Variable                  | Meaning                                                                    |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `AGENTBOX=1`              | Presence flag. The canonical "am I inside a box?" signal.                  |
+| `AGENTBOX_BOX_ID`         | The box's internal id.                                                     |
+| `AGENTBOX_BOX_NAME`       | The box name.                                                              |
 | `AGENTBOX_HOST_WORKSPACE` | Absolute **host** path of the workspace. Informational only — not a mount. |
-| `AGENTBOX_PROJECT_ROOT` | Set only when the workspace has an `agentbox.yaml` ancestor. |
-| `AGENTBOX_PROJECT_INDEX` | The per-project box index (same condition). |
+| `AGENTBOX_PROJECT_ROOT`   | Set only when the workspace has an `agentbox.yaml` ancestor.               |
+| `AGENTBOX_PROJECT_INDEX`  | The per-project box index (same condition).                                |
 
 Two more wire the in-box `agentbox-ctl` back to the host relay so commands like `agentbox-ctl git pull|push` work (see [Sync & git](/docs/sync-and-git)):
 
-| Variable | Meaning |
-| --- | --- |
-| `AGENTBOX_RELAY_URL` | Host relay endpoint (docker: `http://127.0.0.1:8788`). |
-| `AGENTBOX_RELAY_TOKEN` | Per-box bearer token for relay calls. |
+| Variable               | Meaning                                                |
+| ---------------------- | ------------------------------------------------------ |
+| `AGENTBOX_RELAY_URL`   | Host relay endpoint (docker: `http://127.0.0.1:8788`). |
+| `AGENTBOX_RELAY_TOKEN` | Per-box bearer token for relay calls.                  |
 
 On the cloud providers, two extra vars appear: `AGENTBOX_BRIDGE_TOKEN` and `AGENTBOX_BOX_KIND=cloud`. A box restored from a checkpoint is deliberately re-stamped with these same vars, so it keeps correct self-awareness.
 
@@ -41,9 +41,16 @@ AGENTBOX_RELAY_URL=http://127.0.0.1:8788
 AGENTBOX_RELAY_TOKEN=b7d4...
 ```
 
-<Callout title="TIP">Scripts and hooks can branch on `AGENTBOX=1` to behave differently inside a box versus on the host.</Callout>
+<Callout title="TIP">
+  Scripts and hooks can branch on `AGENTBOX=1` to behave differently inside a box versus on the
+  host.
+</Callout>
 
-<Callout type="warn" title="HEADS UP">`AGENTBOX_HOST_WORKSPACE` is a reference string only — there is no host bind-mount of your workspace into the box. The box edits its own git worktree at `/workspace`. See [Core concepts](/docs/core-concepts) and [Teleport a project](/docs/teleport-a-project).</Callout>
+<Callout type="warn" title="HEADS UP">
+  `AGENTBOX_HOST_WORKSPACE` is a reference string only — there is no host bind-mount of your
+  workspace into the box. The box edits its own git worktree at `/workspace`. See [Core
+  concepts](/docs/core-concepts) and [Teleport a project](/docs/teleport-a-project).
+</Callout>
 
 ## box.env
 
@@ -63,7 +70,10 @@ AGENTBOX_BOX_NAME='mybox'
 AGENTBOX_HOST_WORKSPACE='/Users/you/projects/app'
 ```
 
-<Callout title="WHY">Because login shells source `box.env`, `agentbox shell` and any agent spawned through a login shell see the identity vars even though they're separate processes from PID 1.</Callout>
+<Callout title="WHY">
+  Because login shells source `box.env`, `agentbox shell` and any agent spawned through a login
+  shell see the identity vars even though they're separate processes from PID 1.
+</Callout>
 
 ## Agent model, effort, and credential forwarding
 
@@ -99,7 +109,11 @@ OPENAI_API_KEY=sk-... agentbox codex
 
 <Callout title="TIP">Forwarding re-reads your shell on every launch — including `agentbox claude start <box>` on an existing box — so the model you picked in your host session carries into the box automatically. No config key needed. See [Configuration](/docs/configuration).</Callout>
 
-<Callout type="warn" title="HEADS UP">Don't put these tokens in `agentbox.yaml` or a config key — they're credentials. Use your shell env, or `--with-env` / `carry:` for in-workspace `.env` files. See [Teleport a project](/docs/teleport-a-project).</Callout>
+<Callout type="warn" title="HEADS UP">
+  Don't put these tokens in `agentbox.yaml` or a config key — they're credentials. Use your shell
+  env, or `--with-env` / `carry:` for in-workspace `.env` files. See [Teleport a
+  project](/docs/teleport-a-project).
+</Callout>
 
 ## Host env vars
 
@@ -109,11 +123,11 @@ Control and cloud-credential knobs read on the host side.
 
 Cloud credentials live in `~/.agentbox/secrets.env`, written by each provider's `login` command and auto-loaded into the environment before any SDK or API call. A value already set in your shell wins over `secrets.env` — handy for CI.
 
-| Provider | Keys | Login |
-| --- | --- | --- |
+| Provider                 | Keys                                                                                               | Login                    |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ------------------------ |
 | [Daytona](/docs/daytona) | `DAYTONA_API_KEY` (or `DAYTONA_JWT_TOKEN` + `DAYTONA_ORGANIZATION_ID`), optional `DAYTONA_API_URL` | `agentbox daytona login` |
-| [Hetzner](/docs/hetzner) | `HCLOUD_TOKEN`, optional `HCLOUD_ENDPOINT` | `agentbox hetzner login` |
-| [Vercel](/docs/vercel) | `VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID` | `agentbox vercel login` |
+| [Hetzner](/docs/hetzner) | `HCLOUD_TOKEN`, optional `HCLOUD_ENDPOINT`                                                         | `agentbox hetzner login` |
+| [Vercel](/docs/vercel)   | `VERCEL_TOKEN` + `VERCEL_TEAM_ID` + `VERCEL_PROJECT_ID`                                            | `agentbox vercel login`  |
 
 ```console
 $ agentbox daytona login
@@ -127,16 +141,19 @@ For non-interactive or CI use, set the keys directly in the shell instead of run
 HCLOUD_TOKEN=... agentbox create --provider hetzner -y
 ```
 
-<Callout title="TIP">`secrets.env` is AgentBox-managed — don't hand-edit it; re-run the provider's `login`. A key set in your shell always overrides it.</Callout>
+<Callout title="TIP">
+  `secrets.env` is AgentBox-managed — don't hand-edit it; re-run the provider's `login`. A key set
+  in your shell always overrides it.
+</Callout>
 
 ### carry: controls
 
 These mirror the `carry:` flags (see [Teleport a project](/docs/teleport-a-project)):
 
-| Variable | Effect |
-| --- | --- |
+| Variable               | Effect                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `AGENTBOX_CARRY_YES=1` | Auto-approve the `carry:` prompt (same as `--carry-yes`). Required for non-TTY `-y` runs with a non-empty `carry:`. |
-| `AGENTBOX_CARRY=skip` | Disable carry for this run (same as `--carry skip`). |
+| `AGENTBOX_CARRY=skip`  | Disable carry for this run (same as `--carry skip`).                                                                |
 
 ```bash
 AGENTBOX_CARRY_YES=1 agentbox create -y
@@ -146,20 +163,24 @@ AGENTBOX_CARRY_YES=1 agentbox create -y
 
 These govern the host actions the relay performs on a box's behalf (see [Sync & git](/docs/sync-and-git)):
 
-| Variable | Effect |
-| --- | --- |
-| `AGENTBOX_PROMPT=off` | Auto-accept host-action permission prompts (e.g. `git push`). Headless mode. |
-| `AGENTBOX_GH_FORCE=1` | Required, even with `AGENTBOX_PROMPT=off`, to allow the irreversible `gh pr merge`. |
-| `AGENTBOX_GH_PR_CHECKOUT=allow` | Opt in to `gh pr checkout` (it switches the host repo's branch; off by default). |
+| Variable                        | Effect                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `AGENTBOX_PROMPT=off`           | Auto-accept host-action permission prompts (e.g. `git push`). Headless mode.        |
+| `AGENTBOX_GH_FORCE=1`           | Required, even with `AGENTBOX_PROMPT=off`, to allow the irreversible `gh pr merge`. |
+| `AGENTBOX_GH_PR_CHECKOUT=allow` | Opt in to `gh pr checkout` (it switches the host repo's branch; off by default).    |
 
-<Callout type="warn" title="HEADS UP">`AGENTBOX_PROMPT=off` lets a box run host git operations without asking. Use it only in trusted or CI contexts. Even then, `gh pr merge` is gated separately behind `AGENTBOX_GH_FORCE=1` because it's irreversible.</Callout>
+<Callout type="warn" title="HEADS UP">
+  `AGENTBOX_PROMPT=off` lets a box run host git operations without asking. Use it only in trusted or
+  CI contexts. Even then, `gh pr merge` is gated separately behind `AGENTBOX_GH_FORCE=1` because
+  it's irreversible.
+</Callout>
 
 ### Other host knobs
 
-| Variable | Effect |
-| --- | --- |
-| `AGENTBOX_HOME` | Override the `~/.agentbox` state directory root. |
-| `AGENTBOX_NO_ANIM` | Disable install/CLI animation (`NO_COLOR` and `CI` are also honored). |
+| Variable             | Effect                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `AGENTBOX_HOME`      | Override the `~/.agentbox` state directory root.                                                                    |
+| `AGENTBOX_NO_ANIM`   | Disable install/CLI animation (`NO_COLOR` and `CI` are also honored).                                               |
 | `PORTLESS_STATE_DIR` | Override the Portless state dir for [web URLs](/docs/web-apps-and-tunnels) (also a `portless.stateDir` config key). |
 
 See [CLI](/docs/cli) for the flag equivalents of `--carry-yes`, `--carry skip`, and `--with-env`.

@@ -62,6 +62,7 @@ export const dockerProvider: Provider = {
     const opts: CreateBoxOptions = {
       workspacePath: req.workspacePath,
       name: req.name,
+      nameBasis: req.nameBasis,
       useSnapshot: po.useSnapshot ?? false,
       checkpointRef: req.checkpointRef,
       fromBranch: req.fromBranch,
@@ -132,8 +133,8 @@ export const dockerProvider: Provider = {
     await stopBox(box.id);
   },
 
-  async destroy(box: BoxRecord): Promise<void> {
-    await destroyBox(box.id);
+  async destroy(box: BoxRecord, opts?: { keepSnapshot?: boolean }): Promise<void> {
+    await destroyBox(box.id, { keepSnapshot: opts?.keepSnapshot });
   },
 
   async resyncWorkspace(box: BoxRecord, onLog?: (line: string) => void): Promise<ResyncResult> {
@@ -148,7 +149,10 @@ export const dockerProvider: Provider = {
       hostWorkspace: box.workspacePath,
       onLog,
     });
-    return makeDockerSync({ container: box.container }).resyncWorkspace(ctx, box.gitWorktrees ?? []);
+    return makeDockerSync({ container: box.container }).resyncWorkspace(
+      ctx,
+      box.gitWorktrees ?? [],
+    );
   },
 
   sync(box: BoxRecord): ProviderSync {

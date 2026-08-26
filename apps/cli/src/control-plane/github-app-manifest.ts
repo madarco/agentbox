@@ -46,6 +46,34 @@ function htmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/**
+ * Wrap page content in a small self-contained styled shell — system font,
+ * centered card, light/dark aware, AgentBox accent green. No external assets or
+ * network fetches (this is a one-shot loopback server, sometimes seen for only a
+ * moment during the GitHub redirect). `body` is placed inside the card verbatim,
+ * so callers keep full control of it (e.g. the auto-submitting manifest form).
+ */
+function renderPage(title: string, body: string): string {
+  return (
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>${htmlEscape(title)}</title><style>` +
+    `:root{color-scheme:light dark}*{box-sizing:border-box}` +
+    `body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;` +
+    `font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f4f6f5;color:#141a17}` +
+    `.card{width:100%;max-width:28rem;background:#fff;border:1px solid #e2e8e5;border-radius:14px;` +
+    `padding:32px;box-shadow:0 6px 24px rgba(0,0,0,.06);text-align:center}` +
+    `.mark{width:44px;height:44px;margin:0 auto 18px;border-radius:12px;background:#128a4f;color:#fff;` +
+    `display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px}` +
+    `h1{margin:0 0 8px;font-size:1.2rem}p{margin:0;line-height:1.5;color:#4a5551;font-size:.95rem}` +
+    `.btn{display:inline-block;margin-top:20px;padding:10px 18px;border:0;border-radius:9px;background:#128a4f;` +
+    `color:#fff;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}.btn:hover{background:#0f7443}` +
+    `@media(prefers-color-scheme:dark){body{background:#0e1512;color:#e6ebe8}` +
+    `.card{background:#16201c;border-color:#24322c;box-shadow:0 6px 24px rgba(0,0,0,.4)}p{color:#9fb0a8}}` +
+    `</style></head><body><main class="card"><div class="mark">A</div>${body}</main></body></html>`
+  );
+}
+
 export async function runGitHubAppManifestFlow(
   opts: ManifestFlowOptions,
 ): Promise<ManifestFlowResult> {
@@ -82,14 +110,15 @@ export async function runGitHubAppManifestFlow(
         const action = opts.org
           ? `${githubUrl}/organizations/${encodeURIComponent(opts.org)}/settings/apps/new?state=${state}`
           : `${githubUrl}/settings/apps/new?state=${state}`;
-        const page = `<!doctype html><html><body>
-<p>Creating the GitHub App on GitHub… if this page doesn't redirect, click Continue.</p>
-<form id="f" method="post" action="${htmlEscape(action)}">
-<input type="hidden" name="manifest" value="${htmlEscape(JSON.stringify(manifest))}">
-<button type="submit">Continue to GitHub</button>
-</form>
-<script>document.getElementById('f').submit()</script>
-</body></html>`;
+        const page = renderPage(
+          'Redirecting to GitHub',
+          `<h1>Creating your GitHub App…</h1>` +
+            `<p>Redirecting to GitHub. If this page doesn't redirect on its own, use the button below.</p>` +
+            `<form id="f" method="post" action="${htmlEscape(action)}">` +
+            `<input type="hidden" name="manifest" value="${htmlEscape(JSON.stringify(manifest))}">` +
+            `<button class="btn" type="submit">Continue to GitHub</button></form>` +
+            `<script>document.getElementById('f').submit()</script>`,
+        );
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(page);
         return;
@@ -138,8 +167,12 @@ export async function runGitHubAppManifestFlow(
             settled = true;
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
             res.end(
-              `<!doctype html><html><head><meta charset="utf-8"></head><body><h2>GitHub App created ✓</h2>` +
-                `<p>App: ${htmlEscape(result.slug)} (id ${result.appId}). You can close this tab and return to the terminal.</p></body></html>`,
+              renderPage(
+                'GitHub App created',
+                `<h1>GitHub App created</h1>` +
+                  `<p>App: ${htmlEscape(result.slug)} (id ${result.appId}). ` +
+                  `You can close this tab and return to the terminal.</p>`,
+              ),
             );
             server.close();
             resolve(result);

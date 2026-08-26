@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { parseGitRemote } from '@agentbox/relay';
+import { resolveSshConfigTarget } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { log, select } from './prompt.js';
 
@@ -15,6 +16,11 @@ import { log, select } from './prompt.js';
  * interactive prompt, and we hand back carry entries (0600, box-user owned) that
  * ride the normal carry apply path.
  *
+ * The entries deliberately leave `user` unset so carry resolves the box user
+ * itself. Pinning it to 1000 (as this did) made the credential unreadable on
+ * vercel/e2b, where `vscode` is not uid 1000 — 0600 plus a wrong owner is a
+ * secret nobody can use.
+ *
  * This deliberately breaks AgentBox's usual "credentials never enter the box"
  * invariant, so the safety bar is deliberately high: copying a credential
  * requires a live TTY and an explicit in-prompt choice. There is intentionally
@@ -23,7 +29,6 @@ import { log, select } from './prompt.js';
  */
 
 const BOX_HOME = '/home/vscode';
-const BOX_UID = 1000;
 
 // Token mode stages the rendered `~/.git-credentials` (which holds a real
 // token) into a host mkdtemp dir so it can ride the carry upload. That dir must
@@ -74,7 +79,11 @@ interface CredPlan {
 }
 
 /** Run a git command in the repo, returning trimmed stdout ('' on failure). */
-async function git(projectRoot: string, args: string[], opts?: { input?: string }): Promise<string> {
+async function git(
+  projectRoot: string,
+  args: string[],
+  opts?: { input?: string },
+): Promise<string> {
   try {
     const r = await execa('git', ['-C', projectRoot, ...args], {
       input: opts?.input,
@@ -128,19 +137,8 @@ async function fillHttpsToken(
 /** Resolve the SSH identity file ssh would use for `host` (via `ssh -G`). */
 async function resolveSshIdentity(host: string): Promise<string | null> {
   const home = homedir();
-  try {
-    const r = await execa('ssh', ['-G', host], { reject: false });
-    if (r.exitCode === 0) {
-      for (const line of (r.stdout ?? '').split('\n')) {
-        const m = /^identityfile\s+(.+)$/i.exec(line.trim());
-        if (!m) continue;
-        const p = m[1]!.replace(/^~(?=\/)/, home);
-        if (await fileExists(p)) return p;
-      }
-    }
-  } catch {
-    /* fall through to defaults */
-  }
+  const resolved = await resolveSshConfigTarget(host);
+  if (resolved?.identityFile) return resolved.identityFile;
   for (const name of ['id_ed25519', 'id_rsa', 'id_ecdsa']) {
     const p = join(home, '.ssh', name);
     if (await fileExists(p)) return p;
@@ -167,7 +165,6 @@ async function fileEntry(absSrc: string, dest: string): Promise<ResolvedCarryEnt
     kind: 'file',
     bytes,
     mode: 0o600,
-    user: BOX_UID,
     optional: false,
   } as ResolvedCarryEntry;
 }
@@ -190,7 +187,6 @@ async function contentEntry(
     kind: 'file',
     bytes: Buffer.byteLength(content),
     mode: 0o600,
-    user: BOX_UID,
     optional: false,
   } as ResolvedCarryEntry;
 }
@@ -228,7 +224,9 @@ async function planTokenCreds(projectRoot: string, onLog: (l: string) => void): 
   const host = (await originHost(projectRoot)) ?? 'github.com';
   const creds = await fillHttpsToken(projectRoot, host);
   if (!creds) {
-    onLog(`with-credentials: could not obtain a token for ${host} (credential helper + gh both empty)`);
+    onLog(
+      `with-credentials: could not obtain a token for ${host} (credential helper + gh both empty)`,
+    );
     return { entries: [], items: [] };
   }
   const tmpDir = await mkdtemp(join(tmpdir(), 'agentbox-gitcreds-'));
@@ -353,7 +351,9 @@ export async function runGitCredsGate(args: GitCredsGateArgs): Promise<GitCredsG
   }
 
   printSummary(mode, plan.items);
-  onLog(`with-credentials: mode=${mode}, copying ${String(plan.entries.length)} file(s) into the box`);
+  onLog(
+    `with-credentials: mode=${mode}, copying ${String(plan.entries.length)} file(s) into the box`,
+  );
   return { decision: 'approve', entries: plan.entries };
 }
 
@@ -363,7 +363,10 @@ export async function buildCredsPlan(
   mode: GitCredsMode,
   onLog: (l: string) => void = () => {},
 ): Promise<CredPlan> {
-  const plan = mode === 'token' ? await planTokenCreds(projectRoot, onLog) : await planSshCreds(projectRoot, onLog);
+  const plan =
+    mode === 'token'
+      ? await planTokenCreds(projectRoot, onLog)
+      : await planSshCreds(projectRoot, onLog);
   // Record the chosen mode explicitly (only when we actually have a credential
   // to copy) so seedGitCredentials configures for it rather than inferring from
   // file presence — a separate `carry:` entry that drops a `~/.git-credentials`
@@ -372,10 +375,48 @@ export async function buildCredsPlan(
     const markerDir = await mkdtemp(join(tmpdir(), 'agentbox-gitmode-'));
     scheduleTmpCleanup(markerDir);
     plan.entries.push(
-      await contentEntry(markerDir, 'git-direct-mode', `${mode}\n`, '~/.config/agentbox/git-direct-mode'),
+      await contentEntry(
+        markerDir,
+        'git-direct-mode',
+        `${mode}\n`,
+        '~/.config/agentbox/git-direct-mode',
+      ),
     );
   }
   return plan;
+}
+
+/**
+ * Refuse `git.pushMode=direct` (`--dangerously-with-credentials`, and the
+ * post-create `connect --dangerously-git-credentials`) when a control box is in
+ * play. `direct` copies a git credential INTO the box so it can push with the PC
+ * off — it exists as the alternative to a hub. When a control box IS configured,
+ * token leasing (`git.pushMode=auto` → lease, via `packages/relay/src/github-app.ts`)
+ * already gives the box laptop-off push WITHOUT the copy, so putting the credential
+ * (and every snapshot of it) at risk is pure downside there. Without a control box
+ * this returns `null` and the feature stays exactly as-is.
+ *
+ * Pure (no I/O) so every launcher and `connect` share this one check rather than
+ * repeating it — a partial gate is a false sense of safety. `hubInPlay` folds in
+ * the old `--via-hub`-specific refusal: it is true when `relay.controlPlaneUrl` is
+ * set OR the caller forced the hub (`--via-hub`).
+ *
+ * Returns a refusal message when the mode must be refused, else `null`.
+ */
+export function directGitModeRefusal(args: {
+  pushMode: string;
+  hubInPlay: boolean;
+}): string | null {
+  if (args.pushMode !== 'direct') return null;
+  if (!args.hubInPlay) return null;
+  return (
+    'git.pushMode=direct (--dangerously-with-credentials / connect --dangerously-git-credentials) ' +
+    'is refused when a control box is configured (relay.controlPlaneUrl). Token leasing already ' +
+    'lets the box git push/pull with your laptop off WITHOUT copying a credential into the box or ' +
+    'its snapshots: on each push it leases a short-lived, repo-scoped GitHub-App token from the ' +
+    'control box. Leave git.pushMode=auto (the default — it leases when a control box is set) and ' +
+    'drop --dangerously-with-credentials.'
+  );
 }
 
 /**

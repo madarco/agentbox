@@ -1,4 +1,11 @@
 import { execa } from 'execa';
+import {
+  classifyPullFailure,
+  isAuthRetryable,
+  isGhcrTarget,
+  loginToGhcrWithGh,
+  type PullFailure,
+} from './registry-auth.js';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -6,6 +13,7 @@ import {
   BOX_IMAGE_REGISTRY,
   claudeInstallFingerprint,
   registryRefForSha,
+  type FileManifest,
 } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
@@ -76,19 +84,29 @@ export async function imageExists(ref: string): Promise<boolean> {
 }
 
 /**
- * Attempt `docker pull <target>`. Returns true on success, false on any
- * failure (missing tag, offline, auth) — callers fall back to a local build.
- * Never throws. Single attempt: a missing tag is the expected "build locally"
- * signal, not a transient error worth retrying.
+ * Attempt `docker pull <target>`. Never throws.
+ *
+ * Reports WHY it failed, not just that it did: a rate-limited pull, a rejected
+ * credential and an unpublished tag all exit 1, but only the first two can be
+ * fixed by authenticating and only the third means "build locally". Returning a
+ * bare boolean here is what made a throttled pull look identical to a missing
+ * image — a silent ~10-minute rebuild of an image that was in the registry.
  */
 export async function pullImage(
   target: string,
   opts: { onProgress?: (line: string) => void } = {},
-): Promise<boolean> {
+): Promise<{ ok: boolean; failure?: PullFailure }> {
   const subprocess = execa('docker', ['pull', target], {
     stderr: 'pipe',
     stdout: 'pipe',
     reject: false,
+  });
+  // Kept so a failure can be classified; docker writes the real reason to stderr.
+  let stderrText = '';
+  // Always capture stderr, even with no onProgress — the classification below
+  // needs it regardless of whether anyone is watching the progress stream.
+  subprocess.stderr?.on('data', (chunk: Buffer | string) => {
+    stderrText += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
   });
   let heartbeat: NodeJS.Timeout | undefined;
   if (opts.onProgress) {
@@ -114,7 +132,8 @@ export async function pullImage(
   }
   try {
     const result = await subprocess;
-    return result.exitCode === 0;
+    if (result.exitCode === 0) return { ok: true };
+    return { ok: false, failure: classifyPullFailure(stderrText || (result.stderr ?? '')) };
   } finally {
     if (heartbeat) clearInterval(heartbeat);
   }
@@ -230,7 +249,7 @@ export interface PullOrBuildOptions {
  */
 export async function pullOrBuild(
   ref: string,
-  fingerprint: { contextSha256: string } | null,
+  fingerprint: { contextSha256: string; manifest?: FileManifest } | null,
   opts: PullOrBuildOptions = {},
 ): Promise<{ source: 'pulled' | 'built' }> {
   const { writePreparedDockerState } = await import('./prepared-state.js');
@@ -239,14 +258,45 @@ export async function pullOrBuild(
 
   if (allowPull && registry && fingerprint) {
     const target = registryRefForSha(fingerprint.contextSha256, registry);
-    opts.onProgress?.(`[image] pulling ${target}`);
-    if (await pullImage(target, { onProgress: opts.onProgress })) {
+    const succeed = async (): Promise<{ source: 'pulled' }> => {
       await tagImage(target, ref);
-      writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+      writePreparedDockerState({
+        imageRef: ref,
+        contextSha256: fingerprint.contextSha256,
+        ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+      });
       opts.onProgress?.(`[image] pulled ${target} -> ${ref}`);
       return { source: 'pulled' };
+    };
+
+    opts.onProgress?.(`[image] pulling ${target}`);
+    const first = await pullImage(target, { onProgress: opts.onProgress });
+    if (first.ok) return succeed();
+
+    const failure = first.failure ?? { kind: 'unknown' as const, detail: 'unknown error' };
+    opts.onProgress?.(`[image] pull failed (${failure.kind}): ${failure.detail}`);
+
+    // A throttle or a credential problem is not a missing image: the tag is
+    // there and an authenticated pull gets it. GHCR's anonymous limit is per-IP
+    // and a machine that just baked a few times trips it, so borrowing the
+    // host's `gh` token here is the difference between a retag and a ~10-minute
+    // rebuild of an image that was already published.
+    if (isAuthRetryable(failure.kind) && isGhcrTarget(target)) {
+      opts.onProgress?.('[image] retrying authenticated with your `gh` token');
+      const login = await loginToGhcrWithGh();
+      if (login.ok) {
+        const second = await pullImage(target, { onProgress: opts.onProgress });
+        if (second.ok) return succeed();
+        const f2 = second.failure ?? { kind: 'unknown' as const, detail: 'unknown error' };
+        opts.onProgress?.(`[image] authenticated pull also failed (${f2.kind}): ${f2.detail}`);
+      } else {
+        opts.onProgress?.(
+          `[image] could not authenticate to ghcr.io: ${login.reason ?? 'unknown'}`,
+        );
+      }
     }
-    opts.onProgress?.(`[image] registry miss, building ${ref} locally`);
+
+    opts.onProgress?.(`[image] building ${ref} locally instead`);
   }
 
   await buildImage({
@@ -257,7 +307,11 @@ export async function pullOrBuild(
     onProgress: opts.onProgress,
   });
   if (fingerprint) {
-    writePreparedDockerState({ imageRef: ref, contextSha256: fingerprint.contextSha256 });
+    writePreparedDockerState({
+      imageRef: ref,
+      contextSha256: fingerprint.contextSha256,
+      ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+    });
   }
   return { source: 'built' };
 }
@@ -403,4 +457,3 @@ export async function evaluateDockerBaseFreshness(
     stampedSha: readPreparedDockerState()?.base?.contextSha256 ?? null,
   });
 }
-

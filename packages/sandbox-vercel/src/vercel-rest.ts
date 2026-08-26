@@ -109,7 +109,7 @@ export async function createProject(
 }
 
 // --- Git-backed control-plane deploy ---------------------------------------
-// These drive the REST API so `agentbox control-plane setup --deploy vercel`
+// These drive the REST API so `agentbox hub setup --deploy vercel`
 // builds the control plane FROM GitHub (no local upload). Shapes verified
 // against the Vercel REST docs (project create is v11; deployments v13).
 

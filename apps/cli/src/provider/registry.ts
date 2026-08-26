@@ -60,6 +60,12 @@ export interface CreateProviderChoice {
  * Provider for a fresh `agentbox create`. Precedence: --provider flag >
  * box.provider config > 'docker'. Throws if the resolved name isn't registered.
  */
+/** Lazy: keeps the env-file read off every `getProvider` call. */
+async function loadControlPlaneEnvLazily(): Promise<void> {
+  const { loadControlPlaneEnv } = await import('../control-plane/env-file.js');
+  loadControlPlaneEnv();
+}
+
 export async function providerForCreate(choice: CreateProviderChoice): Promise<Provider> {
   const flag = choice.flag?.trim();
   const spec = (flag && flag.length > 0 ? flag : choice.config.box.provider) as ProviderName;
@@ -68,5 +74,18 @@ export async function providerForCreate(choice: CreateProviderChoice): Promise<P
       `unknown sandbox provider "${String(spec)}" (known: ${getRuntimeProviderNames().join(', ')})`,
     );
   }
+  // A control-plane create needs the admin bearer in `process.env` — the
+  // provider registers the box on the plane and pushes seed material with it.
+  // The token lives in the setup-written env file, and nothing on the create
+  // path was loading it, so in an ordinary shell (where the user has not
+  // sourced it) every PC create silently skipped registration: the box came up
+  // with `topology: control-plane` but the plane never heard of it, its seed was
+  // never stored, and its `git push` had no token to lease with.
+  //
+  // Every create path resolves its provider through here, so this is the one
+  // place that covers create / claude / codex / opencode / queued jobs.
+  // Optional-chained: a real EffectiveConfig always carries `relay` (defaults
+  // fill it), but callers/tests hand this a narrower object.
+  if (choice.config.relay?.controlPlaneUrl) await loadControlPlaneEnvLazily();
   return getProvider(spec);
 }

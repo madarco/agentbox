@@ -1,58 +1,73 @@
-import type { BoxRecord, Provider } from '@agentbox/core';
-import { renderStatusTable, type StatusReply } from '@agentbox/ctl';
-import { boxRestartService, boxRestartServices, boxServicesStatusRaw } from '@agentbox/sandbox-core';
+import { renderStatusTable, type ServiceState, type ServiceStatus } from '@agentbox/ctl';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
+import type { HubApiServiceView } from '../control-plane/hub-api-client.js';
+import { reportBoxNotOnAnyHub, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 /**
  * `agentbox services <box>` — list and restart the services declared in a box's
- * `agentbox.yaml`, driven by the in-box `agentbox-ctl` supervisor. Provider-
- * agnostic: everything runs through `provider.exec`, so it works on docker and
- * the cloud providers alike (the box must be running — `agentbox-ctl` is only
- * reachable in a live box; `agentbox status` shows the persisted snapshot when
- * it isn't).
+ * `agentbox.yaml`, driven by the in-box `agentbox-ctl` supervisor.
+ *
+ * Both subcommands go through the hub's public `/api/v1`
+ * (`GET|POST /boxes/:id/services*` via {@link withOwningHub} — box-scoped, so it
+ * targets the hub that OWNS the box: the local hub for docker/remote-docker, the
+ * configured hub for cloud; a plain `withHubClient` would send a docker box's op
+ * to a configured remote control box that never owned it and get `not_found`), so
+ * they work identically against a local hub and a remote control box — the hub runs the
+ * box's `provider.exec` (it holds the credentials), and returns the SAME shared
+ * `boxServicesStatusRaw` / `boxRestartService` result the CLI used to compute
+ * inline. Unlike the old inline path, a paused/stopped box now reports its
+ * PERSISTED service snapshot (the route falls back to it when the supervisor
+ * isn't reachable), so `agentbox services` agrees with `agentbox status`.
  */
 
-/** Pull the live task/service/port snapshot, or null when the box isn't reachable. */
-async function liveStatus(provider: Provider, box: BoxRecord): Promise<StatusReply | null> {
-  const r = await boxServicesStatusRaw(provider, box).catch(() => null);
-  if (!r || r.exitCode !== 0) return null;
-  try {
-    return JSON.parse(r.stdout) as StatusReply;
-  } catch {
-    return null;
-  }
+/** Adapt the API's compact `ServiceView` to the `ServiceStatus` `renderStatusTable`
+ * expects — it only reads name/state/pid/restarts/lastExitCode/blockedOn/command,
+ * so the timing fields are inert placeholders. */
+function toStatusRows(services: HubApiServiceView[]): ServiceStatus[] {
+  return services.map((s) => ({
+    name: s.name,
+    state: s.state as ServiceState,
+    pid: s.pid,
+    restarts: s.restarts,
+    lastExitCode: s.lastExitCode,
+    startedAt: null,
+    readyAt: null,
+    nextRetryAt: null,
+    blockedOn: s.blockedOn,
+    command: s.command,
+  }));
 }
 
 const listCommand = new Command('list')
   .description("List the box's services with their live state (running / ready / crashed / …)")
   .argument('[box]', 'box ref (default: the only box in this project)')
-  .option('--json', 'print the raw live status (services, tasks, ports) as JSON')
+  .option('--json', 'print the raw status (services, tasks, ports) as JSON')
   .action(async (idOrName: string | undefined, opts: { json?: boolean }) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
-      const provider = await providerForBox(box);
-      const live = await liveStatus(provider, box);
-      if (!live) {
+      const r = await withOwningHub(box, async (client) => {
+        const svc = await client.getServices(box.id);
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ services: [], tasks: [], ports: [] }) + '\n');
+          process.stdout.write(JSON.stringify(svc) + '\n');
           return;
         }
-        log.error('could not reach the box supervisor (is the box running?). Try `agentbox status` for the persisted snapshot.');
-        process.exit(1);
-      }
-      if (opts.json) {
-        process.stdout.write(JSON.stringify(live) + '\n');
-        return;
-      }
-      if (live.services.length === 0) {
-        process.stdout.write('no services declared in agentbox.yaml\n');
-        return;
-      }
-      process.stdout.write(renderStatusTable(live.services) + '\n');
+        if (svc.source === 'unavailable') {
+          log.error(
+            'could not reach the box supervisor or find a persisted snapshot (is the box running?). Try `agentbox status` for details.',
+          );
+          process.exitCode = 1;
+          return;
+        }
+        if (svc.services.length === 0) {
+          process.stdout.write('no services declared in agentbox.yaml\n');
+          return;
+        }
+        process.stdout.write(renderStatusTable(toStatusRows(svc.services)) + '\n');
+      });
+      if (r === 'not-found') reportBoxNotOnAnyHub(box);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -69,35 +84,16 @@ const restartCommand = new Command('restart')
       // the box ref stays optional the same way `list`/`status` allow omitting it.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
       const serviceName = shifted ? idOrName : name;
-      const provider = await providerForBox(box);
-      if (serviceName) {
-        const r = await boxRestartService(provider, box, serviceName);
+      const outcome = await withOwningHub(box, async (client) => {
+        // The route restarts one service (with `name`) or every service (without),
+        // reading the service list + looping server-side. A non-zero restart comes
+        // back as a HubApiError that withHubClient maps to an exit code + message.
+        const r = await client.restartService(box.id, serviceName);
         if (r.stdout) process.stdout.write(r.stdout);
         if (r.stderr) process.stderr.write(r.stderr);
-        process.exit(r.exitCode);
-      }
-      // Restart-all: read the service list, then restart each in sequence.
-      const live = await liveStatus(provider, box);
-      if (!live) {
-        log.error('could not reach the box supervisor (is the box running?)');
-        process.exit(1);
-      }
-      const names = live.services.map((s) => s.name);
-      if (names.length === 0) {
-        process.stdout.write('no services to restart\n');
-        return;
-      }
-      const results = await boxRestartServices(provider, box, names);
-      let failed = 0;
-      for (const { name: n, result } of results) {
-        const okMark = result.exitCode === 0 ? 'ok' : `failed (exit ${String(result.exitCode)})`;
-        process.stdout.write(`  ${n}  ${okMark}\n`);
-        if (result.exitCode !== 0) {
-          failed++;
-          if (result.stderr) process.stderr.write(result.stderr);
-        }
-      }
-      process.exit(failed > 0 ? 1 : 0);
+        if (!serviceName && r.ok) process.stdout.write('restarted all services\n');
+      });
+      if (outcome === 'not-found') reportBoxNotOnAnyHub(box);
     } catch (err) {
       handleLifecycleError(err);
     }

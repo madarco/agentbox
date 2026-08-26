@@ -407,14 +407,15 @@
 
   /* center column with hairline frame */
   .frame {
-    max-width: 920px;
+    max-width: 1140px;
     margin: 0 auto;
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
     background: var(--paper);
     min-height: 100vh;
   }
-  .pad { padding-left: 40px; padding-right: 40px; }
+  .pad { padding-left: 56px; padding-right: 56px; }
+  @media (max-width: 1100px){ .pad { padding-left: 40px; padding-right: 40px; } }
   @media (max-width: 640px){ .pad { padding-left: 22px; padding-right: 22px; } .frame { border-left: none; border-right: none; } }
 
   /* row separators */
@@ -435,10 +436,11 @@
   .top .src { color: var(--accent); }
   .top .src:hover { text-decoration: underline; }
   .top .top-ext { display: flex; align-items: center; gap: 16px; }
+  .top .ver { color: var(--accent); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 11.5px; line-height: 1; text-decoration: none; white-space: nowrap; }
+  .top .ver:hover { border-color: var(--accent); }
   /* mobile hamburger — hidden on desktop */
   .menu-btn { display: none; }
   .menu-btn .i-close { display: none; }
-
   @media (max-width: 640px){
     .menu-btn {
       display: grid; place-items: center; width: 34px; height: 34px;
@@ -449,7 +451,6 @@
     .menu-btn svg { width: 17px; height: 17px; }
     header.top.open .menu-btn .i-open { display: none; }
     header.top.open .menu-btn .i-close { display: block; }
-
     /* nav becomes a full-width dropdown under the bar */
     .top nav {
       position: absolute; top: 56px; left: 0; right: 0; z-index: 40;
@@ -460,32 +461,44 @@
       transition: max-height .26s ease;
     }
     header.top.open nav { max-height: 320px; pointer-events: auto; }
-    .top nav a {
-      padding: 13px 22px; color: var(--ink-2);
-      border-top: 1px solid var(--line-2);
-    }
+    .top nav a { padding: 13px 22px; color: var(--ink-2); border-top: 1px solid var(--line-2); }
     .top nav a:hover { background: var(--accent-soft); }
   }
 
   /* ── META STRIP ── */
   .meta {
-    display: flex; flex-wrap: wrap; gap: 0;
+    /* single non-wrapping row at every width: the envs cell is the only
+       shrinkable one and truncates instead of pushing the os cell to row two */
+    display: flex; flex-wrap: nowrap; gap: 0;
     border-bottom: 1px solid var(--line);
     font-family: var(--mono); font-size: 12px; color: var(--muted);
-    /* tighter than the .pad default: the envs list only clears the 920px frame
-       on one row at this inset — at 40px it wraps the os cell onto a second row */
-    padding-left: 16px; padding-right: 16px;
   }
-  .meta span { padding: 9px 10px; border-right: 1px solid var(--line); }
-  .meta span:last-child { border-right: none; }
+  .meta > span { padding: 9px 18px; border-right: 1px solid var(--line); white-space: nowrap; flex: 0 0 auto; }
+  .meta .m-envs { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 0.6ch; overflow: hidden; }
+  .meta .m-envs > b { flex: 0 0 auto; }
+  .m-envs-vp { flex: 1 1 auto; min-width: 0; overflow: hidden; padding: 0; border: none; }
+  .m-envs-track { display: inline-flex; white-space: nowrap; padding: 0; border: none; }
+  .m-envs-track > i { font-style: normal; }
+  /* the duplicate copy only exists while scrolling */
+  .m-envs-track > i + i { display: none; }
+  .m-envs.scrolling .m-envs-track > i + i { display: inline; }
+  .m-envs.scrolling .m-envs-track { animation: meta-marquee var(--marquee-dur, 18s) linear infinite; }
+  .m-envs-vp:hover .m-envs-track { animation-play-state: paused; }
+  @keyframes meta-marquee { from { transform: translateX(0); } to { transform: translateX(var(--marquee-shift, -50%)); } }
+  @media (prefers-reduced-motion: reduce){ .m-envs.scrolling .m-envs-track { animation: none; } }
+  @media (max-width: 1100px){
+    .meta { padding-left: 0; padding-right: 0; }
+    .meta > span { padding: 9px 10px; }
+  }
+  .meta > span:last-child { border-right: none; }
   .meta b { color: var(--ink); font-weight: 500; }
   @media (max-width: 640px){
+    .meta { justify-content: center; }
     /* keep the meta strip on a single line: hide the bold labels, the envs
        list, and the os span, leaving just npm + license (one row, no wrap) */
-    .meta { justify-content: center; }
     .meta b, .meta .m-envs, .meta .m-os { display: none; }
-    .meta span { padding: 9px 14px; }
-    .meta span:nth-of-type(2){ border-right: none; }
+    .meta > span { padding: 9px 14px; }
+    .meta > span:nth-of-type(2){ border-right: none; }
   }
 
   /* ── LOGO STRIP ── */
@@ -515,23 +528,30 @@
   }
 
   /* ── HERO ── */
-  .hero { padding-top: 64px; padding-bottom: 52px; }
-  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
+  .hero { padding-top: 88px; padding-bottom: 72px; }
+  .kicker { font-family: var(--mono); font-size: 13.5px; color: var(--accent); letter-spacing: 0.04em; margin-bottom: 22px; }
   .hero h1 {
-    font-size: clamp(32px, 4.4vw, 44px);
+    font-size: clamp(36px, 3.8vw, 58px);
     line-height: 1.08;
     letter-spacing: -0.03em;
     font-weight: 600;
     margin-bottom: 20px;
   }
   .hero h1 .dim { color: var(--faint); }
-  .hero p.lede { font-size: clamp(15px, 1.6vw, 16.5px); color: var(--ink-2); max-width: 46ch; line-height: 1.6; margin-bottom: 30px; }
+  .hero p.lede { font-size: clamp(15.5px, 1.35vw, 18px); color: var(--ink-2); max-width: 52ch; line-height: 1.6; margin-bottom: 30px; }
   .hero p.lede b { font-weight: 500; }
 
   /* hero two-column with fake terminal */
   .hero-grid { display: grid; grid-template-columns: 1fr; gap: 38px; }
   @media (min-width: 900px) {
     .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 424px); gap: 36px; align-items: center; }
+  }
+  @media (min-width: 1120px) {
+    /* let the text column claim the headline's min-content so the two nowrap
+       lines always fit; the desk column gives up the difference */
+    .hero-grid { grid-template-columns: minmax(min-content, 1fr) minmax(0, 430px); gap: 44px; }
+    /* keep the headline on its two authored lines — the <br /> does the breaking */
+    .hero h1 { font-size: 46px; white-space: nowrap; }
   }
 
   .term {
@@ -616,9 +636,9 @@
   .runlink:hover span { transform: translateX(3px); }
 
   /* ── ARCHITECTURE DIAGRAM ── */
-  .diagram { padding-top: 36px; padding-bottom: 32px; }
-  .dg { display: flex; align-items: stretch; gap: 16px; }
-  .dg-host { flex: 0 1 252px; }
+  .diagram { padding-top: 56px; padding-bottom: 48px; }
+  .dg { display: flex; align-items: stretch; gap: 22px; }
+  .dg-host { flex: 0 1 300px; }
   .dg-vm { flex: 1 1 auto; }
   .dg-arrow { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--accent); flex-shrink: 0; }
   .dg-arrow svg { width: 58px; height: 24px; }
@@ -899,9 +919,9 @@
   /* hero desktop scene — menu bar app + terminal */
   .hero-desk-wrap{ min-width: 0; }
   .hero-desk-scroll{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .hero-desk{ position: relative; min-width: 420px; height: 402px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--paper); }
-  .hero-desk .term{ position: absolute; left: 14px; bottom: 14px; width: 288px; z-index: 1; border-radius: 10px; }
-  .hero-desk .term-body{ height: 196px; }
+  .hero-desk{ position: relative; min-width: 420px; height: 460px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--paper); }
+  .hero-desk .term{ position: absolute; left: 14px; bottom: 14px; width: 322px; z-index: 1; border-radius: 10px; }
+  .hero-desk .term-body{ height: 244px; }
   .hero-desk .btn-new, .hero-desk #hOpenIn, .hero-desk #hGit, .hero-desk .mb-item.abx, .hero-desk .ns-quit{ cursor: pointer; }
   .hero-desk.menu-hidden .nsmenu{ opacity: 0; pointer-events: none; transform: translateY(-4px) scale(.985); }
   #heroNewBox{ animation: nb-halo 2.2s cubic-bezier(.4,0,.4,1) infinite; }
@@ -912,8 +932,10 @@
     100%{ box-shadow: 0 0 0 0 rgba(18,138,79,0); }
   }
   @media (prefers-reduced-motion: reduce){ #heroNewBox{ animation: none; } }
-  .hero-desk .nsmenu.hero-menu{ position: absolute; right: 12px; top: 34px; width: 228px; z-index: 2; }
-  .hero-desk .nsmenu.hero-sub{ position: absolute; left: 12px; top: 152px; width: 180px; z-index: 3; backdrop-filter: none; background: #f4f4f1; opacity: 0; pointer-events: none; transform: translateX(-5px); }
+  .hero-desk .nsmenu.hero-menu{ position: absolute; right: 14px; top: 36px; width: 242px; z-index: 2; }
+  /* right-anchored like the parent menu (right: 14px) so the submenu stays
+     attached to it however wide the desk gets */
+  .hero-desk .nsmenu.hero-sub{ position: absolute; right: 228px; top: 152px; width: 180px; z-index: 3; backdrop-filter: none; background: #f4f4f1; opacity: 0; pointer-events: none; transform: translateX(-5px); }
   .hero-desk .nsmenu.hero-sub.open{ opacity: 1; pointer-events: auto; transform: none; }
   .hd-cursor{ position: absolute; z-index: 9; width: 22px; height: 22px; left: 60%; top: 78%; opacity: 0; pointer-events: none; transition: left .68s cubic-bezier(.45,.05,.25,1), top .68s cubic-bezier(.45,.05,.25,1), opacity .35s ease; }
   .hd-cursor svg{ width: 100%; height: 100%; display: block; filter: drop-shadow(0 1.5px 2.5px rgba(0,0,0,.35)); }
@@ -936,8 +958,8 @@
   /* cascading flyouts */
   .hero-desk .nsmenu.hd-fly{ position: absolute; z-index: 4; opacity: 0; pointer-events: none; transform: translateX(-5px); backdrop-filter: none; background: #f4f4f1; }
   .hero-desk .nsmenu.hd-fly.open{ opacity: 1; pointer-events: auto; transform: none; }
-  #flyOpenIn{ left: 186px; top: 176px; width: 186px; }
-  #flyGit{ left: 186px; top: 210px; width: 198px; }
+  #flyOpenIn{ right: 48px; top: 176px; width: 186px; }
+  #flyGit{ right: 36px; top: 210px; width: 198px; }
 
   /* New Box modal */
   .hd-overlay{ position: absolute; inset: 0; z-index: 6; background: rgba(22,24,28,.30); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
@@ -998,20 +1020,25 @@
   .lede a.applink{ color: var(--accent); border-bottom: 1px solid rgba(18,138,79,.35); }
   .lede a.applink:hover{ border-bottom-color: var(--accent); }
 
+  /* large-frame extras */
+  .feat-lede { font-size: 15.5px; max-width: 72ch; }
+  .tray-desk { max-width: 1000px; margin: 0; }
+  .logostrip { padding-top: 20px; padding-bottom: 20px; }
+
   /* ── SECTIONS ── */
-  .sec { padding-top: 52px; padding-bottom: 52px; }
-  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; }
-  .sec-no { font-family: var(--mono); font-size: 12px; color: var(--accent); }
-  .sec-head h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .sec { padding-top: 72px; padding-bottom: 72px; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 34px; }
+  .sec-no { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  .sec-head h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
   .sec-head .hint { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
 
   /* feature list */
   .flist { display: flex; flex-direction: column; }
-  .fitem { display: grid; grid-template-columns: 150px 1fr; gap: 24px; padding: 18px 0; border-top: 1px solid var(--line-2); }
+  .fitem { display: grid; grid-template-columns: 190px 1fr; gap: 32px; padding: 18px 0; border-top: 1px solid var(--line-2); }
   .fitem:first-child { border-top: none; }
   .fitem .name { font-family: var(--mono); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
   .fitem .name .sq { color: var(--accent); }
-  .fitem p { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+  .fitem p { color: var(--ink-2); font-size: 15px; max-width: 78ch; line-height: 1.55; }
   .fitem p b { font-weight: 500; }
   @media (max-width: 560px){ .fitem { grid-template-columns: 1fr; gap: 6px; } }
 
@@ -1019,11 +1046,23 @@
   .ctable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
   .cgroup-h { font-family: var(--mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); padding: 12px 18px; background: var(--paper); border-bottom: 1px solid var(--line-2); border-top: 1px solid var(--line); }
   .ctable .cgroup-h:first-child { border-top: none; }
-  .crow { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding: 11px 18px; border-top: 1px solid var(--line-2); align-items: baseline; }
+  .crow { display: grid; grid-template-columns: 230px 1fr; gap: 24px; padding: 11px 18px; border-top: 1px solid var(--line-2); align-items: baseline; }
   .crow:first-of-type { border-top: none; }
   .crow code { font-family: var(--mono); font-size: 13px; color: var(--accent); white-space: nowrap; }
-  .crow span { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+  .crow span { color: var(--ink-2); font-size: 14px; line-height: 1.45; }
   @media (max-width: 560px){ .crow { grid-template-columns: 1fr; gap: 3px; } }
+
+  /* remote-docker callout */
+  .pcloud { display: grid; grid-template-columns: 1fr 420px; gap: 40px; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 22px 24px; margin-bottom: 18px; }
+  .pc-kick { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .pcloud h3 { font-size: 19px; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.01em; }
+  .pcloud p { color: var(--ink-2); font-size: 14px; line-height: 1.6; max-width: 62ch; text-wrap: pretty; }
+  .pcloud p a { color: var(--accent); }
+  .pcloud p a:hover { text-decoration: underline; }
+  .pc-code { font-family: var(--mono); font-size: 12px; background: var(--accent-soft); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; color: var(--ink); white-space: nowrap; overflow: hidden; }
+  .pc-code .p { color: var(--muted); margin-right: 4px; }
+  .pc-code .ok { color: var(--accent); }
+  @media (max-width: 760px){ .pcloud { grid-template-columns: 1fr; } }
 
   /* providers compact */
   .ptable { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -1038,7 +1077,7 @@
   .warn { color: #b07d12; }
 
   /* install */
-  .inst { display: grid; grid-template-columns: 1fr 290px; gap: 28px; align-items: start; }
+  .inst { display: grid; grid-template-columns: 1fr 320px; gap: 40px; align-items: start; }
   @media (max-width: 640px){ .inst { grid-template-columns: 1fr; } }
   .inst .note { color: var(--ink-2); font-size: 14px; line-height: 1.6; margin-top: 18px; }
   .req { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px 20px; }
@@ -1139,21 +1178,21 @@
       <a href="#install">install</a>
       <a href="/docs" style="color:var(--accent);">docs</a>
     </nav>
-    <span class="top-right" style="display:flex;align-items:center;gap:14px;">
-      <a class="ver" id="agbVer" href="https://www.npmjs.com/package/@madarco/agentbox" target="_blank" rel="noopener" style="display:none;color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:11.5px;line-height:1;text-decoration:none;white-space:nowrap;"></a>
+    <div class="top-ext">
+      <a class="ver" id="agbVer" href="https://www.npmjs.com/package/@madarco/agentbox" target="_blank" rel="noopener" style="display:none;"></a>
       <a class="src" href="https://github.com/madarco/agentbox" target="_blank" rel="noopener">github ↗</a>
       <button class="menu-btn" id="menuBtn" aria-label="Menu" aria-expanded="false" aria-controls="topnav">
         <svg class="i-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <svg class="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
-    </span>
+    </div>
   </header>
 
   <!-- META STRIP -->
   <div class="meta pad">
     <span><b>npm</b> @madarco/agentbox</span>
     <span><b>license</b> MIT</span>
-    <span class="m-envs"><b>envs</b> Docker · Vercel · Hetzner · DigitalOcean · E2B · Daytona</span>
+    <span class="m-envs"><b>envs</b><span class="m-envs-vp"><span class="m-envs-track"><i>Docker · Your Hardware · Vercel · Hetzner · DigitalOcean · E2B · Daytona</i><i>&nbsp;·&nbsp;Docker · Your Hardware · Vercel · Hetzner · DigitalOcean · E2B · Daytona</i></span></span></span>
     <span class="m-os"><b>os</b> macOS · Linux</span>
   </div>
 
@@ -1163,7 +1202,7 @@
      <div class="hero-main">
       <div class="kicker">// self-hosted agent sandboxes</div>
       <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
-      <p class="lede">Move your project into a dedicated VM — local or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control. Drive it from the CLI or the <a class="applink" href="#app"><b>macOS menu bar app</b></a>.</p>
+      <p class="lede">Move your project into a dedicated VM — local, on a machine you own, or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control. Drive it from the CLI or the <a class="applink" href="#app"><b>macOS menu bar app</b></a>.</p>
       <div class="runline">
         <div class="body">
           <span class="p">$</span>
@@ -1269,6 +1308,7 @@
                 <div class="popup"><div class="pv">Docker <span class="hint">· local, connected</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
                 <div class="pop-menu">
                   <div class="pop-it on" data-name="Docker" data-hint="local, connected"><span class="ck">✓</span>Docker<span class="hint">local · connected</span></div>
+                  <div class="pop-it" data-name="Docker (mac-mini)" data-hint="remote · ssh"><span class="ck">✓</span>Docker (mac-mini)<span class="hint">remote · ssh</span></div>
                   <div class="pop-it" data-name="Vercel" data-hint="connected"><span class="ck">✓</span>Vercel<span class="hint">connected</span></div>
                   <div class="pop-it" data-name="Hetzner" data-hint="connected"><span class="ck">✓</span>Hetzner<span class="hint">connected</span></div>
                   <div class="pop-it" data-name="DigitalOcean" data-hint="connected"><span class="ck">✓</span>DigitalOcean<span class="hint">connected</span></div>
@@ -1317,6 +1357,7 @@
     <div class="ls-group">
       <span class="ls-cap">clouds</span>
       <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/docker/16181c" alt="" width="15" height="15">Docker</span>
+      <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/docker/16181c" alt="" width="15" height="15">Your Hardware</span>
       <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/vercel/16181c" alt="" width="15" height="15">Vercel</span>
       <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/hetzner/16181c" alt="" width="15" height="15">Hetzner</span>
       <span class="ls-item"><img class="si" src="https://cdn.simpleicons.org/digitalocean/16181c" alt="" width="15" height="15">DigitalOcean</span>
@@ -1664,6 +1705,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
                 <div class="popup"><div class="pv">Docker <span class="hint">· local, connected</span></div><div class="caret"><svg><use href="#i-chev-r"></use></svg></div></div>
                 <div class="pop-menu">
                   <div class="pop-it on" data-name="Docker" data-hint="local, connected"><span class="ck">✓</span>Docker<span class="hint">local · connected</span></div>
+                  <div class="pop-it" data-name="Docker (mac-mini)" data-hint="remote · ssh"><span class="ck">✓</span>Docker (mac-mini)<span class="hint">remote · ssh</span></div>
                   <div class="pop-it" data-name="Vercel" data-hint="connected"><span class="ck">✓</span>Vercel<span class="hint">connected</span></div>
                   <div class="pop-it" data-name="Hetzner" data-hint="connected"><span class="ck">✓</span>Hetzner<span class="hint">connected</span></div>
                   <div class="pop-it" data-name="DigitalOcean" data-hint="connected"><span class="ck">✓</span>DigitalOcean<span class="hint">connected</span></div>
@@ -1699,7 +1741,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
     <div class="flist">
       <div class="fitem">
         <div class="name"><span class="sq">▸</span> Teleport</div>
-        <p>Move your project to a dedicated VM — <b>local or in the cloud</b> — with a single command.</p>
+        <p>Move your project to a dedicated VM — <b>local, a machine you own, or the cloud</b> — with a single command.</p>
       </div>
       <div class="fitem">
         <div class="name"><span class="sq">▸</span> Automatic</div>
@@ -1729,6 +1771,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       <div class="crow"><code>agentbox claude</code><span>Create a sandboxed box and launch Claude Code in a detachable tmux session.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; claude</code><span>Launch sandboxed boxes on <b>Vercel</b>, <b>Hetzner</b>, <b>DigitalOcean</b>, <b>Daytona</b> or local <b>Docker</b>.</span></div>
       <div class="crow"><code>agentbox &lt;provider&gt; codex</code><span>Same, for <b>Codex</b> and <b>Open Code</b> — any agent, any provider.</span></div>
+      <div class="crow"><code>agentbox docker:mini claude</code><span><b>Your Hardware</b> — run boxes on any machine you own, over SSH. Register it once with <span class="mono">remote-docker add</span>.</span></div>
       <div class="crow"><code>agentbox claude attach 2</code><span>Reattach to a running Claude session on box <span class="mono">2</span>.</span></div>
 
       <div class="cgroup-h">access</div>
@@ -1755,16 +1798,29 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
   <!-- PROVIDERS -->
   <section class="sec pad rule" id="providers">
     <div class="sec-head"><span class="sec-no">07</span><h2>Providers</h2><span class="hint">local or remote</span></div>
+    <div class="pcloud">
+      <div class="pc-copy">
+        <div class="pc-kick">// your hardware</div>
+        <h3>Your own private sandbox cloud.</h3>
+        <p>Point AgentBox at any machine you can SSH into — the Mac Mini on your desk, a €5 Hetzner server — and run <b>many boxes</b> on its Docker engine. <b>Pause</b> keeps memory, <b>snapshots</b> restore in under a second, and your laptop stays cool. No account, no API token, no bill. <a href="https://agent-box.sh/docs/remote-docker" target="_blank" rel="noopener">remote-docker docs →</a></p>
+      </div>
+      <div class="pc-code">
+        <div><span class="p">$</span> agentbox remote-docker add mini me@10.0.0.9</div>
+        <div><span class="p">$</span> agentbox docker:mini claude</div>
+        <div class="ok">✓ box ready in 0.4s · claude code attached</div>
+      </div>
+    </div>
     <div class="ptable">
       <table>
         <thead>
-          <tr><th>capability</th><th class="col">local docker</th><th class="col">hetzner</th><th class="col">digitalocean</th><th class="col">daytona</th><th class="col">vercel</th></tr>
+          <tr><th>capability</th><th class="col">local docker</th><th class="col">your hardware</th><th class="col">hetzner</th><th class="col">digitalocean</th><th class="col">daytona</th><th class="col">vercel</th></tr>
         </thead>
         <tbody>
-          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td></tr>
-          <tr><td>base image</td><td>Dockerfile</td><td>setup script (Ubuntu)</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
-          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td></tr>
-          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
+          <tr><td>support</td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td><td><span class="yes">full</span></td></tr>
+          <tr><td>base image</td><td>Dockerfile</td><td>Dockerfile · over ssh</td><td>setup script (Ubuntu)</td><td>setup script (Ubuntu)</td><td>Dockerfile</td><td>setup script</td></tr>
+          <tr><td>live snapshots</td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td><td><span class="yes">yes</span></td></tr>
+          <tr><td>account / bill</td><td><span class="yes">none</span></td><td><span class="yes">none · your hardware</span></td><td>API token</td><td>API token</td><td>API key</td><td>account</td></tr>
+          <tr><td>private preview urls</td><td><span class="yes">portless · orbstack</span></td><td><span class="yes">portless</span></td><td><span class="yes">portless</span></td><td><span class="yes">portless</span></td><td><span class="yes">native</span></td><td><span class="yes">native</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -2169,9 +2225,9 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
       { t: 'out', s: '⬡ provisioning box on hetzner…', c: 'dim' },
       { t: 'out', s: '✓ box 1 ready · claude code attached', c: 'ok' },
       { t: 'gap' },
-      { t: 'cmd', s: 'agentbox vercel codex' },
-      { t: 'out', s: '⬡ provisioning box on vercel…', c: 'dim' },
-      { t: 'out', s: '✓ box 2 ready · codex attached', c: 'ok' },
+      { t: 'cmd', s: 'agentbox docker:mac-mini codex' },
+      { t: 'out', s: '⬡ ssh mac-mini · restoring snapshot…', c: 'dim' },
+      { t: 'out', s: '✓ box 2 ready in 0.4s · codex attached', c: 'ok' },
       { t: 'gap' },
       { t: 'cmd', s: 'agentbox codex attach 2' },
       { t: 'out', s: '↳ reattaching to running session…', c: 'dim' },
@@ -2481,7 +2537,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
     var wrap = document.querySelector('.hero-desk-scroll');
     var desk = document.querySelector('.trayapp.hero-desk');
     if (!wrap || !desk) return;
-    var BASE_W = 420, BASE_H = 402;
+    var BASE_W = 420, BASE_H = 460;
     function fit() {
       var w = wrap.clientWidth;
       if (w && w < BASE_W) {
@@ -2516,6 +2572,29 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
         if (d && d.version) { el.textContent = 'v' + d.version; el.style.display = ''; }
       })
       .catch(function () {});
+  })();
+
+  // envs meta cell — marquee only while the list overflows its viewport
+  (function () {
+    var cell = document.querySelector('.meta .m-envs');
+    if (!cell) return;
+    var vp = cell.querySelector('.m-envs-vp');
+    var track = cell.querySelector('.m-envs-track');
+    var first = track && track.firstElementChild;
+    if (!vp || !track || !first) return;
+    function measure() {
+      cell.classList.remove('scrolling');
+      var over = first.getBoundingClientRect().width - vp.clientWidth;
+      if (over <= 1) return;
+      var shift = first.getBoundingClientRect().width;
+      track.style.setProperty('--marquee-shift', '-' + Math.round(shift) + 'px');
+      track.style.setProperty('--marquee-dur', Math.max(10, Math.round(shift / 34)) + 's');
+      cell.classList.add('scrolling');
+    }
+    measure();
+    var t;
+    window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(measure, 150); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
   })();
 
   // mobile nav — hamburger toggles the dropdown

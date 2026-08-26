@@ -16,8 +16,10 @@ export interface CarryItem {
   mode?: number;
   /**
    * Numeric uid that should own the carried file inside the box. When unset,
-   * the copy step defaults to 1000 (the `vscode` user every box runs as) so
-   * the carried files are always agent-readable. Set 0 to keep root-owned.
+   * the copy step resolves the `vscode` user every box runs as, so the carried
+   * files are always agent-readable — its uid is 1000 on some providers and
+   * provider-assigned on others, so leave this unset unless you mean a literal
+   * uid. Set 0 to keep root-owned.
    */
   user?: number;
   /**
@@ -80,7 +82,9 @@ function parseUser(raw: unknown, where: string): number | undefined {
   let n: number;
   if (typeof raw === 'number') {
     if (!Number.isInteger(raw) || raw < 0) {
-      throw new CarryConfigError(`${where}.user must be a non-negative integer uid (got ${String(raw)})`);
+      throw new CarryConfigError(
+        `${where}.user must be a non-negative integer uid (got ${String(raw)})`,
+      );
     }
     n = raw;
   } else if (typeof raw === 'string') {
@@ -131,7 +135,9 @@ function parseMode(raw: unknown, where: string): number | undefined {
   let n: number;
   if (typeof raw === 'number') {
     if (!Number.isInteger(raw) || raw < 0) {
-      throw new CarryConfigError(`${where}.mode must be a non-negative integer (got ${String(raw)})`);
+      throw new CarryConfigError(
+        `${where}.mode must be a non-negative integer (got ${String(raw)})`,
+      );
     }
     n = raw;
   } else if (typeof raw === 'string') {
@@ -140,7 +146,8 @@ function parseMode(raw: unknown, where: string): number | undefined {
       throw new CarryConfigError(`${where}.mode must not be empty`);
     }
     // Accept "0600", "600", "0o600". Always interpreted as octal.
-    const cleaned = trimmed.startsWith('0o') || trimmed.startsWith('0O') ? trimmed.slice(2) : trimmed;
+    const cleaned =
+      trimmed.startsWith('0o') || trimmed.startsWith('0O') ? trimmed.slice(2) : trimmed;
     if (!/^[0-7]+$/.test(cleaned)) {
       throw new CarryConfigError(
         `${where}.mode "${raw}" must be an octal number (e.g. 0o600, "0600", "600")`,

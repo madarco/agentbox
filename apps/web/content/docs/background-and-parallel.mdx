@@ -5,7 +5,7 @@ description: Run many boxes at once, queue background runs with -i, and drive a 
 
 AgentBox is built for fan-out. Every box is fully isolated — its own container and its own `agentbox/<box-name>` branch in a worktree (see [core concepts](/docs/core-concepts)) — so several agents can work the same repo at once without stepping on each other.
 
-There are three capabilities here. **Running boxes in parallel** means you launch several agent sessions yourself, foreground or detached. The **`-i` background queue** lets you submit prompts that the host relay schedules and runs unattended, capped so you don't melt your laptop or burn quota. And **orchestration** lets a host-side agent (or any script) *drive the fleet* — read what each box is doing, send it keystrokes or a prompt, watch its live state, and block on queue and box lifecycle events.
+There are three capabilities here. **Running boxes in parallel** means you launch several agent sessions yourself, foreground or detached. The **`-i` background queue** lets you submit prompts that the host relay schedules and runs unattended, capped so you don't melt your laptop or burn quota. And **orchestration** lets a host-side agent (or any script) _drive the fleet_ — read what each box is doing, send it keystrokes or a prompt, watch its live state, and block on queue and box lifecycle events.
 
 ## Run boxes in parallel
 
@@ -21,11 +21,16 @@ agentbox codex
 It's one agent per box, but a box can hold multiple shell sessions — see [access your box](/docs/access-your-box). To launch many without the queue, detach each as you go: `Ctrl+a d` leaves the agent running, and `agentbox attach <box>` reattaches later.
 
 <Callout type="warn" title="HEADS UP">
-These run with **no concurrency cap** — they all start immediately and each consumes CPU, RAM, and agent quota. To have AgentBox pace the runs for you, use the `-i` background queue below.
+  These run with **no concurrency cap** — they all start immediately and each consumes CPU, RAM, and
+  agent quota. To have AgentBox pace the runs for you, use the `-i` background queue below.
 </Callout>
 
 {/* SCREENSHOT /screenshots/agentbox-ls.png — REPRO: create boxes across providers in one project (agentbox create -n web; agentbox create --provider vercel -n cloud; agentbox create --provider hetzner -n remote), run `agentbox ls`, then render its output through the terminal-card template (/tmp/gen-term.js) and screenshot it headlessly. */}
-<Figure src="/screenshots/agentbox-ls.png" caption="agentbox ls — boxes running in parallel across docker, vercel, and hetzner, each in its own sandbox." />
+
+<Figure
+  src="/screenshots/agentbox-ls.png"
+  caption="agentbox ls — boxes running in parallel across docker, vercel, and hetzner, each in its own sandbox."
+/>
 
 ## Queue background runs with `-i`
 
@@ -52,6 +57,7 @@ By default a queued run opens nothing — attach later with `agentbox attach <bo
 ```bash
 agentbox claude -- -p "Summarize the open PRs"
 ```
+
 </Callout>
 
 `-i` can't combine with `-c` / `--resume` or `--plan`. Per-job, `--max-running` and `--max-working` override the global caps. See [CLI commands](/docs/cli) for all flags.
@@ -60,13 +66,13 @@ agentbox claude -- -p "Summarize the open PRs"
 
 The queue is configured with **global** config keys (the relay is host-wide, so project and workspace layers are intentionally ignored — always use `--global`). Changes take effect on the next relay tick, no restart.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `queue.enabled` | `true` | Run `-i` jobs through the host-wide FIFO queue. |
-| `queue.maxConcurrent` | `5` | Max simultaneously **running boxes** (all providers) before `-i` jobs queue. |
-| `queue.maxWorking` | `0` (off) | Max agents actively **working** (quota-consuming) at once; `0` falls back to the running-box gate. |
-| `queue.idleGraceSeconds` | `15` | Seconds an agent must stay non-working before it frees its working slot. |
-| `queue.openIn` | `none` | When a queued box becomes ready, open an attached terminal onto it: `split`, `window`, or `tab` (tmux/cmux/iTerm2). `none` opens nothing. |
+| Key                      | Default   | Meaning                                                                                                                                   |
+| ------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue.enabled`          | `true`    | Run `-i` jobs through the host-wide FIFO queue.                                                                                           |
+| `queue.maxConcurrent`    | `5`       | Max simultaneously **running boxes** (all providers) before `-i` jobs queue.                                                              |
+| `queue.maxWorking`       | `0` (off) | Max agents actively **working** (quota-consuming) at once; `0` falls back to the running-box gate.                                        |
+| `queue.idleGraceSeconds` | `15`      | Seconds an agent must stay non-working before it frees its working slot.                                                                  |
+| `queue.openIn`           | `none`    | When a queued box becomes ready, open an attached terminal onto it: `split`, `window`, or `tab` (tmux/cmux/iTerm2). `none` opens nothing. |
 
 The default caps **running boxes**. Turn on `queue.maxWorking` for a smarter **working-agent** cap — paused or idle boxes don't count, so you can keep more boxes alive cheaply (see [checkpoints and pausing](/docs/checkpoints-and-pausing)) while still bounding active quota burn. Because `maxConcurrent` counts boxes across all providers, cloud `-i` jobs on [Daytona](/docs/daytona), [Hetzner](/docs/hetzner), or [Vercel](/docs/vercel) share the same gate.
 
@@ -79,7 +85,7 @@ For the full key reference and config precedence, see [configuration](/docs/conf
 
 ## Manage the queue
 
-`agentbox queue` inspects and manages background `-i` jobs: `queue list` shows queued + running jobs, `queue show <id>` dumps the manifest and tails the log, `queue cancel <id>` cancels a *queued* job, `queue clear` sweeps terminal-state manifests, and `queue wait-for <event>` blocks until a queue/box event fires (the scripting gate). See [CLI commands](/docs/cli) for all flags.
+`agentbox queue` inspects and manages background `-i` jobs: `queue list` shows queued + running jobs, `queue show <id>` dumps the manifest and tails the log, `queue cancel <id>` cancels a _queued_ job, `queue clear` sweeps terminal-state manifests, and `queue wait-for <event>` blocks until a queue/box event fires (the scripting gate). See [CLI commands](/docs/cli) for all flags.
 
 ```bash
 agentbox queue list            # active jobs (queued + running)
@@ -91,15 +97,15 @@ agentbox queue cancel <id>     # cancel a *queued* job (not a running one)
 
 ```console
 $ agentbox queue list
-id                  status   agent   box           provider  max  age   prompt
-------------------  -------  ------  ------------  --------  ---  ----  ------------------------------
-a1b2c3d4e5f6a1b2c3  running  codex   changelog     docker    5    2m    Draft the v0.13 changelog fro…
-b7c8d9e0f1a2b3c4d5  queued   claude  nightly-deps  docker    5    30s   Upgrade all dependencies and …
+id            status   agent   box           provider  age
+------------  -------  ------  ------------  --------  ----
+a1b2c3d4e5f6  running  codex   changelog     docker    2m
+b7c8d9e0f1a2  queued   claude  nightly-deps  docker    30s
 
 queue.maxConcurrent = 5 (queue.enabled=true)
 ```
 
-`queue wait-for <event>` blocks on queue and box *lifecycle* transitions (`empty-queue`, `box-running`/`box-paused`/`box-stopped`, `job-done`, …) — useful to settle a whole batch. See [CLI commands](/docs/cli) for the full event list and flags. For driving a single agent's turn, reach for `agent wait-for` below — that's the primary orchestration gate.
+`queue wait-for <event>` blocks on queue and box _lifecycle_ transitions (`empty-queue`, `box-running`/`box-paused`/`box-stopped`, `job-done`, …) — useful to settle a whole batch. See [CLI commands](/docs/cli) for the full event list and flags. For driving a single agent's turn, reach for `agent wait-for` below — that's the primary orchestration gate.
 
 <Callout type="warn" title="CANCEL VS DESTROY">
 `queue cancel` only stops jobs still in `queued`. A **running** job keeps going — stop it by destroying its box with `agentbox destroy <box>` (the error message tells you the box name).
@@ -107,11 +113,11 @@ queue.maxConcurrent = 5 (queue.enabled=true)
 
 ## Orchestrate boxes from an agent
 
-The real power of fan-out is letting *an agent* run the fleet for you. Ask Claude Code (or Codex / OpenCode) on your laptop to "spin up three boxes, fan out this work, watch them, and report back when they're done" — and it can, because AgentBox installs a host skill that teaches it the whole orchestration surface.
+The real power of fan-out is letting _an agent_ run the fleet for you. Ask Claude Code (or Codex / OpenCode) on your laptop to "spin up three boxes, fan out this work, watch them, and report back when they're done" — and it can, because AgentBox installs a host skill that teaches it the whole orchestration surface.
 
 ### The `/agentbox-info` skill
 
-`agentbox install` drops a reference skill at `~/.claude/skills/agentbox-info/SKILL.md` (a managed, non-invocable skill — your host agent reads it automatically; you don't call it). It documents how to provision boxes, queue `-i` jobs, drive a box's terminal, monitor agent state, and push commits through the host relay — so the host agent already knows the commands below. It's distinct from `/agentbox` (the host-side *fork* — see [run an agent](/docs/run-an-agent)) and the in-box `/agentbox-setup` wizard.
+`agentbox install` drops a reference skill at `~/.claude/skills/agentbox-info/SKILL.md` (a managed, non-invocable skill — your host agent reads it automatically; you don't call it). It documents how to provision boxes, queue `-i` jobs, drive a box's terminal, monitor agent state, and push commits through the host relay — so the host agent already knows the commands below. It's distinct from `/agentbox` (the host-side _fork_ — see [run an agent](/docs/run-an-agent)) and the in-box `/agentbox-setup` wizard.
 
 Three command families do the actual driving. All are stateless one-shot commands, safe to call from any script or any agent in parallel, and every one takes `--json` for machine-friendly output.
 
@@ -131,7 +137,7 @@ agentbox drive resize 1 200 60
 
 ### `agentbox agent` — monitor the agent's live state
 
-Where `drive` reads raw pixels, `agentbox agent` reports *what the agent is doing*, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error | input-needed` — so you can watch a box flip from **working** to **idle**, or block until it needs you.
+Where `drive` reads raw pixels, `agentbox agent` reports _what the agent is doing_, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error | input-needed` — so you can watch a box flip from **working** to **idle**, or block until it needs you.
 
 ```bash
 agentbox agent state 1                              # → working | idle | waiting | end-plan | ...
@@ -143,19 +149,19 @@ agentbox agent wait-for question 1                  # an AskUserQuestion picker 
 agentbox agent get-plan-question 1                  # read the pending plan body or question + options
 ```
 
-**`input-needed` is the most important orchestration event** — the single signal that *you* (or the orchestrating agent) need to take action. It fires whenever the agent stops working and wants a human, whether because the **task finished and the prompt is ready** for the next message, or because the **subagent is blocked** on a question, a plan to approve, a permission prompt, or an error. It's the robust replacement for chaining separate `wait-for end-plan` / `wait-for question` / `wait-for prompt` calls — each of those hangs until *its* timeout if the agent happens to reach a *different* state. `wait-for input-needed` also prints the concrete state it matched (`prompt` / `end-plan` / `question` / `waiting` / `error`), so a script can branch on *why* it woke.
+**`input-needed` is the most important orchestration event** — the single signal that _you_ (or the orchestrating agent) need to take action. It fires whenever the agent stops working and wants a human, whether because the **task finished and the prompt is ready** for the next message, or because the **subagent is blocked** on a question, a plan to approve, a permission prompt, or an error. It's the robust replacement for chaining separate `wait-for end-plan` / `wait-for question` / `wait-for prompt` calls — each of those hangs until _its_ timeout if the agent happens to reach a _different_ state. `wait-for input-needed` also prints the concrete state it matched (`prompt` / `end-plan` / `question` / `waiting` / `error`), so a script can branch on _why_ it woke.
 
-| State | `agent wait-for` matches when |
-| --- | --- |
+| State              | `agent wait-for` matches when                                                                                                                                                   |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`input-needed`** | **the agent needs you for anything — a question, plan approval, permission prompt, finished turn (prompt ready), or an error (i.e. any state except `working` / `compacting`)** |
-| `prompt` | idle, session up, no pending plan/question — ready for the next message |
-| `idle` | the turn finished (Stop hook fired) |
-| `end-plan` | ExitPlanMode fired — a plan awaits approval |
-| `question` | an AskUserQuestion picker is up |
-| `waiting` | a tool/permission prompt is pending |
-| `working` | the agent is actively working |
-| `compacting` | the context is being compacted |
-| `error` | the turn ended in an error |
+| `prompt`           | idle, session up, no pending plan/question — ready for the next message                                                                                                         |
+| `idle`             | the turn finished (Stop hook fired)                                                                                                                                             |
+| `end-plan`         | ExitPlanMode fired — a plan awaits approval                                                                                                                                     |
+| `question`         | an AskUserQuestion picker is up                                                                                                                                                 |
+| `waiting`          | a tool/permission prompt is pending                                                                                                                                             |
+| `working`          | the agent is actively working                                                                                                                                                   |
+| `compacting`       | the context is being compacted                                                                                                                                                  |
+| `error`            | the turn ended in an error                                                                                                                                                      |
 
 ### Putting it together
 
@@ -204,7 +210,7 @@ agentbox agent approve <id> --deny              # reject (relay: deny; in-TUI: E
 agentbox agent approvals design --wait 600000
 ```
 
-The **id is a safety token**. `approve <id>` answers the specific prompt you listed; if a *different* prompt has since taken its place, the recomputed id won't match and the approve is **refused** — it never answers the wrong thing. So the loop is always `approvals` → read the `command`/`argv`/options → `approve <id>`, one at a time, never blanket-approving whatever the box asks. For relay approvals that also keeps a prompt-injected box from laundering a malicious push through your credentials (only a host process can answer — the relay endpoint is loopback-only); the orchestrator already holds your git and file credentials, so answering grants nothing new. In-TUI keystroke mapping is best-effort and TUI-version-sensitive — if an approve doesn't take, fall back to [`drive`](/docs/cli).
+The **id is a safety token**. `approve <id>` answers the specific prompt you listed; if a _different_ prompt has since taken its place, the recomputed id won't match and the approve is **refused** — it never answers the wrong thing. So the loop is always `approvals` → read the `command`/`argv`/options → `approve <id>`, one at a time, never blanket-approving whatever the box asks. For relay approvals that also keeps a prompt-injected box from laundering a malicious push through your credentials (only a host process can answer — the relay endpoint is loopback-only); the orchestrator already holds your git and file credentials, so answering grants nothing new. In-TUI keystroke mapping is best-effort and TUI-version-sensitive — if an approve doesn't take, fall back to [`drive`](/docs/cli).
 
 For a fully-unattended run over **trusted** boxes, opt into blanket auto-approval per box:
 
@@ -239,8 +245,14 @@ SYSTEM: ~/.agentbox: 3.4GiB - checkpoints: 1.1GiB
 Per-box live CPU/mem metrics are docker-only; cloud boxes show `—` for those columns.
 
 {/* SCREENSHOT /screenshots/dashboard.png — REPRO: drive the TUI via the PTY harness — pnpm drive start --cols 96 --rows 19 --cwd <project> -- agentbox dashboard <box> ; pnpm drive screen <id> ; strip the pnpm/tsx wrapper lines ; render via /tmp/gen-term.js and screenshot headlessly. */}
-<Figure src="/screenshots/dashboard.png" caption="agentbox dashboard: the box list on the left; the panel on the right acts on the selected box (start an agent, open a shell)." />
+
+<Figure
+  src="/screenshots/dashboard.png"
+  caption="agentbox dashboard: the box list on the left; the panel on the right acts on the selected box (start an agent, open a shell)."
+/>
 
 <Callout title="NOTE">
-The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` runs work in parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to monitor those.
+  The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` runs work in
+  parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to
+  monitor those.
 </Callout>

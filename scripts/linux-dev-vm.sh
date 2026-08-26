@@ -4,7 +4,7 @@
 # `agentbox` on a Linux host. NOT an agentbox box: a bare VPS you log into and
 # drive the CLI on to check Linux compatibility of any feature.
 #
-# WHY this exists: the CLI grew up macOS-only (see docs/linux-host-backlog.md).
+# WHY this exists: the CLI grew up macOS-only (see docs/development.md).
 # To find and fix Linux-host issues we need a real Ubuntu host that survives
 # across edit/deploy/test cycles. This script provisions one, ships the locally
 # built CLI on demand, and tears it down when you're done.

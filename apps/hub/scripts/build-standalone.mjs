@@ -71,6 +71,55 @@ function readPkgVersion(name, fromDir) {
   return null;
 }
 
+/**
+ * Packages the bundle must NOT inline. They resolve at runtime from the installed
+ * `@madarco/agentbox`'s own node_modules (the bundle ships none of its own), so
+ * every entry here has to be a real dependency of apps/cli — see the guard below.
+ */
+const EXTERNAL = [
+  'next',
+  'next/*',
+  'pg',
+  'pg-native',
+  // The @agentbox/sandbox-* providers are private:true workspace packages
+  // (never published to npm), so a fresh `npm i -g` install has no node_modules
+  // to resolve them from — bundle them IN. Their heavy, npm-published SDKs stay
+  // external (they're real deps of @madarco/agentbox) and are only pulled when a
+  // cloud box lifecycle action fires (never on the docker/localhost path).
+  '@daytona/sdk',
+  '@vercel/sandbox',
+  'e2b',
+  // password-mode auth: lazy chunk, never loaded in localhost token mode.
+  'better-auth',
+  'better-auth/*',
+  'kysely',
+];
+
+/** Externals that are deliberately not CLI dependencies (optional native peers). */
+const EXTERNAL_NOT_A_DEP = new Set(['pg-native']);
+
+// An external naming no real dependency silently does the OPPOSITE of what it says:
+// esbuild matches nothing and inlines the package. That is invisible here and only
+// explodes in production — `@daytonaio/sdk` (the pre-rename `@daytona/sdk` name) sat
+// in this list, inlining the SDK, whose internal relative import of
+// `../ObjectStorage.js` then resolved against the bundle and failed every daytona
+// create on a control box. Fail the build instead of shipping that again.
+{
+  const cliPkg = JSON.parse(readFileSync(path.join(hubDir, '..', 'cli', 'package.json'), 'utf8'));
+  const deps = cliPkg.dependencies ?? {};
+  const missing = EXTERNAL.filter((e) => !e.endsWith('/*'))
+    .filter((e) => !EXTERNAL_NOT_A_DEP.has(e))
+    .filter((e) => !(e in deps));
+  if (missing.length > 0) {
+    console.error(
+      `[build-standalone] external(s) not declared in apps/cli dependencies: ${missing.join(', ')}. ` +
+        `esbuild would INLINE them instead of leaving them external. Add the dependency, fix the ` +
+        `specifier, or list it in EXTERNAL_NOT_A_DEP.`,
+    );
+    process.exit(1);
+  }
+}
+
 // esbuild is a transitive workspace dep; resolve it via tsup's tree.
 const require = createRequire(import.meta.url);
 const esbuild = require(
@@ -87,24 +136,7 @@ await esbuild.build({
   outdir: path.join(hubDir, '.standalone-server'),
   entryNames: 'server',
   splitting: true, // keep lazy import('./lib/auth') + dynamic cloud-provider imports as separate chunks
-  external: [
-    'next',
-    'next/*',
-    'pg',
-    'pg-native',
-    // The @agentbox/sandbox-* providers are private:true workspace packages
-    // (never published to npm), so a fresh `npm i -g` install has no node_modules
-    // to resolve them from — bundle them IN. Their heavy, npm-published SDKs stay
-    // external (they're real deps of @madarco/agentbox) and are only pulled when a
-    // cloud box lifecycle action fires (never on the docker/localhost path).
-    '@daytonaio/sdk',
-    '@vercel/sandbox',
-    'e2b',
-    // password-mode auth: lazy chunk, never loaded in localhost token mode.
-    'better-auth',
-    'better-auth/*',
-    'kysely',
-  ],
+  external: EXTERNAL,
   banner: {
     js: "import { createRequire as __cr } from 'node:module'; import { fileURLToPath as __f } from 'node:url'; import { dirname as __d } from 'node:path'; const require = __cr(import.meta.url); const __filename = __f(import.meta.url); const __dirname = __d(__filename);",
   },
@@ -139,5 +171,15 @@ for (const f of await readdir(serverOut)) {
   await cp(path.join(serverOut, f), path.join(outApp, f));
 }
 await rm(serverOut, { recursive: true, force: true });
+
+// The E2B provider's attach helper is a standalone .cjs the resident worker spawns
+// to start the agent detached (E2B has no SSH). `resolveAttachHelperPath` looks for
+// it next to the running bundle, so a hub-created e2b box would come up but its
+// `-i` agent-start fails ("e2b attach helper not found") without this copy.
+const e2bHelperSrc = path.join(hubDir, '..', '..', 'packages', 'sandbox-e2b', 'dist', 'attach-helper.cjs');
+if (existsSync(e2bHelperSrc)) {
+  await cp(e2bHelperSrc, path.join(outApp, 'attach-helper.cjs'));
+  console.log('[build-standalone] staged e2b attach-helper.cjs');
+}
 
 console.log(`[build-standalone] done → ${path.relative(process.cwd(), path.join(outApp, 'server.js'))}`);

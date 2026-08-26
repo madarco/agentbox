@@ -124,7 +124,7 @@ The relay/bridge **tokens** are deliberately kept out of the world-readable
 reads on demand (`resolveRelayEnv`); the bridge token stays in the daemon's
 process env only. This is what lets the in-box agent and the host-driven
 `agentbox git push` reach the relay on cloud boxes, which (unlike docker) have no
-global env to inherit the token from. See [`host-relay.md`](./host-relay.md).
+global env to inherit the token from. See [`host-relay.md`](./architecture.md#host-relay-agentboxrelay).
 
 ### 1.1 Per-provider base-image pins
 
@@ -181,6 +181,60 @@ docker passes a Dockerfile `--build-arg` (and folds the mode into
 `ensureImage`'s create-time fingerprint so the lazy rebuild doesn't
 clobber an npm image); daytona — whose SDK has no build-arg — builds from
 a sibling temp Dockerfile with the ARG default flipped.
+
+### 1.2.2 Where a cloud base is baked, and who ends up holding it
+
+A cloud base is a provider-side snapshot **any** machine with the API key
+can boot, so it should be baked once and shared — not baked per machine.
+Two mechanisms do that, and both key off the same `base.contextSha256`:
+
+- **Routing** (`control-plane/route-prepare.ts`). With a control box
+  configured and `cloud.viaHub` on, `agentbox prepare --provider <cloud>`
+  drives **its** bake (`POST /api/v1/providers/:id/prepare`, log streamed
+  over the job SSE), then pulls the record back from custody. That is the
+  same machine `create` builds on, so a local bake would produce a
+  snapshot nothing boots. `--local` / `--via-hub` force either side;
+  `--name` / `--location` / `--size` keep it local, since the hub's
+  `parseProviderPrepare` doesn't carry them.
+
+  The bake-side predicate is `isHubBakeableProvider`, **not**
+  `isHubRoutableProvider` — they answer different questions, and both
+  turn on the same runtime fact for **remote-docker**: whether the
+  control box has that alias in its OWN registry (`GET /api/v1/hosts`,
+  via `controlBoxKnowsHost`). It SSHes there as itself, so your local
+  alias list says nothing about whether it can — which is what
+  `agentbox remote-docker share <alias>` exists to change. Once shared,
+  BOTH its bakes and its creates go to the control box; until then both
+  stay on this machine, with a reason printed. Only plain `docker` is
+  never hub-bakeable or hub-routable: it bind-mounts a checkout that
+  exists only here.
+
+  **Known gap:** the alias registry is per machine and nothing propagates
+  it — every writer (`upsertHostAlias`, from `docker add` / `host-setup`
+  / the hub's `addRemoteDockerHost`) is local. So a host added on the PC
+  keeps baking on the PC until it is registered on the control box too.
+  Left manual on purpose: copying the alias across would flip
+  `hubKnowsHost` to true without the control box's key being authorized
+  on that host, routing a bake that then fails in place of a local one
+  that worked. The hub's `POST /api/v1/hosts` already `probeRemoteEngine`s
+  before saving, so a *probe-gated* propagation is the shape to build if
+  this is ever automated — never a file copy.
+- **Sync** (`control-plane/prepared-custody.ts` + `sandbox-cloud/prepared-sync.ts`).
+  `syncBakesWithControlBox` (hub setup / deploy / update) and the
+  `self-update` post-update refresh reconcile **both** directions: push
+  the local record when it matches this CLI's build context, otherwise
+  pull the box's. Adoption is fingerprint-match-wins and fold-tolerant
+  (`matchClaudeInstallFingerprint`), so a base baked in the other
+  `box.claudeInstall` mode is taken rather than re-baked, exactly as the
+  hub's own `hydratePreparedFromCustody` does. Adopting also mirrors the
+  `box.image<Provider>` pin — daytona resolves its base from that key,
+  not from prepared-state, so a record-only adoption would be inert.
+
+The PC's hub UI follows the same principle: with a control box configured
+it **mirrors** that box's provider rows (`lib/remote-hub.ts` +
+`lib/boxes/provider-origin.ts`) instead of reporting local bakes nothing
+will boot. An unreachable box renders as `unknown`, never as local state
+under a control-box label.
 
 ### 1.3 Login → prepare nudge
 
@@ -462,6 +516,20 @@ supported" error so the in-box RPC unblocks):
 - `browser.open.mirror` — fire-and-forget; host opens the URL in the
   user's browser after an SSE prompt (90s TTL).
 
+**How the host executor finds the backend.** The relay bundle carries no
+`@agentbox/sandbox-*` packages (that would close a
+`sandbox-daytona → sandbox-cloud → sandbox-docker → relay` dependency cycle), so
+the host process injects them with `setCloudBackendLoader`. `resolveCloudBackend`
+then tries, in order: the **injected loader** (built-ins only) → the legacy
+computed-specifier `import()` (resolves only in the pnpm dev tree) → the
+**plugin registry** (external providers, imported by absolute path, behind the
+SDK-version gate) → error. The two injection sites are the CLI's spawned relay
+bin, which side-loads `apps/cli/dist/cloud-backends.js` through the
+`AGENTBOX_CLOUD_BACKENDS` env var set by `spawnRelay`, and the hub/control box,
+which registers `apps/hub/lib/provider-importers.ts` in-process before starting
+the daemon. `scripts/check-cloud-backend-wiring.mjs` guards both in CI — the
+failure mode only appears in built bundles.
+
 ### 2.4 Preview URLs
 
 Three flavors, one per use case:
@@ -657,8 +725,8 @@ the docker provider ships, TigerVNC + noVNC + websockify + autocutsel,
 Playwright Chromium + agent-browser + portless, Claude Code (native
 installer) + Codex + OpenCode, sshd hardening drop-in, vscode user (UID
 1000) with passwordless sudo. Order matters: all small file-install
-steps run BEFORE the long Chromium download (see follow-ups in
-`docs/hertzner_backlog.md` for the diagnostic on why).
+steps run BEFORE the long Chromium download — a failure late in that
+download otherwise loses every install step that came after it.
 
 ### 3.3 SSH tunnel manager — the load-bearing comms primitive
 
@@ -746,9 +814,7 @@ hetzner-specific code (verified live in Phase-7 smoke).
 ## 3b. The Vercel shape
 
 Vercel Sandbox is a Firecracker microVM on Amazon Linux 2023 with first-class
-snapshots and `sandbox.domain(port)` public preview URLs. Full build-out status
-and the live-verify checklist live in [`vercel-backlog.md`](./vercel-backlog.md);
-the shape in brief:
+snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
 
 - **Base via snapshot, not Dockerfile.** Vercel can't build an image, so
   `agentbox prepare --provider vercel` boots a fresh `node24` sandbox, runs
@@ -898,10 +964,18 @@ answered by asking the engine (`docker image inspect`), not by trusting a local
 file that could disagree with it — and it is answered **per host**, which a
 single `~/.agentbox/remote-docker-prepared.json` could never be. Ensure order:
 present → pull the fingerprint-tagged GHCR image (published multi-arch, so an
-amd64 remote gets amd64 from an arm64 laptop) → stream the local build context to
-`docker build -` on the remote. `prepare` is therefore **optional** (unlike the
-VPS providers': a remote engine can build from a Dockerfile), and only records
-history for `prepare --status` / `doctor`.
+amd64 remote gets amd64 from an arm64 laptop) → stream the local build context
+into a temp dir on the remote and `docker build` it from there. `prepare` is
+therefore **optional** (unlike the VPS providers': a remote engine can build from
+a Dockerfile), and only records history for `prepare --status` / `doctor`.
+
+The build deliberately does **not** use `docker build -` (the tar-on-stdin form).
+Docker 29 dropped the classic builder, and buildx rejects a stdin context
+combined with `-f` outright — `ambiguous Dockerfile source: both stdin and flag
+correspond to Dockerfiles` — which killed every bake and every registry-miss
+create on a current engine. Our context always names its Dockerfile
+`Dockerfile.box`, so `-f` is not negotiable; the temp dir is, and it is removed
+whether the build succeeds or fails.
 
 **Checkpoints.** `docker commit` on the engine. The snapshot name carries the
 host, because `deleteSnapshot`/`snapshotExists` are handed nothing but that string
@@ -938,6 +1012,14 @@ as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
 CLI and hub show no login row. A named host-alias registry
 (`~/.agentbox/remote-docker-hosts.json`) driven by `agentbox remote-docker
 add|update|list|doctor|remove` replaces it.
+
+The one exception is a host **shared with a control box**. A registry entry may
+carry a `connection` — the `ssh -G` expansion (host / user / port) plus an
+explicit `identityFile` — and when it does, that wins over the `ssh` string at
+dial time (`dialTarget`). It has to: an `~/.ssh/config` alias means whatever the
+registering user's config says and nothing at all on another machine, and the hub
+container has no `~/.ssh` and no agent. An entry without a `connection` behaves
+exactly as before.
 
 **Known limits.** Published ports are fixed at `docker run` (same constraint as
 Vercel): a service added to `agentbox.yaml` after create is reachable through the
@@ -989,6 +1071,35 @@ General settings and the project id in the project's General settings.
 `.env`/`.env.local` are never harvested. First-time use of `--provider e2b`
 triggers the login prompt automatically.
 
+## 4b. Custody, adoption and the thin-client laptop
+
+With a control box configured, cloud-box **management** runs on the control box
+(create, lifecycle, checkpoints, prune, git leasing, approvals, status) while the
+**direct IO plane** stays on the laptop. That split is bridged by two things:
+
+- **Custody** — the control box holds, metadata-addressed, what a box needs from
+  either side: agent credentials, per-project seed material (`.env` + untracked),
+  provider bake records, and **per-box SSH private keys** (hetzner/DigitalOcean).
+  It is served under `/api/v1/custody` with a strict **two-tier** contract:
+  `list` / `PUT` / `DELETE` authorize with the hub API key and their responses are
+  **metadata only** (path/size/sha256/mode/mtime — never a value); the byte-read
+  `GET /api/v1/custody/<path>` is the **one** value-returning route and is
+  *elevated* — on a control box (password profile) it additionally requires the
+  admin token, so the widely-distributed API key alone can never read a secret. On
+  a plain localhost hub the hub token suffices but the byte-read is
+  **loopback-peer-gated** (the localhost hub binds `0.0.0.0` for docker boxes, so a
+  non-loopback byte-read is refused even with a valid token — custody bytes must not
+  cross the network). The gate is fail-closed and depends on the custom server
+  owning the socket and stripping any client-supplied copy of the trust header.
+- **Adoption** — because the IO plane is direct, the laptop materializes a local
+  `BoxRecord` for a cloud box it wants to drive, re-sourced from `GET /api/v1/boxes`
+  (the payload carries every non-secret reconstruction field; tokens are re-minted
+  host-side) and pulling the box's per-box SSH key from custody. A thin client with
+  the API key but no admin token adopts the record and works over the SDK
+  (e2b/vercel/daytona) or flags `sshKeysMissing` for an SSH provider rather than
+  failing opaquely later. This is why **`secrets.env` stays on the laptop too**: the
+  provider credential is needed for that direct SDK IO.
+
 ## 5. Known caveats
 
 - **Destroy lag in the Daytona dashboard**: `sb.delete()` returns immediately
@@ -1014,6 +1125,19 @@ triggers the login prompt automatically.
 Every command below honors `box.provider` automatically. Pass
 `--provider <name>` on `create` / `claude` / `codex` / `opencode` to
 override per invocation.
+
+> **Routing (2026-07).** For every **box/fleet** command in the table below —
+> `create`, lifecycle, `checkpoint`, `prune`, `list`, git, services, approvals —
+> the CLI no longer calls the provider inline; it goes through the hub's
+> `POST/GET /api/v1/...` and the **hub's backend** invokes the `provider.*` call
+> named in the "cloud path" column, against a local hub or a remote control box
+> alike (the thin-CLI consolidation —
+> [`hub-api-single-path-plan.md`](../docs/hub-api-single-path-plan.md)). The
+> **direct IO** commands (`shell`, `cp`/`download`, `url`, `screen`, `code`,
+> `open`, `attach`) still call the provider from the laptop — that is why a cloud
+> box the control box created is **adopted** locally (a `BoxRecord` re-sourced from
+> `GET /api/v1/boxes`, plus a per-box SSH-key pull from custody) before those work.
+> See §4b.
 
 | Command | Cloud path |
 | --- | --- |
@@ -1054,10 +1178,11 @@ Compose the full `Provider` with `createCloudProvider(backend)` and export a
 Two ways to ship it:
 
 - **Built-in** (first-party): add one row to the `PROVIDERS` table in
-  `packages/config/src/providers.ts` and one entry to the `IMPORTERS` map in
-  `apps/cli/src/provider/loaders.ts` (both bundle-inlined), plus the relay's
-  literal-import block in `resolveCloudBackend`
-  (`packages/relay/src/host-actions.ts`).
+  `packages/config/src/providers.ts`, then one entry to each literal-import map
+  — `apps/cli/src/provider/loaders.ts` and `apps/hub/lib/provider-importers.ts`.
+  Both are `Record<ProviderKind, …>`, so a missing entry is a type error. The
+  relay itself needs no edit: it resolves backends through whichever of those
+  maps the host process injected (see §2.3).
 - **External / community plugin**: publish `agentbox-provider-<name>` built on
   `@madarco/agentbox-provider-sdk` and `agentbox plugin add` it — **no edits to AgentBox**.
   This is the recommended path for third-party clouds. See
@@ -1116,8 +1241,4 @@ failure flags either a backend bug or an abstraction gap.
 | SSH alias management | `apps/cli/src/ssh-config.ts` |
 | Cloud E2E test | `apps/cli/test/cloud-e2e.test.ts` (gated on `DAYTONA_API_KEY`) |
 
-Track outstanding work in
-[`daytona-backlog.md`](./daytona-backlog.md),
-[`hertzner_backlog.md`](./hertzner_backlog.md),
-[`vercel-backlog.md`](./vercel-backlog.md), and
-[`e2b_backlog.md`](./e2b_backlog.md).
+Each provider's known caveats are documented in its own section above.

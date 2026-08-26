@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  AGENTBOX_HUB_SSH_ALIAS,
   agentboxAliasFor,
   agentboxSshConfigPath,
+  controlPlaneDeployPath,
   ensureSshInclude,
   hasUnmanagedHostConflict,
   parseSshTarget,
@@ -224,5 +226,65 @@ describe('syncAgentboxSshConfig + Include model', () => {
     await ensureSshInclude();
     const ssh = await readSsh();
     expect(ssh).toContain(`Include ${agentboxSshConfigPath()}`);
+  });
+
+  async function writeDeploy(record: Record<string, unknown>): Promise<void> {
+    const path = controlPlaneDeployPath();
+    await fs.mkdir(join(tmp, '.agentbox', 'control-plane'), { recursive: true });
+    await fs.writeFile(path, JSON.stringify(record, null, 2));
+  }
+
+  const deployRecord = {
+    provider: 'hetzner',
+    url: 'https://1.2.3.4.sslip.io',
+    serverId: 42,
+    ip: '1.2.3.4',
+    domain: '1.2.3.4.sslip.io',
+    firewallId: 7,
+    sshKeyDir: '/home/u/.agentbox/control-plane/ssh/abc',
+  };
+
+  it('adds a control-box Host block from the deploy record', async () => {
+    await writeState([]);
+    await writeDeploy(deployRecord);
+    await syncAgentboxSshConfig();
+    const cfg = await readOwned();
+    expect(cfg).toContain(`Host ${AGENTBOX_HUB_SSH_ALIAS}`);
+    expect(cfg).toContain('  HostName 1.2.3.4');
+    expect(cfg).toContain('  User root');
+    expect(cfg).toContain('  IdentityFile /home/u/.agentbox/control-plane/ssh/abc/id_ed25519');
+    expect(cfg).toContain('# BEGIN agentbox control box agentbox-hub');
+  });
+
+  it('omits the control-box block with no deploy record', async () => {
+    await writeState([hzBox('hz1', '1.2.3.4')]);
+    await syncAgentboxSshConfig();
+    expect(await readOwned()).not.toContain(`Host ${AGENTBOX_HUB_SSH_ALIAS}`);
+  });
+
+  it('omits the control-box block when the record predates sshKeyDir', async () => {
+    await writeState([]);
+    await writeDeploy({ provider: 'hetzner', ip: '1.2.3.4' });
+    await syncAgentboxSshConfig();
+    expect(await readOwned()).not.toContain(`Host ${AGENTBOX_HUB_SSH_ALIAS}`);
+  });
+
+  it('never emits a duplicate Host when a box claims the hub alias', async () => {
+    await writeState([hzBox(AGENTBOX_HUB_SSH_ALIAS, '9.9.9.9')]);
+    await writeDeploy(deployRecord);
+    await syncAgentboxSshConfig();
+    const cfg = await readOwned();
+    expect(cfg.split(`Host ${AGENTBOX_HUB_SSH_ALIAS}`).length - 1).toBe(1);
+    // The box (user-created, more specific) wins — OpenSSH takes the first match.
+    expect(cfg).toContain('  HostName 9.9.9.9');
+  });
+
+  it('drops the control-box block when the deploy record is removed', async () => {
+    await writeState([]);
+    await writeDeploy(deployRecord);
+    await syncAgentboxSshConfig();
+    await fs.rm(controlPlaneDeployPath());
+    await syncAgentboxSshConfig();
+    expect(await readOwned()).not.toContain(`Host ${AGENTBOX_HUB_SSH_ALIAS}`);
   });
 });

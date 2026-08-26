@@ -1,11 +1,28 @@
 import { confirm, log } from '../lib/prompt.js';
-import { pruneOrphanProjectConfigs } from '@agentbox/config';
-import type { CloudBackend, CloudSandboxSummary } from '@agentbox/core';
-import { readState } from '@agentbox/sandbox-core';
-import { listBoxes, pruneBoxes, type PruneResult } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { boxOwningHubIsLocal, withHubClient } from '../control-plane/with-hub.js';
+import type {
+  HubApiClient,
+  HubApiCloudOrphan,
+  HubApiPruneCloud,
+  HubApiPruneGeneral,
+  HubApiPruneResult,
+} from '../control-plane/hub-api-client.js';
 import { handleLifecycleError } from './_errors.js';
-import { cloudBackendForProvider } from '../provider/cloud-backend.js';
+
+/**
+ * `agentbox prune` — fleet cleanup through the hub's public `/api/v1`
+ * (`POST /prune`). The hub runs `pruneBoxes` (+ orphan project configs) for the
+ * general/docker tier, and for a cloud `--provider` enumerates untracked sandboxes
+ * and (on confirm) deletes them AND reaps their control-box registrations
+ * server-side — so this CLI no longer carries a separate reap.
+ *
+ * Prune is FLEET-scoped, not box-scoped, so it can't use `withOwningHub` (there is
+ * no box to own it). It routes by the provider argument instead, reusing the same
+ * ownership predicate: docker + remote-docker are local-owned (their engine/host
+ * is driven by the LOCAL hub), so those go to the local hub; a true cloud provider
+ * (daytona/hetzner/vercel/e2b/digitalocean) is owned by the configured hub.
+ */
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -14,7 +31,7 @@ interface PruneOptions {
   provider?: string;
 }
 
-function totalRemovals(r: PruneResult, projectConfigs: string[]): number {
+function totalRemovals(r: HubApiPruneResult, projectConfigs: string[]): number {
   return (
     r.removedRecords.length +
     r.removedContainers.length +
@@ -25,7 +42,7 @@ function totalRemovals(r: PruneResult, projectConfigs: string[]): number {
   );
 }
 
-function summary(r: PruneResult, projectConfigs: string[]): string {
+function summary(r: HubApiPruneResult, projectConfigs: string[]): string {
   const lines: string[] = [];
   if (r.removedRecords.length > 0) {
     lines.push(
@@ -60,14 +77,18 @@ function summary(r: PruneResult, projectConfigs: string[]): string {
   return lines.length > 0 ? lines.join('\n') : '  (nothing to remove)';
 }
 
-/** Project roots of boxes still in state.json — their config must survive. */
-async function liveProjectRoots(): Promise<string[]> {
-  try {
-    const boxes = await listBoxes();
-    return boxes.map((b) => b.projectRoot).filter((p): p is string => typeof p === 'string');
-  } catch {
-    return [];
-  }
+/** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
+const CLOUD_PRUNE_PROVIDERS = [
+  'daytona',
+  'hetzner',
+  'vercel',
+  'e2b',
+  'digitalocean',
+  'remote-docker',
+] as const;
+
+function isCloudPruneProvider(name: string): boolean {
+  return (CLOUD_PRUNE_PROVIDERS as readonly string[]).includes(name);
 }
 
 export const pruneCommand = new Command('prune')
@@ -80,120 +101,77 @@ export const pruneCommand = new Command('prune')
   .option('-y, --yes', 'skip the confirmation prompt')
   .option(
     '--provider <name>',
-    'restrict prune to a specific provider (docker | daytona | hetzner | vercel | e2b | digitalocean). For cloud providers, lists sandboxes that are not in this CLI\'s state.json and offers to delete them.',
+    "restrict prune to a specific provider (docker | daytona | hetzner | vercel | e2b | digitalocean). For cloud providers, lists sandboxes that are not in this CLI's state.json and offers to delete them.",
   )
   .action(async (opts: PruneOptions) => {
     try {
-      if (opts.provider !== undefined && isCloudPruneProvider(opts.provider)) {
-        await pruneCloud(opts.provider, opts);
-        return;
-      }
-      if (opts.provider !== undefined && opts.provider !== 'docker') {
-        log.error(`unknown provider '${opts.provider}'; expected docker, daytona, hetzner, vercel, e2b, or digitalocean`);
+      const provider = opts.provider;
+      if (provider !== undefined && provider !== 'docker' && !isCloudPruneProvider(provider)) {
+        log.error(
+          `unknown provider '${provider}'; expected docker, daytona, hetzner, vercel, e2b, or digitalocean`,
+        );
         process.exit(2);
       }
-      const dryRun = opts.dryRun ?? false;
-      // Project-config GC is part of the destructive `--all` tier (it removes
-      // ~/.agentbox/projects/<hash>/ dirs whose workspace folder was deleted).
-      const protectedPaths = opts.all ? await liveProjectRoots() : [];
+      // Fleet routing by provider: docker/remote-docker → local hub; a true cloud
+      // provider → the configured hub. Reuses the box-ownership predicate so the
+      // "which hub" rule is single-sourced (a general prune has no provider →
+      // defaults to docker → local).
+      const preferLocal = boxOwningHubIsLocal({ provider: provider ?? 'docker' });
+      const isCloud = provider !== undefined && isCloudPruneProvider(provider);
 
-      const preview = await pruneBoxes({ dryRun: true, all: opts.all });
-      const previewProjects = opts.all
-        ? (await pruneOrphanProjectConfigs({ dryRun: true, protectedPaths })).removed.map(
-            (r) => r.originalPath,
-          )
-        : [];
-      if (totalRemovals(preview, previewProjects) === 0) {
-        process.stdout.write('nothing to prune\n');
-        return;
-      }
-
-      log.info(`would remove:\n${summary(preview, previewProjects)}`);
-      if (dryRun) return;
-
-      if (!opts.yes) {
-        const ok = await confirm({ message: 'Proceed with prune?', initialValue: true });
-        if (!ok) {
-          log.info('cancelled');
-          return;
+      await withHubClient({ preferLocal }, async (client) => {
+        if (isCloud) {
+          await runCloudPrune(client, provider!, opts);
+        } else {
+          await runGeneralPrune(client, opts);
         }
-      }
-
-      const result = await pruneBoxes({ all: opts.all });
-      const removedProjects = opts.all
-        ? (await pruneOrphanProjectConfigs({ protectedPaths })).removed.map((r) => r.originalPath)
-        : [];
-      process.stdout.write(`pruned:\n${summary(result, removedProjects)}\n`);
+      });
     } catch (err) {
       handleLifecycleError(err);
     }
   });
 
-/** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
-const CLOUD_PRUNE_PROVIDERS = [
-  'daytona',
-  'hetzner',
-  'vercel',
-  'e2b',
-  'digitalocean',
-  'remote-docker',
-] as const;
-type CloudPruneProvider = (typeof CLOUD_PRUNE_PROVIDERS)[number];
-
-function isCloudPruneProvider(name: string): name is CloudPruneProvider {
-  return (CLOUD_PRUNE_PROVIDERS as readonly string[]).includes(name);
-}
-
-/**
- * Cloud orphan-sandbox prune. Lists every sandbox the configured credentials
- * can see, cross-references against this CLI's local `state.json`, and offers
- * to delete the ones the user no longer tracks (typically: a harness timeout
- * killed the create before `recordBox` ran, leaving a half-provisioned
- * billable sandbox lingering).
- *
- * Read-only without `--yes`: prints the orphan list and confirms before
- * deleting. With `--dry-run`, only prints.
- */
-async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Promise<void> {
+async function runGeneralPrune(client: HubApiClient, opts: PruneOptions): Promise<void> {
   const dryRun = opts.dryRun ?? false;
-  // CloudPruneProvider is always a cloud provider, so this never resolves null.
-  const backend = (await cloudBackendForProvider(provider)) as CloudBackend;
-  if (!backend.list) {
-    log.error(`${provider} backend doesn't expose \`list()\`; cannot enumerate sandboxes for prune`);
-    process.exit(2);
+  const preview = (await client.prune({ all: opts.all, dryRun: true })) as HubApiPruneGeneral;
+  if (totalRemovals(preview.result, preview.projectConfigs) === 0) {
+    process.stdout.write('nothing to prune\n');
+    return;
   }
-  const [remote, state] = await Promise.all([backend.list(), readState()]);
-  const knownIds = new Set<string>();
-  for (const b of state.boxes) {
-    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId) {
-      knownIds.add(b.cloud.sandboxId);
+  log.info(`would remove:\n${summary(preview.result, preview.projectConfigs)}`);
+  if (dryRun) return;
+
+  if (!opts.yes) {
+    const ok = await confirm({ message: 'Proceed with prune?', initialValue: true });
+    if (!ok) {
+      log.info('cancelled');
+      return;
     }
   }
-  // Anything we created (labelled by us via `tags: { 'agentbox.name': ... }`)
-  // but isn't in state is an orphan we should offer to clean up. Sandboxes
-  // the user provisioned through other tooling shouldn't be touched — identify
-  // ours by the presence of a friendly name (`summary.name` mirrors that tag).
-  const orphans: CloudSandboxSummary[] = remote.filter((sb) => {
-    if (knownIds.has(sb.sandboxId)) return false;
-    const friendly = sb.name ?? '';
-    return friendly.length > 0;
-  });
-  if (orphans.length === 0) {
+  const done = (await client.prune({ all: opts.all })) as HubApiPruneGeneral;
+  process.stdout.write(`pruned:\n${summary(done.result, done.projectConfigs)}\n`);
+}
+
+async function runCloudPrune(
+  client: HubApiClient,
+  provider: string,
+  opts: PruneOptions,
+): Promise<void> {
+  const dryRun = opts.dryRun ?? false;
+  const preview = (await client.prune({ provider, dryRun: true })) as HubApiPruneCloud;
+  if (preview.orphans.length === 0) {
     process.stdout.write(`no ${provider} orphans found\n`);
     return;
   }
-  log.info(`found ${String(orphans.length)} ${provider} sandbox(es) not in this CLI's state:`);
-  for (const sb of orphans) {
-    const parts = [sb.sandboxId];
-    if (sb.name) parts.push(sb.name);
-    if (sb.state) parts.push(sb.state);
-    if (sb.createdAt) parts.push(sb.createdAt);
-    process.stdout.write(`  ${parts.join('  ')}\n`);
-  }
+  log.info(
+    `found ${String(preview.orphans.length)} ${provider} sandbox(es) not in this fleet's state:`,
+  );
+  for (const sb of preview.orphans) process.stdout.write(`  ${orphanLine(sb)}\n`);
   if (dryRun) return;
+
   if (!opts.yes) {
     const ok = await confirm({
-      message: `Delete ${String(orphans.length)} orphan sandbox(es)?`,
+      message: `Delete ${String(preview.orphans.length)} orphan sandbox(es)?`,
       initialValue: false,
     });
     if (!ok) {
@@ -201,20 +179,18 @@ async function pruneCloud(provider: CloudPruneProvider, opts: PruneOptions): Pro
       return;
     }
   }
-  let deleted = 0;
-  let failed = 0;
-  for (const sb of orphans) {
-    try {
-      await backend.destroy({ sandboxId: sb.sandboxId });
-      deleted++;
-    } catch (err) {
-      failed++;
-      log.warn(
-        `delete ${sb.sandboxId} failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
+  const done = (await client.prune({ provider })) as HubApiPruneCloud;
   process.stdout.write(
-    `${provider} prune: deleted ${String(deleted)}, failed ${String(failed)}\n`,
+    `${provider} prune: deleted ${String(done.deleted)}, failed ${String(done.failed)}` +
+      (done.reaped > 0 ? `, control-box registrations reaped ${String(done.reaped)}` : '') +
+      '\n',
   );
+}
+
+function orphanLine(sb: HubApiCloudOrphan): string {
+  const parts = [sb.sandboxId];
+  if (sb.name) parts.push(sb.name);
+  if (sb.state) parts.push(sb.state);
+  if (sb.createdAt) parts.push(sb.createdAt);
+  return parts.join('  ');
 }

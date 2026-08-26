@@ -1,5 +1,6 @@
 /**
  * `agentbox app` — start / stop / restart / status for the AgentBox macOS menu-bar app.
+ * Bare `agentbox app` starts it.
  *
  * Drives the running process directly (`open` / `pkill` / `pgrep`) without touching the installed
  * bundle — the lightweight lifecycle control the tray otherwise lacks (only `agentbox install app`
@@ -14,9 +15,16 @@ import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { AGENTBOX_VERSION } from '../version.js';
-import { APP_BUNDLE_ID, APP_NAME, APP_PATH, LEGACY_APP_NAME } from './install-app.js';
+import {
+  APP_BUNDLE_ID,
+  APP_NAME,
+  APP_PATH,
+  launchTray,
+  restartTray,
+  stopTray,
+  trayPids,
+} from './install-app.js';
 
 /** macOS writes app crash reports here as `AgentBox-<timestamp>.ips`. */
 const DIAGNOSTIC_REPORTS_DIR = join(homedir(), 'Library/Logs/DiagnosticReports');
@@ -30,44 +38,10 @@ function ensureMac(): boolean {
   return false;
 }
 
-/** PIDs of a process by exact executable name, or [] if none. `pgrep` exits 1 when nothing matches. */
-async function pidsForName(name: string): Promise<number[]> {
-  const res = await execa('pgrep', ['-x', name]).catch(() => null);
-  if (!res) return [];
-  return res.stdout
-    .split('\n')
-    .map((l) => Number(l.trim()))
-    .filter((n) => Number.isInteger(n) && n > 0);
-}
-
-/**
- * PIDs of the running app, or [] if none. Covers both the current (`AgentBox`) and the legacy
- * pre-rename (`AgentBoxTray`) executable names, so status/stop/restart still see a stray old process
- * during migration.
- */
-async function trayPids(): Promise<number[]> {
-  const [current, legacy] = await Promise.all([
-    pidsForName(APP_NAME),
-    pidsForName(LEGACY_APP_NAME),
-  ]);
-  return [...current, ...legacy];
-}
-
-async function startTray(): Promise<void> {
-  await execa('open', [APP_PATH]);
-}
-
-async function stopTray(): Promise<void> {
-  // `pkill` exits 1 when there was nothing to kill — not an error for us. Cover the legacy
-  // pre-rename name too so `stop`/`restart` don't leave a stray old process alive.
-  await execa('pkill', ['-x', APP_NAME]).catch(() => undefined);
-  await execa('pkill', ['-x', LEGACY_APP_NAME]).catch(() => undefined);
-}
-
 /** True only when the bundle is present; guard `start`/`restart` and point at the installer. */
 function ensureInstalled(): boolean {
   if (existsSync(APP_PATH)) return true;
-  log.error(`${APP_PATH} is not installed. Run \`agentbox install tray\` first.`);
+  log.error(`${APP_PATH} is not installed. Run \`agentbox install app\` first.`);
   process.exitCode = 1;
   return false;
 }
@@ -188,7 +162,7 @@ const statusSub = new Command('status')
   });
 
 const startSub = new Command('start')
-  .description('Launch the AgentBox app if it is not already running')
+  .description('Launch the AgentBox app if it is not already running (the default)')
   .action(async () => {
     if (!ensureMac()) return;
     intro('Starting AgentBox…');
@@ -200,7 +174,7 @@ const startSub = new Command('start')
       outro('Not started'); // close the clack session the `intro` above opened
       return;
     }
-    await startTray();
+    await launchTray((m) => log.warn(m));
     outro('Started (look for the box icon in the menu bar)');
   });
 
@@ -223,11 +197,7 @@ const restartSub = new Command('restart')
     if (!ensureMac()) return;
     if (!ensureInstalled()) return;
     intro('Restarting AgentBox…');
-    await stopTray();
-    // Wait for the old process to actually exit before relaunching, else `open`
-    // may just foreground the still-quitting instance.
-    for (let i = 0; i < 20 && (await trayPids()).length; i++) await delay(100);
-    await startTray();
+    await restartTray((m) => log.warn(m));
     outro('Restarted');
   });
 
@@ -355,9 +325,15 @@ async function writeBugReportBundle(outPath: string, last: string): Promise<void
 }
 
 export const appCommand = new Command('app')
-  .description('Control the AgentBox menu-bar app (status / start / stop / restart / log)')
-  .addCommand(statusSub, { isDefault: true })
-  .addCommand(startSub)
+  .description(
+    'Control the AgentBox menu-bar app — bare `agentbox app` starts it (status / start / stop / restart / log)',
+  )
+  // `start` is the default, mirroring `agentbox hub`: the bare command DOES the
+  // thing. It is idempotent (already-running is an `Already running` no-op), so
+  // it is a safe default in a way `status` was merely a useless one — reporting
+  // "installed but not running" while leaving the app not running.
+  .addCommand(startSub, { isDefault: true })
+  .addCommand(statusSub)
   .addCommand(stopSub)
   .addCommand(restartSub)
   .addCommand(logSub);

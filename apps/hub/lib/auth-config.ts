@@ -66,6 +66,13 @@ export function cookieSecure(): boolean {
 /** SQLite auth DB for the hetzner profile (localhost/vercel never create it). */
 export const AUTH_DB_PATH = join(STATE_DIR, 'hub', 'auth.db');
 
+/**
+ * SQLite relay-core store (boxes/events/status/prompts/create_jobs) — the
+ * hetzner profile's default when no POSTGRES_URL is configured, so the control
+ * box needs no database container. Sibling of {@link AUTH_DB_PATH}.
+ */
+export const STORE_DB_PATH = join(STATE_DIR, 'hub', 'store.db');
+
 /** Shared-secret file for the localhost token gate (auto-managed by server.ts). */
 export const AUTH_TOKEN_PATH = join(STATE_DIR, 'hub', 'token');
 

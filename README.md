@@ -76,6 +76,10 @@ agentbox dashboard
 npm -g install @madarco/agentbox
 ```
 
+Want to help test what's coming? `npm -g install @madarco/agentbox@nightly` puts you on the
+[nightly channel](https://agent-box.sh/docs/nightly) — pre-release builds, with stable releases still
+reaching you automatically. `agentbox self-update --channel stable` opts back out.
+
 Requirements: macOS (arm64 or Intel) or Linux, Docker ([Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev/)), Node `>=20.10`. The first `agentbox create` / `agentbox claude` builds the `agentbox/box:dev` image (~1 GB, one-time).
 Uses `portless` to give box web apps the same URL from inside the box and on the host.
 
@@ -145,7 +149,7 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox self-update` — Update agentbox, wipe the box image so it rebuilds, reload the relay
 - `agentbox config` — Read / write layered config (global, per-project, workspace `defaults:`)
 - `agentbox relay` — Manage the host relay process (`status` / `stop` / `start` / `restart`)
-- `agentbox app` — Control the macOS menu-bar app process (`status` / `start` / `stop` / `restart`); install it with `agentbox install tray`
+- `agentbox app` — Control the macOS menu-bar app process (`status` / `start` / `stop` / `restart`); install it with `agentbox install app`
 
 Run `agentbox <command> --help` for command-specific options.
 
@@ -171,7 +175,7 @@ The full development workflow, stack, end-to-end smoke tests, and teardown live 
 
 ### Menu-bar tray app (dev)
 
-The macOS tray app lives in the sibling repo [`../agentbox-tray`](https://github.com/madarco/agentbox-tray). When you have it checked out next to this repo, these scripts build and run your **local** dev build (ad-hoc signed, at `../agentbox-tray/AgentBoxTray.app`) — separate from the notarized copy `agentbox install tray` puts in `/Applications`:
+The macOS tray app lives in the sibling repo [`../agentbox-tray`](https://github.com/madarco/agentbox-tray). When you have it checked out next to this repo, these scripts build and run your **local** dev build (ad-hoc signed, at `../agentbox-tray/AgentBoxTray.app`) — separate from the notarized copy `agentbox install app` puts in `/Applications`:
 
 ```sh
 pnpm tray:dev        # rebuild the dev .app and relaunch it (the one you'll use most)
@@ -181,7 +185,7 @@ pnpm tray:stop       # quit any running instance
 pnpm tray:restart    # quit + relaunch the dev build
 ```
 
-> Note: `agentbox app start|restart` targets the **installed** `/Applications` copy, not this dev build. Use the `pnpm tray:*` scripts while iterating on the tray here; run `agentbox install tray` to refresh `/Applications` from the current CLI build.
+> Note: `agentbox app start|restart` targets the **installed** `/Applications` copy, not this dev build. Use the `pnpm tray:*` scripts while iterating on the tray here; run `agentbox install app` to refresh `/Applications` from the current CLI build.
 
 ### Custom providers (plugins)
 

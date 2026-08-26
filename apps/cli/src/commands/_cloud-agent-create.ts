@@ -77,6 +77,10 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
   try {
     const result = await args.provider.create({
       ...args.request,
+      // The agent this box exists for. Mirrors the `recordLastAgent` below into
+      // the control-plane registration, so a PC adopting a hub-created box
+      // knows which agent to relaunch.
+      agent: args.mode,
       onLog: (line) => s.message(line),
     });
     const nSuffix =

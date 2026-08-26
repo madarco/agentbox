@@ -2,9 +2,9 @@ import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import type { BoxStatus } from '@agentbox/ctl';
 import { boxResourceStats, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
-import { setBoxDisplayName } from '@agentbox/sandbox-core';
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { reportBoxNotOnAnyHub, withOwningHub } from '../control-plane/with-hub.js';
 import { boxLabel } from '../box-label.js';
 import { renderEndpointLines } from '../endpoints-render.js';
 import { fmtAgo, fmtBytes, fmtPercent } from '../fmt.js';
@@ -76,9 +76,18 @@ export const statusCommand = withWatchOptions(
           process.exit(2);
         }
       }
-      await setBoxDisplayName(box.id, next);
-      const after = next ?? box.name;
-      process.stdout.write(`renamed ${before} -> ${after}\n`);
+      // Rename is a pure state write the hub owns (POST /boxes/:id/rename); the
+      // hub does the same `setBoxDisplayName` the CLI used to call inline, so this
+      // works against a local hub and a remote control box alike. Empty string clears.
+      // Box-scoped, so it targets the box's OWNING hub (withOwningHub) — a plain
+      // withHubClient would send a docker box's rename to a configured remote control
+      // box that never owned it and fail `not_found`.
+      const r = await withOwningHub(box, async (client) => {
+        await client.rename(box.id, next ?? '');
+        const after = next ?? box.name;
+        process.stdout.write(`renamed ${before} -> ${after}\n`);
+      });
+      if (r === 'not-found') reportBoxNotOnAnyHub(box);
       return;
     }
 

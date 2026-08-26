@@ -39,7 +39,11 @@ export interface SyncExecResult {
 export interface PushOptions {
   /** tar `--exclude` patterns applied when packing a dir. */
   exclude?: string[];
-  /** chown target uid inside the box. Default 1000 (`vscode`); 0 leaves root. */
+  /**
+   * chown target uid inside the box. Docker-only knob (its box user really is
+   * 1000); the cloud transport ignores it and lets the extract run as the box
+   * user, which is correct on providers where `vscode` is not uid 1000.
+   */
   uid?: number;
   /** chmod -R applied after extract. */
   mode?: number;

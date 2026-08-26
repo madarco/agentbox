@@ -11,6 +11,7 @@
  */
 
 import type { CloudBackend, Provider } from '@agentbox/core';
+import type { FileManifest } from './prepared-state.js';
 
 /**
  * `info` is for rows that are intentionally inert (e.g. an integration the
@@ -76,9 +77,18 @@ export interface ProviderModule {
    * CURRENT build-context fingerprint of the provider's base image/snapshot,
    * for staleness nagging. Absent for docker (its base self-heals).
    */
-  currentBaseFingerprintLive?: (
-    claudeInstall?: 'native' | 'npm',
-  ) => Promise<string | undefined>;
+  currentBaseFingerprintLive?: (claudeInstall?: 'native' | 'npm') => Promise<string | undefined>;
+  /**
+   * Per-file digests behind that fingerprint (relpath → sha256), so a `stale`
+   * verdict can be explained rather than only asserted. Diffed against the
+   * manifest stored at bake time.
+   *
+   * Each provider resolves its OWN asset list, which is why this is a
+   * per-provider hook and not a shared helper — docker hashes
+   * `DOCKER_CONTEXT_FILE_MAP`, the cloud providers each hash their own
+   * `resolveRuntimeAssets()`. `undefined` when the assets can't be resolved.
+   */
+  currentBaseFileHashes?: () => Promise<FileManifest | undefined>;
   /** Local, offline-safe health probes for `agentbox doctor`. */
   doctorChecks: () => Promise<CheckResult[]>;
 }

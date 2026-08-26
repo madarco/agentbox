@@ -1,4 +1,13 @@
-import { closeSync, mkdirSync, openSync, renameSync, symlinkSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,6 +42,26 @@ function logsDir(): string {
  * callbacks. The fd is closed on `close()` and on `process.exit` so a
  * crash still flushes everything that was written.
  */
+/**
+ * The log for the command currently running, when one opened a log at all.
+ *
+ * Exists so deep layers can record a decision without every caller threading a
+ * logger down to them. The concrete case: `ensureImage`'s pull-vs-build progress
+ * is wired only to a @clack spinner, which overwrites itself — so the single
+ * most expensive branch in a create (pull a published image, or rebuild it for
+ * ten minutes) left NO trace on disk, and a silently rate-limited pull was
+ * indistinguishable from an unpublished tag when reading the logs afterwards.
+ */
+let activeCommandLog: CommandLog | null = null;
+
+/**
+ * Append to the active command log, if any. A no-op when nothing opened one
+ * (a short command, or a unit test), so callers never need to check.
+ */
+export function logToActiveCommand(line: string): void {
+  activeCommandLog?.write(line);
+}
+
 export function openCommandLog(command: string): CommandLog {
   const dir = logsDir();
   mkdirSync(dir, { recursive: true });
@@ -57,6 +86,7 @@ export function openCommandLog(command: string): CommandLog {
   const closeOnce = (): void => {
     if (closed) return;
     closed = true;
+    if (activeCommandLog === log) activeCommandLog = null;
     try {
       writeSync(fd, `${new Date().toISOString()} --- END ${command} ---\n`);
     } catch {
@@ -71,7 +101,7 @@ export function openCommandLog(command: string): CommandLog {
   // Last-resort flush. Don't unhook anything else; this is purely additive.
   process.on('exit', closeOnce);
 
-  return {
+  const log: CommandLog = {
     path,
     write(line: string): void {
       if (closed) return;
@@ -106,6 +136,8 @@ export function openCommandLog(command: string): CommandLog {
     },
     close: closeOnce,
   };
+  activeCommandLog = log;
+  return log;
 }
 
 function updateLatestSymlink(dir: string, target: string): void {

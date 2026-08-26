@@ -17,6 +17,7 @@ import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox
 import { statusBadge, type CheckResult } from '@agentbox/sandbox-core';
 import { probeRemoteEngine } from './remote-docker.js';
 import { prepareRemoteDocker } from './prepare.js';
+import { bakeRegisteredHost, shareRegisteredHost } from './share-hook.js';
 import { readPreparedState, removePreparedHost } from './prepared-state.js';
 import {
   assertValidAlias,
@@ -33,14 +34,27 @@ export const remoteDockerCommand = new Command('remote-docker')
       .description('Register a host alias (name → SSH connection) for `--provider docker:<alias>`')
       .argument('<alias>', 'a short name for the host (letters, digits, `.`, `_`, `-`)')
       .argument('<ssh>', 'the SSH connection: `~/.ssh/config` alias or `[user@]host[:port]`')
-      .option('-d, --default', 'also set it as the default host (box.remoteDockerHost) for this project')
-      .option('-g, --global', 'set it as the default host, written to global config (implies --default)')
-      .option('-n, --no-bake', 'skip baking the box image on the host (it builds lazily on first create)')
+      .option(
+        '-d, --default',
+        'also set it as the default host (box.remoteDockerHost) for this project',
+      )
+      .option(
+        '-g, --global',
+        'set it as the default host, written to global config (implies --default)',
+      )
+      .option(
+        '-n, --no-bake',
+        'skip baking the box image on the host (it builds lazily on first create)',
+      )
+      .option(
+        '--no-share',
+        "don't hand this host to the configured control box (no key is installed on it)",
+      )
       .action(
         async (
           alias: string,
           ssh: string,
-          opts: { default?: boolean; global?: boolean; bake?: boolean },
+          opts: { default?: boolean; global?: boolean; bake?: boolean; share?: boolean },
         ) => {
           try {
             assertValidAlias(alias);
@@ -69,6 +83,12 @@ export const remoteDockerCommand = new Command('remote-docker')
           upsertHostAlias(alias, ssh);
           p.log.success(`registered '${alias}' → ${ssh}`);
 
+          // A control box cannot resolve this machine's ssh config, so a host is
+          // useless to it until it is shared — and a half-registered host that
+          // silently only works from this laptop is the worse outcome. Do it now;
+          // `--no-share` opts out.
+          if (opts.share !== false) await shareRegisteredHost(alias);
+
           if (opts.default || opts.global) {
             const scope = opts.global ? 'global' : 'project';
             await setConfigValue(scope, 'box.remoteDockerHost', alias, process.cwd(), {
@@ -85,20 +105,33 @@ export const remoteDockerCommand = new Command('remote-docker')
           // create is instant. A GHCR pull is fast; a registry-miss build is slow.
           // Best-effort: a failure leaves the alias registered and the image
           // builds lazily on first create.
+          //
+          // The bake goes through the CLI's hook, which drives the hub's
+          // `/hosts/:alias/bake` route — the control box when it has this host
+          // (shared just above), this machine's hub otherwise. Same path
+          // `agentbox prepare --provider docker:<alias>` takes, so the two can
+          // never disagree about where the build runs. The inline call below is
+          // only for this package used without the CLI.
           if (opts.bake !== false) {
-            const cfg = await loadEffectiveConfig(process.cwd());
-            const claudeInstall = cfg.effective.box.claudeInstall;
-            const bs = p.spinner();
-            bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
             try {
-              await prepareRemoteDocker({
-                host: alias,
-                ...(claudeInstall ? { claudeInstall } : {}),
-                onLog: (line) => bs.message(line.slice(0, 80)),
-              });
-              bs.stop(`box image ready on ${alias}`);
+              if (!(await bakeRegisteredHost(alias))) {
+                const cfg = await loadEffectiveConfig(process.cwd());
+                const claudeInstall = cfg.effective.box.claudeInstall;
+                const bs = p.spinner();
+                bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
+                try {
+                  await prepareRemoteDocker({
+                    host: alias,
+                    ...(claudeInstall ? { claudeInstall } : {}),
+                    onLog: (line) => bs.message(line.slice(0, 80)),
+                  });
+                  bs.stop(`box image ready on ${alias}`);
+                } catch (err) {
+                  bs.stop('box image bake failed');
+                  throw err;
+                }
+              }
             } catch (err) {
-              bs.stop('box image bake failed');
               p.log.warn(
                 `${err instanceof Error ? err.message : String(err)} — it will build on first create, or run \`agentbox prepare --provider docker:${alias}\``,
               );
@@ -248,7 +281,10 @@ export const remoteDockerCommand = new Command('remote-docker')
   .addCommand(
     new Command('doctor')
       .description('Check whether a host can run boxes (ssh reachable + docker present)')
-      .argument('[host]', 'a registered alias OR a raw `[user@]host[:port]` (default: box.remoteDockerHost)')
+      .argument(
+        '[host]',
+        'a registered alias OR a raw `[user@]host[:port]` (default: box.remoteDockerHost)',
+      )
       .action(async (host?: string) => {
         const name = (host ?? (await configuredHost())).trim();
         if (!name) {

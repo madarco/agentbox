@@ -41,6 +41,21 @@ export function toAuthedHttpsUrl(origin: string, token: string): string {
 }
 
 /**
+ * Rewrite any GitHub remote URL to plain HTTPS, dropping embedded credentials.
+ *
+ * For a machine that authenticates git through a credential helper rather than
+ * an SSH key — the hub in `hub.gitAuth=gh` mode — an scp-form
+ * `git@github.com:owner/repo` origin is unusable: ssh fails at host-key
+ * verification (no `known_hosts` entry) before it ever reaches auth, so the
+ * helper never gets a say. Same URL over HTTPS is exactly what the helper
+ * covers.
+ */
+export function toHttpsUrl(origin: string): string {
+  const { host, path } = parseGitRemote(origin);
+  return `https://${host}/${path}`;
+}
+
+/**
  * The `[HOST/]OWNER/REPO` slug `gh --repo` expects, derived from a remote URL.
  * github.com is implicit (just `OWNER/REPO`); enterprise hosts are prefixed.
  */

@@ -84,7 +84,9 @@ const propagateCommand = new Command('propagate')
             { mode: 0o600 },
           );
           pushed += 1;
-          process.stdout.write(`pushed ${agent} credential to volume ${vol.volume} (${vol.boxNames.join(', ')})\n`);
+          process.stdout.write(
+            `pushed ${agent} credential to volume ${vol.volume} (${vol.boxNames.join(', ')})\n`,
+          );
         } catch (err) {
           failed += 1;
           process.stderr.write(
@@ -121,11 +123,45 @@ const propagateCommand = new Command('propagate')
           (failed > 0 ? `, ${String(failed)} failed` : '') +
           '\n',
       );
+
+      // Opportunistically mirror the refreshed backup up to the control box's
+      // custody store, so a hub-created box (phase 3) logs in with the same
+      // credential. Best-effort + hash-skipped: a no-op when no control plane
+      // is configured or the blob is unchanged, and never fails propagate.
+      await pushCredentialToCustody(agent, content);
+
       if (failed > 0) process.exitCode = 1;
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * Push one agent's backup to custody if — and only if — a control plane URL and
+ * an admin token are both configured. Silent no-op otherwise; the CustodyClient
+ * hash-skips an unchanged value. Failures are logged to stderr, never thrown.
+ */
+async function pushCredentialToCustody(agent: AgentId, content: string): Promise<void> {
+  try {
+    // Only when a control box is configured (remoteOnly). Pushing an agent
+    // credential is a write, so it needs the hub API key alone — no admin token.
+    const { resolveCustodyApiTarget } = await import('./control-plane.js');
+    const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
+    if (!target) return;
+    const { CustodyClient, planPush } = await import('../control-plane/custody-client.js');
+    const client = new CustodyClient(target);
+    const path = `agents/${agent}/${resolveAgentSpec(agent).credential.boxRelPath}`;
+    const item = { path, data: Buffer.from(content, 'utf8') };
+    const manifest = await client.list('agents');
+    if (planPush([item], manifest)[0]!.action === 'skip') return;
+    await client.put(path, item.data);
+    process.stdout.write(`pushed ${agent} credential to control box custody\n`);
+  } catch (err) {
+    process.stderr.write(
+      `custody push skipped: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
+}
 
 export const credentialsCommand = new Command('credentials')
   .description('Manage agent credential sync across boxes')

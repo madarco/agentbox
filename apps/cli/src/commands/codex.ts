@@ -19,7 +19,6 @@ import {
   codexSessionInfo,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureCodexInstalled,
   ensureCodexVolume,
@@ -64,8 +63,15 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
+import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
@@ -77,13 +83,14 @@ import {
   type ResumeMode,
 } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 function pickCodexCreateOpts(
   opts: CodexCreateOptions,
@@ -110,7 +117,6 @@ function pickCodexCreateOpts(
 }
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * Attach to a box's Codex tmux session through the wrapped-pty footer (same
@@ -119,7 +125,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * claude-specific, so codex reuses them with `mode: 'codex'`.
  */
 export async function attachCodexWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
@@ -128,7 +134,7 @@ export async function attachCodexWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildCodexAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,
@@ -175,6 +181,12 @@ interface CodexCreateOptions {
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
   useBranch?: string;
+  /** --via-hub: force building this cloud box on the control box (else the cloud.viaHub default). */
+  viaHub?: boolean;
+  /** --local: force building on this machine even when a control box is configured. */
+  local?: boolean;
+  /** --url <url>: control-box URL for the hub route (else relay.controlPlaneUrl). */
+  url?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
@@ -264,7 +276,9 @@ async function signInToCodex(
 
   const res = await runGuidedLogin('codex', () => codexLoginBinding({ image, extraArgs }));
   if (res.unsupported) {
-    log.info(`Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`);
+    log.info(
+      `Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`,
+    );
     return passthrough();
   }
   return { ok: res.ok, error: res.error, cancelled: res.cancelled };
@@ -292,7 +306,7 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing codex config');
@@ -347,7 +361,7 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing codex config');
   await ensureCodexVolume(
     { volume: SHARED_CODEX_VOLUME },
@@ -445,6 +459,15 @@ export const codexCommand = new Command('codex')
     'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
   .option(
+    '--via-hub',
+    'force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.',
+  )
+  .option(
+    '--local',
+    'force building the box on this machine even when a control box is configured (the opposite of --via-hub).',
+  )
+  .option('--url <url>', 'control-box URL for the hub route (default: relay.controlPlaneUrl)')
+  .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.',
   )
@@ -522,10 +545,37 @@ export const codexCommand = new Command('codex')
     );
     const isCloud = providerName !== 'docker';
 
+    // Docker off under a remote hub (Step 12): a docker box built here can't run
+    // with the laptop off, so it's refused under a control box unless hub.mode=local.
+    const dockerRefusal = await dockerProviderRefusal(
+      cfg.effective,
+      providerName,
+      remoteHost,
+      'create',
+    );
+    if (dockerRefusal) {
+      log.error(dockerRefusal);
+      cmdLog.close();
+      process.exit(1);
+    }
+
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
       log.error(
         'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
       );
+      cmdLog.close();
+      process.exit(1);
+    }
+
+    // Refuse copying a git credential into the box when a control box is in play —
+    // token leasing does the same laptop-off push without the copy. Checked before
+    // routing / the -i path so it can't slip into the hub create.
+    const directRefusal = directGitModeRefusal({
+      pushMode: cfg.effective.git.pushMode,
+      hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+    });
+    if (directRefusal) {
+      log.error(directRefusal);
       cmdLog.close();
       process.exit(1);
     }
@@ -535,6 +585,7 @@ export const codexCommand = new Command('codex')
     await ensureProjectRepoOnControlPlane({
       controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
       gitPushMode: cfg.effective.git.pushMode,
+      hubGitAuth: cfg.effective.hub.gitAuth,
       projectRoot,
       yes: !!opts.yes,
     });
@@ -548,6 +599,9 @@ export const codexCommand = new Command('codex')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only (the queue worker doesn't thread
       // git.pushMode=direct, and copying a credential needs a human at the prompt).
       if (cfg.effective.git.pushMode === 'direct') {
@@ -556,6 +610,69 @@ export const codexCommand = new Command('codex')
         );
         cmdLog.close();
         process.exit(1);
+      }
+      // Route the background run to the control box when configured — the worker
+      // creates the box AND starts codex with the prompt (laptop off). Local
+      // creds aren't needed for the hub path (custody seeds them).
+      const iRouting = await resolveCreateRouting({
+        providerName,
+        remoteHost,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      if (iRouting.where === 'hub') {
+        // Resolve + approve `carry:` BEFORE enqueuing: the hub worker builds the
+        // box from a clone plus custody, so anything the user wants copied has to
+        // ride the seed. Skipping this is how an approved file silently failed to
+        // reach a hub-created box.
+        const carryForHub = await runQueuedCarryGate({
+          projectRoot,
+          opts,
+          onLog: (line) => cmdLog.write(line),
+          onClose: () => cmdLog.close(),
+        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'codex',
+              carry: carryForHub,
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
+        );
+        if (res) {
+          if (res.error) {
+            log.error(
+              `control plane run failed: ${res.error}` +
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox codex attach ${res.boxId}\`)`
+                  : ''),
+            );
+            cmdLog.close();
+            process.exit(1);
+          }
+          outro(`codex is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
+          cmdLog.close();
+          return;
+        }
+      }
+      if (iRouting.where === 'local' && iRouting.fellBackReason) {
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -651,6 +768,68 @@ export const codexCommand = new Command('codex')
     }
 
     if (isCloud) {
+      // Route the create to the control box when one is configured, then adopt +
+      // attach here so the agent starts. Foreground only (we already returned for
+      // -i above). resume / --dangerously-with-credentials teleport host state at
+      // create time, which the worker path can't do, so they stay local.
+      const routing = await resolveCreateRouting({
+        providerName,
+        remoteHost,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      // git.pushMode=direct is refused above whenever the hub is in play, so it is
+      // NOT a hub-incompatibility term here — only --resume (host state teleported
+      // at create time) forces a local build.
+      const hubIncompatible = Boolean(resumePrepared);
+      if (routing.where === 'hub' && hubIncompatible) {
+        if (opts.viaHub)
+          log.warn(
+            '--via-hub is ignored for --resume runs (they teleport host state at create time); building this box locally.',
+          );
+      } else if (routing.where === 'hub') {
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'codex',
+              // The gate above already resolved + approved these; the hub path
+              // used to discard them, so a hub-built box came up without files
+              // the user had explicitly said yes to.
+              carry: carryEntries,
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
+        );
+        if (adopted) {
+          await cloudAgentAttach({
+            box: adopted,
+            binary: 'codex',
+            sessionName: cfg.effective.codex.sessionName,
+            mode: 'codex',
+            extraArgs: applyCodexSkipPermissions(codexArgs, cfg.effective),
+            openIn: hostAwareOpenIn(cfg),
+          });
+          cmdLog.close();
+          return;
+        }
+        // adopted === null → control box not fully configured for it; fall to local.
+      } else if (routing.fellBackReason) {
+        log.warn(
+          `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+        );
+      }
+
       // Cloud sign-in offer: capture a host login to ~/.agentbox so the per-box
       // push seeds it (docker's offer below only seeds via the shared volume).
       // Uses the default docker image — the login runs in a docker container,
@@ -679,6 +858,7 @@ export const codexCommand = new Command('codex')
           // so cloud boxes from the agent commands honor the same config.
           controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
           gitPushMode: cfg.effective.git.pushMode,
+          hubGitAuth: cfg.effective.hub.gitAuth,
           // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
           providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective, {
             remoteHost,
@@ -1179,7 +1359,9 @@ const codexStartCommand = new Command('start')
             sessionName,
             extraArgs: effectiveCodexArgs,
           });
-          outro(`--no-attach: codex started in background. Attach: agentbox codex attach ${reattachRef(box)}`);
+          outro(
+            `--no-attach: codex started in background. Attach: agentbox codex attach ${reattachRef(box)}`,
+          );
           return;
         }
         await cloudAgentAttach({
@@ -1228,7 +1410,7 @@ const codexLoginCommand = new Command('login')
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+      await ensureImage(image, { onProgress: imageProgress(s) });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing codex config');

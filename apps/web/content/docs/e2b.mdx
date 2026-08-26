@@ -7,9 +7,7 @@ Run your agents in a fast E2B cloud sandbox with a public HTTPS preview URL and 
 
 Switch per box with `--provider e2b`, or pin it project-wide with `box.provider: e2b` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
-<Callout title="Nightly">
-E2B support is available in the **nightly** build of AgentBox.
-</Callout>
+<Callout title="Nightly">E2B support is available in the **nightly** build of AgentBox.</Callout>
 
 ## Set up
 
@@ -41,7 +39,10 @@ agentbox e2b claude
 ## Prepare the base template (Dockerfile → `Template.build()`)
 
 <Callout title="WHAT MAKES E2B DIFFERENT">
-Daytona, Hetzner, and Vercel each bake their base by booting a vanilla image, running provisioning steps, then snapshotting. **E2B is the only AgentBox cloud provider that builds the base directly from a Dockerfile** via the SDK's `Template.build()`. That means a deterministic, layer-cached, code-first build rather than a stateful provisioning run.
+  Daytona, Hetzner, and Vercel each bake their base by booting a vanilla image, running provisioning
+  steps, then snapshotting. **E2B is the only AgentBox cloud provider that builds the base directly
+  from a Dockerfile** via the SDK's `Template.build()`. That means a deterministic, layer-cached,
+  code-first build rather than a stateful provisioning run.
 </Callout>
 
 `agentbox prepare --provider e2b` drives a TypeScript-described `Template.build()` that includes everything the box needs (agentbox-ctl, the vscode user, Claude / Codex / OpenCode, tmux, VNC). The resulting `templateId:tag` is recorded under the per-provider key `box.imageE2b` and to `~/.agentbox/e2b-prepared.json`; every `create --provider e2b` boots from it.
@@ -81,17 +82,21 @@ agentbox e2b claude
 
 ## Limits
 
-| Limit | |
-| --- | --- |
-| Region | SDK-chosen (transparent) |
+| Limit             |                                                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Region            | SDK-chosen (transparent)                                                                                                                    |
 | Disk / RAM / vCPU | Template-level — baked at `Template.build()` time via `prepare --provider e2b --size <cpu-memory>`; per-create `--size` warns if it differs |
-| Exposed ports | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080 |
-| Session length | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom; auto-renewed (up to the plan cap) while the agent is working |
-| Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume |
-| SSH | none — attach is an SDK-streaming PTY bridge over `pty.create` |
+| Exposed ports     | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080                                                                                 |
+| Session length    | 1 hour (Hobby) — the attach helper caps at **55 minutes** for headroom; auto-renewed (up to the plan cap) while the agent is working        |
+| Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume                                        |
+| SSH               | none — attach is an SDK-streaming PTY bridge over `pty.create`                                                                              |
 
 <Callout title="IN-BOX DOCKER">
-E2B supports [Docker-in-Docker](/docs/docker-in-docker) — the microVM grants the capabilities a container runtime needs. The engine is baked into the prepare template and `dockerd` auto-launches on every create/resume, so a `postgres:16` `agentbox.yaml` service or ad-hoc `docker run` works with no opt-in. Pulled images carry over across pause/resume; the data root is wiped with the box on `destroy`.
+  E2B supports [Docker-in-Docker](/docs/docker-in-docker) — the microVM grants the capabilities a
+  container runtime needs. The engine is baked into the prepare template and `dockerd` auto-launches
+  on every create/resume, so a `postgres:16` `agentbox.yaml` service or ad-hoc `docker run` works
+  with no opt-in. Pulled images carry over across pause/resume; the data root is wiped with the box
+  on `destroy`.
 </Callout>
 
 ## Pause / resume
@@ -115,7 +120,9 @@ agentbox create --provider e2b --checkpoint setup
 ```
 
 <Callout type="warn" title="HEADS UP">
-`createSnapshot` pauses the source sandbox while capturing; the next op auto-resumes it. AgentBox self-heals a stale checkpoint: `create` probes liveness, prunes the dangling manifest, and falls back to the base template.
+  `createSnapshot` pauses the source sandbox while capturing; the next op auto-resumes it. AgentBox
+  self-heals a stale checkpoint: `create` probes liveness, prunes the dangling manifest, and falls
+  back to the base template.
 </Callout>
 
 ## Maintenance
@@ -131,15 +138,15 @@ agentbox prune --provider e2b -y
 
 ## Specs
 
-| Spec | |
-| --- | --- |
-| Base image | Debian 12 |
-| Build method | Dockerfile via the SDK's `Template.build()` (`agentbox prepare --provider e2b`) — the only AgentBox cloud built from a Dockerfile |
-| Docker-in-Docker | None (Firecracker + seccomp) |
-| SSH | None — SDK-streaming PTY bridge over `pty.create` |
-| Arch | x86_64 (amd64) |
-| Live snapshots | Free pause/resume (`Sandbox.pause`/`connect`) + id-addressed snapshots (`Sandbox.createSnapshot`) |
-| Preview URL | Public HTTPS `https://{port}-{sandboxId}.e2b.app` (no token) |
+| Spec             |                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Base image       | Debian 12                                                                                                                         |
+| Build method     | Dockerfile via the SDK's `Template.build()` (`agentbox prepare --provider e2b`) — the only AgentBox cloud built from a Dockerfile |
+| Docker-in-Docker | None (Firecracker + seccomp)                                                                                                      |
+| SSH              | None — SDK-streaming PTY bridge over `pty.create`                                                                                 |
+| Arch             | x86_64 (amd64)                                                                                                                    |
+| Live snapshots   | Free pause/resume (`Sandbox.pause`/`connect`) + id-addressed snapshots (`Sandbox.createSnapshot`)                                 |
+| Preview URL      | Public HTTPS `https://{port}-{sandboxId}.e2b.app` (no token)                                                                      |
 
 ## Caveats
 

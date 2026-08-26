@@ -5,7 +5,7 @@
  */
 
 import { errSummary, type CheckResult, type CredStatusSummary } from '@agentbox/sandbox-core';
-import { detectPortless, portlessDoctorRow } from '@agentbox/sandbox-cloud';
+import { detectPortless, portlessDoctorRow, portlessServiceStatus } from '@agentbox/sandbox-cloud';
 import { readDigitalOceanCredStatus } from './credentials.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -41,7 +41,7 @@ export async function doctorChecks(): Promise<CheckResult[]> {
         };
     // Host Portless mints the <box>.localhost alias for the SSH-forwarded port;
     // without it digitalocean web URLs degrade to raw loopback.
-    const portlessRes = portlessDoctorRow(await detectPortless());
+    const portlessRes = portlessDoctorRow(await detectPortless(), await portlessServiceStatus());
     return [credRes, snapRes, portlessRes];
   } catch (err) {
     return [{ label: 'credentials', status: 'warn', detail: errSummary(err) }];

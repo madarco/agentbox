@@ -14,6 +14,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { repoSlugFromRemote } from './git-pat.js';
 import type { GitRpcResult } from './types.js';
 
 /** Whitelisted subset of `gh pr` ops exposed via RPC. Keep in sync with the ctl CLI. */
@@ -38,12 +41,7 @@ export function isGhPrOp(value: string): value is GhPrOp {
 }
 
 /** Read-only ops never trigger the host confirmation prompt. */
-export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set([
-  'view',
-  'list',
-  'diff',
-  'checks',
-]);
+export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list', 'diff', 'checks']);
 
 /**
  * `gh pr` write ops that auto-approve under `box.autoApproveSafeHostActions`:
@@ -77,8 +75,7 @@ export const GH_RUN_READ_ONLY_OPS: ReadonlySet<GhRunOp> = new Set(['list', 'view
 // a review comment. The optional trailing `(\?…)` lets agents embed GET query
 // params in the path (e.g. `…/comments?per_page=50`) rather than via field flags.
 const PR_REVIEW_COMMENT = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments(\?.*)?$/;
-const PR_REVIEW_COMMENT_REPLY =
-  /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments\/\d+\/replies(\?.*)?$/;
+const PR_REVIEW_COMMENT_REPLY = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments\/\d+\/replies(\?.*)?$/;
 
 /**
  * `gh api` endpoints on which POST (create a comment) is proxied — unprompted,
@@ -170,7 +167,9 @@ export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult 
     // `--input` (stdin/file body) can't traverse the relay — refuse outright.
     // Its spaced value (if any) is irrelevant; we return before consuming it.
     if (arg === '--input' || arg.startsWith('--input=')) {
-      return refuse("'--input' (stdin/file body) isn't supported through the relay; use -f/-F fields");
+      return refuse(
+        "'--input' (stdin/file body) isn't supported through the relay; use -f/-F fields",
+      );
     }
     // Field flags auto-switch gh api to POST. The SPACED forms take the next
     // token as their value, so consume it — otherwise a method-looking value
@@ -184,7 +183,12 @@ export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult 
     }
     // Glued field forms carry their value inline (`-fbody=hi`, `--field=…`). No
     // read-only flag starts with -f / -F, so the prefix match is safe.
-    if (arg.startsWith('-f') || arg.startsWith('-F') || arg.startsWith('--field=') || arg.startsWith('--raw-field=')) {
+    if (
+      arg.startsWith('-f') ||
+      arg.startsWith('-F') ||
+      arg.startsWith('--field=') ||
+      arg.startsWith('--raw-field=')
+    ) {
       hasFieldFlag = true;
     }
   }
@@ -197,7 +201,9 @@ export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult 
       `POST is only proxied to PR review-comment endpoints (repos/:o/:r/pulls/:n/comments[/:id/replies]), not '${endpoint}'`,
     );
   }
-  return refuse(`method '${method}' is not proxied — only GET, and POST to comment endpoints, are allowed`);
+  return refuse(
+    `method '${method}' is not proxied — only GET, and POST to comment endpoints, are allowed`,
+  );
 }
 
 /**
@@ -370,6 +376,34 @@ async function probeGh(): Promise<GitRpcResult | null> {
 }
 
 /**
+ * Where to run `gh`, and whether it must be told the repo.
+ *
+ * `gh` infers the repo from its cwd's git remote, so the host checkout is the
+ * natural place to run it. A control box has no checkout: passing that path as
+ * `cwd` makes the spawn itself fail with a bare `spawn gh ENOENT` (Node reports
+ * a missing cwd exactly like a missing binary), which reads as "gh isn't
+ * installed" and sent us hunting the wrong problem. Fall back to a directory
+ * that exists and name the repo explicitly from the registered origin instead.
+ */
+export function ghRunContext(
+  workspacePath: string,
+  originUrl: string | undefined,
+  args: string[],
+): { cwd: string; args: string[] } {
+  if (workspacePath.length > 0 && existsSync(workspacePath)) {
+    return { cwd: workspacePath, args };
+  }
+  const origin = originUrl?.trim() ?? '';
+  const alreadyScoped = args.some((a) => a === '--repo' || a === '-R' || a.startsWith('--repo='));
+  if (origin.length === 0 || alreadyScoped) return { cwd: tmpdir(), args };
+  try {
+    return { cwd: tmpdir(), args: ['--repo', repoSlugFromRemote(origin), ...args] };
+  } catch {
+    return { cwd: tmpdir(), args };
+  }
+}
+
+/**
  * Spawn `gh` on the host with the given argv inside `cwd`. Returns the
  * standard `{ exitCode, stdout, stderr }` envelope. Self-contained
  * (doesn't call into `server.ts`'s `runHostCommand`) so this module has no
@@ -438,7 +472,9 @@ export async function checkoutGuards(
     return {
       exitCode: status.exitCode,
       stdout: '',
-      stderr: `gh pr checkout: failed to inspect host repo: ${status.stderr || status.stdout}`.trimEnd() + '\n',
+      stderr:
+        `gh pr checkout: failed to inspect host repo: ${status.stderr || status.stdout}`.trimEnd() +
+        '\n',
     };
   }
   if (status.stdout.trim().length > 0) {
@@ -453,7 +489,8 @@ export async function checkoutGuards(
     return {
       exitCode: head.exitCode,
       stdout: '',
-      stderr: `gh pr checkout: failed to resolve HEAD: ${head.stderr || head.stdout}`.trimEnd() + '\n',
+      stderr:
+        `gh pr checkout: failed to resolve HEAD: ${head.stderr || head.stdout}`.trimEnd() + '\n',
     };
   }
   const currentBranch = head.stdout.trim();
@@ -516,7 +553,6 @@ export function refuseCheckoutByDefault(op: GhPrOp): GitRpcResult | null {
   return {
     exitCode: 13,
     stdout: '',
-    stderr:
-      'gh pr checkout: disabled by default; set AGENTBOX_GH_PR_CHECKOUT=allow to enable\n',
+    stderr: 'gh pr checkout: disabled by default; set AGENTBOX_GH_PR_CHECKOUT=allow to enable\n',
   };
 }

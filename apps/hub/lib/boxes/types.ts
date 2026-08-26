@@ -49,6 +49,36 @@ export interface Box {
   opencodeSessionTitle?: string;
   claudeActivity?: string;
   codexActivity?: string;
+  // Live shell-session count (docker only; the persisted status has none for
+  // cloud/registered boxes). Drives `agentbox list`'s SHELLS column. Absent →
+  // the CLI renders `-`.
+  shellCount?: number;
+  // ── Adoption / reconstruction fields. A thin CLI (`agentbox ls`, and Step 4's
+  // box resolution) rebuilds a drivable local record from THIS payload instead
+  // of the internal `/admin/store` registration wire, so the API carries every
+  // NON-SECRET field `registrationToBoxRecord` needs. Tokens (relay/bridge/
+  // preview) are deliberately omitted — a fresh adoption re-mints them. Populated
+  // for cloud boxes; absent (undefined) for docker and synthetic `job:` rows. ──
+  // Provider-native sandbox id (the handle the backend SDK resolves).
+  sandboxId?: string;
+  // The box repo's origin remote URL, from its registration. Lets project-scoped
+  // `ls` match a box to the cwd's repo by identity — needed for a registered box
+  // with no local `projectRoot`, and for ANY box seen through a REMOTE hub, whose
+  // `projectRoot` is the control box's path and so can't match this laptop's.
+  originUrl?: string | null;
+  // Public IP/host of the box's VM (direct-SSH providers: hetzner/digitalocean).
+  publicHost?: string;
+  // Resolved base image / snapshot ref the sandbox booted from.
+  image?: string;
+  // In-box WebProxy port (cloud boxes bind a non-privileged port).
+  webPort?: number;
+  // Token-authed preview URLs keyed by in-box port (mirrors CloudBoxFields).
+  previewUrls?: Record<number, string>;
+  // The agent the box was created for → BoxRecord.lastAgent.
+  lastAgent?: 'claude' | 'codex' | 'opencode';
+  // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
+  // 'control-plane'. Absent for docker.
+  topology?: string;
 }
 
 export interface Project {
@@ -71,6 +101,19 @@ export interface Project {
   needsSetup?: boolean;
   provider: string;
   createdAt: number;
+  /**
+   * The project repo's origin remote URL, when known. Populated by the hosted
+   * (control-box) source from the box registration so the remote hub's project
+   * page can show where the repo lives; undefined on the localhost path (the
+   * page falls back to `repo`).
+   */
+  originUrl?: string | null;
+  /**
+   * Custody `projects/<slug>` key (`owner__repo`) for the project's seed
+   * material, when a box registered one. The project page joins on this to read
+   * the seed/custody status. Hosted source only.
+   */
+  projectSlug?: string | null;
 }
 
 export interface Repo {
@@ -135,6 +178,39 @@ export interface ProviderOption {
   baseStatus?: 'fresh' | 'stale' | 'unprepared' | 'unknown';
   // Human-readable reason when baseStatus === 'stale' (the fingerprint delta).
   baseStaleReason?: string;
+  // Which files actually differ, when baseStatus === 'stale'. Only computed for
+  // stale rows (it re-hashes the build context).
+  bakeDiff?: BakeDiff;
+  // WHICH MACHINE this row describes. 'hub' means the state was read from the
+  // configured control box, because that is where boxes on this provider are
+  // actually created and baked (`cloud.viaHub`) — so this host's own bake is
+  // irrelevant to it. Docker and remote-docker are always 'local': their bases
+  // are local images, not portable snapshots. Absent = local (the plain,
+  // no-control-box case).
+  origin?: 'local' | 'hub';
+  // The control box's URL, for the out-links on an `origin: 'hub'` row. Actions
+  // on a remote provider belong to the remote hub's own UI.
+  hubUrl?: string;
+}
+
+/**
+ * The per-file explanation behind a `stale` verdict.
+ *
+ * `hasManifest: false` means the base was baked before per-file manifests were
+ * recorded, so there is nothing to diff against — the UI says so and points at a
+ * re-bake rather than guessing which file moved.
+ */
+export interface BakeDiff {
+  hasManifest: boolean;
+  /**
+   * A manifest exists but the CURRENT hashes couldn't be computed (e.g. a dev
+   * tree with no staged runtime), so there is nothing to diff against. Distinct
+   * from `hasManifest: false`, which means a re-bake would actually help.
+   */
+  liveUnavailable?: boolean;
+  changed?: { rel: string; from: string; to: string }[];
+  added?: string[];
+  removed?: string[];
 }
 
 export interface HubState {
@@ -147,6 +223,11 @@ export interface HubState {
   // Active gate: 'password' (hetzner/vercel) drives the topbar sign-out; 'token'
   // (localhost) and 'off' show none.
   authMode: AuthMode;
+  // The control box this hub operates through (`relay.controlPlaneUrl`), when
+  // configured. Present on the PC's localhost hub; null on the control box
+  // itself. The topbar links to it so the local hub doesn't pretend to be the
+  // brain when a control box holds the shared state.
+  controlPlane?: { url: string } | null;
 }
 
 export const statusMeta: Record<BoxStatus, { label: string; badgeClass: string }> = {

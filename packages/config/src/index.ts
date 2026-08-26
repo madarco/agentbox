@@ -11,6 +11,7 @@ export {
   type EffectiveConfig,
   type EngineKind,
   type GitPushMode,
+  type HubGitAuthMode,
   type IdeFlavor,
   type KeyDescriptor,
   type KeyType,
@@ -24,12 +25,20 @@ export {
   PROVIDERS,
   PROVIDER_NAMES,
   CLOUD_PROVIDER_NAMES,
+  HUB_ROUTABLE_PROVIDER_NAMES,
+  isHubRoutableProvider,
   isProviderKind,
   providerMeta,
   providerKeyCap,
   perProviderConfigKey,
   type ProviderMeta,
 } from './providers.js';
+export {
+  parseProviderSpec,
+  providerNameOf,
+  REMOTE_DOCKER,
+  type ProviderSpec,
+} from './provider-spec.js';
 
 export {
   coerceFromString,
@@ -62,12 +71,11 @@ export {
   type LoadEffectiveConfigOptions,
 } from './load.js';
 
-export {
-  defaultCheckpointConfigKey,
-  resolveDefaultCheckpoint,
-} from './checkpoint.js';
+export { defaultCheckpointConfigKey, resolveDefaultCheckpoint } from './checkpoint.js';
 
 export { resolveBoxSize } from './size.js';
+
+export { resolvePrepareLocation } from './location.js';
 
 export {
   DAYTONA_VM_REGION,
@@ -76,14 +84,14 @@ export {
   type DaytonaSandboxClass,
 } from './daytona.js';
 
-export {
-  boxImageConfigKey,
-  resolveBoxImage,
-} from './image.js';
+export { boxImageConfigKey, resolveBoxImage } from './image.js';
+
+export { withFileLock } from './file-lock.js';
 
 export {
   bumpProjectGcCounter,
   listProjectsConfigured,
+  mergeConfigYaml,
   pruneOrphanProjectConfigs,
   registerProject,
   setConfigValue,

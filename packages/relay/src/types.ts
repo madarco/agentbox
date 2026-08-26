@@ -38,6 +38,15 @@ export interface BoxRegistration {
    * `@agentbox/sandbox-{backend}` to drive the in-sandbox channel.
    */
   backend?: string;
+  /**
+   * For `kind === 'cloud'`: the provider-native sandbox id (e.g. the Hetzner
+   * server id). The per-box SSH key material lives on disk keyed by this id
+   * (`~/.agentbox/boxes/<sandboxId>/ssh/`), so a PC that adopts a hub-created
+   * box (`agentbox hub pull`) writes the downloaded keys under the same id, and
+   * a reap can locate the box's custody `boxes/<sandboxId>/` subtree. Absent for
+   * providers that mint no keypair (e2b/vercel) and legacy registrations.
+   */
+  sandboxId?: string;
   /** Docker container name; the relay needs it to `docker pause` an idle box. */
   containerName?: string;
   /** ISO-8601 box-creation time (BoxRecord.createdAt); used as a tie-break in auto-pause ordering. */
@@ -95,6 +104,25 @@ export interface BoxRegistration {
    * without a git origin.
    */
   originUrl?: string;
+  /**
+   * Public IP/host of the box's VM for direct-SSH providers (hetzner,
+   * digitalocean). Lets a PC adopting this box (`agentbox hub adopt`)
+   * reconstruct the `BoxRecord.ssh` target without asking the provider API.
+   * Absent for SDK-reached providers (e2b/vercel/daytona) and legacy rows.
+   */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from (mirrors `CloudBoxFields.image`). */
+  image?: string;
+  /** In-box WebProxy port (mirrors `CloudBoxFields.webPort`), for `url` reconstruction. */
+  webPort?: number;
+  /** Agent the box was created for ('claude' | 'codex' | 'opencode') → `BoxRecord.lastAgent`. */
+  agent?: string;
+  /**
+   * Custody `projects/<slug>` key of the box's project (owner__repo). Links a
+   * registration to its seed material and secrets without re-deriving the slug
+   * from `originUrl` on every consumer.
+   */
+  projectSlug?: string;
 }
 
 export interface BoxWorktree {
@@ -153,6 +181,8 @@ export interface RegisterBoxBody {
   kind?: BoxKind;
   /** For cloud boxes: which backend (e.g. 'daytona'). Drives executor lazy-import. */
   backend?: string;
+  /** For cloud boxes: provider-native sandbox id (SSH-key + custody dir key). */
+  sandboxId?: string;
   containerName?: string;
   createdAt?: string;
   /**
@@ -177,6 +207,16 @@ export interface RegisterBoxBody {
   autoApproveSafeHostActions?: boolean;
   /** The box repo's origin remote URL (for GitHub-App lease repo resolution). */
   originUrl?: string;
+  /** Public VM IP/host for direct-SSH providers (PC adoption). */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from. */
+  image?: string;
+  /** In-box WebProxy port. */
+  webPort?: number;
+  /** Agent the box was created for. */
+  agent?: string;
+  /** Custody `projects/<slug>` key of the box's project. */
+  projectSlug?: string;
 }
 
 /**

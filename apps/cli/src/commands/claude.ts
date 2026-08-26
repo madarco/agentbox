@@ -15,7 +15,6 @@ import {
   claudeSessionInfo,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureClaudeVolume,
   ensureImage,
@@ -59,8 +58,15 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
+import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
@@ -73,7 +79,7 @@ import {
 } from '../session-teleport/index.js';
 import { resolvePlanTeleport } from '../session-teleport/plan.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { maybeShowInstallHint } from '../lib/install-hint.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -86,6 +92,7 @@ import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { handleLifecycleError } from './_errors.js';
+import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -104,6 +111,7 @@ import {
   writeLoginState,
   type LoginState,
 } from '../lib/claude-login-session.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
 /** Project an agent-create options struct down to what the queue worker needs. */
 function pickCreateOpts(opts: ClaudeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
@@ -136,9 +144,6 @@ function logPrune(rebuild: { pruned: string[]; prunedBytes: number }): void {
   log.info(`pruned ${String(n)} stale plugin cache${n === 1 ? '' : 's'} (${String(mb)} MB freed)`);
 }
 
-/** Host-side URL for the relay (always loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
-
 /**
  * Replacement for the old `attachClaudeSession`: builds the docker tmux-
  * attach argv, hands it to the node-pty wrapper for the footer + prompt
@@ -161,7 +166,7 @@ export async function attachClaudeWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildClaudeAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,
@@ -209,6 +214,12 @@ interface ClaudeCreateOptions {
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
   useBranch?: string;
+  /** --via-hub: force building this cloud box on the control box (else the cloud.viaHub default). */
+  viaHub?: boolean;
+  /** --local: force building on this machine even when a control box is configured. */
+  local?: boolean;
+  /** --url <url>: control-box URL for the hub route (else relay.controlPlaneUrl). */
+  url?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
@@ -368,7 +379,7 @@ async function maybeRunClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Seed the shared claude-config volume from the host's ~/.claude *before*
   // the login container runs, so `claude auth login` writes its oauthAccount
   // on top of the host config (trust, installMethod, project alias) rather
@@ -421,7 +432,7 @@ async function maybeRunCloudClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing claude config');
   await ensureClaudeVolume(
     { volume: SHARED_CLAUDE_VOLUME },
@@ -511,6 +522,15 @@ export const claudeCommand = new Command('claude')
     '-b, --use-branch <name>',
     'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
+  .option(
+    '--via-hub',
+    'force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.',
+  )
+  .option(
+    '--local',
+    'force building the box on this machine even when a control box is configured (the opposite of --via-hub).',
+  )
+  .option('--url <url>', 'control-box URL for the hub route (default: relay.controlPlaneUrl)')
   .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.',
@@ -630,10 +650,37 @@ export const claudeCommand = new Command('claude')
     );
     const isCloud = providerName !== 'docker';
 
+    // Docker off under a remote hub (Step 12): a docker box built here can't run
+    // with the laptop off, so it's refused under a control box unless hub.mode=local.
+    const dockerRefusal = await dockerProviderRefusal(
+      cfg.effective,
+      providerName,
+      remoteHost,
+      'create',
+    );
+    if (dockerRefusal) {
+      log.error(dockerRefusal);
+      cmdLog.close();
+      process.exit(1);
+    }
+
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
       log.error(
         'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
       );
+      cmdLog.close();
+      process.exit(1);
+    }
+
+    // Refuse copying a git credential into the box when a control box is in play —
+    // token leasing does the same laptop-off push without the copy. Checked before
+    // routing / the -i path so it can't slip into the hub create.
+    const directRefusal = directGitModeRefusal({
+      pushMode: cfg.effective.git.pushMode,
+      hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+    });
+    if (directRefusal) {
+      log.error(directRefusal);
       cmdLog.close();
       process.exit(1);
     }
@@ -643,6 +690,7 @@ export const claudeCommand = new Command('claude')
     await ensureProjectRepoOnControlPlane({
       controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
       gitPushMode: cfg.effective.git.pushMode,
+      hubGitAuth: cfg.effective.hub.gitAuth,
       projectRoot,
       yes: !!opts.yes,
     });
@@ -653,6 +701,9 @@ export const claudeCommand = new Command('claude')
     // (docker bakes the prompt into `tmux new-session`; cloud pre-starts a
     // detached tmux session via `buildAttach({ detached: true })`).
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only: the queue worker (a separate
       // process) doesn't thread git.pushMode=direct into provider.create, so a
       // queued box would carry the secret but never use it. And copying a
@@ -663,6 +714,71 @@ export const claudeCommand = new Command('claude')
         );
         cmdLog.close();
         process.exit(1);
+      }
+      // Route the background run to the control box when one is configured: the
+      // resident worker creates the box AND starts claude with the prompt, so it
+      // runs with the laptop off. Local agent creds aren't needed for the hub path
+      // (the control box seeds them from custody), so route before the local check.
+      const iRouting = await resolveCreateRouting({
+        providerName,
+        remoteHost,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      if (iRouting.where === 'hub') {
+        // Resolve + approve `carry:` BEFORE enqueuing: the hub worker builds the
+        // box from a clone plus custody, so anything the user wants copied has to
+        // ride the seed. Skipping this is how an approved file silently failed to
+        // reach a hub-created box.
+        const carryForHub = await runQueuedCarryGate({
+          projectRoot,
+          opts,
+          onLog: (line) => cmdLog.write(line),
+          onClose: () => cmdLog.close(),
+        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'claude',
+              carry: carryForHub,
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: applyClaudeSkipPermissions(claudeArgs, cfg.effective),
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
+        );
+        if (res) {
+          if (res.error) {
+            log.error(
+              `control plane run failed: ${res.error}` +
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox claude attach ${res.boxId}\`)`
+                  : ''),
+            );
+            cmdLog.close();
+            process.exit(1);
+          }
+          outro(`claude is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
+          cmdLog.close();
+          return;
+        }
+        // res === null → control box not fully configured; fall through to local.
+      }
+      if (iRouting.where === 'local' && iRouting.fellBackReason) {
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -818,10 +934,29 @@ export const claudeCommand = new Command('claude')
     // runtime; if the local install no longer matches, the wizard offers to
     // rebuild before creating. Docker self-heals via `ensureImage`, so its
     // baseStatus is always `fresh` and the wizard is a no-op here.
-    const baseStatus = await evaluateBaseFreshness(
+    //
+    // Resolved BEFORE the wizard, not just at the create below: a hub-routed
+    // create is built on the control box, from ITS base, so this machine's base
+    // is irrelevant to it. Asking to spend minutes re-baking locally — for a box
+    // that never touches the result — is pure waste, and it is exactly what a PC
+    // sees whenever the control box has re-baked and the PC hasn't.
+    // git.pushMode=direct is refused above whenever the hub is in play, so it is
+    // NOT a hub-incompatibility term here — only --resume / --plan (host state
+    // teleported at create time) force a local build.
+    const hubIncompatible = Boolean(resumePrepared) || Boolean(planPrepared);
+    const createRouting = await resolveCreateRouting({
       providerName,
-      cfg.effective.box.claudeInstall,
-    );
+      remoteHost,
+      effective: cfg.effective,
+      projectRoot,
+      forceHub: opts.viaHub,
+      forceLocal: opts.local,
+      urlFlag: opts.url,
+    });
+    const buildsOnHub = createRouting.where === 'hub' && !hubIncompatible;
+    const baseStatus = buildsOnHub
+      ? undefined
+      : await evaluateBaseFreshness(providerName, cfg.effective.box.claudeInstall);
     const wiz = await maybeRunSetupWizard({
       workspace: opts.workspace,
       yes: !!opts.yes,
@@ -892,6 +1027,59 @@ export const claudeCommand = new Command('claude')
 
     if (isCloud) {
       const provider = await providerForCreate({ flag: opts.provider, config: cfg.effective });
+
+      // Route the create to the control box when one is configured, then adopt +
+      // attach here so the agent starts. Foreground only (we already returned for
+      // -i above). resume / --plan / --dangerously-with-credentials teleport host
+      // state AT create time, which the worker path can't do, so they stay local.
+      // Resolved above the wizard (see `createRouting`) so the stale-base prompt
+      // knows whether this machine's base is even going to be used.
+      const routing = createRouting;
+      if (routing.where === 'hub' && hubIncompatible) {
+        if (opts.viaHub)
+          log.warn(
+            '--via-hub is ignored for --resume / --plan runs (they teleport host state at create time); building this box locally.',
+          );
+      } else if (routing.where === 'hub') {
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'claude',
+              // The gate above already resolved + approved these; the hub path
+              // used to discard them, so a hub-built box came up without files
+              // the user had explicitly said yes to.
+              carry: carryEntries,
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
+        );
+        if (adopted) {
+          await cloudAgentAttach({
+            box: adopted,
+            binary: 'claude',
+            sessionName: cfg.effective.claude.sessionName,
+            mode: 'claude',
+            extraArgs: effectiveClaudeArgs,
+            openIn: hostAwareOpenIn(cfg),
+          });
+          cmdLog.close();
+          return;
+        }
+        // adopted === null → control box not fully configured for it; fall to local.
+      } else if (routing.fellBackReason) {
+        log.warn(
+          `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+        );
+      }
+
       // browser.default = 'playwright' | 'both' implies installing playwright
       // even if box.withPlaywright wasn't explicitly set.
       const withPlaywright =
@@ -923,6 +1111,7 @@ export const claudeCommand = new Command('claude')
           // so cloud boxes from the agent commands honor the same config.
           controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
           gitPushMode: cfg.effective.git.pushMode,
+          hubGitAuth: cfg.effective.hub.gitAuth,
           // Per-provider session-lifetime (e2b/vercel timeout) so the keepalive
           // seeds correctly; mirrors `agentbox create`.
           providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective, {
@@ -1549,7 +1738,9 @@ const claudeStartCommand = new Command('start')
             sessionName,
             extraArgs: effectiveClaudeArgs,
           });
-          outro(`--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`);
+          outro(
+            `--no-attach: claude started in background. Attach: agentbox claude attach ${reattachRef(box)}`,
+          );
           return;
         }
         await cloudAgentAttach({
@@ -1617,7 +1808,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
   const image = cfg.effective.box.image;
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(image, { onProgress: imageProgress(s) });
   s.stop('image ready');
 
   const id = randomUUID().slice(0, 8);
@@ -1663,7 +1854,9 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
       process.exit(1);
     }
     if (Date.now() > deadline) {
-      log.error(`timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`);
+      log.error(
+        `timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`,
+      );
       process.exit(1);
     }
     await sleep(400);
@@ -1703,7 +1896,9 @@ async function deliverLoginCode(code: string): Promise<void> {
     // the session stays valid so a corrected `--code` can retry it.
     if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
       s.stop('code rejected');
-      log.error(`${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`);
+      log.error(
+        `${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`,
+      );
       process.exit(1);
     }
     if (Date.now() > deadline) {
@@ -1732,54 +1927,60 @@ const claudeLoginCommand = new Command('login')
     '--interactive',
     "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
   )
-  .action(async (args: string[], opts: { headless?: boolean; code?: string; interactive?: boolean }) => {
-    const mode = selectLoginMode({
-      isTTY: !!process.stdin.isTTY,
-      headless: !!opts.headless,
-      code: typeof opts.code === 'string',
-      interactive: !!opts.interactive,
-      ptyAvailable: !!(await loadPtyBackend()),
-    });
-    try {
-      if (mode === 'code') {
-        await deliverLoginCode(opts.code as string);
-        return;
-      }
-      if (mode === 'headless') {
-        await startHeadlessLogin(args);
-        return;
-      }
-      intro('Signing in to Claude...');
-      const cfg = await loadEffectiveConfig(process.cwd());
-      const image = cfg.effective.box.image;
-
-      const s = spinner();
-      s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
-      s.stop('image ready');
-
-      // Throwaway `docker run` against the shared volume — the written
-      // credentials persist there and `syncClaudeCredentials` mirrors them to
-      // the host backup, so every later box (shared or isolate) is seeded.
-      const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
-      if (res.cancelled) {
-        outro('sign-in cancelled');
-        process.exit(1);
-      }
-      if (!res.ok) {
-        log.error(res.error ?? 'login failed');
-        // A login method whose output we can't recognize (an exotic `-- --sso`
-        // shape) never reaches a prompt; the passthrough still drives it.
-        if (res.error?.includes('never printed an auth URL')) {
-          log.info('Try `agentbox claude login --interactive` to use claude\'s own login TUI.');
+  .action(
+    async (args: string[], opts: { headless?: boolean; code?: string; interactive?: boolean }) => {
+      const mode = selectLoginMode({
+        isTTY: !!process.stdin.isTTY,
+        headless: !!opts.headless,
+        code: typeof opts.code === 'string',
+        interactive: !!opts.interactive,
+        ptyAvailable: !!(await loadPtyBackend()),
+      });
+      try {
+        if (mode === 'code') {
+          await deliverLoginCode(opts.code as string);
+          return;
         }
-        process.exit(1);
+        if (mode === 'headless') {
+          await startHeadlessLogin(args);
+          return;
+        }
+        intro('Signing in to Claude...');
+        const cfg = await loadEffectiveConfig(process.cwd());
+        const image = cfg.effective.box.image;
+
+        const s = spinner();
+        s.start('preparing sandbox image');
+        await ensureImage(image, { onProgress: imageProgress(s) });
+        s.stop('image ready');
+
+        // Throwaway `docker run` against the shared volume — the written
+        // credentials persist there and `syncClaudeCredentials` mirrors them to
+        // the host backup, so every later box (shared or isolate) is seeded.
+        const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
+        if (res.cancelled) {
+          outro('sign-in cancelled');
+          process.exit(1);
+        }
+        if (!res.ok) {
+          log.error(res.error ?? 'login failed');
+          // A login method whose output we can't recognize (an exotic `-- --sso`
+          // shape) never reaches a prompt; the passthrough still drives it.
+          if (res.error?.includes('never printed an auth URL')) {
+            log.info("Try `agentbox claude login --interactive` to use claude's own login TUI.");
+          }
+          process.exit(1);
+        }
+        outro('signed in — credentials saved for future boxes');
+        // A fresh login is exactly when the control box's copy goes stale — push
+        // the refreshed backup to custody (best-effort, silent, no-op without a
+        // control box or when the hash is unchanged).
+        await syncAgentCredentialsIfChanged();
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      outro('signed in — credentials saved for future boxes');
-    } catch (err) {
-      handleLifecycleError(err);
-    }
-  });
+    },
+  );
 
 claudeCommand.addCommand(claudeAttachCommand);
 claudeCommand.addCommand(claudeStartCommand);

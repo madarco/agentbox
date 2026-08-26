@@ -3,10 +3,12 @@ title: AgentBox Skills
 description: AgentBox installs Claude Code skills so the agent can drive boxes for you — fork a session, operate the CLI, and configure a box from the inside
 ---
 
-AgentBox ships a handful of Claude Code skills (mirrored as Codex prompts and OpenCode commands) so the agent itself can drive AgentBox. One forks your current session into a new box, one teaches the agent to operate the `agentbox` CLI on your host, and one runs *inside* a box to configure it. The npm package installs them for you.
+AgentBox ships a handful of Claude Code skills (mirrored as Codex prompts and OpenCode commands) so the agent itself can drive AgentBox. One forks your current session into a new box, one teaches the agent to operate the `agentbox` CLI on your host, and one runs _inside_ a box to configure it. The npm package installs them for you.
 
 <Callout title="NOTE">
-These are the AgentBox-provided skills, not the same thing as your own `~/.claude` skills — though those flow into every box too (see [Keeping boxes in sync](#keeping-boxes-in-sync)). For the agent session itself, see [Run an agent](/docs/run-an-agent).
+  These are the AgentBox-provided skills, not the same thing as your own `~/.claude` skills — though
+  those flow into every box too (see [Keeping boxes in sync](#keeping-boxes-in-sync)). For the agent
+  session itself, see [Run an agent](/docs/run-an-agent).
 </Callout>
 
 ## Install the skills
@@ -23,7 +25,7 @@ They land in `~/.claude/skills/agentbox/` and `~/.claude/skills/agentbox-info/`,
 
 ## `/agentbox` — fork a session
 
-`/agentbox [provider]` is the user-invokable slash command. Run it from Claude Code, Codex, or OpenCode and it teleports your *current* session — the full conversation, plus the active plan if you're in plan mode — into a fresh box and resumes it there. The provider argument is optional and defaults to local Docker.
+`/agentbox [provider]` is the user-invokable slash command. Run it from Claude Code, Codex, or OpenCode and it teleports your _current_ session — the full conversation, plus the active plan if you're in plan mode — into a fresh box and resumes it there. The provider argument is optional and defaults to local Docker.
 
 ```text
 /agentbox            # fork this session into a local Docker box
@@ -34,15 +36,17 @@ Under the hood it calls `agentbox fork`. It's host-only in v1 (forking from insi
 
 ## `agentbox-info` — operate AgentBox from chat
 
-`agentbox-info` is a host-side *reference* skill. Claude loads it automatically — there's nothing to type — when you ask it to spin up boxes, queue background runs with `-i`, or push commits safely through the host relay. It's the knowledge that lets an agent already running on your laptop operate the `agentbox` CLI on your behalf.
+`agentbox-info` is a host-side _reference_ skill. Claude loads it automatically — there's nothing to type — when you ask it to spin up boxes, queue background runs with `-i`, or push commits safely through the host relay. It's the knowledge that lets an agent already running on your laptop operate the `agentbox` CLI on your behalf.
 
 <Callout title="TIP">
-You never invoke `agentbox-info` directly; it's auto-loaded by relevance. Just ask your host agent to "start a box" or "queue three runs" and it knows the commands. See [Orchestration & queue boxes](/docs/background-and-parallel).
+  You never invoke `agentbox-info` directly; it's auto-loaded by relevance. Just ask your host agent
+  to "start a box" or "queue three runs" and it knows the commands. See [Orchestration & queue
+  boxes](/docs/background-and-parallel).
 </Callout>
 
 ## `agentbox-setup` — configure a box from the inside
 
-`agentbox-setup` runs *inside* a box. When the agent in a box has no [`agentbox.yaml`](/docs/agentbox-yaml) — or you ask it to (re)configure one — this skill walks it through discovering the project's services and tasks and writing `/workspace/agentbox.yaml`, so the in-box supervisor can boot the workspace deterministically.
+`agentbox-setup` runs _inside_ a box. When the agent in a box has no [`agentbox.yaml`](/docs/agentbox-yaml) — or you ask it to (re)configure one — this skill walks it through discovering the project's services and tasks and writing `/workspace/agentbox.yaml`, so the in-box supervisor can boot the workspace deterministically.
 
 It ships in the box image rather than in your host `~/.claude`, so it's only active where it's useful. See [Services & tasks](/docs/services-and-tasks) for the file it produces and how the supervisor runs it.
 
@@ -51,7 +55,8 @@ It ships in the box image rather than in your host `~/.claude`, so it's only act
 Your host `~/.claude` is the source of truth. Every `agentbox create` / `agentbox claude` syncs it into the next box, so your skills, plugins, MCP servers, and login all flow in automatically. A running box doesn't resync on a plain `attach` — use `agentbox claude start` after you install a new skill or sign in on the host, and it picks up the change.
 
 <Callout type="warn" title="HEADS UP">
-`attach` never resyncs your host `~/.claude`. After installing a skill or signing in on the host, use `agentbox claude start` (or a fresh `agentbox claude`) so the box picks it up.
+  `attach` never resyncs your host `~/.claude`. After installing a skill or signing in on the host,
+  use `agentbox claude start` (or a fresh `agentbox claude`) so the box picks it up.
 </Callout>
 
 ## Next steps

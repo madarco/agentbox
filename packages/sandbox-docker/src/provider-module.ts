@@ -12,7 +12,8 @@ import { dockerProvider } from './docker-provider.js';
 import { DEFAULT_BOX_IMAGE, imageInfo } from './image.js';
 import { volumeExists } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
-import { detectPortless, portlessDoctorRow } from './portless.js';
+import { currentDockerBaseFileHashes } from './prepared-state.js';
+import { detectPortless, portlessDoctorRow, portlessServiceStatus } from './portless.js';
 import { SHARED_CLAUDE_VOLUME } from './sync/agents/claude.js';
 import { SHARED_CODEX_VOLUME } from './sync/agents/codex.js';
 import { SHARED_OPENCODE_VOLUME } from './sync/agents/opencode.js';
@@ -74,7 +75,7 @@ export async function dockerChecks(): Promise<CheckResult[]> {
     (async (): Promise<CheckResult | null> => {
       const engine = await detectEngine().catch(() => 'other' as const);
       if (engine === 'orbstack') return null;
-      return portlessDoctorRow(await detectPortless());
+      return portlessDoctorRow(await detectPortless(), await portlessServiceStatus());
     })(),
   ]);
 
@@ -126,5 +127,10 @@ export async function dockerChecks(): Promise<CheckResult[]> {
 
 export const providerModule: ProviderModule = {
   provider: dockerProvider,
+  // No `currentBaseFingerprintLive` — docker's base self-heals via ensureImage,
+  // so it is never nagged about staleness. It still exposes the per-file hashes
+  // so the System page can explain a `stale` docker row the same way it explains
+  // a cloud one.
+  currentBaseFileHashes: () => currentDockerBaseFileHashes(),
   doctorChecks: dockerChecks,
 };

@@ -25,14 +25,19 @@ export { hostOpenCommand } from './host-open.js';
 export {
   agentboxSshConfigPath,
   agentboxAliasFor,
+  controlPlaneDeployPath,
+  AGENTBOX_HUB_SSH_ALIAS,
   ensureSshInclude,
   syncAgentboxSshConfig,
   hasUnmanagedHostConflict,
   parseSshTarget,
   readAgentboxSshAlias,
+  type ControlPlaneDeployRecord,
+  type HubDeploySource,
   type SshAliasOptions,
   type SshTarget,
 } from './ssh-config.js';
+export { EXPOSED_HUB_PROFILE, buildExposedHubEnv, parseEnvFileBody } from './hub-expose.js';
 export {
   resolveCloudSshTarget,
   ensureCloudSshAlias,
@@ -41,6 +46,7 @@ export {
   type CloudSshOptions,
 } from './cloud-ssh.js';
 export { mintSshKey, type MintedSshKey } from './ssh-key.js';
+export { resolveSshConfigTarget, type SshConfigTarget } from './ssh-config-probe.js';
 export {
   scpDownload,
   scpUpload,
@@ -56,6 +62,8 @@ export {
   SshTunnelManager,
   controlSockPath,
   defaultBoxSshDir,
+  boxSshNamespaceForProvider,
+  boxSshDirForProvider,
   pickFreePort,
   type PortForward,
   type SshTunnelOpenOptions,
@@ -82,6 +90,8 @@ export {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
+  boxLogsRaw,
   boxRestartService,
   boxRestartServices,
   boxServicesStatusRaw,
@@ -103,6 +113,41 @@ export {
 } from './doctor.js';
 export { maskSecret, secretsEnvPath, writeManagedSecrets } from './secrets.js';
 export {
+  publishManagedCredentials,
+  setCredentialPublisher,
+  type CredentialPublisher,
+} from './credential-publish.js';
+export {
+  fetchHealthz,
+  killPid,
+  pingHealthz,
+  processAlive,
+  resolveCliEntry,
+  shouldReclaimForVersion,
+  HUB_RELAY_PORT,
+  type HealthzBody,
+  type RelayReuseHealth,
+} from './hub-process.js';
+export {
+  ensureHub,
+  getHubStatus,
+  stopHub,
+  resolveHubServer,
+  hubRuntimeEnv,
+  readHubToken,
+  HUB_TOKEN_FILE,
+  type EnsureHubOptions,
+  type HubEndpoint,
+  type HubStatus,
+  type StopHubResult,
+} from './hub-lifecycle.js';
+export { setHubPortlessHooks, setHubDockerContext, type HubPortlessHooks } from './hub-hooks.js';
+export {
+  runDockerCredentialRefresh,
+  setDockerCredentialRefresh,
+  type DockerCredentialRefresher,
+} from './credential-refresh.js';
+export {
   PLUGINS_FILE,
   SUPPORTED_SDK_API_VERSIONS,
   isSupportedApiVersion,
@@ -123,7 +168,10 @@ export {
 export * from './sync/index.js';
 export {
   claudeInstallFingerprint,
+  matchClaudeInstallFingerprint,
+  computeContextManifest,
   computeContextSha256,
+  diffFileManifests,
   DOCKER_CONTEXT_FILE_MAP,
   preparedStatePathFor,
   readCliStamp,
@@ -134,8 +182,24 @@ export {
   writePreparedStateRaw,
   type CliStamp,
   type ContextFile,
+  type ContextManifest,
+  type FileManifest,
+  type FileManifestDiff,
   type PreparedBaseSnapshot,
   type PreparedProviderKind,
 } from './prepared-state.js';
+export {
+  RUNTIME_ROOT_ENV,
+  resolveStagedRuntimeRoot,
+  stagedRuntimeRootCandidates,
+} from './runtime-root.js';
 
 export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';
+export {
+  boxNameBasisFromOriginUrl,
+  deriveRepoLabel,
+  HUB_WORKER_CLONE_PREFIX,
+  isHubWorkerClone,
+  ownerRepoFromOriginUrl,
+  projectSlugFromOriginUrl,
+} from './project-slug.js';

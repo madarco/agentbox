@@ -131,6 +131,14 @@ export interface CloudBoxFields {
    */
   resources?: { cpu?: number; memory?: number; disk?: number };
   /**
+   * Public IP/host of the box's VM (direct-SSH backends: hetzner /
+   * digitalocean), read from the provision response. Persisted so the plane
+   * re-registration on resume — and a PC adopting a hub-created box — can
+   * rebuild the SSH target without a provider API call. Absent for SDK-reached
+   * backends and pre-feature records.
+   */
+  publicHost?: string;
+  /**
    * Inbound-access policy for VPS boxes (hetzner / digitalocean per-box
    * firewall). Persisted so a host-egress-IP drift re-sync (`repairReachability`
    * / `agentbox inbound`) recomputes `sources ∪ current-host-egress` without
@@ -193,6 +201,13 @@ export interface CloudBoxFields {
    * config changed. Mirrors config's `GitPushMode`.
    */
   gitPushMode?: 'auto' | 'relay' | 'lease' | 'direct';
+  /**
+   * The hub's git-auth mode at create time (`hub.gitAuth`). Persisted for the
+   * same reason as `gitPushMode`: a resume re-kick must re-derive the same
+   * routing even if the host config has since changed. Mirrors config's
+   * `HubGitAuthMode`.
+   */
+  hubGitAuth?: 'gh' | 'app';
 }
 
 /**
@@ -261,7 +276,7 @@ export interface BoxRecord {
    * Cosmetic user-chosen label, set via `agentbox status <box> --set-name`.
    * Purely for display and lookup — unlike `name` it does NOT drive the
    * container, git branch, or Portless URL. Absent means "fall back to name".
-   * See docs/state.md.
+   * See docs/architecture.md ("Where state lives").
    */
   displayName?: string;
   /**

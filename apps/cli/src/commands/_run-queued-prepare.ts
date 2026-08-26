@@ -14,11 +14,20 @@
  */
 
 import { Command } from 'commander';
-import { boxImageConfigKey, isProviderKind, loadEffectiveConfig, setConfigValue } from '@agentbox/config';
+import {
+  boxImageConfigKey,
+  isProviderKind,
+  loadEffectiveConfig,
+  resolveBoxSize,
+  resolveDaytonaClass,
+  resolvePrepareLocation,
+  setConfigValue,
+} from '@agentbox/config';
 import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
 import { openCommandLog } from '../lib/log-file.js';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
+import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
 
 export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
   .description('internal: run a queued provider image-bake job (do not invoke directly)')
@@ -78,10 +87,23 @@ async function runPrepareJob(
   }
   const cwd = job.createOpts?.workspace || process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-  // Docker base-image registry override (box.imageRegistry; empty = always build).
-  const registry = providerName === 'docker' ? cfg?.effective.box.imageRegistry : undefined;
-  const claudeInstall =
-    job.prepare?.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
+  const eff = cfg?.effective;
+  // Base-image registry override. Docker pulls from it; daytona's linux-vm bake
+  // MUST have it (a VM snapshot can only boot from a published image).
+  const registry =
+    providerName === 'docker' || providerName === 'daytona' ? eff?.box.imageRegistry : undefined;
+  const claudeInstall = job.prepare?.claudeInstall ?? eff?.box.claudeInstall ?? 'native';
+  // Bake INPUTS: the CLI's per-invocation flags (on job.prepare) win; when a flag
+  // is absent they fall back to the hub's effective config, so a `box.sizeDaytona`
+  // / `box.daytonaClass` / `box.hetznerLocation` / `box.digitaloceanRegion` pin
+  // bakes the same base the old local path did. `--build` forces a local docker
+  // build (skip the registry pull).
+  const allowPull = job.prepare?.build ? false : undefined;
+  const size = job.prepare?.size || (eff ? resolveBoxSize(eff, providerName) : '') || undefined;
+  const location = resolvePrepareLocation(providerName, job.prepare?.location, eff);
+  const sandboxClass = providerName === 'daytona' && eff ? resolveDaytonaClass(eff) : undefined;
+  const vmBaseImage =
+    providerName === 'daytona' ? eff?.box.daytonaVmBaseImage || undefined : undefined;
 
   const provider = await getProvider(providerName);
   if (typeof provider.prepare !== 'function') {
@@ -91,12 +113,34 @@ async function runPrepareJob(
   // A `docker:<alias>` spec bakes that specific remote-docker host (the hub's
   // per-host bake). parseProviderSpec pulls the host out; other providers ignore it.
   const remoteHost = parseProviderSpec(providerName).remoteHost;
+
+  // A base is a provider-side snapshot any machine with the API key can boot,
+  // so if the control box's custody already holds one baked from this exact
+  // build context, adopt it instead of spending minutes re-baking it here.
+  if (!job.prepare?.force) {
+    const adopted = await tryAdoptPreparedBase({
+      provider,
+      providerName,
+      log: (l) => log.write(l),
+    });
+    if (adopted) {
+      log.write(`prepared ${providerName}: adopted a shared base (identical build context, no bake)`);
+      return;
+    }
+  }
+
   log.write(`baking ${providerName} (force=${String(job.prepare?.force ?? false)})`);
   const result = await provider.prepare({
+    name: job.prepare?.name,
     hostWorkspace: cwd,
     force: job.prepare?.force,
+    allowPull,
     registry,
     claudeInstall,
+    size,
+    location,
+    sandboxClass,
+    vmBaseImage,
     ...(remoteHost ? { host: remoteHost } : {}),
     onLog: (line) => log.write(line),
   });
@@ -123,4 +167,8 @@ async function runPrepareJob(
       );
     }
   }
+
+  // Share the fresh bake so the other side (PC ⇄ control box) boots this same
+  // base rather than building its own.
+  await sharePreparedBase(providerName, (l) => log.write(l));
 }

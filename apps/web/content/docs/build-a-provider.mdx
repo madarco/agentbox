@@ -6,7 +6,9 @@ description: Build a custom AgentBox provider as a plugin on @madarco/agentbox-p
 AgentBox ships seven built-in providers ([local-docker](/docs/local-docker), [remote-docker](/docs/remote-docker), [hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean), [daytona](/docs/daytona), [vercel](/docs/vercel), [e2b](/docs/e2b)), but the provider surface is **open**: you can build your own provider as a plugin — its own npm package — and run agents on any cloud or infrastructure with `agentbox --provider <name>`. A plugin needs **zero changes to AgentBox itself**.
 
 <Callout type="info" title="SHARE YOUR PROVIDER">
-Once your provider works end to end, open a PR against [madarco/agentbox](https://github.com/madarco/agentbox) to add a short page for it under **Community Providers** in these docs — so other users can discover and install it.
+  Once your provider works end to end, open a PR against
+  [madarco/agentbox](https://github.com/madarco/agentbox) to add a short page for it under
+  **Community Providers** in these docs — so other users can discover and install it.
 </Callout>
 
 You build against one public package, [`@madarco/agentbox-provider-sdk`](https://www.npmjs.com/package/@madarco/agentbox-provider-sdk). It re-exports the whole provider-facing surface with AgentBox's internals inlined, so your plugin never imports AgentBox internals — that indirection is the stable seam AgentBox can refactor behind without breaking published plugins.
@@ -35,14 +37,25 @@ const backend: CloudBackend = {
   async get(id) {
     /* … */
   },
-  async start(h) {}, async stop(h) {}, async pause(h) {}, async resume(h) {},
-  async destroy(h) {}, async state(h) { return 'running'; },
+  async start(h) {},
+  async stop(h) {},
+  async pause(h) {},
+  async resume(h) {},
+  async destroy(h) {},
+  async state(h) {
+    return 'running';
+  },
   async exec(h, cmd, opts) {
     /* … */
   },
-  async uploadFile(h, local, remote) {}, async downloadFile(h, remote, local) {},
-  async listFiles(h, dir) { return []; },
-  async previewUrl(h, port) { return { url: `https://…:${port}` }; },
+  async uploadFile(h, local, remote) {},
+  async downloadFile(h, remote, local) {},
+  async listFiles(h, dir) {
+    return [];
+  },
+  async previewUrl(h, port) {
+    return { url: `https://…:${port}` };
+  },
   // optional: createSnapshot/deleteSnapshot (checkpoints), list (prune),
   // refreshPreviewUrl, signedPreviewUrl, attachArgv, renewTimeout, …
 };
@@ -76,7 +89,7 @@ A cloud provider that bakes its own base image typically overrides three optiona
 
 - **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake the host's static agent config in with `stageClaudeStaticForUpload` / `stageCodexStaticForUpload` / `stageOpencodeStaticForUpload`; persist the result in your own `~/.agentbox/<name>-prepared.json`.
 - **`buildAttach`** — for a provider with no SSH, render the shared inner tmux command with `renderInnerCommand` + `hostTermForCloud` and return your transport's argv.
-- **`checkpoint`** — if your snapshots are **id-addressed** (an opaque id you can't name, like Vercel/E2B), override the whole capability and store the snapshot *id* in the manifest via `writeCloudCheckpointManifest` and friends. If they're name-addressed, just implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
+- **`checkpoint`** — if your snapshots are **id-addressed** (an opaque id you can't name, like Vercel/E2B), override the whole capability and store the snapshot _id_ in the manifest via `writeCloudCheckpointManifest` and friends. If they're name-addressed, just implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
 
 For the **box-side runtime** (a VPS-style provider that installs files onto a throwaway host), pull `ctl.cjs` and the shims from the running CLI with `resolveSharedRuntimeAsset('ctl.cjs')` so they stay version-locked — **don't vendor your own**. Ship only your provider-specific pieces (an installer script, a `custom-system-CLAUDE.md`). Providers that build from a Dockerfile don't need any of this.
 
@@ -113,7 +126,10 @@ agentbox plugin remove myprovider            # unregister (does not uninstall th
 ```
 
 <Callout type="warn" title="TRUST">
-A provider plugin runs **in-process** with full host + credential access — it is trusted code, exactly like the CLI. `agentbox plugin add` is the consent boundary: it names the package and version and warns before recording. Only add plugins you trust; AgentBox does not sandbox plugin code.
+  A provider plugin runs **in-process** with full host + credential access — it is trusted code,
+  exactly like the CLI. `agentbox plugin add` is the consent boundary: it names the package and
+  version and warns before recording. Only add plugins you trust; AgentBox does not sandbox plugin
+  code.
 </Callout>
 
 ## Compatibility & publishing

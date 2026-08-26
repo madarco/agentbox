@@ -12,6 +12,7 @@
 import { Command } from 'commander';
 import { openCommandLog } from '../lib/log-file.js';
 import { runClaudeLogin } from '../lib/claude-login-run.js';
+import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   readLoginRequest,
   takeLoginCode,
@@ -20,7 +21,9 @@ import {
 } from '../lib/claude-login-session.js';
 
 export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
-  .description('internal: drive `claude auth login` under a pty for headless login (do not invoke directly)')
+  .description(
+    'internal: drive `claude auth login` under a pty for headless login (do not invoke directly)',
+  )
   .argument('<id>', 'login session id (~/.agentbox/claude-login/<id>/)')
   .action(async (id: string) => {
     const log = openCommandLog(`claude-login-${id}`);
@@ -28,7 +31,9 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
 
     const base = { pid: process.pid, createdAt: new Date().toISOString() };
     let cur: Omit<LoginState, 'updatedAt'> = { ...base, phase: 'starting' };
-    const setState = (patch: Partial<Omit<LoginState, 'updatedAt' | 'pid' | 'createdAt'>>): void => {
+    const setState = (
+      patch: Partial<Omit<LoginState, 'updatedAt' | 'pid' | 'createdAt'>>,
+    ): void => {
       cur = { ...cur, ...patch };
       writeLoginState(id, cur);
     };
@@ -62,6 +67,11 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
       getCode: () => takeLoginCode(id),
       signal: abort.signal,
     });
+
+    // Headless counterpart of the foreground `claude login` re-push: a fresh
+    // login makes the control box's copy stale, so refresh custody from the
+    // just-synced host backup (best-effort, silent, no-op without a control box).
+    if (result.ok) await syncAgentCredentialsIfChanged();
 
     log.close();
     process.exit(result.ok ? 0 : 1);

@@ -15,7 +15,7 @@ import type { IntegrationConnector, IntegrationOpRefusal } from '../types.js';
  * `comment` subcommand (the official surface is `api datasources files
  * pages login logout whoami workers`), and Notion's REST POST `/v1/comments`
  * takes a structured JSON body that doesn't trivially map from CLI flags.
- * Adding it is tracked as a focused follow-up — see `docs/notion_backlog.md`.
+ * Adding it is a focused follow-up, not built yet.
  *
  * No `env` override: the relay runs the host's `ntn` with its own default
  * auth (the macOS keychain after `ntn login`), matching what `agentbox

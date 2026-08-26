@@ -1,0 +1,25 @@
+- [x] check that when providers are baked, and then the user setup a remote hub, the providers should be marked as baked? Or if the bake is different (maybe we change envs probably because now the hub is remote?) in that case we should show a message at the end of the setup telling that providers are configured but will need baking again.
+- [x] when started cloud box with hub no claude login passed -> agentbox hub credentials push -> make sure to do it at the end of the setup and every time it is needed (check in case of refresh for eg) 
+- [x] in web hub: UI for custody to see what is there
+- [x] in web hub: UI page in webhub to see the version, hash, and skills that are contained (all details to understand the status, and if need bake why)
+- [x] in web hub: in the project detail page should show url, custody/seeds and other details.
+- [x] project name when adding a project on remote hub should be readable (last part of the path for eg like for local hub) 
+- [x] hub setup: remove messagge " Control plane is healthy (https://116.203.120.179.sslip.io/healthz)." is only confusing. replace with a check character like ✔ Healthy for eg. 
+- [x] hub setup: look for missing gh command at start (do a hub doctor), in that case tell to install because is mandatory for remote hub
+- [x] hub setup: remove mention to github app for now (we want users to just inject gh token for now)  
+- [x] hub setup: hide Vercel option
+- [x] hub setup:add digital ocean option for setup. similar the hetzner option
+- [x] change help text agentbox hub:   setup [options]        Create the GitHub App the control plane leases push tokens with, and write its deploy config (env + admin token)  -> Set up a persistent remote Hub for your AgentBoxes
+- [x] remote hub prompts: List + answer control-box host-action approvals from the PC -> rename to approvals (we use this terminology in the app and for local hub) 
+- [x] no logo on login page of remote hub  
+- [x] http://127.0.0.1:51472/callback?code=10dc87a1a305a8a5b7697a36670e54bee5933f29&state=40c861517f0cdb0edb1c3a157cb0a709 improve design of this page (and of redirect to github page, even if it is visible for a moment) 
+- [x] add a banner on top of local hub that remote hub is now available with a link to the remote hub. Like this AgentBox instance is linked to this remote hub.
+- [x] remote hub web: "Carried from this machine" section on remote hub should show the custody files that are inside the bake. doesn't makes sense like it is today (shows only 1 file in remote hub). should probably show the skills in custody etc? and link to it when in remote hub (and in custody we should link to system page when in local hub)
+- [x] remote hub web: in system: box image section is basically just related to docker provider, just move the info inside the row in providers section
+- [x] self-update shouldn't remove the docker image anymore, since the hash will do that only when needed (in the past self-update was to do a clean install but now we don't need it anymore)
+
+- [ ] remote-docker on a control box: a hub-created box's `webUrl` is the hub CONTAINER's forwarded loopback port (`http://127.0.0.1:<n>`), which is meaningless to a browser elsewhere. The hub's own poller uses it correctly, but "Open Web" in the web UI needs the hub to proxy the box's port (cloud boxes get a public URL instead).
+- [ ] hub-created boxes clone SHALLOW, and the bundle-based `git push` cannot complete from a shallow clone against the relay's scratch repo (`did not send all necessary objects`). Provider-agnostic — hit with a big repo on a `docker:hub` box, but it applies to any hub-created cloud box. Either clone deep enough or teach the push path to unshallow first.
+- [x] `agentbox remote-docker add` bakes by calling the provider directly, so for a SHARED host it bakes from this machine instead of routing to the control box like `agentbox prepare` does. Same image, wrong streamer. (Done: `add` now goes through the CLI's bake hook -> `runPrepare` -> the hub's `/hosts/:alias/bake`.)
+- [ ] the hub's `preparePrecheck` only probes the LOCAL docker daemon; for a `docker:<alias>` bake it should probe that engine.
+- [ ] a LOCAL hub's provider list shows only its own remote-docker hosts — `mergeRemoteProviders` keeps them local. With hosts shared to a control box, the local UI could show the control box's engines as `origin: 'hub'` rows.

@@ -19,6 +19,25 @@ export interface RegisterBoxWithPlaneArgs {
   name: string;
   originUrl: string;
   backend: string;
+  /**
+   * Provider-native sandbox id. Persisted on the plane registration so a PC can
+   * adopt the box (`agentbox hub pull`) — the SSH key material is keyed by this
+   * id on disk — and a reap can find its custody `boxes/<sandboxId>/` subtree.
+   */
+  sandboxId?: string;
+  /**
+   * Registered worktrees (containerPath/branch/sanctionedBranch). The plane's
+   * lease gate auto-allows only the box's sanctioned `agentbox/*` branch, and
+   * it reads that from the REGISTRATION (host-authoritative), never from box
+   * params — without this a control-plane box's `git push` blocks on a human
+   * approval that auto-approve should have covered.
+   */
+  worktrees?: Array<{
+    containerPath: string;
+    hostMainRepo: string;
+    branch: string;
+    sanctionedBranch?: string;
+  }>;
   bridgeToken?: string;
   previewUrl?: string;
   previewToken?: string;
@@ -26,6 +45,21 @@ export interface RegisterBoxWithPlaneArgs {
   projectIndex?: number;
   autoApproveHostActions?: boolean;
   autoApproveSafeHostActions?: boolean;
+  /**
+   * Public VM IP/host for direct-SSH backends. A PC adopting this box
+   * (`agentbox hub adopt`) rebuilds its SSH target from this — the registration
+   * is the only thing it has, and asking the provider API would need the box's
+   * cloud credentials. Omitted by SDK-reached backends.
+   */
+  publicHost?: string;
+  /** Resolved image/snapshot ref the box booted from. */
+  image?: string;
+  /** In-box WebProxy port. */
+  webPort?: number;
+  /** Agent the box was created for, so an adopting PC can relaunch the right one. */
+  agent?: string;
+  /** Custody `projects/<slug>` key linking the box to its seed material. */
+  projectSlug?: string;
 }
 
 /** Read the host workspace's `origin` remote URL (the box's push target). */
@@ -52,7 +86,9 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       name: args.name,
       kind: 'cloud',
       backend: args.backend,
+      sandboxId: args.sandboxId,
       originUrl: args.originUrl,
+      worktrees: args.worktrees,
       bridgeToken: args.bridgeToken,
       previewUrl: args.previewUrl,
       previewToken: args.previewToken,
@@ -60,6 +96,11 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       projectIndex: args.projectIndex,
       autoApproveHostActions: args.autoApproveHostActions,
       autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+      publicHost: args.publicHost,
+      image: args.image,
+      webPort: args.webPort,
+      agent: args.agent,
+      projectSlug: args.projectSlug,
     }),
   });
   if (!res.ok) {

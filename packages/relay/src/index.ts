@@ -34,6 +34,12 @@ export type {
   RelayEvent,
   SetNoticeBody,
 } from './types.js';
+export {
+  registrationToBoxRecord,
+  normalizeRegistrationAgent,
+  buildSshTarget,
+  type RegistrationToRecordOptions,
+} from './registration-to-record.js';
 export { HostActionQueue } from './host-action-queue.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
@@ -45,28 +51,34 @@ export {
 } from './credentials-fanout.js';
 export { type Store, type PromptRow } from './store/store.js';
 export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
-export {
-  gateApproval,
-  type ApprovalGate,
-  type GateDeps,
-  type PromptMode,
-} from './permission.js';
+export { gateApproval, type ApprovalGate, type GateDeps, type PromptMode } from './permission.js';
 export { resolveWorktree } from './worktree.js';
 export { leaseTokenResult } from './lease.js';
-export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export {
+  drainOneCreateJob,
+  drainCreateJobs,
+  makeControlPlaneCreateBox,
+  cloneRepoWithLfs,
+  type CreateBoxFn,
+  type CreateBoxDeps,
+  type CloneRepoRunGit,
+} from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
-export { toAuthedHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
+export { toAuthedHttpsUrl, toHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
 export {
   handleRelayRequest,
   type ControlPlaneDeps,
   type GenericRequest,
   type RelayResponse,
 } from './core/handler.js';
+export { PostgresStore, type PostgresStoreOptions } from './store/postgres-store.js';
 export {
-  PostgresStore,
-  type PostgresStoreOptions,
-  SCHEMA_SQL,
-} from './store/postgres-store.js';
+  SqliteStore,
+  type SqliteStoreOptions,
+  DEFAULT_SQLITE_STORE_PATH,
+} from './store/sqlite-store.js';
+export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
+export { WriteThroughStore, type WriteThroughParts } from './store/write-through-store.js';
 export { RemoteStore, type RemoteStoreOptions } from './store/remote-store.js';
 export {
   applyStoreOp,
@@ -74,7 +86,48 @@ export {
   type StoreRpcRequest,
   type StoreRpcResponse,
 } from './store/store-rpc.js';
+export {
+  handleStoreRpcRequest,
+  isStoreRpcPath,
+  STORE_RPC_PATH,
+  type StoreRpcRouteRequest,
+  type StoreRpcRouteResponse,
+  type StoreRpcRouteDeps,
+} from './store/store-rpc-routes.js';
 export { makeStore } from './store/index.js';
+export {
+  type CustodyStore,
+  type CustodyEntry,
+  type CustodyPutResult,
+  CustodyPathError,
+  CustodyTooLargeError,
+  normalizeCustodyPath,
+  normalizeCustodyPrefix,
+  custodyDigest,
+  CUSTODY_SCOPES,
+} from './custody/store.js';
+export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';
+export {
+  handleCustodyRequest,
+  handleCustodyBlobRequest,
+  isCustodyPath,
+  isCustodyBlobPath,
+  CUSTODY_PATH_PREFIX,
+  CUSTODY_BLOB_PATH_PREFIX,
+  type CustodyRequest,
+  type CustodyResponse,
+  type CustodyBlobRequest,
+  type CustodyBlobResponse,
+  type CustodyRouteDeps,
+} from './custody/routes.js';
+export {
+  handleRemoteBoxesRequest,
+  isRemoteBoxesPath,
+  REMOTE_BOXES_PREFIX,
+  type RemoteBoxesRequest,
+  type RemoteBoxesResponse,
+  type RemoteBoxesDeps,
+} from './remote-boxes.js';
 export {
   askPrompt,
   type AutoApprovePolicy,
@@ -143,6 +196,11 @@ export {
 } from './server.js';
 export { startRelayDaemon, type RelayDaemonHandle } from './daemon.js';
 export {
+  setCloudBackendLoader,
+  type CloudBackendLoader,
+  type CloudCpModule,
+} from './host-actions.js';
+export {
   loadAutopauseConfig,
   selectBoxesToPause,
   startAutopauseLoop,
@@ -163,6 +221,11 @@ export {
   type RenewDecision,
 } from './cloud-keepalive.js';
 export {
+  startRetentionLoop,
+  type RetentionLoopDeps,
+  type RetentionLoopHandle,
+} from './retention.js';
+export {
   countWorkingSlots,
   defaultCountRunningBoxes,
   defaultCountWorkingBoxes,
@@ -172,16 +235,17 @@ export {
   loadQueue,
   loadQueueConfig,
   occupiesWorkingSlot,
-  PREPARE_MAX_CONCURRENT,
+  PREPARE_MAX_CONCURRENT_PER_PROVIDER,
   QUEUE_DIR,
   QUEUE_LOGS_DIR,
   queueLogPath,
   queueLoginCodePath,
   readActiveAgent,
   readJob,
-  countRunningPrepareJobs,
+  countRunningPrepareJobsByProvider,
   selectNextRunnable,
   selectNextRunnableByWorking,
+  selectNextRunnableForeground,
   selectNextRunnablePrepare,
   startQueueLoop,
   STARTUP_GRACE_MS,

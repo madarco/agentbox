@@ -16,7 +16,9 @@ import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareHetznerProvider } from './prepare.js';
-import { currentHetznerBaseFingerprintLive } from './prepared-state.js';
+import { currentHetznerBaseFingerprintLive,
+  currentHetznerBaseFileHashes,
+} from './prepared-state.js';
 import { ensureHetznerCredentials, setHetznerCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
@@ -27,7 +29,7 @@ const cloudProvider = createCloudProvider(hetznerBackend, {
 export const hetznerProvider: Provider = {
   ...cloudProvider,
   prepare: prepareHetznerProvider,
-  baseFingerprint: () => currentHetznerBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -38,6 +40,7 @@ export const providerModule: ProviderModule = {
   readCredStatus: readCredStatusSummary,
   setCredentials: setHetznerCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
+  currentBaseFileHashes: () => currentHetznerBaseFileHashes(),
   doctorChecks,
 };
 
@@ -61,10 +64,23 @@ export {
 } from './prepare.js';
 export { generateBoxCloudInit, generatePrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
 export {
+  applyControlPlaneConfig,
   deployControlPlaneToHetzner,
+  destroyControlPlaneOnHetzner,
+  updateControlPlaneOnHetzner,
+  type ApplyControlPlaneOptions,
+  type ControlPlaneDestroyResult,
   type ControlPlaneHetznerDeployOptions,
   type ControlPlaneHetznerDeployResult,
+  type ControlPlaneUpdateOptions,
 } from './control-plane-deploy.js';
+export {
+  HUB_DEPLOY_ASSETS,
+  findStagedHubDeployRoot,
+  hubDeployCandidates,
+  resolveHubDeployAssets,
+  type HubDeployAsset,
+} from './hub-deploy-assets.js';
 export {
   RUNTIME_ASSETS,
   candidatesFor,

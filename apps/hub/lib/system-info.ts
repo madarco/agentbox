@@ -1,0 +1,137 @@
+// Presentation helpers for the System / Build page — pure so they can be
+// unit-tested without a running hub. The route assembles the raw facts (env
+// version, deploy record, prepared-state bake records, freshness); these shape
+// them for display and answer "do I need to re-bake?".
+
+// The deploy record's `source` (mirrors HubDeploySource in @agentbox/sandbox-core;
+// structural so this file pulls in no package). `package` = an npm install on the
+// box; `source` = the monorepo cloned + built on the box.
+export type HubDeploySourceLike =
+  | { kind: 'package'; spec: string }
+  | { kind: 'source'; repoUrl: string; repoRef: string };
+
+export interface HubBuild {
+  /** The running version (from AGENTBOX_CLI_VERSION), or null when unknown. */
+  version: string | null;
+  /** `nightly` / `stable`, or `source (<ref>)` for a build-from-source box. */
+  channel: string | null;
+  /** Human build line, e.g. `@madarco/agentbox@0.28.0 (npm)`. */
+  build: string | null;
+}
+
+// The prerelease marker that classifies a build as nightly (mirrors
+// channelOfVersion in apps/cli/src/lib/channel.ts). Inlined — a one-substring
+// check isn't worth importing the CLI.
+const NIGHTLY_MARKER = '-nightly.';
+
+/**
+ * Reconcile the running version with what the deploy record says was deployed.
+ * The live version (env) is authoritative for `version`/`channel`; the record's
+ * `source` supplies the human build line and, for a source build, the channel is
+ * the ref the user actually tracks (`nightly`, `main`, a feature branch). Pure so
+ * the precedence is testable — a small, hub-side echo of `describeRemoteHubBuild`.
+ */
+export function describeHubBuild(input: {
+  version: string | null;
+  source?: HubDeploySourceLike | null;
+}): HubBuild {
+  const source = input.source ?? null;
+  const build = source
+    ? source.kind === 'package'
+      ? `@madarco/agentbox@${source.spec} (npm)`
+      : `${source.repoUrl}@${source.repoRef} (built from source)`
+    : null;
+  const channel =
+    source?.kind === 'source'
+      ? `source (${source.repoRef})`
+      : input.version
+        ? input.version.includes(NIGHTLY_MARKER)
+          ? 'nightly'
+          : 'stable'
+        : null;
+  return { version: input.version, channel, build };
+}
+
+// ── box-image contents (what is baked in) ──────────────────────────────────
+// The box image build context is the honest manifest of "skills / agents / config
+// baked into the image": the setup skill, the custom system prompt, the agent
+// hook/settings files, the runtime scripts, and the base (Dockerfile + ctl). Each
+// context file feeds the invalidation fingerprint, so listing them explains what a
+// re-bake would pick up.
+
+export type BaseFreshness = 'fresh' | 'stale' | 'unprepared' | 'unknown';
+
+export interface ProviderBake {
+  id: string;
+  label: string;
+  /** The base is baked and present — freshness-authoritative when the host
+   * backend computed it, else a bake record exists on disk. */
+  baked: boolean;
+  /** Short (12-char) fingerprint of the build context the base was baked from. */
+  fingerprint?: string;
+  /** CLI version that produced the bake. */
+  cliVersion?: string;
+  /** ISO timestamp of the bake. */
+  bakedAt?: string;
+  /** Provider-opaque image identifier (docker tag / snapshot id / image id). */
+  imageRef?: string;
+  /** Freshness vs the current build context (when the host backend computed it). */
+  baseStatus?: BaseFreshness;
+  /** Why it is stale — the actionable part. */
+  baseStaleReason?: string;
+  /**
+   * Which files differ, when `baseStatus === 'stale'`. `hasManifest: false`
+   * means the base predates per-file manifests — say so rather than guess.
+   */
+  bakeDiff?: {
+    hasManifest: boolean;
+    liveUnavailable?: boolean;
+    changed?: { rel: string; from: string; to: string }[];
+    added?: string[];
+    removed?: string[];
+  };
+  /**
+   * WHICH MACHINE this row describes. `hub` means the state came from the
+   * configured control box, because boxes on this provider are created and baked
+   * there — so this host's own bake record is not the answer, and the per-bake
+   * metadata (fingerprint / bakedAt / imageRef) is deliberately absent rather
+   * than filled in from the wrong machine.
+   */
+  origin?: 'local' | 'hub';
+  /** The control box's URL, for an out-link on an `origin: 'hub'` row. */
+  hubUrl?: string;
+}
+
+/**
+ * Whether a provider's base counts as baked. Freshness (when the in-process
+ * host backend computed it) is authoritative: only `unprepared` means there is
+ * no stored base. `unknown` still has a stored fingerprint — the base is baked,
+ * the live fingerprint just couldn't be computed to verify freshness — so it
+ * must NOT read as not-baked. When freshness is absent (the plane read path,
+ * which has no provider code), fall back to whether a bake record exists.
+ */
+export function isBaked(baseStatus: BaseFreshness | undefined, hasRecord: boolean): boolean {
+  if (baseStatus) return baseStatus !== 'unprepared';
+  return hasRecord;
+}
+
+/** A short, plain-English verdict for a provider's bake state. */
+export function bakeVerdict(p: ProviderBake): { tone: 'ok' | 'warn' | 'muted'; text: string } {
+  if (p.baseStatus === 'stale') {
+    return {
+      tone: 'warn',
+      text: 'Re-bake needed — build context changed since this base was baked.',
+    };
+  }
+  if (!p.baked || p.baseStatus === 'unprepared') {
+    return {
+      tone: 'muted',
+      text: 'Not baked yet — the next create (or a manual bake) will build it.',
+    };
+  }
+  if (p.baseStatus === 'unknown')
+    return { tone: 'ok', text: 'Baked — freshness could not be verified here.' };
+  if (p.baseStatus === 'fresh')
+    return { tone: 'ok', text: 'Baked and up to date with the current build context.' };
+  return { tone: 'ok', text: 'Baked.' };
+}

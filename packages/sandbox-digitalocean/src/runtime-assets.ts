@@ -17,6 +17,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveStagedRuntimeRoot } from '@agentbox/sandbox-core';
 
 const SELF = dirname(fileURLToPath(import.meta.url));
 
@@ -35,14 +36,7 @@ const SELF = dirname(fileURLToPath(import.meta.url));
  * picks it up by inspecting where the module was loaded from.
  */
 export function findStagedCliRuntimeRoot(): string | undefined {
-  const candidates = [
-    resolve(SELF, '..', 'runtime'),         // <cliRoot>/dist/.. → <cliRoot> then /runtime
-    resolve(SELF, '..', '..', 'runtime'),   // chunk-NNNN.js at <cliRoot>/dist/<sub>/.. → <cliRoot>/runtime
-  ];
-  for (const c of candidates) {
-    if (existsSync(resolve(c, 'digitalocean', 'scripts', 'install-box.sh'))) return c;
-  }
-  return undefined;
+  return resolveStagedRuntimeRoot(SELF, 'digitalocean/scripts/install-box.sh');
 }
 
 /**

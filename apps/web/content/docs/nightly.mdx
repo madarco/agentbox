@@ -1,0 +1,95 @@
+---
+title: Nightly channel
+description: Run pre-release AgentBox builds to help test features before they ship. One command opts in, one opts out, and you keep getting stable releases automatically.
+---
+
+<div className="agb-doc-meta">
+  <span>Updated 2026</span>
+</div>
+
+Big features land on the `nightly` branch and get exercised on one machine — the maintainer's —
+before they reach a release. The **nightly channel** lets you run those builds so they get tested
+against real projects, real cloud accounts, and real habits first.
+
+It is meant for people who don't mind the occasional rough edge and are willing to report what
+breaks. If you want a quiet tool, stay on stable.
+
+## Opt in
+
+```bash
+npm i -g @madarco/agentbox@nightly
+agentbox install app            # macOS menu-bar app, if you use it
+```
+
+That's it. The version you now have carries a `-nightly.` suffix, and AgentBox reads that as "this
+user is on nightly" — the daily update check, `agentbox self-update`, and `agentbox install app` all
+follow the channel from here on, with nothing to configure.
+
+If you'd rather switch an existing install without remembering the tag:
+
+```bash
+agentbox self-update --channel nightly
+```
+
+## Opt out
+
+```bash
+agentbox self-update --channel stable
+```
+
+This moves you back to the newest **release** and records the choice, so a nightly build is never
+installed again. (It won't downgrade a running install below the current release — you land on
+whatever stable version is newest.)
+
+## What "nightly" actually means
+
+**The newest build, pre-release or not.** Nightly does not mean "always a pre-release".
+
+Nightly versions are named for the release they precede — `0.28.0-nightly.202607251430` comes before
+`0.28.0` — so when `0.28.0` ships it is genuinely newer than every nightly that led up to it, and
+you're offered it automatically. You then stay on that release until the next nightly (`0.29.0-nightly.…`)
+appears.
+
+Two things follow, and both surprise people:
+
+- **You will sometimes be running a plain stable version.** That is normal and you are still on the
+  channel — the next nightly will reach you. Nothing needs re-doing.
+- **The update nudge can offer a version that looks smaller.** `0.28.0` really is newer than
+  `0.28.0-nightly.5`. AgentBox labels this case ("the stable release") so it doesn't read as a
+  downgrade.
+
+You can check where you stand at any time:
+
+```bash
+agentbox --version                        # a -nightly. suffix means a nightly build
+agentbox config get update.channel        # auto | stable | nightly
+```
+
+`auto` (the default) means "follow whatever build is installed". It becomes `nightly` the first time
+you update on the channel, which is what keeps you there across a stable release.
+
+## Things to know before you opt in
+
+<Callout type="warn" title="HEADS UP">
+  Nightly and stable **share all of your AgentBox state** — `~/.agentbox`, your boxes, the hub, your
+  provider credentials and baked images. There is no separate profile.
+</Callout>
+
+- **Switching channels can trigger a cloud re-bake.** If a nightly changes anything baked into a box
+  base image, the next `agentbox prepare` for Hetzner, E2B, Vercel or DigitalOcean rebuilds it — a few
+  minutes. Flipping back and forth repeatedly means paying that repeatedly.
+- **A nightly can change on-disk state.** If a build alters how something in `~/.agentbox` is stored,
+  going back to stable afterwards may not read it the same way. Existing boxes are the thing to watch.
+- **Nightly builds are tested, not blessed.** They pass the full CI suite (lint, typecheck, unit
+  tests) and the box image is published for them, so day-to-day use is the same. What they have not
+  had is time and other people's machines — which is exactly what you're providing.
+- **The menu-bar app may lag.** It's published separately and only when it changes; your app checks
+  both channels and installs whichever is newer, so a nightly CLI happily runs the stable app.
+
+## Reporting problems
+
+Include the output of `agentbox --version` — the timestamp in a nightly version identifies the exact
+build. [File an issue](https://github.com/madarco/agentbox/issues) with what you ran and what
+happened. `~/.agentbox/logs/latest.log` covers the most recent `create`/`claude`/`codex` run.
+
+If a nightly leaves you stuck, `agentbox self-update --channel stable` gets you back to a release.

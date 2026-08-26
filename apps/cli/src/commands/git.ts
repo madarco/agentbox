@@ -1,34 +1,41 @@
 import type { BoxRecord, ExecResult } from '@agentbox/core';
-import { GH_PR_OPS, hashRpcParams, injectPrCreateHead as injectHead, type GhPrOp } from '@agentbox/relay';
 import {
-  boxGitCheckout,
-  boxGitNewBranch,
-  boxGitPull,
-  boxGitPush,
-  boxGitPushHost,
-  mutateState,
-  scratchBranchName,
-  type BoxGitDeps,
-} from '@agentbox/sandbox-core';
-import { mintHostInitiatedToken, registerBoxWithRelay } from '@agentbox/sandbox-docker';
+  GH_PR_OPS,
+  hashRpcParams,
+  injectPrCreateHead as injectHead,
+  type GhPrOp,
+} from '@agentbox/relay';
+import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
+import type { HubApiOpResult } from '../control-plane/hub-api-client.js';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 /**
  * `agentbox git <subcommand> <box>` — host-side proxy for git/PR operations
- * against a specific box. Every subcommand resolves the box, attaches the
- * provider, and runs the matching `agentbox-ctl git` / `agentbox-ctl gh pr`
- * (or raw `git`) inside the box's /workspace.
+ * against a specific box.
  *
- * Credentialed RPCs (push, fetch, pull-fetch, gh pr) carry a one-time scoped
- * token minted by the host via `mintHostInitiatedToken`; the relay validates
- * the token and skips its confirm prompt on match. A simple "host-initiated"
+ * The branch-mutating ops (`push`, `pull`, `checkout`, `branch`,
+ * `push --host-only`) go through the hub's public `/api/v1`
+ * (`POST /boxes/:id/git/:op` via {@link withHubClient}), so they work
+ * identically against a local hub and a remote control box — the hub owns the
+ * host-initiated-token mint + branch sanctioning that used to live here. The
+ * box command's own exit code is carried faithfully through the error envelope
+ * (`error.details.exitCode`), so e.g. `push --host-only` against a box whose
+ * host has no working copy still surfaces the server's exit 64.
+ *
+ * `fetch`, `status`, and the `pr` group stay INLINE: no `/api/v1` route exists
+ * for them yet, so they resolve the box + provider directly and run the
+ * matching `agentbox-ctl git` / `agentbox-ctl gh pr` (or raw `git`) in the
+ * box's /workspace. Their credentialed RPCs (fetch, gh pr) carry a one-time
+ * scoped token minted by the host via `mintHostInitiatedToken`; the relay
+ * validates it and skips its confirm prompt on match. A simple "host-initiated"
  * boolean would be forgeable by the box agent (the agent sees the argv); the
- * one-time token isn't (the mint endpoint is loopback-only). If the relay
- * can't mint (older relay / not running), the call still proceeds — it just
- * goes through the normal prompt path on the wrapper side.
+ * one-time token isn't (the mint endpoint is loopback-only). If the relay can't
+ * mint (older relay / not running), the call still proceeds — it just goes
+ * through the normal prompt path on the wrapper side.
  */
 
 const WORKSPACE = '/workspace';
@@ -47,84 +54,10 @@ async function runAndStream(box: BoxRecord, argv: string[]): Promise<number> {
   return r.exitCode;
 }
 
-/**
- * Record `branch` as the box's host-sanctioned branch after a host-driven
- * `agentbox git checkout`/`branch`/`pull <branch>`. The relay auto-approves a
- * push only to a scratch branch or this value, so a host branch switch must
- * update it (otherwise the box would prompt to push the branch the host just
- * put it on). Persists to `~/.agentbox/state.json` (docker root worktree +
- * cloud field) and re-registers docker boxes so the in-memory relay registry
- * picks up the new value. Best-effort: a failure here just means the next push
- * to that branch prompts — it never blocks the branch switch itself.
- */
-async function sanctionBoxBranch(box: BoxRecord, branch: string): Promise<void> {
-  try {
-    await mutateState((state) => {
-      const b = state.boxes.find((x) => x.id === box.id);
-      if (!b) return state;
-      if (b.gitWorktrees) {
-        for (const w of b.gitWorktrees) {
-          if (w.kind === 'root') w.sanctionedBranch = branch;
-        }
-      }
-      if (b.cloud) b.cloud.sanctionedBranch = branch;
-      return state;
-    });
-  } catch {
-    return; // couldn't persist → leave the gate as-is
-  }
-  // Docker's push gate reads the in-memory registry, so re-register to refresh
-  // the worktree's sanctionedBranch. Cloud's gate reads state.json per RPC, so
-  // the persist above is enough — no cloud re-register needed.
-  const isDocker = box.provider === 'docker' || box.provider === undefined;
-  if (isDocker && box.relayToken) {
-    const worktrees = (box.gitWorktrees ?? []).map((w) =>
-      w.kind === 'root' ? { ...w, sanctionedBranch: branch } : w,
-    );
-    try {
-      await registerBoxWithRelay({
-        boxId: box.id,
-        token: box.relayToken,
-        name: box.name,
-        containerName: box.container,
-        createdAt: box.createdAt,
-        projectIndex: box.projectIndex,
-        worktrees,
-        autoApproveHostActions: box.autoApproveHostActions,
-        autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-      });
-    } catch (err) {
-      // The new sanctioned branch is persisted to state.json but the running
-      // relay's in-memory registry still holds the old one — so its push /
-      // PR-head gate keeps following the stale branch until the relay
-      // re-registers (next `agentbox relay restart` / rehydrate reads
-      // state.json). Surface it rather than swallow: silent staleness would
-      // leave `git push` gated on the wrong branch with no signal.
-      process.stderr.write(
-        `agentbox git: warning — recorded ${branch} as the box's branch, but the relay did not pick it up ` +
-          `(${err instanceof Error ? err.message : String(err)}). Run \`agentbox relay restart\` so pushes to ${branch} are gated correctly.\n`,
-      );
-    }
-  }
-}
-
-/** Stream a shared-helper exec result to the terminal, then exit with its code. */
-async function streamExit(r: ExecResult): Promise<never> {
+/** Write a hub git-op result's captured stdout/stderr to the terminal. */
+function streamOp(r: HubApiOpResult): void {
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
-  return exitWith(r.exitCode);
-}
-
-/**
- * BoxGitDeps for the shared helpers: forward each credentialed RPC's
- * `(method, params)` to the host-initiated-token minter. The helpers only ever
- * build `{ path, remote?, args? }`, so the cast to PredictedGitParams is safe
- * (path is always set) and the params hash round-trips with what ctl sends.
- */
-function gitDeps(box: BoxRecord): BoxGitDeps {
-  return {
-    hostInitiatedArgs: (method, params) => hostInitiatedArgs(box.id, method, params as PredictedGitParams),
-  };
 }
 
 /**
@@ -169,7 +102,10 @@ async function hostInitiatedArgs(
 }
 
 /** Build the `{ path, remote?, args? }` ctl will send for git RPCs. */
-function buildPredictedGitParams(remote: string | undefined, extraArgs: string[]): PredictedGitParams {
+function buildPredictedGitParams(
+  remote: string | undefined,
+  extraArgs: string[],
+): PredictedGitParams {
   const out: PredictedGitParams = { path: WORKSPACE };
   if (remote) out.remote = remote;
   if (extraArgs.length > 0) out.args = extraArgs;
@@ -192,11 +128,23 @@ async function exitWith(code: number): Promise<never> {
 const pushCommand = new Command('push')
   .description("Push the box's branch via the host relay (host creds, no prompt)")
   .argument('<box>', 'box ref: project index, id, id prefix, name, or container')
-  .argument('[args...]', 'extra flags forwarded to `agentbox-ctl git push` (e.g. --force-with-lease, --tags)')
+  .argument(
+    '[args...]',
+    'extra flags forwarded to `agentbox-ctl git push` (e.g. --force-with-lease, --tags)',
+  )
   .option('--remote <name>', 'remote name (default: origin)')
-  .option('--host-only', "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)")
-  .option('--as <branch>', "with --host-only: destination branch name in the host repo (default: the box's branch name)")
-  .option('--force', 'with --host-only: allow a non-fast-forward overwrite of the destination branch')
+  .option(
+    '--host-only',
+    "land the branch in the host's local repo only; do NOT push to the remote (nothing is published online)",
+  )
+  .option(
+    '--as <branch>',
+    "with --host-only: destination branch name in the host repo (default: the box's branch name)",
+  )
+  .option(
+    '--force',
+    'with --host-only: allow a non-fast-forward overwrite of the destination branch',
+  )
   .allowExcessArguments(true)
   .allowUnknownOption(true)
   .action(
@@ -207,22 +155,23 @@ const pushCommand = new Command('push')
     ) => {
       try {
         if (opts.hostOnly && opts.remote) {
-          process.stderr.write('agentbox git push: --host-only does not use a remote; drop --remote\n');
+          process.stderr.write(
+            'agentbox git push: --host-only does not use a remote; drop --remote\n',
+          );
           await exitWith(64);
         }
         const box = await resolveBoxOrExit(boxRef);
-        const provider = await providerForBox(box);
-        if (opts.hostOnly) {
-          // Host-only landing publishes nothing, so the relay skips its
-          // push-confirm gate entirely — no host-initiated token needed.
-          await streamExit(await boxGitPushHost(provider, box, { as: opts.as, force: opts.force, args }));
-          return;
-        }
-        // --force is a real remote-push flag; the helper appends it to the args
-        // tail and folds it into the params hash so the minted token matches.
-        await streamExit(
-          await boxGitPush(provider, box, { remote: opts.remote, force: opts.force, args }, gitDeps(box)),
-        );
+        await withHubClient({}, async (client) => {
+          // No `mode` pre-check for --host-only: a `hub expose`d machine reports
+          // mode 'remote' yet IS the host with the checkout, so host-only
+          // succeeds there. The real condition — does this box's host have a
+          // working copy — is checked server-side, which returns exit 64 (carried
+          // faithfully via the error envelope) when it genuinely doesn't.
+          const r = opts.hostOnly
+            ? await client.git(box.id, 'push-host', { as: opts.as, force: opts.force, args })
+            : await client.git(box.id, 'push', { remote: opts.remote, force: opts.force, args });
+          streamOp(r);
+        });
       } catch (err) {
         handleLifecycleError(err);
       }
@@ -255,7 +204,7 @@ const fetchCommand = new Command('fetch')
 
 const pullCommand = new Command('pull')
   .description(
-    "Fetch via the relay then merge in /workspace. With <branch>: first `git checkout <branch>` so the box switches base branch and pulls latest — useful for reusing a box on a new task.",
+    'Fetch via the relay then merge in /workspace. With <branch>: first `git checkout <branch>` so the box switches base branch and pulls latest — useful for reusing a box on a new task.',
   )
   .argument('<box>', 'box ref')
   .argument('[branch]', 'optional branch to switch to before pulling (e.g. main)')
@@ -273,19 +222,17 @@ const pullCommand = new Command('pull')
     ) => {
       try {
         const box = await resolveBoxOrExit(boxRef);
-        const provider = await providerForBox(box);
-        if (branch) {
-          const switched = await boxGitCheckout(provider, box, branch);
-          if (switched.stdout) process.stdout.write(switched.stdout);
-          if (switched.stderr) process.stderr.write(switched.stderr);
-          if (switched.exitCode !== 0) await exitWith(switched.exitCode);
-          // Host switched the box onto <branch> — sanction it so the following
-          // pull/push don't prompt to touch the branch the host just picked.
-          await sanctionBoxBranch(box, branch);
-        }
-        await streamExit(
-          await boxGitPull(provider, box, { remote: opts.remote, ffOnly: opts.ffOnly, args }, gitDeps(box)),
-        );
+        await withHubClient({}, async (client) => {
+          if (branch) {
+            // The hub sanctions <branch> after a 0-exit checkout, so the
+            // following pull/push don't prompt to touch the branch the host
+            // just picked. A non-zero checkout throws → the pull is skipped.
+            streamOp(await client.git(box.id, 'checkout', { branch }));
+          }
+          streamOp(
+            await client.git(box.id, 'pull', { remote: opts.remote, ffOnly: opts.ffOnly, args }),
+          );
+        });
       } catch (err) {
         handleLifecycleError(err);
       }
@@ -293,7 +240,7 @@ const pullCommand = new Command('pull')
   );
 
 const checkoutCommand = new Command('checkout')
-  .description('Change the box\'s working branch (runs `git checkout <branch>` in /workspace)')
+  .description("Change the box's working branch (runs `git checkout <branch>` in /workspace)")
   .argument('<box>', 'box ref')
   .argument('<branch>', 'branch to check out inside the box')
   .argument('[args...]', 'extra flags forwarded to `git checkout`')
@@ -302,39 +249,38 @@ const checkoutCommand = new Command('checkout')
   .action(async (boxRef: string, branch: string, args: string[]) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
-      const provider = await providerForBox(box);
-      const r = await boxGitCheckout(provider, box, branch, args);
-      // Host-sanctioned branch switch: record it so pushing this branch skips
-      // the confirm prompt (an in-box agent's own checkout does not).
-      if (r.exitCode === 0) await sanctionBoxBranch(box, branch);
-      await streamExit(r);
+      // The hub sanctions <branch> after a 0-exit checkout, so pushing this
+      // branch skips the confirm prompt (an in-box agent's own checkout does not).
+      await withHubClient({}, async (client) => {
+        streamOp(await client.git(box.id, 'checkout', { branch, args }));
+      });
     } catch (err) {
       handleLifecycleError(err);
     }
   });
 
 const branchCommand = new Command('branch')
-  .description('Create a new agentbox/* branch from HEAD (or a given base) and switch the box onto it')
+  .description(
+    'Create a new agentbox/* branch from HEAD (or a given base) and switch the box onto it',
+  )
   .argument('<box>', 'box ref')
   .argument('<name>', "new branch name (an 'agentbox/' prefix is added when missing)")
-  .option('--from <ref>', 'base ref to fork from (default: the box\'s current HEAD)')
+  .option('--from <ref>', "base ref to fork from (default: the box's current HEAD)")
   .action(async (boxRef: string, name: string, opts: { from?: string }) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
-      const provider = await providerForBox(box);
-      const r = await boxGitNewBranch(provider, box, name, opts.from);
-      // The new branch is always an `agentbox/*` scratch branch (already
-      // gate-exempt), but record it as sanctioned for consistency + in case
-      // the scratch-prefix policy ever changes.
-      if (r.exitCode === 0) await sanctionBoxBranch(box, scratchBranchName(name));
-      await streamExit(r);
+      // The hub records the new `agentbox/*` scratch branch as sanctioned (it's
+      // already gate-exempt, but kept for consistency + a future prefix policy).
+      await withHubClient({}, async (client) => {
+        streamOp(await client.git(box.id, 'branch', { name, from: opts.from }));
+      });
     } catch (err) {
       handleLifecycleError(err);
     }
   });
 
 const statusCommand = new Command('status')
-  .description('Run `git status` in the box\'s /workspace (read-only, no relay)')
+  .description("Run `git status` in the box's /workspace (read-only, no relay)")
   .argument('<box>', 'box ref')
   .argument('[args...]', 'extra flags forwarded to `git status`')
   .allowExcessArguments(true)
@@ -379,7 +325,11 @@ const PR_OP_DESCRIPTIONS: Record<GhPrOp, string> = {
  * `worktree.hostMainRepo` is the cwd `gh` runs in, so passing `--head` is
  * sufficient — base stays whatever the user picked / repo default.
  */
-function injectPrCreateHead(op: GhPrOp, box: { gitWorktrees?: { kind: string; branch: string }[] }, args: string[]): string[] {
+function injectPrCreateHead(
+  op: GhPrOp,
+  box: { gitWorktrees?: { kind: string; branch: string }[] },
+  args: string[],
+): string[] {
   const rootWt = (box.gitWorktrees ?? []).find((w) => w.kind === 'root');
   return injectHead(op, rootWt?.branch, args);
 }

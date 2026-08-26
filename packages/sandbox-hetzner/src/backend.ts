@@ -4,7 +4,7 @@
  *
  * Design rationale + the safety/tunneling model live in the plan at
  * `~/.claude/plans/how-to-safely-create-parallel-pebble.md` and the live
- * status doc at `docs/hertzner_backlog.md`. The short version:
+ * provider notes in `docs/cloud-providers.md`. The short version:
  *
  *   - 1:1 VPS-per-box. Each box gets a per-box ed25519 keypair (private key
  *     never leaves the host) and a per-box Hetzner Cloud Firewall locked to
@@ -52,6 +52,7 @@ import {
   normalizeSourceCidr,
   syncFirewallSource,
 } from './firewall.js';
+import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
 import { readPreparedState } from './prepared-state.js';
@@ -271,7 +272,8 @@ async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressSt
     firewallId,
     allowedSources,
     currentEgress,
-    boxRef: server.labels['agentbox.box'] ?? sandboxId,
+    // `||`, not `??`: a name with nothing label-legal in it sanitizes to ''.
+    boxRef: server.labels['agentbox.box'] || sandboxId,
   };
 }
 
@@ -281,6 +283,7 @@ async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string
     await tunnels.open({
       boxId: sandboxId,
       vpsHost: vpsIp,
+      vpsUser: VPS_USER,
       identity: state.identity,
     });
   } catch (err) {
@@ -371,6 +374,15 @@ export const hetznerBackend: CloudBackend = {
           ? normalizeSourceCidr(egressOverride)
           : `${await detectEgressIp({ onLog })}/32`;
     const sources = resolveInboundSources(inboundPolicy, hostEgress);
+    // Control-plane-topology creates: the control box locks the box to its own
+    // egress IP; add the admin-supplied PC egress CIDR(s) so direct PC→box SSH
+    // still works. Skipped when `open` (already 0.0.0.0/0). Deduped.
+    if (inboundPolicy.mode !== 'open' && req.extraInboundCidrs && req.extraInboundCidrs.length > 0) {
+      for (const cidr of req.extraInboundCidrs) {
+        const normalized = normalizeSourceCidr(cidr);
+        if (!sources.includes(normalized)) sources.push(normalized);
+      }
+    }
     progress(`firewall inbound: ${describeInbound(inboundPolicy)} -> ${sources.join(', ')}`);
 
     // 3. Mint per-box SSH key into a temp dir keyed by a fresh uuid; we
@@ -386,15 +398,20 @@ export const hetznerBackend: CloudBackend = {
     );
     const key = await mintSshKey(tempDir, `agentbox-box-${req.name}-${stamp}`);
 
+    // Hetzner rejects a label value or resource name over 63 chars (or one not
+    // starting/ending alphanumeric), and a box name can exceed that — see naming.ts.
+    const boxLabel = hetznerLabelValue(req.name);
+    const resourceName = hetznerResourceName('agentbox', req.name, stamp);
+
     let firewallId: number | null = null;
     let serverId: number | null = null;
     try {
       // 4. Firewall.
       const firewall = await createPerBoxFirewall(c, {
-        name: `agentbox-${req.name}-${stamp}`,
+        name: resourceName,
         sources,
         labels: {
-          'agentbox.box': req.name,
+          'agentbox.box': boxLabel,
           'agentbox.role': 'box',
         },
       });
@@ -423,7 +440,7 @@ export const hetznerBackend: CloudBackend = {
           { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
           () =>
             c.createServer({
-              name: `agentbox-${req.name}-${stamp}`,
+              name: resourceName,
               server_type: serverType,
               image: imageRef,
               location,
@@ -432,7 +449,7 @@ export const hetznerBackend: CloudBackend = {
               labels: {
                 'agentbox.managed': 'true',
                 'agentbox.role': 'box',
-                'agentbox.box': req.name,
+                'agentbox.box': boxLabel,
                 'agentbox.firewall': String(firewall.id),
               },
               start_after_create: true,
@@ -490,6 +507,7 @@ export const hetznerBackend: CloudBackend = {
       return {
         sandboxId,
         inbound: inboundPolicy,
+        publicHost: vpsIp,
         resources: {
           cpu: provisioned.cores,
           memory: provisioned.memory,
@@ -535,14 +553,16 @@ export const hetznerBackend: CloudBackend = {
     const id = Number.parseInt(sandboxId, 10);
     if (!Number.isFinite(id)) return null;
     const server = await client().getServer(id);
-    return server ? { sandboxId } : null;
+    // Report the live IP: it can change across a stop/start, and the resume
+    // re-registration re-publishes it for PC adoption.
+    return server ? { sandboxId, publicHost: server.public_net.ipv4?.ip } : null;
   },
 
   async list(): Promise<CloudSandboxSummary[]> {
     const servers = await client().listServers({ label_selector: 'agentbox.managed=true' });
     return servers.map((s) => ({
       sandboxId: String(s.id),
-      name: s.labels['agentbox.box'] ?? s.name,
+      name: s.labels['agentbox.box'] || s.name,
       createdAt: s.created,
       state: mapState(s.status),
     }));

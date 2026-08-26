@@ -24,8 +24,7 @@ const fail: ExecaResult = { exitCode: 1, stdout: '', stderr: '' };
 
 // docker subcommand of a recorded execa call: execa('docker', [subcmd, ...]).
 const sub = (call: unknown[]): string => (call[1] as string[])[0] ?? '';
-const calledWith = (subcmd: string): boolean =>
-  execaMock.mock.calls.some((c) => sub(c) === subcmd);
+const calledWith = (subcmd: string): boolean => execaMock.mock.calls.some((c) => sub(c) === subcmd);
 
 const fp = { contextSha256: '0123456789abcdef0123456789abcdef' };
 
@@ -120,5 +119,90 @@ describe('pullOrBuild', () => {
     expect(res.source).toBe('built');
     expect(calledWith('pull')).toBe(false);
     expect(writePreparedDockerStateMock).not.toHaveBeenCalled();
+  });
+});
+
+// --- authenticated retry on a throttled pull -------------------------------
+//
+// A rate-limited pull is NOT a missing image: the tag is published and an
+// authenticated pull gets it. Rebuilding instead costs ~10 minutes for nothing,
+// which is exactly what used to happen (silently, since the old pullImage
+// returned a bare boolean).
+describe('pullOrBuild — authenticated retry', () => {
+  const throttled: ExecaResult = {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'Error response from daemon: toomanyrequests: retry-after 313s',
+  };
+  const missing: ExecaResult = {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'Error response from daemon: manifest unknown',
+  };
+
+  it('logs in and retries when throttled, then retags without building', async () => {
+    let pulls = 0;
+    execaMock.mockImplementation(async (cmd: string, args: string[]) => {
+      if (args[0] === 'pull') {
+        pulls += 1;
+        return pulls === 1 ? throttled : ok; // throttled once, then authenticated
+      }
+      if (cmd === 'gh' && args[0] === 'auth') return { exitCode: 0, stdout: 'gho_tok', stderr: '' };
+      if (args[0] === 'login') return ok;
+      if (args[0] === 'tag') return ok;
+      if (args[0] === 'build') return ok;
+      throw new Error(`unexpected ${cmd} ${args[0]}`);
+    });
+    // Fine-grained-PAT shape: no classic scopes reported, so the login proceeds.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({ headers: new Headers() } as unknown as Response);
+
+    const lines: string[] = [];
+    const res = await pullOrBuild('agentbox/box:dev', fp, { onProgress: (l) => lines.push(l) });
+
+    expect(res.source).toBe('pulled');
+    expect(pulls).toBe(2);
+    expect(calledWith('build')).toBe(false);
+    expect(calledWith('tag')).toBe(true);
+    // The reason must be on the record, not swallowed.
+    expect(lines.join('\n')).toMatch(/pull failed \(rate-limit\).*toomanyrequests/s);
+    fetchSpy.mockRestore();
+  });
+
+  it('does NOT attempt a login for a genuinely unpublished tag', async () => {
+    execaMock.mockImplementation(async (cmd: string, args: string[]) => {
+      if (args[0] === 'pull') return missing;
+      if (args[0] === 'build') return ok;
+      if (cmd === 'gh') throw new Error('gh must not be consulted for a 404');
+      throw new Error(`unexpected ${cmd} ${args[0]}`);
+    });
+
+    const lines: string[] = [];
+    const res = await pullOrBuild('agentbox/box:dev', fp, { onProgress: (l) => lines.push(l) });
+
+    expect(res.source).toBe('built');
+    expect(execaMock.mock.calls.some((c) => c[0] === 'gh')).toBe(false);
+    expect(lines.join('\n')).toMatch(/pull failed \(not-found\)/);
+  });
+
+  it('falls back to a build when the token cannot read packages', async () => {
+    execaMock.mockImplementation(async (cmd: string, args: string[]) => {
+      if (args[0] === 'pull') return throttled;
+      if (cmd === 'gh' && args[0] === 'auth') return { exitCode: 0, stdout: 'gho_tok', stderr: '' };
+      if (args[0] === 'build') return ok;
+      if (args[0] === 'login') throw new Error('login must not be attempted without read:packages');
+      throw new Error(`unexpected ${cmd} ${args[0]}`);
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      headers: new Headers({ 'x-oauth-scopes': 'repo, workflow' }),
+    } as unknown as Response);
+
+    const lines: string[] = [];
+    const res = await pullOrBuild('agentbox/box:dev', fp, { onProgress: (l) => lines.push(l) });
+
+    expect(res.source).toBe('built');
+    expect(lines.join('\n')).toContain('read:packages');
+    fetchSpy.mockRestore();
   });
 });

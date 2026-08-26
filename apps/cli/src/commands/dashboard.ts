@@ -36,7 +36,12 @@ import {
   waitForTmuxPaneContent,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
-import { hostOpenCommand, readState } from '@agentbox/sandbox-core';
+import { getHubStatus, hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
+import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
+import { resolveHubApiTarget } from './control-plane.js';
+import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';
+import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
+import { withOwningHub } from '../control-plane/with-hub.js';
 import type { BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
@@ -158,15 +163,12 @@ export const dashboardCommand = new Command('dashboard')
 
       const project = await findProjectRoot(process.cwd());
       let showAll = !opts.project; // default: every box globally; -p scopes to cwd project
-      const full = await listBoxes();
+      const full = await listDashboardBoxes();
       const scoped0 = scoped(showAll, project.root, full);
 
       let initialId: string;
       if (idOrName !== undefined) {
         const picked = await resolveBoxOrExit(idOrName);
-        // Cloud boxes are surfaced read-only in the sidebar — selecting one
-        // shows a "live panels are docker-only" placeholder via
-        // resolveTarget. Don't refuse the ref here.
         initialId = picked.id;
         if (!scoped0.some((b) => b.id === picked.id)) showAll = true; // widen so it shows
       } else if (scoped0.length === 0) {
@@ -179,13 +181,43 @@ export const dashboardCommand = new Command('dashboard')
       const newBoxEntry: SidebarBox = { id: NEW_BOX_ID, name: NEW_BOX_LABEL, state: 'new' };
       const listCandidates = async (): Promise<SidebarBox[]> => [
         newBoxEntry,
-        ...scoped(showAll, project.root, await listBoxes()).map(toSidebar),
+        ...scoped(showAll, project.root, await listDashboardBoxes()).map(toSidebar),
       ];
+
+      /**
+       * Adopt a box that exists only on the control box, so the panels + actions
+       * below have a local record to drive. Selecting the row is the natural
+       * trigger: everything downstream (`loadBoxRecord`, lifecycle, endpoints)
+       * needs `state.json`. Returns null when adoption isn't possible, and the
+       * caller shows a read-only placeholder instead.
+       */
+      const ensureAdopted = async (box: DashboardBox): Promise<ListedBox | null> => {
+        if (box.needsAdopt !== true) return box;
+        const adopted = await tryAutoAdopt(box.name, process.cwd());
+        if (adopted === null || adopted === 'unreachable') return null;
+        return (await listBoxes()).find((b) => b.id === adopted.id) ?? null;
+      };
 
       const resolveTarget = async (boxId: string): Promise<RightTarget> => {
         if (boxId === NEW_BOX_ID) return { kind: 'create-menu', where: project.root };
-        const box = (await listBoxes()).find((b) => b.id === boxId);
-        if (!box) return { kind: 'placeholder', lines: ['', '  box not found'] };
+        const merged = (await listDashboardBoxes()).find((b) => b.id === boxId);
+        if (!merged) return { kind: 'placeholder', lines: ['', '  box not found'] };
+        const box = await ensureAdopted(merged);
+        if (!box) {
+          // `tryAutoAdopt` returns null for several reasons — control box down,
+          // no admin token, or it genuinely doesn't know this box — and doesn't
+          // say which. Don't assert a cause we haven't established; name the
+          // command that reports the real one.
+          return {
+            kind: 'placeholder',
+            lines: [
+              '',
+              `  box ${merged.name} lives on the control box and couldn't be adopted here.`,
+              "  Until it is, it can't be driven from this machine.",
+              `  Retry (and see why) with: agentbox hub adopt ${merged.name}`,
+            ],
+          };
+        }
         if (box.state === 'paused' || box.state === 'stopped') {
           return { kind: 'lifecycle-menu', state: box.state };
         }
@@ -631,24 +663,87 @@ export const dashboardCommand = new Command('dashboard')
         await stopBox(boxId);
       };
 
-      const destroyBoxAction = async (boxId: string): Promise<void> => {
+      const destroyBoxAction = async (boxId: string): Promise<string | void> => {
         const record = await loadBoxRecord(boxId);
-        if ((record.provider ?? 'docker') !== 'docker') {
-          const provider = await providerForBox(record);
-          await provider.destroy(record);
+        if ((record.provider ?? 'docker') === 'docker') {
+          await destroyBox(boxId);
           return;
         }
-        await destroyBox(boxId);
+        // Cloud: route through the hub that OWNS the box, not whichever the
+        // current config names. `withOwningHub` tries the owner-first hub then
+        // retries the OTHER distinct hub on `not_found` — so a box created against
+        // a control box (or driven after a local config change) is torn down AND
+        // reaped on the RIGHT hub instead of erroring `not_found` and leaving both
+        // the sandbox and its registration behind. Same fix `agentbox destroy`
+        // uses (with-hub.ts, Step 5); replaces the old inline `provider.destroy` +
+        // `/remote/boxes` reap. The route does provider teardown + store/custody
+        // reap server-side (one implementation, both modes).
+        const outcome = await withOwningHub(record, (client) => client.destroy(record.id));
+        if (outcome === undefined) {
+          // A real hub error (conflict / auth / backend) was reported already;
+          // keep the record — the sandbox may still be up.
+          return `destroy failed for ${record.name}; run: agentbox destroy ${record.name}`;
+        }
+        if (outcome === 'not-found') {
+          return `${record.name} was not found on any hub; run: agentbox destroy ${record.name} --force`;
+        }
+        // Some hub reaped it; drop this machine's adopted copy too (a no-op when
+        // the hub is co-located). Best-effort.
+        await removeBoxRecord(record.id).catch(() => {});
       };
+
+      // Bring up the local hub (once, before the TUI owns the screen) so the
+      // per-box prompt streams have a `/api/v1` to hit. This is the default hub
+      // for boxes that answer here; a control-box row overrides it per box.
+      let localHub = await resolveHubApiTarget(undefined, { preferLocal: true }).catch(() => null);
+      // The `/api/v1` prompt stream is API-key-gated even on loopback, so a
+      // keyless fallback URL would 401 every subscription. If the resolve above
+      // hiccuped but a local hub is in fact running, read its token directly so
+      // the fallback carries a valid key rather than silently failing.
+      if (!localHub) {
+        const st = await getHubStatus().catch(() => null);
+        if (st?.running && st.token)
+          localHub = { url: `http://127.0.0.1:${String(st.port)}`, apiKey: st.token };
+      }
 
       const compositor = new Compositor(
         {
           ptySpawn,
           termCtor,
-          // Host-side loopback URL the per-box SSE subscriptions connect to.
-          // The relay binds 0.0.0.0; loopback is the admin/* path's required
-          // source. Same constant the wrapped-pty wrappers use.
-          relayBaseUrl: `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          // Default hub for the per-box SSE subscriptions: this host's own local
+          // hub, whose `/api/v1` gate accepts the local hub token. The key is
+          // present whenever the hub is running (resolved above, or read from
+          // getHubStatus); only a genuinely-down local hub leaves it unset, and
+          // then a LOCAL box's stream degrades visibly to "approvals unavailable"
+          // while a control-box row still resolves its own remote key per box.
+          hubBaseUrl: localHub?.url ?? `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          hubApiKey: localHub?.apiKey,
+          // ...but a box created against a control box keeps its approvals
+          // there, so resolve per box and fall back to the above.
+          //
+          // Resolved from the MERGED listing, not local state: the sidebar now
+          // includes rows that exist only on the control box, and those are
+          // exactly the ones whose approvals are remote. Looking them up
+          // locally would miss them and silently subscribe to loopback, so
+          // their approval marker would never light until they were adopted.
+          // Quiet: this runs while the TUI owns the screen, so it must not spawn
+          // an autostart spinner (the local hub is already up, resolved above).
+          hubSourceFor: async (boxId) => {
+            const box = (await listDashboardBoxes()).find((b) => b.id === boxId);
+            if (!box) return null;
+            const source = await resolveBoxPromptSource(box, { quiet: true });
+            if (!source) return null;
+            return {
+              baseUrl: source.baseUrl,
+              apiKey: source.apiKey,
+              // The CLI paths warn on stderr here; a TUI owns the screen, so
+              // hand it to the compositor to show in the alert band instead.
+              warning:
+                source.unauthenticatedPlane !== undefined
+                  ? `approvals live on ${source.unauthenticatedPlane} but no hub API key is available here`
+                  : undefined,
+            };
+          },
           listCandidates,
           resolveTarget,
           startClaude,

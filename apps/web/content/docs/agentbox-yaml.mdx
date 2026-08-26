@@ -15,19 +15,20 @@ Point the file at the published schema on the first line so editors (e.g. the Re
 ```
 
 In-repo examples use a local relative path instead; published projects use the URL above.
+
 </Callout>
 
 ## Top-level keys
 
 All top-level keys are optional, and unknown keys are rejected (`additionalProperties: false`). A missing or empty `agentbox.yaml` is completely fine — `create` does not fail without one.
 
-| Key | Read by | Purpose |
-| --- | --- | --- |
-| `services` | supervisor | Long-running processes (map of name → spec). |
-| `tasks` | supervisor | One-shot units that run to completion before dependents. |
-| `replacements` | supervisor + host | Named reusable text-substitution rule-sets — see [replacements](#replacements). |
-| `ide` | host (`agentbox code`) | VS Code attach customizations; the supervisor ignores it. |
-| `defaults` | host (`@agentbox/config`) | Project-level AgentBox config defaults. |
+| Key            | Read by                   | Purpose                                                                         |
+| -------------- | ------------------------- | ------------------------------------------------------------------------------- |
+| `services`     | supervisor                | Long-running processes (map of name → spec).                                    |
+| `tasks`        | supervisor                | One-shot units that run to completion before dependents.                        |
+| `replacements` | supervisor + host         | Named reusable text-substitution rule-sets — see [replacements](#replacements). |
+| `ide`          | host (`agentbox code`)    | VS Code attach customizations; the supervisor ignores it.                       |
+| `defaults`     | host (`@agentbox/config`) | Project-level AgentBox config defaults.                                         |
 
 `carry` is also declared at the top level but is host-applied and parsed separately — see its [own section](#carry) below. Service and task **names** must match `[A-Za-z0-9_-]+`.
 
@@ -44,19 +45,19 @@ tasks:
 
 A service is a long-running process. It needs **either** `command` **or** [`image`](#docker-image-services) (not both); unknown fields are rejected.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `command` | (required, or `image`) | Shell string (run via `bash -c`) or an argv array. |
-| `image` | (required, or `command`) | Run a docker container instead — see [docker image services](#docker-image-services). |
-| `cwd` | `/workspace` | Working directory; relative paths resolve against `/workspace`. |
-| `env` | — | Extra env vars for a `command` service (scalars, coerced to strings). For an `image` service, put container env under `image.env`. |
-| `autostart` | `true` | Start automatically when the daemon boots. |
-| `restart` | `on-failure` | Restart policy — see [needs and restart](#needs-and-restart). |
-| `backoff` | — | Exponential backoff between restarts. |
-| `needs` | — | DAG dependencies. |
-| `ready_when` | — | Readiness probe — see [ready_when](#ready_when). |
-| `expose` | — | Mark the one web service — see [expose](#expose). |
-| `ide` | — | Per-service VS Code hints (host-side only). |
+| Field        | Default                  | Meaning                                                                                                                            |
+| ------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `command`    | (required, or `image`)   | Shell string (run via `bash -c`) or an argv array.                                                                                 |
+| `image`      | (required, or `command`) | Run a docker container instead — see [docker image services](#docker-image-services).                                              |
+| `cwd`        | `/workspace`             | Working directory; relative paths resolve against `/workspace`.                                                                    |
+| `env`        | —                        | Extra env vars for a `command` service (scalars, coerced to strings). For an `image` service, put container env under `image.env`. |
+| `autostart`  | `true`                   | Start automatically when the daemon boots.                                                                                         |
+| `restart`    | `on-failure`             | Restart policy — see [needs and restart](#needs-and-restart).                                                                      |
+| `backoff`    | —                        | Exponential backoff between restarts.                                                                                              |
+| `needs`      | —                        | DAG dependencies.                                                                                                                  |
+| `ready_when` | —                        | Readiness probe — see [ready_when](#ready_when).                                                                                   |
+| `expose`     | —                        | Mark the one web service — see [expose](#expose).                                                                                  |
+| `ide`        | —                        | Per-service VS Code hints (host-side only).                                                                                        |
 
 A service moves through `pending → waiting → starting → running → ready`, and can land in `unhealthy`, `crashed`, `backoff`, or `stopped`. Logs land at `/var/log/agentbox/<svc>.log` inside the box.
 
@@ -90,7 +91,8 @@ $ agentbox-ctl start web
 `stop` does not exit the daemon; `start` restarts a previously-stopped service.
 
 <Callout title="TIP">
-Use the array form of `command` to avoid shell quoting; use the string form (`bash -c`) when you need shell features like pipes, `&&`, or sourcing env files.
+  Use the array form of `command` to avoid shell quoting; use the string form (`bash -c`) when you
+  need shell features like pipes, `&&`, or sourcing env files.
 </Callout>
 
 ### Docker image services
@@ -102,13 +104,13 @@ services:
   postgres:
     image:
       name: postgres:17-alpine
-      ports: ["5437:5432"]            # "<host>:<container>" (or "<port>")
-      env:                            # the container's -e env
+      ports: ['5437:5432'] # "<host>:<container>" (or "<port>")
+      env: # the container's -e env
         POSTGRES_USER: optima
         POSTGRES_PASSWORD: changeme
         POSTGRES_DB: optima
-      args: "-c max_connections=200"  # string OR ["-c", "max_connections=200"]; shell-tokenized
-      container_name: optima_db       # optional; default = service name
+      args: '-c max_connections=200' # string OR ["-c", "max_connections=200"]; shell-tokenized
+      container_name: optima_db # optional; default = service name
     ready_when:
       port: 5437
     restart: always
@@ -132,7 +134,7 @@ Tasks **re-run on every supervisor restart** (which happens on box start, not ju
 tasks:
   install:
     command: pnpm install --frozen-lockfile
-    run_once: true            # skip while the command is unchanged
+    run_once: true # skip while the command is unchanged
 
   build:
     command: pnpm build
@@ -141,9 +143,9 @@ tasks:
 
 `run_once` takes two forms:
 
-| Form | Behavior |
-| --- | --- |
-| `run_once: true` | The supervisor stores a marker keyed by a **hash of the resolved command**. A warm boot skips while the hash matches; editing the command invalidates it and re-runs. The marker lives at `/var/lib/agentbox/tasks/<name>` (box rootfs — captured by checkpoints, never under `/workspace`). |
+| Form                         | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run_once: true`             | The supervisor stores a marker keyed by a **hash of the resolved command**. A warm boot skips while the hash matches; editing the command invalidates it and re-runs. The marker lives at `/var/lib/agentbox/tasks/<name>` (box rootfs — captured by checkpoints, never under `/workspace`).                                                                                                                                                                                                       |
 | `run_once: { check: <cmd> }` | Run the probe before launching; **exit 0 means already satisfied** (skip). No marker is written — the probe is the source of truth. Use this when the thing you'd guard on lives **outside** the checkpointed filesystem (e.g. a containerized database, whose data is in the in-box docker volume, not the checkpoint). The probe runs verbatim via `bash -c` with the box env, so use shell vars like `$AGENTBOX_BOX_NAME`; it does **not** expand `{{…}}` placeholders (those are render-only). |
 
 ```yaml
@@ -167,24 +169,27 @@ $ agentbox-ctl run-task install --force
 `run-task` resets the task to pending so the scheduler reruns it; it is a no-op on an already-`done` task unless you pass `--force`. `--force` also bypasses the `run_once` skip (marker or check) and, for the marker form, rewrites the marker.
 
 <Callout type="warn" title="HEADS UP">
-Tasks re-run on every daemon start, not just at create. A non-idempotent task (an unguarded `git init`, a destructive migration) will fire repeatedly — declare `run_once:` (or guard it yourself). Prefer the `{ check }` form for state that a checkpoint does not capture (containerized DB data), where a filesystem marker would desync.
+  Tasks re-run on every daemon start, not just at create. A non-idempotent task (an unguarded `git
+  init`, a destructive migration) will fire repeatedly — declare `run_once:` (or guard it yourself).
+  Prefer the `{check}` form for state that a checkpoint does not capture (containerized DB data),
+  where a filesystem marker would desync.
 </Callout>
 
 ## ready_when
 
 A per-service readiness probe. Exactly one of `port`, `log_match`, or `http` must be present.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `port` | — | TCP connect probe to `host:<port>`. |
-| `host` | `127.0.0.1` | Host for the `port` probe; ignored otherwise. |
-| `log_match` | — | Regex matched against the service's output; first match flips to `ready`. |
-| `http` | — | HTTP(S) URL; sends GET, waits for `expect_status` (default: any 2xx). |
-| `expect_status` | — | Specific status to wait for; only valid with `http`. |
-| `interval_ms` | `500` | Poll interval (ignored for `log_match`). |
-| `initial_delay_ms` | `0` | Delay before the first probe. |
-| `timeout_ms` | `60000` | Total time before timing out. |
-| `on_timeout` | `kill` | `kill` re-enters the restart policy; `mark_unhealthy` leaves the process running but flagged. |
+| Field              | Default     | Meaning                                                                                       |
+| ------------------ | ----------- | --------------------------------------------------------------------------------------------- |
+| `port`             | —           | TCP connect probe to `host:<port>`.                                                           |
+| `host`             | `127.0.0.1` | Host for the `port` probe; ignored otherwise.                                                 |
+| `log_match`        | —           | Regex matched against the service's output; first match flips to `ready`.                     |
+| `http`             | —           | HTTP(S) URL; sends GET, waits for `expect_status` (default: any 2xx).                         |
+| `expect_status`    | —           | Specific status to wait for; only valid with `http`.                                          |
+| `interval_ms`      | `500`       | Poll interval (ignored for `log_match`).                                                      |
+| `initial_delay_ms` | `0`         | Delay before the first probe.                                                                 |
+| `timeout_ms`       | `60000`     | Total time before timing out.                                                                 |
+| `on_timeout`       | `kill`      | `kill` re-enters the restart policy; `mark_unhealthy` leaves the process running but flagged. |
 
 ```yaml
 services:
@@ -199,7 +204,8 @@ services:
 The `port` and `log_match` variants are one-liners: `port: 3000` or `log_match: 'listening on'`. Use `on_timeout: mark_unhealthy` as the escape hatch for legitimately slow cold starts.
 
 <Callout title="TIP">
-Downstream units gated with `needs: [api]` start only once the probe reports `ready`, not merely when the process spawns.
+  Downstream units gated with `needs: [api]` start only once the probe reports `ready`, not merely
+  when the process spawns.
 </Callout>
 
 ## expose
@@ -217,7 +223,8 @@ expose:
 Because `expose` is wired by the supervisor, not the container runtime, adding or changing it and running `agentbox-ctl reload` activates the web service with no box restart. The setup wizard relies on this when it writes `agentbox.yaml` after create.
 
 <Callout type="warn" title="HEADS UP">
-`as` must be `80` — it is the single container port AgentBox reserves for the published web URL. Any other value is rejected.
+  `as` must be `80` — it is the single container port AgentBox reserves for the published web URL.
+  Any other value is rejected.
 </Callout>
 
 See [web apps and tunnels](/docs/web-apps-and-tunnels) for how the exposed port becomes a published URL on the host. VNC and screen sharing are separate — see [browser and screen](/docs/browser-and-screen).
@@ -228,11 +235,11 @@ See [web apps and tunnels](/docs/web-apps-and-tunnels) for how the exposed port 
 
 **`restart`** (services only) controls relaunch:
 
-| Value | Behavior |
-| --- | --- |
-| `always` | Restart regardless of exit code. |
+| Value        | Behavior                                   |
+| ------------ | ------------------------------------------ |
+| `always`     | Restart regardless of exit code.           |
 | `on-failure` | (default) Restart only on a non-zero exit. |
-| `never` | Leave it dead after it exits. |
+| `never`      | Leave it dead after it exits.              |
 
 **`backoff`** (services only) sets exponential backoff between restarts: `initial_ms` (default `500`), `max_ms` (default `30000`), `factor` (default `2`). The runtime enforces `max_ms >= initial_ms` — a cross-field rule the JSON Schema cannot express.
 
@@ -267,7 +274,8 @@ changed: web
 ```
 
 <Callout type="warn" title="HEADS UP">
-A `needs` cycle or a reference to a non-existent unit fails validation — the daemon will not start, and on the host `agentbox create` aborts before doing any docker work.
+  A `needs` cycle or a reference to a non-existent unit fails validation — the daemon will not
+  start, and on the host `agentbox create` aborts before doing any docker work.
 </Callout>
 
 See [background and parallel](/docs/background-and-parallel) for running multiple boxes, and [services and tasks](/docs/services-and-tasks) for the DAG model in prose.
@@ -287,7 +295,8 @@ defaults:
 The full key set lives at `https://agent-box.sh/schema/user-config.schema.json`.
 
 <Callout title="TIP">
-Use `defaults` to make a repo "remember" its provider and checkpoint so teammates get the same box without passing flags.
+  Use `defaults` to make a repo "remember" its provider and checkpoint so teammates get the same box
+  without passing flags.
 </Callout>
 
 See [configuration](/docs/configuration) for the full key set and precedence. Note the cross-provider gotcha: pinning provider-native snapshot ids in shared keys can collide — the configuration page covers the per-provider `box.defaultCheckpointDocker` / `...Daytona` / `...Hetzner` / `...Vercel` overrides.
@@ -296,17 +305,17 @@ See [configuration](/docs/configuration) for the full key set and precedence. No
 
 `carry` is declared at the top level but is **host-applied**, not parsed by the supervisor (it has its own parser). It is a declarative host→box file copy that bypasses `.gitignore`. Each entry maps a host `src` to an in-box `dest`:
 
-| Field | Rule |
-| --- | --- |
-| `src` | Must start with `/`, `~/`, or `./`. `~/` = host home; `./` = project root. |
-| `dest` | Must start with `/` or `~/`. `~/` expands to `/home/vscode`. |
-| `mode` | Octal — accepts `0o600`, `"0600"`, or `"600"`. |
-| `user` | Numeric uid that owns the file in-box (default `1000` = `vscode`; `0` keeps it root-owned). |
-| `exclude` | List of tar globs / bare dir names to drop when copying a **directory** (additive on top of the defaults below). |
-| `optional` | `true` skips a missing `src` silently instead of erroring. |
-| `replaceEnvs` | `true` substitutes `{{AGENTBOX_*}}` placeholders in the file content host-side before copying (**file entries only**). See [replacements](#replacements). |
-| `replace` | Inline replacement rules applied (in order) before copying (**file only**). |
-| `rules` | Names of top-level [`replacements:`](#replacements) rule-sets to apply (**file only**). |
+| Field         | Rule                                                                                                                                                                                                                                                                        |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src`         | Must start with `/`, `~/`, or `./`. `~/` = host home; `./` = project root.                                                                                                                                                                                                  |
+| `dest`        | Must start with `/` or `~/`. `~/` expands to `/home/vscode`.                                                                                                                                                                                                                |
+| `mode`        | Octal — accepts `0o600`, `"0600"`, or `"600"`.                                                                                                                                                                                                                              |
+| `user`        | Numeric uid that owns the file in-box. Leave unset (the default) and AgentBox resolves the box's `vscode` user itself — its uid is `1000` on some providers and assigned at bake time on vercel/e2b, so don't write `1000` meaning "the box user". `0` keeps it root-owned. |
+| `exclude`     | List of tar globs / bare dir names to drop when copying a **directory** (additive on top of the defaults below).                                                                                                                                                            |
+| `optional`    | `true` skips a missing `src` silently instead of erroring.                                                                                                                                                                                                                  |
+| `replaceEnvs` | `true` substitutes `{{AGENTBOX_*}}` placeholders in the file content host-side before copying (**file entries only**). See [replacements](#replacements).                                                                                                                   |
+| `replace`     | Inline replacement rules applied (in order) before copying (**file only**).                                                                                                                                                                                                 |
+| `rules`       | Names of top-level [`replacements:`](#replacements) rule-sets to apply (**file only**).                                                                                                                                                                                     |
 
 A shorthand string form `"src=dest"` (or just `"src"` to mirror) is also accepted.
 
@@ -319,7 +328,7 @@ carry:
   - src: ../legacy-app
     dest: ~/legacy-app
     exclude:
-      - "*/cache"
+      - '*/cache'
 ```
 
 The canonical use case is developing AgentBox inside an AgentBox: carry `~/.agentbox/secrets.env` and `~/.agentbox/claude-credentials.json` so the in-box CLI is already authenticated.
@@ -337,7 +346,9 @@ agentbox claude --carry skip
 You can also set `AGENTBOX_CARRY_YES=1` or `AGENTBOX_CARRY=skip`. Note that `-y`/`--yes` does **not** auto-approve carry — a non-TTY `-y` with non-empty entries fails loud and asks for the explicit env var. `agentbox fork` is the exception: it sends carry by default (opt out with `agentbox fork --carry skip`).
 
 <Callout type="warn" title="HEADS UP">
-`carry` deliberately bypasses `.gitignore` and copies host files into the box. Treat the box as the untrusted side and only carry what the agent genuinely needs (credentials, env files). The per-entry cap is `box.cpMaxBytes` (default 100 MiB), the same limit `agentbox cp` enforces.
+  `carry` deliberately bypasses `.gitignore` and copies host files into the box. Treat the box as
+  the untrusted side and only carry what the agent genuinely needs (credentials, env files). The
+  per-entry cap is `box.cpMaxBytes` (default 100 MiB), the same limit `agentbox cp` enforces.
 </Callout>
 
 Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).
@@ -351,7 +362,7 @@ replacements:
   box-host:
     # Repoint a hard-coded hostname at this box's published URL.
     - from: 'optima\.localhost'
-      to: '{{AGENTBOX_BOX_HOST}}'   # docker/hetzner: <box-name>.localhost; vercel/daytona/e2b: the real preview host
+      to: '{{AGENTBOX_BOX_HOST}}' # docker/hetzner: <box-name>.localhost; vercel/daytona/e2b: the real preview host
       regex: true
 ```
 
@@ -379,14 +390,14 @@ tasks:
 
 `replaceEnvs` / `--env` substitute a fixed **whitelist** of `{{...}}` placeholders (a stray `{{FOO}}` is left untouched, and secrets are never substitutable):
 
-| Placeholder | Value |
-| --- | --- |
-| `{{AGENTBOX_BOX_NAME}}` | The box name. |
-| `{{AGENTBOX_BOX_HOST}}` | The host this box is reachable at. Docker/Hetzner: the published portless host `<box-name>.localhost`. Public-URL clouds (Vercel/Daytona/E2B): the real preview host (e.g. `<sub>.vercel.run`), wired in at boot so it matches what `agentbox url` returns. |
-| `{{AGENTBOX_BOX_ID}}` | The box id. |
-| `{{AGENTBOX_BOX_KIND}}` | `docker` or `cloud`. |
-| `{{AGENTBOX_HOST_WORKSPACE}}` | Host workspace path. |
-| `{{AGENTBOX_PROJECT_ROOT}}` | Project root. |
+| Placeholder                   | Value                                                                                                                                                                                                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{AGENTBOX_BOX_NAME}}`       | The box name.                                                                                                                                                                                                                                               |
+| `{{AGENTBOX_BOX_HOST}}`       | The host this box is reachable at. Docker/Hetzner: the published portless host `<box-name>.localhost`. Public-URL clouds (Vercel/Daytona/E2B): the real preview host (e.g. `<sub>.vercel.run`), wired in at boot so it matches what `agentbox url` returns. |
+| `{{AGENTBOX_BOX_ID}}`         | The box id.                                                                                                                                                                                                                                                 |
+| `{{AGENTBOX_BOX_KIND}}`       | `docker` or `cloud`.                                                                                                                                                                                                                                        |
+| `{{AGENTBOX_HOST_WORKSPACE}}` | Host workspace path.                                                                                                                                                                                                                                        |
+| `{{AGENTBOX_PROJECT_ROOT}}`   | Project root.                                                                                                                                                                                                                                               |
 
 Arbitrary substitutions go through explicit `replace:` / `rules:` rules, not the placeholder whitelist.
 
@@ -394,9 +405,9 @@ Arbitrary substitutions go through explicit `replace:` / `rules:` rules, not the
 
 `render` also expands a secret-generator token, so you can stop shelling out to `openssl rand`:
 
-| Token | Behavior |
-| --- | --- |
-| `{{AGENTBOX_AUTO_SECRET}}` | A fresh 32-byte base64url secret each render. Stable in practice because you render the template→file once (guarded). |
+| Token                             | Behavior                                                                                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{AGENTBOX_AUTO_SECRET}}`        | A fresh 32-byte base64url secret each render. Stable in practice because you render the template→file once (guarded).                     |
 | `{{AGENTBOX_AUTO_SECRET:<name>}}` | Generated once, persisted at `/var/lib/agentbox/secrets/<name>`, **reused** on every later render — stable even if you render every boot. |
 
 ```yaml
@@ -409,7 +420,9 @@ BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"
 `agentbox-ctl render <src>` flags: `--out <path>` (or `--in-place`, else stdout), `--env` (placeholder substitution), `--rules <names>` (comma-separated `replacements:` refs), `--rule 'from=>to'` (literal, repeatable), `--rule-regex 'pat=>repl'` (regex, repeatable), and `--state-dir <path>` (where named secrets persist).
 
 <Callout title="TIP">
-Reach for `replaceEnvs`/`render` instead of hand-written `sed`: an `env` task that pins `BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` to `https://{{AGENTBOX_BOX_HOST}}` becomes a one-liner, and the box and host browser then resolve the app at the same URL.
+  Reach for `replaceEnvs`/`render` instead of hand-written `sed`: an `env` task that pins
+  `BETTER_AUTH_URL`/`NEXT_PUBLIC_APP_URL` to `https://{{ AGENTBOX_BOX_HOST }}` becomes a one-liner,
+  and the box and host browser then resolve the app at the same URL.
 </Callout>
 
 ## Validating the file

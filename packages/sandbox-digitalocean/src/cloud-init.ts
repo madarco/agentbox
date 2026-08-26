@@ -64,6 +64,66 @@ export function generatePrepareCloudInit(opts: PrepareCloudInitOptions): string 
   ].join('\n');
 }
 
+export interface ControlPlaneCloudInitOptions {
+  /** ed25519/rsa public key string (one line, OpenSSH format) for `root`. */
+  sshPubkey: string;
+  /**
+   * Clone the agentbox monorepo to `/opt/agentbox` so the VPS can build the hub
+   * from source. Omitted in the default package mode, where the hub image is
+   * `npm install -g @madarco/agentbox` and the orchestrator scp's the compose
+   * stack — nothing on the VPS needs the repo.
+   */
+  repo?: { url: string; ref: string };
+}
+
+/**
+ * Cloud-init for a control-plane Droplet (stock Ubuntu, not the box snapshot).
+ * Logs in as `root`, installs Docker + git, and — in source mode — clones the
+ * agentbox repo to `/opt/agentbox`. The orchestrator then scp's the secret env +
+ * Caddy config and runs `docker compose up` over ssh — secrets never go in
+ * user-data (which is readable from cloud metadata).
+ *
+ * Mirrors the Hetzner `controlPlaneCloudInit`, with DigitalOcean's two quirks
+ * baked in: the key rides a TOP-LEVEL `ssh_authorized_keys` (the `users:` root
+ * form does not inject for root on DO's Ubuntu 24.04), and every line stays
+ * ASCII (DO truncates user-data at the first non-ASCII byte).
+ */
+export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): string {
+  const pubkey = opts.sshPubkey.trim();
+  const repo = opts.repo;
+  return [
+    '#cloud-config',
+    '# AgentBox control-plane VPS - provisioned by `agentbox hub setup --deploy digitalocean`.',
+    'disable_root: false',
+    'ssh_pwauth: false',
+    'ssh_authorized_keys:',
+    `  - ${yamlScalar(pubkey)}`,
+    'chpasswd:',
+    '  expire: false',
+    'runcmd:',
+    '  - [ passwd, -d, root ]',
+    '  - [ bash, -lc, "chage -d $(date +%Y-%m-%d) -E -1 -I -1 -M 99999 -m 0 root" ]',
+    '  - [ bash, -lc, "curl -fsSL https://get.docker.com | sh" ]',
+    // git stays even in package mode: the resident create worker clones repos on
+    // the VPS, and it is the first thing you reach for when debugging by hand.
+    '  - [ bash, -lc, "apt-get update && apt-get install -y git" ]',
+    // Two-step so a SHA works at all (`--branch <sha>` is invalid) and so a ref
+    // that doesn't exist FAILS rather than silently leaving the default branch.
+    ...(repo
+      ? [
+          `  - [ bash, -lc, "git clone --depth 1 --branch ${shArg(repo.ref)} ${shArg(repo.url)} /opt/agentbox || { rm -rf /opt/agentbox && git clone ${shArg(repo.url)} /opt/agentbox && git -C /opt/agentbox checkout ${shArg(repo.ref)}; } || rm -rf /opt/agentbox" ]`,
+        ]
+      : []),
+    '',
+  ].join('\n');
+}
+
+/** Single-quote a value for embedding inside a `bash -lc "..."` cloud-init step. */
+function shArg(value: string): string {
+  // Only used for repo URL/ref (no shell metachars in practice); guard anyway.
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 export interface BoxCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format). */
   sshPubkey: string;

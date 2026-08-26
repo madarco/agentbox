@@ -15,7 +15,7 @@
 // published package, so the resolvers anchor on it uniformly.
 
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +101,22 @@ for (const [srcRel, destRel] of direct) {
 // Absent in a partial dev build (warn+skip) — a publish runs build:standalone
 // first (apps/cli prepublishOnly).
 copy('apps/hub/dist-standalone', join(runtime, 'hub'));
+
+// Control-box deploy assets — `agentbox hub deploy hetzner` scp's these onto the
+// VPS and builds the `app` service from them, so a package-mode deploy needs no
+// repo clone at all (packages/sandbox-hetzner/src/hub-deploy-assets.ts resolves
+// them here first, then falls back to the monorepo source paths in dev).
+// docker-compose.yml is shipped VERBATIM and shared with the source path, so the
+// service's environment/volumes block has exactly one definition.
+const hubDeployFiles = [
+  'apps/hub/docker-compose.yml',
+  'apps/hub/docker-compose.package.yml',
+  'apps/hub/Dockerfile.package',
+];
+for (const srcRel of hubDeployFiles) {
+  copy(srcRel, join(runtime, 'hub-deploy', basename(srcRel)));
+}
+
 copy(dockerfileSrc, join(dockerCtx, 'Dockerfile.box'));
 for (const srcRel of contextFiles) {
   copy(srcRel, join(dockerCtx, srcRel), execBitFiles.has(srcRel));

@@ -5,6 +5,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { parseUserConfig } from '../src/parse.js';
+import { KEY_REGISTRY } from '../src/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaPath = resolve(here, '..', 'schema', 'user-config.schema.json');
@@ -202,6 +203,51 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
         // booleans, so `box: { snapshot: yes }` parses to the string "yes".
         // Both parser and schema must reject (string != boolean).
         expect({ name: f.name, ok }).toMatchObject({ ok: false });
+      });
+    }
+  });
+
+  /**
+   * The fixture lists above are curated, so a key added to `KEY_REGISTRY` but not
+   * to the schema slipped through silently — 15 of them had, including whole
+   * branches (`git`, `ssh`, `cloud`, `integrations`). Since the schema is
+   * `additionalProperties: false`, that means a user writing a perfectly valid
+   * key gets a red squiggle in their editor. Check every registered key
+   * exhaustively so the two can't drift again.
+   */
+  describe('every KEY_REGISTRY key exists in the JSON schema', () => {
+    const node = (key: string): Record<string, unknown> | null => {
+      let cur = schema;
+      for (const part of key.split('.')) {
+        const props = cur['properties'] as Record<string, Record<string, unknown>> | undefined;
+        const next = props?.[part];
+        if (!next) return null;
+        cur = next;
+      }
+      return cur;
+    };
+
+    it('has no missing keys', () => {
+      const missing = KEY_REGISTRY.map((d) => d.key).filter((k) => node(k) === null);
+      expect(missing).toEqual([]);
+    });
+
+    for (const desc of KEY_REGISTRY.filter((d) => d.type === 'enum')) {
+      it(`${desc.key} enum matches the registry`, () => {
+        // A drifted enum is worse than a missing key: the editor rejects a value
+        // the parser accepts, with no hint as to which side is wrong.
+        //
+        // A key that also accepts a provider spec (`box.provider`) is a `oneOf`
+        // in the schema — the enum branch is what must match the registry, and
+        // the second branch is the pattern the parser widens to.
+        const n = node(desc.key);
+        const oneOf = n?.['oneOf'] as Array<Record<string, unknown>> | undefined;
+        if (desc.allowProviderSpec) {
+          expect(oneOf?.[0]?.['enum']).toEqual([...(desc.enumValues ?? [])]);
+          expect(oneOf?.[1]?.['pattern']).toBeTruthy();
+          return;
+        }
+        expect(n?.['enum']).toEqual([...(desc.enumValues ?? [])]);
       });
     }
   });

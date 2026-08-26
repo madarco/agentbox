@@ -38,10 +38,48 @@ export interface CreateJobRequest {
   branch?: string;
   /** Desired box name (default: generated). */
   name?: string;
-  /** Agent to launch (e.g. 'claude'); informational for the worker. */
+  /** Agent to launch (e.g. 'claude'). The worker starts it detached when a
+   * `prompt` is set (a background `-i` run); otherwise it's a registration hint. */
   agent?: string;
-  /** Initial prompt to queue for the agent, if any. */
+  /** Initial prompt to seed the agent with. Its presence is what makes the
+   * worker start the agent in-box (vs. a "cold" create the PC attaches later). */
   prompt?: string;
+  /** Fully-processed agent args (post-`--`, incl. skip-permissions) the CLI
+   * computed from its config, so the worker needs no CLI/config to launch. */
+  agentArgs?: string[];
+  /**
+   * Start the agent in-box even without a `prompt`. A hub web-UI create wants a
+   * box with its agent already running (that is what the local queue path does),
+   * but has no seed prompt to imply it — the prompt-presence rule alone would
+   * hand back a box with a dead session.
+   */
+  startAgent?: boolean;
+  /**
+   * Box-shaping create flags the CLI resolved (mirrors the local file-queue
+   * path's `createOpts`), so a control-box create honors them instead of silently
+   * dropping them. Only the flags that map to direct `provider.create` args are
+   * carried here — VM sizing (`--size`/`--location`/`--inbound`) needs the CLI's
+   * provider-specific sizing helper, which isn't available worker-side, so those
+   * fall back to the control box's own config (consistent with `prepare`).
+   */
+  opts?: CreateJobRequestOpts;
+}
+
+/** Box-shaping create flags a control-box create honors (see CreateJobRequest.opts). */
+export interface CreateJobRequestOpts {
+  /** Start from this checkpoint (CLI `--snapshot`). */
+  snapshot?: string;
+  /** Box image override (`--image`). */
+  image?: string;
+  withPlaywright?: boolean;
+  withEnv?: boolean;
+  vnc?: boolean;
+  /** Cap commits in the cloud-seed git bundle (`--bundle-depth`). */
+  bundleDepth?: number;
+  /** `--build`: force a local base build instead of pulling. */
+  build?: boolean;
+  /** `--no-credential-sync` → false. */
+  credentialSync?: boolean;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */
@@ -81,6 +119,13 @@ export interface CreateJobRow {
  * job queue (Phase 5) extend this interface in their own phases.
  */
 export interface Store {
+  /**
+   * Create/upgrade the backing tables. Durable stores (Postgres, SQLite) only —
+   * the in-memory and remote stores have nothing to migrate, hence optional.
+   * Idempotent; safe to call on every boot.
+   */
+  migrate?(): Promise<void>;
+
   // --- boxes (was BoxRegistry) ---
   registerBox(reg: BoxRegistration): Promise<void>;
   getBox(boxId: string): Promise<BoxRegistration | undefined>;
@@ -105,6 +150,13 @@ export interface Store {
   ): Promise<void>;
   getStatus(boxId: string): Promise<BoxStatusSnapshot | undefined>;
   deleteStatus(boxId: string): Promise<void>;
+  /**
+   * Every box's latest status snapshot in one round-trip (avoids N+1 over
+   * `listBoxes` + per-box `getStatus`). The hub UI renders every box's live
+   * status from this; promoted onto the interface in phase 4 so the hub can
+   * read statuses without knowing the concrete backend.
+   */
+  listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>>;
 
   // --- prompt mailbox (poll-mode approvals; Phase 2) ---
   createPrompt(row: PromptRow): Promise<void>;
@@ -119,6 +171,15 @@ export interface Store {
   // the federated laptop's RemoteStore omits these, only the plane creates boxes) ---
   enqueueCreateJob?(job: CreateJobRow): Promise<void>;
   getCreateJob?(id: string): Promise<CreateJobRow | null>;
+  /**
+   * Recent jobs, newest first. The plane's queue is otherwise only addressable
+   * by id, so a PC that enqueued a background run has no way to see what else is
+   * in flight — `agentbox queue list` would show only its own local jobs.
+   */
+  listCreateJobs?(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]>;
   /** Atomically claim the oldest queued job (→ running), or null when none. */
   claimNextCreateJob?(workerId: string): Promise<CreateJobRow | null>;
   completeCreateJob?(
@@ -126,4 +187,12 @@ export interface Store {
     status: 'done' | 'failed',
     result: { boxId?: string; error?: string },
   ): Promise<void>;
+
+  // --- retention (durable stores only; the laptop's memory is process-lifetime).
+  // A resident control box runs forever, so answered prompts + finished jobs must
+  // be swept or the tables only grow. Both return the number of rows removed. ---
+  /** Delete answered prompts (and expired-past-`expires_at` rows) older than `beforeIso`. */
+  prunePrompts?(beforeIso: string): Promise<number>;
+  /** Delete done/failed create jobs whose `finishedAt` is older than `beforeIso`. */
+  pruneCreateJobs?(beforeIso: string): Promise<number>;
 }

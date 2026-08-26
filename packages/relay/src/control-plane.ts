@@ -10,7 +10,15 @@ export {
   type GenericRequest,
   type RelayResponse,
 } from './core/handler.js';
-export { PostgresStore, type PostgresStoreOptions, SCHEMA_SQL } from './store/postgres-store.js';
+export { PostgresStore, type PostgresStoreOptions } from './store/postgres-store.js';
+export {
+  SqliteStore,
+  type SqliteStoreOptions,
+  DEFAULT_SQLITE_STORE_PATH,
+} from './store/sqlite-store.js';
+export { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from './store/schema.js';
+export { WriteThroughStore, type WriteThroughParts } from './store/write-through-store.js';
+export { makeStore } from './store/index.js';
 export { MemoryStore } from './store/memory-store.js';
 export { type Store, type PromptRow } from './store/store.js';
 export {
@@ -18,5 +26,26 @@ export {
   loadGitHubAppConfig,
   type GitHubAppConfig,
 } from './github-app.js';
-export { drainOneCreateJob, drainCreateJobs, type CreateBoxFn } from './create-worker.js';
+export {
+  drainOneCreateJob,
+  drainCreateJobs,
+  makeControlPlaneCreateBox,
+  cloneRepoWithLfs,
+  type CreateBoxFn,
+  type CreateBoxDeps,
+  type CloneRepoRunGit,
+} from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+// The hub web UI streams a create's progress from the per-job log file the local
+// queue writes; a control-plane create job reuses the same path so one job-log
+// contract covers both create paths.
+export { QUEUE_LOGS_DIR, queueLogPath } from './queue.js';
+export { toAuthedHttpsUrl, toHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
+export {
+  type CustodyStore,
+  type CustodyEntry,
+  type CustodyPutResult,
+  CUSTODY_SCOPES,
+  normalizeCustodyPath,
+} from './custody/store.js';
+export { FsCustodyStore, DEFAULT_CUSTODY_DIR } from './custody/fs-store.js';

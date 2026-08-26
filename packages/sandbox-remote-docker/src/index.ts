@@ -115,9 +115,18 @@ export {
   isValidAlias,
   readHostsRegistry,
   getHostAlias,
+  getHostConnection,
+  hostKeyDir,
   listHostAliases,
   upsertHostAlias,
   removeHostAlias,
+  type RemoteHostConnection,
   type RemoteHostEntry,
 } from './hosts-registry.js';
 export { readPreparedState, removePreparedHost } from './prepared-state.js';
+export {
+  setRemoteHostSharer,
+  setRemoteHostBaker,
+  type RemoteHostSharer,
+  type RemoteHostBaker,
+} from './share-hook.js';

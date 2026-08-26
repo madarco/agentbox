@@ -133,6 +133,23 @@ export const CLOUD_PROVIDER_NAMES: readonly ProviderKind[] = PROVIDERS.filter(
   (p) => p.kind === 'cloud',
 ).map((p) => p.name);
 
+/**
+ * Providers whose box creates can run on a remote hub (the deployed control box):
+ * the true clouds only. Excludes `docker` (local engine — no hub to route to) and
+ * `remote-docker` (docker on YOUR OWN machine over SSH — the control box can't
+ * reach it, and the create-via-hub path rejects it). NOT the same as
+ * {@link CLOUD_PROVIDER_NAMES}, which counts `remote-docker` as cloud for the
+ * git-bundle staging / SSH-sync it shares with the real clouds.
+ */
+export const HUB_ROUTABLE_PROVIDER_NAMES: readonly ProviderKind[] = CLOUD_PROVIDER_NAMES.filter(
+  (n) => n !== 'remote-docker',
+);
+
+/** True when `name`'s creates can be handed to a remote control box. */
+export function isHubRoutableProvider(name: string): boolean {
+  return (HUB_ROUTABLE_PROVIDER_NAMES as readonly string[]).includes(name);
+}
+
 export function isProviderKind(name: string): name is ProviderKind {
   return (PROVIDER_NAMES as readonly string[]).includes(name);
 }

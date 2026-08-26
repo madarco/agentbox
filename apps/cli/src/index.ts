@@ -56,6 +56,8 @@ import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
 import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
 import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
+import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd.js';
+import { setRemoteHostBaker, setRemoteHostSharer } from '@agentbox/sandbox-remote-docker';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
 import { driveCommand } from './commands/drive.js';
@@ -77,7 +79,6 @@ import { pruneCommand } from './commands/prune.js';
 import { queueCommand } from './commands/queue.js';
 import { relayCommand } from './commands/relay.js';
 import { hubCommand } from './commands/hub.js';
-import { controlPlaneCommand } from './commands/control-plane.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
@@ -108,10 +109,64 @@ import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
 import { installConfigWarningSink } from './lib/config-warnings.js';
+import {
+  setCredentialPublisher,
+  setDockerCredentialRefresh,
+  setHubDockerContext,
+  setHubPortlessHooks,
+} from '@agentbox/sandbox-core';
+import {
+  BUILD_CONTEXT_DIR,
+  dockerCredentialRefresh,
+  dockerHubPortlessHooks,
+} from '@agentbox/sandbox-docker';
 
 // Unknown config keys are non-fatal (a plugin's bundled parser may be older than
 // the CLI that wrote them) — the host CLI is the one that tells the user.
 installConfigWarningSink();
+
+// A provider login writes the local `secrets.env` AND mirrors the credential to
+// the hub (validate + persist on the hub's machine). Only the interactive setters
+// publish — the headless `setCredentials` the hub itself drives does not, so this
+// never loops back. Registered here (not in the provider packages) because the
+// hub client + target resolution live in the CLI; the inner import stays lazy to
+// avoid the hub.ts <-> control-plane.ts module cycle at load.
+setCredentialPublisher(async (providerId, fields) => {
+  const { publishProviderCredentials } = await import('./control-plane/publish-credentials.js');
+  await publishProviderCredentials(providerId, fields);
+});
+
+// Same seam for remote-docker hosts: registering one locally tells a control box
+// nothing (it cannot resolve this machine's ~/.ssh/config), so `remote-docker
+// add` and the install wizard hand it over. Installed here because it needs the
+// hub client; lazy inner import for the same module-cycle reason.
+setRemoteHostSharer(async (alias) => {
+  const { shareAfterAdd } = await import('./control-plane/remote-docker-share.js');
+  await shareAfterAdd(alias);
+});
+
+// And its bake: `remote-docker add` must not build the image inline, or a host
+// the control box was just given would still be baked from this laptop.
+// `runPrepare` owns the local-hub-vs-control-box choice and drives the hub's
+// `/hosts/:alias/bake` route, so `add`, `agentbox prepare` and the install
+// wizard all bake in the same place.
+setRemoteHostBaker(async (alias) => {
+  const { runPrepare } = await import('./commands/prepare.js');
+  await runPrepare(`docker:${alias}`, { yes: true, suppressStatus: true });
+});
+
+// The hub lifecycle lives in `@agentbox/sandbox-core` (Step 12) so a docker-free
+// host can start / probe the hub without importing docker machinery. The two
+// docker-side niceties it still wants — the Portless friendly URL and the docker
+// build context — are supplied here through the hub seam. On a host without the
+// docker package these stay unset and the hub just uses its loopback URL.
+setHubPortlessHooks(dockerHubPortlessHooks);
+setHubDockerContext(BUILD_CONTEXT_DIR);
+
+// Cloud creates refresh the host agent-credential backups from the docker shared
+// volumes before seeding (Step 12): the docker `docker run` lives here, behind the
+// `@agentbox/sandbox-core` seam, so the cloud package never imports docker.
+setDockerCredentialRefresh(dockerCredentialRefresh);
 
 const program = new Command();
 
@@ -165,9 +220,6 @@ program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(relayCommand);
 program.addCommand(hubCommand);
-// Experimental + WIP (hosted control plane / deployed hub). Hidden from the main
-// `agentbox --help` list; still runnable and self-documented via `control-plane --help`.
-program.addCommand(controlPlaneCommand, { hidden: true });
 // Internal worker spawned by the relay's queue scheduler. Hidden from
 // `--help` (it shows nothing user-facing — see _run-queued-job.ts).
 program.addCommand(runQueuedJobCommand, { hidden: true });
@@ -186,6 +238,9 @@ program.addCommand(hetznerCommand);
 program.addCommand(vercelCommand);
 program.addCommand(e2bCommand);
 program.addCommand(digitaloceanCommand);
+// The provider package owns the local registry commands; `share`/`unshare` need
+// the hub client, which lives here — so the CLI folds them into the same group.
+for (const sub of remoteDockerShareSubcommands) remoteDockerCommand.addCommand(sub);
 program.addCommand(remoteDockerCommand);
 program.addCommand(dockerCommand);
 program.addCommand(updateCommand);
@@ -208,9 +263,7 @@ program.addCommand(
     .argument('[command]', 'command to show help for')
     .action((name: string | undefined) => {
       if (name) {
-        const sub = program.commands.find(
-          (c) => c.name() === name || c.aliases().includes(name),
-        );
+        const sub = program.commands.find((c) => c.name() === name || c.aliases().includes(name));
         if (!sub) program.error(`unknown command '${name}'`);
         sub!.help();
       }
@@ -314,7 +367,11 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
     versionPromptShown = true;
     try {
       const yes = await confirm({
-        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — download new version now?`,
+        // Say what this actually does. "download new version now?" read as "there
+        // is another version waiting" — confusing right after the user installed
+        // this one on purpose, and wrong: nothing downloads here except the
+        // menu-bar app, and only when its published build differs.
+        message: `agentbox was updated (${state.lastRunVersion} → ${AGENTBOX_VERSION}) — refresh skills, re-check the box image, reload the relay and the menu-bar app?`,
         initialValue: true,
       });
       if (yes) {

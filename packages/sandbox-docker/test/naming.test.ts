@@ -44,8 +44,23 @@ describe('defaultBoxName', () => {
   });
 
   it('sanitizes spaces in workspace folder', () => {
-    expect(defaultBoxName('/tmp/My Test Workspace', 'deadbeef')).toBe(
-      'my-test-workspace-deadbeef',
-    );
+    expect(defaultBoxName('/tmp/My Test Workspace', 'deadbeef')).toBe('my-test-workspace-deadbeef');
+  });
+
+  // A control box builds every box from a per-job clone it deletes on the way
+  // out, so the workspace basename names a directory that no longer exists and
+  // identifies no project. `nameBasis` (the repo) overrides it.
+  it('prefers nameBasis over the workspace basename', () => {
+    expect(
+      defaultBoxName('/tmp/agentbox-hub-worker-74d57005-7edf-46ea', 'bf16245c8', 'optima'),
+    ).toBe('optima-bf16245c8');
+  });
+
+  it('sanitizes nameBasis like any other name token', () => {
+    expect(defaultBoxName('/tmp/whatever', 'deadbeef', 'My Repo')).toBe('my-repo-deadbeef');
+  });
+
+  it('falls back to the workspace basename when nameBasis sanitizes to empty', () => {
+    expect(defaultBoxName('/Users/marco/myproject', 'a1b2c3d4', '')).toBe('myproject-a1b2c3d4');
   });
 });

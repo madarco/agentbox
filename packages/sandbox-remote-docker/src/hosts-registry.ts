@@ -20,6 +20,12 @@
  * Shape mirrors `prepared-state.ts` (a provider-owned `Record<string,T>` JSON doc),
  * but with its own filename and inline atomic read/write. `homedir()` is resolved
  * at call time so tests can redirect `$HOME`.
+ *
+ * `SCHEMA` stays at 1 even as fields are added: every addition so far is optional
+ * and ignorable, and `readHostsRegistry` hard-rejects a document whose schema it
+ * does not equal — so bumping it would make an older CLI (or an older control
+ * box) report every registered host as missing, which is strictly worse than it
+ * ignoring a field it does not understand.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -28,9 +34,37 @@ import { dirname, resolve as pathResolve } from 'node:path';
 
 const SCHEMA = 1;
 
+/**
+ * A self-describing way to reach the engine, resolved once (via `ssh -G`) at
+ * registration time.
+ *
+ * `ssh` alone is enough on the machine that registered it — an `~/.ssh/config`
+ * alias like `buildbox` means whatever that user's config says. It means nothing
+ * anywhere else, which is exactly the problem when the host has to be SHARED
+ * with a control box: the hub container has no `~/.ssh` and no agent. So a
+ * shared host also carries the expansion, plus the key to authenticate with.
+ */
+export interface RemoteHostConnection {
+  /** Hostname or IP — never a local `~/.ssh/config` alias. */
+  host: string;
+  user?: string;
+  port?: number;
+  /** Absolute path to the private key. Omit to use the agent / ssh_config. */
+  identityFile?: string;
+  /** Absolute path to a dedicated known_hosts file. */
+  knownHosts?: string;
+}
+
 export interface RemoteHostEntry {
   /** The SSH connection string: `[user@]host[:port]` or an `~/.ssh/config` alias. */
   ssh: string;
+  /**
+   * Present when the entry was registered with an explicit, portable connection
+   * (`remote-docker share`, or a host the hub itself was given). When set it
+   * WINS over `ssh` at dial time — it is the more specific answer, and on a
+   * control box it is the only one that can work.
+   */
+  connection?: RemoteHostConnection;
   createdAt: string;
   updatedAt?: string;
 }
@@ -88,6 +122,15 @@ export function writeHostsRegistry(reg: RemoteHostsRegistry): void {
   renameSync(tmp, path);
 }
 
+/**
+ * Where a shared host's material lives: the key minted for a control box to dial
+ * with, and the `known_hosts` its ssh writes. Per alias (0700), beside the
+ * registry that names it — the same shape the VPS providers use for per-box keys.
+ */
+export function hostKeyDir(alias: string): string {
+  return pathResolve(homedir(), '.agentbox', 'remote-docker', 'hosts', alias);
+}
+
 export function getHostAlias(alias: string): RemoteHostEntry | undefined {
   return readHostsRegistry()?.hosts[alias];
 }
@@ -105,13 +148,23 @@ export function listHostAliases(): Array<{ alias: string; entry: RemoteHostEntry
  * Register or re-point an alias. Preserves `createdAt` on an update and stamps
  * `updatedAt`. Caller validates the alias name + probes the connection first.
  */
-export function upsertHostAlias(alias: string, ssh: string): void {
+export function upsertHostAlias(
+  alias: string,
+  ssh: string,
+  connection?: RemoteHostConnection,
+): void {
   const reg = readHostsRegistry() ?? { schema: SCHEMA, hosts: {} };
   const existing = reg.hosts[alias];
   const now = new Date().toISOString();
-  reg.hosts[alias] = existing
+  // An explicit `undefined` connection CLEARS a stale one rather than leaving a
+  // key path that no longer describes how we reach the host — re-pointing an
+  // alias at a new machine must not inherit the old machine's identity.
+  const next: RemoteHostEntry = existing
     ? { ...existing, ssh, updatedAt: now }
     : { ssh, createdAt: now };
+  if (connection) next.connection = connection;
+  else delete next.connection;
+  reg.hosts[alias] = next;
   writeHostsRegistry(reg);
 }
 
@@ -131,6 +184,16 @@ export function removeHostAlias(alias: string): boolean {
  */
 export function resolveConnection(ref: string): string {
   return getHostAlias(ref)?.ssh ?? ref;
+}
+
+/**
+ * The portable connection registered for `ref`, if any. Separate from
+ * {@link resolveConnection} because the two answer different questions: that one
+ * returns "what do I hand ssh as a destination", this one "do I also know the
+ * host, port and key explicitly". Callers that dial need both.
+ */
+export function getHostConnection(ref: string): RemoteHostConnection | undefined {
+  return getHostAlias(ref)?.connection;
 }
 
 /**

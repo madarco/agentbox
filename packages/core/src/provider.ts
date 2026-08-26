@@ -42,8 +42,9 @@ export interface ResolvedCarryEntry {
   mode?: number;
   /**
    * Numeric uid that should own the carried file inside the box. When unset,
-   * the per-provider copy step defaults to 1000 (the in-box `vscode` user).
-   * Set 0 (root) to skip the chown and leave the extract owner intact.
+   * the copy step resolves the in-box `vscode` user itself — whose uid is 1000
+   * on docker/hetzner/digitalocean/daytona but provider-assigned on vercel and
+   * e2b, so do NOT set 1000 here expecting "the box user". Set 0 for root:root.
    */
   user?: number;
   optional: boolean;
@@ -70,8 +71,26 @@ export interface ResolvedCarryEntry {
 export interface CreateBoxRequest {
   workspacePath: string;
   name?: string;
+  /**
+   * What to derive the default name from when `name` is absent and
+   * `workspacePath` is not a meaningful identity — specifically a control box's
+   * per-job clone (`/tmp/agentbox-hub-worker-<jobId>`), a directory deleted the
+   * moment the create returns. Without this every hub-created box is named after
+   * that directory, so no box name says which project it belongs to.
+   *
+   * Providers still append their own `-<id>` suffix and length clamp, so this is
+   * a basis, not a final name. An explicit `name` always wins.
+   */
+  nameBasis?: string;
   /** Project root (nearest ancestor with agentbox.yaml, else workspacePath). */
   projectRoot: string;
+  /**
+   * Agent the box is being created for, when the create is agent-initiated
+   * (`agentbox claude|codex|opencode`, queue jobs, hub creates). Registered on
+   * the control plane so an adopting PC knows which agent to relaunch. Plain
+   * `agentbox create` leaves it unset.
+   */
+  agent?: 'claude' | 'codex' | 'opencode';
   /** Override the base image / snapshot. */
   image?: string;
   /**
@@ -167,6 +186,14 @@ export interface CreateBoxRequest {
    * Docker ignores it (always relay).
    */
   gitPushMode?: 'auto' | 'relay' | 'lease' | 'direct';
+  /**
+   * How the box's hub authenticates to GitHub (`hub.gitAuth`). Mirrors config's
+   * `HubGitAuthMode` (core doesn't depend on config). Only `auto` push routing
+   * reads it: an `app` hub can mint a per-box token so the box leases, while a
+   * `gh` hub holds one broad token it must never hand out, so the box pushes
+   * through the relay instead.
+   */
+  hubGitAuth?: 'gh' | 'app';
   /** Provider-specific knobs (docker: sharedCache/portless; daytona: resources/region). */
   providerOptions?: Record<string, unknown>;
   onLog?: (line: string) => void;

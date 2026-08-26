@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { PostgresStore } from '@agentbox/relay/control-plane';
+import { repoNameFromRegistration } from './project-name';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
 /*
@@ -22,6 +23,14 @@ interface Registration {
   projectIndex?: number;
   worktrees?: { branch?: string }[];
   originUrl?: string;
+  /** Custody `projects/<slug>` key (`owner__repo`) the box registered with. */
+  projectSlug?: string;
+  // Adoption / reconstruction fields (non-secret) carried on the registration.
+  sandboxId?: string;
+  publicHost?: string;
+  image?: string;
+  webPort?: number;
+  agent?: string;
 }
 type Snapshot = Record<string, unknown>;
 interface AgentState {
@@ -38,12 +47,17 @@ function b64url(s: string): string {
   return Buffer.from(s).toString('base64url');
 }
 
+/**
+ * A readable project label — the repo's last path segment, matching the local
+ * hub's `path.basename(projectRoot)`. Prefers the origin URL, then the custody
+ * slug, then the box name. See `project-name.ts` for the shared derivation.
+ */
 function repoName(r: Registration): string {
-  if (r.originUrl) {
-    const tail = r.originUrl.replace(/\.git$/, '').split(/[/:]/).pop();
-    if (tail) return tail;
-  }
-  return r.name;
+  return repoNameFromRegistration({
+    originUrl: r.originUrl,
+    projectSlug: r.projectSlug,
+    name: r.name,
+  });
 }
 
 /** Project identity for grouping — the repo (origin) when known, else the box name. */
@@ -89,20 +103,54 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     // Hosted source has no endpoint data yet — cloud preview URLs are a follow-up.
     webUrl: null,
     vncUrl: null,
+    // The registration's box name — populated on this topology too (the
+    // in-process host source always sets it) so server-side ref resolution
+    // (`GET /api/v1/boxes?ref=<name>`) matches by name here, not just by id.
+    // `task` above is the display label (a session title when present), so it
+    // is not a reliable name key.
+    name: r.name,
+    // Adoption / reconstruction fields from the registration (non-secret), so a
+    // thin CLI can rebuild a drivable record from this payload.
+    sandboxId: r.sandboxId,
+    originUrl: r.originUrl,
+    publicHost: r.publicHost,
+    image: r.image,
+    webPort: r.webPort,
+    lastAgent:
+      r.agent === 'claude' || r.agent === 'codex' || r.agent === 'opencode' ? r.agent : undefined,
+    topology: 'control-plane',
   };
 }
 
 function deriveProjects(regs: Registration[]): Project[] {
-  const byKey = new Map<string, { key: string; name: string; createdAt: number }>();
+  const byKey = new Map<
+    string,
+    { key: string; name: string; createdAt: number; originUrl?: string; projectSlug?: string }
+  >();
   for (const r of regs) {
     const key = projectKey(r);
     const createdAt = Date.parse(r.createdAt ?? r.registeredAt) || Date.now();
     const existing = byKey.get(key);
-    if (!existing) byKey.set(key, { key, name: repoName(r), createdAt });
-    else if (createdAt < existing.createdAt) existing.createdAt = createdAt;
+    if (!existing) {
+      byKey.set(key, { key, name: repoName(r), createdAt, originUrl: r.originUrl, projectSlug: r.projectSlug });
+    } else {
+      if (createdAt < existing.createdAt) existing.createdAt = createdAt;
+      // A later registration may carry the git identity an earlier one lacked.
+      existing.originUrl ??= r.originUrl;
+      existing.projectSlug ??= r.projectSlug;
+    }
   }
   return [...byKey.values()]
-    .map((p) => ({ id: p.key, name: p.name, repo: p.name, defaultBranch: 'main', provider: 'cloud', createdAt: p.createdAt }))
+    .map((p) => ({
+      id: p.key,
+      name: p.name,
+      repo: p.name,
+      defaultBranch: 'main',
+      provider: 'cloud',
+      createdAt: p.createdAt,
+      originUrl: p.originUrl ?? null,
+      projectSlug: p.projectSlug ?? null,
+    }))
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -166,6 +214,9 @@ export async function getPostgresDashboardData(): Promise<Omit<HubState, 'authMo
     projects: deriveProjects(regs),
     boxes: regs.map((r) => mapBox(r, statusByBox.get(r.boxId))),
     approvals,
+    // The hosted control box IS the control plane — it doesn't operate through
+    // another one.
+    controlPlane: null,
     // Provider readiness is host-local; the hosted/Postgres path has no create
     // host to probe (hosted create is a documented follow-up). Empty → the modal
     // falls back to docker-only.

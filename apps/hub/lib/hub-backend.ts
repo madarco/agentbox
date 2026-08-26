@@ -1,41 +1,63 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  CLOUD_PROVIDER_NAMES,
+  defaultCheckpointConfigKey,
   findProjectRoot,
   hashProjectPath,
+  isHubRoutableProvider,
   isProviderKind,
   listProjectsConfigured,
   loadEffectiveConfig,
   PROVIDER_NAMES,
   providerMeta,
+  pruneOrphanProjectConfigs,
   registerProject,
   resolveDefaultCheckpoint,
   setConfigValue,
   unregisterProject,
+  parseProviderSpec,
   unsetConfigValue,
   type ProviderKind,
 } from '@agentbox/config';
-import { normalizeLastAgent, type BoxRecord, type ExecResult, type Provider } from '@agentbox/core';
+import {
+  normalizeLastAgent,
+  type BoxRecord,
+  type CloudSandboxSummary,
+  type ExecResult,
+  type Provider,
+} from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import {
   deleteJob,
   enqueuePrepareJob,
   enqueueQueueJob,
+  FsCustodyStore,
   hashRpcParams,
   isValidBoxStatus,
   loadQueue,
+  queueLogPath,
   readJob,
+  registrationToBoxRecord,
   writeQueueLoginCode,
+  type BoxRegistration,
+  type CustodyStore,
   type PendingApproval,
   type QueueAgentKind,
   type QueueJob,
+  type QueueJobCreateOpts,
   type RelayServerHandle,
 } from '@agentbox/relay';
-import type { BoxGitDeps, ProviderModule } from '@agentbox/sandbox-core';
+import { mergeRemoteProviders } from './boxes/provider-origin.js';
+import { hydratePreparedFromCustody } from './prepared-hydrate.js';
+import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
+import { IMPORTERS } from './provider-importers.js';
+import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
   autoWriteSshConfig,
@@ -44,45 +66,92 @@ import {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
   boxRestartService,
   boxRestartServices,
   boxServicesStatusRaw,
+  boxSshDirForProvider,
+  matchClaudeInstallFingerprint,
+  mutateState,
   readPreparedStateRaw,
   readState,
+  recordBox,
+  scratchBranchName,
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
+  diffFileManifests,
+  type FileManifest,
 } from '@agentbox/sandbox-core';
 import {
   baseFreshnessFromFingerprints,
   currentCloudBaseFingerprint,
+  listAllCloudCheckpoints,
+  listCloudBackendDirs,
+  listCloudCheckpoints,
   openWebAppOnVncScreen,
+  resolveCloudCheckpoint,
   type BaseStatus,
+  type CloudCheckpointInfo,
 } from '@agentbox/sandbox-cloud';
 import {
+  clearRelayNotice,
+  createCheckpoint,
   ensureBoxBrowserShowingApp,
+  generateRelayToken,
+  listAllCheckpoints,
   listBoxes,
+  listCheckpoints,
   mintHostInitiatedToken,
+  pruneBoxes,
+  readBoxStatus,
+  registerBoxWithRelay,
+  removeCheckpoint as removeDockerCheckpoint,
+  setRelayNotice,
+  type CheckpointInfo,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
 import type {
   ActionResult,
+  AgentStateResult,
+  BoxLogAttachSpec,
   BoxOpResult,
   BranchList,
   BrowseDirResult,
+  CheckpointCreateResult,
+  CheckpointItemView,
+  CheckpointListing,
+  CheckpointProjectView,
+  CheckpointRemoveResult,
+  CloudOrphanView,
   CreateBoxInput,
   CreateBoxResult,
   DirEntry,
   GitInfo,
   HubBackend,
+  JobListItem,
   OpenInApp,
   OpenTargets,
   OpenTargetsReport,
+  PruneView,
   RemoteDockerHostView,
   ServicesResult,
 } from './boxes/backend-types';
 import { hubProfile } from './auth-config';
-import type { Approval, Box, BoxStatus, GithubState, HubState, Project, ProviderOption, User } from './boxes/types';
+import { custodyIdentityFromRegistration } from './boxes/seed-slug';
+import { controlPlaneCreateRequest } from './boxes/control-plane-create';
+import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
+import type {
+  BakeDiff,
+  Approval,
+  Box,
+  BoxStatus,
+  GithubState,
+  HubState,
+  Project,
+  ProviderOption,
+  User,
+} from './boxes/types';
 
 /*
  * Node-only host backend. This module imports the sandbox/relay toolchain and is
@@ -96,16 +165,8 @@ const execFileAsync = promisify(execFile);
 // Cosmetic rename-label cap — mirrors the CLI's --set-name cap and parseRenameBox.
 const DISPLAY_NAME_MAX = 60;
 
-// ── provider resolution (mirrors apps/cli/src/provider/loaders.ts) ──
-const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
-  docker: () => import('@agentbox/sandbox-docker'),
-  daytona: () => import('@agentbox/sandbox-daytona'),
-  hetzner: () => import('@agentbox/sandbox-hetzner'),
-  vercel: () => import('@agentbox/sandbox-vercel'),
-  e2b: () => import('@agentbox/sandbox-e2b'),
-  digitalocean: () => import('@agentbox/sandbox-digitalocean'),
-  'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
-};
+// Provider resolution lives in ./provider-importers (shared with hub-worker and
+// the relay's injected cloud-backend loader).
 
 // Per-provider serialization of prepare-enqueue: `prepareProvider` reads the
 // queue then enqueues, which isn't atomic across two concurrent POSTs (both could
@@ -122,6 +183,52 @@ async function providerForBox(box: BoxRecord): Promise<Provider> {
   const mod = (await IMPORTERS[name]()).providerModule;
   if (mod.ensureCredentials) await mod.ensureCredentials();
   return mod.provider;
+}
+
+/** Per-box probe budget. A hung cloud SDK call must not stall the whole listing. */
+const LIVE_PROBE_TIMEOUT_MS = 4000;
+
+/** Resolve to the promise's value, or null if it doesn't settle within `ms`. */
+function withProbeTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    if (typeof t.unref === 'function') t.unref();
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(null);
+      },
+    );
+  });
+}
+
+/**
+ * Overwrite the optimistic `state` that `listBoxes()` hardcodes to `running` for
+ * cloud boxes (it skips the SDK round-trip) with a real `provider.probeState()`.
+ * The hub-side half of the CLI's old client `applyLiveCloudStates`: now that the
+ * hub holds the provider credentials, `agentbox ls --live` asks the hub to probe
+ * rather than doing it from the laptop. Docker boxes already carry a live
+ * `docker inspect` state and are skipped. Mutates `listed` in place; a probe that
+ * throws or times out leaves the persisted state as-is so the listing stays
+ * responsive (expired creds, a wedged SDK call).
+ */
+async function applyLiveCloudStates(listed: ListedBox[]): Promise<void> {
+  await Promise.all(
+    listed.map(async (b) => {
+      if (!b.provider || b.provider === 'docker') return;
+      try {
+        const provider = await providerForBox(b);
+        const state = await withProbeTimeout(provider.probeState(b), LIVE_PROBE_TIMEOUT_MS);
+        if (state !== null) b.state = state;
+      } catch {
+        // Leave b.state at the listBoxes literal — best-effort freshness.
+      }
+    }),
+  );
 }
 
 // ── ListedBox → UI view model ──
@@ -150,15 +257,27 @@ function hostLabel(b: ListedBox): string {
   return b.cloud?.backend ? `${provider} · ${b.cloud.backend}` : provider;
 }
 
-function mapBox(b: ListedBox): Box {
+/**
+ * Where a box whose project FOLDER no longer exists should render instead: under
+ * its repo, taken from the box's own control-plane registration. A control box
+ * builds every box from a per-job clone it then deletes, so this is the normal
+ * case there, not an edge case.
+ */
+interface ProjectRegrouping {
+  projectId: string;
+  repo: string;
+  reg: BoxRegistration;
+}
+
+function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
   const eps = b.endpoints?.endpoints ?? [];
   return {
     id: b.id,
-    projectId: hashProjectPath(root),
-    repo: path.basename(root),
+    projectId: regroup?.projectId ?? hashProjectPath(root),
+    repo: regroup?.repo ?? path.basename(root),
     branch: b.gitWorktrees?.[0]?.branch ?? b.cloud?.workspaceBranch ?? '',
     // A user-set display label (via rename) wins over the live agent session
     // title as the box's primary label; else fall back to the session title, then name.
@@ -193,8 +312,93 @@ function mapBox(b: ListedBox): Box {
     opencodeSessionTitle: b.opencodeSessionTitle,
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
+    shellCount: b.shellSessions.length,
+    // Adoption / reconstruction fields (see Box) — cloud fields are cloud only
+    // (a docker box has no cloud block, so they stay undefined). `originUrl` is
+    // the box's repo identity, threaded from its Store registration: a thin
+    // client talking to a REMOTE hub sees this box's `projectRoot` as the control
+    // box's path, meaningless locally, so repo identity is the only stable key it
+    // can scope `ls <project>` by. Undefined when the box has no registration.
+    sandboxId: b.cloud?.sandboxId,
+    originUrl,
+    publicHost: b.cloud?.publicHost,
+    image: b.cloud?.image ?? (b.provider && b.provider !== 'docker' ? b.image : undefined),
+    webPort: b.cloud?.webPort,
+    previewUrls: b.cloud?.previewUrls,
+    lastAgent: b.lastAgent,
+    topology: b.cloud?.topology,
   };
 }
+
+/**
+ * A box the control box knows only from its Store registry — created from a PC
+ * (or another host) that registered it here but whose `state.json` this VPS
+ * doesn't have. Without this the hub's own web UI + `/api/v1/boxes` (and so the
+ * tray) list only boxes the control box created locally, hiding every
+ * PC-registered box the Store plainly holds. Surface it, from the registration
+ * alone.
+ *
+ * A live status the box pushed (via the plane's status store) is used when
+ * present; otherwise it shows `running`, since a registration means the box
+ * exists. Lifecycle actions on these rows are a follow-up — the control box has
+ * no local record to drive them yet.
+ */
+/**
+ * The synthetic project a registered box groups under. The box row and this
+ * project MUST share the id, or the dashboard counts the box but renders it
+ * under no project card (it groups strictly by `projectId`).
+ *
+ * Keyed by the box's HOST FOLDER (`worktrees[].hostMainRepo`, the PC path the
+ * box was created from) — the same key `agentbox ls` uses locally
+ * (`hashProjectPath(projectRoot)`). So a PC box groups by its folder, not its
+ * repo: two folders that share a git origin stay separate (matching the local
+ * model), and the id matches the box's own local project, so adopting it on the
+ * PC lands it in the same card rather than a duplicate.
+ *
+ * Falls back to the repo identity only when there's no host folder (e.g. a
+ * hub-worker box whose temp clone was deleted — those normally render from
+ * local state, not here).
+ */
+
+function mapRegistrationToBox(reg: BoxRegistration): Box {
+  const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
+  const { id: projectId, repo: repoKey } = registrationProjectKey(reg);
+  return {
+    id: reg.boxId,
+    projectId,
+    repo: repoKey,
+    branch: reg.worktrees?.[0]?.branch ?? '',
+    task: reg.name,
+    displayName: null,
+    agent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']) ?? 'claude',
+    status: 'running',
+    createdAt,
+    lastActivity: createdAt,
+    host: `${reg.backend ?? 'cloud'} · registered`,
+    provider: reg.backend ?? 'cloud',
+    commits: null,
+    filesTouched: null,
+    error: null,
+    webUrl: null,
+    vncUrl: null,
+    state: 'running',
+    name: reg.name,
+    projectIndex: reg.projectIndex,
+    // Adoption / reconstruction fields — everything a PC needs to rebuild a
+    // drivable record for this box from the API alone (Step 4), minus secrets.
+    sandboxId: reg.sandboxId,
+    originUrl: reg.originUrl,
+    publicHost: reg.publicHost,
+    image: reg.image,
+    webPort: reg.webPort,
+    lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    // A control box only knows a registered box through the plane, so it is by
+    // definition a control-plane-topology box.
+    topology: 'control-plane',
+  };
+}
+
+/** A short repo label from an origin URL: `owner/repo`, else the last path segment. */
 
 /**
  * A host repo's current branch (`git rev-parse --abbrev-ref HEAD`). Returns null when
@@ -203,9 +407,29 @@ function mapBox(b: ListedBox): Box {
  */
 async function hostBranchOf(repo: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const { stdout } = await execFileAsync('git', [
+      '-C',
+      repo,
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
     const branch = stdout.trim();
     return !branch || branch === 'HEAD' ? null : branch;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The repo's `origin` remote URL, or null. Lets a locally-registered project
+ * resolve its custody slug (`seedSlugFor`) the same way a remote registration
+ * does — so the seed/custody panel works uniformly regardless of source.
+ */
+async function hostOriginOf(repo: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', repo, 'remote', 'get-url', 'origin']);
+    return stdout.trim() || null;
   } catch {
     return null;
   }
@@ -229,6 +453,21 @@ async function computeNeedsSetup(root: string, provider: string): Promise<boolea
 }
 
 /**
+ * The control box this hub operates through (`relay.controlPlaneUrl`), or null.
+ * Present on the PC's localhost hub; the control box's own hub leaves the key
+ * unset, so it correctly reports no control box (it IS one). Best-effort.
+ */
+async function readControlPlane(): Promise<{ url: string } | null> {
+  try {
+    const cfg = await loadEffectiveConfig(os.homedir());
+    const url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/$/, '');
+    return url ? { url } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The project list unions the on-disk registry (`~/.agentbox/projects`, which
  * includes folders that have *zero* boxes) with the roots of live boxes. It also
  * self-heals: any box root not yet registered is registered here, so projects
@@ -240,6 +479,14 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   const boxByRoot = new Map<string, { root: string; provider: string; createdAt: number }>();
   for (const b of boxes) {
     const root = projectRootOf(b);
+    // A box whose recorded root is gone has no project FOLDER — a control box
+    // builds every box from a per-job clone it deletes on the way out. Adopting
+    // that path would mint a project card named after the clone dir, pointing at
+    // nothing: no origin, no agentbox.yaml, no seed, and a create that resolves
+    // to a dead path. Such boxes group by repo identity instead (see getData).
+    // A per-job worker clone is never a project folder, even during the minute
+    // it still exists mid-create — see `isHubWorkerClone`.
+    if (isHubWorkerClone(root) || !existsSync(root)) continue;
     const createdAt = Date.parse(b.createdAt) || Date.now();
     const existing = boxByRoot.get(root);
     if (!existing) boxByRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
@@ -251,8 +498,15 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   const byId = new Map<string, Project>();
   // The host path per project id, so we can read each repo's current branch below.
   const pathById = new Map<string, string>();
-  // Registry entries (incl. zero-box projects).
-  for (const e of await listProjectsConfigured()) {
+  // What the registry already has recorded, so the origin is only rewritten when
+  // it actually changed.
+  const recordedOrigin = new Map<string, string>();
+  // Registry entries (incl. zero-box projects). A registered path that has since
+  // vanished is skipped for the same reason — including the ghosts an older build
+  // wrote before the check above existed.
+  for (const e of (await listProjectsConfigured()).filter(
+    (e) => !isHubWorkerClone(e.originalPath) && existsSync(e.originalPath),
+  )) {
     const box = boxByRoot.get(e.originalPath);
     byId.set(e.hash, {
       id: e.hash,
@@ -260,9 +514,11 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
       repo: path.basename(e.originalPath),
       defaultBranch: 'main',
       provider: box?.provider ?? 'docker',
-      createdAt: box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
+      createdAt:
+        box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
     });
     pathById.set(e.hash, e.originalPath);
+    if (e.originUrl) recordedOrigin.set(e.hash, e.originUrl);
   }
   // Belt-and-suspenders: any box root that failed to register still shows up.
   for (const p of boxByRoot.values()) {
@@ -285,10 +541,19 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
     [...byId.entries()].map(async ([id, proj]) => {
       const repo = pathById.get(id);
       if (!repo) return;
-      [proj.currentBranch, proj.needsSetup] = await Promise.all([
+      let origin: string | null;
+      [proj.currentBranch, proj.needsSetup, origin] = await Promise.all([
         hostBranchOf(repo),
         computeNeedsSetup(repo, proj.provider),
+        hostOriginOf(repo),
       ]);
+      if (origin) proj.originUrl = origin;
+      // Persist the origin the first time we can read it. It is the only thing
+      // that still identifies the project once its folder goes away, and a hub
+      // create needs it to clone. Written only on change — this runs per poll.
+      if (origin && origin !== recordedOrigin.get(id)) {
+        await registerProject(repo, { originUrl: origin }).catch(() => {});
+      }
     }),
   );
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
@@ -307,10 +572,12 @@ async function resolveProjectPath(projectId: string): Promise<string | null> {
   if (entry) return entry.originalPath;
   for (const b of await listBoxes()) {
     const root = projectRootOf(b);
-    if (hashProjectPath(root) === projectId) {
-      await registerProject(root).catch(() => {});
-      return root;
-    }
+    if (hashProjectPath(root) !== projectId) continue;
+    // Only heal a root that is actually there: registering a deleted per-job
+    // clone is what minted the ghost project cards in the first place.
+    if (isHubWorkerClone(root) || !existsSync(root)) return root;
+    await registerProject(root).catch(() => {});
+    return root;
   }
   return null;
 }
@@ -436,7 +703,9 @@ async function dockerDaemonReachable(): Promise<boolean> {
 /** Whether an executable is on PATH (used to precheck hetzner's ssh/scp). */
 async function binOnPath(name: string): Promise<boolean> {
   try {
-    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [name], { timeout: 4000 });
+    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [name], {
+      timeout: 4000,
+    });
     return true;
   } catch {
     return false;
@@ -472,7 +741,8 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
   return PROVIDER_NAMES.map((id) => {
     // Keep "Docker (local)" but drop the "(cloud …)" qualifier from cloud labels
     // — the picker just wants the provider name.
-    const label = id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
+    const label =
+      id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
     const configured = isProviderConfigured(id);
     const hasCredentials = hasProviderCredentials(id, keys);
     // An in-flight bake for this provider (queued or running) — lets the UI show
@@ -496,6 +766,17 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
   });
 }
 
+/**
+ * Swap in the CONTROL BOX's cloud rows when one is configured. The rule itself
+ * is pure and lives in `boxes/provider-origin`; this is the IO half.
+ */
+async function withRemoteProviders(local: ProviderOption[]): Promise<ProviderOption[]> {
+  const remote = await fetchRemoteProviders();
+  if (remote === undefined) return local; // no control box — everything is local
+  const target = await resolveRemoteHub();
+  return mergeRemoteProviders({ local, remote, hubUrl: target?.url });
+}
+
 // ── base-image freshness (opt-in; kept OFF the getData() hot path) ──
 // Computing a provider's live fingerprint loads its module and hashes the
 // runtime build context (~15 small files) — cheap but not free, and pointless
@@ -507,18 +788,24 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
 // entry misses and recomputes, so a fresh bake is reflected immediately (no
 // stale window from a TTL that outlives the bake — Bugbot #151).
 const FRESHNESS_TTL_MS = 60_000;
-const freshnessCache = new Map<ProviderKind, { at: number; stored: string; live: string | undefined }>();
+const freshnessCache = new Map<
+  ProviderKind,
+  { at: number; stored: string; live: string | undefined }
+>();
 
 /**
- * Live base-image/snapshot freshness for one provider, mirroring the CLI's
- * `evaluateBaseFreshness` (apps/cli/src/checkpoint-lookup.ts) but reusing the
- * hub's own provider `IMPORTERS`. Docker gets a real check too (unlike the
+ * Live base-image/snapshot freshness for one provider, over the hub's own
+ * provider `IMPORTERS` — the one place this now runs (the CLI reads it back from
+ * `GET /api/v1/providers?freshness=1`). Docker gets a real check too (unlike the
  * CLI, which lets `ensureImage` self-heal silently): the tray/web create
  * flows use `unprepared`/`stale` to announce the upcoming bake instead of
  * hiding a multi-minute build inside the create job. Any failure to compute
  * the live fingerprint degrades to 'unknown' (never a false 'stale').
  */
-async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' | 'npm'): Promise<BaseStatus> {
+async function providerBaseFreshness(
+  id: ProviderKind,
+  claudeInstall?: 'native' | 'npm',
+): Promise<BaseStatus> {
   if (id === 'docker') {
     // Bypasses the cloud-fingerprint freshnessCache: the check is one
     // `docker image inspect` plus hashing the staged context files, and
@@ -530,23 +817,49 @@ async function providerBaseFreshness(id: ProviderKind, claudeInstall?: 'native' 
       return { state: 'unknown' };
     }
   }
+  // On a control box the bake record lives in custody, not local prepared-state
+  // (which is empty until a create hydrates it). Adopt it here too — same
+  // fingerprint-match-wins policy as the create path — so `/settings` reflects
+  // shared bakes instead of showing every provider as "needs baking". No-op on a
+  // local hub (local prepared-state already set) or when custody has no match.
+  try {
+    const mod = (await IMPORTERS[id]()).providerModule;
+    await hydratePreparedFromCustody(
+      new FsCustodyStore(),
+      id,
+      mod.provider,
+      claudeInstall ?? 'native',
+      () => {},
+    );
+  } catch {
+    // best-effort: fall through to whatever local prepared-state holds
+  }
   const stored = currentCloudBaseFingerprint(id);
   const cached = freshnessCache.get(id);
   // Reuse the memoized LIVE fingerprint only while both the stored fingerprint
   // and the TTL still hold — a re-bake changes `stored` and invalidates it.
+  //
+  // The live probe is always taken in NATIVE mode: that is the raw context hash,
+  // from which the npm fold derives, so one probe covers both. Probing in the
+  // locally-configured mode instead would report a base baked in the other mode
+  // as stale — the adopted-then-nagged case, where a create succeeds off a shared
+  // bake while /settings still demands a re-bake of it.
   let live: string | undefined;
   if (cached && cached.stored === (stored ?? '') && Date.now() - cached.at < FRESHNESS_TTL_MS) {
     live = cached.live;
   } else {
     try {
       const mod = (await IMPORTERS[id]()).providerModule;
-      live = await mod.currentBaseFingerprintLive?.(claudeInstall);
+      live = await mod.currentBaseFingerprintLive?.('native');
     } catch {
       live = undefined;
     }
     freshnessCache.set(id, { at: Date.now(), stored: stored ?? '', live });
   }
-  return baseFreshnessFromFingerprints(stored, live);
+  // Fresh when the stored fingerprint corresponds to EITHER install mode of the
+  // current context; `baseFreshnessFromFingerprints` then sees matching values.
+  const bakedWith = stored && live ? matchClaudeInstallFingerprint(stored, live) : null;
+  return baseFreshnessFromFingerprints(stored, bakedWith ? stored : live);
 }
 
 /**
@@ -566,14 +879,48 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
   return Promise.all(
     base.map(async (p) => {
       if (!isProviderKind(p.id)) return p;
+      // A control-box row already carries THAT machine's freshness, computed
+      // against ITS build context. Recomputing it here would answer a question
+      // about the wrong host — the "adopted-then-nagged" bug, one level up.
+      if (p.origin === 'hub') return p;
       const fresh = await providerBaseFreshness(p.id, claudeInstall);
       return {
         ...p,
         baseStatus: fresh.state,
         baseStaleReason: fresh.state === 'stale' ? fresh.reason : undefined,
+        // Only stale rows pay for the diff: it re-hashes the whole build context,
+        // and for every other state there is nothing to explain.
+        bakeDiff: fresh.state === 'stale' ? await providerBakeDiff(p.id) : undefined,
       };
     }),
   );
+}
+
+/**
+ * Why a provider's base is stale, file by file.
+ *
+ * Compares the per-file manifest recorded at bake time against the current one.
+ * A base baked before manifests existed has no stored manifest, and the honest
+ * answer is to say so — inventing a diff from mtimes or from the aggregate hash
+ * would be a guess dressed as a fact.
+ */
+async function providerBakeDiff(id: ProviderKind): Promise<BakeDiff | undefined> {
+  try {
+    const raw = readPreparedStateRaw(id) as { base?: { files?: FileManifest } } | null;
+    const stored = raw?.base?.files;
+    if (!stored || Object.keys(stored).length === 0) return { hasManifest: false };
+    const mod = (await IMPORTERS[id]()).providerModule;
+    const current = await mod.currentBaseFileHashes?.();
+    // A manifest IS recorded here — the live side just couldn't be hashed (a dev
+    // tree with no staged runtime). Reporting `hasManifest: false` would tell the
+    // user to re-bake to enable a diff they already have, when the real problem
+    // is resolving the current assets.
+    if (!current) return { hasManifest: true, liveUnavailable: true };
+    return { hasManifest: true, ...diffFileManifests(stored, current) };
+  } catch {
+    // Best-effort: the row still renders its stale verdict without the detail.
+    return undefined;
+  }
 }
 
 /** The registered remote-docker host aliases as create/settings-facing views. */
@@ -586,12 +933,29 @@ async function loadRemoteDockerHostViews(): Promise<RemoteDockerHostView[]> {
     const baked = prepared?.hosts[alias];
     return {
       alias,
-      ssh: entry.ssh,
+      // Report the connection when there is one: the ssh string can be an alias
+      // from the machine that shared the host, which reads as nonsense here.
+      ssh: entry.connection ? describeHostConnection(entry.connection) : entry.ssh,
       baked: Boolean(baked),
       ...(baked ? { bakedImageRef: baked.imageRef } : {}),
       default: alias === dflt,
+      ...(entry.connection?.identityFile ? { managedKey: true } : {}),
     };
   });
+}
+
+/** How the hub dials a shared host: the `ssh -G` expansion plus our own key. */
+interface HostDialConnection {
+  host: string;
+  user?: string;
+  port?: number;
+  identityFile?: string;
+}
+
+/** `[user@]host[:port]` for a resolved connection. IPv6 keeps its brackets. */
+function describeHostConnection(conn: HostDialConnection): string {
+  const host = conn.host.includes(':') ? `[${conn.host}]` : conn.host;
+  return `${conn.user ? `${conn.user}@` : ''}${host}${conn.port !== undefined ? `:${String(conn.port)}` : ''}`;
 }
 
 /**
@@ -656,8 +1020,12 @@ function mapApproval(p: PendingApproval): Approval {
 // agentbox.yaml — the same signals `findProjectRoot` walks up to.
 async function looksLikeProject(dir: string): Promise<boolean> {
   const [git, yaml] = await Promise.all([
-    stat(path.join(dir, '.git')).then(() => true).catch(() => false),
-    stat(path.join(dir, 'agentbox.yaml')).then(() => true).catch(() => false),
+    stat(path.join(dir, '.git'))
+      .then(() => true)
+      .catch(() => false),
+    stat(path.join(dir, 'agentbox.yaml'))
+      .then(() => true)
+      .catch(() => false),
   ]);
   return git || yaml;
 }
@@ -736,7 +1104,10 @@ async function branchListHost(repo: string): Promise<BranchList> {
  * (apps/cli): fetch branch/tag names first (SHAs skip the fetch), then
  * `rev-parse --verify <ref>^{commit}`. Node execFile, not execa.
  */
-async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true } | { ok: false; error: string }> {
+async function verifyFromBranch(
+  repo: string,
+  ref: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!SHA_RE.test(ref)) {
     await execFileAsync('git', ['-C', repo, 'fetch', '--quiet', 'origin', ref], {
       timeout: GIT_NET_TIMEOUT_MS,
@@ -745,13 +1116,122 @@ async function verifyFromBranch(repo: string, ref: string): Promise<{ ok: true }
   const ok = await execFileAsync('git', ['-C', repo, 'rev-parse', '--verify', `${ref}^{commit}`])
     .then(() => true)
     .catch(() => false);
-  return ok ? { ok: true } : { ok: false, error: `unknown base ref "${ref}" (not found in the project repo)` };
+  return ok
+    ? { ok: true }
+    : { ok: false, error: `unknown base ref "${ref}" (not found in the project repo)` };
 }
 
-async function runLifecycle(id: string, op: (box: BoxRecord, provider: Provider) => Promise<void>): Promise<ActionResult> {
+/** Reverse-adoption seam: reconstruct + persist a local record from a Store registration. */
+type HydrateFn = (id: string) => Promise<BoxRecord | null>;
+
+/**
+ * Materialize a box's per-box SSH key from the control box's local custody into
+ * the on-disk ssh dir the provider exec/git path reads. Best-effort: SDK
+ * providers (e2b/vercel/daytona) mint no keypair (`boxSshDirForProvider` → null),
+ * and a PC-created VPS box whose PC never pushed its key simply has none in
+ * custody — lifecycle + destroy still work (cloud API), only git/exec over SSH
+ * needs it.
+ */
+async function materializeBoxSshFromCustody(
+  custody: CustodyStore | null | undefined,
+  provider: string,
+  sandboxId: string,
+): Promise<void> {
+  if (!custody) return;
+  const dir = boxSshDirForProvider(provider, sandboxId);
+  if (!dir) return;
+  const entries = await custody.list(`boxes/${sandboxId}/ssh`).catch(() => []);
+  if (entries.length === 0) return;
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  for (const e of entries) {
+    const found = await custody.get(e.path).catch(() => null);
+    if (!found) continue;
+    const out = path.join(dir, path.basename(e.path));
+    await writeFile(out, found.data, { mode: 0o600 });
+    await chmod(out, 0o600);
+  }
+}
+
+/**
+ * Reverse-adopt a box the control box holds only as a Store registration (created
+ * on a PC / another host, never locally): rebuild a drivable `BoxRecord` via the
+ * shared `registrationToBoxRecord` (the same core the CLI's `hub adopt` calls),
+ * pull its SSH key from local custody, and persist it to `state.json`. Returns
+ * null when
+ * there is no registration or the provider can't be resolved (unknown kind /
+ * missing creds), so the caller reports "not found" or falls back to a state-only
+ * reap exactly as before. Idempotent: once recorded, a second call finds it in
+ * local state and never reaches here.
+ */
+async function hydrateRegisteredBox(
+  handle: RelayServerHandle,
+  id: string,
+): Promise<BoxRecord | null> {
+  const reg = await handle.store.getBox(id).catch(() => undefined);
+  if (!reg) return null;
+  const record = registrationToBoxRecord(reg, {
+    // The control box IS the control plane; persist its own public URL so the
+    // record's topology matches a worker-created box's.
+    controlPlaneUrl: process.env.AGENTBOX_HUB_PUBLIC_URL ?? '',
+    freshToken: generateRelayToken,
+  });
+  // Only adopt a box we can actually drive: resolving the provider loads its
+  // module + credentials, so a missing-cred / unknown-provider box returns null
+  // rather than leaving behind a local record we can't act on.
   try {
-    const { boxes } = await readState();
-    const box = boxes.find((b) => b.id === id);
+    await providerForBox(record);
+  } catch {
+    return null;
+  }
+  await materializeBoxSshFromCustody(
+    handle.custody,
+    record.provider ?? 'docker',
+    reg.sandboxId ?? id,
+  ).catch(() => {});
+  await recordBox(record);
+  return record;
+}
+
+/**
+ * Reap a box's control-box Store state — registration, status snapshot, and
+ * SSH-key custody subtree. Idempotent; returns whether a registration existed.
+ * Used both after a real destroy (clear the now-dead registration) and as the
+ * fallback when the cloud resource can't be driven (state cleanup only).
+ */
+async function reapStoreState(handle: RelayServerHandle, id: string): Promise<boolean> {
+  const reg = await handle.store.getBox(id).catch(() => undefined);
+  const existed = await handle.store.forgetBox(id).catch(() => false);
+  await handle.store.deleteStatus(id).catch(() => {});
+  if (handle.custody) {
+    const key = reg?.sandboxId ?? id;
+    const entries = await handle.custody.list(`boxes/${key}`).catch(() => []);
+    for (const e of entries) await handle.custody.delete(e.path).catch(() => false);
+  }
+  return existed || reg !== undefined;
+}
+
+/**
+ * Resolve a box id to its local `BoxRecord`, falling back to reverse-adoption:
+ * a box the control box knows only from its Store registration (created on a PC
+ * / another host) has no local `state.json` record, so `readState()` misses it.
+ * `hydrate` reconstructs + persists that record on demand (see
+ * `hydrateRegisteredBox`), after which every provider-driven path (lifecycle,
+ * git, real destroy) finds it in state and Just Works.
+ */
+async function findOrHydrateBox(id: string, hydrate?: HydrateFn): Promise<BoxRecord | null> {
+  const { boxes } = await readState();
+  const local = boxes.find((b) => b.id === id);
+  if (local) return local;
+  return hydrate ? await hydrate(id) : null;
+}
+
+async function runLifecycle(
+  id: string,
+  op: (box: BoxRecord, provider: Provider) => Promise<void>,
+  hydrate?: HydrateFn,
+): Promise<ActionResult> {
+  try {
+    const box = await findOrHydrateBox(id, hydrate);
     if (!box) return { ok: false, error: `box ${id} not found` };
     const provider = await providerForBox(box);
     await op(box, provider);
@@ -781,9 +1261,11 @@ async function hubWriteSshConfig(box: BoxRecord, provider: Provider): Promise<vo
 }
 
 /** Resolve a box id to its record + provider, or null when the box is gone. */
-async function resolveBoxProvider(id: string): Promise<{ box: BoxRecord; provider: Provider } | null> {
-  const { boxes } = await readState();
-  const box = boxes.find((b) => b.id === id);
+async function resolveBoxProvider(
+  id: string,
+  hydrate?: HydrateFn,
+): Promise<{ box: BoxRecord; provider: Provider } | null> {
+  const box = await findOrHydrateBox(id, hydrate);
   if (!box) return null;
   return { box, provider: await providerForBox(box) };
 }
@@ -801,24 +1283,104 @@ const GIT_TOKEN_TTL_MS = 120_000;
 function hubGitDeps(boxId: string): BoxGitDeps {
   return {
     hostInitiatedArgs: async (method, params) => {
-      const token = await mintHostInitiatedToken(boxId, method, hashRpcParams(params), GIT_TOKEN_TTL_MS);
+      const token = await mintHostInitiatedToken(
+        boxId,
+        method,
+        hashRpcParams(params),
+        GIT_TOKEN_TTL_MS,
+      );
       return token ? ['--host-initiated-token', token] : [];
     },
   };
 }
 
 /** Run a box-git helper and map its exec result to a BoxOpResult. */
-async function gitOp(id: string, fn: (box: BoxRecord, provider: Provider) => Promise<ExecResult>): Promise<BoxOpResult> {
+async function gitOp(
+  id: string,
+  fn: (box: BoxRecord, provider: Provider) => Promise<ExecResult>,
+  hydrate?: HydrateFn,
+): Promise<BoxOpResult> {
   try {
-    const rp = await resolveBoxProvider(id);
+    const rp = await resolveBoxProvider(id, hydrate);
     if (!rp) return { ok: false, error: `box ${id} not found` };
     const r = await fn(rp.box, rp.provider);
     if (r.exitCode !== 0) {
-      return { ok: false, error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim() };
+      // Carry the box command's own exit code so a client can surface a faithful
+      // exit — e.g. 64 from `git push --host-only` when the box's host has no
+      // working copy — instead of the /api/v1 code→exit table's coarse mapping.
+      return {
+        ok: false,
+        error: (r.stderr || r.stdout || `command exited ${String(r.exitCode)}`).trim(),
+        exitCode: r.exitCode,
+      };
     }
     return { ok: true, stdout: r.stdout, stderr: r.stderr };
   } catch (err) {
     return { ok: false, error: errMsg(err) };
+  }
+}
+
+/**
+ * Record `branch` as the box's host-sanctioned branch after a host-driven
+ * checkout/branch. The relay auto-approves an in-box push only to a scratch
+ * branch or this value, so a host branch switch must update it — otherwise the
+ * agent would be prompted to push the branch the host just put it on. Persists
+ * to state.json (docker root worktree + cloud field) and re-registers docker
+ * boxes so the running relay's in-memory registry picks up the new value. This
+ * hub server IS the relay process, so `registerBoxWithRelay`'s loopback
+ * admin-post reaches it in-process (same path as `mintHostInitiatedToken`).
+ *
+ * Best-effort: a failure here only means the next push to that branch prompts —
+ * it never blocks the branch switch. Moved here from the CLI's `git.ts` so both
+ * frontends sanction identically, in both local and remote-hub modes.
+ */
+async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
+  try {
+    await mutateState((state) => {
+      const b = state.boxes.find((x) => x.id === box.id);
+      if (!b) return state;
+      if (b.gitWorktrees) {
+        for (const w of b.gitWorktrees) {
+          if (w.kind === 'root') w.sanctionedBranch = branch;
+        }
+      }
+      if (b.cloud) b.cloud.sanctionedBranch = branch;
+      return state;
+    });
+  } catch {
+    return; // couldn't persist → leave the gate as-is
+  }
+  // Docker's push gate reads the in-memory registry, so re-register to refresh
+  // the root worktree's sanctionedBranch. Cloud's gate reads state.json per RPC,
+  // so the persist above is enough — no cloud re-register needed.
+  const isDocker = box.provider === 'docker' || box.provider === undefined;
+  if (isDocker && box.relayToken) {
+    const worktrees = (box.gitWorktrees ?? []).map((w) =>
+      w.kind === 'root' ? { ...w, sanctionedBranch: branch } : w,
+    );
+    try {
+      await registerBoxWithRelay({
+        boxId: box.id,
+        token: box.relayToken,
+        name: box.name,
+        containerName: box.container,
+        createdAt: box.createdAt,
+        projectIndex: box.projectIndex,
+        worktrees,
+        autoApproveHostActions: box.autoApproveHostActions,
+        autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+      });
+    } catch (err) {
+      // Persisted to state.json, but the running relay still holds the old
+      // sanctioned branch until it re-registers (next restart/rehydrate reads
+      // state.json). Best-effort — the branch switch itself already succeeded —
+      // but log it: silent staleness would leave the push gate following the
+      // wrong branch with no signal (the CLI used to warn on stderr here).
+      console.warn(
+        `[hub] sanction ${branch} for ${box.name}: persisted, but the relay did not pick it up ` +
+          `(${errMsg(err)}); pushes to ${branch} stay gated until \`agentbox relay restart\`.`,
+      );
+    }
   }
 }
 
@@ -867,6 +1429,308 @@ function mapPersistedServices(s: CtlBoxStatus): ServicesResult {
     tasks: s.tasks.map((t) => ({ name: t.name, state: t.state })),
     ports: s.ports.map((p) => ({ port: p.port, service: p.service })),
   };
+}
+
+// ── fleet ops: checkpoint / prune / logs (Step 9) ──
+// These moved server-side from the CLI so they run on whichever hub owns the box
+// (its checkpoint store + provider credentials + running box live there).
+
+/** The in-box ctl daemon log (mirrors the CLI's logs.ts DAEMON_LOG_PATH). */
+const DAEMON_LOG_PATH = '/var/log/agentbox/ctl-daemon.log';
+
+/** Footer warning shown in attached sessions while a checkpoint runs. */
+const CHECKPOINT_NOTICE = 'Checkpoint in progress — the box will be unresponsive for a moment';
+/** Longer than the relay's checkpoint RPC timeout so a stale notice self-clears. */
+const CHECKPOINT_NOTICE_TTL_MS = 660_000;
+
+/**
+ * Ensure a box is running before a checkpoint capture (docker commit / cloud
+ * snapshot both need the box up). Uses the provider interface uniformly so docker
+ * and cloud share one path — the same probe/resume/start the CLI did inline.
+ */
+async function ensureBoxRunning(provider: Provider, box: BoxRecord): Promise<void> {
+  const state = await provider.probeState(box);
+  if (state === 'paused') await provider.resume(box);
+  else if (state === 'stopped') await provider.start(box);
+  else if (state === 'missing')
+    throw new Error(`box ${box.name} sandbox is missing; was it destroyed?`);
+}
+
+/** Built-in cloud backends unioned with any on-disk checkpoint-store dir. */
+async function allCloudBackends(): Promise<string[]> {
+  return [...new Set<string>([...CLOUD_PROVIDER_NAMES, ...(await listCloudBackendDirs())])];
+}
+
+/** A built-in cloud provider by backend name (plugin backends aren't bundled here). */
+async function cloudProviderForBackend(backend: string): Promise<Provider | null> {
+  if (!isProviderKind(backend)) return null;
+  return (await IMPORTERS[backend]()).providerModule.provider;
+}
+
+function dockerItemView(c: CheckpointInfo, def: string): CheckpointItemView {
+  return {
+    name: c.name,
+    provider: 'docker',
+    kind: c.manifest.type,
+    sourceBoxName: c.manifest.sourceBoxName,
+    createdAt: c.manifest.createdAt,
+    isDefault: c.name === def,
+  };
+}
+
+function cloudItemView(c: CloudCheckpointInfo, backend: string, def: string): CheckpointItemView {
+  return {
+    name: c.name,
+    provider: backend,
+    kind: 'snapshot',
+    sourceBoxName: c.manifest.sourceBoxName,
+    createdAt: c.manifest.createdAt,
+    isDefault: c.name === def,
+  };
+}
+
+/** One project's checkpoint rows (docker + every cloud backend), defaults marked. */
+async function listSingleProjectCheckpointItems(
+  projectRoot: string,
+): Promise<CheckpointItemView[]> {
+  const cfg = await loadEffectiveConfig(projectRoot).catch(() => null);
+  const items: CheckpointItemView[] = [];
+  const defDocker = cfg ? resolveDefaultCheckpoint(cfg.effective, 'docker') : '';
+  for (const c of await listCheckpoints(projectRoot)) items.push(dockerItemView(c, defDocker));
+  for (const backend of await allCloudBackends()) {
+    const def = cfg ? resolveDefaultCheckpoint(cfg.effective, backend as ProviderKind) : '';
+    for (const c of await listCloudCheckpoints(projectRoot, backend)) {
+      items.push(cloudItemView(c, backend, def));
+    }
+  }
+  return items;
+}
+
+/**
+ * Every project's checkpoints (docker + cloud), grouped by store segment. The
+ * checkpoint dirs are the source of truth (a checkpoint can outlive its project's
+ * config); `listProjectsConfigured` only supplies the human root for labeling +
+ * per-project default resolution.
+ */
+async function buildGlobalCheckpointListing(): Promise<CheckpointProjectView[]> {
+  const projects = await listProjectsConfigured();
+  const rootByHash = new Map(projects.map((p) => [p.hash, p.originalPath]));
+
+  const dockerGroups = await listAllCheckpoints();
+  const cloudGroups = await Promise.all(
+    (await allCloudBackends()).map(async (backend) => ({
+      backend,
+      groups: await listAllCloudCheckpoints(backend),
+    })),
+  );
+
+  interface Merged {
+    projectRoot?: string;
+    docker: CheckpointInfo[];
+    cloud: { backend: string; items: CloudCheckpointInfo[] }[];
+  }
+  const bySegment = new Map<string, Merged>();
+  const ensure = (segment: string): Merged => {
+    let m = bySegment.get(segment);
+    if (!m) {
+      m = { projectRoot: rootByHash.get(segment.slice(0, 16)), docker: [], cloud: [] };
+      bySegment.set(segment, m);
+    }
+    return m;
+  };
+  for (const g of dockerGroups) ensure(g.segment).docker = g.items;
+  for (const { backend, groups } of cloudGroups) {
+    for (const g of groups) ensure(g.segment).cloud.push({ backend, items: g.items });
+  }
+
+  const out: CheckpointProjectView[] = [];
+  for (const [segment, m] of bySegment) {
+    let defDocker = '';
+    const defCloud = new Map<string, string>();
+    if (m.projectRoot) {
+      const cfg = await loadEffectiveConfig(m.projectRoot).catch(() => null);
+      if (cfg) {
+        defDocker = resolveDefaultCheckpoint(cfg.effective, 'docker');
+        for (const { backend } of m.cloud) {
+          defCloud.set(backend, resolveDefaultCheckpoint(cfg.effective, backend as ProviderKind));
+        }
+      }
+    }
+    const items: CheckpointItemView[] = [];
+    for (const c of m.docker) items.push(dockerItemView(c, defDocker));
+    for (const { backend, items: cItems } of m.cloud) {
+      for (const c of cItems) items.push(cloudItemView(c, backend, defCloud.get(backend) ?? ''));
+    }
+    out.push({
+      segment,
+      projectRoot: m.projectRoot,
+      label: m.projectRoot ? path.basename(m.projectRoot) : segment,
+      items,
+    });
+  }
+  out.sort((a, b) => a.label.localeCompare(b.label) || a.segment.localeCompare(b.segment));
+  return out;
+}
+
+/**
+ * Clear a now-deleted checkpoint's dangling default-checkpoint config pointers.
+ * Sweeps the global + per-provider keys; clears whichever the PROJECT layer set to
+ * `ref`, and warns for one set in a layer we can't auto-edit (global / yaml). The
+ * exact sweep the CLI's `rmSub` did — moved server-side with the delete.
+ */
+async function sweepDanglingDefaults(
+  projectRoot: string,
+  ref: string,
+): Promise<{ clearedKeys: string[]; warnedKeys: string[] }> {
+  const clearedKeys: string[] = [];
+  const warnedKeys: string[] = [];
+  const cfg = await loadEffectiveConfig(projectRoot).catch(() => null);
+  if (!cfg) return { clearedKeys, warnedKeys };
+  const projectBox = cfg.layers.project.values.box;
+  const eff = cfg.effective.box;
+  const defKeys = [
+    ['box.defaultCheckpoint', projectBox?.defaultCheckpoint, eff.defaultCheckpoint],
+    [
+      'box.defaultCheckpointDocker',
+      projectBox?.defaultCheckpointDocker,
+      eff.defaultCheckpointDocker,
+    ],
+    [
+      'box.defaultCheckpointDaytona',
+      projectBox?.defaultCheckpointDaytona,
+      eff.defaultCheckpointDaytona,
+    ],
+    [
+      'box.defaultCheckpointHetzner',
+      projectBox?.defaultCheckpointHetzner,
+      eff.defaultCheckpointHetzner,
+    ],
+    [
+      'box.defaultCheckpointVercel',
+      projectBox?.defaultCheckpointVercel,
+      eff.defaultCheckpointVercel,
+    ],
+    ['box.defaultCheckpointE2b', projectBox?.defaultCheckpointE2b, eff.defaultCheckpointE2b],
+  ] as const;
+  for (const [key, projectValue, effectiveValue] of defKeys) {
+    if (projectValue === ref) {
+      await unsetConfigValue('project', key, projectRoot).catch(() => {});
+      clearedKeys.push(key);
+    } else if (effectiveValue === ref) {
+      warnedKeys.push(key);
+    }
+  }
+  return { clearedKeys, warnedKeys };
+}
+
+/**
+ * Delete a checkpoint from every store that has it (or just `provider`'s), then
+ * clear any dangling default-checkpoint pointer. Docker is always a candidate
+ * (removeDockerCheckpoint no-ops when absent); cloud backends are pre-resolved so
+ * we only act on the ones that actually have `ref`. No confirm here — the CLI owns
+ * the TTY confirm before calling.
+ */
+async function removeCheckpointEverywhere(
+  projectRoot: string,
+  ref: string,
+  provider?: string,
+): Promise<CheckpointRemoveResult> {
+  const wantDocker = !provider || provider === 'docker';
+  const cloudHits: string[] = [];
+  for (const backend of await allCloudBackends()) {
+    if (provider && provider !== backend) continue;
+    if (await resolveCloudCheckpoint(projectRoot, backend, ref)) cloudHits.push(backend);
+  }
+
+  const removed: string[] = [];
+  const failedBackends: string[] = [];
+  if (wantDocker && (await removeDockerCheckpoint(projectRoot, ref))) removed.push('docker');
+  for (const backend of cloudHits) {
+    try {
+      const cp = await cloudProviderForBackend(backend);
+      // `cloudHits` means the checkpoint IS on disk for this backend, so a missing
+      // provider / checkpoint hook (e.g. a plugin backend not bundled in the hub)
+      // is a genuine can't-remove — record it as failed, NOT removed. Reporting a
+      // delete that didn't happen would leave the snapshot on disk while the CLI
+      // says it's gone.
+      if (!cp?.checkpoint) {
+        failedBackends.push(backend);
+        continue;
+      }
+      await cp.checkpoint.remove(projectRoot, ref);
+      removed.push(backend);
+    } catch {
+      failedBackends.push(backend);
+    }
+  }
+
+  if (removed.length === 0) {
+    if (failedBackends.length > 0) {
+      return {
+        ok: false,
+        error: `failed to remove checkpoint ${ref} from: ${failedBackends.join(', ')}`,
+      };
+    }
+    return { ok: false, error: `checkpoint not found: ${ref}` };
+  }
+  const { clearedKeys, warnedKeys } = await sweepDanglingDefaults(projectRoot, ref);
+  return { ok: true, removed, clearedKeys, warnedKeys };
+}
+
+/** Live project roots whose per-project config must survive `prune --all`. */
+async function liveProjectRootsForPrune(): Promise<string[]> {
+  try {
+    return (await listBoxes())
+      .map((b) => b.projectRoot)
+      .filter((p): p is string => typeof p === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** General (docker + orphan-config) prune. Dry-run changes nothing. */
+async function pruneGeneral(all: boolean, dryRun: boolean): Promise<PruneView> {
+  const protectedPaths = all ? await liveProjectRootsForPrune() : [];
+  const result = await pruneBoxes({ all, dryRun });
+  const projectConfigs = all
+    ? (await pruneOrphanProjectConfigs({ dryRun, protectedPaths })).removed.map(
+        (r) => r.originalPath,
+      )
+    : [];
+  return { kind: 'general', result, projectConfigs };
+}
+
+/**
+ * Enumerate a cloud provider's untracked sandboxes (created by us — a friendly
+ * name — but not in this fleet's state). Returns the backend so the caller can
+ * delete + reap. The filter keeps only sandboxes whose name carries our
+ * friendly-name marker, so a co-tenant's sandboxes are never touched.
+ */
+async function enumerateCloudOrphans(
+  provider: string,
+): Promise<
+  | { ok: true; backend: import('@agentbox/core').CloudBackend; orphans: CloudSandboxSummary[] }
+  | { ok: false; error: string }
+> {
+  if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+  const mod = (await IMPORTERS[provider]()).providerModule;
+  if (mod.ensureCredentials) await mod.ensureCredentials();
+  const backend = mod.backend;
+  if (!backend?.list) {
+    return { ok: false, error: `${provider} backend can't enumerate sandboxes for prune` };
+  }
+  const [remote, state] = await Promise.all([backend.list(), readState()]);
+  const knownIds = new Set<string>();
+  for (const b of state.boxes) {
+    if ((b.provider ?? 'docker') === provider && b.cloud?.sandboxId)
+      knownIds.add(b.cloud.sandboxId);
+  }
+  const orphans = remote.filter((sb) => !knownIds.has(sb.sandboxId) && (sb.name ?? '').length > 0);
+  return { ok: true, backend, orphans };
+}
+
+function orphanView(sb: CloudSandboxSummary): CloudOrphanView {
+  return { sandboxId: sb.sandboxId, name: sb.name, state: sb.state, createdAt: sb.createdAt };
 }
 
 /** Parse `git status --porcelain=v2 --branch` into a live git summary. */
@@ -935,9 +1799,13 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) return null;
   try {
-    const { stdout } = await execFileAsync(process.execPath, [entry, 'open', '--targets', '--json'], {
-      timeout: 10_000,
-    });
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [entry, 'open', '--targets', '--json'],
+      {
+        timeout: 10_000,
+      },
+    );
     const value = JSON.parse(stdout) as OpenTargetsReport;
     openTargetsCache = { at: now, value };
     return value;
@@ -947,75 +1815,236 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
 }
 
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
+  // Reverse-adoption: drive a box the control box knows only from its Store
+  // registration (PC-created / independent) by reconstructing its local record on
+  // demand. Threaded into every provider-driven path below.
+  const hydrate: HydrateFn = (bid) => hydrateRegisteredBox(handle, bid);
+
+  /**
+   * The repo a project's boxes are cloned from. A control box's projects ARE
+   * repos — it holds no working copy — so the origin comes from a box
+   * registration rather than from `git remote` in a folder that isn't there.
+   */
+  async function projectRepoUrl(projectId: string): Promise<string | null> {
+    const path = await resolveProjectPath(projectId);
+    if (path && existsSync(path)) {
+      const origin = await hostOriginOf(path);
+      if (origin) return origin;
+    }
+    // The folder is gone (or has no origin): fall back to what the registry
+    // recorded while it was there, then to a box registration's git identity.
+    const entry = (await listProjectsConfigured()).find((e) => e.hash === projectId);
+    if (entry?.originUrl) return entry.originUrl;
+    const regs = await handle.store.listBoxes().catch(() => []);
+    for (const reg of regs) {
+      if (!reg.originUrl) continue;
+      if (registrationProjectKey(reg).id === projectId) return reg.originUrl;
+    }
+    return null;
+  }
+
+  /**
+   * Enqueue a create on the control-plane queue — the path that leases a push
+   * token, clones the repo and overlays the custody seed. Used when there is no
+   * host checkout to build from, which on a control box is always.
+   *
+   * Returns the create-job id; `getJob` resolves it from the Store and the worker
+   * writes `~/.agentbox/logs/queue-<id>.log`, so the UI follows it exactly like a
+   * local queue job.
+   */
+  async function createViaControlPlane(input: CreateBoxInput): Promise<CreateBoxResult> {
+    if (process.env.AGENTBOX_HUB_WORKER !== 'on' || !handle.store.enqueueCreateJob) {
+      const what = input.repoUrl ?? `project ${input.projectId ?? '(none)'}`;
+      return {
+        ok: false,
+        error: `${what} has no folder on this machine, and this hub has no create worker to clone it with`,
+      };
+    }
+    // The CLI sends `repoUrl` directly (it holds the origin); the web UI sends a
+    // projectId whose repo the hub resolves. Prefer the explicit repoUrl.
+    const repoUrl =
+      input.repoUrl ?? (input.projectId ? await projectRepoUrl(input.projectId) : null);
+    if (!repoUrl) {
+      return {
+        ok: false,
+        error: `project ${input.projectId ?? '(none)'} has no repo URL — a hub create clones from the origin, so the project must have one`,
+      };
+    }
+    const mapped = controlPlaneCreateRequest(input, repoUrl);
+    if (!mapped.ok) return { ok: false, error: mapped.error };
+    const id = randomUUID();
+    await handle.store.enqueueCreateJob({
+      id,
+      status: 'queued',
+      request: mapped.request,
+      createdAt: new Date().toISOString(),
+    });
+    return { ok: true, jobId: id };
+  }
   return {
     // authMode is layered on by source.ts (an env-derived concern), so the host
     // backend produces everything else.
-    async getData(): Promise<Omit<HubState, 'authMode'>> {
+    async getData(opts): Promise<Omit<HubState, 'authMode'>> {
       const [listed, jobs] = await Promise.all([listBoxes(), loadQueue()]);
+      // `?live=1` (opt-in, expensive — mirrors providers' `?freshness=1`): refresh
+      // each cloud box's `state` with an authoritative SDK probe before mapping.
+      // Off the default path — a plain listing shows the fast persisted state.
+      if (opts?.live) await applyLiveCloudStates(listed);
       // Surface in-flight create jobs as synthetic `creating` boxes (and just-
       // failed ones as `error`) until the real box lands in listBoxes() and
       // takes over — matched by the boxId the worker writes back to the manifest.
       const liveIds = new Set(listed.map((b) => b.id));
+      const liveSandboxIds = new Set(
+        listed.map((b) => b.cloud?.sandboxId).filter((s): s is string => Boolean(s)),
+      );
       const jobBoxes: Box[] = [];
       for (const j of jobs) {
         // A prepare (image-bake) job produces an artifact, not a box — it never
         // surfaces in the box list (its progress is provider status instead).
         if (j.kind === 'prepare') continue;
         if (j.boxId && liveIds.has(j.boxId)) continue;
-        if (j.status === 'queued' || j.status === 'running') jobBoxes.push(mapJobToBox(j, 'creating'));
+        if (j.status === 'queued' || j.status === 'running')
+          jobBoxes.push(mapJobToBox(j, 'creating'));
         else if (j.status === 'failed') jobBoxes.push(mapJobToBox(j, 'error'));
+      }
+      const allRegistrations = await handle.store.listBoxes().catch(() => []);
+      // Boxes the Store holds but this VPS's local state doesn't — i.e.
+      // registered from a PC. Deduped by box id AND sandbox id (a box the
+      // control box created locally is in both, under possibly different ids).
+      const registered = allRegistrations.filter(
+        (r) => !liveIds.has(r.boxId) && !(r.sandboxId && liveSandboxIds.has(r.sandboxId)),
+      );
+      const registeredBoxes = registered.map(mapRegistrationToBox);
+      // A local box whose project folder is gone (every control-box create: it
+      // builds from a per-job clone and deletes it) has no project card to group
+      // under. Its own registration carries the durable identity — the repo — so
+      // regroup it there, which is also what gives the card the repo's name
+      // instead of the clone dir's.
+      const regByBoxId = new Map(allRegistrations.map((r) => [r.boxId, r]));
+      const repoGrouped = new Map<string, ProjectRegrouping>();
+      for (const b of listed) {
+        const root = projectRootOf(b);
+        if (!isHubWorkerClone(root) && existsSync(root)) continue;
+        const reg = regByBoxId.get(b.id);
+        if (!reg) continue;
+        const { id, repo } = registrationProjectKey(reg);
+        repoGrouped.set(b.id, { projectId: id, repo, reg });
+      }
+      // Each registered box needs a project to render under (the dashboard groups
+      // strictly by projectId). Add a synthetic one per new project key not
+      // already produced by listProjects — sharing the box row's id.
+      const projects = await listProjects(listed);
+      const projectIds = new Set(projects.map((p) => p.id));
+      // Repo-identity cards for the regrouped local boxes, before the registered
+      // ones (same shape, same dedupe by project id).
+      for (const { projectId, repo, reg } of repoGrouped.values()) {
+        if (projectIds.has(projectId)) continue;
+        projectIds.add(projectId);
+        projects.push({
+          id: projectId,
+          name: repo,
+          repo,
+          defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
+          provider: reg.backend ?? 'cloud',
+          createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+          ...custodyIdentityFromRegistration(reg),
+        });
+      }
+      for (const reg of registered) {
+        const { id, repo } = registrationProjectKey(reg);
+        if (projectIds.has(id)) continue;
+        projectIds.add(id);
+        projects.push({
+          id,
+          name: repo,
+          repo,
+          defaultBranch: reg.worktrees?.[0]?.branch ?? 'main',
+          provider: reg.backend ?? 'cloud',
+          createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
+          // The registration carries the box's git identity — thread it onto the
+          // synthetic project so the seed/custody panel can resolve its custody
+          // slug (`seedSlugFor`). Without this, the primary self-hosted control
+          // box (SQLite store, no Postgres source) shows an empty panel even when
+          // custody genuinely holds the seed.
+          ...custodyIdentityFromRegistration(reg),
+        });
       }
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
-        projects: await listProjects(listed),
-        boxes: [...jobBoxes, ...listed.map(mapBox)],
+        projects,
+        boxes: [
+          ...jobBoxes,
+          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl)),
+          ...registeredBoxes,
+        ],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
-        providers: listProviders(jobs),
+        providers: await withRemoteProviders(listProviders(jobs)),
+        controlPlane: await readControlPlane(),
       };
     },
     async providersWithFreshness(opts): Promise<ProviderOption[]> {
-      const fresh = await listProvidersWithFreshness(listProviders(await loadQueue()));
+      const fresh = await listProvidersWithFreshness(
+        await withRemoteProviders(listProviders(await loadQueue())),
+      );
       return opts?.expandRemoteDockerHosts ? expandRemoteDockerHosts(fresh) : fresh;
     },
     start: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        // Mirrors the CLI dashboard's resumeBox: docker `start` rejects a paused
-        // container, so probe first. No-op when already running (idempotent).
-        // Unlike CLI `agentbox start` this does not restore agent tmux sessions
-        // (restoreAgentSessions is CLI-only) — the agent restarts on next attach.
-        const state = await provider.probeState(box);
-        if (state === 'running') return;
-        if (state === 'paused') await provider.resume(box);
-        else await provider.start(box);
-        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
-        await hubWriteSshConfig(box, provider);
-      }),
-    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box)),
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          // The box's *compute* lifecycle: docker `start` rejects a paused
+          // container, so probe first. No-op when already running (idempotent).
+          // Restoring the agent's tmux session is deliberately NOT done here — it
+          // is box IO (read per-box session pointers, relaunch a detached tmux
+          // over exec) that lives on the direct IO plane. The CLI layers
+          // `restoreAgentSessions` on after this returns; a hub-UI/tray start
+          // brings the box up and the agent resumes on next attach.
+          const state = await provider.probeState(box);
+          if (state === 'running') return;
+          if (state === 'paused') await provider.resume(box);
+          else await provider.start(box);
+          // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+          await hubWriteSshConfig(box, provider);
+        },
+        hydrate,
+      ),
+    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box), hydrate),
     resume: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        await provider.resume(box);
-        // Refresh the box's SSH-config alias now it's back online (IP may have changed).
-        await hubWriteSshConfig(box, provider);
-      }),
-    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box)),
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await provider.resume(box);
+          // Refresh the box's SSH-config alias now it's back online (IP may have changed).
+          await hubWriteSshConfig(box, provider);
+        },
+        hydrate,
+      ),
+    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box), hydrate),
     screen: (id) =>
-      runLifecycle(id, async (box, provider) => {
-        // The open-VNC prep step: mirror `agentbox screen` so the viewer shows
-        // the box's web app, not a blank X desktop. Browser-launch failures are
-        // logged, not thrown — the viewer URL still works without it.
-        if ((box.provider ?? 'docker') === 'docker') {
-          const br = await ensureBoxBrowserShowingApp(box);
-          if (!br.up) console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason ?? 'unknown'}`);
-        } else {
-          const br = await openWebAppOnVncScreen(box, provider);
-          if (!br.opened && br.reason && br.reason !== 'no web service') {
-            console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason}`);
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          // The open-VNC prep step: mirror `agentbox screen` so the viewer shows
+          // the box's web app, not a blank X desktop. Browser-launch failures are
+          // logged, not thrown — the viewer URL still works without it.
+          if ((box.provider ?? 'docker') === 'docker') {
+            const br = await ensureBoxBrowserShowingApp(box);
+            if (!br.up)
+              console.warn(
+                `[hub] screen ${box.name}: in-box browser failed: ${br.reason ?? 'unknown'}`,
+              );
+          } else {
+            const br = await openWebAppOnVncScreen(box, provider);
+            if (!br.opened && br.reason && br.reason !== 'no web service') {
+              console.warn(`[hub] screen ${box.name}: in-box browser failed: ${br.reason}`);
+            }
           }
-        }
-      }),
-    async destroy(id): Promise<ActionResult> {
+        },
+        hydrate,
+      ),
+    async destroy(id, opts): Promise<ActionResult> {
       // A synthetic `job:` box is a failed create with no real container — "destroy"
       // it by clearing its queue manifest (what the tray/UI Dismiss action hits).
       if (id.startsWith('job:')) {
@@ -1033,11 +2062,37 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: errMsg(err) };
         }
       }
-      return runLifecycle(id, async (box, provider) => {
-        await provider.destroy(box);
+      // `hydrate` reverse-adopts a registration-only box (PC-created / worker-
+      // created whose temp clone was cleaned) so `provider.destroy` tears down the
+      // REAL cloud resource — not just a state reap.
+      const box = await findOrHydrateBox(id, hydrate);
+      if (!box) {
+        // Nothing under this id to tear down. Reap any dangling Store registration
+        // + custody so it stops showing, but report `not found` — we did NOT
+        // confirm a teardown, so a caller must not drop a local record on the
+        // strength of this (a box unknown here may be a docker box the caller
+        // should retry on its own local hub, or a stale record to drop only with an
+        // explicit `--force`).
+        await reapStoreState(handle, id);
+        return { ok: false, error: `box ${id} not found` };
+      }
+      try {
+        const provider = await providerForBox(box);
+        await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
-      });
+      } catch (err) {
+        // The provider teardown FAILED (no creds here, provider unreachable, ...).
+        // The resource may still be running, so do NOT reap the registration (keep
+        // the box visible + retryable) and report the failure — `{ ok: true }` here
+        // would let a caller drop the only record of a live sandbox, since reaping
+        // the registration alone is NOT a teardown.
+        return { ok: false, error: errMsg(err) };
+      }
+      // Confirmed teardown — now reap the now-dead Store registration + custody
+      // (idempotent; also cleans up a locally-created box's lingering registration).
+      await reapStoreState(handle, id);
+      return { ok: true };
     },
     async rename(id, displayName): Promise<ActionResult> {
       // Pure state mutation — no provider round-trip. Empty/blank clears the label.
@@ -1060,10 +2115,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.
-    answerApproval(id, answer): Promise<ActionResult> {
+    answerApproval(id, answer, cancelled): Promise<ActionResult> {
       const boxId = handle.prompts.boxFor(id);
       if (!boxId) return Promise.resolve({ ok: false, error: 'no pending approval' });
-      if (!handle.prompts.resolve(id, answer)) {
+      if (!handle.prompts.resolve(id, answer, cancelled)) {
         return Promise.resolve({ ok: false, error: 'no pending approval' });
       }
       handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });
@@ -1071,26 +2126,46 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async create(input: CreateBoxInput): Promise<CreateBoxResult> {
       try {
+        // The canonical fork (same route, behavior differs inside): a `repoUrl`
+        // (or a projectId with no local folder — a control box's projects are
+        // repos, not folders) goes to the control-plane clone queue, the one path
+        // that leases a token, clones the repo and applies the custody seed. A
+        // resolvable local workspace goes to the file queue. Same 202 {jobId}.
         // Resolve the project by id server-side — never trust a client path.
-        // Accepts any project the dashboard shows (registry or live box root).
-        const workspace = await resolveProjectPath(input.projectId);
-        if (!workspace) return { ok: false, error: `unknown project ${input.projectId}` };
+        const workspace = input.projectId ? await resolveProjectPath(input.projectId) : null;
+        if (input.repoUrl || !workspace || !existsSync(workspace)) {
+          return await createViaControlPlane(input);
+        }
         // Provider gate (defense-in-depth: a client could bypass the disabled UI
         // option). Default docker; reject unknown kinds and unconfigured providers.
         const provider = (input.provider ?? 'docker').trim();
         // A host-qualified `docker:<alias>` / `remote-docker:<alias>` spec targets a
         // registered remote-docker host — validate the alias (the worker parses the
         // spec out of providerName). Bare names take the configured-provider gate.
-        const hostSpec = provider.match(/^(?:docker|remote-docker):(.+)$/);
-        if (hostSpec) {
-          const alias = hostSpec[1];
+        const spec = parseProviderSpec(provider);
+        if (spec.remoteHost) {
+          const alias = spec.remoteHost;
           const rd = await import('@agentbox/sandbox-remote-docker');
           if (!rd.getHostAlias(alias)) {
-            return { ok: false, error: `unknown remote-docker host '${alias}' — add it in Settings` };
+            return {
+              ok: false,
+              error: `unknown remote-docker host '${alias}' — add it in Settings`,
+            };
           }
         } else {
-          if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
+          if (!isProviderKind(provider))
+            return { ok: false, error: `unknown provider ${provider}` };
           if (!isProviderConfigured(provider)) {
+            // With a control box configured, cloud boxes are ITS job — this UI
+            // is a mirror, not a second create path — so say where to go rather
+            // than tell the user to set up a provider this host won't use.
+            const hub = isHubRoutableProvider(provider) ? await resolveRemoteHub() : null;
+            if (hub) {
+              return {
+                ok: false,
+                error: `create ${provider} boxes on the control box (${hub.url}) — this host mirrors its state`,
+              };
+            }
             return { ok: false, error: `provider ${provider} is not set up on this host` };
           }
         }
@@ -1125,15 +2200,56 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // stops after create, like `agentbox create`). It never attaches. The
         // worker names the box from `createOpts.name` (like the CLI's
         // pickCreateOpts), so the typed name must go there, not only on boxName.
+        // Box-shaping knobs the CLI `create` resolved (image, snapshot, limits,
+        // carry, size/location, credential-sync, ...). Threaded end-to-end so a
+        // hub-routed create builds the SAME box the old inline path did — dropping
+        // one is an invisible capability regression. Absent (web-UI create) → the
+        // worker's config defaults. `workspace`/`name`/`fromBranch` are authoritative
+        // here (resolved server-side), so they win over any opts echo.
+        const o = input.opts ?? {};
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
           providerName: provider,
           prompt: noAgent ? '' : (input.prompt ?? ''),
-          agentArgs: [],
+          agentArgs: input.agentArgs ?? [],
           ...(noAgent ? { noAgent: true } : {}),
           ...(setupWizard ? { setupWizard: true } : {}),
-          createOpts: { workspace, name, fromBranch },
+          ...(input.foreground ? { foreground: true } : {}),
+          createOpts: {
+            workspace,
+            name,
+            fromBranch,
+            image: o.image,
+            snapshot: o.snapshot,
+            hostSnapshot: o.hostSnapshot,
+            withPlaywright: o.withPlaywright,
+            withEnv: o.withEnv,
+            envFiles: o.envFiles,
+            vnc: o.vnc,
+            resync: o.resync,
+            sharedDockerCache: o.sharedDockerCache,
+            portless: o.portless,
+            sessionName: o.sessionName,
+            dangerouslySkipPermissions: o.dangerouslySkipPermissions,
+            memory: o.memory,
+            cpus: o.cpus,
+            pidsLimit: o.pidsLimit,
+            disk: o.disk,
+            build: o.build,
+            imageRegistry: o.imageRegistry,
+            credentialSync: o.credentialSync,
+            bundleDepth: o.bundleDepth,
+            useBranch: o.useBranch,
+            gitPushMode: o.gitPushMode,
+            size: o.size,
+            location: o.location,
+            inbound: o.inbound,
+            remoteHost: o.remoteHost,
+            // ResolvedCarryEntry[] on the wire is typed unknown[] (Next-bundle
+            // hygiene); the worker reads the concrete shape.
+            carry: o.carry as QueueJobCreateOpts['carry'],
+          },
         });
         handle.pokeQueue();
         return { ok: true, jobId: job.id };
@@ -1157,7 +2273,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
     },
     prepareProvider(id, opts): Promise<CreateBoxResult> {
-      if (!isProviderKind(id)) return Promise.resolve({ ok: false, error: `unknown provider ${id}` });
+      if (!isProviderKind(id))
+        return Promise.resolve({ ok: false, error: `unknown provider ${id}` });
       // Serialize per provider so concurrent POSTs can't both miss the in-flight
       // job and enqueue duplicates (the check+enqueue below isn't atomic on its own).
       const prev = prepareEnqueueChain.get(id) ?? Promise.resolve();
@@ -1177,6 +2294,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             providerName: id,
             force: opts?.force,
             claudeInstall: opts?.claudeInstall,
+            build: opts?.build,
+            size: opts?.size,
+            location: opts?.location,
+            name: opts?.name,
           });
           handle.pokeQueue();
           return { ok: true, jobId: job.id };
@@ -1185,7 +2306,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         }
       });
       // Keep the chain alive for the next call without letting a rejection break it.
-      prepareEnqueueChain.set(id, run.catch(() => {}));
+      prepareEnqueueChain.set(
+        id,
+        run.catch(() => {}),
+      );
       return run;
     },
     async listBranches(projectId: string): Promise<BranchList> {
@@ -1239,7 +2363,26 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     browseDir: (dir) => browseDirHost(dir),
     async getJob(id) {
       const job = await readJob(id);
-      if (!job) return null;
+      if (!job) {
+        // Not a local queue manifest — it may be a control-plane create job (the
+        // path a control box takes, where there is no host checkout to build
+        // from). Same shape, so the UI's poll + log stream work unchanged.
+        const cp = await handle.store.getCreateJob?.(id).catch(() => null);
+        if (!cp) return null;
+        return {
+          id: cp.id,
+          status: cp.status,
+          logPath: queueLogPath(cp.id),
+          boxId: cp.result?.boxId,
+          // A failed control-plane create carries its reason in result.error —
+          // surface it so the CLI create path reports the failure faithfully.
+          error: cp.result?.error,
+          provider: cp.request.provider,
+          name: cp.request.name,
+          agent: cp.request.agent,
+          createdAt: cp.createdAt,
+        };
+      }
       // Surface the worker-written login sub-state (the inbound code rides a
       // separate file, never the manifest).
       const login = job.login
@@ -1251,11 +2394,73 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             lastError: job.login.lastError,
           }
         : undefined;
-      return { status: job.status, logPath: job.logPath, boxId: job.boxId, login };
+      return {
+        id: job.id,
+        status: job.status,
+        logPath: job.logPath,
+        boxId: job.boxId,
+        login,
+        // `reason` is the failure message the worker writes on a failed job.
+        error: job.status === 'failed' ? job.reason : undefined,
+        provider: job.providerName,
+        name: job.boxName || undefined,
+        agent: job.noAgent ? 'none' : job.agent,
+        createdAt: job.createdAt,
+      };
+    },
+    async listJobs() {
+      // The unified job view: local file-queue create jobs + (on a control box)
+      // the control-plane create queue. Prepare (bake) jobs are excluded — they
+      // produce an artifact, not a box. Newest first.
+      const [local, cp] = await Promise.all([
+        loadQueue(),
+        handle.store.listCreateJobs?.({ limit: 100 }).catch(() => []) ?? Promise.resolve([]),
+      ]);
+      const items: JobListItem[] = [];
+      for (const j of local) {
+        if (j.kind === 'prepare') continue;
+        items.push({
+          id: j.id,
+          status: j.status,
+          boxId: j.boxId,
+          error: j.status === 'failed' ? j.reason : undefined,
+          provider: j.providerName,
+          name: j.boxName || undefined,
+          agent: j.noAgent ? 'none' : j.agent,
+          createdAt: j.createdAt,
+        });
+      }
+      for (const j of cp) {
+        items.push({
+          id: j.id,
+          status: j.status,
+          boxId: j.result?.boxId,
+          error: j.result?.error,
+          provider: j.request.provider,
+          name: j.request.name,
+          agent: j.request.agent,
+          createdAt: j.createdAt,
+        });
+      }
+      items.sort((a, b) => ((a.createdAt ?? '') < (b.createdAt ?? '') ? 1 : -1));
+      return items;
     },
     async submitLoginCode(id, code) {
       const job = await readJob(id);
-      if (!job) return { ok: false, error: `job not found: ${id}` };
+      if (!job) {
+        // A control-plane create job (visible to getJob via the Store) has no
+        // in-box login-code channel — the clone-side worker seeds creds from
+        // custody rather than driving an interactive browser re-login. Say that
+        // distinctly from a genuinely-missing job rather than a bare "not found".
+        const cp = await handle.store.getCreateJob?.(id).catch(() => null);
+        if (cp) {
+          return {
+            ok: false,
+            error: `job ${id} is a control-plane create — it has no in-box login-code channel`,
+          };
+        }
+        return { ok: false, error: `job not found: ${id}` };
+      }
       // Deliver via the dedicated code file (worker reads+consumes it) — never a
       // manifest write, so it can't race the worker's `login` phase/url updates.
       await writeQueueLoginCode(id, code);
@@ -1263,22 +2468,46 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
 
     // ── box git operations (delegate to the shared, provider-agnostic helpers) ──
-    gitCheckout: (id, branch) => gitOp(id, (box, provider) => boxGitCheckout(provider, box, branch)),
+    // checkout/branch additionally sanction the resulting branch so a later
+    // in-box push to it isn't prompted (best-effort; see sanctionBranch).
+    gitCheckout: (id, branch, args) =>
+      gitOp(
+        id,
+        async (box, provider) => {
+          const r = await boxGitCheckout(provider, box, branch, args);
+          if (r.exitCode === 0) await sanctionBranch(box, branch);
+          return r;
+        },
+        hydrate,
+      ),
     gitNewBranch: (id, input) =>
-      gitOp(id, (box, provider) => boxGitNewBranch(provider, box, input.name, input.from)),
+      gitOp(
+        id,
+        async (box, provider) => {
+          const r = await boxGitNewBranch(provider, box, input.name, input.from);
+          if (r.exitCode === 0) await sanctionBranch(box, scratchBranchName(input.name));
+          return r;
+        },
+        hydrate,
+      ),
     gitPush: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id))),
+      gitOp(id, (box, provider) => boxGitPush(provider, box, input, hubGitDeps(id)), hydrate),
     gitPull: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id))),
-    gitPushHost: (id, input = {}) => gitOp(id, (box, provider) => boxGitPushHost(provider, box, input)),
+      gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
+    gitPushHost: (id, input = {}) =>
+      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
-        const rp = await resolveBoxProvider(id);
+        const rp = await resolveBoxProvider(id, hydrate);
         if (!rp) return { ok: false, error: `box ${id} not found` };
         const r = await rp.provider.exec(rp.box, ['git', 'status', '--porcelain=v2', '--branch'], {
           cwd: BOX_WORKSPACE,
         });
-        if (r.exitCode !== 0) return { ok: false, error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim() };
+        if (r.exitCode !== 0)
+          return {
+            ok: false,
+            error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim(),
+          };
         return parseGitStatus(r.stdout);
       } catch (err) {
         return { ok: false, error: errMsg(err) };
@@ -1287,32 +2516,294 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
 
     // ── box service control ──
     async getServices(id): Promise<ServicesResult> {
-      const rp = await resolveBoxProvider(id).catch(() => null);
-      if (!rp) return { source: 'unavailable', services: [], tasks: [], ports: [], error: `box ${id} not found` };
+      const rp = await resolveBoxProvider(id, hydrate).catch(() => null);
+      if (!rp)
+        return {
+          source: 'unavailable',
+          services: [],
+          tasks: [],
+          ports: [],
+          error: `box ${id} not found`,
+        };
       const live = await liveServices(rp.provider, rp.box);
       if (live) return mapLiveServices(live);
       const snap = handle.statusStore.get(id);
-      if (snap && isValidBoxStatus(snap)) return mapPersistedServices(snap as unknown as CtlBoxStatus);
+      if (snap && isValidBoxStatus(snap))
+        return mapPersistedServices(snap as unknown as CtlBoxStatus);
       return { source: 'unavailable', services: [], tasks: [], ports: [] };
     },
     async restartService(id, name): Promise<BoxOpResult> {
       try {
-        const rp = await resolveBoxProvider(id);
+        const rp = await resolveBoxProvider(id, hydrate);
         if (!rp) return { ok: false, error: `box ${id} not found` };
         if (name) {
           const r = await boxRestartService(rp.provider, rp.box, name);
           return r.exitCode === 0
             ? { ok: true, stdout: r.stdout, stderr: r.stderr }
-            : { ok: false, error: (r.stderr || `restart ${name} exited ${String(r.exitCode)}`).trim() };
+            : {
+                ok: false,
+                error: (r.stderr || `restart ${name} exited ${String(r.exitCode)}`).trim(),
+              };
         }
         // Restart all: read the live service list, then restart each in sequence.
         const live = await liveServices(rp.provider, rp.box);
-        if (!live) return { ok: false, error: 'could not reach the box supervisor (is the box running?)' };
+        if (!live)
+          return { ok: false, error: 'could not reach the box supervisor (is the box running?)' };
         const names = live.services.map((s) => s.name);
         if (names.length === 0) return { ok: true };
         const results = await boxRestartServices(rp.provider, rp.box, names);
         const failed = results.filter((r) => r.result.exitCode !== 0).map((r) => r.name);
-        return failed.length > 0 ? { ok: false, error: `failed to restart: ${failed.join(', ')}` } : { ok: true };
+        return failed.length > 0
+          ? { ok: false, error: `failed to restart: ${failed.join(', ')}` }
+          : { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    // ── checkpoints (durable project assets) ──
+    async createCheckpoint(id, opts): Promise<CheckpointCreateResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const { box, provider } = rp;
+        const providerName = box.provider ?? 'docker';
+        await ensureBoxRunning(provider, box);
+        const projectRoot = box.projectRoot ?? (await findProjectRoot(box.workspacePath)).root;
+
+        // Warn attached sessions the box is about to freeze (docker commit / a
+        // pausing cloud snapshot). Best-effort — a null id means the relay is
+        // unreachable and there is nothing to clear.
+        const noticeId = await setRelayNotice(
+          box.id,
+          'checkpoint',
+          CHECKPOINT_NOTICE,
+          CHECKPOINT_NOTICE_TTL_MS,
+        ).catch(() => null);
+        try {
+          if (providerName === 'docker') {
+            const cfg = await loadEffectiveConfig(projectRoot);
+            const info = await createCheckpoint({
+              box,
+              projectRoot,
+              name: opts.name,
+              merged: opts.merged === true,
+              setDefault: opts.setDefault === true,
+              replace: opts.replace === true,
+              maxLayers: cfg.effective.checkpoint.maxLayers,
+              onLog: (line) => console.log(`[hub] ${line}`),
+            });
+            return {
+              ok: true,
+              name: info.name,
+              kind: info.manifest.type,
+              ref: info.name,
+              provider: 'docker',
+              dir: info.dir,
+              setDefaultKey: opts.setDefault ? 'box.defaultCheckpointDocker' : undefined,
+            };
+          }
+          if (!provider.checkpoint) {
+            return { ok: false, error: `provider '${providerName}' doesn't support checkpoints` };
+          }
+          const name = opts.name ?? `${box.name}-${String(Date.now()).slice(-6)}`;
+          // When this becomes the project default, save the box's agent login(s)
+          // back to the host BEFORE the (possibly pausing) snapshot, so the next
+          // box seeded from it inherits them. Best-effort — never blocks capture.
+          if (opts.setDefault && provider.extractAgentCredentials) {
+            await provider.extractAgentCredentials(box).catch(() => []);
+          }
+          const result = await provider.checkpoint.create(box, name);
+          let setDefaultKey: string | undefined;
+          if (opts.setDefault) {
+            setDefaultKey = defaultCheckpointConfigKey(providerName);
+            await setConfigValue('project', setDefaultKey, result.ref, projectRoot);
+          }
+          return {
+            ok: true,
+            name: result.ref,
+            kind: 'snapshot',
+            ref: result.ref,
+            provider: providerName,
+            setDefaultKey,
+          };
+        } finally {
+          if (noticeId) await clearRelayNotice(box.id, noticeId).catch(() => {});
+        }
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async listCheckpoints(opts): Promise<CheckpointListing> {
+      if (opts.global) return { projects: await buildGlobalCheckpointListing() };
+      // The route requires `?project=` for the scoped listing (the hub's cwd is
+      // not the user's project), so `project` is present here.
+      const projectRoot = opts.project ?? (await findProjectRoot(process.cwd())).root;
+      const items = await listSingleProjectCheckpointItems(projectRoot);
+      return {
+        projects: [
+          {
+            segment: hashProjectPath(projectRoot),
+            projectRoot,
+            label: path.basename(projectRoot),
+            items,
+          },
+        ],
+      };
+    },
+    async removeCheckpoint(opts): Promise<CheckpointRemoveResult> {
+      try {
+        return await removeCheckpointEverywhere(opts.project, opts.ref, opts.provider);
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    // ── prune (fleet cleanup) ──
+    async pruneFleet(opts): Promise<PruneView> {
+      try {
+        const dryRun = opts.dryRun === true;
+        const provider = opts.provider;
+        if (!provider || provider === 'docker') {
+          const view = await pruneGeneral(opts.all === true, dryRun);
+          // Reap the Store registration of every docker record we just removed, so
+          // a pruned orphan (its container vanished — crash, manual `docker rm`,
+          // OOM) doesn't linger in the hub-store-backed `agentbox ls` as a ghost.
+          // A normal `destroy` already reaps the Store; prune must too now that the
+          // listing comes from the Store, not state.json. Idempotent + best-effort.
+          if (!dryRun && view.kind === 'general') {
+            for (const id of view.result.removedRecords) {
+              await reapStoreState(handle, id).catch(() => false);
+            }
+          }
+          return view;
+        }
+        const enumRes = await enumerateCloudOrphans(provider);
+        if (!enumRes.ok) return { kind: 'error', error: enumRes.error };
+        const orphanViews = enumRes.orphans.map(orphanView);
+        if (dryRun || enumRes.orphans.length === 0) {
+          return {
+            kind: 'cloud',
+            provider,
+            dryRun: true,
+            orphans: orphanViews,
+            deleted: 0,
+            failed: 0,
+            reaped: 0,
+          };
+        }
+        let deleted = 0;
+        let failed = 0;
+        const deletedIds: string[] = [];
+        for (const sb of enumRes.orphans) {
+          try {
+            await enumRes.backend.destroy({ sandboxId: sb.sandboxId });
+            deleted++;
+            deletedIds.push(sb.sandboxId);
+          } catch {
+            failed++;
+          }
+        }
+        // Reap the control-box Store registrations of the just-deleted sandboxes
+        // (server-side, replacing the CLI's old reapSandboxesOnControlBox): map
+        // sandbox id -> box id through the store, then reap that box's state.
+        let reaped = 0;
+        if (deletedIds.length > 0) {
+          const wanted = new Set(deletedIds);
+          const regs = await handle.store.listBoxes().catch(() => []);
+          for (const reg of regs) {
+            if (reg.sandboxId && wanted.has(reg.sandboxId)) {
+              if (await reapStoreState(handle, reg.boxId)) reaped++;
+            }
+          }
+        }
+        return {
+          kind: 'cloud',
+          provider,
+          dryRun: false,
+          orphans: orphanViews,
+          deleted,
+          failed,
+          reaped,
+        };
+      } catch (err) {
+        return { kind: 'error', error: errMsg(err) };
+      }
+    },
+
+    // ── agent state ──
+    async getAgentState(id): Promise<AgentStateResult | null> {
+      const box = await findOrHydrateBox(id, hydrate).catch(() => null);
+      if (!box) return null;
+      // Prefer the on-disk status.json (exactly what the CLI's readBoxStatus read):
+      // the relay writes it on every push, so it is the DURABLE snapshot and
+      // survives a hub/relay restart — unlike the in-memory statusStore, which is
+      // empty after a restart until the box pushes again. Fall back to the in-memory
+      // store for a box whose status file isn't on this machine (a registered-only /
+      // reverse-adopted box).
+      const disk = await readBoxStatus(box).catch(() => null);
+      const mem = handle.statusStore.get(id);
+      const snap = disk ?? (mem && isValidBoxStatus(mem) ? (mem as unknown as CtlBoxStatus) : null);
+      return { claude: snap?.claude ?? null };
+    },
+
+    // ── box service logs ──
+    async boxLogSnapshot(id, opts): Promise<BoxOpResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const argv = opts.daemon
+          ? ['tail', '-n', String(opts.tail), DAEMON_LOG_PATH]
+          : boxLogsArgv(opts.service ?? '', { tail: opts.tail, follow: false });
+        const r = await rp.provider.exec(rp.box, argv, { user: 'vscode' });
+        return r.exitCode === 0
+          ? { ok: true, stdout: r.stdout, stderr: r.stderr }
+          : {
+              ok: false,
+              error: (r.stderr || r.stdout || `logs exited ${String(r.exitCode)}`).trim(),
+              exitCode: r.exitCode,
+            };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async boxLogAttach(id, opts): Promise<BoxLogAttachSpec> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        const { box, provider } = rp;
+        // Split on the same signal logs.ts used inline: docker follows via a raw
+        // `docker exec`; every other provider builds an attach argv (SSH/SDK).
+        if ((box.provider ?? 'docker') === 'docker') {
+          if (!box.container) return { ok: false, error: `box ${box.name} has no container` };
+          const inner = opts.daemon
+            ? ['tail', '-n', String(opts.tail), '-F', DAEMON_LOG_PATH]
+            : boxLogsArgv(opts.service ?? '', { tail: opts.tail, follow: true });
+          return {
+            ok: true,
+            argv: ['docker', 'exec', '--user', 'vscode', box.container, ...inner],
+          };
+        }
+        if (!provider.buildAttach) {
+          return { ok: false, error: `provider '${provider.name}' does not support log streaming` };
+        }
+        const spec = opts.daemon
+          ? await provider.buildAttach(box, 'shell', {
+              sessionName: 'daemon-logs',
+              user: 'vscode',
+              command: `tail -n ${opts.tail} -F ${DAEMON_LOG_PATH}`,
+              noTmux: true,
+            })
+          : await provider.buildAttach(box, 'logs', {
+              service: opts.service ?? '',
+              tail: opts.tail,
+              follow: true,
+              user: 'vscode',
+            });
+        if (spec.argv.length === 0) {
+          return { ok: false, error: 'provider.buildAttach returned an empty argv' };
+        }
+        return { ok: true, argv: spec.argv, env: spec.env, cleanup: spec.cleanup };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }
@@ -1328,12 +2819,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: false, error: 'open-in actions require a local hub running on macOS' };
       }
       const entry = process.env['AGENTBOX_CLI_ENTRY'];
-      if (!entry) return { ok: false, error: 'hub is missing AGENTBOX_CLI_ENTRY; cannot launch host apps' };
+      if (!entry)
+        return { ok: false, error: 'hub is missing AGENTBOX_CLI_ENTRY; cannot launch host apps' };
       try {
         // Re-shell `agentbox open <id> --in <app>` (routes vscode -> code, the
         // rest to their host-app launchers). It launches and returns; the timeout
         // guards against a hung launcher, not the app staying open.
-        await execFileAsync(process.execPath, [entry, 'open', id, '--in', app], { timeout: 20_000 });
+        await execFileAsync(process.execPath, [entry, 'open', id, '--in', app], {
+          timeout: 20_000,
+        });
         return { ok: true };
       } catch (err) {
         // execFile rejects on non-zero exit. The CLI prints its real error via
@@ -1363,12 +2857,47 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (rd.getHostAlias(alias)) {
           return { ok: false, error: `host alias "${alias}" already exists` };
         }
+        // A shared host arrives with its own key. Write it before probing — the
+        // probe has to run as the registered entry will, or a 201 would only
+        // prove that whatever ssh picked by default happened to work.
+        // Structural, not the package's exported type: the remote-docker package
+        // is only ever dynamically imported here, to keep it out of the bundle.
+        let connection: HostDialConnection | undefined = opts?.connection
+          ? { ...opts.connection }
+          : undefined;
+        if (opts?.identity) {
+          if (!connection) {
+            return { ok: false, error: 'identity requires connection (the ssh -G expansion)' };
+          }
+          const dir = rd.hostKeyDir(alias);
+          await mkdir(dir, { recursive: true, mode: 0o700 });
+          const keyPath = path.join(dir, 'id_ed25519');
+          const body = opts.identity.endsWith('\n') ? opts.identity : `${opts.identity}\n`;
+          await writeFile(keyPath, body, { mode: 0o600 });
+          // writeFile's mode is umask-masked; ssh refuses a group-readable key.
+          await chmod(keyPath, 0o600);
+          connection = { ...connection, identityFile: keyPath };
+        }
         // Probe before saving so an unreachable host / missing docker is rejected.
-        const probe = await rd.probeRemoteEngine(trimmedSsh);
-        if (!probe.ok) return { ok: false, error: probe.error ?? `${trimmedSsh}: remote engine unusable` };
-        rd.upsertHostAlias(alias, trimmedSsh);
+        // With a connection, probe THAT — the ssh string may be an alias only the
+        // sharing machine can resolve.
+        const probeSpec = connection ? describeHostConnection(connection) : trimmedSsh;
+        const probe = await rd.probeRemoteEngine(
+          probeSpec,
+          connection?.identityFile
+            ? {
+                identity: connection.identityFile,
+                knownHosts: path.join(rd.hostKeyDir(alias), 'known_hosts'),
+              }
+            : undefined,
+        );
+        if (!probe.ok)
+          return { ok: false, error: probe.error ?? `${probeSpec}: remote engine unusable` };
+        rd.upsertHostAlias(alias, trimmedSsh, connection);
         if (opts?.default) {
-          await setConfigValue('global', 'box.remoteDockerHost', alias, os.homedir(), { raw: true });
+          await setConfigValue('global', 'box.remoteDockerHost', alias, os.homedir(), {
+            raw: true,
+          });
         }
         return { ok: true };
       } catch (err) {

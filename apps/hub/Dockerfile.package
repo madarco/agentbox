@@ -1,0 +1,72 @@
+# AgentBox hub — control-box image built from the PUBLISHED npm package.
+#
+# The default for `agentbox hub deploy hetzner`. Its sibling `Dockerfile` clones
+# this monorepo onto the VPS and builds 14 workspace packages + the CLI (~2m40s);
+# this one installs the artifact npm already carries. `@madarco/agentbox` ships
+# the standalone hub at `runtime/hub/apps/hub/server.js` — the exact bundle
+# `agentbox hub` spawns locally — so the control box and the PC that deployed it
+# run the same published build by construction, rather than by a branch name
+# happening to match.
+#
+# Build context is this directory (NOT the repo root): the deploy scp's just this
+# file + the two compose files into /opt/agentbox/apps/hub. There is no repo on
+# the VPS in this mode.
+#   docker compose -f docker-compose.yml -f docker-compose.package.yml up -d --build
+
+FROM node:22-slim
+
+# Same rationale as Dockerfile's runtime stage: the resident create worker clones
+# repos VPS-side (git-lfs so an LFS repo's objects fetch instead of hard-failing
+# the checkout), a hetzner box needs ssh/scp for its ControlMaster, and `gh` backs
+# the credential helper in `hub.gitAuth=gh` mode plus the `gh.pr.*` / `gh.api`
+# host actions. Installed from GitHub's apt repo — Debian's own package lags badly.
+RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs openssh-client ca-certificates curl gnupg \
+  && mkdir -p -m 755 /etc/apt/keyrings \
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update && apt-get install -y --no-install-recommends gh \
+  && rm -rf /var/lib/apt/lists/*
+
+# The npm spec to install: an exact version by default (the deploying CLI's own),
+# or whatever `--package` named. Declared as an ARG so the layer is cache-keyed by
+# it — redeploying the same version reuses the install.
+ARG AGENTBOX_SPEC
+# --omit=optional drops @homebridge/node-pty-prebuilt-multiarch: it exists only
+# for `agentbox dashboard`, sits behind a guarded dynamic import, and is the one
+# native dep whose prebuild could be missing for this VPS's arch.
+# The symlink gives the ENVs below a fixed path (`npm root -g` is not expandable
+# in ENV), and `--version` gates the BUILD on a resolvable spec — a typo'd
+# `--package` fails here rather than three minutes later in the healthz poll.
+RUN npm install -g --no-fund --no-audit --omit=optional "@madarco/agentbox@${AGENTBOX_SPEC}" \
+  && ln -s "$(npm root -g)/@madarco/agentbox" /opt/agentbox-cli \
+  && node /opt/agentbox-cli/dist/index.js --version
+
+# Load-bearing: without it Next takes the dev path and dies with "Couldn't find
+# any `pages` or `app` directory" (the standalone bundle has neither).
+ENV NODE_ENV=production
+# Queue worker + host-app spawns re-exec the CLI from this entry.
+ENV AGENTBOX_CLI_ENTRY=/opt/agentbox-cli/dist/index.js
+# Base-image fingerprinting: each provider's findStagedCliRuntimeRoot only probes
+# next to its own bundle, which from runtime/hub/apps/hub/** misses the staged
+# tree and falls back to hashing packages/** source — a different fingerprint than
+# the CLI baked with, so the hub rejects every PC-baked custody record. Here the
+# staged tree IS the PC's (same npm tarball), so pointing at it makes the
+# fingerprints identical byte-for-byte.
+ENV AGENTBOX_RUNTIME_ROOT=/opt/agentbox-cli/runtime
+# resolveSharedRuntimeAsset (external provider plugins) reads this. A locally
+# spawned hub inherits it from the parent CLI process; a container has no parent.
+ENV AGENTBOX_CLI_RUNTIME_DIR=/opt/agentbox-cli/runtime
+# resolveDockerBuild does NOT read AGENTBOX_RUNTIME_ROOT, so it needs its own.
+ENV AGENTBOX_DOCKER_CONTEXT=/opt/agentbox-cli/runtime/docker
+
+EXPOSE 8787
+# server.ts self-migrates auth (ensureAuthReady) + the store on boot, and anchors
+# its own cwd from required-server-files.json — no separate migrate step, no WORKDIR.
+#
+# AGENTBOX_CLI_VERSION is what the relay reports on /healthz, and so what
+# `agentbox hub status` shows and `hub update` compares against. Read from the
+# installed package's own manifest rather than from AGENTBOX_SPEC: a spec may be
+# a dist-tag (`nightly`) or a range, and the useful answer is the version that
+# actually got installed.
+CMD ["sh", "-c", "export AGENTBOX_CLI_VERSION=\"$(node -p \"require('/opt/agentbox-cli/package.json').version\")\"; exec node /opt/agentbox-cli/runtime/hub/apps/hub/server.js"]

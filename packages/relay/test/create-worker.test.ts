@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { drainCreateJobs, drainOneCreateJob } from '../src/create-worker.js';
+import {
+  cloneRepoWithLfs,
+  drainCreateJobs,
+  drainOneCreateJob,
+  makeControlPlaneCreateBox,
+  type CreateBoxDeps,
+} from '../src/create-worker.js';
 import { handleRelayRequest, type ControlPlaneDeps } from '../src/core/handler.js';
 import { MemoryStore } from '../src/store/memory-store.js';
 import type { CreateJobRequest } from '../src/store/store.js';
@@ -36,7 +42,10 @@ describe('box-create flow', () => {
     const jobId = (enq.body as { jobId: string }).jobId;
 
     // Queued until a worker runs.
-    const queued = await handleRelayRequest(r('GET', `/remote/boxes/${jobId}`, { bearer: ADMIN }), d);
+    const queued = await handleRelayRequest(
+      r('GET', `/remote/boxes/${jobId}`, { bearer: ADMIN }),
+      d,
+    );
     expect((queued.body as { status: string }).status).toBe('queued');
 
     // Worker drains it with a fake create fn.
@@ -85,8 +94,161 @@ describe('box-create flow', () => {
     expect(job?.result?.error).toMatch(/provider exploded/);
   });
 
+  it('an agent-start failure fails the job but keeps the box id', async () => {
+    // A background `-i` run: the box was created, but starting the agent in-box
+    // failed (e.g. creds rejected). The job must fail (so it isn't masked as done)
+    // while preserving the box id, so the box is adoptable/attachable to re-login.
+    const store = new MemoryStore();
+    await store.enqueueCreateJob({
+      id: 'j2',
+      status: 'queued',
+      request: { repoUrl: 'x', provider: 'e2b', agent: 'claude', prompt: 'do a thing' },
+      createdAt: new Date().toISOString(),
+    });
+    await drainOneCreateJob(
+      store,
+      () => Promise.resolve({ boxId: 'box-created', agentStartError: 'credentials were rejected' }),
+      'w1',
+    );
+    const job = await store.getCreateJob('j2');
+    expect(job?.status).toBe('failed');
+    expect(job?.result?.boxId).toBe('box-created');
+    expect(job?.result?.error).toMatch(/credentials were rejected/);
+  });
+
   it('drains nothing when the queue is empty', async () => {
     const store = new MemoryStore();
     expect(await drainOneCreateJob(store, () => Promise.resolve({ boxId: 'x' }), 'w1')).toBeNull();
+  });
+});
+
+describe('makeControlPlaneCreateBox', () => {
+  const request: CreateJobRequest = {
+    repoUrl: 'https://github.com/acme/widgets.git',
+    provider: 'e2b',
+  };
+
+  function harness(over: Partial<CreateBoxDeps> = {}) {
+    const created: Array<Parameters<CreateBoxDeps['createBox']>[0]> = [];
+    const cleaned: string[] = [];
+    const deps: CreateBoxDeps = {
+      leaseRemoteUrl: (u) => Promise.resolve(`${u}?token`),
+      cloneRepo: () => Promise.resolve(),
+      createBox: (opts) => {
+        created.push(opts);
+        return Promise.resolve({ id: 'box-1' });
+      },
+      tmpDir: (jobId) => `/tmp/clone-${jobId}`,
+      cleanup: (dir) => {
+        cleaned.push(dir);
+        return Promise.resolve();
+      },
+      ...over,
+    };
+    return { deps, created, cleaned };
+  }
+
+  it('routes every line to the per-job logger when one is supplied', async () => {
+    const lines: string[] = [];
+    const shared: string[] = [];
+    const { deps } = harness({
+      log: (l) => shared.push(l),
+      logFor: (jobId) => (l) => lines.push(`${jobId}:${l}`),
+    });
+    await makeControlPlaneCreateBox(deps)(request, 'job-7');
+    // The hub UI streams the per-job file; nothing may fall through to the
+    // worker-wide log instead (the modal would sit blank).
+    expect(shared).toEqual([]);
+    expect(lines.every((l) => l.startsWith('job-7:'))).toBe(true);
+    expect(lines.some((l) => l.includes('cloning'))).toBe(true);
+  });
+
+  it('falls back to the worker-wide log when no per-job logger exists', async () => {
+    const shared: string[] = [];
+    const { deps } = harness({ log: (l) => shared.push(l) });
+    await makeControlPlaneCreateBox(deps)(request, 'job-8');
+    expect(shared.some((l) => l.includes('cloning'))).toBe(true);
+  });
+
+  it('passes startAgent through so a hub UI create gets a live session', async () => {
+    const { deps, created } = harness();
+    await makeControlPlaneCreateBox(deps)({ ...request, startAgent: true }, 'job-9');
+    expect(created[0]?.startAgent).toBe(true);
+  });
+
+  it('cleans up the per-job clone even when the create throws', async () => {
+    const { deps, cleaned } = harness({
+      createBox: () => Promise.reject(new Error('provider exploded')),
+    });
+    await expect(makeControlPlaneCreateBox(deps)(request, 'job-10')).rejects.toThrow(
+      'provider exploded',
+    );
+    expect(cleaned).toEqual(['/tmp/clone-job-10']);
+  });
+});
+
+describe('cloneRepoWithLfs', () => {
+  interface Call {
+    args: string[];
+    env?: Record<string, string>;
+  }
+
+  it('clones with LFS smudge skipped, fetches LFS over forced HTTPS, then scrubs the token', async () => {
+    const calls: Call[] = [];
+    const runGit = (args: string[], env?: Record<string, string>): Promise<void> => {
+      calls.push({ args, env });
+      return Promise.resolve();
+    };
+    await cloneRepoWithLfs(
+      runGit,
+      'https://x-access-token:tok@github.com/o/r.git',
+      'https://github.com/o/r.git',
+      '/tmp/d',
+      'main',
+    );
+    // 1) clone --branch with GIT_LFS_SKIP_SMUDGE so an LFS repo never hard-fails.
+    expect(calls[0]!.args).toEqual([
+      'clone',
+      '--branch',
+      'main',
+      'https://x-access-token:tok@github.com/o/r.git',
+      '/tmp/d',
+    ]);
+    expect(calls[0]!.env?.GIT_LFS_SKIP_SMUDGE).toBe('1');
+    // 2) `lfs pull` with lfs.url FORCED to the authed HTTPS endpoint (the embedded
+    //    token authenticates + dodges any insteadOf SSH rewrite).
+    expect(calls[1]!.args).toEqual([
+      '-C',
+      '/tmp/d',
+      '-c',
+      'lfs.url=https://x-access-token:tok@github.com/o/r.git/info/lfs',
+      'lfs',
+      'pull',
+    ]);
+    // 3) scrub the leased token → bare origin.
+    expect(calls[2]!.args).toEqual([
+      '-C',
+      '/tmp/d',
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/o/r.git',
+    ]);
+  });
+
+  it('still scrubs the token when the LFS pull fails (pointers left in place)', async () => {
+    const calls: Call[] = [];
+    const logs: string[] = [];
+    const runGit = (args: string[]): Promise<void> => {
+      calls.push({ args });
+      // Fail only the LFS pull (e.g. the control box can't auth the LFS transport).
+      if (args.includes('lfs')) return Promise.reject(new Error('smudge error: ssh_askpass'));
+      return Promise.resolve();
+    };
+    await cloneRepoWithLfs(runGit, 'authed', 'bare', '/tmp/d', undefined, (l) => logs.push(l));
+    // clone (no --branch), lfs pull (failed), set-url still ran.
+    expect(calls[0]!.args).toEqual(['clone', 'authed', '/tmp/d']);
+    expect(calls[2]!.args).toEqual(['-C', '/tmp/d', 'remote', 'set-url', 'origin', 'bare']);
+    expect(logs.join('\n')).toMatch(/pointers/i);
   });
 });

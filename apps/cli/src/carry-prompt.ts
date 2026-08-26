@@ -81,9 +81,11 @@ function printSummary(entries: ResolvedCarryEntry[]): void {
     else if (e.optional) flags.push('optional');
     if (e.kind === 'dir') flags.push('dir');
     if (e.mode !== undefined) flags.push(`mode ${e.mode.toString(8).padStart(4, '0')}`);
-    // Default user is 1000 (vscode); only show in flags when explicitly set
-    // to something else, to keep the table calm in the common case.
-    if (e.user !== undefined && e.user !== 1000) flags.push(`user ${String(e.user)}`);
+    // Unset means "the box user", which is the calm common case and needs no
+    // flag. Any explicit `user:` is an override worth seeing at the gate —
+    // including `user: 1000`, which now pins a literal uid rather than
+    // restating the default.
+    if (e.user !== undefined) flags.push(`user ${String(e.user)}`);
     if (e.symlinkInfo === 'outside-home') flags.push('symlink → outside $HOME!');
     const size = e.kind === 'missing' ? '—' : fmtBytes(e.bytes ?? 0);
     rows.push(

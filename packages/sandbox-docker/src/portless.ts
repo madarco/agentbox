@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { connect } from 'node:net';
 import { execa } from 'execa';
 import type { CheckResult } from '@agentbox/sandbox-core';
 
@@ -25,9 +26,11 @@ import type { CheckResult } from '@agentbox/sandbox-core';
  * canonical home; we can't move it the other way without cycle-fixing
  * package.json wiring.
  *
- * Portless is user-installed; AgentBox never bundles, installs, or starts
- * it — every function here is best-effort and must never throw: a Portless
- * failure degrades to the loopback URL.
+ * Portless is never bundled: AgentBox installs it and starts a proxy only on
+ * the user's behalf — an explicit opt-in, or on demand once they have opted in
+ * (`ensurePortlessProxy`, because a proxy does not survive a reboot while its
+ * route registry does). Every function here is best-effort and must never
+ * throw: a Portless failure degrades to the loopback URL.
  */
 
 /**
@@ -39,6 +42,23 @@ const SUB_VERSION = ['--version'];
 const SUB_ALIAS = 'alias';
 const SUB_ALIAS_REMOVE = '--remove';
 const SUB_GET = 'get';
+const SUB_SERVICE_INSTALL = ['service', 'install'];
+const SUB_SERVICE_STATUS = ['service', 'status'];
+const SUB_SERVICE_UNINSTALL = ['service', 'uninstall'];
+
+/**
+ * Throwaway route name used only to ask Portless which scheme/port it serves on.
+ * `portless get` answers for any name, registered or not, so this needs no
+ * cleanup and never appears in `portless list`.
+ */
+const PORTLESS_PROBE_NAME = 'agentbox-probe';
+
+/**
+ * Where Portless installs its macOS OS-startup service. Only used as a fallback
+ * when `portless service status` output can't be parsed — the CLI prints this
+ * exact path as "Service entry" (portless 0.13.0).
+ */
+const PORTLESS_LAUNCHD_PLIST = '/Library/LaunchDaemons/sh.portless.proxy.plist';
 
 /**
  * Port AgentBox starts the Portless proxy on when it sets one up itself.
@@ -58,6 +78,12 @@ export interface PortlessState {
    * `false` also covers "could not tell".
    */
   proxyRunning: boolean;
+}
+
+/** Whether Portless's own OS-startup service is installed (`portless service`). */
+export interface PortlessServiceState {
+  /** A boot-time service is registered, so the proxy comes back after a reboot. */
+  installed: boolean;
 }
 
 let cached: PortlessState | null = null;
@@ -118,21 +144,40 @@ export async function portlessUnalias(name: string): Promise<boolean> {
   }
 }
 
+/** Compose the URL a static route named `name` is served at, given the proxy mode. */
+function composePortlessUrl(name: string, mode: { port: number; tls: boolean }): string {
+  const scheme = mode.tls ? 'https' : 'http';
+  const isDefaultPort = mode.tls ? mode.port === 443 : mode.port === 80;
+  return `${scheme}://${name}.localhost${isDefaultPort ? '' : `:${String(mode.port)}`}`;
+}
+
 /**
  * Resolve the user-facing URL for a registered route. Falls back to the
  * deterministic `https://<name>.localhost` when `portless get` is unavailable
  * (proxy down, route not yet registered, Portless missing).
+ *
+ * `portless get` is **cwd-sensitive**: run from inside a git worktree it answers
+ * with the worktree-scoped name it would give a dev server started there
+ * (`https://<worktree>.<name>.localhost`), which is not the route
+ * `portless alias` registered. AgentBox always asks about a static alias, so an
+ * answer naming a different host is discarded and the URL is composed from the
+ * proxy's actual scheme/port instead — otherwise the URL a box (or the hub) is
+ * advertised on would depend on which directory the command ran from.
  */
 export async function portlessGetUrl(name: string): Promise<string> {
-  const fallback = `https://${name}.localhost`;
+  const expectedHost = `${name}.localhost`;
   try {
     const r = await execa(PORTLESS_BIN, [SUB_GET, name], { reject: false });
     const out = (r.stdout ?? '').trim();
-    if (r.exitCode === 0 && /^https?:\/\//.test(out)) return out;
+    if (r.exitCode === 0 && /^https?:\/\//.test(out)) {
+      const host = new URL(out).hostname;
+      if (host === expectedHost) return out;
+    }
   } catch {
     // fall through
   }
-  return fallback;
+  const mode = await portlessConfiguredMode();
+  return mode === null ? `https://${expectedHost}` : composePortlessUrl(name, mode);
 }
 
 /** Command the user should run to install Portless. */
@@ -146,6 +191,15 @@ export function portlessStartHint(): string {
 }
 
 /**
+ * Command that makes the proxy survive a reboot. A manually started proxy dies
+ * with the machine and nothing brings it back, which is the whole reason this
+ * hint exists separately from `portlessStartHint`.
+ */
+export function portlessServiceHint(): string {
+  return 'agentbox install portless';
+}
+
+/**
  * A `doctor` row (see `@agentbox/sandbox-core`'s `CheckResult`) for a provider
  * that benefits from a host Portless proxy — docker on plain Docker Desktop /
  * Linux engine (OrbStack serves `.orb.local` natively, so its `doctorChecks`
@@ -153,7 +207,10 @@ export function portlessStartHint(): string {
  * `<box>.localhost` alias with host Portless). Pure — the caller passes the
  * already-probed state so this stays offline and testable.
  */
-export function portlessDoctorRow(state: PortlessState): CheckResult {
+export function portlessDoctorRow(
+  state: PortlessState,
+  service?: PortlessServiceState,
+): CheckResult {
   if (!state.installed) {
     return {
       label: 'portless',
@@ -167,14 +224,23 @@ export function portlessDoctorRow(state: PortlessState): CheckResult {
       label: 'portless',
       status: 'warn',
       detail: 'installed, proxy not running',
-      hint: `start it: \`${portlessStartHint()}\``,
+      // The OS service is the hint that actually sticks: `proxy start` has to be
+      // re-run after every reboot, which is how a host ends up here in the first
+      // place. AgentBox also starts a proxy on demand, so this is a nudge, not a
+      // blocker.
+      hint: `make it permanent: \`${portlessServiceHint()}\` (or one-shot: \`${portlessStartHint()}\`)`,
     };
   }
-  return {
-    label: 'portless',
-    status: 'ok',
-    detail: state.version ? `running · v${state.version}` : 'running',
-  };
+  const running = state.version ? `running · v${state.version}` : 'running';
+  if (service?.installed === false) {
+    return {
+      label: 'portless',
+      status: 'ok',
+      detail: `${running} · no OS service (won't survive a reboot)`,
+      hint: `optional: \`${portlessServiceHint()}\` to start it at boot`,
+    };
+  }
+  return { label: 'portless', status: 'ok', detail: running };
 }
 
 export interface PortlessBrowserEnvOptions {
@@ -221,18 +287,20 @@ export async function installPortless(): Promise<boolean> {
 }
 
 /**
- * Start a Portless proxy with no TLS on the no-root port (`PORTLESS_PROXY_PORT`)
- * — `portless proxy start --no-tls -p <port>`. No sudo, no CA-trust prompt.
- * Idempotent: Portless reports "already running" (exit 0) if one is already up.
- * Never throws.
+ * Start a Portless proxy with no TLS on a no-root port (`PORTLESS_PROXY_PORT` by
+ * default) — `portless proxy start --no-tls -p <port>`. No sudo, no CA-trust
+ * prompt. Idempotent: Portless reports "already running" (exit 0) if one is
+ * already up. Never throws.
+ *
+ * `port` exists so a restart lands on the port this host is *already* configured
+ * for: switching ports rewrites every `<box>.localhost` URL, which is exactly
+ * what must not happen behind the user's back (see `ensurePortlessProxy`).
  */
-export async function startPortlessProxy(): Promise<boolean> {
+export async function startPortlessProxy(port: number = PORTLESS_PROXY_PORT): Promise<boolean> {
   try {
-    const r = await execa(
-      PORTLESS_BIN,
-      ['proxy', 'start', '--no-tls', '-p', String(PORTLESS_PROXY_PORT)],
-      { reject: false },
-    );
+    const r = await execa(PORTLESS_BIN, ['proxy', 'start', '--no-tls', '-p', String(port)], {
+      reject: false,
+    });
     return r.exitCode === 0;
   } catch {
     return false;
@@ -319,6 +387,158 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
 }
 
 /**
+ * Whether Portless's OS-startup service is installed — the only thing that
+ * brings the proxy back after a reboot. Parses `portless service status`, whose
+ * output carries an `Installed: yes|no` line (portless 0.13.0); if that shape
+ * ever changes, fall back to the macOS LaunchDaemon path the same command
+ * prints. Never throws — an unreadable status reads as "not installed", which
+ * only costs the user an extra nudge.
+ */
+export async function portlessServiceStatus(): Promise<PortlessServiceState> {
+  try {
+    const r = await execa(PORTLESS_BIN, SUB_SERVICE_STATUS, { reject: false });
+    const m = /^\s*Installed:\s*(yes|no)\s*$/im.exec(r.stdout ?? '');
+    if (m) return { installed: m[1]?.toLowerCase() === 'yes' };
+  } catch {
+    // fall through to the filesystem probe
+  }
+  if (process.platform === 'darwin') return { installed: existsSync(PORTLESS_LAUNCHD_PLIST) };
+  return { installed: false };
+}
+
+/**
+ * Install Portless's OS-startup service (`portless service install`) so the
+ * proxy is up after every reboot, and trust its CA. Needs root — same elevation
+ * shape as `startPortlessProxyRoot`, so the user is asked for a password once.
+ *
+ * Note the service runs Portless's *default* mode: HTTPS on :443. A host that
+ * was on the no-root `:1355` proxy therefore moves to clean `https://<box>.localhost`
+ * URLs. AgentBox re-resolves every URL through `portless get`, so that is a
+ * display change rather than breakage — but it is user-visible, so callers
+ * should say so before prompting.
+ */
+export async function installPortlessService(): Promise<RootProxyStartResult> {
+  const bin = await resolvePortlessBin();
+  try {
+    if (process.platform === 'darwin') {
+      const q = shellSingleQuote(bin);
+      const shellCmd = `${q} ${SUB_SERVICE_INSTALL.join(' ')} && ${q} trust`;
+      const script =
+        `do shell script "${escapeForAppleScript(shellCmd)}" ` +
+        `with administrator privileges ` +
+        `with prompt "AgentBox wants to start the Portless proxy at login."`;
+      const r = await execa('osascript', ['-e', script], { reject: false });
+      if (r.exitCode === 0) return 'started';
+      if (/User canceled|-128/i.test(r.stderr ?? '')) return 'cancelled';
+      return 'failed';
+    }
+    const r = await execa(bin, SUB_SERVICE_INSTALL, { reject: false, stdio: 'inherit' });
+    if (r.exitCode !== 0) return 'failed';
+    await execa(bin, ['trust'], { reject: false, stdio: 'inherit' });
+    return 'started';
+  } catch {
+    return 'failed';
+  }
+}
+
+/** Remove the OS-startup service. Never throws. */
+export async function uninstallPortlessService(): Promise<boolean> {
+  const bin = await resolvePortlessBin();
+  try {
+    if (process.platform === 'darwin') {
+      const shellCmd = `${shellSingleQuote(bin)} ${SUB_SERVICE_UNINSTALL.join(' ')}`;
+      const script =
+        `do shell script "${escapeForAppleScript(shellCmd)}" with administrator privileges ` +
+        `with prompt "AgentBox wants to remove the Portless startup service."`;
+      const r = await execa('osascript', ['-e', script], { reject: false });
+      return r.exitCode === 0;
+    }
+    const r = await execa(bin, SUB_SERVICE_UNINSTALL, { reject: false, stdio: 'inherit' });
+    return r.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The proxy mode this host is already configured for, or null when Portless has
+ * never served anything here. Read from `portless get` (the persisted route
+ * registry), so it survives the proxy dying — which is the whole point: it tells
+ * us which mode to put *back*.
+ */
+export async function portlessConfiguredMode(): Promise<{ port: number; tls: boolean } | null> {
+  try {
+    const r = await execa(PORTLESS_BIN, [SUB_GET, PORTLESS_PROBE_NAME], { reject: false });
+    const out = (r.stdout ?? '').trim();
+    if (r.exitCode !== 0 || !/^https?:\/\//.test(out)) return null;
+    const u = new URL(out);
+    const tls = u.protocol === 'https:';
+    const port = u.port ? Number.parseInt(u.port, 10) : tls ? 443 : 80;
+    return Number.isFinite(port) ? { port, tls } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ports below 1024 can only be bound by root. */
+function needsRoot(port: number): boolean {
+  return port < 1024;
+}
+
+/**
+ * Make sure a Portless proxy is actually live, starting one if it isn't, and
+ * return the resulting state.
+ *
+ * This exists because a proxy is not durable state: it dies on reboot, and
+ * nothing (short of the OS service) brings it back — while the route registry
+ * *is* durable, so `portless get` keeps answering with a URL that resolves to
+ * nothing. Every AgentBox entry point that is about to hand out a
+ * `<name>.localhost` URL should call this first.
+ *
+ * **It restarts the mode the host is already configured for, and never switches
+ * modes on its own.** The scheme and port are part of the URL, and that URL is
+ * shared: a cloud box mirrors the host proxy's mode inside the box, and
+ * `agentbox.yaml` / env templates written against `{{AGENTBOX_BOX_HOST}}` spell
+ * `https://<box>.localhost` by hand. Quietly coming back on `--no-tls -p 1355`
+ * would leave the host serving one URL while the box, and everything written
+ * against it, still expects another — the exact symmetry this integration exists
+ * to provide.
+ *
+ * So when the configured mode needs root (:443, the clean HTTPS default) and we
+ * are not allowed to ask for a password, this starts nothing and reports the
+ * proxy as down; the caller points the user at `agentbox install portless`,
+ * which fixes it permanently and without a prompt from then on. Never throws.
+ */
+export async function ensurePortlessProxy(
+  opts: { allowRootPrompt?: boolean } = {},
+): Promise<PortlessState> {
+  let state = await detectPortless();
+  if (!state.installed || state.proxyRunning) return state;
+
+  const mode = await portlessConfiguredMode();
+  // Nothing configured yet (a host that has never run a proxy): the clean
+  // HTTPS :443 mode is the one to aim for, same as the first-run opt-in.
+  const wantsRoot = mode === null || needsRoot(mode.port);
+
+  if (wantsRoot) {
+    if (opts.allowRootPrompt !== true) return state; // caller warns; no silent downgrade
+    await startPortlessProxyRoot();
+    resetPortlessCache();
+    state = await detectPortless();
+    if (state.proxyRunning) return state;
+    // Elevation refused or failed. Falling back to the no-root port is a mode
+    // *change*, so it is only acceptable here: an interactive caller who has
+    // just been told what is happening, on a host with no live URLs to break.
+  }
+
+  await startPortlessProxy(
+    mode !== null && !needsRoot(mode.port) ? mode.port : PORTLESS_PROXY_PORT,
+  );
+  resetPortlessCache();
+  return detectPortless();
+}
+
+/**
  * Candidate Portless state directories. `$PORTLESS_STATE_DIR` wins outright;
  * otherwise Portless keeps state in `~/.portless` — even for the root :443
  * proxy, whose `proxy.pid` there stays owned by the invoking user (verified
@@ -393,17 +613,48 @@ export async function resolvePortlessHostStateDir(override?: string): Promise<st
   return home;
 }
 
+/** Whether something accepts a TCP connection on 127.0.0.1:<port>. */
+async function tcpAccepts(port: number, timeoutMs = 400): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    const done = (result: boolean): void => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => {
+      done(true);
+    });
+    socket.once('timeout', () => {
+      done(false);
+    });
+    socket.once('error', () => {
+      done(false);
+    });
+  });
+}
+
 /**
- * Best-effort: is a Portless proxy currently running on the host. A daemonized
- * proxy writes a live `proxy.pid`, but a `--foreground` proxy (and some daemon
- * modes) does not — so we also scan the process table. Either signal counts.
+ * Best-effort: is a Portless proxy currently *serving* on this host.
+ *
+ * Two signals, both about the running process rather than the persisted config
+ * (which survives reboots and would otherwise report a proxy that is long gone):
+ *   1. a live `proxy.pid` in a Portless state dir — cheap and authoritative for
+ *      a daemonized proxy;
+ *   2. something accepting TCP on the port Portless is configured to serve —
+ *      covers a `--foreground` proxy, which writes no pid file.
+ *
+ * This deliberately does NOT scan the process table. `pgrep -f "portless proxy"`
+ * matches any command line that merely *contains* that phrase — a shell that ran
+ * the command, an editor, a script, an agent transcript — so it reported a live
+ * proxy on hosts that had none. Every "is it up?" decision here (start one or
+ * not, advertise the URL or not) inverts on that answer, so a false positive is
+ * worse than a missed detection: it is what leaves a user with `.localhost` URLs
+ * that resolve to nothing.
  */
 async function isProxyRunning(): Promise<boolean> {
   if ((await findLivePortlessStateDir()) !== null) return true;
-  try {
-    const r = await execa('pgrep', ['-f', 'portless proxy'], { reject: false });
-    return r.exitCode === 0 && (r.stdout ?? '').trim().length > 0;
-  } catch {
-    return false;
-  }
+  const mode = await portlessConfiguredMode();
+  if (mode === null) return false;
+  return tcpAccepts(mode.port);
 }

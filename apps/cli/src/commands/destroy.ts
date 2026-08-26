@@ -1,17 +1,40 @@
 import { confirm, log } from '../lib/prompt.js';
 import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
-import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
-import { destroyBox, portlessUnalias } from '@agentbox/sandbox-docker';
+import {
+  readState,
+  removeBoxRecord,
+  resolveBoxRef,
+  syncAgentboxSshConfig,
+} from '@agentbox/sandbox-core';
+import { portlessUnalias } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { providerForBox } from '../provider/registry.js';
-import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { boxOwningHubIsLocal, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface DestroyOptions {
   yes?: boolean;
   keepSnapshot?: boolean;
+  force?: boolean;
+}
+
+/** What to do after the hub attempt(s), given whether a hub reaped the box. */
+export type DestroyDecision = 'aborted' | 'reap-cleanup' | 'refused' | 'force-cleanup';
+
+/**
+ * The safety invariant, isolated + unit-tested: this machine's local record is
+ * dropped ONLY when a hub actually reaped the box (`reaped`) or the user forced it
+ * (`--force`). A bare `not-found` (no hub owned the box) must NEVER drop the
+ * record — it would delete the only handle to a possibly-still-running resource.
+ */
+export function decideDestroy(
+  outcome: 'reaped' | 'not-found' | undefined,
+  force: boolean,
+): DestroyDecision {
+  if (outcome === undefined) return 'aborted'; // hub error; exit code already set
+  if (outcome === 'reaped') return 'reap-cleanup';
+  return force ? 'force-cleanup' : 'refused';
 }
 
 /**
@@ -55,12 +78,17 @@ export const destroyCommand = new Command('destroy')
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--keep-snapshot', "don't delete the snapshot dir under ~/.agentbox/snapshots/")
+  .option(
+    '--force',
+    'drop the local record even if no hub owned the box (use only when you are sure the underlying resource is already gone)',
+  )
   .action(async (idOrName: string | undefined, opts: DestroyOptions) => {
     try {
       // Resolve-by-container fallback: an explicit ref that matches no state
       // record may still be a live orphan container (create died before
       // recordBox, or its record was lost). Try to clean it up directly
-      // instead of failing with "no agentbox matches".
+      // instead of failing with "no agentbox matches". This is local docker
+      // recovery — the hub can't drive a box that was never registered.
       if (idOrName !== undefined) {
         const project = await findProjectRoot(process.cwd());
         const hit = resolveBoxRef(idOrName, await readState(), project.root);
@@ -95,36 +123,54 @@ export const destroyCommand = new Command('destroy')
         }
       }
 
-      // Docker boxes still use the rich `destroyBox` path so the user sees
-      // container/volume/snapshot accounting. Cloud boxes go through the
-      // provider's `destroy`, which deletes the remote sandbox and removes
-      // the local record but has no Docker-shaped output to enumerate.
+      // The hub's destroy route tears down the provider resource AND reaps the
+      // store/custody registration (`hub-backend.ts`), so this is one call in both
+      // modes — no separate control-box reap. `keepSnapshot` travels on the body.
+      // `withOwningHub` runs it against the hub that OWNS the box (local for
+      // docker/remote-docker, configured for cloud) and retries the other distinct
+      // hub on `not_found` — so a bare `not_found` never drops a record no hub owns.
       const providerName = box.provider ?? 'docker';
-      if (providerName === 'docker') {
-        const result = await destroyBox(box.id, { keepSnapshot: opts.keepSnapshot });
-        const out: string[] = [`destroyed ${result.record.container}`];
-        if (result.removedContainer) out.push('  ✓ container removed');
-        out.push(`  ✓ volumes removed: ${result.removedVolumes.join(', ')}`);
-        if (result.removedSnapshot) out.push(`  ✓ snapshot removed: ${result.removedSnapshot}`);
-        else if (box.snapshotDir && opts.keepSnapshot) {
-          out.push(`  · snapshot kept: ${box.snapshotDir}`);
-        }
-        process.stdout.write(out.join('\n') + '\n');
-      } else {
-        const provider = await providerForBox(box);
-        await provider.destroy(box);
-        // Best-effort: regenerate `~/.agentbox/ssh/config` now the box is gone
-        // from state, dropping its `Host` block. A file failure shouldn't block
-        // destroy.
-        try {
-          await syncAgentboxSshConfig();
-        } catch {
-          /* best-effort */
-        }
-        process.stdout.write(
-          `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
+      const r = await withOwningHub(box, (client) =>
+        client.destroy(box.id, { keepSnapshot: opts.keepSnapshot }),
+      );
+      const outcome = r === undefined ? undefined : r === 'ok' ? 'reaped' : 'not-found';
+      const decision = decideDestroy(outcome, opts.force === true);
+      if (decision === 'aborted') return; // withHubClient reported + set the exit code
+
+      if (decision === 'refused') {
+        // No hub AgentBox knows about owns this box. Dropping the local record now
+        // would delete the only handle to a possibly-still-running container/VM, so
+        // refuse and tell the user how to drop the record deliberately.
+        log.error(
+          `Box ${box.name} was not found on any hub AgentBox knows — its ${providerName} ` +
+            `resource may still be running, so its local record was kept.`,
+        );
+        log.info(
+          `If you're certain the ${providerName} resource is already gone, drop the stale record with ` +
+            `\`agentbox destroy ${box.name} --force\`.`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      if (decision === 'force-cleanup') {
+        log.warn(
+          `--force: no hub owned ${box.name}; dropping its local record WITHOUT a confirmed teardown.`,
         );
       }
+
+      // A hub reaped the box (or --force). Client-side cleanup: the laptop keeps an
+      // adopted `BoxRecord` + ssh alias for the direct IO plane, and the route only
+      // cleaned the HUB's copy of the state (its own machine's, which for a remote
+      // hub is the control box). Drop this machine's copy too. A no-op when the hub
+      // is co-located (the route already removed the shared record). Best-effort.
+      await removeBoxRecord(box.id).catch(() => {});
+      await syncAgentboxSshConfig().catch(() => {});
+
+      process.stdout.write(
+        boxOwningHubIsLocal(box)
+          ? `destroyed ${box.container ?? box.name}\n`
+          : `destroyed ${box.name} (${providerName} sandbox ${box.cloud?.sandboxId ?? '<unknown>'})\n`,
+      );
     } catch (err) {
       handleLifecycleError(err);
     }

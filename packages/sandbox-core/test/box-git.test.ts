@@ -6,6 +6,7 @@ import {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  boxLogsArgv,
   boxRestartServices,
   scratchBranchName,
   servicesStatusArgv,
@@ -80,7 +81,10 @@ describe('boxGitPush', () => {
       '--force',
     ]);
     // The minted token is bound to exactly the params ctl will send.
-    expect(seen[0]).toEqual({ method: 'git.push', params: { path: '/workspace', remote: 'origin', args: ['--force'] } });
+    expect(seen[0]).toEqual({
+      method: 'git.push',
+      params: { path: '/workspace', remote: 'origin', args: ['--force'] },
+    });
   });
 
   it('works with no deps (no token) for scratch pushes', async () => {
@@ -106,7 +110,10 @@ describe('boxGitPull', () => {
       },
     );
     expect(calls[0]).toEqual(['agentbox-ctl', 'git', 'pull', '--remote', 'upstream', '--ff-only']);
-    expect(seen[0]).toEqual({ method: 'git.fetch', params: { path: '/workspace', remote: 'upstream' } });
+    expect(seen[0]).toEqual({
+      method: 'git.fetch',
+      params: { path: '/workspace', remote: 'upstream' },
+    });
   });
 });
 
@@ -114,7 +121,15 @@ describe('boxGitPushHost', () => {
   it('uses --host-only and never mints a token', async () => {
     const { provider, calls } = recorder();
     await boxGitPushHost(provider, box, { as: 'saved', force: true });
-    expect(calls[0]).toEqual(['agentbox-ctl', 'git', 'push', '--host-only', '--as', 'saved', '--force']);
+    expect(calls[0]).toEqual([
+      'agentbox-ctl',
+      'git',
+      'push',
+      '--host-only',
+      '--as',
+      'saved',
+      '--force',
+    ]);
   });
 });
 
@@ -131,5 +146,23 @@ describe('services control', () => {
       ['agentbox-ctl', 'restart', 'db'],
     ]);
     expect(out.map((r) => r.name)).toEqual(['web', 'db']);
+  });
+
+  it('boxLogsArgv builds the ctl logs tail, adding --follow only when asked', () => {
+    expect(boxLogsArgv('web', { tail: 200 })).toEqual([
+      'agentbox-ctl',
+      'logs',
+      'web',
+      '--tail',
+      '200',
+    ]);
+    expect(boxLogsArgv('web', { tail: 50, follow: true })).toEqual([
+      'agentbox-ctl',
+      'logs',
+      'web',
+      '--tail',
+      '50',
+      '--follow',
+    ]);
   });
 });

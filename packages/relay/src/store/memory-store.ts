@@ -87,6 +87,10 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  listStatuses(): Promise<Array<{ boxId: string; status: BoxStatusSnapshot }>> {
+    return Promise.resolve(this.statusStore.list());
+  }
+
   createPrompt(row: PromptRow): Promise<void> {
     this.prompts.set(row.id, { ...row });
     return Promise.resolve();
@@ -128,6 +132,18 @@ export class MemoryStore implements Store {
   getCreateJob(id: string): Promise<CreateJobRow | null> {
     const job = this.createJobs.get(id);
     return Promise.resolve(job ? { ...job } : null);
+  }
+
+  listCreateJobs(opts?: {
+    limit?: number;
+    status?: Array<CreateJobRow['status']>;
+  }): Promise<CreateJobRow[]> {
+    const wanted = opts?.status;
+    const rows = [...this.createJobs.values()]
+      .filter((j) => !wanted || wanted.includes(j.status))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((j) => ({ ...j }));
+    return Promise.resolve(opts?.limit ? rows.slice(0, opts.limit) : rows);
   }
 
   claimNextCreateJob(workerId: string): Promise<CreateJobRow | null> {

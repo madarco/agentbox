@@ -1,5 +1,5 @@
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import type { GitPushMode } from '@agentbox/config';
+import type { GitPushMode, HubGitAuthMode } from '@agentbox/config';
 import { bashScript, quoteShellArgv } from './shell.js';
 
 /**
@@ -62,6 +62,16 @@ export interface KickCloudBootstrapArgs {
    * or auto-with-control-plane) writes `AGENTBOX_GIT_LEASE=1`. Omitted = `auto`.
    */
   gitPushMode?: GitPushMode;
+  /**
+   * How the box's hub authenticates to GitHub (`hub.gitAuth`). Only consulted by
+   * the `auto` push mode: a hub in `app` mode can hand out installation tokens,
+   * so the box leases and pushes for itself; a hub in `gh` mode holds a plain
+   * token it must never hand out, so the box routes through the relay's bundle
+   * path instead and receives no credential at all.
+   *
+   * Omitted = `gh`, matching the config default.
+   */
+  hubGitAuth?: HubGitAuthMode;
   onLog?: (line: string) => void;
 }
 
@@ -129,9 +139,16 @@ export function buildBootstrapEnv(args: KickCloudBootstrapArgs): {
 
   // Git push routing (git.pushMode). The login-shell `git push` leases + pushes
   // direct only when this flag is set; otherwise it routes through the host relay.
-  // `auto` (default) leases iff a control plane is configured for the box.
+  //
+  // `auto` leases only when the box's hub can actually mint a per-box token —
+  // i.e. it runs a GitHub App. A `gh`-mode hub holds one broad token that must
+  // never enter a box, so `auto` there means relay: the box asks the hub to push
+  // and receives no credential. (Explicit `lease` still forces leasing, which is
+  // how an App-mode hub keeps today's behavior after this default flipped.)
   const pushMode = args.gitPushMode ?? 'auto';
-  const lease = pushMode === 'lease' || (pushMode === 'auto' && Boolean(args.controlPlaneUrl));
+  const hubLeases = (args.hubGitAuth ?? 'gh') === 'app';
+  const lease =
+    pushMode === 'lease' || (pushMode === 'auto' && Boolean(args.controlPlaneUrl) && hubLeases);
   if (lease) {
     boxEnvFile.push(`AGENTBOX_GIT_LEASE=1`);
   }

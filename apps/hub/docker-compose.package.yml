@@ -1,0 +1,18 @@
+# Overlay that switches the control box from "clone + build this monorepo" to
+# "install the published @madarco/agentbox". Layered on the SAME docker-compose.yml
+# the source path uses, so the service's environment/volumes/ports block has one
+# definition and cannot drift between the two modes:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.package.yml \
+#                  -f docker-compose.caddy.yml up -d --build
+#
+# Compose merges `build:` sub-keys, so this replaces the base's
+# `context: ../..` + `dockerfile: apps/hub/Dockerfile` outright. Both files are
+# scp'd into the same directory, so `context: .` is that directory.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.package
+      args:
+        AGENTBOX_SPEC: ${AGENTBOX_SPEC:?set AGENTBOX_SPEC to the npm spec to install}

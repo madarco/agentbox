@@ -3,7 +3,10 @@ title: Quickstart
 description: Spin up your first isolated agent box and launch Claude Code inside it — from a single terminal command. This guide takes about three minutes end to end.
 ---
 
-<Figure src="/screenshots/agentbox-ls.png" caption="agentbox ls — every box for the project at a glance: one per agent run, across local Docker and the cloud, each with its agent's live state." />
+<Figure
+  src="/screenshots/agentbox-ls.png"
+  caption="agentbox ls — every box for the project at a glance: one per agent run, across local Docker and the cloud, each with its agent's live state."
+/>
 
 <div className="agb-doc-meta">
   <span>Updated 2026</span>
@@ -47,8 +50,8 @@ to make that provider the **default for new boxes** — say yes and a plain
 `agentbox claude` goes there, with no `--provider` flag or provider prefix.
 
 <Callout title="NOTE">
-  You can run `agentbox install` again at any time to add more providers — each
-  run only logs in and builds the base image for the providers you pick.
+  You can run `agentbox install` again at any time to add more providers — each run only logs in and
+  builds the base image for the providers you pick.
 </Callout>
 
 ## Launch your first box
@@ -127,16 +130,16 @@ list.
 | `Ctrl+a s` | Open a screen sharing of the box browser shared with your agent        |
 | `Ctrl+a c` | Attach to the VSCode server running inside the box                     |
 | `Ctrl+a t` | Open a fresh shell in the same box, in a new tab                       |
-| `Ctrl+a k` | Destroy the box (asks to confirm)                                     |
+| `Ctrl+a k` | Destroy the box (asks to confirm)                                      |
 
-| Command                            | What it does                                                            |
-| ---------------------------------- | ----------------------------------------------------------------------- |
-| `agentbox list`                    | List every box in the current project with its agent's live state.      |
+| Command                            | What it does                                                                |
+| ---------------------------------- | --------------------------------------------------------------------------- |
+| `agentbox list`                    | List every box in the current project with its agent's live state.          |
 | `agentbox attach 1`                | Reattach to the running agent session on box 1 (claude / codex / opencode). |
-| `agentbox shell 1`                 | Open an interactive bash shell inside the box.                          |
-| `agentbox url`                     | Open the box's web app URL in your browser.                             |
-| `agentbox pause 1`                 | Freeze the box to save resources — resumes sub-second.                  |
-| `agentbox destroy <N or box name>` | Tear down the box and discard its upper volume.                         |
+| `agentbox shell 1`                 | Open an interactive bash shell inside the box.                              |
+| `agentbox url`                     | Open the box's web app URL in your browser.                                 |
+| `agentbox pause 1`                 | Freeze the box to save resources — resumes sub-second.                      |
+| `agentbox destroy <N or box name>` | Tear down the box and discard its upper volume.                             |
 
 Want to run the same agent on a cloud provider instead? Prefix the command with the
 provider name — for example `agentbox hetzner claude`. See [Hetzner](/docs/hetzner)

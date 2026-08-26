@@ -23,7 +23,9 @@ $ agent-browser open --headed https://example.com
 `--headed` matters: `agent-browser` defaults to headless, which renders nothing on the VNC display.
 
 <Callout title="TIP">
-The agent calls `agent-browser` itself — you don't have to. Sessions, auth, and cookies persist under `~/.agent-browser/`, surviving `pause`/`unpause` and `stop`/`start`, and are only wiped on `agentbox destroy`.
+  The agent calls `agent-browser` itself — you don't have to. Sessions, auth, and cookies persist
+  under `~/.agent-browser/`, surviving `pause`/`unpause` and `stop`/`start`, and are only wiped on
+  `agentbox destroy`.
 </Callout>
 
 ## Playwright
@@ -44,7 +46,7 @@ Every box runs a noVNC desktop. `agentbox screen <box>` opens that viewer in you
 agentbox screen mybox
 ```
 
-`screen` is distinct from [`agentbox url`](/docs/web-apps-and-tunnels): `url` opens the box's web *app*; `screen` opens the *desktop* viewer. See [CLI commands](/docs/cli) for all flags (`--print`, `--loopback`, `--ttl`).
+`screen` is distinct from [`agentbox url`](/docs/web-apps-and-tunnels): `url` opens the box's web _app_; `screen` opens the _desktop_ viewer. See [CLI commands](/docs/cli) for all flags (`--print`, `--loopback`, `--ttl`).
 
 Opt out at create time with `--no-vnc`:
 
@@ -53,17 +55,22 @@ agentbox create --no-vnc
 ```
 
 <Callout type="warn" title="HEADS UP">
-`--no-vnc` disables the desktop for the box's whole lifetime — `agentbox screen` then refuses with a "VNC is disabled" message. Recreate the box to re-enable it.
+  `--no-vnc` disables the desktop for the box's whole lifetime — `agentbox screen` then refuses with
+  a "VNC is disabled" message. Recreate the box to re-enable it.
 </Callout>
 
 {/* SCREENSHOT /screenshots/novnc-desktop.png — REPRO: agentbox screen <box> --print to get the noVNC URL (https://<box>.localhost/vnc.html?autoconnect=1&password=...), open it in a headless browser, wait for the canvas to connect, screenshot the ~1044x800 canvas, then wrap that capture in a fake browser chrome (browser-in-browser). Full recipe in apps/web/images.md → Phase A. */}
-<Figure src="/screenshots/novnc-desktop.png" caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown." />
+
+<Figure
+  src="/screenshots/novnc-desktop.png"
+  caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown."
+/>
 
 This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL.
 
 ## Screen sharing
 
-`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed Chromium *inside* the box pointed at the box's own web app — so you see the app rendered in the VNC desktop, not a blank X screen.
+`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed Chromium _inside_ the box pointed at the box's own web app — so you see the app rendered in the VNC desktop, not a blank X screen.
 
 It's idempotent: if a browser session is already active (the agent is mid-task), `screen` leaves it untouched and never navigates the agent's page away.
 
@@ -77,7 +84,7 @@ The most useful part is one origin from both sides: the in-box Chromium loads th
 From [`agentbox dashboard`](/docs/background-and-parallel), the same two actions are chords on the selected box: `Ctrl-a s` (screen — noVNC viewer + in-box browser) and `Ctrl-a u` (url — web app host-side). They shell out to `agentbox screen` / `agentbox url`, inheriting the same Portless behavior.
 
 <Callout title="TIP">
-Run `agentbox screen` while the agent is working and you'll see exactly what its browser sees.
+  Run `agentbox screen` while the agent is working and you'll see exactly what its browser sees.
 </Callout>
 
 The `expose:` service that makes the web app reachable is covered in [services-and-tasks](/docs/services-and-tasks).

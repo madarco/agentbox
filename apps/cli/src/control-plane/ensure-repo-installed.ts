@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import type { GitPushMode } from '@agentbox/config';
+import type { GitPushMode, HubGitAuthMode } from '@agentbox/config';
 import { GitHubAppLeaser, loadGitHubAppConfig, parseGitRemote } from '@agentbox/relay';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
 
@@ -130,6 +130,7 @@ function writeReposState(state: ReposState): void {
 export async function ensureProjectRepoOnControlPlane(args: {
   controlPlaneUrl: string | undefined;
   gitPushMode?: GitPushMode;
+  hubGitAuth?: HubGitAuthMode;
   projectRoot: string;
   yes?: boolean;
 }): Promise<void> {
@@ -139,6 +140,10 @@ export async function ensureProjectRepoOnControlPlane(args: {
   // doesn't need to be authorized on the control plane's GitHub App — skip the
   // check/nag. (`direct` uses credentials copied straight into the box.)
   if (args.gitPushMode === 'relay' || args.gitPushMode === 'direct') return;
+  // Same for a `gh`-mode hub: there is no App to authorize a repo on — the hub
+  // pushes for the box with its own token. Nagging there sent users to an
+  // install page for an App that doesn't exist.
+  if ((args.hubGitAuth ?? 'gh') !== 'app') return;
   const ownerRepo = await resolveOwnerRepo(projectRoot);
   if (!ownerRepo) return;
   const { owner, repo } = ownerRepo;
@@ -158,7 +163,7 @@ export async function ensureProjectRepoOnControlPlane(args: {
     // reminder beats a silent lease failure later. (The live check above still
     // auto-clears this and goes quiet once the repo is actually authorized.)
     clog.warn(
-      `${owner}/${repo} isn't authorized on the control plane's GitHub App yet — run \`agentbox control-plane add\`.`,
+      `${owner}/${repo} isn't authorized on the control plane's GitHub App yet — run \`agentbox hub add\`.`,
     );
     return;
   }
@@ -170,7 +175,7 @@ export async function ensureProjectRepoOnControlPlane(args: {
   if (nonInteractive) {
     clog.warn(
       `Repo ${owner}/${repo} may not be authorized on the control plane's GitHub App; ` +
-        `pushes/PRs will fail to lease until you run \`agentbox control-plane add\`.`,
+        `pushes/PRs will fail to lease until you run \`agentbox hub add\`.`,
     );
     state[key] = { promptedAt: new Date().toISOString() };
     writeReposState(state);
@@ -180,7 +185,7 @@ export async function ensureProjectRepoOnControlPlane(args: {
   if (!url) {
     clog.warn(
       `Repo ${owner}/${repo} isn't authorized on the GitHub App and no App metadata was found locally. ` +
-        `Run \`agentbox control-plane add\` from a machine that ran \`control-plane setup\`.`,
+        `Run \`agentbox hub add\` from a machine that ran \`hub setup\`.`,
     );
     state[key] = { promptedAt: new Date().toISOString() };
     writeReposState(state);

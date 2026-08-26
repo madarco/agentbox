@@ -45,6 +45,8 @@ export interface SshAliasOptions {
    * that engine and dials the published sshd port on its loopback.
    */
   proxyJump?: string;
+  /** Comment-marker flavor; defaults to `cloud box`. */
+  kind?: BlockKind;
 }
 
 function sshConfigPath(): string {
@@ -60,16 +62,32 @@ function stateFilePath(): string {
   return join(homedir(), '.agentbox', 'state.json');
 }
 
+/** Deploy record written by `agentbox hub setup --deploy hetzner` / `hub deploy hetzner`. */
+export function controlPlaneDeployPath(): string {
+  return join(homedir(), '.agentbox', 'control-plane', 'deploy.json');
+}
+
+/**
+ * Host alias for the deployed control box. Fixed rather than derived: there is
+ * at most one deployed hub per machine, and a stable `ssh agentbox-hub` is the
+ * whole point — the VPS is otherwise reachable only via a per-deploy key buried
+ * under `~/.agentbox/control-plane/ssh/<stamp>/`.
+ */
+export const AGENTBOX_HUB_SSH_ALIAS = 'agentbox-hub';
+
 const INCLUDE_BEGIN = '# BEGIN agentbox ssh include';
 const INCLUDE_END = '# END agentbox ssh include';
 
-function beginMarker(alias: string): string {
-  return `# BEGIN agentbox cloud box ${alias}`;
+function beginMarker(alias: string, kind: BlockKind = 'cloud box'): string {
+  return `# BEGIN agentbox ${kind} ${alias}`;
 }
 
-function endMarker(alias: string): string {
-  return `# END agentbox cloud box ${alias}`;
+function endMarker(alias: string, kind: BlockKind = 'cloud box'): string {
+  return `# END agentbox ${kind} ${alias}`;
 }
+
+/** What a managed block describes — only the comment markers differ. */
+type BlockKind = 'cloud box' | 'control box';
 
 /**
  * Stable `~/.ssh/config` Host alias for a box: the box name itself. Box names
@@ -96,7 +114,7 @@ function buildBlock(opts: SshAliasOptions): string {
   // convention: many sandboxes sit behind one DNS name, so pinning a host key
   // locally generates noise + false-positive HostKeyVerificationFailed errors.
   const lines: string[] = [
-    beginMarker(opts.alias),
+    beginMarker(opts.alias, opts.kind),
     `Host ${opts.alias}`,
     `  HostName ${opts.hostname}`,
     `  User ${opts.user}`,
@@ -120,7 +138,7 @@ function buildBlock(opts: SshAliasOptions): string {
     `  StrictHostKeyChecking accept-new`,
     `  UserKnownHostsFile /dev/null`,
     `  LogLevel ERROR`,
-    endMarker(opts.alias),
+    endMarker(opts.alias, opts.kind),
     '',
   );
   return lines.join('\n');
@@ -165,18 +183,129 @@ export async function ensureSshInclude(): Promise<void> {
 }
 
 /**
+ * Where a control-box deploy gets the hub from.
+ *
+ * `package` (the default) installs the published `@madarco/agentbox` on the VPS
+ * and runs the standalone hub it already ships at `runtime/hub/apps/hub/server.js`
+ * — the same bundle `agentbox hub` spawns locally. The control box and the PC
+ * that deployed it then run the identical published build by construction, which
+ * also makes their base-image fingerprints match byte-for-byte.
+ *
+ * `source` clones the monorepo onto the VPS and builds it there. The escape hatch
+ * for deploying unreleased code, and what a dev build (no published version to
+ * install) falls back to.
+ *
+ * Lives here, next to the record that carries it, so the deploy record stays a
+ * plain sandbox-core type — provider packages depend on this one, not the reverse.
+ */
+export type HubDeploySource =
+  | { kind: 'package'; spec: string }
+  | { kind: 'source'; repoUrl: string; repoRef: string };
+
+/**
+ * The record `agentbox hub deploy` persists to `deploy.json`. Every field is
+ * optional because it is also written mid-deploy (before the hub is healthy)
+ * and read back by later commands that must tolerate an older/partial file.
+ */
+export interface ControlPlaneDeployRecord {
+  provider?: string;
+  /** Public URL the hub serves on, e.g. `https://<ip>.sslip.io`. */
+  url?: string;
+  serverId?: number;
+  ip?: string;
+  domain?: string;
+  /**
+   * Hetzner firewall ids are numeric; DigitalOcean's are UUID strings — one field
+   * carries either, so the destroy/update paths tolerate both providers.
+   */
+  firewallId?: number | string;
+  /**
+   * DigitalOcean only: the unique per-deploy tag the control-plane firewall is
+   * bound to (created before the droplet so the firewall auto-applies at boot).
+   * Destroy deletes it once the firewall is gone, or it leaks as an empty tag.
+   */
+  firewallTag?: string;
+  /** Holds `id_ed25519` (+ `.pub`, `known_hosts`) — the only key that VPS trusts. */
+  sshKeyDir?: string;
+  /**
+   * What was deployed. Nothing else records the running build — the VPS keeps no
+   * version marker, and in package mode there is not even a git checkout to
+   * `rev-parse` — so without this a control box is unattributable after the fact.
+   */
+  source?: HubDeploySource;
+
+  // --- `provider: 'local'` only (agentbox hub expose) -----------------------
+  // A control box that IS this machine's own hub, flipped to the deployed
+  // profile rather than a separate VPS. These fields describe how it was
+  // exposed so `hub start` / autostart / update / destroy reconstruct the mode
+  // from disk. `sshKeyDir` is intentionally absent (no ssh alias block).
+  /**
+   * The box-facing URL: what a cloud box is told to call home on
+   * (`AGENTBOX_HUB_PUBLIC_URL`). The LAN address, or the tunnel URL. Distinct
+   * from the CLI-facing loopback the local shortcut uses.
+   */
+  publicUrl?: string;
+  /** Port the hub binds (default 8787). */
+  port?: number;
+  /** Bind address (`0.0.0.0` LAN, `127.0.0.1` loopback-only). */
+  bind?: string;
+  /** The tunnel kind in front of the hub, if any: `cloudflare` | `tailscale`. */
+  tunnel?: string;
+  /** Whether an autostart unit (launchd/systemd) was installed. */
+  autostart?: boolean;
+  /**
+   * The admin PC's egress CIDR at expose time — added to a hetzner box's
+   * firewall so this machine can still SSH boxes the hub creates. Stored (not
+   * recomputed) so the exposed-env assembly stays a pure function of the record.
+   */
+  adminCidr?: string;
+}
+
+/**
+ * The managed block for the deployed control box, or '' when there is no deploy
+ * record (or it predates `sshKeyDir`). Read from `deploy.json` rather than
+ * `state.json` because the control box is not a box — it is the machine that
+ * *runs* the hub, and nothing else in the CLI models it.
+ */
+async function controlPlaneBlock(deployPath: string): Promise<string> {
+  let record: ControlPlaneDeployRecord;
+  try {
+    record = JSON.parse(await fs.readFile(deployPath, 'utf8')) as ControlPlaneDeployRecord;
+  } catch {
+    // Absent (never deployed) or corrupt — either way there is no host to add.
+    return '';
+  }
+  if (!record.ip || !record.sshKeyDir) return '';
+  return buildBlock({
+    kind: 'control box',
+    alias: AGENTBOX_HUB_SSH_ALIAS,
+    hostname: record.ip,
+    // The deploy provisions stock Ubuntu and works as root throughout (docker
+    // compose, /opt/agentbox); no unprivileged user is ever created.
+    user: 'root',
+    identityFile: join(record.sshKeyDir, 'id_ed25519'),
+  });
+}
+
+/**
  * Regenerate the AgentBox-owned `~/.agentbox/ssh/config` from `state.json`: one
- * `Host <name>` block per box that carries a resolved `box.ssh` target. Reads
- * only persisted state — no provider calls, never wakes a paused box — so a
- * destroyed box's block simply disappears on the next sync. Also ensures the
+ * `Host <name>` block per box that carries a resolved `box.ssh` target, plus a
+ * `Host agentbox-hub` block for the deployed control box (from `deploy.json`).
+ * Reads only persisted state — no provider calls, never wakes a paused box — so
+ * a destroyed box's block simply disappears on the next sync. Also ensures the
  * `Include` line in `~/.ssh/config`.
  */
-export async function syncAgentboxSshConfig(statePath: string = stateFilePath()): Promise<void> {
+export async function syncAgentboxSshConfig(
+  statePath: string = stateFilePath(),
+  deployPath: string = controlPlaneDeployPath(),
+): Promise<void> {
   const state = await readState(statePath);
   const blocks: string[] = [];
+  const aliases = new Set<string>();
   for (const box of state.boxes) {
     const ssh = box.ssh;
     if (!ssh) continue;
+    aliases.add(agentboxAliasFor(box.name));
     blocks.push(
       buildBlock({
         alias: agentboxAliasFor(box.name),
@@ -188,8 +317,15 @@ export async function syncAgentboxSshConfig(statePath: string = stateFilePath())
       }),
     );
   }
+  // A box literally named `agentbox-hub` would otherwise emit a second `Host
+  // agentbox-hub`; OpenSSH takes the first, so the box (the more specific,
+  // user-created thing) wins and we skip ours rather than write a dead stanza.
+  if (!aliases.has(AGENTBOX_HUB_SSH_ALIAS)) {
+    const hub = await controlPlaneBlock(deployPath);
+    if (hub) blocks.push(hub);
+  }
   const header =
-    '# Managed by agentbox — regenerated on box create/start/destroy.\n' +
+    '# Managed by agentbox — regenerated on box create/start/destroy and hub deploy.\n' +
     '# Do not edit; changes are overwritten. Disable with `agentbox config set ssh.autoConfig false`.\n\n';
   const path = agentboxSshConfigPath();
   await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });

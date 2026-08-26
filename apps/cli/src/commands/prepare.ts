@@ -22,16 +22,7 @@
  */
 
 import { intro, log, spinner } from '@clack/prompts';
-import {
-  boxImageConfigKey,
-  isProviderKind,
-  loadEffectiveConfig,
-  resolveBoxSize,
-  resolveDaytonaClass,
-  setConfigValue,
-  unsetConfigValue,
-  type EffectiveConfig,
-} from '@agentbox/config';
+import { loadEffectiveConfig, unsetConfigValue } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
   SHARED_CLAUDE_VOLUME,
@@ -42,18 +33,31 @@ import {
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
+import { UserFacingError } from '@agentbox/core';
+import type { Provider } from '@agentbox/core';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { parseProviderSpec } from '../provider/spec.js';
+import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
+import { controlBoxKnowsHost } from '../control-plane/remote-docker-share.js';
+import { bakeViaHub } from '../control-plane/hub-prepare.js';
+import { dockerProviderRefusal } from '../control-plane/remote-hub.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
+import {
+  localExposedLoopbackUrl,
+  resolveCustodyTarget,
+  resolveHubApiClient,
+  resolveHubApiTarget,
+} from './control-plane.js';
 
 interface PrepareOptions {
   provider?: string;
-  name?: string;
   force?: boolean;
-  build?: boolean;
   yes?: boolean;
   status?: boolean;
   claudeInstall?: string;
+  build?: boolean;
+  name?: string;
   location?: string;
   size?: string;
 }
@@ -249,6 +253,51 @@ function renderDaytona(status: DaytonaStatusResult, pinnedImage?: string): strin
   return out;
 }
 
+/**
+ * Bound on the control-box status read. `?freshness=1` makes the hub hash its
+ * own build context, so it is not instant — but this is an interactive status
+ * command, and an unreachable box must cost a fixed, small amount of time.
+ */
+const CONTROL_BOX_STATUS_MS = 5000;
+
+/**
+ * The control box's own provider inventory, or nothing when none is configured
+ * (or it can't be reached — a status command must never hang or fail on it).
+ *
+ * Only shown for a GENUINELY remote control box: a co-located hub (a local hub,
+ * or `hub expose` on this machine) bakes on this same machine, so the local
+ * provider rows already describe it and a second "control box" section would just
+ * mislabel it. Exported so `agentbox doctor` shows the same section.
+ */
+export async function renderControlBoxProviders(): Promise<string[]> {
+  if (await hubIsCoLocated().catch(() => true)) return [];
+  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+  if (!target) return [];
+  // Probe with a socket we own before spending the budget: a fetch to an
+  // unreachable host can't be cancelled, and this is a status command.
+  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) {
+    return ['', 'control box: unreachable — could not read its baked providers'];
+  }
+  const client = new HubApiClient({
+    ...target,
+    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+  });
+  const providers = await client.listProviders({ freshness: true }).catch(() => null);
+  if (!providers) return ['', 'control box: unreachable — could not read its baked providers'];
+  const cloud = providers.filter((p) => p.id !== 'docker' && p.id !== 'remote-docker');
+  if (cloud.length === 0) return [];
+  const out = ['', 'control box (where cloud boxes are built):'];
+  for (const p of cloud) {
+    const state = !p.hasCredentials
+      ? 'no credentials'
+      : !p.configured
+        ? 'not baked'
+        : (p.baseStatus ?? 'baked');
+    out.push(`  ${pad(p.id, 16)} ${state}`);
+  }
+  return out;
+}
+
 async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   const pinnedRaw = cfg?.effective.box.image;
@@ -287,16 +336,17 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
     lines.push('');
     lines.push(`project pin:  box.image = ${pinned}`);
   }
+  // With a control box configured, ITS bakes are the ones a cloud create boots —
+  // so an inventory that only ever showed this machine's was describing the
+  // wrong host. Appended, never substituted: the local rows still matter for
+  // docker (always built on this machine) and for the co-located-hub case.
+  if (!opts.onlyProvider) lines.push(...(await renderControlBoxProviders()));
   process.stdout.write(lines.join('\n') + '\n');
 }
 
 export interface RunPrepareOptions {
-  /** Snapshot name (Daytona only). */
-  name?: string;
   /** Rebuild even if the image / snapshot already exists. */
   force?: boolean;
-  /** Docker only: force a local build instead of pulling the prebuilt image from the registry. */
-  build?: boolean;
   /** Skip the Daytona cost-notice. */
   yes?: boolean;
   /** Host workspace dir (defaults to `process.cwd()`). */
@@ -309,69 +359,241 @@ export interface RunPrepareOptions {
    */
   claudeInstall?: 'native' | 'npm';
   /**
-   * Datacenter / region the bake VPS runs in (Hetzner only). CLI override of
-   * `box.hetznerLocation`; other providers ignore it.
+   * Bake INPUTS (not routing) threaded to the hub bake. Each is a per-invocation
+   * override; when absent the hub worker fills it from its effective config.
+   *   - `build`: force a local docker build instead of pulling the registry base.
+   *   - `size`: bake-time VM size (daytona `cpu-mem-disk`, e2b `cpu-mem`).
+   *   - `location`: bake datacenter / region (hetzner / digitalocean / daytona).
+   *   - `name`: snapshot name (daytona).
    */
-  location?: string;
-  /**
-   * Bake-time VM size for the snapshot/template providers (daytona:
-   * `cpu-memory-disk` GB; e2b: `cpu-memory` GB). CLI override of
-   * `box.size<Provider>` / `box.size`; docker/hetzner/vercel ignore it.
-   */
+  build?: boolean;
   size?: string;
+  location?: string;
+  name?: string;
 }
 
 /**
- * The bake-time datacenter/region to hand the provider, or `undefined` to let
- * it choose. CLI flag wins over the provider's location config key; providers
- * without a location concept always get `undefined`.
- *
- * Daytona contributes only an EXPLICIT `box.daytonaRegion`, never the region
- * *derived* from `box.daytonaClass`. The derived region belongs to the class,
- * and the class can still change inside the bake: with no published box image
- * (npm install mode, or a locally shifted build fingerprint) the linux-vm bake
- * falls back to a container. Pre-deriving `us-east-1` here made that fallback
- * ask for a container in the one region that has no container runners — so the
- * whole prepare died ("No runners are configured in region 'us-east-1' for
- * sandbox class 'container'") instead of degrading. Leaving it undefined lets
- * each path pick its own: the VM bake defaults to `DAYTONA_VM_REGION`, the
- * container bake to the account default.
+ * Whether the hub the bake will run on is THIS machine (a local hub, or a control
+ * box exposed on loopback via `hub expose`). Decides whether the prepared-state
+ * the worker writes is already here (co-located → nothing to adopt) or on a remote
+ * control box's disk (adopt the record back from custody).
  */
-export function resolvePrepareLocation(
-  providerName: string,
-  cliLocation: string | undefined,
-  effective: EffectiveConfig | undefined,
-): string | undefined {
-  const configured =
-    providerName === 'hetzner'
-      ? effective?.box.hetznerLocation
-      : providerName === 'digitalocean'
-        ? effective?.box.digitaloceanRegion
-        : providerName === 'daytona'
-          ? effective?.box.daytonaRegion
-          : undefined;
-  return cliLocation?.trim() || configured || undefined;
+async function hubIsCoLocated(): Promise<boolean> {
+  // Lazy import mirrors resolveHubApiTarget's cycle-avoidance (hub.ts <->
+  // control-plane.ts). `hub expose` on this machine reports mode 'remote' but is
+  // still co-located, so the loopback check is the second half of the answer.
+  const { resolveHubTarget } = await import('./hub.js');
+  const target = await resolveHubTarget(undefined).catch(() => null);
+  if (target?.mode === 'local') return true;
+  return (await localExposedLoopbackUrl().catch(() => null)) !== null;
 }
 
 /**
- * Run `provider.prepare` for `providerName`. Extracted so the install wizard
- * can drive the same code path as `agentbox prepare --provider X`.
- * Caller is responsible for any `intro(...)` framing; this function manages
- * its own spinner inside.
+ * Pure decision: does a bake target the LOCAL hub (`local: true`) or the remote
+ * control box (`false`)? This is target selection only — the bake always runs
+ * through the same `POST /api/v1/providers/:id/prepare` (or `/hosts/:alias/bake`)
+ * route; there is NO inline `provider.prepare` path, which is exactly the second
+ * implementation this consolidation exists to delete. The choice is only ever
+ * WHICH base URL the one client points at.
+ *
+ * Extracted pure (IO done by {@link shouldPreferLocalHub}) so the routing is
+ * unit-testable — the deleted `resolvePrepareRouting` had this same shape, and
+ * dropping it is what regressed the `cloud.viaHub` and remote-docker fallbacks.
+ *
+ * Local wins when:
+ *   - the hub is already co-located (no control box, or `hub expose` here);
+ *   - `cloud.viaHub=false` — the user keeps builds on their own machine even with
+ *     a control plane configured (the config KEY survives; only the `--local` /
+ *     `--via-hub` flags were dropped);
+ *   - `docker`, whose base is an image on THIS machine — baking it on the control
+ *     box would produce an image on the wrong host;
+ *   - `remote-docker` whose host alias the control box doesn't know, but the local
+ *     hub (this machine's `~/.ssh`) does.
+ * Otherwise the control box is the target (the default for cloud bakes).
+ */
+export function resolvePrepareTargetKind(input: {
+  /** The default hub is already on this machine (local, or `hub expose` here). */
+  coLocated: boolean;
+  /** `relay.controlPlaneUrl` — a genuine remote control box is configured. */
+  controlPlaneUrl: string | undefined;
+  /** `cloud.viaHub` — build cloud boxes / bases on the control box by default. */
+  viaHub: boolean;
+  providerName: string;
+  remoteHost?: string;
+  /** remote-docker only: whether the control box has the host alias registered. */
+  controlBoxKnowsHost?: boolean;
+}): { local: boolean; reason?: string } {
+  if (input.coLocated) return { local: true };
+  if (!input.controlPlaneUrl) return { local: true };
+  if (!input.viaHub) return { local: true, reason: 'cloud.viaHub is off — baking on this machine' };
+  if (input.providerName === 'docker') return { local: true };
+  if (input.providerName === 'remote-docker' && input.remoteHost && !input.controlBoxKnowsHost) {
+    return {
+      local: true,
+      reason: `the control box has no \`${input.remoteHost}\` host registered — baking on this machine's hub`,
+    };
+  }
+  return { local: false };
+}
+
+/**
+ * IO wrapper around {@link resolvePrepareTargetKind}: resolves co-location, the
+ * effective config, and — only for a remote-docker host that could actually
+ * target the control box — the alias check.
+ */
+async function shouldPreferLocalHub(
+  providerName: string,
+  remoteHost: string | undefined,
+): Promise<{ local: boolean; reason?: string }> {
+  const coLocated = await hubIsCoLocated();
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  const eff = cfg?.effective;
+  const controlPlaneUrl = eff?.relay.controlPlaneUrl;
+  const viaHub = eff?.cloud.viaHub ?? true;
+  // The alias check is the only networked input, and only remote-docker needs it.
+  // Skip it whenever an earlier rule already forces local (no control box,
+  // co-located, or cloud.viaHub off) so a normal bake makes no extra round-trip.
+  const knowsHost =
+    providerName === 'remote-docker' && remoteHost && controlPlaneUrl && viaHub && !coLocated && eff
+      ? await controlBoxKnowsHost(remoteHost, eff)
+      : undefined;
+  return resolvePrepareTargetKind({
+    coLocated,
+    controlPlaneUrl,
+    viaHub,
+    providerName,
+    remoteHost,
+    controlBoxKnowsHost: knowsHost,
+  });
+}
+
+/**
+ * Bake `providerName` THROUGH the hub — the one prepare path (local hub or remote
+ * control box). Throws on failure so internal callers (`install`, the create
+ * wizard's stale-base rebuild) can catch it; the top-level command surfaces it.
+ * The failure path deliberately does NOT fall back to a local bake: a hub bake
+ * that failed for a real reason (no credentials there, a broken build context)
+ * would fail the same way here.
+ */
+async function runPrepareViaHub(args: {
+  providerName: string;
+  provider: Provider;
+  force?: boolean;
+  claudeInstall: 'native' | 'npm';
+  build?: boolean;
+  size?: string;
+  location?: string;
+  name?: string;
+  remoteHost?: string;
+  suppressStatus?: boolean;
+}): Promise<void> {
+  // WHICH hub: the local hub on this machine, or the remote control box. Same
+  // route either way — target selection, never an inline bake.
+  const target = await shouldPreferLocalHub(args.providerName, args.remoteHost);
+  if (target.reason) log.info(target.reason);
+  // Auto-starts a local hub when that is the target (Step 0). A remote control
+  // box with no API key returns null after printing why.
+  const client = await resolveHubApiClient(undefined, { preferLocal: target.local });
+  // resolveHubApiClient already printed why (no API key, hub wouldn't start).
+  if (!client) throw new UserFacingError('could not reach a hub to run the bake');
+  // The local hub's worker writes the prepared-state straight to this machine, so
+  // choosing local IS the co-located signal — no custody round-trip to adopt.
+  const coLocated = target.local;
+  // Custody is only the remote-adopt channel; a co-located hub wrote the record
+  // straight to this machine, so skip resolving it (and its error path) there.
+  const custody = coLocated ? null : await resolveCustodyTarget(undefined, { quiet: true });
+  const where = coLocated ? 'hub' : 'control box';
+  const what = args.remoteHost ? `${args.providerName} host ${args.remoteHost}` : args.providerName;
+  const sp = spinner();
+  sp.start(`preparing ${what} on the ${where}…`);
+  const outcome = await bakeViaHub({
+    client,
+    providerName: args.providerName,
+    provider: args.provider,
+    force: args.force,
+    claudeInstall: args.claudeInstall,
+    build: args.build,
+    size: args.size,
+    location: args.location,
+    name: args.name,
+    custody,
+    coLocated,
+    remoteHost: args.remoteHost,
+    onLog: (line) => sp.message(line.slice(0, 80)),
+  });
+  if (outcome.status === 'failed') {
+    sp.stop(`prepare failed on the ${where}: ${outcome.detail}`);
+    throw new Error(outcome.detail);
+  }
+  sp.stop(`prepared ${what} on the ${where}`);
+  if (outcome.status === 'baked-not-adopted') {
+    // The hub can now create with it; this machine just can't verify it locally.
+    log.warn(`${outcome.detail} — cloud creates route to the control box, so this is not fatal`);
+  } else if (coLocated) {
+    log.success(`prepared ${args.providerName}`);
+  } else {
+    log.success(
+      args.remoteHost
+        ? `baked ${args.remoteHost} from the control box — the image is on that host, so this machine sees it too`
+        : `adopted the control box's ${args.providerName} base — this machine is current too`,
+    );
+  }
+  // One-shot migration of a stale generic `box.image`. Pre-fix builds wrote every
+  // cloud prepare's snapshot id into the shared key, so any non-default value
+  // still there poisons every provider that doesn't recognize it. Best-effort —
+  // never fail the command on it.
+  try {
+    const projectCfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+    const projectImage = projectCfg?.layers.project.values.box?.image;
+    if (
+      typeof projectImage === 'string' &&
+      projectImage.length > 0 &&
+      projectImage !== DEFAULT_BOX_IMAGE
+    ) {
+      const cleared = await unsetConfigValue('project', 'box.image', process.cwd());
+      if (cleared.existed) {
+        log.warn(
+          `migrated stale \`box.image\` from a previous prepare (was \`${projectImage}\`); ` +
+            `re-set manually if you actually meant it: \`agentbox config set --project box.image <ref>\``,
+        );
+      }
+    }
+  } catch (err) {
+    log.warn(
+      `could not migrate stale box.image (continuing): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!args.suppressStatus) {
+    process.stdout.write('\n');
+    await showStatus({ onlyProvider: args.providerName });
+  }
+}
+
+/**
+ * Prepare `providerName`'s base — the single entry point the `prepare` command,
+ * the install wizard, and the create-time stale-base rebuild all share. The bake
+ * ALWAYS runs on the hub (Step 1 of the `/api/v1` consolidation): a local hub is
+ * co-located so the artifact lands here, a remote control box is where cloud boxes
+ * are built and the record is adopted back. Caller owns any `intro(...)` framing;
+ * this manages its own spinner.
  */
 export async function runPrepare(
   providerSpec: string,
   opts: RunPrepareOptions = {},
 ): Promise<void> {
+  // Throw, never exit: `runPrepare` is called from the install wizard, the
+  // create-time stale-base rebuild and `remote-docker add` — a bare exit would
+  // kill those mid-flow instead of letting them report. The `prepare` command
+  // itself is unchanged: printCliError renders a UserFacingError's message bare
+  // and exits 1, exactly what these did.
   if (!isKnownProvider(providerSpec)) {
-    process.stderr.write(
-      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}\n`,
+    throw new UserFacingError(
+      `error: --provider must be one of: ${getRuntimeProviderNames().join(', ')}`,
     );
-    process.exit(1);
   }
   // `--provider docker:<host>` bakes the image on that machine's engine. Split
-  // the spec: the bare name drives every provider lookup below, the host is
-  // handed to the provider's own prepare.
+  // the spec: the bare name drives every provider lookup, the host is baked via
+  // the hub's per-host endpoint.
   const { name: providerName, remoteHost } = parseProviderSpec(providerSpec);
 
   if (providerName === 'daytona' && !opts.yes && process.stdin.isTTY) {
@@ -384,125 +606,48 @@ export async function runPrepare(
 
   const provider = await getProvider(providerName);
   if (typeof provider.prepare !== 'function') {
-    log.error(`provider '${providerName}' does not implement prepare`);
-    process.exit(1);
+    throw new UserFacingError(`provider '${providerName}' does not implement prepare`);
   }
 
   const cwd = opts.cwd ?? process.cwd();
   const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-  // Base-image registry override. Docker uses it to pull instead of building;
-  // daytona's linux-vm bake MUST have it (a VM snapshot can only boot from a
-  // published image), so it reads the same key.
-  const registry =
-    providerName === 'docker' || providerName === 'daytona'
-      ? cfg?.effective.box.imageRegistry
-      : undefined;
-  // Bake-time Claude install method: CLI flag wins over the config key.
+  // Docker off under a remote hub (Step 12): don't bake a local docker/remote-docker
+  // image when a control box owns the fleet. `local` mode (or no cfg) keeps it on.
+  if (cfg) {
+    const refusal = await dockerProviderRefusal(cfg.effective, providerName, remoteHost, 'prepare');
+    if (refusal) throw new UserFacingError(refusal);
+  }
+  // Bake-time Claude install method: CLI flag wins over the config key. The
+  // remaining bake INPUTS (`build` / `size` / `location` / `name`) are passed
+  // through only when the user set the corresponding flag; the hub worker fills
+  // any that are absent from ITS effective config (size/region/sandbox class),
+  // so one route body serves every bake shape (plan Step 1).
   const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
-  // Bake-time sandbox class (daytona): the class is baked into the snapshot and
-  // a snapshot of one class can't create a sandbox of the other.
-  const sandboxClass =
-    providerName === 'daytona' && cfg ? resolveDaytonaClass(cfg.effective) : undefined;
-  // Escape hatch for a build context with no published box image (a locally
-  // modified Dockerfile.box): bake the VM base from an explicit image instead.
-  const vmBaseImage =
-    providerName === 'daytona' ? cfg?.effective.box.daytonaVmBaseImage || undefined : undefined;
-  const location = resolvePrepareLocation(providerName, opts.location, cfg?.effective);
-  // Bake-time size (daytona/e2b): CLI flag wins over the cascaded box.size /
-  // box.size<Provider>. Empty resolves to undefined so the provider bakes its
-  // default resources.
-  const size =
-    opts.size?.trim() || (cfg ? resolveBoxSize(cfg.effective, providerName) : '') || undefined;
-  // The remote engine to bake on (remote-docker): the `docker:<host>` spec
-  // first, else the configured default. Other providers ignore it.
+  // remote-docker: the `docker:<host>` spec first, else the configured default.
   const host =
     providerName === 'remote-docker'
       ? remoteHost || cfg?.effective.box.remoteDockerHost || undefined
       : undefined;
-  const sp = spinner();
-  sp.start(`preparing ${providerName}…`);
-  try {
-    const result = await provider.prepare({
-      name: opts.name,
-      hostWorkspace: cwd,
-      force: opts.force,
-      allowPull: opts.build ? false : undefined,
-      registry,
-      claudeInstall,
-      location,
-      size,
-      host,
-      sandboxClass,
-      vmBaseImage,
-      onLog: (line) => sp.message(line.slice(0, 80)),
-    });
-    if (result.snapshotName !== undefined) {
-      sp.stop(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
-      if (isProviderKind(providerName)) {
-        const configKey = boxImageConfigKey(providerName);
-        try {
-          const written = await setConfigValue('project', configKey, result.snapshotName, cwd);
-          log.success(`${configKey} = ${result.snapshotName} (written to ${written.path})`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn(
-            `prepared snapshot '${result.snapshotName}', but failed to pin it into the project config: ${msg}\n` +
-              `Run \`agentbox config set --project ${configKey} ${result.snapshotName}\` manually.`,
-          );
-        }
-      } else {
-        // External plugin providers persist their baked ref in their own
-        // prepared-state (`~/.agentbox/<name>-prepared.json`), which the
-        // plugin's backend reads back when it sees the image sentinel — so
-        // there is no AgentBox config key to pin (and pinning to the generic
-        // `box.image` would poison built-in providers).
-        log.success(`prepared ${providerName}: snapshot '${result.snapshotName}'`);
-      }
-    } else {
-      sp.stop(`${providerName.slice(0, 1).toUpperCase() + providerName.slice(1)} provider ready`);
-    }
-    // One-shot migration of stale generic `box.image`. Pre-fix builds wrote
-    // every cloud prepare's snapshot id into the shared key, so any
-    // non-default value still there is poisoning every provider that
-    // doesn't recognize it. Runs after ANY successful prepare (including
-    // docker, which doesn't write a snapshot name itself) so the cleanup
-    // happens the first time the user re-prepares anywhere. Manual
-    // docker overrides survive via the warning + one-line re-set hint.
-    try {
-      const cfg = await loadEffectiveConfig(cwd).catch(() => null);
-      const projectImage = cfg?.layers.project.values.box?.image;
-      if (
-        typeof projectImage === 'string' &&
-        projectImage.length > 0 &&
-        projectImage !== DEFAULT_BOX_IMAGE
-      ) {
-        const cleared = await unsetConfigValue('project', 'box.image', cwd);
-        if (cleared.existed) {
-          log.warn(
-            `migrated stale \`box.image\` from a previous prepare (was \`${projectImage}\`); ` +
-              `re-set manually if you actually meant it: \`agentbox config set --project box.image <ref>\``,
-          );
-        }
-      }
-    } catch (err) {
-      // Best-effort migration — don't fail the prepare command on it.
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`could not migrate stale box.image (continuing): ${msg}`);
-    }
 
-    if (!opts.suppressStatus) {
-      process.stdout.write('\n');
-      await showStatus({ onlyProvider: providerName });
-    }
-  } catch (err) {
-    sp.stop(`prepare failed: ${describeError(err)}`);
-    throw err;
-  }
+  await runPrepareViaHub({
+    providerName,
+    provider,
+    force: opts.force,
+    claudeInstall,
+    build: opts.build,
+    size: opts.size,
+    location: opts.location,
+    name: opts.name,
+    remoteHost: host,
+    suppressStatus: opts.suppressStatus,
+  });
 }
 
 export const prepareCommand = new Command('prepare')
   .description(
-    'Build base sandbox images / snapshots, or show what is already prepared across providers.',
+    'Build base sandbox images / snapshots, or show what is already prepared across providers. ' +
+      'The bake always runs on the hub — a local hub is this machine; with a control box configured, ' +
+      'it runs there (where cloud boxes are built) and the record is adopted back.',
   )
   .option(
     '-p, --provider <name>',
@@ -551,40 +696,12 @@ export const prepareCommand = new Command('prepare')
     // silently swallow getProvider() failures (e.g. an ensureCredentials cancel)
     // that fall outside runPrepare's inner spinner error handler.
     await runPrepare(providerName, {
-      name: opts.name,
       force: opts.force,
-      build: opts.build,
       yes: opts.yes,
       claudeInstall,
-      location: opts.location,
+      build: opts.build,
       size: opts.size,
+      location: opts.location,
+      name: opts.name,
     });
   });
-
-/**
- * Unwrap the cause chain on Error objects so opaque wrappers like Node's
- * `TypeError: fetch failed` (whose `.message` carries zero context but
- * whose `.cause` is e.g. `{ code: 'ECONNREFUSED', address, port }`)
- * surface the real reason in the CLI's one-line failure message.
- */
-function describeError(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
-  const parts: string[] = [err.message];
-  let cause: unknown = (err as Error & { cause?: unknown }).cause;
-  // Bound the walk so a cyclic / pathological cause chain can't OOM.
-  for (let i = 0; i < 5 && cause; i++) {
-    if (cause instanceof Error) {
-      parts.push(`caused by: ${cause.message}`);
-      const code = (cause as Error & { code?: unknown }).code;
-      if (typeof code === 'string') parts.push(`(${code})`);
-      cause = (cause as Error & { cause?: unknown }).cause;
-    } else if (typeof cause === 'object') {
-      parts.push(`caused by: ${JSON.stringify(cause)}`);
-      break;
-    } else {
-      parts.push(`caused by: ${String(cause)}`);
-      break;
-    }
-  }
-  return parts.join(' — ');
-}

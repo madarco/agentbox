@@ -89,8 +89,12 @@ export async function createPerBoxFirewall(
   client: HetznerClient,
   opts: CreateFirewallOptions,
 ): Promise<HetznerFirewall> {
+  // retryOnAmbiguous: true — unlike a server/image create (billable, a hidden
+  // success on retry duplicates a paid resource), a firewall is free and a
+  // duplicate is a harmless, easily-reaped orphan. A transient 502/504/429 here
+  // should not abort the whole box create.
   return withHetznerRetry(
-    { method: 'createFirewall', retryOnAmbiguous: false, attemptTimeoutMs: 60_000 },
+    { method: 'createFirewall', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
     () =>
       client.createFirewall({
         name: opts.name,

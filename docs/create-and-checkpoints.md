@@ -8,6 +8,19 @@ capture/restore mechanics, with code pointers. Source of truth:
 
 ## `agentbox create` — files and git
 
+> **Where this runs (2026-07).** `agentbox create` no longer drives the provider
+> inline — it goes through the hub's `POST /api/v1/boxes` and streams
+> `GET /api/v1/jobs/:id/logs`, against a local hub or a remote control box alike
+> (the thin-CLI consolidation — [`hub-api-single-path-plan.md`](./hub-api-single-path-plan.md)).
+> The hub's backend keeps the fork that already existed: a resolvable **local**
+> workspace goes to the file queue (`_run-queued-job`), a **no-workspace** project
+> goes to the control-plane clone queue (`create-worker.ts`), both returning
+> `202 { jobId }`. The file/git mechanics below are exactly what that worker
+> executes for a docker box — they moved *behind* the API, they did not change.
+> (The one create path still inline is the agent launchers' `claude`/`codex`/
+> `opencode` **local foreground** create — see the exceptions in
+> [`architecture.md`](./architecture.md) → "End state: one path through `/api/v1`".)
+
 ### Git: in-container worktree against a bind-mounted `.git`
 
 1. **Detect repos** — `detectGitRepos(workspace)` (`git-worktree.ts`) scans for
@@ -87,6 +100,14 @@ the host checkout and host filesystem.
 Purpose: let a new box start warm (deps installed, project built) instead of
 cold, without baking anything into the base image. Code: `checkpoint.ts`
 (capture + resolve) and the restore path in `create.ts`.
+
+> **Where this runs (2026-07).** Like `create`, the CLI's checkpoint commands go
+> through the hub: `agentbox checkpoint create` → `POST /api/v1/boxes/:id/checkpoint`,
+> `checkpoint ls`/`rm` → `GET|DELETE /api/v1/checkpoints`, and `agentbox prune` →
+> `POST /api/v1/prune` (which always leaves checkpoint images intact). Box-scoped
+> ops route to the box's **owning** hub; the project checkpoint store is keyed by the
+> absolute project root, so listing/removing resolves on the machine that holds it.
+> The `docker commit` mechanics below are what the hub backend runs behind those routes.
 
 ### Storage model
 

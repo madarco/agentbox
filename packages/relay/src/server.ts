@@ -38,6 +38,7 @@ import {
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateHasExplicitHead,
   prCreateNeedsHead,
+  ghRunContext,
   refuseCheckoutByDefault,
   refuseMergeBypass,
   runHostGh,
@@ -60,12 +61,23 @@ import {
 import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
-import { resolveWorktree } from './worktree.js';
+import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
+import { adminGateAllows } from './admin-gate.js';
+import {
+  handleCustodyBlobRequest,
+  handleCustodyRequest,
+  isCustodyBlobPath,
+} from './custody/routes.js';
+import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
+import { readCreateJobLog } from './job-log-tail.js';
+import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
+import type { CustodyStore } from './custody/store.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
+import { WriteThroughStore } from './store/write-through-store.js';
 import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
 import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
@@ -132,6 +144,34 @@ export interface RelayServerOptions {
    */
   githubApp?: GitHubAppConfig | null;
   /**
+   * Custody store (agent creds / project secrets / box SSH keys). Absent → the
+   * `/admin/custody/*` routes are not served here. The control box (hetzner
+   * profile) wires an {@link FsCustodyStore}. See `./custody/routes.ts`.
+   */
+  custody?: CustodyStore | null;
+  /**
+   * Per-request body cap for custody PUTs (`relay.custodyMaxBodyBytes`).
+   * Defaults to 32 MiB — big enough for a project's untracked-files seed tar,
+   * and scoped to custody so the 1 MiB control-plane cap still governs every
+   * other route.
+   */
+  custodyMaxBodyBytes?: number;
+  /**
+   * Cap for the streaming blob surface (`relay.custodyMaxBlobBytes`). Defaults
+   * to 100 MiB to match `box.cpMaxBytes`, so a `carry:` entry the CLI accepted
+   * at resolve time can actually be stored — the two caps disagreeing is what
+   * let an approved 25.7 MiB file be promised to the user and then dropped.
+   * Enforced mid-stream, so an over-cap body is cut off rather than landed.
+   */
+  custodyMaxBlobBytes?: number;
+  /**
+   * Admin bearer that gates `/admin/custody/*` (the ONLY proof accepted — the
+   * loopback bypass that covers the other `/admin/*` routes does not apply to
+   * custody, since a control box behind Caddy makes every request look
+   * loopback). Required for custody to serve; other admin routes are unaffected.
+   */
+  adminToken?: string;
+  /**
    * Optional delegate for requests that matched no relay route (e.g. Next's
    * `getRequestHandler()`). Invoked at the top-level 404 fallthrough, so every
    * relay route still matches first and the UI can never shadow `/admin`,
@@ -152,6 +192,8 @@ export interface RelayServerHandle {
   notices: BoxNotices;
   /** Fan-out for the embedded hub UI's SSE route (pending-approval changes). */
   hubNotifier: HubNotifier;
+  /** The custody store, when wired (control box). Used by the hub backend's reap. */
+  custody?: CustodyStore | null;
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
   url: string;
@@ -176,6 +218,16 @@ export interface RelayServerHandle {
 const BOX_STATUS_EVENT = 'box-status';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plane traffic, not payloads.
+/**
+ * Per-request cap for custody PUTs only. Custody carries project seed material
+ * (an untracked-files tarball) as base64 JSON, which the 1 MiB control-plane cap
+ * is far too small for — but raising {@link MAX_BODY_BYTES} would hand the same
+ * budget to `/rpc` and `/events`, which have no business with payloads. Override
+ * with `relay.custodyMaxBodyBytes`.
+ */
+const DEFAULT_CUSTODY_MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
+/** Matches `box.cpMaxBytes` — see the `custodyMaxBlobBytes` option doc. */
+const DEFAULT_CUSTODY_MAX_BLOB_BYTES = 100 * 1024 * 1024; // 100 MiB
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
 const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees can be slow.
 const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
@@ -230,6 +282,27 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   });
 }
 
+async function readRawBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let total = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error('request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
 function bearerToken(req: IncomingMessage): string {
   const raw = req.headers.authorization;
   if (typeof raw !== 'string') return '';
@@ -240,10 +313,7 @@ function bearerToken(req: IncomingMessage): string {
 function isLoopbackAddress(addr: string | undefined): boolean {
   if (!addr) return false;
   return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr.startsWith('127.')
+    addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.')
   );
 }
 
@@ -282,7 +352,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // hosted control plane injects a Postgres-backed store instead. Handlers go
   // through `store.*`; the concrete instances stay exposed on the handle for
   // the autopause / queue loops (bin.ts) and the unit tests that read them.
-  const store: Store = opts.store ?? new MemoryStore({ registry, events, statusStore });
+  // Persisted-state seam. localhost/tests get a MemoryStore wrapping the concrete
+  // instances above (byte-identical to the pre-seam relay). A control box injects
+  // a durable store (SQLite/Postgres); wrap it so every write also mirrors into
+  // those instances — the daemon's loops + the hub backend read them synchronously
+  // and would otherwise see an empty registry/statusStore (Backlog: phase-3
+  // blocker A). `startRelayServer` hydrates the mirror from the store on boot.
+  const store: Store = opts.store
+    ? new WriteThroughStore(opts.store, { registry, events, statusStore })
+    : new MemoryStore({ registry, events, statusStore });
   // Per-box `box.autoApproveHostActions`: when a box registered with the flag,
   // host-action confirms resolve to 'y' without a prompt, but every bypass
   // lands in the event ring buffer (visible via `/admin/events`) so it's
@@ -320,7 +398,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // write + debounced `agentbox credentials propagate` spawn). In box mode the
   // event rides the local ring buffer to the bridge instead — the host's
   // poller hands it to this handler on the other side.
-  const credentialsFanout = mode === 'box' ? null : new CredentialsFanout({ log });
+  // `custody` is the control box's store — passing it is what lets an accepted
+  // token reach custody, so the next hub create seeds a current credential
+  // instead of the last one a PC pushed. Absent on a localhost relay (no store).
+  const credentialsFanout =
+    mode === 'box' ? null : new CredentialsFanout({ log, custody: opts.custody ?? null });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }
@@ -334,6 +416,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // boxes reach it via the poller).
   const githubAppConfig = opts.githubApp === undefined ? loadGitHubAppConfig() : opts.githubApp;
   const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
+  const custody = opts.custody ?? null;
+  const custodyAdminToken = opts.adminToken ?? '';
+  const custodyMaxBodyBytes =
+    typeof opts.custodyMaxBodyBytes === 'number' && opts.custodyMaxBodyBytes > 0
+      ? opts.custodyMaxBodyBytes
+      : DEFAULT_CUSTODY_MAX_BODY_BYTES;
+  const custodyMaxBlobBytes =
+    typeof opts.custodyMaxBlobBytes === 'number' && opts.custodyMaxBlobBytes > 0
+      ? opts.custodyMaxBlobBytes
+      : DEFAULT_CUSTODY_MAX_BLOB_BYTES;
   const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
@@ -383,6 +475,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // different agentbox version; `commit` is observability-only.
         version: process.env.AGENTBOX_CLI_VERSION || undefined,
         commit: process.env.AGENTBOX_CLI_COMMIT || undefined,
+        // The running hub's profile + whether the resident create worker is on.
+        // `agentbox hub expose` flips a localhost hub to the `hetzner` profile;
+        // reporting it here lets host-side `ensureHub` reclaim a hub running in
+        // the wrong mode (a plain localhost hub while deploy.json says exposed),
+        // and `hub status` show what is actually running.
+        profile: process.env.AGENTBOX_HUB_PROFILE || undefined,
+        worker: process.env.AGENTBOX_HUB_WORKER === 'on' ? true : undefined,
       });
       return;
     }
@@ -412,7 +511,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // A box-mode relay only ever has one registered box (itself). The
         // status snapshot — if any has been pushed — belongs to that box.
         const only = (await store.listBoxes())[0];
-        const status = only ? (await store.getStatus(only.boxId)) ?? null : null;
+        const status = only ? ((await store.getStatus(only.boxId)) ?? null) : null;
         const reply: BridgePollResponse = {
           actions,
           events: newEvents,
@@ -449,18 +548,123 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       return;
     }
 
-    // Admin endpoints are reachable from loopback only. The relay binds to
-    // 0.0.0.0 so containers can reach /events and /rpc via host.docker.internal,
-    // but admin operations (register-box, forget-box, list events, etc.) are
-    // for the host CLI and must not be exposed to boxes. `/remote/*` is a
-    // hosted-control-plane surface (box creation) served by the Next.js app's
-    // handler, not the laptop relay — so it does not exist here.
+    // The blob surface must be dispatched BEFORE the JSON one, because it is the
+    // only path that does not buffer the body — handing a 100 MiB carry payload
+    // to `readRawBody` below is exactly what this route exists to avoid. The
+    // request object IS the stream; nothing has consumed it yet.
+    if (isCustodyBlobPath(url.pathname)) {
+      const blobRes = await handleCustodyBlobRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          body: req.method === 'PUT' ? req : undefined,
+          maxBytes: custodyMaxBlobBytes,
+        },
+        { custody, adminToken: custodyAdminToken, log },
+      );
+      if (blobRes) {
+        if (blobRes.stream) {
+          res.writeHead(blobRes.status, {
+            'content-type': 'application/octet-stream',
+            ...(blobRes.entry ? { 'content-length': String(blobRes.entry.size) } : {}),
+            ...(blobRes.entry ? { 'x-agentbox-sha256': blobRes.entry.sha256 } : {}),
+          });
+          blobRes.stream.pipe(res);
+          blobRes.stream.on('error', () => res.destroy());
+        } else {
+          send(res, blobRes.status, blobRes.body ?? null);
+        }
+        return;
+      }
+    }
+
+    // Custody (`/admin/custody/*`) is admin-bearer-gated, NOT loopback-gated:
+    // on the control box the hub sits behind Caddy on the same host, so every
+    // proxied request looks loopback. The shared dispatcher enforces the bearer
+    // (and fail-closes with 503 when custody or the admin token is unset), so
+    // this must run BEFORE the loopback rejection below.
+    if (url.pathname === '/admin/custody' || url.pathname.startsWith('/admin/custody/')) {
+      const bodyText =
+        req.method === 'PUT' || req.method === 'POST'
+          ? await readRawBody(req, custodyMaxBodyBytes)
+          : '';
+      const custodyRes = await handleCustodyRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          query: url.searchParams,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { custody, adminToken: custodyAdminToken, log },
+      );
+      if (custodyRes) {
+        send(res, custodyRes.status, custodyRes.body ?? null);
+        return;
+      }
+    }
+
+    // Create-queue surface (`/remote/boxes`) — admin-bearer-gated like custody
+    // (not loopback: the control box is behind Caddy). The shared dispatcher is
+    // the SAME one the Vercel plane's `core/handler.ts` mounts, so the PC can
+    // `agentbox create --via-hub` against the control box exactly as against the
+    // hosted plane. Runs before the loopback rejection below.
+    if (isRemoteBoxesPath(url.pathname)) {
+      const bodyText = req.method === 'POST' ? await readRawBody(req) : '';
+      const remoteRes = await handleRemoteBoxesRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          bodyText,
+          query: url.searchParams,
+        },
+        { store, adminToken: custodyAdminToken, custody, readJobLog: readCreateJobLog, log },
+      );
+      if (remoteRes) {
+        send(res, remoteRes.status, remoteRes.body ?? null);
+        return;
+      }
+    }
+
+    // Generic Store RPC (`/admin/store`) — admin-bearer-gated shared dispatcher,
+    // the same one `core/handler.ts` mounts, so a PC's RemoteStore reads the
+    // control box's registry/status/events over HTTP. Carries its own bearer
+    // gate (not loopback: the control box is behind Caddy), so it runs before the
+    // loopback rejection below. A laptop relay has no admin token → 503.
+    if (isStoreRpcPath(url.pathname)) {
+      const bodyText = req.method === 'POST' ? await readRawBody(req) : '';
+      const storeRpcRes = await handleStoreRpcRequest(
+        {
+          method: req.method ?? 'GET',
+          path: url.pathname,
+          bearer: bearerToken(req),
+          bodyText,
+        },
+        { store, adminToken: custodyAdminToken, log },
+      );
+      if (storeRpcRes) {
+        send(res, storeRpcRes.status, storeRpcRes.body ?? null);
+        return;
+      }
+    }
+
+    // Admin endpoints are reachable from loopback, or — on a relay with an
+    // admin token configured (the control box) — with that bearer. The relay
+    // binds to 0.0.0.0 so containers can reach /events and /rpc via
+    // host.docker.internal, but admin operations (register-box, forget-box,
+    // list events, etc.) are for the host CLI / an authenticated admin and must
+    // not be exposed to boxes. A laptop relay sets no admin token, so its gate
+    // stays loopback-only. Any other `/remote/*` is a hosted-plane surface not
+    // served by this relay.
     if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/remote/')) {
       if (url.pathname.startsWith('/remote/')) {
         send(res, 404, { error: 'not found', route });
         return;
       }
-      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      const loopback = isLoopbackAddress(req.socket.remoteAddress);
+      if (!adminGateAllows(loopback, bearerToken(req), custodyAdminToken)) {
         send(res, 403, { error: 'admin endpoints are loopback-only' });
         return;
       }
@@ -483,6 +687,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           return;
         }
         await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
+        // Push it to attached wrappers. The durable file only serves a footer on
+        // THIS machine; a box owned by a remote hub has no such file on the
+        // user's laptop, so the stream is the only way its footer learns the
+        // agent activity and the `starting N/M…` service count.
+        subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, body.payload);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
@@ -551,6 +760,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             subscribers,
             hostInitiatedTokens,
             autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
+            originUrl: reg.originUrl,
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -650,7 +860,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             }
           }
         }
-        const result = await handleGitRpc(reg, body.method, body.params as GitRpcParams | undefined);
+        const result = await handleGitRpc(
+          reg,
+          body.method,
+          body.params as GitRpcParams | undefined,
+        );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -706,7 +920,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // doesn't land under the relay daemon's CWD (whichever project started
         // the relay), and so the consent prompt shows the real destination.
         const workspacePath = await boxWorkspacePath(reg.boxId);
-        const { argv: cpArgs, detail, contextArgv } = buildCpArgv({
+        const {
+          argv: cpArgs,
+          detail,
+          contextArgv,
+        } = buildCpArgv({
           method: body.method,
           boxName: reg.name,
           sources: norm.sources,
@@ -732,8 +950,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           workspacePath,
           hostPaths: cpHostPaths,
           checkSecret: body.method === 'cp.fromHost',
-          carried:
-            body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
+          carried: body.method === 'cp.fromHost' ? await boxCarriedHostPaths(reg.boxId) : undefined,
         });
         if (cpAuto) {
           prompts.noteAutoApprove(
@@ -744,7 +961,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
               detail: detailParts.join('\n'),
               context: { command: body.method, argv: contextArgv },
             },
-            body.method === 'cp.toHost' ? 'safe: contained copy to host' : 'safe: contained copy from host',
+            body.method === 'cp.toHost'
+              ? 'safe: contained copy to host'
+              : 'safe: contained copy from host',
           );
         } else {
           const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
@@ -823,13 +1042,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (body.method === 'git.clone' || body.method === 'gh.repo.clone') {
         // Clone bundle-ship-back machinery is deferred to a follow-up PR
-        // (see docs/plans/gh-and-git-shims-host-only.md → Deferred follow-ups).
         // The shim + ctl plumbing is in place so the next iteration only has
         // to land the relay-side host clone + bundle + box transfer.
         send(res, 501, {
           exitCode: 64,
           stdout: '',
-          stderr: `${body.method}: not yet implemented (deferred; see docs/plans/gh-and-git-shims-host-only.md). Run \`gh\` / \`git\` on the host directly for now.\n`,
+          stderr: `${body.method}: not yet implemented for this box. Run \`gh\` / \`git\` on the host directly for now.\n`,
         });
         return;
       }
@@ -1026,8 +1244,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         name: body.name,
         kind,
         backend:
-          typeof body.backend === 'string' && body.backend.length > 0
-            ? body.backend
+          typeof body.backend === 'string' && body.backend.length > 0 ? body.backend : undefined,
+        sandboxId:
+          typeof body.sandboxId === 'string' && body.sandboxId.length > 0
+            ? body.sandboxId
             : undefined,
         registeredAt: new Date().toISOString(),
         containerName:
@@ -1060,11 +1280,27 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
             : undefined,
+        publicHost:
+          typeof body.publicHost === 'string' && body.publicHost.length > 0
+            ? body.publicHost
+            : undefined,
+        image: typeof body.image === 'string' && body.image.length > 0 ? body.image : undefined,
+        webPort:
+          typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
+            ? Math.trunc(body.webPort)
+            : undefined,
+        agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        projectSlug:
+          typeof body.projectSlug === 'string' && body.projectSlug.length > 0
+            ? body.projectSlug
+            : undefined,
       };
       await store.registerBox(reg);
       log(
         `registered ${kind} box ${reg.boxId} (${reg.name})` +
-          (worktrees && worktrees.length > 0 ? ` with ${String(worktrees.length)} worktree(s)` : ''),
+          (worktrees && worktrees.length > 0
+            ? ` with ${String(worktrees.length)} worktree(s)`
+            : ''),
       );
       // Cloud boxes get a host-side poller so the host relay can mirror their
       // status into its BoxStatusStore (and, once the executor is wired,
@@ -1099,6 +1335,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             onStatus: (status) => {
               if (isValidBoxStatus(status)) {
                 void store.setStatus(reg.boxId, reg.name, reg.projectIndex, status);
+                // Same reason as the direct-POST path above: this is the only
+                // status source an attached footer has for a cloud box.
+                subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, status);
               }
             },
             // Drained host-only RPCs (git.push, …) run on the host via the
@@ -1116,6 +1355,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       subscribers,
                       hostInitiatedTokens,
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
+                      originUrl: reg.originUrl,
                       log,
                     });
                     await respond(result);
@@ -1342,7 +1582,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? body.ttlMs
           : undefined;
       const token = hostInitiatedTokens.mint(body.boxId, body.method, paramsHash, ttlMs);
-      log(`host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`);
+      log(
+        `host-initiated-mint box=${body.boxId} method=${body.method} paramsBound=${paramsHash !== null}`,
+      );
       send(res, 200, { token });
       return;
     }
@@ -1456,6 +1698,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     subscribers,
     notices,
     hubNotifier,
+    custody,
     hostActions: hostActions ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {
@@ -1475,7 +1718,6 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     },
   };
 }
-
 
 function sanitizeWorktrees(input: BoxWorktree[] | undefined): BoxWorktree[] | undefined {
   if (!Array.isArray(input)) return undefined;
@@ -1535,14 +1777,7 @@ async function handleGitSaveToHost(
     };
   }
   const refspec = landRefspec(src, dest, params?.force);
-  const result = await runHostCommand([
-    'git',
-    '-C',
-    worktree.hostMainRepo,
-    'fetch',
-    '.',
-    refspec,
-  ]);
+  const result = await runHostCommand(['git', '-C', worktree.hostMainRepo, 'fetch', '.', refspec]);
   if (result.exitCode === 0) {
     return {
       exitCode: 0,
@@ -1577,6 +1812,13 @@ async function handleGitRpc(
       stdout: '',
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
+  }
+  // A worker-created (hub) box registered its `hostMainRepo` as the create-time
+  // seed clone (a temp dir deleted after create), so `git -C <that>` would fail
+  // cryptically. Reject fail-closed with a clear message instead.
+  const unavailable = hostRepoUnavailableReason(worktree, reg.boxId, method);
+  if (unavailable) {
+    return { exitCode: 64, stdout: '', stderr: unavailable };
   }
   const op = method === 'git.push' ? 'push' : 'fetch';
   const remote = resolveRemote(params?.remote);
@@ -1679,8 +1921,7 @@ async function handleGhPrRpc(
     return {
       exitCode: 10,
       stdout: '',
-      stderr:
-        'host-initiated token rejected: invalid, expired, or bound to different params\n',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
   // Safe subset: open-PR + PR comment auto-approve under the flag (audited);
@@ -1731,7 +1972,8 @@ async function handleGhPrRpc(
   const finalArgs = injectPrCreateHead(op, worktree.sanctionedBranch ?? worktree.branch, args);
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  return runHostGh(['pr', op, ...finalArgs], worktree.hostMainRepo);
+  const prRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
+  return runHostGh(['pr', op, ...prRun.args], prRun.cwd);
 }
 
 /**
@@ -1790,7 +2032,8 @@ async function handleGhRunRpc(
       }
     }
   }
-  return runHostGh(['run', op, ...args], worktree.hostMainRepo);
+  const runRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, args);
+  return runHostGh(['run', op, ...runRun.args], runRun.cwd);
 }
 
 /**
@@ -1821,7 +2064,8 @@ async function handleGhApiRpc(
   if (callRefusal) return callRefusal;
   const ghReady = await assertGhReady();
   if (ghReady) return ghReady;
-  return runHostGh(['api', endpoint, ...args], worktree.hostMainRepo);
+  const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
+  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd);
 }
 
 /**
@@ -1895,10 +2139,7 @@ async function handleIntegrationRpc(
   // for the malformed-args-to-disabled-integration edge case. Runs before
   // `assertIntegrationReady`, the prompt, and the host spawn so a disabled
   // integration is never user-visible as a permission prompt.
-  const enableRefusal = await refuseIfIntegrationDisabled(
-    parsed.service,
-    worktree.hostMainRepo,
-  );
+  const enableRefusal = await refuseIfIntegrationDisabled(parsed.service, worktree.hostMainRepo);
   if (enableRefusal) return enableRefusal;
 
   const ready = await assertIntegrationReady(connector);
@@ -1936,8 +2177,7 @@ async function handleIntegrationRpc(
         return {
           exitCode: 10,
           stdout: '',
-          stderr:
-            'host-initiated token rejected: invalid, expired, or bound to different params\n',
+          stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
         };
       }
       if (!tokenOk) {
@@ -1997,10 +2237,7 @@ async function handleCpRpc(cpArgs: string[], cwd?: string): Promise<GitRpcResult
  * merging. The relay passes `-y` so the host CLI doesn't try to prompt
  * (we already did, via the host wrapper, before reaching this handler).
  */
-async function handleDownloadRpc(
-  reg: BoxRegistration,
-  kind: DownloadKind,
-): Promise<GitRpcResult> {
+async function handleDownloadRpc(reg: BoxRegistration, kind: DownloadKind): Promise<GitRpcResult> {
   // params.hostPath is reserved in the wire shape; the v1 relay ignores it
   // and lets the host CLI use its defaults (box.workspacePath or ~/.claude).
   const entry = process.env.AGENTBOX_CLI_ENTRY;
@@ -2117,6 +2354,10 @@ function runHostCommand(
 
 export async function startRelayServer(opts: RelayServerOptions): Promise<RelayServerHandle> {
   const handle = createRelayServer(opts);
+  // Hydrate the in-memory mirror from a durable store before the caller starts
+  // the daemon loops, so a control box's registry/statusStore survive a restart
+  // (no-op for the MemoryStore laptop path — it has no `hydrate`).
+  if (handle.store instanceof WriteThroughStore) await handle.store.hydrate();
   await new Promise<void>((resolve, reject) => {
     handle.server.once('error', reject);
     handle.server.listen(opts.port, opts.host ?? '0.0.0.0', () => {

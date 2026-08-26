@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decideTrayBounce,
   decideTrayUpdate,
   parseSidecarSha,
   parseVersionManifest,
@@ -32,30 +33,35 @@ describe('parseSidecarSha', () => {
 
 describe('decideTrayUpdate', () => {
   it('never updates when the app is not installed', () => {
-    expect(
-      decideTrayUpdate({ installed: false, stampedSha: SHA_A, latestSha: SHA_B }),
-    ).toEqual({ update: false, reason: 'not-installed' });
+    expect(decideTrayUpdate({ installed: false, stampedSha: SHA_A, latestSha: SHA_B })).toEqual({
+      update: false,
+      reason: 'not-installed',
+    });
   });
 
   it('never downloads when the published sha is unknown (offline)', () => {
-    expect(
-      decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: undefined }),
-    ).toEqual({ update: false, reason: 'no-latest-sha' });
+    expect(decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: undefined })).toEqual({
+      update: false,
+      reason: 'no-latest-sha',
+    });
   });
 
   it('self-heals a pre-stamp install: missing stamp reads as update-needed', () => {
-    expect(
-      decideTrayUpdate({ installed: true, stampedSha: undefined, latestSha: SHA_A }),
-    ).toEqual({ update: true, reason: 'no-stamp' });
+    expect(decideTrayUpdate({ installed: true, stampedSha: undefined, latestSha: SHA_A })).toEqual({
+      update: true,
+      reason: 'no-stamp',
+    });
   });
 
   it('updates on mismatch, skips when current', () => {
-    expect(
-      decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: SHA_B }),
-    ).toEqual({ update: true, reason: 'mismatch' });
-    expect(
-      decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: SHA_A }),
-    ).toEqual({ update: false, reason: 'up-to-date' });
+    expect(decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: SHA_B })).toEqual({
+      update: true,
+      reason: 'mismatch',
+    });
+    expect(decideTrayUpdate({ installed: true, stampedSha: SHA_A, latestSha: SHA_A })).toEqual({
+      update: false,
+      reason: 'up-to-date',
+    });
   });
 });
 
@@ -189,5 +195,56 @@ describe('trayNudgeMessage', () => {
   it('is silent when either version is unknown', () => {
     expect(trayNudgeMessage(st(undefined), '0.1.11')).toBeNull();
     expect(trayNudgeMessage(st('0.1.12'), undefined)).toBeNull();
+  });
+});
+
+describe('decideTrayBounce', () => {
+  const base = {
+    installed: true,
+    running: true,
+    installAttempted: false,
+    reinstalled: false,
+  };
+
+  // The reported bug: a CLI-only update leaves the app advertising the version
+  // that was just installed, because it reads `agentbox --version` once at launch.
+  it('restarts a running app that needed no update of its own', () => {
+    expect(decideTrayBounce(base)).toEqual({ bounce: true, reason: 'stale-row' });
+  });
+
+  it('does not double-restart an app installTray just relaunched', () => {
+    expect(decideTrayBounce({ ...base, installAttempted: true, reinstalled: true })).toEqual({
+      bounce: false,
+      reason: 'just-reinstalled',
+    });
+  });
+
+  it('relaunches when the tray update failed — installTray killed it and gave up', () => {
+    // installTray pkills before it knows whether it can install; its zip-missing /
+    // download-failed paths return without relaunching, leaving no menu bar at all.
+    expect(decideTrayBounce({ ...base, installAttempted: true, reinstalled: false })).toEqual({
+      bounce: true,
+      reason: 'install-failed',
+    });
+  });
+
+  it('leaves an app the user quit alone', () => {
+    expect(decideTrayBounce({ ...base, running: false })).toEqual({
+      bounce: false,
+      reason: 'not-running',
+    });
+  });
+
+  it('does nothing when the app is not installed', () => {
+    expect(decideTrayBounce({ ...base, installed: false })).toEqual({
+      bounce: false,
+      reason: 'not-installed',
+    });
+  });
+
+  it('does not launch an uninstalled app even if an install was attempted', () => {
+    expect(
+      decideTrayBounce({ ...base, installed: false, running: false, installAttempted: true }),
+    ).toEqual({ bounce: false, reason: 'not-installed' });
   });
 });

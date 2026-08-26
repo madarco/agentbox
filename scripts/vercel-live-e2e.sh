@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # vercel-live-e2e.sh — drive the remaining P0 live-smoke items for the Vercel
-# provider (docs/vercel-backlog.md): pause/resume (#5), checkpoint round-trip
+# provider (docs/cloud-providers.md): pause/resume (#5), checkpoint round-trip
 # (#6), and (opt-in) relay round-trip (#4).
 #
 # WHY this exists: the boot path was validated live 2026-05-28, but pause/resume,

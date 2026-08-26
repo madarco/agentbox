@@ -1,5 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { hostOpenCommand, writeManagedSecrets, type CredSetResult } from '@agentbox/sandbox-core';
+import {
+  hostOpenCommand,
+  publishManagedCredentials,
+  writeManagedSecrets,
+  type CredSetResult,
+} from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -83,6 +88,7 @@ export async function ensureDaytonaCredentials(
     if (result.ok) {
       persistCredentials(creds);
       log.success(`Daytona credentials saved to ${secretsPath()}`);
+      await publishDaytonaToHub(creds);
       outro('Setup complete.');
       return;
     }
@@ -95,6 +101,7 @@ export async function ensureDaytonaCredentials(
       log.warn(`Could not reach Daytona to validate (${result.message}) — saving anyway.`);
       persistCredentials(creds);
       log.success(`Daytona credentials saved to ${secretsPath()}`);
+      await publishDaytonaToHub(creds);
       outro('Setup complete (unvalidated).');
       return;
     }
@@ -210,6 +217,18 @@ function persistCredentials(creds: Credentials): void {
   if (creds.jwtToken) record.DAYTONA_JWT_TOKEN = creds.jwtToken;
   if (creds.organizationId) record.DAYTONA_ORGANIZATION_ID = creds.organizationId;
   writeManagedSecrets(MANAGED_KEYS, record);
+}
+
+/**
+ * Mirror the just-saved credentials to the hub. Best-effort; the local
+ * secrets.env write stays for the direct IO plane — see publishManagedCredentials.
+ */
+async function publishDaytonaToHub(creds: Credentials): Promise<void> {
+  const fields: Record<string, string> = {};
+  if (creds.apiKey) fields.apiKey = creds.apiKey;
+  if (creds.jwtToken) fields.jwtToken = creds.jwtToken;
+  if (creds.organizationId) fields.organizationId = creds.organizationId;
+  await publishManagedCredentials('daytona', fields);
 }
 
 /**

@@ -1,13 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,6 +8,7 @@ import {
   BUILT_IN_DEFAULTS,
   GLOBAL_CONFIG_FILE,
   parseUserConfig,
+  type GitPushMode,
   type UserConfig,
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
@@ -25,12 +19,16 @@ import type { BoxStatusStore } from './status-store.js';
 export const QUEUE_DIR = join(STATE_DIR, 'queue');
 
 /**
- * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs — a separate lane
- * from box creation. Serialized to 1: bakes are resource-heavy (a docker build,
- * a booted VPS) and each pins project config on success, so running one at a
- * time avoids contention and write races. A second bake queues behind the first.
+ * Concurrency ceiling for `kind: 'prepare'` (image-bake) jobs, applied **per
+ * provider lane** — a separate gate from box creation. Two bakes of the same
+ * provider would race on that provider's prepared-state marker and its
+ * `box.image<Provider>` pin, so a provider bakes one at a time and a second
+ * request for it queues. Different providers share nothing and bake in parallel.
+ *
+ * The lane key is `job.providerName` verbatim, so a remote-docker `docker:<alias>`
+ * bake gets its own lane per host — those run on different machines entirely.
  */
-export const PREPARE_MAX_CONCURRENT = 1;
+export const PREPARE_MAX_CONCURRENT_PER_PROVIDER = 1;
 
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
@@ -101,6 +99,16 @@ export interface QueueJob {
    * and no default snapshot. Inert when `noAgent` (no agent to run it).
    */
   setupWizard?: boolean;
+  /**
+   * A FOREGROUND create (an interactive `agentbox create` a human is watching),
+   * as opposed to a background `-i` run. The scheduler starts foreground jobs in
+   * their own lane, ungated by `queue.maxConcurrent` — that gate bounds background
+   * fan-out, and making an interactive command sit `queued` behind unrelated `-i`
+   * jobs would be a worse regression than the inline path it replaces. Its box
+   * still counts in the running total once live (honest occupancy); it is just
+   * never blocked. See {@link selectNextRunnableForeground}.
+   */
+  foreground?: boolean;
   /** Workspace + create-time options the worker reconstructs from. */
   createOpts: QueueJobCreateOpts;
   /** Per-job concurrency ceiling (--max-running override, else the global). */
@@ -167,14 +175,25 @@ export interface QueueJobLogin {
 
 /**
  * Options for a `kind: 'prepare'` job: bake a provider's base image. The worker
- * (`_run-queued-prepare`) calls `provider.prepare({ force, claudeInstall, onLog })`
- * directly and streams progress to the job log.
+ * (`_run-queued-prepare`) passes these into `provider.prepare`, filling any that
+ * are absent from the hub's own effective config, and streams progress to the
+ * job log. These are the bake INPUTS (not routing) — the CLI's `--build` /
+ * `--size` / `--location` / `--name` flags ride here so one route serves every
+ * bake shape.
  */
 export interface QueueJobPrepare {
   /** Rebuild even if the base image/snapshot already exists. */
   force?: boolean;
   /** Bake-time Claude install method (falls back to the effective config). */
   claudeInstall?: 'native' | 'npm';
+  /** Force a local docker build instead of pulling the registry base (`--build`). */
+  build?: boolean;
+  /** Bake-time VM size for the fixed-resource providers (daytona `cpu-mem-disk`, e2b `cpu-mem`). */
+  size?: string;
+  /** Bake datacenter / region (hetzner / digitalocean / daytona). */
+  location?: string;
+  /** Snapshot name (daytona; defaults to `agentbox-base-<timestamp>` when absent). */
+  name?: string;
 }
 
 /**
@@ -211,6 +230,31 @@ export interface QueueJobCreateOpts {
    * job and applied by the worker, which reads the host files at create time.
    */
   carry?: ResolvedCarryEntry[];
+  // ── Fields the foreground `agentbox create` conversion carries so the queue
+  //    worker builds the same box the old inline path did (audit: every create
+  //    flag has a home; a dropped one is an invisible capability regression). ──
+  /** `--build` / `--no-pull`: force a local docker base build (→ allowPull:false). */
+  build?: boolean;
+  /** `box.imageRegistry`: GHCR ref the base is pulled from (docker + daytona). */
+  imageRegistry?: string;
+  /** `--with-env` / wizard picks: gitignore-bypassing env/config files to copy in. */
+  envFiles?: string[];
+  /** `--no-credential-sync` → false: the in-box refreshed-token fan-out watcher. */
+  credentialSync?: boolean;
+  /** `--bundle-depth`: cap commits in the cloud-seed git bundle (0 = full). */
+  bundleDepth?: number;
+  /** `-b`/`--use-branch`: reuse an existing branch instead of forking agentbox/<name>. */
+  useBranch?: string;
+  /** `git.pushMode` (`--dangerously-with-credentials` → 'direct'); cloud only. */
+  gitPushMode?: GitPushMode;
+  /** `--size`: VM size for cloud providers (hetzner type / daytona cpu-mem-disk / vercel vCPU). */
+  size?: string;
+  /** `--location`: datacenter/region (hetzner / digitalocean). */
+  location?: string;
+  /** `--inbound`: VPS firewall access policy (locked | open | CIDR list). */
+  inbound?: string;
+  /** `--remote-host`: SSH destination whose docker engine runs a remote-docker box. */
+  remoteHost?: string;
 }
 
 export interface QueueConfig {
@@ -273,6 +317,8 @@ export interface EnqueueQueueJobInput {
   noAgent?: boolean;
   /** Seed the setup-wizard prompt as the agent's first turn (hub create path). */
   setupWizard?: boolean;
+  /** A FOREGROUND create — starts in the ungated lane (see {@link QueueJob.foreground}). */
+  foreground?: boolean;
   /** Per-invocation override of queue.maxConcurrent. */
   maxRunningOverride?: number;
   /** Per-invocation override of queue.maxWorking. */
@@ -298,9 +344,7 @@ export interface EnqueueQueueJobResult {
  * share one manifest-builder without the hub importing `apps/cli`. The scheduler
  * (`startQueueLoop`) picks the manifest up on its next tick regardless.
  */
-export async function enqueueQueueJob(
-  input: EnqueueQueueJobInput,
-): Promise<EnqueueQueueJobResult> {
+export async function enqueueQueueJob(input: EnqueueQueueJobInput): Promise<EnqueueQueueJobResult> {
   const cfg = await loadQueueConfig();
   const ceiling =
     typeof input.maxRunningOverride === 'number' && input.maxRunningOverride > 0
@@ -322,6 +366,7 @@ export async function enqueueQueueJob(
     agentArgs: input.agentArgs,
     ...(input.noAgent ? { noAgent: true } : {}),
     ...(input.setupWizard ? { setupWizard: true } : {}),
+    ...(input.foreground ? { foreground: true } : {}),
     createOpts: input.createOpts,
     maxConcurrent: ceiling,
     ...(maxWorking !== undefined ? { maxWorking } : {}),
@@ -348,6 +393,14 @@ export interface EnqueuePrepareJobInput {
   force?: boolean;
   /** Bake-time Claude install method (else the effective config decides). */
   claudeInstall?: 'native' | 'npm';
+  /** Force a local docker build instead of pulling the registry base (`--build`). */
+  build?: boolean;
+  /** Bake-time VM size (else the effective config's `box.size<Provider>` decides). */
+  size?: string;
+  /** Bake datacenter / region (else the provider's `box.<...>Location/Region` decides). */
+  location?: string;
+  /** Snapshot name (daytona; the provider defaults it when absent). */
+  name?: string;
   /** Host dir used for config resolution; the worker defaults it if absent. */
   workspace?: string;
 }
@@ -356,16 +409,19 @@ export interface EnqueuePrepareJobInput {
  * Build a `kind: 'prepare'` manifest and write it to the queue. Like
  * {@link enqueueQueueJob} this is transport-free — the caller pokes the
  * scheduler. The agent/create fields carry inert placeholders (the prepare
- * worker only reads `providerName` + `prepare`); the job is scheduled in its own
- * lane (see {@link PREPARE_MAX_CONCURRENT}) and never surfaces as a box.
+ * worker only reads `providerName` + `prepare`); the job is scheduled in its
+ * provider's own lane (see {@link PREPARE_MAX_CONCURRENT_PER_PROVIDER}) and never
+ * surfaces as a box.
  */
-export async function enqueuePrepareJob(
-  input: EnqueuePrepareJobInput,
-): Promise<{ job: QueueJob }> {
+export async function enqueuePrepareJob(input: EnqueuePrepareJobInput): Promise<{ job: QueueJob }> {
   const id = randomBytes(9).toString('hex');
   const prepare: QueueJobPrepare = {
     ...(input.force ? { force: true } : {}),
     ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+    ...(input.build ? { build: true } : {}),
+    ...(input.size ? { size: input.size } : {}),
+    ...(input.location ? { location: input.location } : {}),
+    ...(input.name ? { name: input.name } : {}),
   };
   const job: QueueJob = {
     id,
@@ -378,7 +434,7 @@ export async function enqueuePrepareJob(
     agentArgs: [],
     createOpts: { workspace: input.workspace ?? process.cwd() },
     prepare,
-    maxConcurrent: PREPARE_MAX_CONCURRENT,
+    maxConcurrent: PREPARE_MAX_CONCURRENT_PER_PROVIDER,
     createdAt: new Date().toISOString(),
     logPath: queueLogPath(id),
   };
@@ -444,35 +500,60 @@ export function selectNextRunnable(jobs: QueueJob[], runningCount: number): Queu
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
     if (j.kind === 'prepare') continue; // prepare has its own lane
+    if (j.foreground) continue; // foreground has its own lane (ungated)
     if (runningCount < j.maxConcurrent) return j;
   }
   return null;
 }
 
-/** Count running prepare jobs (its own concurrency lane). Dead workers skipped. */
-export function countRunningPrepareJobs(jobs: QueueJob[]): number {
-  let n = 0;
+/**
+ * Pure selector for the FOREGROUND lane: the oldest queued foreground create.
+ * Ungated — a foreground create is an interactive command a human is watching
+ * (inherently one per terminal), so it must never sit `queued` behind background
+ * `-i` jobs that happen to fill `queue.maxConcurrent`. Independent of the box and
+ * working gates, exactly like {@link selectNextRunnablePrepare}. Its box counts
+ * toward the running total once live (honest occupancy) but is never blocked.
+ */
+export function selectNextRunnableForeground(jobs: QueueJob[]): QueueJob | null {
+  for (const j of jobs) {
+    if (j.status !== 'queued') continue;
+    if (j.kind === 'prepare') continue;
+    if (!j.foreground) continue;
+    return j;
+  }
+  return null;
+}
+
+/**
+ * Count running prepare jobs per provider lane (keyed by `providerName`). Dead
+ * workers are skipped so a crashed bake doesn't wedge its provider's lane.
+ */
+export function countRunningPrepareJobsByProvider(jobs: QueueJob[]): Map<string, number> {
+  const byProvider = new Map<string, number>();
   for (const j of jobs) {
     if (j.kind !== 'prepare') continue;
     if (j.status !== 'running') continue;
     if (typeof j.pid === 'number' && !processAlive(j.pid)) continue;
-    n += 1;
+    byProvider.set(j.providerName, (byProvider.get(j.providerName) ?? 0) + 1);
   }
-  return n;
+  return byProvider;
 }
 
 /**
  * Pure selector for the prepare (image-bake) lane: the oldest queued prepare job
- * while under {@link PREPARE_MAX_CONCURRENT}. Independent of the box gates.
+ * whose provider lane is under {@link PREPARE_MAX_CONCURRENT_PER_PROVIDER}. A job
+ * whose lane is busy is skipped, not blocking — so a queued e2b bake starts while
+ * a docker bake runs. Independent of the box gates.
  */
 export function selectNextRunnablePrepare(
   jobs: QueueJob[],
-  runningPrepare: number,
+  runningByProvider: Map<string, number>,
 ): QueueJob | null {
-  if (runningPrepare >= PREPARE_MAX_CONCURRENT) return null;
   for (const j of jobs) {
     if (j.kind !== 'prepare') continue;
     if (j.status !== 'queued') continue;
+    const running = runningByProvider.get(j.providerName) ?? 0;
+    if (running >= PREPARE_MAX_CONCURRENT_PER_PROVIDER) continue;
     return j;
   }
   return null;
@@ -582,6 +663,7 @@ export function selectNextRunnableByWorking(
   for (const j of jobs) {
     if (j.status !== 'queued') continue;
     if (j.kind === 'prepare') continue; // prepare has its own lane
+    if (j.foreground) continue; // foreground has its own lane (ungated)
     const ceil =
       typeof j.maxWorking === 'number' && j.maxWorking > 0 ? j.maxWorking : globalMaxWorking;
     if (workingCount < ceil) return j;
@@ -695,7 +777,11 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
     ticking = true;
     try {
       const cfg = await loadConfig();
-      if (!cfg.enabled) return;
+      // NOTE: `cfg.enabled` gates only the BACKGROUND box/working lane below (it
+      // bounds background `-i` fan-out). The foreground lane (an interactive
+      // `agentbox create`, which now enqueues through the hub) and the prepare
+      // lane must run regardless — a disabled background queue must not wedge an
+      // interactive create at `queued`. Hygiene (sweep/recover) also runs always.
 
       // Throttled hygiene sweep of stale terminal manifests (runs regardless of
       // whether anything is queued, so a finished burst gets cleaned up).
@@ -732,8 +818,10 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
 
       // Start as many slots as we can in one tick — picking one per tick would
       // mean a 2s lag per job after a slot frees, which adds up when a burst
-      // of jobs queues against a freshly-cleared pool.
-      while (!stopped) {
+      // of jobs queues against a freshly-cleared pool. Gated by `cfg.enabled`:
+      // when the background queue is off, this lane starts nothing (the foreground
+      // + prepare lanes below still run).
+      while (!stopped && cfg.enabled) {
         let occupancy: number;
         let next: QueueJob | null;
         if (gateByWorking && countWorking) {
@@ -790,13 +878,14 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
         }
       }
 
-      // Prepare (image-bake) lane — independent of the box/working gates. A bake
-      // produces an artifact, not a box, so it neither counts against nor is
-      // blocked by running boxes. Serialized to PREPARE_MAX_CONCURRENT.
+      // Foreground lane — an interactive `agentbox create` a human is watching.
+      // Ungated by `queue.maxConcurrent` (that gate bounds background `-i` fan-out);
+      // a foreground create must start immediately, not sit `queued` behind unrelated
+      // background jobs. Start every queued foreground create this tick — there is
+      // inherently one per terminal, and each was launched by a present human.
       while (!stopped) {
         const fresh = await loadQueue();
-        const runningPrepare = countRunningPrepareJobs(fresh);
-        const next = selectNextRunnablePrepare(fresh, runningPrepare);
+        const next = selectNextRunnableForeground(fresh);
         if (!next) break;
         const current = await readJob(next.id);
         if (!current || current.status !== 'queued') continue;
@@ -814,7 +903,52 @@ export function startQueueLoop(deps: QueueLoopDeps): QueueLoopHandle {
             await writeJob(withPid);
             onStatusChange?.(withPid);
             log(
-              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; prepare ${String(runningPrepare + 1)}/${String(PREPARE_MAX_CONCURRENT)}`,
+              `queue: started foreground job ${updated.id} (${updated.agent}) as pid ${String(pid)}`,
+            );
+          } else {
+            log(`queue: started foreground job ${updated.id} (${updated.agent}); pid unknown`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const failed: QueueJob = {
+            ...updated,
+            status: 'failed',
+            finishedAt: new Date().toISOString(),
+            reason: `worker-spawn-failed: ${msg}`,
+          };
+          await writeJob(failed);
+          onStatusChange?.(failed);
+          log(`queue: spawn for foreground job ${updated.id} failed: ${msg}`);
+        }
+      }
+
+      // Prepare (image-bake) lanes — independent of the box/working gates. A bake
+      // produces an artifact, not a box, so it neither counts against nor is
+      // blocked by running boxes. One lane per provider: the recount below sees
+      // the job just claimed, so a single tick starts at most one bake per
+      // provider and as many providers as have queued work.
+      while (!stopped) {
+        const fresh = await loadQueue();
+        const runningByProvider = countRunningPrepareJobsByProvider(fresh);
+        const next = selectNextRunnablePrepare(fresh, runningByProvider);
+        if (!next) break;
+        const current = await readJob(next.id);
+        if (!current || current.status !== 'queued') continue;
+        const updated: QueueJob = {
+          ...current,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        };
+        await writeJob(updated);
+        onStatusChange?.(updated);
+        try {
+          const pid = await spawnWorker(updated);
+          if (typeof pid === 'number') {
+            const withPid: QueueJob = { ...updated, pid };
+            await writeJob(withPid);
+            onStatusChange?.(withPid);
+            log(
+              `queue: started prepare job ${updated.id} (${updated.providerName}) as pid ${String(pid)}; ${updated.providerName} lane ${String((runningByProvider.get(updated.providerName) ?? 0) + 1)}/${String(PREPARE_MAX_CONCURRENT_PER_PROVIDER)}`,
             );
           } else {
             log(`queue: started prepare job ${updated.id} (${updated.providerName}); pid unknown`);

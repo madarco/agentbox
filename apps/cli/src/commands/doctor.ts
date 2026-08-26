@@ -20,6 +20,7 @@ import {
   type ProviderName,
 } from '../lib/doctor-checks.js';
 import { isKnownProvider } from '../provider/registry.js';
+import { renderControlBoxProviders } from './prepare.js';
 
 interface DoctorOptions {
   provider?: string;
@@ -63,6 +64,14 @@ export const doctorCommand = new Command('doctor')
     }
 
     process.stdout.write(formatDetailed(groups).join('\n') + '\n');
+
+    // The provider rows above are local probes (this machine's credentials +
+    // prepared-state). With a control box configured, ITS baked providers are the
+    // ones a cloud create boots — so append its inventory, read from
+    // `GET /api/v1/providers?freshness=1`. Empty (and silent) for a co-located
+    // local hub, where the local rows already describe it.
+    const controlBox = await renderControlBoxProviders().catch(() => [] as string[]);
+    if (controlBox.length > 0) process.stdout.write(controlBox.join('\n') + '\n');
 
     const worst = worstStatus(groups);
     if (worst === 'fail') {

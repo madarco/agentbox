@@ -32,7 +32,9 @@ import {
 import { readCliStamp, recordBox, type ProviderModule } from '@agentbox/sandbox-core';
 import { prepareVercelProvider } from './prepare.js';
 import { buildVercelAttach } from './build-attach.js';
-import { currentVercelBaseFingerprintLive } from './prepared-state.js';
+import { currentVercelBaseFingerprintLive,
+  currentVercelBaseFileHashes,
+} from './prepared-state.js';
 import { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
 import { doctorChecks, readCredStatusSummary } from './provider-module.js';
 
@@ -105,7 +107,7 @@ export const vercelProvider: Provider = {
   prepare: prepareVercelProvider,
   buildAttach: buildVercelAttach,
   checkpoint: vercelCheckpoint,
-  baseFingerprint: () => currentVercelBaseFingerprintLive(),
+  baseFingerprint: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -116,6 +118,7 @@ export const providerModule: ProviderModule = {
   readCredStatus: readCredStatusSummary,
   setCredentials: setVercelCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
+  currentBaseFileHashes: () => currentVercelBaseFileHashes(),
   doctorChecks,
 };
 

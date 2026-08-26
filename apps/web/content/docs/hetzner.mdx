@@ -5,7 +5,7 @@ description: Run your agents on a real, inexpensive Hetzner VPS with full root a
 
 Run your agents on a real, inexpensive cloud VM you fully control — no local Docker needed. Each box is its own Hetzner Cloud VPS (1:1) you drive with the same `agentbox` commands as a local box, reached over pure OpenSSH (no third-party agent in the box — you own root). Heads up: a Hetzner box is a real VPS that bills ~€4/mo even when stopped — pause is poweroff/poweron, not free — and its firewall locks to your current egress IP.
 
-Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per *running* box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
+Switch per box with `--provider hetzner`, or pin it project-wide with `box.provider: hetzner` in [`agentbox.yaml`](/docs/agentbox-yaml). Pick Hetzner for bare-VPS control (full kernel, your own region), a Cloud Firewall locked to your egress IP, and full [Docker-in-Docker](/docs/docker-in-docker). Cost is roughly €4/mo per _running_ box. Comparing options? See [local-docker](/docs/local-docker), [daytona](/docs/daytona), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
 ## Set up
 
@@ -15,7 +15,7 @@ The easiest path is the interactive wizard — it signs you in and bakes the bas
 agentbox install        # then select hetzner
 ```
 
-Paste a Hetzner Cloud API token when prompted — a **Read & Write** token from the target project's *Security → API Tokens* page (boxes will be created in whichever project minted it). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider hetzner` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
+Paste a Hetzner Cloud API token when prompted — a **Read & Write** token from the target project's _Security → API Tokens_ page (boxes will be created in whichever project minted it). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider hetzner` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in ~15-20s.
 
 For CI or scripted setup, run the explicit equivalents:
 
@@ -25,11 +25,16 @@ agentbox prepare --provider hetzner    # bake the base snapshot
 ```
 
 <Callout title="NOTE">
-Mint the token under the specific Hetzner *project* you want boxes to live in, and make it **Read & Write**. Read-only tokens can't create servers.
+  Mint the token under the specific Hetzner *project* you want boxes to live in, and make it **Read
+  & Write**. Read-only tokens can't create servers.
 </Callout>
 
 {/* SCREENSHOT /screenshots/hetzner_api.jpg — Hetzner Cloud console → Security → API tokens, the Read & Write token + Generate button (token value masked). Captured manually from the console. */}
-<Figure src="/screenshots/hetzner_api.jpg" caption="Mint a Read & Write API token under Security → API Tokens in the Hetzner console." />
+
+<Figure
+  src="/screenshots/hetzner_api.jpg"
+  caption="Mint a Read & Write API token under Security → API Tokens in the Hetzner console."
+/>
 
 ## Use it
 
@@ -65,10 +70,11 @@ agentbox prepare --provider hetzner --claude-install npm
 `npm` installs `@anthropic-ai/claude-code` and symlinks it into the same
 `~/.local/bin/claude` path the native installer uses, so the box behaves
 identically. Bake-time only — changing it re-bakes the snapshot.
+
 </Callout>
 
 <Callout type="warn" title="HEADS UP">
-The bake costs a few minutes and a couple euro-cents, but you only do it once per account.
+  The bake costs a few minutes and a couple euro-cents, but you only do it once per account.
 </Callout>
 
 ## Create a box and run an agent
@@ -99,7 +105,7 @@ The default VM is `cx23` (2 vCPU / 4 GB / 40 GB, ~€4/mo while running) in loca
 agentbox create -y --provider hetzner --size cx33 --location fsn1
 ```
 
-Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), and `ash` (Ashburn, US). `--location` on a non-hetzner provider is ignored with a warning. The bake VPS location can be set the same way: `agentbox prepare --provider hetzner --location fsn1`.
+Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), and `ash` (Ashburn, US). `--location` on a non-hetzner provider is ignored with a warning. The bake VPS location can be set the same way: `agentbox prepare --provider hetzner --location fsn1` (or pin `box.hetznerLocation`).
 
 After the box comes up, AgentBox reports the **real** provisioned resources read back from Hetzner — e.g. `provisioned 4 vCPU / 16 GB RAM / 160 GB disk` — rather than a static guess, and stores them on the box record.
 
@@ -110,11 +116,15 @@ Before AgentBox creates any billable resource (firewall, SSH key, server), it va
 - **Unknown type** (`--size cx99`) → lists valid non-deprecated x86 types.
 - **ARM type** (`--size cax31`) → rejected; AgentBox base snapshots are x86-only, so `cax*` types aren't supported.
 - **Deprecated type** (e.g. the old `cx22`) → rejected, with current alternatives.
-- **Type not offered in the location** (`--size ccx23 --location nbg1`) → lists where it *is* offered and reminds you of `--location`.
+- **Type not offered in the location** (`--size ccx23 --location nbg1`) → lists where it _is_ offered and reminds you of `--location`.
 - **Disk too small** for the base snapshot → asks for a larger type.
 
 <Callout type="warn" title="Dedicated (ccx) types and account limits">
-New Hetzner accounts start with a low server limit, and the dedicated-vCPU `ccx*` types count against it quickly. If Hetzner refuses the create with `resource_limit_exceeded`, AgentBox surfaces the account-limits explanation and points you at the [Hetzner Console](https://console.hetzner.cloud/) → your project → **Limits** to request an increase. An out-of-capacity error (`resource_unavailable`) suggests trying another `--location`.
+  New Hetzner accounts start with a low server limit, and the dedicated-vCPU `ccx*` types count
+  against it quickly. If Hetzner refuses the create with `resource_limit_exceeded`, AgentBox
+  surfaces the account-limits explanation and points you at the [Hetzner
+  Console](https://console.hetzner.cloud/) → your project → **Limits** to request an increase. An
+  out-of-capacity error (`resource_unavailable`) suggests trying another `--location`.
 </Callout>
 
 ## Firewall
@@ -147,29 +157,30 @@ agentbox checkpoint create smoke setup
 ```
 
 <Callout title="TIP">
-Because Hetzner checkpoints are full-disk snapshots, capturing one after your project's setup lets later boxes boot ready-to-go and skip workspace seeding.
+  Because Hetzner checkpoints are full-disk snapshots, capturing one after your project's setup lets
+  later boxes boot ready-to-go and skip workspace seeding.
 </Callout>
 
 ## Specs
 
-| Spec | |
-| --- | --- |
-| Base image | Ubuntu 24.04 snapshot |
-| Build method | Baked snapshot — install script on a throwaway VPS then `create_image` (`agentbox prepare --provider hetzner`); no Dockerfile |
-| Docker-in-Docker | Yes (full root, unmodified) |
-| SSH | Yes — one persistent OpenSSH ControlMaster per box |
-| Arch | x86_64 (amd64) |
-| Live snapshots | `create_image` snapshots (no-pause default); pause = poweroff/poweron and a stopped VPS still bills ~€4/mo |
-| Preview URL | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless) |
+| Spec             |                                                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Base image       | Ubuntu 24.04 snapshot                                                                                                         |
+| Build method     | Baked snapshot — install script on a throwaway VPS then `create_image` (`agentbox prepare --provider hetzner`); no Dockerfile |
+| Docker-in-Docker | Yes (full root, unmodified)                                                                                                   |
+| SSH              | Yes — one persistent OpenSSH ControlMaster per box                                                                            |
+| Arch             | x86_64 (amd64)                                                                                                                |
+| Live snapshots   | `create_image` snapshots (no-pause default); pause = poweroff/poweron and a stopped VPS still bills ~€4/mo                    |
+| Preview URL      | SSH local port forward via `ssh -O forward`, mirrored to `https://<box-name>.localhost` (Portless)                            |
 
 ## Caveats
 
-- **Pause still bills.** Hetzner charges ~€4/mo even for a *stopped* VPS. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the VPS, its firewall, and the per-box SSH key.
+- **Pause still bills.** Hetzner charges ~€4/mo even for a _stopped_ VPS. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the VPS, its firewall, and the per-box SSH key.
 - **No live stats.** `agentbox top` and `dashboard` render `—` for CPU/mem; the basic API doesn't expose per-server metrics.
 - **No shared credential volume.** Agent credentials are pushed to each box via scp at create time.
 - **IPv4 only.** SSH targets the VPS's IPv4 address; IPv6-only host networks aren't exercised yet.
 - **`agentbox prune --provider hetzner` isn't wired yet.** Clean up orphans from the Hetzner dashboard or the REST API (`$HCLOUD_TOKEN` lives in `~/.agentbox/secrets.env`).
 
 <Callout type="warn" title="HEADS UP">
-Destroying is the only way to stop billing. A stopped box keeps accruing the ~€4/mo charge.
+  Destroying is the only way to stop billing. A stopped box keeps accruing the ~€4/mo charge.
 </Callout>

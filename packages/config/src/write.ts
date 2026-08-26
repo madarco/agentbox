@@ -10,6 +10,7 @@ import {
   projectMetaFile,
 } from './paths.js';
 import { coerceFromString, parseUserConfig } from './parse.js';
+import { withFileLock } from './file-lock.js';
 import { type ConfigScope, lookupKey, type UserConfig, UserConfigError } from './types.js';
 import { readdir } from 'node:fs/promises';
 
@@ -29,8 +30,40 @@ interface SetOptions {
 }
 
 /**
+ * Set one dotted key in a `config.yaml` **body**, preserving everything else,
+ * and return the new body. Pure — no filesystem — so a caller holding a config
+ * file that isn't on this machine can merge into it.
+ *
+ * That is the reason this exists separately from {@link setConfigValue}: the
+ * hetzner control-plane deploy has to write `box.claudeInstall` into the VPS's
+ * config, which the hub *also* writes itself (`box.remoteDockerHost`). Uploading
+ * a freshly-generated file would silently drop the hub's own keys on every
+ * redeploy, so the deploy reads the remote body, merges here, and uploads.
+ *
+ * Validates the merged document the same way `setConfigValue` does; an unknown
+ * key or a body whose top level isn't a mapping throws `UserConfigError`.
+ */
+export function mergeConfigYaml(body: string, key: string, value: unknown): string {
+  if (!lookupKey(key)) {
+    throw new UserConfigError(`unknown key "${key}"`);
+  }
+  const doc = parseDocBody(body, '<config.yaml>');
+  setLeaf(doc, key, value);
+  stampSchema(doc);
+  const merged = stringifyYaml(doc);
+  parseUserConfig(merged, '<config.yaml>');
+  return merged;
+}
+
+/**
  * Write a single key into the chosen scope's config file. Creates parent
  * dirs and (for project scope) the meta.json sidecar. Atomic via tmp-rename.
+ *
+ * The read-modify-write runs under a cross-process file lock: unrelated
+ * agentbox processes write the same global `config.yaml` concurrently (two
+ * parallel image bakes each pin their own `box.image<Provider>` from a separate
+ * detached worker), and without the lock the later writer's read would predate
+ * the earlier one's write and silently drop its key.
  */
 export async function setConfigValue(
   scope: ConfigScope,
@@ -48,13 +81,15 @@ export async function setConfigValue(
     : value;
 
   const path = await configPathFor(scope, cwd);
-  const current = await readExistingDoc(path);
-  setLeaf(current, key, coerced);
-  stampSchema(current);
-  // Re-parse to validate the merged document; any change that produces an
-  // invalid file (shouldn't be possible here, but defence-in-depth) throws.
-  parseUserConfig(stringifyYaml(current), path);
-  await atomicWriteYaml(path, current);
+  await withFileLock(path, async () => {
+    const current = await readExistingDoc(path);
+    setLeaf(current, key, coerced);
+    stampSchema(current);
+    // Re-parse to validate the merged document; any change that produces an
+    // invalid file (shouldn't be possible here, but defence-in-depth) throws.
+    parseUserConfig(stringifyYaml(current), path);
+    await atomicWriteYaml(path, current);
+  });
 
   if (scope === 'project') {
     const root = (await findProjectRoot(cwd)).root;
@@ -66,7 +101,8 @@ export async function setConfigValue(
 
 /**
  * Remove a key from the chosen scope's config file. Empty parent objects are
- * pruned so the file stays tidy. ENOENT is treated as success.
+ * pruned so the file stays tidy. ENOENT is treated as success. Locked like
+ * {@link setConfigValue} — same read-modify-write, same lost-update hazard.
  */
 export async function unsetConfigValue(
   scope: ConfigScope,
@@ -77,11 +113,14 @@ export async function unsetConfigValue(
     throw new UserConfigError(`unknown key "${key}"`);
   }
   const path = await configPathFor(scope, cwd);
-  const current = await readExistingDoc(path);
-  const existed = unsetLeaf(current, key);
+  const existed = await withFileLock(path, async () => {
+    const current = await readExistingDoc(path);
+    if (!unsetLeaf(current, key)) return false;
+    stampSchema(current);
+    await atomicWriteYaml(path, current);
+    return true;
+  });
   if (!existed) return { path, existed: false };
-  stampSchema(current);
-  await atomicWriteYaml(path, current);
   if (scope === 'project') {
     const root = (await findProjectRoot(cwd)).root;
     await touchProjectMeta(root);
@@ -104,6 +143,13 @@ export interface ProjectEntry {
   lastSeenAt: string | null;
   configPath: string;
   hasConfigFile: boolean;
+  /**
+   * The repo this project's folder pointed at, recorded when it was last seen.
+   * Outlives the folder on purpose: a control box builds boxes from throwaway
+   * clones, so by the time it needs the origin to clone again, the directory it
+   * would have read `git remote` from is gone.
+   */
+  originUrl?: string;
 }
 
 /**
@@ -137,6 +183,7 @@ export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
       lastSeenAt: meta.lastSeenAt,
       configPath: cfgPath,
       hasConfigFile: hasConfig,
+      ...(meta.originUrl ? { originUrl: meta.originUrl } : {}),
     });
   }
   out.sort((a, b) => a.originalPath.localeCompare(b.originalPath));
@@ -221,9 +268,12 @@ export async function bumpProjectGcCounter(): Promise<number> {
   return next;
 }
 
-async function readMeta(
-  dirName: string,
-): Promise<{ originalPath: string; createdAt: string | null; lastSeenAt: string | null } | null> {
+async function readMeta(dirName: string): Promise<{
+  originalPath: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  originUrl: string | null;
+} | null> {
   const metaPath = `${PROJECTS_DIR}/${dirName}/meta.json`;
   try {
     const text = await readFile(metaPath, 'utf8');
@@ -233,6 +283,7 @@ async function readMeta(
       originalPath: parsed['originalPath'],
       createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : null,
       lastSeenAt: typeof parsed['lastSeenAt'] === 'string' ? parsed['lastSeenAt'] : null,
+      originUrl: typeof parsed['originUrl'] === 'string' ? parsed['originUrl'] : null,
     };
   } catch {
     return null;
@@ -256,6 +307,26 @@ async function fileExists(p: string): Promise<boolean> {
  * the next `config set`. Validation of the merged doc still happens in
  * `setConfigValue`; the key being set is validated by `lookupKey`.
  */
+/**
+ * Parse a config-file body into a mutable doc. An empty/blank body is an empty
+ * doc (that's how a first write starts), `label` only names the source in errors.
+ */
+function parseDocBody(text: string, label: string): Partial<UserConfig> {
+  let doc: unknown;
+  try {
+    doc = parseYaml(text);
+  } catch (err) {
+    throw new UserConfigError(
+      `${label}: yaml parse error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (doc === null || doc === undefined) return {};
+  if (typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new UserConfigError(`${label}: top-level must be a mapping`);
+  }
+  return doc as Partial<UserConfig>;
+}
+
 async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
   let text: string;
   try {
@@ -264,19 +335,7 @@ async function readExistingDoc(path: string): Promise<Partial<UserConfig>> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  let doc: unknown;
-  try {
-    doc = parseYaml(text);
-  } catch (err) {
-    throw new UserConfigError(
-      `${path}: yaml parse error: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (doc === null || doc === undefined) return {};
-  if (typeof doc !== 'object' || Array.isArray(doc)) {
-    throw new UserConfigError(`${path}: top-level must be a mapping`);
-  }
-  return doc as Partial<UserConfig>;
+  return parseDocBody(text, path);
 }
 
 /**
@@ -347,8 +406,11 @@ async function atomicWriteYaml(path: string, doc: Partial<UserConfig>): Promise<
  * `absPath` should be a canonical project root (e.g. `findProjectRoot(cwd).root`).
  * Callers that start from an arbitrary user path should canonicalize first.
  */
-export async function registerProject(absPath: string): Promise<void> {
-  await touchProjectMeta(absPath);
+export async function registerProject(
+  absPath: string,
+  opts: { originUrl?: string } = {},
+): Promise<void> {
+  await touchProjectMeta(absPath, opts.originUrl);
 }
 
 /**
@@ -367,22 +429,26 @@ export async function unregisterProject(hash: string): Promise<boolean> {
   return true;
 }
 
-async function touchProjectMeta(absPath: string): Promise<void> {
+async function touchProjectMeta(absPath: string, originUrl?: string): Promise<void> {
   const dir = dirname(projectMetaFile(absPath));
   await mkdir(dir, { recursive: true });
   const metaPath = projectMetaFile(absPath);
-  let prior: { originalPath?: string; createdAt?: string } = {};
+  let prior: { originalPath?: string; createdAt?: string; originUrl?: string } = {};
   try {
     prior = JSON.parse(await readFile(metaPath, 'utf8')) as typeof prior;
   } catch {
     /* fresh file */
   }
   const now = new Date().toISOString();
+  // A caller that didn't read an origin (the folder may be gone) must not erase
+  // the one recorded when it was there.
+  const origin = originUrl ?? prior.originUrl;
   const next = {
     originalPath: absPath,
     hash: hashProjectPath(absPath),
     createdAt: prior.createdAt ?? now,
     lastSeenAt: now,
+    ...(origin ? { originUrl: origin } : {}),
   };
   const tmp = `${metaPath}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
   await writeFile(tmp, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });

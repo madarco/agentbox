@@ -23,11 +23,17 @@ name: Publish box image
 # step when the fingerprint is already published (below) — the tag is the
 # content identity, so "already there" means "nothing to build".
 
+# `nightly` is in the branch list because the CLI resolves the box image by
+# build-context fingerprint, and a nightly CLI published off that branch asks for
+# a tag only a build from that branch produces. Without it every nightly tester
+# silently falls back to a ~10-minute local docker build, and Daytona degrades to
+# a container class outright (a linux-vm base can only boot from a PUBLISHED
+# image). The floating `:latest` / `:<version>` tags stay main-only — see below.
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
-    branches: [main]
+    branches: [main, nightly]
 
 jobs:
   publish:
@@ -67,20 +73,28 @@ jobs:
 
       - name: Compute image tags
         id: tags
+        env:
+          # Only a release ref may claim the floating tags. Nightly-branch runs
+          # still publish the fingerprint tag — that is the one the CLI pulls —
+          # but must not move `latest`, which would hand every *stable* user an
+          # image built from unreleased code.
+          RELEASE_REF: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
         run: |
           SHA="$(node apps/cli/scripts/print-box-context-sha.mjs --claude-install ${{ matrix.claude-install }})"
           VERSION="$(node -p "require('./apps/cli/package.json').version")"
           echo "sha=${SHA:0:16}" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "box context fingerprint (${{ matrix.claude-install }}): $SHA (tag sha-${SHA:0:16}), cli $VERSION"
+          echo "release_ref=$RELEASE_REF" >> "$GITHUB_OUTPUT"
+          echo "box context fingerprint (${{ matrix.claude-install }}): $SHA (tag sha-${SHA:0:16}), cli $VERSION, release-ref $RELEASE_REF"
           # The fingerprint tag is the one the CLI resolves, and every variant gets
           # one. `latest` and the version tag name the DEFAULT image, so only the
-          # native build may claim them — letting the npm build move `latest` would
-          # hand every default user an npm-installed Claude.
+          # native build on a release ref may claim them — letting the npm build
+          # move `latest` would hand every default user an npm-installed Claude,
+          # and letting a nightly move it would ship unreleased code as stable.
           {
             echo "tags<<TAGS_EOF"
             echo "$IMAGE:sha-${SHA:0:16}"
-            if [ "${{ matrix.claude-install }}" = "native" ]; then
+            if [ "${{ matrix.claude-install }}" = "native" ] && [ "$RELEASE_REF" = "true" ]; then
               echo "$IMAGE:$VERSION"
               echo "$IMAGE:latest"
             fi
@@ -126,10 +140,10 @@ jobs:
       # The image already exists, but `latest` / the version tag may still point
       # at older content (e.g. a release commit that didn't touch the context).
       # imagetools re-points the tags at the existing manifest — no rebuild, and
-      # it preserves the multi-arch index. Native only: those two tags name the
-      # default image (see the tag list above).
+      # it preserves the multi-arch index. Native + release-ref only: those two
+      # tags name the default stable image (see the tag list above).
       - name: Re-point version and latest at the existing image
-        if: steps.probe.outputs.exists == 'true' && matrix.claude-install == 'native'
+        if: steps.probe.outputs.exists == 'true' && matrix.claude-install == 'native' && steps.tags.outputs.release_ref == 'true'
         run: |
           docker buildx imagetools create \
             -t "$IMAGE:${{ steps.tags.outputs.version }}" \

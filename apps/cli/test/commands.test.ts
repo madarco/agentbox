@@ -21,6 +21,7 @@ import { shellCommand } from '../src/commands/shell.js';
 import { startCommand } from '../src/commands/start.js';
 import { stopCommand } from '../src/commands/stop.js';
 import { unpauseCommand } from '../src/commands/unpause.js';
+import { hubCommand } from '../src/commands/hub.js';
 
 describe('lifecycle CLI surface', () => {
   it('list is registered with -j/--json, -g/--global, and the ls alias', () => {
@@ -81,9 +82,15 @@ describe('lifecycle CLI surface', () => {
     );
   });
 
-  it('install takes --force and --dry-run, plus `cmux`, `herdr`, `codex`, and `app` subcommands', () => {
+  it('install takes --force and --dry-run, plus `cmux`, `herdr`, `portless`, `codex`, and `app` subcommands', () => {
     expect(installCommand.name()).toBe('install');
-    expect(installCommand.commands.map((c) => c.name())).toEqual(['cmux', 'herdr', 'codex', 'app']);
+    expect(installCommand.commands.map((c) => c.name())).toEqual([
+      'cmux',
+      'herdr',
+      'portless',
+      'codex',
+      'app',
+    ]);
     const longs = installCommand.options.map((o) => o.long);
     expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
   });
@@ -175,9 +182,7 @@ describe('lifecycle CLI surface', () => {
     expect(attachCommand.registeredArguments).toHaveLength(1);
     expect(attachCommand.registeredArguments[0]!.required).toBe(false);
     const longs = attachCommand.options.map((o) => o.long);
-    expect(longs).toEqual(
-      expect.arrayContaining(['--session-name', '--attach-in', '--inline']),
-    );
+    expect(longs).toEqual(expect.arrayContaining(['--session-name', '--attach-in', '--inline']));
   });
 
   it('shell takes [box] + variadic [cmd...] and exposes the multi-shell flags', () => {
@@ -205,6 +210,53 @@ describe('lifecycle CLI surface', () => {
     expect(kill.options.map((o) => o.long)).toEqual(expect.arrayContaining(['--name', '--all']));
   });
 
+  it('hub folds the former control-plane group: local + remote-admin subcommands in one surface', () => {
+    expect(hubCommand.name()).toBe('hub');
+    const subs = hubCommand.commands.map((c) => c.name());
+    // Local hub process + client verbs (pre-existing).
+    expect(subs).toEqual(
+      expect.arrayContaining(['start', 'status', 'target', 'stop', 'restart', 'pull', 'adopt']),
+    );
+    // Folded remote-hub admin verbs (formerly `agentbox control-plane *`).
+    expect(subs).toEqual(
+      expect.arrayContaining([
+        'setup',
+        'deploy',
+        'set-url',
+        'unset-url',
+        'add',
+        'worker',
+        'credentials',
+        'secrets',
+        'project',
+        'custody',
+        'boxes',
+        'approvals',
+      ]),
+    );
+    // No subcommand is dropped or duplicated by the fold.
+    expect(new Set(subs).size).toBe(subs.length);
+    // `start` stays the default (bare `agentbox hub` starts + opens the local hub).
+    expect((hubCommand as unknown as { _defaultCommandName?: string })._defaultCommandName).toBe(
+      'start',
+    );
+  });
+
+  it('hub status is unified by target: takes --url + --json', () => {
+    const status = hubCommand.commands.find((c) => c.name() === 'status')!;
+    const longs = status.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--url', '--json']));
+  });
+
+  it('hub boxes is list-only (lifecycle moved to the top-level commands via /api/v1)', () => {
+    const boxes = hubCommand.commands.find((c) => c.name() === 'boxes')!;
+    const subs = boxes.commands.map((c) => c.name());
+    // The `start|stop|pause|resume|rm` stopgaps were removed in Step 5: the
+    // top-level `agentbox start|stop|pause|unpause|destroy` route through the
+    // hub `/api/v1` in both modes, so a second surface would be redundant.
+    expect(subs).toEqual(['list']);
+  });
+
   it('all box-arg commands now accept [box] (optional) for auto-pick', () => {
     const optionalBoxCmds = [
       statusCommand,
@@ -217,5 +269,10 @@ describe('lifecycle CLI surface', () => {
     for (const cmd of optionalBoxCmds) {
       expect(cmd.registeredArguments[0]!.required, `${cmd.name()}: [box]`).toBe(false);
     }
+  });
+
+  it('destroy exposes --keep-snapshot and --force (drop the record when no hub owns the box)', () => {
+    const longs = destroyCommand.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--yes', '--keep-snapshot', '--force']));
   });
 });

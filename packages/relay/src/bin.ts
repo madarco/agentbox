@@ -1,7 +1,49 @@
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { DEFAULT_RELAY_PORT } from './types.js';
-import { startRelayDaemon } from './daemon.js';
+import { setCloudBackendLoader, startRelayDaemon, type CloudBackendLoader } from './daemon.js';
+
+/**
+ * Side-load the host's built-in cloud backends from `AGENTBOX_CLOUD_BACKENDS`
+ * (set by `spawnRelay`, pointing at the CLI bundle's `dist/cloud-backends.js`).
+ *
+ * This relay bin is bundled from `@agentbox/relay` alone, so it carries no
+ * provider packages and — in an npm install — has no `node_modules` to resolve
+ * them from. The CLI bundle does have them inlined, hence the hand-off.
+ *
+ * Deliberately lazy: the module is imported on the first cloud action, never at
+ * boot, so a docker-only relay never touches a cloud SDK. `resolveBackend` also
+ * never throws — a bad path degrades to the plugin/legacy fallbacks instead of
+ * failing the RPC.
+ */
+function registerCloudBackendsFromEnv(log: (line: string) => void): void {
+  const path = process.env.AGENTBOX_CLOUD_BACKENDS;
+  if (!path) return;
+  let pending: Promise<CloudBackendLoader> | undefined;
+  const load = (): Promise<CloudBackendLoader> => {
+    pending ??= import(pathToFileURL(path).href).then(
+      (m: { cloudBackendLoader: CloudBackendLoader }) => m.cloudBackendLoader,
+    );
+    return pending;
+  };
+  setCloudBackendLoader({
+    id: `agentbox:env:${path}`,
+    resolveBackend: async (name) => {
+      try {
+        return await (await load()).resolveBackend(name);
+      } catch (err) {
+        pending = undefined;
+        log(
+          `cloud backend loader at ${path} failed (${err instanceof Error ? err.message : String(err)}); falling back`,
+        );
+        return null;
+      }
+    },
+    loadCloudCp: async () => (await load()).loadCloudCp(),
+  });
+  log(`cloud backends: ${path}`);
+}
 
 const program = new Command();
 
@@ -21,10 +63,14 @@ program
       process.stderr.write(`agentbox-relay: invalid port "${opts.port}"\n`);
       process.exit(2);
     }
+    const log = (line: string): void => {
+      process.stdout.write(`agentbox-relay: ${line}\n`);
+    };
+    registerCloudBackendsFromEnv(log);
     const daemon = await startRelayDaemon({
       port,
       host: opts.host,
-      logger: (line) => process.stdout.write(`agentbox-relay: ${line}\n`),
+      logger: log,
     });
     process.stdout.write(`agentbox-relay: listening on ${opts.host}:${String(port)}\n`);
 
@@ -44,7 +90,11 @@ program
   .requiredOption('--name <name>', 'human-readable box name')
   .option('--port <number>', 'relay port', String(DEFAULT_RELAY_PORT))
   .action(async (opts: { id: string; token: string; name: string; port: string }) => {
-    await adminPost('/admin/register-box', { boxId: opts.id, token: opts.token, name: opts.name }, opts.port);
+    await adminPost(
+      '/admin/register-box',
+      { boxId: opts.id, token: opts.token, name: opts.name },
+      opts.port,
+    );
   });
 
 program
@@ -108,19 +158,16 @@ async function adminPost(path: string, body: unknown, portStr: string): Promise<
 async function adminGet(path: string, portStr: string): Promise<string> {
   const port = Number.parseInt(portStr, 10);
   return new Promise<string>((resolve, reject) => {
-    const req = httpRequest(
-      { host: '127.0.0.1', port, method: 'GET', path },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          const status = res.statusCode ?? 0;
-          if (status >= 200 && status < 300) resolve(text);
-          else reject(new Error(`relay ${path} → ${String(status)}: ${text}`));
-        });
-      },
-    );
+    const req = httpRequest({ host: '127.0.0.1', port, method: 'GET', path }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        const status = res.statusCode ?? 0;
+        if (status >= 200 && status < 300) resolve(text);
+        else reject(new Error(`relay ${path} → ${String(status)}: ${text}`));
+      });
+    });
     req.on('error', reject);
     req.end();
   });

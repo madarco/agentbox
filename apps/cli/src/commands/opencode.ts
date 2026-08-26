@@ -16,7 +16,6 @@ import {
   buildOpencodeLoginRunArgv,
   createBox,
   DEFAULT_BOX_IMAGE,
-  DEFAULT_RELAY_PORT,
   detectEngine,
   ensureImage,
   ensureOpencodeInstalled,
@@ -61,22 +60,32 @@ import {
 } from './_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
 import { cloudAgentCreate } from './_cloud-agent-create.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  enqueueAgentJobViaHub,
+  withHubJobLine,
+} from './_cloud-agent-via-hub.js';
+import { resolveCreateRouting } from '../control-plane/route-create.js';
+import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
-import { resolveGitCredsCarry } from '../lib/git-creds-gate.js';
+import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { prepareTeleport, TeleportError } from '../session-teleport/index.js';
 import { clampSpinnerLine } from '../spinner-line.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { handleLifecycleError } from './_errors.js';
+import { attachRelayOptions } from '../control-plane/box-plane.js';
 
-function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/relay').QueueJobCreateOpts {
+function pickOpencodeCreateOpts(
+  opts: OpencodeCreateOptions,
+): import('@agentbox/relay').QueueJobCreateOpts {
   return {
     workspace: opts.workspace,
     name: opts.name,
@@ -98,7 +107,6 @@ function pickOpencodeCreateOpts(opts: OpencodeCreateOptions): import('@agentbox/
 }
 
 /** Host-side URL for the relay (loopback for the wrapper's SSE subscription). */
-const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * Attach to a box's OpenCode tmux session through the wrapped-pty footer (same
@@ -106,7 +114,7 @@ const RELAY_HOST_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
  * with the inner pty's code.
  */
 export async function attachOpencodeWrapped(
-  box: { id: string; name: string; container: string; projectIndex?: number },
+  box: BoxRecord,
   sessionName: string | undefined,
   reattach: string,
   onError?: (msg: string) => void,
@@ -115,7 +123,7 @@ export async function attachOpencodeWrapped(
   const code = await runWrappedAttach({
     container: box.container,
     dockerArgv: buildOpencodeAttachArgv(box.container, sessionName),
-    relayBaseUrl: RELAY_HOST_URL,
+    ...(await attachRelayOptions(box)),
     boxId: box.id,
     boxName: box.name,
     projectIndex: box.projectIndex,
@@ -160,6 +168,12 @@ interface OpencodeCreateOptions {
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
   useBranch?: string;
+  /** --via-hub: force building this cloud box on the control box (else the cloud.viaHub default). */
+  viaHub?: boolean;
+  /** --local: force building on this machine even when a control box is configured. */
+  local?: boolean;
+  /** --url <url>: control-box URL for the hub route (else relay.controlPlaneUrl). */
+  url?: string;
   /** -v / --verbose: bypass the spinner and stream raw provider output. */
   verbose?: boolean;
   /** Raw `--attach-in <mode>` value; validated by `parseAttachInOption`. */
@@ -260,7 +274,7 @@ async function signInToOpencode(
     const provider = (
       await text({
         message: 'Which provider? (id or name, e.g. anthropic, openai, github-copilot)',
-        placeholder: 'leave blank to use OpenCode\'s own picker',
+        placeholder: "leave blank to use OpenCode's own picker",
       })
     ).trim();
     // No id → we can't skip the picker, so opencode must drive its own terminal.
@@ -278,7 +292,9 @@ async function signInToOpencode(
     return { ok: false, error: `opencode: ${res.unsupported}` };
   }
   if (res.unsupported) {
-    log.info(`Guided sign-in can't drive this provider (${res.unsupported}); using OpenCode's own prompts.`);
+    log.info(
+      `Guided sign-in can't drive this provider (${res.unsupported}); using OpenCode's own prompts.`,
+    );
     return passthrough(args);
   }
   return { ok: res.ok, error: res.error, cancelled: res.cancelled };
@@ -306,7 +322,7 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing opencode config');
@@ -318,7 +334,9 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
 
   const res = await signInToOpencode(args.image, []);
   if (!res.ok) {
-    log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
+    log.warn(
+      'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
+    );
     return;
   }
   log.success('Signed in to OpenCode — saved for future boxes.');
@@ -329,7 +347,10 @@ async function cloudOpencodeCredAvailable(env: NodeJS.ProcessEnv = process.env):
   for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
     if ((env[k] ?? '').length > 0) return true;
   }
-  for (const p of [OPENCODE_CREDENTIALS_BACKUP_FILE, join(homedir(), '.local', 'share', 'opencode', 'auth.json')]) {
+  for (const p of [
+    OPENCODE_CREDENTIALS_BACKUP_FILE,
+    join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+  ]) {
     try {
       await access(p);
       return true;
@@ -363,7 +384,7 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+  await ensureImage(args.image, { onProgress: imageProgress(s) });
   s.message('preparing opencode config');
   await ensureOpencodeVolume(
     { volume: SHARED_OPENCODE_VOLUME },
@@ -373,12 +394,17 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
 
   const res = await signInToOpencode(args.image, []);
   if (!res.ok) {
-    log.warn('OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.');
+    log.warn(
+      'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
+    );
     return;
   }
   const { copied } = await extractOpencodeCredentials(SHARED_OPENCODE_VOLUME, args.image);
   if (copied) log.success('Signed in to OpenCode — saved for future boxes.');
-  else log.warn('OpenCode login finished but no auth.json was captured — sign in inside the box if needed.');
+  else
+    log.warn(
+      'OpenCode login finished but no auth.json was captured — sign in inside the box if needed.',
+    );
 }
 
 export const opencodeCommand = new Command('opencode')
@@ -386,7 +412,10 @@ export const opencodeCommand = new Command('opencode')
   // Mirror create's surface so users can swap the verb without re-learning flags.
   .option('-w, --workspace <path>', 'host workspace to mount', process.cwd())
   .option('-n, --name <name>', 'friendly box name (default: <workspace-basename>-<id>)')
-  .option('--host-snapshot', 'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)')
+  .option(
+    '--host-snapshot',
+    'APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)',
+  )
   .option('--no-host-snapshot', 'tar-pipe directly from the live host workspace at create time')
   .option(
     '--snapshot <ref>',
@@ -435,18 +464,24 @@ export const opencodeCommand = new Command('opencode')
   .option('--cpus <n>', 'CPU count cap (fractional ok, e.g. 1.5); unset = unlimited')
   .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
   .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
-  .option(
-    '--provider <name>',
-    "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
-  )
+  .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' for a cloud box")
   .option(
     '--from-branch <ref>',
     "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
   )
   .option(
     '-b, --use-branch <name>',
-    "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+    'reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.',
   )
+  .option(
+    '--via-hub',
+    'force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.',
+  )
+  .option(
+    '--local',
+    'force building the box on this machine even when a control box is configured (the opposite of --via-hub).',
+  )
+  .option('--url <url>', 'control-box URL for the hub route (default: relay.controlPlaneUrl)')
   .option(
     '-v, --verbose',
     'bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/opencode.log.',
@@ -476,7 +511,7 @@ export const opencodeCommand = new Command('opencode')
   )
   .argument(
     '[opencode-args...]',
-    "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
+    'extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`',
   )
   .action(async (opencodeArgs: string[], opts: OpencodeCreateOptions) => {
     const cmdLog = openCommandLog('opencode');
@@ -490,9 +525,7 @@ export const opencodeCommand = new Command('opencode')
           agent: 'opencode',
           hostCwd: opts.workspace,
           mode:
-            opts.continue === true
-              ? { kind: 'continue' }
-              : { kind: 'resume', id: opts.resume! },
+            opts.continue === true ? { kind: 'continue' } : { kind: 'resume', id: opts.resume! },
         });
       } catch (err) {
         if (err instanceof TeleportError) {
@@ -515,10 +548,37 @@ export const opencodeCommand = new Command('opencode')
     );
     const isCloud = providerName !== 'docker';
 
+    // Docker off under a remote hub (Step 12): a docker box built here can't run
+    // with the laptop off, so it's refused under a control box unless hub.mode=local.
+    const dockerRefusal = await dockerProviderRefusal(
+      cfg.effective,
+      providerName,
+      remoteHost,
+      'create',
+    );
+    if (dockerRefusal) {
+      log.error(dockerRefusal);
+      cmdLog.close();
+      process.exit(1);
+    }
+
     if (cfg.effective.git.pushMode === 'direct' && !isCloud) {
       log.error(
         'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
       );
+      cmdLog.close();
+      process.exit(1);
+    }
+
+    // Refuse copying a git credential into the box when a control box is in play —
+    // token leasing does the same laptop-off push without the copy. Checked before
+    // routing / the -i path so it can't slip into the hub create.
+    const directRefusal = directGitModeRefusal({
+      pushMode: cfg.effective.git.pushMode,
+      hubInPlay: remoteHubConfigured(cfg.effective) || Boolean(opts.viaHub),
+    });
+    if (directRefusal) {
+      log.error(directRefusal);
       cmdLog.close();
       process.exit(1);
     }
@@ -528,6 +588,7 @@ export const opencodeCommand = new Command('opencode')
     await ensureProjectRepoOnControlPlane({
       controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
       gitPushMode: cfg.effective.git.pushMode,
+      hubGitAuth: cfg.effective.hub.gitAuth,
       projectRoot,
       yes: !!opts.yes,
     });
@@ -541,6 +602,9 @@ export const opencodeCommand = new Command('opencode')
           : undefined;
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      // Captured as a const so the narrowing survives into the status-line
+      // callback below (TS drops property narrowing inside a closure).
+      const seedPrompt = opts.initialPrompt;
       // --dangerously-with-credentials is foreground-only (the queue worker doesn't thread
       // git.pushMode=direct, and copying a credential needs a human at the prompt).
       if (cfg.effective.git.pushMode === 'direct') {
@@ -549,6 +613,69 @@ export const opencodeCommand = new Command('opencode')
         );
         cmdLog.close();
         process.exit(1);
+      }
+      // Route the background run to the control box when configured — the worker
+      // creates the box AND starts opencode with the prompt (laptop off). Local
+      // creds aren't needed for the hub path (custody seeds them).
+      const iRouting = await resolveCreateRouting({
+        providerName,
+        remoteHost,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      if (iRouting.where === 'hub') {
+        // Resolve + approve `carry:` BEFORE enqueuing: the hub worker builds the
+        // box from a clone plus custody, so anything the user wants copied has to
+        // ride the seed. Skipping this is how an approved file silently failed to
+        // reach a hub-created box.
+        const carryForHub = await runQueuedCarryGate({
+          projectRoot,
+          opts,
+          onLog: (line) => cmdLog.write(line),
+          onClose: () => cmdLog.close(),
+        });
+        const res = await withHubJobLine(
+          (onStatus) =>
+            enqueueAgentJobViaHub({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'opencode',
+              carry: carryForHub,
+              name: opts.name,
+              fromBranch: opts.fromBranch,
+              urlFlag: opts.url,
+              prompt: seedPrompt,
+              agentArgs: opencodeArgs,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'run started on the remote hub' : 'remote hub unavailable'),
+          { verbose: opts.verbose === true },
+        );
+        if (res) {
+          if (res.error) {
+            log.error(
+              `control plane run failed: ${res.error}` +
+                (res.boxId
+                  ? ` (box ${res.boxId} was created — attach with \`agentbox opencode attach ${res.boxId}\`)`
+                  : ''),
+            );
+            cmdLog.close();
+            process.exit(1);
+          }
+          outro(`opencode is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
+          cmdLog.close();
+          return;
+        }
+      }
+      if (iRouting.where === 'local' && iRouting.fellBackReason) {
+        log.warn(
+          `control box configured but ${iRouting.fellBackReason}; running this -i job locally.`,
+        );
       }
       try {
         await assertAgentCredsAvailable({
@@ -644,6 +771,61 @@ export const opencodeCommand = new Command('opencode')
     }
 
     if (isCloud) {
+      // Route the create to the control box when one is configured, then adopt +
+      // attach here so the agent starts. Foreground only (we already returned for
+      // -i above). --dangerously-with-credentials copies host creds at create
+      // time, which the worker path can't do, so it stays local.
+      const routing = await resolveCreateRouting({
+        providerName,
+        remoteHost,
+        effective: cfg.effective,
+        projectRoot,
+        forceHub: opts.viaHub,
+        forceLocal: opts.local,
+        urlFlag: opts.url,
+      });
+      // git.pushMode=direct is refused above whenever the hub is in play, so a
+      // hub route here always means a leasing/relay box — no direct-mode fallback.
+      if (routing.where === 'hub') {
+        const adopted = await withHubJobLine(
+          (onStatus) =>
+            createCloudBoxViaHubAndAdopt({
+              providerName,
+              remoteHost,
+              projectRoot,
+              agent: 'opencode',
+              // The gate above already resolved + approved these; the hub path
+              // used to discard them, so a hub-built box came up without files
+              // the user had explicitly said yes to.
+              carry: carryEntries,
+              name: opts.name,
+              fromBranch,
+              urlFlag: opts.url,
+              onStatus,
+              onLog: (line) => cmdLog.write(line),
+            }),
+          (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
+          { verbose: opts.verbose === true },
+        );
+        if (adopted) {
+          await cloudAgentAttach({
+            box: adopted,
+            binary: 'opencode',
+            sessionName: cfg.effective.opencode.sessionName,
+            mode: 'opencode',
+            extraArgs: opencodeArgs,
+            openIn: hostAwareOpenIn(cfg),
+          });
+          cmdLog.close();
+          return;
+        }
+        // adopted === null → control box not fully configured for it; fall to local.
+      } else if (routing.fellBackReason) {
+        log.warn(
+          `control box configured but ${routing.fellBackReason}; building ${providerName} box locally.`,
+        );
+      }
+
       // Cloud sign-in offer: capture a host login to ~/.agentbox so the per-box
       // push seeds it (docker's offer below only seeds via the shared volume).
       // Uses the default docker image — the login runs in a docker container,
@@ -672,6 +854,7 @@ export const opencodeCommand = new Command('opencode')
           // so cloud boxes from the agent commands honor the same config.
           controlPlaneUrl: cfg.effective.relay.controlPlaneUrl,
           gitPushMode: cfg.effective.git.pushMode,
+          hubGitAuth: cfg.effective.hub.gitAuth,
           // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
           providerOptions: cloudSizingProviderOptions(provider.name, cfg.effective, {
             remoteHost,
@@ -989,7 +1172,7 @@ const opencodeStartCommand = new Command('start')
   )
   .argument(
     '[opencode-args...]',
-    "extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`",
+    'extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`',
   )
   .action(async function (this: Command, idOrName: string | undefined, opencodeArgs: string[]) {
     const opts = this.optsWithGlobals() as OpencodeStartOptions;
@@ -999,16 +1182,15 @@ const opencodeStartCommand = new Command('start')
       // Two positionals make commander bind the first post-`--` token to
       // `[box]`; resolveBoxOrShift detects that and auto-picks the box.
       const { box, shifted } = await resolveBoxOrShift(idOrName);
-      const effectiveOpencodeArgs = shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
+      const effectiveOpencodeArgs =
+        shifted && idOrName ? [idOrName, ...opencodeArgs] : opencodeArgs;
       if (opts.continue === true || opts.resume) {
         try {
           await prepareTeleport({
             agent: 'opencode',
             hostCwd: box.workspacePath,
             mode:
-              opts.continue === true
-                ? { kind: 'continue' }
-                : { kind: 'resume', id: opts.resume! },
+              opts.continue === true ? { kind: 'continue' } : { kind: 'resume', id: opts.resume! },
           });
         } catch (err) {
           if (err instanceof TeleportError) {
@@ -1065,10 +1247,7 @@ const opencodeLoginCommand = new Command('login')
     '[args...]',
     'extra args forwarded to `opencode auth login`; place after `--`, e.g. `agentbox opencode login -- --provider anthropic`',
   )
-  .option(
-    '--interactive',
-    "attach your terminal to OpenCode's own login TUI (legacy passthrough)",
-  )
+  .option('--interactive', "attach your terminal to OpenCode's own login TUI (legacy passthrough)")
   .action(async (args: string[], opts: { interactive?: boolean }) => {
     intro('Signing in to OpenCode...');
     if (!process.stdin.isTTY) {
@@ -1081,7 +1260,7 @@ const opencodeLoginCommand = new Command('login')
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: (line) => s.message(clampSpinnerLine(line)) });
+      await ensureImage(image, { onProgress: imageProgress(s) });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing opencode config');

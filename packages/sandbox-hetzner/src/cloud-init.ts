@@ -62,24 +62,28 @@ export function generatePrepareCloudInit(opts: PrepareCloudInitOptions): string 
 export interface ControlPlaneCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format) for `root`. */
   sshPubkey: string;
-  /** Public git repo to clone the control-plane app from. */
-  repoUrl: string;
-  /** Branch / tag / sha to check out. */
-  repoRef: string;
+  /**
+   * Clone the agentbox monorepo to `/opt/agentbox` so the VPS can build the hub
+   * from source. Omitted in the default package mode, where the hub image is
+   * `npm install -g @madarco/agentbox` and the orchestrator scp's the compose
+   * stack — nothing on the VPS needs the repo.
+   */
+  repo?: { url: string; ref: string };
 }
 
 /**
  * Cloud-init for a control-plane VPS (stock Ubuntu, not the box snapshot).
- * Logs in as `root`, installs Docker + git, and clones the agentbox repo to
- * `/opt/agentbox`. The orchestrator then scp's the secret env + Caddy config
- * and runs `docker compose up` over ssh — secrets never go in user-data (which
- * is readable from cloud metadata).
+ * Logs in as `root`, installs Docker + git, and — in source mode — clones the
+ * agentbox repo to `/opt/agentbox`. The orchestrator then scp's the secret env +
+ * Caddy config and runs `docker compose up` over ssh — secrets never go in
+ * user-data (which is readable from cloud metadata).
  */
 export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): string {
   const pubkey = opts.sshPubkey.trim();
+  const repo = opts.repo;
   return [
     '#cloud-config',
-    '# AgentBox control-plane VPS — provisioned by `agentbox control-plane setup --deploy hetzner`.',
+    '# AgentBox control-plane VPS — provisioned by `agentbox hub setup --deploy hetzner`.',
     'disable_root: false',
     'ssh_pwauth: false',
     'chpasswd:',
@@ -93,8 +97,18 @@ export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): strin
     '  - [ passwd, -d, root ]',
     '  - [ chage, -E, "-1", -I, "-1", -M, "99999", root ]',
     '  - [ bash, -lc, "curl -fsSL https://get.docker.com | sh" ]',
+    // git stays even in package mode: the resident create worker clones repos on
+    // the VPS, and it is the first thing you reach for when debugging by hand.
     '  - [ bash, -lc, "apt-get update && apt-get install -y git" ]',
-    `  - [ bash, -lc, "git clone --depth 1 --branch ${shArg(opts.repoRef)} ${shArg(opts.repoUrl)} /opt/agentbox || git clone ${shArg(opts.repoUrl)} /opt/agentbox" ]`,
+    // Two-step so a SHA works at all (`--branch <sha>` is invalid) — and so a ref
+    // that doesn't exist FAILS. The old fallback was a bare `git clone`, which
+    // silently left the repo's default branch checked out: the deploy then built
+    // a different version than it configured, and only surfaced as a 502.
+    ...(repo
+      ? [
+          `  - [ bash, -lc, "git clone --depth 1 --branch ${shArg(repo.ref)} ${shArg(repo.url)} /opt/agentbox || { rm -rf /opt/agentbox && git clone ${shArg(repo.url)} /opt/agentbox && git -C /opt/agentbox checkout ${shArg(repo.ref)}; } || rm -rf /opt/agentbox" ]`,
+        ]
+      : []),
     '',
   ].join('\n');
 }

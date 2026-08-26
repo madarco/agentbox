@@ -50,7 +50,9 @@ export async function seedGitIdentity(
   if (r.exitCode !== 0) {
     // Non-fatal: the box still boots; the user just sees the identity error on
     // the next commit, same as before this step existed.
-    log(`git: identity config failed (exit ${String(r.exitCode)}): ${(r.stderr || r.stdout).trim()}`);
+    log(
+      `git: identity config failed (exit ${String(r.exitCode)}): ${(r.stderr || r.stdout).trim()}`,
+    );
     return;
   }
   log(`git: configured committer identity ${name} <${email}>`);
@@ -71,9 +73,10 @@ export async function seedGitIdentity(
  *   passphrase-protected key can't sign in the box, and forcing `commit.gpgsign`
  *   would break every commit, so we probe `ssh-keygen -y -P ''` and skip if not).
  *
- * All copied creds are re-owned to the box user first (carry chowns to a fixed
- * uid 1000, but the box user is 1001/1002 on some providers). Idempotent on
- * resume.
+ * All copied creds are re-owned to the box user first. Heal-only now that carry
+ * resolves the box user itself: this still covers boxes created before that fix
+ * when they resume, and a carry that partially failed (carry is best-effort per
+ * entry, this step is fatal). Idempotent.
  *
  * **Fatal on failure** (throws): this only runs in `git.pushMode=direct`, where a
  * usable credential is the whole point. If the config step fails, or no
@@ -123,8 +126,9 @@ export async function seedGitCredentials(
     .join('; ');
 
   const script = [
-    // carry chowns to a fixed uid (1000); the box user is 1001/1002 elsewhere.
-    // Re-own so the box can read its own 0600 creds. Provider-agnostic.
+    // Heal-only: carry now chowns to the box user (--reference=/home/vscode),
+    // but a pre-fix box resuming here, or an entry whose best-effort carry
+    // failed, can still leave a 0600 cred the box user can't read.
     `sudo -n chown -R "$(id -u):$(id -g)" "$HOME/.git-credentials" "$HOME/.ssh" 2>/dev/null || true`,
     `chmod 600 "$HOME/.git-credentials" 2>/dev/null || true`,
     `chmod 700 "$HOME/.ssh" 2>/dev/null || true`,
@@ -163,7 +167,9 @@ async function buildSigningSnippet(hostRepo?: string): Promise<string> {
   const signingKey = await readHostGitConfig('user.signingkey', hostRepo);
   if (gpgsign !== 'true' || !signingKey || format !== 'ssh') return '';
   const looksLikePath = signingKey.includes('/') && !signingKey.startsWith('key::');
-  const boxKey = looksLikePath ? `/home/vscode/.ssh/${signingKey.split('/').pop() ?? ''}` : signingKey;
+  const boxKey = looksLikePath
+    ? `/home/vscode/.ssh/${signingKey.split('/').pop() ?? ''}`
+    : signingKey;
   const priv = looksLikePath
     ? `/home/vscode/.ssh/${(signingKey.split('/').pop() ?? '').replace(/\.pub$/, '')}`
     : boxKey;
@@ -183,7 +189,9 @@ async function buildSigningSnippet(hostRepo?: string): Promise<string> {
 
 /** Read the host repo's origin URL and extract its host (defaults to github.com). */
 async function readHostOriginHost(hostRepo?: string): Promise<string> {
-  const args = hostRepo ? ['-C', hostRepo, 'remote', 'get-url', 'origin'] : ['remote', 'get-url', 'origin'];
+  const args = hostRepo
+    ? ['-C', hostRepo, 'remote', 'get-url', 'origin']
+    : ['remote', 'get-url', 'origin'];
   const r = await execa('git', args, { reject: false });
   const url = r.exitCode === 0 ? (r.stdout ?? '').trim() : '';
   // scheme://[user@]host[:port]/… , scp-form user@host:… , or bare host.
