@@ -174,6 +174,12 @@ function renderStatus(s: HubStatus, exposed?: ControlPlaneDeployRecord | null): 
       ...mode,
       ...exposedLines,
       `  log:  ${s.logFile}`,
+      // A rebuild under a live hub only fails LATER, on the first lazy import
+      // ("Cannot find module 'dist-XXXX.js'"). Say so here, where someone is
+      // already looking, instead of leaving them to decode that at the call site.
+      ...(s.staleBundle
+        ? ['  stale: rebuilt since this hub started — run `agentbox hub restart`']
+        : []),
     ].join('\n');
   }
   const stoppedExposed = exposed ? ['  mode: exposed (configured; the hub is not running)'] : [];

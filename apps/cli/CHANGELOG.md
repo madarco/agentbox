@@ -9,6 +9,20 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.28.2] - 2026-08-26
+
+### Fixed
+
+- The hub and the lean relay fought over port 8787 whenever the CLI's version differed
+  from the running hub's — the standing state after any upgrade or publish. Each evicted
+  the other in a loop, and every eviction restarted the queue loop, so background `-i`
+  jobs sat at `queued`. `ensureRelay` now restarts a hub instead of replacing it with a
+  relay.
+- `agentbox hub status` now warns when the hub was started before the bundle it runs
+  from was rebuilt — the state that produced `Cannot find module 'dist-XXXX.js'`.
+- Taking port 8787 no longer leaves the other daemon's pidfile behind, so `relay status`
+  and `hub status` stop reporting a dead pid as running.
+
 ## [0.28.1] - 2026-08-26
 
 ### Fixed

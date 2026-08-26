@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, openSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -49,6 +49,8 @@ import {
 
 const STATE_DIR = join(homedir(), '.agentbox');
 const HUB_PID_FILE = join(STATE_DIR, 'hub.pid');
+/** The lean relay's pidfile — cleared when the hub takes the port from a relay. */
+const RELAY_PID_FILE = join(STATE_DIR, 'relay.pid');
 const HUB_LOG_FILE = join(STATE_DIR, 'hub.log');
 export const HUB_TOKEN_FILE = join(STATE_DIR, 'hub', 'token');
 const PORT = HUB_RELAY_PORT;
@@ -259,6 +261,9 @@ async function reclaimPort(
     await killPid(pid);
   }
   await unlink(HUB_PID_FILE).catch(() => {});
+  // Same reason as the relay side: a stale sibling pidfile makes `relay status`
+  // report a process this call just killed.
+  await unlink(RELAY_PID_FILE).catch(() => {});
   if (await pingHealthz(300)) {
     throw new Error(
       `something is still listening on :${String(PORT)} and could not be stopped ` +
@@ -485,6 +490,15 @@ export interface HubStatus {
   profile?: string;
   /** True when the resident create worker is running (exposed hub). */
   worker?: boolean;
+  /**
+   * The running hub predates the bundle it was spawned from — something rebuilt
+   * `server.js` underneath it (a `pnpm build`, or `npm publish`, whose
+   * `prepublishOnly` rebuilds the workspace). Its eagerly-loaded chunks are still
+   * in memory, but the next LAZY `import()` resolves against the new
+   * content-hashed filenames and dies with `Cannot find module 'dist-XXXX.js'`.
+   * Only surfaces later, on whichever command first needs a lazy module.
+   */
+  staleBundle?: boolean;
 }
 
 /** Read-only snapshot of the hub's liveness (mirrors getRelayStatus). */
@@ -506,5 +520,26 @@ export async function getHubStatus(): Promise<HubStatus> {
     logFile: HUB_LOG_FILE,
     ...(health?.profile ? { profile: health.profile } : {}),
     ...(health?.worker ? { worker: true } : {}),
+    ...((await bundleIsNewerThanHub(pid)) ? { staleBundle: true } : {}),
   };
+}
+
+/**
+ * Whether `server.js` was rewritten after the running hub started. The hub writes
+ * its pidfile at boot, so that file's mtime IS the process start time — no `ps`
+ * shell-out, and it works the same for a published install as for a dev tree.
+ * False whenever either side can't be read: this drives a warning, so an
+ * unknown must not read as "stale".
+ */
+async function bundleIsNewerThanHub(pid: number | null): Promise<boolean> {
+  if (pid === null) return false;
+  try {
+    const [startedAt, builtAt] = await Promise.all([
+      stat(HUB_PID_FILE).then((st) => st.mtimeMs),
+      stat(resolveHubServer()).then((st) => st.mtimeMs),
+    ]);
+    return builtAt > startedAt;
+  } catch {
+    return false;
+  }
 }

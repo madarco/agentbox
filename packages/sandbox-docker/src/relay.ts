@@ -16,6 +16,7 @@ import {
   type BoxWorktree,
 } from '@agentbox/relay';
 import {
+  ensureHub,
   fetchHealthz,
   killPid,
   pingHealthz,
@@ -45,6 +46,8 @@ export {
 
 const STATE_DIR = join(homedir(), '.agentbox');
 const PID_FILE = join(STATE_DIR, 'relay.pid');
+/** The hub's pidfile — cleared when a relay takes the port from a hub. */
+const HUB_PID_FILE = join(STATE_DIR, 'hub.pid');
 const LOG_FILE = join(STATE_DIR, 'relay.log');
 const RELAY_HOME_DIR = join(STATE_DIR, 'relay');
 
@@ -103,6 +106,21 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     // by a different agentbox install — e.g. a stale npx cache entry — so its
     // code may not match this CLI). See shouldReclaimForVersion for the gates.
     if (!shouldReclaimForVersion(health, currentVersion)) {
+      return ENDPOINT;
+    }
+    // The incumbent is a HUB, not a lean relay (the hub embeds this same relay
+    // daemon and adds the UI). Replacing it with a bare relay would drop the UI
+    // and start a takeover war: `ensureHub` evicts a lean relay on sight, so the
+    // next hub-touching command puts the hub back and kills this relay, forever.
+    // Every eviction SIGTERMs the queue loop mid-job, which is how a queued `-i`
+    // job never reaches `running`. Hand off instead — `ensureHub` restarts the
+    // hub at the right version. (No recursion: ensureHub never calls back here.)
+    if (health.ui === true) {
+      log(
+        `a hub from agentbox ${health.version ?? '?'} holds :${String(PORT)} but this CLI is ` +
+          `${currentVersion ?? '?'} — restarting the hub rather than replacing it with a relay`,
+      );
+      await ensureHub({ onLog: log });
       return ENDPOINT;
     }
     if (health.cliEntry === false) {
@@ -178,6 +196,10 @@ async function reclaimRelay(
     await killPid(pid);
   }
   await unlink(PID_FILE).catch(() => {});
+  // Whoever takes the port owns it. Leaving the loser's pidfile behind makes the
+  // other side's `status` report a dead pid as running — which is exactly how
+  // this bug got diagnosed against the wrong log.
+  await unlink(HUB_PID_FILE).catch(() => {});
   // Confirm the port actually freed; if a relay still answers we'd reuse the
   // broken one again on the next call. Surface it rather than loop silently.
   if (await pingHealthz(300)) {
@@ -477,9 +499,13 @@ export interface RelayStatus {
  *   - running: false, pidAlive: false     — truly down
  */
 export async function getRelayStatus(): Promise<RelayStatus> {
-  const pid = await readPidFile();
-  const pidAlive = pid !== null && (await processAlive(pid));
+  const fromFile = await readPidFile();
   const health = await fetchHealthz(300);
+  // Fall back to the pid /healthz reports: when the HUB holds the port there is
+  // no relay pidfile (whoever takes :8787 clears the loser's), and a bare `?`
+  // reads as "we lost it" rather than "the hub is serving this".
+  const pid = fromFile ?? health?.pid ?? null;
+  const pidAlive = pid !== null && (await processAlive(pid));
   return {
     running: health !== null,
     pid,
