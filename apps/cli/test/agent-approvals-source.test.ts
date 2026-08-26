@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoxRecord } from '@agentbox/core';
 import type { BoxStatusClaude } from '@agentbox/ctl';
 import { gatherApprovals, missingHalves } from '../src/commands/agent.js';
+import { boxAnswersOnLocalHub } from '../src/control-plane/box-plane.js';
 import type { BoxPromptSource } from '../src/control-plane/box-plane.js';
 
 // Pure: both halves of `gatherApprovals` are hub calls now, so a stub client is
@@ -112,5 +113,40 @@ describe('gatherApprovals degrades one half at a time', () => {
       'host-action approvals (502 bad gateway)',
       "the agent's in-TUI prompts (ETIMEDOUT)",
     ]);
+  });
+});
+
+// Which hub owns a box — the decision BOTH `approvals` and `approve` now share.
+// Bugbot Medium x2 on the first cut: an inline `provider === 'docker'` test sent
+// a locally-created remote-docker box to the control box, which never wrote its
+// snapshot, and made `approve` disagree with the listing that minted the id.
+describe('boxAnswersOnLocalHub', () => {
+  it('keeps a docker box local', () => {
+    expect(boxAnswersOnLocalHub({ provider: 'docker' })).toBe(true);
+    expect(boxAnswersOnLocalHub({})).toBe(true); // undefined provider defaults to docker
+  });
+
+  it('keeps a LOCALLY-created remote-docker box local', () => {
+    // The container is on another machine's engine, but the box registers with
+    // this laptop's relay — which is what writes its status.json and holds its
+    // approval mailbox.
+    expect(boxAnswersOnLocalHub({ provider: 'remote-docker' })).toBe(true);
+  });
+
+  it('sends a remote-docker box the CONTROL BOX created to that control box', () => {
+    // `docker:hub`: same provider family, opposite owner. Only the recorded
+    // plane can tell the two apart.
+    expect(
+      boxAnswersOnLocalHub({
+        provider: 'remote-docker',
+        cloud: { controlPlaneUrl: 'https://cp.example' },
+      } as never),
+    ).toBe(false);
+  });
+
+  it('sends cloud boxes to their plane', () => {
+    for (const p of ['e2b', 'vercel', 'hetzner', 'daytona', 'digitalocean']) {
+      expect(boxAnswersOnLocalHub({ provider: p }), p).toBe(false);
+    }
   });
 });

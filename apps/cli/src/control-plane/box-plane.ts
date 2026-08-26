@@ -11,6 +11,7 @@
 import type { BoxRecord } from '@agentbox/core';
 import { DEFAULT_RELAY_PORT } from '@agentbox/relay';
 import { HubApiClient } from './hub-api-client.js';
+import { boxOwningHubIsLocal } from './with-hub.js';
 
 /** The laptop's own relay daemon. */
 export const LOCAL_RELAY_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
@@ -31,6 +32,27 @@ export type BoxPlane = { url: string; adminToken: string } | 'none' | 'no-token'
 export type PlaneAddressable = Pick<BoxRecord, 'provider' | 'cloud'>;
 
 /**
+ * True when this box's relay, mailbox and status all live on THIS machine's hub,
+ * so there is no plane to resolve at all.
+ *
+ * Two signals, in this order:
+ *   1. A RECORDED plane wins. `cloud.controlPlaneUrl` is written by the
+ *      hub-create and adopt paths, i.e. exactly on the boxes a control box owns
+ *      — including a `remote-docker` box it built on its own engine
+ *      (`docker:hub`), which the provider family alone would misroute back here.
+ *   2. Otherwise the owning-hub family decides, via {@link boxOwningHubIsLocal}
+ *      and NOT an inline `provider === 'docker'` test. `remote-docker` is a
+ *      container on another machine's engine, but the box registers with the
+ *      LOCAL relay (the local hub drives that engine over SSH), so its approvals
+ *      and its status snapshot are here. Calling it remote sent both reads to a
+ *      hub that never wrote them.
+ */
+export function boxAnswersOnLocalHub(box: PlaneAddressable): boolean {
+  if (box.cloud?.controlPlaneUrl) return false;
+  return boxOwningHubIsLocal(box);
+}
+
+/**
  * Resolve the control box holding this box's state, and the bearer for it.
  *
  * The URL comes from the box's own record first: `cloud.controlPlaneUrl` is the
@@ -44,15 +66,15 @@ export type PlaneAddressable = Pick<BoxRecord, 'provider' | 'cloud'>;
  * plane at all means there is genuinely nothing to ask, while a known plane we
  * can't authenticate to is an answer we never got.
  *
- * Docker boxes short-circuit to `none` — they register on the laptop loopback
- * relay and are never on a plane, the same rule `mergeHubBoxes` applies.
+ * A box the local hub owns short-circuits to `none` — see
+ * {@link boxAnswersOnLocalHub}, the same rule `mergeHubBoxes` applies.
  *
  * Imports lazily: this runs on paths that also serve hosts with no control box
  * at all (every attach, every destroy), which shouldn't pay to load config +
  * relay code.
  */
 export async function resolveBoxPlane(box: PlaneAddressable): Promise<BoxPlane> {
-  if ((box.provider ?? 'docker') === 'docker') return 'none';
+  if (boxAnswersOnLocalHub(box)) return 'none';
   const { loadEffectiveConfig } = await import('@agentbox/config');
   const { loadControlPlaneEnv } = await import('./env-file.js');
   const configured = await loadEffectiveConfig(process.cwd())
@@ -71,13 +93,13 @@ export async function resolveBoxPlane(box: PlaneAddressable): Promise<BoxPlane> 
  * Mirrors {@link resolveBoxPlane} but for the *client* surface: the URL comes
  * from `cloud.controlPlaneUrl` first (survives a config change on this host),
  * else `relay.controlPlaneUrl`, and the Bearer is the hub API key
- * (`AGENTBOX_HUB_API_KEY`) — not the admin token. A docker box short-circuits to
- * `none` (its approvals live on the local hub).
+ * (`AGENTBOX_HUB_API_KEY`) — not the admin token. A box the local hub owns
+ * short-circuits to `none` (see {@link boxAnswersOnLocalHub}).
  */
 type BoxHubTarget = { url: string; apiKey: string } | 'none' | 'no-token';
 
 async function resolveBoxHubTarget(box: PlaneAddressable): Promise<BoxHubTarget> {
-  if ((box.provider ?? 'docker') === 'docker') return 'none';
+  if (boxAnswersOnLocalHub(box)) return 'none';
   const { loadEffectiveConfig } = await import('@agentbox/config');
   const { loadControlPlaneEnv } = await import('./env-file.js');
   const configured = await loadEffectiveConfig(process.cwd())
@@ -110,7 +132,7 @@ export interface BoxPromptSource {
 /**
  * Resolve the prompt mailbox for a box as a hub `/api/v1` client + SSE target.
  *
- * A docker box (or a cloud box with no control box) answers on the **local hub**,
+ * A box the local hub owns (or a cloud box with no control box) answers on the **local hub**,
  * which is auto-started here so `/api/v1` is actually available (a bare relay
  * can't serve it). A cloud box on a plane answers on that control box, keyed by
  * the hub API key. A named-but-unauthenticated plane degrades to the local hub

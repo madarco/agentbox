@@ -195,6 +195,10 @@ CLI, not the raw commits.
   parked on a prompt" — and `agent approve` refused the same prompt as already
   changed. Both now read the snapshot from the hub that owns the box, and a half
   that could not be read is reported instead of rendering as "nothing pending".
+- **A remote-docker box's approvals were looked for on the wrong hub** when a
+  control box was configured. It registers with the local relay, but an inline
+  provider check treated only `docker` as local, so its host-action mailbox was
+  read from the control box. Ownership is now decided in one place for both.
 - **Remote Docker builds work on Docker 29.** The box image was streamed to
   `docker build -` alongside `-f`, which Docker 29's buildx rejects outright
   ("ambiguous Dockerfile source") — that broke every bake and every registry-miss

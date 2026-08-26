@@ -388,15 +388,29 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
     process.exit(2);
   }
   const box = await resolveBoxOrExit(parsed.boxId);
-  // Through the OWNING hub, for the same reason `state`/`wait-for` do: the
-  // snapshot is written by whichever relay the box reports to, so a control-box
-  // box has none on this laptop. Reading the local file here made every such
-  // prompt fail the race guard below as "it changed or was answered".
-  const claude = await fetchAgentClaude(box);
-  if (claude === HUB_ERROR) return; // withOwningHub reported + set the exit code
-  if (claude === HUB_NOT_FOUND) {
-    reportAgentBoxNotFound(box, false);
-    return;
+  // Through the hub that owns the box: the snapshot is written by whichever
+  // relay the box reports to, so a control-box box has none on this laptop, and
+  // reading the local file here made every such prompt fail the race guard below
+  // as "it changed or was answered".
+  //
+  // Resolved by `resolveBoxPromptSource` — the SAME resolver `agent approvals`
+  // used to mint this id. Two different answers to "which hub owns this box"
+  // would race-check an id against a hub that never listed it, which is
+  // indistinguishable from the prompt having changed.
+  const source = await resolveBoxPromptSource(box);
+  if (!source) {
+    log.error("Could not reach a hub to read this box's agent state.");
+    process.exit(1);
+  }
+  let claude: BoxStatusClaude | null;
+  try {
+    claude = await agentClaudeFrom(source, box.id);
+  } catch (err) {
+    log.error(
+      `could not read the agent snapshot for ${box.name} from the ${source.remote ? 'control box' : 'hub'}: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    process.exit(1);
   }
   // Race guard: the prompt must still be the one this id was minted for.
   const current = claude ? mintTuiId(box.id, claude) : null;
@@ -498,6 +512,18 @@ export interface GatheredApprovals {
 }
 
 /**
+ * The box's agent snapshot as the OWNING hub holds it. `getAgentState` reads the
+ * hub's own `status.json` for the box (falling back to its in-memory status
+ * store), so for a local box this is exactly what reading the file here returned.
+ */
+async function agentClaudeFrom(
+  source: BoxPromptSource,
+  boxId: string,
+): Promise<BoxStatusClaude | null> {
+  return ((await source.client.getAgentState(boxId)).claude ?? null) as BoxStatusClaude | null;
+}
+
+/**
  * What a partial read could not answer for, phrased for the user. Empty when
  * both halves succeeded — the ONLY case in which an empty row list is allowed to
  * be reported as "nothing pending".
@@ -554,7 +580,7 @@ export async function gatherApprovals(
 
   let claude: BoxStatusClaude | null = null;
   try {
-    claude = ((await source.client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;
+    claude = await agentClaudeFrom(source, box.id);
   } catch (err) {
     tuiError = err instanceof Error ? err.message : String(err);
   }
@@ -639,9 +665,8 @@ async function fetchAgentClaude(
 
 /**
  * Report a box no hub owns, for the snapshot readers (`state` /
- * `get-plan-question` / `approve`'s race guard) — exit 2, matching `wait-for`.
- * Distinct from a null snapshot: the box is genuinely unknown, not merely
- * un-reported-on yet.
+ * `get-plan-question`) — exit 2, matching `wait-for`. Distinct from a null
+ * snapshot: the box is genuinely unknown, not merely un-reported-on yet.
  */
 function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
   if (asJson) {
