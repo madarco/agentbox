@@ -34,6 +34,7 @@ const runtime = join(cliRoot, 'runtime');
 const dockerCtx = join(runtime, 'docker');
 const hetznerCtx = join(runtime, 'hetzner');
 const digitaloceanCtx = join(runtime, 'digitalocean');
+const createosCtx = join(runtime, 'createos');
 const daytonaCtx = join(runtime, 'daytona');
 const vercelCtx = join(runtime, 'vercel');
 const e2bCtx = join(runtime, 'e2b');
@@ -274,6 +275,31 @@ const digitaloceanFiles = [
 ];
 for (const [srcRel, destRel, exec] of digitaloceanFiles) {
   copy(srcRel, join(digitaloceanCtx, destRel), exec);
+}
+
+// CreateOS provider — runtime assets uploaded into the fresh microVM during
+// provision. CreateOS currently has no file-context template bake, so this
+// mirrors the flat VPS install layout and runs per sandbox.
+const createosFiles = [
+  ['packages/sandbox-createos/scripts/install-box.sh', 'scripts/install-box.sh', true],
+  ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
+  ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
+  ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
+  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
+  ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
+  ['packages/sandbox-docker/scripts/ntn-shim', 'ntn-shim', true],
+  ['packages/sandbox-docker/scripts/linear-shim', 'linear-shim', true],
+  ['packages/sandbox-createos/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
+  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
+  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+];
+for (const [srcRel, destRel, exec] of createosFiles) {
+  copy(srcRel, join(createosCtx, destRel), exec);
 }
 
 // Daytona provider — overlay files the daytona prepare step adds on top of

@@ -3,7 +3,8 @@
  *
  * Precedence (highest wins):
  *   1. `box.image<Provider>` — per-provider override
- *      (`imageDocker` / `imageDaytona` / `imageHetzner` / `imageVercel`).
+ *      (`imageDocker` / `imageDaytona` / `imageHetzner` / `imageVercel` /
+ *      `imageE2b` / `imageCreateos` / ...).
  *   2. `box.image` — generic fallback (defaults to `agentbox/box:dev`,
  *      which cloud backends recognize as a sentinel meaning "boot from
  *      the provider's prepared base snapshot").

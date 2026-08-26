@@ -10,6 +10,8 @@ interface InboundOptions {
   yes?: boolean;
 }
 
+const INBOUND_PROVIDERS = new Set(['hetzner', 'digitalocean']);
+
 export const inboundCommand = new Command('inbound')
   .description(
     "Set a VPS box's inbound-access policy (hetzner / digitalocean per-box firewall). " +
@@ -30,6 +32,26 @@ export const inboundCommand = new Command('inbound')
     try {
       const box = await resolveBoxOrExit(idOrName);
       const provider = await providerForBox(box);
+      const providerName = box.provider ?? 'docker';
+
+      if (!INBOUND_PROVIDERS.has(providerName)) {
+        if (opts.show || spec.length === 0) {
+          process.stdout.write(
+            `inbound: unsupported for provider '${providerName}' - only hetzner / digitalocean boxes have a per-box firewall.\n`,
+          );
+          return;
+        }
+        log.error(
+          `inbound access control isn't supported for provider '${providerName}' - ` +
+            'only hetzner / digitalocean boxes have a per-box firewall.',
+        );
+        process.exit(2);
+      }
+
+      if (!provider.setInbound) {
+        log.error(`inbound access control isn't available for provider '${providerName}'.`);
+        process.exit(2);
+      }
 
       if (opts.show || spec.length === 0) {
         const policy = box.cloud?.inbound ?? { mode: 'locked' as const, sources: [] };
@@ -41,14 +63,6 @@ export const inboundCommand = new Command('inbound')
           );
         }
         return;
-      }
-
-      if (!provider.setInbound) {
-        log.error(
-          `inbound access control isn't supported for provider '${box.provider ?? 'docker'}' — ` +
-            'only hetzner / digitalocean boxes have a per-box firewall.',
-        );
-        process.exit(2);
       }
 
       const raw = spec.join(' ');

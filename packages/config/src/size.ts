@@ -13,6 +13,7 @@
  *     on the snapshot path.
  *   - vercel: vCPU count — `1`, `2`, `4` or `8` (RAM is coupled at 2 GB/vCPU).
  *   - e2b: `cpu-memory` GB spec (e.g. `4-8`), baked at prepare time.
+ *   - createos: shape slug (e.g. `s-2vcpu-2gb`) or `cpu-memory[-disk]` GB.
  *   - docker: reserved (docker uses memory/cpus/disk). The key exists for
  *     surface uniformity.
  *

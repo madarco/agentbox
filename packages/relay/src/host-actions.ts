@@ -259,6 +259,10 @@ export async function resolveCloudBackend(name: string): Promise<CloudBackend> {
         ((await import(pkg)) as { digitaloceanBackend: CloudBackend }).digitaloceanBackend,
     );
   }
+  if (name === 'createos') {
+    const pkg = '@agentbox/sandbox-' + 'createos';
+    return loadCloudBackend(pkg, async () => ((await import(pkg)) as { createosBackend: CloudBackend }).createosBackend);
+  }
   if (name === 'remote-docker') {
     const pkg = '@agentbox/sandbox-' + 'remote-docker';
     return loadCloudBackend(

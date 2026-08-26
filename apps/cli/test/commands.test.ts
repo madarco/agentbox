@@ -6,6 +6,7 @@ import { createCommand } from '../src/commands/create.js';
 import { forkCommand } from '../src/commands/fork.js';
 import { installCommand } from '../src/commands/install.js';
 import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
+import { createosCommand } from '@agentbox/sandbox-createos/cli';
 import { dockerCommand } from '../src/commands/docker.js';
 import { destroyCommand } from '../src/commands/destroy.js';
 import { downloadCommand } from '../src/commands/download.js';
@@ -145,6 +146,14 @@ describe('lifecycle CLI surface', () => {
     const subs = daytonaCommand.commands.map((c) => c.name());
     expect(subs).toContain('login');
     const login = daytonaCommand.commands.find((c) => c.name() === 'login')!;
+    expect(login.options.map((o) => o.long)).toContain('--status');
+  });
+
+  it('createos has a login (default) subcommand with --status', () => {
+    expect(createosCommand.name()).toBe('createos');
+    const subs = createosCommand.commands.map((c) => c.name());
+    expect(subs).toContain('login');
+    const login = createosCommand.commands.find((c) => c.name() === 'login')!;
     expect(login.options.map((o) => o.long)).toContain('--status');
   });
 

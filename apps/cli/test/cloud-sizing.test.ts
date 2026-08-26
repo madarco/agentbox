@@ -12,10 +12,12 @@ function makeCfg(box: Record<string, unknown> = {}): EffectiveConfig {
       sizeHetzner: '',
       sizeVercel: '',
       sizeE2b: '',
+      sizeCreateos: '',
       hetznerLocation: 'nbg1',
       vercelTimeoutMs: 2_700_000,
       vercelNetworkPolicy: 'strict',
       e2bTimeoutMs: 120_000,
+      createosTimeoutMs: 180_000,
       daytonaClass: 'linux-vm',
       daytonaRegion: '',
       daytonaTimeoutMs: 1_500_000,
@@ -42,6 +44,10 @@ const DAYTONA_BASE = {
 describe('cloudSizingProviderOptions', () => {
   it('threads the e2b session timeout for e2b boxes', () => {
     expect(cloudSizingProviderOptions('e2b', makeCfg())).toEqual({ timeoutMs: 120_000 });
+  });
+
+  it('threads the createos auto-pause timeout for createos boxes', () => {
+    expect(cloudSizingProviderOptions('createos', makeCfg())).toEqual({ timeoutMs: 180_000 });
   });
 
   it('threads timeout / network policy for vercel boxes (no vcpus key)', () => {
@@ -97,11 +103,18 @@ describe('cloudSizingProviderOptions', () => {
       size: '4-8-20',
       location: 'nbg1',
     });
+    expect(cloudSizingProviderOptions('createos', cfg)).toEqual({
+      size: '4-8-20',
+      timeoutMs: 180_000,
+    });
   });
 
   it('prefers the per-provider size key over the generic one', () => {
     const cfg = makeCfg({ size: '4-8-20', sizeHetzner: 'cx33' });
     expect(cloudSizingProviderOptions('hetzner', cfg)).toMatchObject({ size: 'cx33' });
+    expect(
+      cloudSizingProviderOptions('createos', makeCfg({ size: '4-8-20', sizeCreateos: 's-2vcpu-2gb' })),
+    ).toMatchObject({ size: 's-2vcpu-2gb' });
   });
 
   it('lets the --size flag win over config, trimming whitespace', () => {
@@ -189,7 +202,7 @@ describe('digitalocean project', () => {
 
   it('is ignored for every other provider', () => {
     const cfg = makeCfg({ digitaloceanProject: 'client-x' });
-    for (const p of ['hetzner', 'daytona', 'vercel', 'e2b', 'docker']) {
+    for (const p of ['hetzner', 'daytona', 'vercel', 'e2b', 'createos', 'docker']) {
       expect(cloudSizingProviderOptions(p, cfg).project).toBeUndefined();
     }
   });

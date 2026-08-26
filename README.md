@@ -42,7 +42,7 @@ agentbox claude
 > Run setup wizard? -> Yes
 
 # Also use a cloud:
-agentbox hetzner claude # or vercel, daytona
+agentbox hetzner claude # or vercel, daytona, e2b, createos
 
 # Ctrl+a d to detach, claude keep going, to reconnect later:
 agentbox attach 1
@@ -85,12 +85,12 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 
 ## Cloud Providers
 
-|                     | local docker              | remote docker          | hetzner                | daytona            | vercel             | e2b                |
-| ------------------- | ------------------------- | ---------------------- | ---------------------- | ------------------ | ------------------ | ------------------ |
-| Support             | ✅                        | ✅                     | ✅                     | ⚠️ Partial         | ✅                 | ✅                 |
-| Base image          | Dockerfile                | Dockerfile (on the remote) | Setup script (Ubuntu)  | Dockerfile         | Setup script       | Dockerfile (`Template.build`) |
-| Live snapshots      | ✅                        | ✅ (`docker commit`)   | ✅                     | 🧪 Experimental    | ✅                 | ✅                 |
-| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless over SSH) | ✅ (portless)          | ✅ (native)        | ✅ (native)        | ✅ (native)        |
+|                     | local docker              | remote docker          | hetzner                | daytona            | vercel             | e2b                | createos          |
+| ------------------- | ------------------------- | ---------------------- | ---------------------- | ------------------ | ------------------ | ------------------ | ----------------- |
+| Support             | ✅                        | ✅                     | ✅                     | ⚠️ Partial         | ✅                 | ✅                 | ⚠️ Partial        |
+| Base image          | Dockerfile                | Dockerfile (on the remote) | Setup script (Ubuntu)  | Dockerfile         | Setup script       | Dockerfile (`Template.build`) | Rootfs + provision install |
+| Live snapshots      | ✅                        | ✅ (`docker commit`)   | ✅                     | 🧪 Experimental    | ✅                 | ✅                 | Pause/resume      |
+| Private preview URLs| ✅ (portless or OrbStack) | ✅ (portless over SSH) | ✅ (portless)          | ✅ (native)        | ✅ (native)        | ✅ (native)        | ✅ (native)       |
 
 **Cloud setup** (optional — skip for local Docker)
 
@@ -99,9 +99,10 @@ Uses `portless` to give box web apps the same URL from inside the box and on the
 - `agentbox hetzner login` — interactive Hetzner Cloud token setup, saved to `~/.agentbox/secrets.env`
 - `agentbox daytona login` — interactive Daytona API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox e2b login` — interactive E2B API key setup, saved to `~/.agentbox/secrets.env`
+- `agentbox createos login` — interactive CreateOS API key setup, saved to `~/.agentbox/secrets.env`
 - `agentbox digitalocean login` — interactive DigitalOcean Personal Access Token setup, saved to `~/.agentbox/secrets.env`
 - `agentbox remote-docker doctor <host>` — run boxes on a machine you already own, over SSH. No login and no token: it connects as you, using your own `~/.ssh/config`. Then `agentbox docker:<host> claude`.
-- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|digitalocean|docker:<host>]` — build the image and initial snapshot (e2b builds from a Dockerfile via `Template.build()`)
+- `agentbox prepare [--provider daytona|hetzner|vercel|e2b|createos|digitalocean|docker:<host>]` — build the image and initial snapshot where supported; createos validates credentials/runtime assets and installs during provision
 - `agentbox hetzner claude`, `agentbox hetzner codex`, `agentbox hetzner create`, etc.
 
 ## How to use
@@ -160,7 +161,7 @@ Full documentation lives at **[agent-box.sh/docs](https://agent-box.sh/docs)**:
 - [Quickstart](https://agent-box.sh/docs) and [Core concepts](https://agent-box.sh/docs/core-concepts)
 - [Teleport a project](https://agent-box.sh/docs/teleport-a-project), [Run an agent](https://agent-box.sh/docs/run-an-agent), [Access your box](https://agent-box.sh/docs/access-your-box)
 - [Configuration](https://agent-box.sh/docs/configuration), [Services & tasks](https://agent-box.sh/docs/services-and-tasks), [Sync & git](https://agent-box.sh/docs/sync-and-git)
-- Cloud providers: [Hetzner](https://agent-box.sh/docs/hetzner), [Daytona](https://agent-box.sh/docs/daytona), [Vercel](https://agent-box.sh/docs/vercel), [E2B](https://agent-box.sh/docs/e2b), [DigitalOcean](https://agent-box.sh/docs/digitalocean)
+- Cloud providers: [Hetzner](https://agent-box.sh/docs/hetzner), [Daytona](https://agent-box.sh/docs/daytona), [Vercel](https://agent-box.sh/docs/vercel), [E2B](https://agent-box.sh/docs/e2b), [CreateOS](https://agent-box.sh/docs/createos), [DigitalOcean](https://agent-box.sh/docs/digitalocean)
 - Full [CLI reference](https://agent-box.sh/docs/cli)
 
 ## Development
@@ -215,4 +216,3 @@ Bug reports, docs fixes, and provider work are welcome — see [CONTRIBUTING.md]
 # License
 
 MIT. See [LICENSE](./LICENSE).
-

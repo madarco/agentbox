@@ -135,6 +135,7 @@ export interface UserConfig {
     defaultCheckpointVercel?: string;
     defaultCheckpointE2b?: string;
     defaultCheckpointDigitalocean?: string;
+    defaultCheckpointCreateos?: string;
     defaultCheckpointRemoteDocker?: string;
     /**
      * Generic VM-size fallback for cloud providers. Provider-interpreted:
@@ -151,6 +152,7 @@ export interface UserConfig {
     sizeVercel?: string;
     sizeE2b?: string;
     sizeDigitalocean?: string;
+    sizeCreateos?: string;
     sizeRemoteDocker?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
@@ -176,6 +178,7 @@ export interface UserConfig {
     imageVercel?: string;
     imageE2b?: string;
     imageDigitalocean?: string;
+    imageCreateos?: string;
     imageRemoteDocker?: string;
     imageRegistry?: string;
     dockerCacheShared?: boolean;
@@ -191,6 +194,7 @@ export interface UserConfig {
     hetznerLocation?: string;
     digitaloceanRegion?: string;
     digitaloceanProject?: string;
+    createosTimeoutMs?: number;
     remoteDockerHost?: string;
     vercelTimeoutMs?: number;
     vercelNetworkPolicy?: string;
@@ -360,6 +364,7 @@ export interface EffectiveConfig {
     defaultCheckpointVercel: string;
     defaultCheckpointE2b: string;
     defaultCheckpointDigitalocean: string;
+    defaultCheckpointCreateos: string;
     defaultCheckpointRemoteDocker: string;
     size: string;
     sizeDocker: string;
@@ -368,6 +373,7 @@ export interface EffectiveConfig {
     sizeVercel: string;
     sizeE2b: string;
     sizeDigitalocean: string;
+    sizeCreateos: string;
     sizeRemoteDocker: string;
     withPlaywright: boolean;
     withEnv: boolean;
@@ -388,6 +394,7 @@ export interface EffectiveConfig {
     imageVercel: string;
     imageE2b: string;
     imageDigitalocean: string;
+    imageCreateos: string;
     imageRemoteDocker: string;
     imageRegistry: string;
     dockerCacheShared: boolean;
@@ -403,6 +410,7 @@ export interface EffectiveConfig {
     hetznerLocation: string;
     digitaloceanRegion: string;
     digitaloceanProject: string;
+    createosTimeoutMs: number;
     remoteDockerHost: string;
     vercelTimeoutMs: number;
     vercelNetworkPolicy: string;
@@ -547,6 +555,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     defaultCheckpointVercel: '',
     defaultCheckpointE2b: '',
     defaultCheckpointDigitalocean: '',
+    defaultCheckpointCreateos: '',
     defaultCheckpointRemoteDocker: '',
     size: '',
     sizeDocker: '',
@@ -555,6 +564,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeVercel: '',
     sizeE2b: '',
     sizeDigitalocean: '',
+    sizeCreateos: '',
     sizeRemoteDocker: '',
     withPlaywright: false,
     withEnv: false,
@@ -571,6 +581,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     imageVercel: '',
     imageE2b: '',
     imageDigitalocean: '',
+    imageCreateos: '',
     // Empty = the provider derives the fingerprint-tagged ref itself and ensures
     // it on the remote engine; set only to pin a hand-built image there.
     imageRemoteDocker: '',
@@ -595,6 +606,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     // Empty = leave boxes in the account's default project (DigitalOcean's own
     // behavior). There is no sane default id to pick — it differs per account.
     digitaloceanProject: '',
+    createosTimeoutMs: 2_700_000,
     // Empty = no default remote engine; `--provider remote-docker` then errors
     // unless the SSH destination came from `docker:<host>` / `--remote-host`.
     remoteDockerHost: '',
@@ -1064,6 +1076,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       "DigitalOcean Project new --provider digitalocean boxes are placed in — a name or the project's UUID. Unset (the default) leaves boxes in the account's default project. Set it per repo via `agentbox.yaml`, or globally at `agentbox digitalocean login`. DigitalOcean-only; ignored by other providers.",
+  },
+  {
+    key: 'box.createosTimeoutMs',
+    type: 'int',
+    description:
+      'Idle timeout (ms) for new --provider createos boxes. The backend maps it to CreateOS auto-pause seconds. Default 2700000 (45 min). CreateOS-only.',
   },
   {
     key: 'box.remoteDockerHost',

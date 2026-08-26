@@ -904,7 +904,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '-p, --provider <name>',
-    'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean). Omit for status-only.',
+    'provider to prepare (docker | daytona | hetzner | vercel | e2b | digitalocean | createos). Omit for status-only.',
   )
   .option('-n, --name <name>', 'snapshot name (Daytona only; default: agentbox-base-<timestamp>)')
   .option('-f, --force', 'rebuild even if the image / snapshot already exists')
@@ -929,7 +929,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '--size <spec>',
-    'bake-time VM size. daytona: cpu-memory-disk GB (e.g. 4-8-20). e2b: cpu-memory GB (e.g. 4-8). Overrides box.size / box.size<Provider>. Ignored by docker/hetzner/vercel.',
+    'bake-time VM size. daytona: cpu-memory-disk GB (e.g. 4-8-20). e2b: cpu-memory GB (e.g. 4-8). CreateOS accepts shape slugs on create. Overrides box.size / box.size<Provider>.',
   )
   .action(async (opts: PrepareOptions) => {
     // Status-only path: no provider, or explicit --status.

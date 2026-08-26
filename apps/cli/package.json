@@ -90,6 +90,7 @@
     "@agentbox/relay": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-createos": "workspace:*",
     "@agentbox/sandbox-daytona": "workspace:*",
     "@agentbox/sandbox-digitalocean": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",

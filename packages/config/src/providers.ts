@@ -453,6 +453,18 @@ export const PROVIDERS = [
       'Per-provider override of `box.image` for digitalocean (numeric snapshot id). Written by `agentbox prepare --provider digitalocean`.',
   },
   {
+    name: 'createos',
+    kind: 'cloud',
+    label: 'CreateOS (cloud microVM)',
+    loginHint: 'paste an API key from CreateOS',
+    rebuildMinutes: '0',
+    blurb: 'CreateOS Sandboxes',
+    sizeDesc:
+      'Per-provider override of `box.size` for createos. Shape slug (e.g. `s-2vcpu-2gb`) or `cpu-memory[-disk]` GB spec (e.g. `2-2-20`).',
+    imageDesc:
+      'Per-provider override of `box.image` for createos (rootfs/template name, e.g. `devbox:1` or a custom template alias). Empty/default uses `devbox:1`.',
+  },
+  {
     name: 'remote-docker',
     kind: 'cloud',
     label: 'Remote Docker (your own machine over SSH)',

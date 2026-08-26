@@ -25,7 +25,8 @@ export interface CloudSizingFlags {
  * - **all providers**: `size` — the generic VM-size string, `--size` flag first,
  *   else `box.size<Provider>` / `box.size`. Each backend interprets it natively
  *   (hetzner: server type; daytona: `cpu-mem-disk` GB; vercel: vCPU count;
- *   e2b: baked at prepare time; docker: ignored).
+ *   e2b: baked at prepare time; createos: shape slug or `cpu-memory[-disk]`;
+ *   docker: ignored).
  * - **hetzner**: `location` — datacenter, `--location` flag first, else
  *   `box.hetznerLocation`.
  * - **digitalocean**: `location` — region, `--location` flag first, else
@@ -43,6 +44,7 @@ export interface CloudSizingFlags {
  * - **e2b**: `timeoutMs` — the session timeout the box is created with (and
  *   records as `cloud.sessionTimeoutMs`, which seeds the host keepalive loop so
  *   it can push the deadline forward while the agent is working).
+ * - **createos**: `timeoutMs` — mapped to CreateOS' sandbox auto-pause window.
  * - **daytona**: `timeoutMs` (auto-stop inactivity window, same keepalive rail
  *   as e2b), `sandboxClass` (`linux-vm` | `container`) and `location` (region).
  *   `location` carries only an EXPLICIT `box.daytonaRegion` — the class-derived
@@ -101,6 +103,9 @@ export function cloudSizingProviderOptions(
   }
   if (providerName === 'e2b') {
     out.timeoutMs = cfg.box.e2bTimeoutMs;
+  }
+  if (providerName === 'createos') {
+    out.timeoutMs = cfg.box.createosTimeoutMs;
   }
   if (providerName === 'remote-docker') {
     // Which machine runs the container. Unlike every other provider's options

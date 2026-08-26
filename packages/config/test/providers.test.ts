@@ -173,7 +173,7 @@ describe('provider table is the single source of truth', () => {
     });
 
     it('the other paste-a-token providers stay paste-a-token', () => {
-      for (const name of ['hetzner', 'e2b', 'digitalocean']) {
+      for (const name of ['hetzner', 'e2b', 'digitalocean', 'createos']) {
         expect(hintFor(name)).toMatch(/paste/i);
         expect(hintFor(name)).not.toMatch(/browser|sign-?in/i);
       }

@@ -55,6 +55,7 @@ import { dockerCommand } from './commands/docker.js';
 import { hetznerCommand } from '@agentbox/sandbox-hetzner/cli';
 import { vercelCommand } from '@agentbox/sandbox-vercel/cli';
 import { e2bCommand } from '@agentbox/sandbox-e2b/cli';
+import { createosCommand } from '@agentbox/sandbox-createos/cli';
 import { digitaloceanCommand } from '@agentbox/sandbox-digitalocean/cli';
 import { remoteDockerCommand } from '@agentbox/sandbox-remote-docker/cli';
 import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd.js';
@@ -265,6 +266,7 @@ program.addCommand(daytonaCommand);
 program.addCommand(hetznerCommand);
 program.addCommand(vercelCommand);
 program.addCommand(e2bCommand);
+program.addCommand(createosCommand);
 program.addCommand(digitaloceanCommand);
 // The provider package owns the local registry commands; `share`/`unshare` need
 // the hub client, which lives here — so the CLI folds them into the same group.

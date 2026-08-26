@@ -1,0 +1,80 @@
+---
+title: CreateOS
+description: Run your agents in a CreateOS cloud microVM with public preview URLs and pause/resume
+---
+
+Run agents in a CreateOS cloud sandbox with public HTTPS preview URLs and provider-level pause/resume. Each box is a remote microVM, but the AgentBox flow stays the same: seed the workspace from your host git state, start `agentbox-ctl`, and run Claude, Codex, or OpenCode inside `/workspace`.
+
+Switch per box with `--provider createos`, or pin it project-wide with `box.provider: createos` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [Daytona](/docs/daytona), [Vercel](/docs/vercel), [E2B](/docs/e2b), and [local Docker](/docs/local-docker).
+
+<Callout title="Nightly">
+CreateOS support is available in the **nightly** build of AgentBox.
+</Callout>
+
+## Set up
+
+Use the interactive wizard, or configure the provider directly:
+
+```bash
+agentbox createos login
+agentbox prepare --provider createos
+```
+
+Paste a CreateOS API key when prompted. AgentBox stores it as `CREATEOS_API_KEY` in `~/.agentbox/secrets.env`. For scripted setup, set `CREATEOS_API_KEY` directly.
+
+`prepare --provider createos` validates credentials, confirms the `createos` CLI is installed, and checks that the AgentBox runtime assets are present. Unlike E2B, CreateOS does not currently bake AgentBox's local runtime files into a reusable base template; each new sandbox installs the runtime into the selected rootfs during provision.
+
+## Use it
+
+```bash
+agentbox createos claude
+```
+
+`agentbox createos create|claude|codex|opencode` is sugar for the same command with `--provider createos`.
+
+## Sizing and Rootfs
+
+`--size` accepts either a native CreateOS shape slug or AgentBox's compact `cpu-memory[-disk]` GB form:
+
+```bash
+agentbox create --provider createos --size s-2vcpu-2gb
+agentbox create --provider createos --size 2-2-20
+```
+
+Pin the same value with `box.sizeCreateos` or the generic `box.size`.
+
+By default AgentBox boots CreateOS boxes from `devbox:1`. Override that with `--image <rootfs-or-template>` or `box.imageCreateos`.
+
+## Limits
+
+| Limit | |
+| --- | --- |
+| Runtime install | Per sandbox provision; `prepare` validates only |
+| Default shape | `s-2vcpu-2gb` |
+| Default disk | 20 GiB |
+| Default rootfs | `devbox:1` |
+| Preview URL | Public HTTPS from CreateOS ingress; WebProxy runs on 8080 |
+| Attach | `createos sandbox process run --pty` |
+| SSH | none - AgentBox does not manage SSH keys for CreateOS boxes |
+| Docker-in-Docker | installed in the box and auto-started by AgentBox |
+
+## Pause / Resume
+
+CreateOS boxes use the provider API for pause and resume:
+
+```bash
+agentbox pause <box>
+agentbox start <box>
+```
+
+The provider maps AgentBox's idle timeout to CreateOS `auto_pause_after_seconds`; configure it with `box.createosTimeoutMs`.
+
+## Caveats
+
+- **No reusable AgentBox bake yet** — `agentbox prepare --provider createos` is a readiness check, and `create` installs the runtime into each new sandbox.
+- **Checkpoints are not provider-native yet** — use CreateOS pause/resume for lifecycle parking; provider snapshot restore can be added once AgentBox has a CreateOS template/snapshot capture path.
+- **CreateOS-only config keys are ignored elsewhere** — `box.imageCreateos`, `box.defaultCheckpointCreateos`, `box.sizeCreateos`, and `box.createosTimeoutMs` only apply to CreateOS.
+
+## Related
+
+[CLI](/docs/cli) · [configuration](/docs/configuration) · [teleport a project](/docs/teleport-a-project) · [web apps and tunnels](/docs/web-apps-and-tunnels) · [sync and git](/docs/sync-and-git)
