@@ -23,6 +23,7 @@ import {
   syncAgentCredentialsIfChanged,
 } from './control-plane.js';
 import { adoptHubBox } from '../control-plane/hub-adopt.js';
+import { providerSpecFor } from '../provider/spec.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { pushCreateSeed } from '../control-plane/create-target.js';
@@ -68,15 +69,6 @@ export async function withHubJobLine<T>(
     if (started) s.stop('the remote hub create failed', 1);
     throw err;
   }
-}
-
-/**
- * What to put in the hub's `provider` field. A remote-docker create must name its
- * ENGINE — the hub keys its own host registry by alias — so it goes over the wire
- * as `docker:<alias>`, the same spec the CLI accepts.
- */
-function hubProviderSpec(providerName: string, remoteHost: string | undefined): string {
-  return providerName === 'remote-docker' && remoteHost ? `docker:${remoteHost}` : providerName;
 }
 
 export interface CloudAgentViaHubArgs {
@@ -183,7 +175,7 @@ export async function createCloudBoxViaHubAndAdopt(
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({
     repoUrl,
-    provider: hubProviderSpec(providerName, remoteHost),
+    provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,
@@ -293,7 +285,7 @@ export async function enqueueAgentJobViaHub(
   const client = new HubApiClient(apiTarget);
   const { jobId } = await client.createBox({
     repoUrl,
-    provider: hubProviderSpec(providerName, remoteHost),
+    provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,

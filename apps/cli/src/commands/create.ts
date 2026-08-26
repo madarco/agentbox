@@ -19,7 +19,7 @@ import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/
 import { openCommandLog } from '../lib/log-file.js';
 import { makeProgressReporter } from '../lib/progress.js';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
-import { parseProviderSpec } from '../provider/spec.js';
+import { providerSpecFor, resolveProviderChoice } from '../provider/spec.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import {
   maybeRunSetupWizard,
@@ -227,8 +227,7 @@ async function runCreateViaHubApi(
   const outcome = await withHubClient({ url: opts.url }, async (client) => {
     const { jobId } = await client.createBox({
       repoUrl: target.repoUrl,
-      provider:
-        providerName === 'remote-docker' && remoteHost ? `docker:${remoteHost}` : providerName,
+      provider: providerSpecFor(providerName, remoteHost),
       agent: 'none',
       name: opts.name?.trim() || undefined,
       fromBranch: opts.fromBranch?.trim() || undefined,
@@ -393,13 +392,13 @@ export const createCommand = new Command('create')
     } catch {
       /* best-effort project registration */
     }
-    // `--provider` may be a host-qualified spec (`docker:buildbox`). Split it:
-    // `providerName` must stay a bare name — it keys the per-provider config
-    // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record.
-    const { name: providerName, remoteHost: specRemoteHost } = parseProviderSpec(
-      opts.provider ?? cfg.effective.box.provider ?? 'docker',
-    );
-    const remoteHost = opts.remoteHost ?? specRemoteHost;
+    // `providerName` stays a bare name — it keys the per-provider config
+    // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record; the
+    // engine rides alongside it in `remoteHost`.
+    const { providerName, remoteHost } = resolveProviderChoice(cfg.effective, {
+      provider: opts.provider,
+      remoteHost: opts.remoteHost,
+    });
 
     // Docker off under a remote hub (Step 12): with a control box configured a
     // docker box built here can't run with the laptop off, so it's refused unless

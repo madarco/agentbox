@@ -17,7 +17,13 @@
  */
 
 import { homedir } from 'node:os';
-import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  REMOTE_DOCKER,
+  setConfigValue,
+  unsetConfigValue,
+  type UserConfig,
+} from '@agentbox/config';
 import { AGENTBOX_HUB_SSH_ALIAS } from '@agentbox/sandbox-core';
 import { getHostAlias, removeHostAlias, upsertHostAlias } from '@agentbox/sandbox-remote-docker';
 import { readDeployRecord } from './deploy-hetzner.js';
@@ -31,8 +37,18 @@ import { controlBoxIsThisMachine } from './remote-hub.js';
  */
 export const HUB_DOCKER_ALIAS = 'hub';
 
-/** What `box.provider` becomes when the hub's engine takes over as the default. */
+/**
+ * The spec written to make the hub's engine the default. `setConfigValue`
+ * desugars it into the pair actually stored — `box.provider: remote-docker` +
+ * `box.remoteDockerHost: hub` — so this stays the one place that spells the
+ * sugar, and everything reading it back matches on the pair.
+ */
 export const HUB_PROVIDER_SPEC = `docker:${HUB_DOCKER_ALIAS}`;
+
+/** True when the config layer's provider+host pair IS the hub's own engine. */
+function isHubDockerDefault(box: UserConfig['box']): boolean {
+  return box?.provider === REMOTE_DOCKER && box.remoteDockerHost === HUB_DOCKER_ALIAS;
+}
 
 /**
  * Register `hub` and, when the previous default was plain docker, make it the
@@ -65,6 +81,10 @@ export async function ensureHubDockerTarget(log: (line: string) => void): Promis
   // Only take over from docker (or from nothing). A user who pinned a cloud
   // provider chose it; a control box arriving does not change that.
   if (current !== undefined && current !== 'docker') return;
+  // Writing the spec sets `box.remoteDockerHost` too, so refuse to clobber a
+  // default engine the user picked for themselves.
+  const currentHost = cfg.layers.global.values.box?.remoteDockerHost;
+  if (currentHost !== undefined && currentHost !== HUB_DOCKER_ALIAS) return;
   if (!(await controlBoxKnowsHost(HUB_DOCKER_ALIAS, cfg.effective))) return;
   await setConfigValue('global', 'box.provider', HUB_PROVIDER_SPEC, homedir(), { raw: true });
   log(
@@ -80,8 +100,11 @@ export async function ensureHubDockerTarget(log: (line: string) => void): Promis
  */
 export async function removeHubDockerTarget(log: (line: string) => void): Promise<void> {
   const cfg = await loadEffectiveConfig(homedir()).catch(() => null);
-  if (cfg?.layers.global.values.box?.provider === HUB_PROVIDER_SPEC) {
+  if (cfg && isHubDockerDefault(cfg.layers.global.values.box)) {
     await unsetConfigValue('global', 'box.provider', homedir());
+    // Only the half we wrote: the alias is deleted below, so leaving
+    // `remoteDockerHost: hub` behind would point the default at a dead name.
+    await unsetConfigValue('global', 'box.remoteDockerHost', homedir());
     log('box.provider was `docker:hub`; cleared it (new boxes go back to local docker)');
   }
   // Only ours — an alias the user re-pointed is theirs to keep.

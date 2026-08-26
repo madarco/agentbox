@@ -95,12 +95,12 @@ export interface UserConfig {
   schema?: number;
   box?: {
     /**
-     * A provider name, or a host-qualified engine spec (`docker:<alias>`) that
-     * resolves to remote-docker — see `provider-spec.ts`. Typed loosely for the
-     * spec form; `parseProviderSpec` + the KEY_REGISTRY validation are what keep
-     * an arbitrary string out.
+     * Which backend new boxes go to. Always a bare provider NAME here: the
+     * host-qualified `docker:<alias>` spec is an *input* form only — the parser
+     * desugars it into `provider` + `remoteDockerHost` (see `desugarProviderSpec`
+     * in `parse.ts`), so nothing downstream has to re-split a config value.
      */
-    provider?: ProviderKind | (string & {});
+    provider?: ProviderKind;
     hostSnapshot?: boolean;
     defaultCheckpoint?: string;
     /** Per-provider override of `defaultCheckpoint`. Resolved before falling back to the global. */
@@ -321,8 +321,8 @@ export interface UserConfig {
  */
 export interface EffectiveConfig {
   box: {
-    /** A provider name, or a `docker:<alias>` engine spec (see `UserConfig`). */
-    provider: ProviderKind | (string & {});
+    /** A bare provider name — a `docker:<alias>` input is already split (see `UserConfig`). */
+    provider: ProviderKind;
     hostSnapshot: boolean | undefined;
     defaultCheckpoint: string;
     defaultCheckpointDocker: string;

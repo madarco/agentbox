@@ -41,7 +41,8 @@ CLI, not the raw commits.
   updating a control box registers its engine as the host `hub` and, when your
   default was still plain `docker`, moves `box.provider` to `docker:hub` — so plain `agentbox create`
   keeps making a docker-shaped box, on a machine that stays on. `box.provider` now
-  accepts any `docker:<alias>` engine spec.
+  accepts any `docker:<alias>` engine spec, stored as `box.provider` plus
+  `box.remoteDockerHost`.
 - `agentbox install portless` sets Portless up for good: it installs the CLI if
   missing and registers Portless's own OS startup service, so the proxy serving
   `https://<box>.localhost` is back after a reboot instead of staying down until

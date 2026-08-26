@@ -102,6 +102,47 @@ function enumValueAllowed(desc: KeyDescriptor, raw: string): boolean {
 }
 
 /**
+ * Split a host-qualified `box.provider` (`docker:hub`) into the two keys that
+ * actually store it: `box.provider` (a bare provider NAME) and
+ * `box.remoteDockerHost` (the engine). The spec is a usability affordance for
+ * argv and for hand-written YAML; keeping it in the stored value would mean
+ * every consumer re-splitting a config string, and would force `provider`'s type
+ * open to `string`. Desugaring HERE — rather than only in `agentbox config set`
+ * — is what lets a hand-edited `provider: docker:hub` keep working.
+ *
+ * Runs per LAYER, so the two keys land together in the file that named them and
+ * merge as an ordinary pair afterwards.
+ */
+function desugarProviderSpec(
+  box: Record<string, unknown>,
+  where: string,
+  opts: ParseOptions,
+): void {
+  const raw = box['provider'];
+  if (typeof raw !== 'string') return;
+  let spec;
+  try {
+    spec = parseProviderSpec(raw);
+  } catch {
+    // Unreachable: coerceTypedValue already rejected an unparseable spec.
+    return;
+  }
+  if (spec.remoteHost === undefined) return;
+
+  const existing = box['remoteDockerHost'];
+  if (typeof existing === 'string' && existing !== spec.remoteHost) {
+    // The spec wins, matching how `--provider docker:<host>` has always beaten
+    // the configured default. Loud, because the losing key looks live.
+    opts.onWarning?.(
+      `${where}.box: provider "${raw}" names host "${spec.remoteHost}", which overrides ` +
+        `remoteDockerHost "${existing}" in the same file`,
+    );
+  }
+  box['provider'] = spec.name;
+  box['remoteDockerHost'] = spec.remoteHost;
+}
+
+/**
  * Parse a UserConfig document text (YAML). Malformed values (wrong type, bad
  * enum, renamed key) throw UserConfigError; unknown keys are reported to
  * `opts.onWarning` and skipped (see `ParseOptions`).
@@ -173,6 +214,7 @@ export function parseUserConfigObject(
       throw new UserConfigError(`${where}.${branchName}: must be a mapping`);
     }
     const branchOut = parseBranchObject(branchSpec, branchName, branchRaw, '', where, opts);
+    if (branchName === 'box') desugarProviderSpec(branchOut, where, opts);
     if (Object.keys(branchOut).length > 0) {
       // We've validated that each branch matches one of UserConfig's known
       // sub-objects; the indexed write keeps the union type happy.

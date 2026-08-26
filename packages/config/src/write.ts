@@ -10,6 +10,7 @@ import {
   projectMetaFile,
 } from './paths.js';
 import { coerceFromString, parseUserConfig } from './parse.js';
+import { parseProviderSpec } from './provider-spec.js';
 import { withFileLock } from './file-lock.js';
 import { type ConfigScope, lookupKey, type UserConfig, UserConfigError } from './types.js';
 import { readdir } from 'node:fs/promises';
@@ -18,6 +19,13 @@ interface WriteResult {
   path: string;
   /** The value we coerced and stored, after string→typed conversion. */
   coerced: unknown;
+  /**
+   * Every leaf actually written, in order. Usually just the requested key —
+   * `box.provider: docker:hub` is the exception, splitting into two (see
+   * {@link providerSpecLeaves}). Callers that report what they did should print
+   * these rather than the key they asked for.
+   */
+  written: readonly { key: string; value: unknown }[];
 }
 
 interface SetOptions {
@@ -27,6 +35,26 @@ interface SetOptions {
    * round-trip parse for validation.
    */
   raw?: boolean;
+}
+
+/**
+ * The leaves a `set` actually writes. `box.provider: docker:hub` is sugar for a
+ * PAIR — the provider name plus the engine — so it expands to two keys and the
+ * stored `box.provider` stays a bare `ProviderKind`. The parser desugars the
+ * same way on read (`desugarProviderSpec`), so a hand-edited file and a file we
+ * wrote behave identically; this just keeps files we write already-canonical.
+ */
+function providerSpecLeaves(
+  key: string,
+  value: unknown,
+): readonly { key: string; value: unknown }[] {
+  if (key !== 'box.provider' || typeof value !== 'string') return [{ key, value }];
+  const spec = parseProviderSpec(value);
+  if (spec.remoteHost === undefined) return [{ key, value }];
+  return [
+    { key: 'box.provider', value: spec.name },
+    { key: 'box.remoteDockerHost', value: spec.remoteHost },
+  ];
 }
 
 /**
@@ -48,7 +76,7 @@ export function mergeConfigYaml(body: string, key: string, value: unknown): stri
     throw new UserConfigError(`unknown key "${key}"`);
   }
   const doc = parseDocBody(body, '<config.yaml>');
-  setLeaf(doc, key, value);
+  for (const leaf of providerSpecLeaves(key, value)) setLeaf(doc, leaf.key, leaf.value);
   stampSchema(doc);
   const merged = stringifyYaml(doc);
   parseUserConfig(merged, '<config.yaml>');
@@ -76,14 +104,16 @@ export async function setConfigValue(
     throw new UserConfigError(`unknown key "${key}"`);
   }
 
-  const coerced = opts.raw && typeof value === 'string'
-    ? coerceFromString(key, value)
-    : value;
+  const coerced = opts.raw && typeof value === 'string' ? coerceFromString(key, value) : value;
+
+  const written = providerSpecLeaves(key, coerced);
 
   const path = await configPathFor(scope, cwd);
   await withFileLock(path, async () => {
     const current = await readExistingDoc(path);
-    setLeaf(current, key, coerced);
+    // Both leaves land under ONE lock: a half-written pair would leave the
+    // provider pointing at remote-docker with no engine to reach.
+    for (const leaf of written) setLeaf(current, leaf.key, leaf.value);
     stampSchema(current);
     // Re-parse to validate the merged document; any change that produces an
     // invalid file (shouldn't be possible here, but defence-in-depth) throws.
@@ -96,7 +126,7 @@ export async function setConfigValue(
     await touchProjectMeta(root);
   }
 
-  return { path, coerced };
+  return { path, coerced, written };
 }
 
 /**
@@ -389,9 +419,8 @@ async function atomicWriteYaml(path: string, doc: Partial<UserConfig>): Promise<
   await mkdir(dirname(path), { recursive: true });
   // YAML serialises empty objects as `{}` which is correct but ugly; if the
   // doc is empty we still want a usable placeholder file.
-  const text = Object.keys(doc).length === 0
-    ? '# managed by agentbox config — empty\n'
-    : stringifyYaml(doc);
+  const text =
+    Object.keys(doc).length === 0 ? '# managed by agentbox config — empty\n' : stringifyYaml(doc);
   const tmp = `${path}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
   await writeFile(tmp, text, { encoding: 'utf8', mode: 0o644 });
   await rename(tmp, path);

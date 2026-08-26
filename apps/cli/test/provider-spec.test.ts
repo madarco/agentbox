@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseProviderSpec,
   providerNameOf,
+  resolveProviderChoice,
   resolveCreateProviderSpec,
 } from '../src/provider/spec.js';
 
@@ -83,5 +84,57 @@ describe('resolveCreateProviderSpec (a queued job with --remote-host resolves th
     expect(resolveCreateProviderSpec('docker:dev@10.0.0.9:2222', undefined)).toBe(
       'docker:dev@10.0.0.9:2222',
     );
+  });
+});
+
+describe('resolveProviderChoice (config stores the pair, commands read both)', () => {
+  const cfg = (provider: string, remoteDockerHost = '') =>
+    ({ box: { provider, remoteDockerHost } }) as unknown as Parameters<
+      typeof resolveProviderChoice
+    >[0];
+
+  it('reads the engine from box.remoteDockerHost when the config is the default', () => {
+    // The regression this exists to prevent: box.provider no longer carries the
+    // host, and dockerProviderRefusal refuses a remote-docker create whose host
+    // it cannot see — so a dropped host turns every `docker:hub` create into
+    // "docker is off under a control box".
+    expect(resolveProviderChoice(cfg('remote-docker', 'hub'))).toEqual({
+      providerName: 'remote-docker',
+      remoteHost: 'hub',
+      spec: 'docker:hub',
+    });
+  });
+
+  it('a --provider spec host beats the configured default', () => {
+    expect(
+      resolveProviderChoice(cfg('remote-docker', 'hub'), { provider: 'docker:buildbox' }),
+    ).toMatchObject({ providerName: 'remote-docker', remoteHost: 'buildbox' });
+  });
+
+  it('an explicit --remote-host beats both', () => {
+    expect(
+      resolveProviderChoice(cfg('remote-docker', 'hub'), {
+        provider: 'docker:buildbox',
+        remoteHost: 'mini',
+      }),
+    ).toMatchObject({ remoteHost: 'mini' });
+  });
+
+  it('never carries a host onto a provider that has no engine', () => {
+    // Otherwise `--remote-host` would look honoured on an e2b create.
+    expect(resolveProviderChoice(cfg('e2b', 'hub'), { remoteHost: 'mini' })).toEqual({
+      providerName: 'e2b',
+      remoteHost: undefined,
+      spec: 'e2b',
+    });
+    expect(resolveProviderChoice(cfg('docker', 'hub'))).toEqual({
+      providerName: 'docker',
+      remoteHost: undefined,
+      spec: 'docker',
+    });
+  });
+
+  it('falls back to docker when nothing is set', () => {
+    expect(resolveProviderChoice(cfg('', ''))).toMatchObject({ providerName: 'docker' });
   });
 });

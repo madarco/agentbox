@@ -85,10 +85,7 @@ function leafValue(loaded: LoadedConfig, key: string): unknown {
   return walkKey(loaded.effective as unknown as Record<string, unknown>, key);
 }
 
-function rawLeafFromValues(
-  values: Record<string, unknown> | undefined,
-  key: string,
-): unknown {
+function rawLeafFromValues(values: Record<string, unknown> | undefined, key: string): unknown {
   return walkKey(values, key);
 }
 
@@ -158,7 +155,14 @@ const getCommand = new Command('get')
                       loaded.layers.global.values as Record<string, unknown>,
                       loaded.layers.global.path,
                     ),
-                    default: { value: leafValue({ ...loaded, effective: loaded.layers.defaults } as LoadedConfig, key) ?? null, path: null },
+                    default: {
+                      value:
+                        leafValue(
+                          { ...loaded, effective: loaded.layers.defaults } as LoadedConfig,
+                          key,
+                        ) ?? null,
+                      path: null,
+                    },
                   }
                 : undefined,
             },
@@ -184,7 +188,9 @@ const getCommand = new Command('get')
         return;
       }
 
-      process.stdout.write(`${key} = ${fmtValue(value)}   (from: ${describeSource(source, loaded)})\n`);
+      process.stdout.write(
+        `${key} = ${fmtValue(value)}   (from: ${describeSource(source, loaded)})\n`,
+      );
     } catch (err) {
       handleError(err);
     }
@@ -193,8 +199,8 @@ const getCommand = new Command('get')
 const setCommand = new Command('set')
   .description('Set a config key in the global or per-project file (default: --project)')
   .argument('<key>', 'dot-path key (e.g. box.hostSnapshot)')
-  .argument('<value>', 'value to set; coerced to the key\'s declared type')
-  .option('--global', "write to ~/.agentbox/config.yaml")
+  .argument('<value>', "value to set; coerced to the key's declared type")
+  .option('--global', 'write to ~/.agentbox/config.yaml')
   .option('--project', 'write to ~/.agentbox/projects/<hash>/config.yaml (default)')
   .action(async (key: string, value: string, opts: SetOptions) => {
     const scope = resolveWriteScope(opts);
@@ -202,10 +208,19 @@ const setCommand = new Command('set')
       const r = await setConfigValue(scope, key, value, process.cwd(), { raw: true });
       if (opts.json) {
         process.stdout.write(
-          JSON.stringify({ key, scope, value: r.coerced, path: r.path }, null, 2) + '\n',
+          JSON.stringify(
+            { key, scope, value: r.coerced, path: r.path, wrote: r.written },
+            null,
+            2,
+          ) + '\n',
         );
       } else {
-        process.stdout.write(`${key} = ${fmtValue(r.coerced)}   (wrote ${r.path})\n`);
+        // Print what LANDED, not what was asked for: `box.provider docker:hub`
+        // is sugar for two keys, and a later `config get box.provider` answers
+        // `remote-docker`. Showing both here is what makes that unsurprising.
+        for (const leaf of r.written) {
+          process.stdout.write(`${leaf.key} = ${fmtValue(leaf.value)}   (wrote ${r.path})\n`);
+        }
         warnOnSet(key, r.coerced);
       }
     } catch (err) {
@@ -232,7 +247,7 @@ function warnOnSet(key: string, value: unknown): void {
 const unsetCommand = new Command('unset')
   .description('Remove a config key from the global or per-project file (default: --project)')
   .argument('<key>', 'dot-path key (e.g. box.hostSnapshot)')
-  .option('--global', "edit ~/.agentbox/config.yaml")
+  .option('--global', 'edit ~/.agentbox/config.yaml')
   .option('--project', 'edit ~/.agentbox/projects/<hash>/config.yaml (default)')
   .action(async (key: string, opts: ScopeOptions) => {
     const scope = resolveWriteScope(opts);
@@ -276,9 +291,10 @@ const listCommand = new Command('list')
         const obj: Record<string, unknown> = {};
         for (const desc of visibleKeys) {
           const value = pickFromScope(loaded, scope, desc.key);
-          obj[desc.key] = scope === 'effective'
-            ? { value: value ?? null, source: loaded.sources[desc.key] ?? 'default' }
-            : { value: value ?? null };
+          obj[desc.key] =
+            scope === 'effective'
+              ? { value: value ?? null, source: loaded.sources[desc.key] ?? 'default' }
+              : { value: value ?? null };
         }
         process.stdout.write(JSON.stringify({ scope, keys: obj }, null, 2) + '\n');
         return;
@@ -331,7 +347,7 @@ function pickFromScope(loaded: LoadedConfig, scope: ListOptions['scope'], key: s
 
 const pathCommand = new Command('path')
   .description('Print the file path for a config scope (default: --project)')
-  .option('--global', "~/.agentbox/config.yaml")
+  .option('--global', '~/.agentbox/config.yaml')
   .option('--project', '~/.agentbox/projects/<hash>/config.yaml (default)')
   .option('--workspace', './agentbox.yaml (resolved by walking up to the nearest one)')
   .option('--json', 'machine-readable output')
@@ -350,7 +366,10 @@ const editCommand = new Command('edit')
   .description('Open a config file in $EDITOR (default: --project)')
   .option('--global', 'edit ~/.agentbox/config.yaml')
   .option('--project', 'edit ~/.agentbox/projects/<hash>/config.yaml (default)')
-  .option('--workspace', "edit ./agentbox.yaml (the resolved one — and remember to fill in the `defaults:` block)")
+  .option(
+    '--workspace',
+    'edit ./agentbox.yaml (the resolved one — and remember to fill in the `defaults:` block)',
+  )
   .action(async (opts: EditScopeOptions) => {
     try {
       const scope = resolveEditScope(opts);
@@ -364,7 +383,9 @@ const editCommand = new Command('edit')
   });
 
 const listProjectsCommand = new Command('list-projects')
-  .description('List directories that have per-user-per-project config recorded under ~/.agentbox/projects/')
+  .description(
+    'List directories that have per-user-per-project config recorded under ~/.agentbox/projects/',
+  )
   .option('--json', 'machine-readable output')
   .action(async (opts: ListProjectsOptions) => {
     try {

@@ -74,7 +74,7 @@ import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
-import { parseProviderSpec } from '../provider/spec.js';
+import { resolveProviderChoice } from '../provider/spec.js';
 import {
   prepareTeleport,
   TeleportError,
@@ -540,9 +540,9 @@ export const codexCommand = new Command('codex')
     const projectRoot = (await findProjectRoot(opts.workspace)).root;
     // Resolve provider. Cloud path skips docker-only steps (login offer,
     // Portless, createBox) and delegates to cloudAgentCreate.
-    const { name: providerName, remoteHost } = parseProviderSpec(
-      opts.provider ?? cfg.effective.box.provider ?? 'docker',
-    );
+    const { providerName, remoteHost } = resolveProviderChoice(cfg.effective, {
+      provider: opts.provider,
+    });
     const isCloud = providerName !== 'docker';
 
     // Docker off under a remote hub (Step 12): a docker box built here can't run
