@@ -33,11 +33,9 @@ import { Sandbox, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
 import { prepareE2bProvider } from './prepare.js';
 import { buildE2bAttach } from './build-attach.js';
-import { currentE2bBaseFingerprintLive,
-  currentE2bBaseFileHashes,
-} from './prepared-state.js';
+import { currentE2bBaseFingerprintLive, currentE2bBaseFileHashes } from './prepared-state.js';
 import { ensureE2bCredentials, setE2bCredentials } from './credentials.js';
-import { doctorChecks, readCredStatusSummary } from './provider-module.js';
+import { doctorChecks, readCredStatusSummary, sizeIgnoredReason } from './provider-module.js';
 
 const BACKEND_NAME = 'e2b';
 
@@ -90,7 +88,10 @@ async function deleteE2bSnapshot(snapshotId: string): Promise<void> {
 function snapshotName(boxName: string, checkpointName: string): string {
   // E2B template names accept lower-case alnum + dashes/dots; coerce.
   const sanitize = (s: string): string =>
-    s.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '');
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
   return `agentbox-${sanitize(boxName)}-${sanitize(checkpointName)}-${sanitize(ts)}`;
 }
@@ -168,6 +169,7 @@ export const providerModule: ProviderModule = {
   setCredentials: (fields) => Promise.resolve(setE2bCredentials(fields)),
   currentBaseFingerprintLive: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
   currentBaseFileHashes: () => currentE2bBaseFileHashes(),
+  sizeIgnoredReason,
   doctorChecks,
 };
 

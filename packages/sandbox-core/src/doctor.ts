@@ -89,6 +89,23 @@ export interface ProviderModule {
    * `resolveRuntimeAssets()`. `undefined` when the assets can't be resolved.
    */
   currentBaseFileHashes?: () => Promise<FileManifest | undefined>;
+  /**
+   * Reason `size` won't take effect, or `null` if it will.
+   *
+   * Some backends fix CPU/memory/disk when the base image is BAKED and reject
+   * per-create resources (daytona on the snapshot path, e2b always), so a
+   * `--size` / `box.size<Provider>` there is silently discarded at provision.
+   * The CLI calls this early — on `config set` and before a create is queued —
+   * so the warning reaches a terminal instead of only a detached job's log.
+   *
+   * Per-provider rather than shared for the same reason as
+   * `currentBaseFileHashes` above: each parses its own size grammar
+   * (`cpu-mem-disk` vs `cpu-mem`) and reads the baked value from its own
+   * prepared-state shape. Must stay PURE and LOCAL — no network, no
+   * credentials — because it runs on every `agentbox config set box.size…`.
+   * Absent for backends that apply size live (hetzner, vercel, docker).
+   */
+  sizeIgnoredReason?: (size: string) => string | null;
   /** Local, offline-safe health probes for `agentbox doctor`. */
   doctorChecks: () => Promise<CheckResult[]>;
 }

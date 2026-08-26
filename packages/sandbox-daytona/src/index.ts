@@ -12,7 +12,7 @@ import { makeDaytonaCheckpoint } from './checkpoint.js';
 import { prepareDaytona } from './prepare.js';
 import { currentDaytonaBaseFingerprintLive } from './prepared-state.js';
 import { ensureDaytonaCredentials, setDaytonaCredentials } from './credentials.js';
-import { doctorChecks, readCredStatusSummary } from './provider-module.js';
+import { doctorChecks, readCredStatusSummary, sizeIgnoredReason } from './provider-module.js';
 
 const cloudProvider = createCloudProvider(daytonaBackend, {
   defaultResources: { ...DAYTONA_DEFAULT_RESOURCES },
@@ -36,6 +36,7 @@ export const providerModule: ProviderModule = {
   readCredStatus: readCredStatusSummary,
   setCredentials: setDaytonaCredentials,
   currentBaseFingerprintLive: (claudeInstall) => currentDaytonaBaseFingerprintLive(claudeInstall),
+  sizeIgnoredReason,
   doctorChecks,
 };
 

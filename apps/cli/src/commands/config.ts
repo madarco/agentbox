@@ -13,6 +13,7 @@ import {
   type LoadedConfig,
 } from '@agentbox/config';
 import { Command, InvalidArgumentError } from 'commander';
+import { providerForSizeKey, sizeIgnoredReason } from '../lib/size-advisory.js';
 
 type EditScope = ConfigScope | 'workspace';
 
@@ -221,7 +222,7 @@ const setCommand = new Command('set')
         for (const leaf of r.written) {
           process.stdout.write(`${leaf.key} = ${fmtValue(leaf.value)}   (wrote ${r.path})\n`);
         }
-        warnOnSet(key, r.coerced);
+        await warnOnSet(key, r.coerced);
       }
     } catch (err) {
       handleError(err);
@@ -233,7 +234,21 @@ const setCommand = new Command('set')
  * the config package) because it's about CLI/runtime behavior, not the value's
  * validity.
  */
-function warnOnSet(key: string, value: unknown): void {
+async function warnOnSet(key: string, value: unknown): Promise<void> {
+  // A size the target backend bakes in is silently discarded at create time.
+  // Say so now, while the user is looking at the key they just set.
+  const sizeTarget = providerForSizeKey(key);
+  if (sizeTarget !== undefined && typeof value === 'string') {
+    const provider =
+      sizeTarget ??
+      (await loadEffectiveConfig(process.cwd())
+        .then((c) => c.effective.box.provider)
+        .catch(() => null));
+    if (provider) {
+      const why = await sizeIgnoredReason(provider, value);
+      if (why) process.stderr.write(`note: ${why}\n`);
+    }
+  }
   if (key === 'queue.openIn' && value !== 'none') {
     process.stderr.write(
       'note: queue.openIn only opens a terminal when you submit the `-i` job from inside tmux, cmux, or iTerm2.\n' +

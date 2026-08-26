@@ -81,7 +81,10 @@ export function defaultSnapshotName(
  * only resolves COPY sources that map to a relative archive entry; an absolute
  * `addLocalFile` COPY silently fails to land), then COPYed to `remoteTar`.
  */
-function daytonaSeedPaths(kind: AgentStaticStage['kind']): { contextRel: string; remoteTar: string } {
+function daytonaSeedPaths(kind: AgentStaticStage['kind']): {
+  contextRel: string;
+  remoteTar: string;
+} {
   return {
     contextRel: `agentbox-seed-${kind}.tar.gz`,
     remoteTar: `/tmp/agentbox-seed-${kind}.tar.gz`,
@@ -106,7 +109,9 @@ export function buildDaytonaSeedCommands(
   const cmds: string[] = [
     'USER root',
     `COPY ${DAYTONA_CLAUDE_MD_REL} /tmp/agentbox-custom-CLAUDE.md`,
-    ...usable.map((s) => `COPY ${daytonaSeedPaths(s.kind).contextRel} ${daytonaSeedPaths(s.kind).remoteTar}`),
+    ...usable.map(
+      (s) => `COPY ${daytonaSeedPaths(s.kind).contextRel} ${daytonaSeedPaths(s.kind).remoteTar}`,
+    ),
     'RUN install -m 0644 /tmp/agentbox-custom-CLAUDE.md /etc/claude-code/CLAUDE.md && rm -f /tmp/agentbox-custom-CLAUDE.md',
     ...usable.map(
       (s) =>
@@ -184,9 +189,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     // Confirm the snapshot still exists on Daytona before short-circuiting.
     // A "yes locally, no on the server" mismatch must rebuild.
     try {
-      const existing = await getClient().snapshot.get(
-        prepared?.base?.imageRef ?? snapshotName,
-      );
+      const existing = await getClient().snapshot.get(prepared?.base?.imageRef ?? snapshotName);
       if (existing?.name) {
         log(
           `daytona snapshot '${existing.name}' up to date ` +
@@ -199,9 +202,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         `recorded snapshot '${prepared?.base?.imageRef ?? snapshotName}' not found on Daytona; rebuilding`,
       );
     } catch {
-      log(
-        `recorded snapshot lookup failed; rebuilding (pass --force to silence)`,
-      );
+      log(`recorded snapshot lookup failed; rebuilding (pass --force to silence)`);
     }
   } else if (!opts.force && fingerprint && prepared?.base?.contextSha256) {
     const bakedSize = prepared.extras?.size;
@@ -272,17 +273,26 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
           snapshotName: baked.snapshotName,
           contextSha256: fingerprint.contextSha256,
           size: sizeKey,
+          // This path always sends explicit resources (see the `resources:` line
+          // above), so the effective size is exactly what we asked for.
+          effectiveSize: sizeKey ?? formatDaytonaSize(DAYTONA_DEFAULT_RESOURCES),
           class: 'linux-vm',
           env: baked.env,
         });
-        log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
+        log(
+          `recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,
+        );
       }
       // Reap the snapshot this bake replaces. Only after the new one is recorded
       // — a failed bake must never leave the user with no base at all. Never the
       // one we just made, and never a container snapshot (a user who flips the
       // class back would want it).
       const superseded = prepared?.base?.imageRef;
-      if (superseded && superseded !== baked.snapshotName && prepared?.extras?.class === 'linux-vm') {
+      if (
+        superseded &&
+        superseded !== baked.snapshotName &&
+        prepared?.extras?.class === 'linux-vm'
+      ) {
         log(`removing superseded snapshot '${superseded}'`);
         await deleteSnapshotQuietly(getClient(opts.location ?? DAYTONA_VM_REGION), superseded);
       }
@@ -345,7 +355,10 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 
     const usable = stages.filter((s) => s.staged.tarballPath !== null);
     for (const s of usable) {
-      copyFileSync(s.staged.tarballPath as string, join(seedContextDir, daytonaSeedPaths(s.kind).contextRel));
+      copyFileSync(
+        s.staged.tarballPath as string,
+        join(seedContextDir, daytonaSeedPaths(s.kind).contextRel),
+      );
     }
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
@@ -353,9 +366,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     // Region: a container snapshot registers wherever the client points (the
     // account default unless the user pinned `box.daytonaRegion`).
     const client = getClient(opts.location ?? '');
-    log(
-      `creating Daytona snapshot '${snapshotName}'${sizeResources ? ` (${sizeKey})` : ''}…`,
-    );
+    log(`creating Daytona snapshot '${snapshotName}'${sizeResources ? ` (${sizeKey})` : ''}…`);
     const snapshot = await client.snapshot.create(
       {
         name: snapshotName,
@@ -373,11 +384,13 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
         size: sizeKey,
+        // Without an explicit size this path lets Daytona pick, so read the
+        // resources back off the created snapshot. Absent when the SDK doesn't
+        // report them — better silent than a guessed number in a warning.
+        effectiveSize: sizeKey ?? snapshotResourceKey(snapshot),
         class: 'container',
       });
-      log(
-        `recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,
-      );
+      log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
     }
     return { snapshotName: snapshot.name ?? snapshotName };
   } finally {
@@ -408,4 +421,21 @@ function writeNpmDockerfile(originalPath: string): string {
   const target = join(dirname(originalPath), '.agentbox-claude-npm.Dockerfile');
   writeFileSync(target, flipped);
   return target;
+}
+
+/** `cpu-memory-disk` key for a resource triple, the form `extras.size` uses. */
+function formatDaytonaSize(r: { cpu: number; memory: number; disk: number }): string {
+  return `${String(r.cpu)}-${String(r.memory)}-${String(r.disk)}`;
+}
+
+/**
+ * Resources of a snapshot Daytona sized itself. Defensive: the SDK's snapshot
+ * shape is not guaranteed to carry them, and this only feeds a warning string.
+ */
+function snapshotResourceKey(snapshot: unknown): string | undefined {
+  const r = (snapshot as { resources?: { cpu?: number; memory?: number; disk?: number } })
+    ?.resources;
+  if (!r || typeof r.cpu !== 'number' || typeof r.memory !== 'number' || typeof r.disk !== 'number')
+    return undefined;
+  return formatDaytonaSize({ cpu: r.cpu, memory: r.memory, disk: r.disk });
 }
