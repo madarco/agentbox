@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState, ResyncResult } from '@agentbox/core';
-import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/core';
+import { AmbiguousBoxError, BoxNotFoundError, buildNoVncUrl } from '@agentbox/core';
 import type {
   AgentActivityState,
   BoxStatus,
@@ -134,9 +134,14 @@ export async function listBoxes(): Promise<ListedBox[]> {
           b.portlessVncAlias !== undefined
             ? (b.portlessVncUrl ?? `https://${b.portlessVncAlias}.localhost`)
             : undefined;
+        // Only Portless yields a URL stable enough to persist in a listing. A
+        // cloud provider's own preview URL is either header-authed or a signed
+        // URL that expires within the hour, so daytona/vercel/e2b report the
+        // endpoint as enabled-but-unreachable here and clients mint one on
+        // demand via the hub's `/boxes/:id/vnc`.
         const vncUrl =
           portlessVncBase && b.vncPassword
-            ? `${portlessVncBase}/vnc.html?autoconnect=1&password=${encodeURIComponent(b.vncPassword)}`
+            ? buildNoVncUrl(portlessVncBase, b.vncPassword)
             : undefined;
         const cloudEndpoints: BoxEndpoint[] = [];
         if (webUrl) {

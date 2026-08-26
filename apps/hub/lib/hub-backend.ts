@@ -107,6 +107,7 @@ import {
   readBoxStatus,
   registerBoxWithRelay,
   removeCheckpoint as removeDockerCheckpoint,
+  resolveVncViewerUrl,
   setRelayNotice,
   type CheckpointInfo,
   type ListedBox,
@@ -136,7 +137,9 @@ import type {
   PruneView,
   RemoteDockerHostView,
   ServicesResult,
+  VncUrlResult,
 } from './boxes/backend-types';
+import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
@@ -2509,6 +2512,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             error: (r.stderr || `git status exited ${String(r.exitCode)}`).trim(),
           };
         return parseGitStatus(r.stdout);
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+
+    async vncUrl(id, opts): Promise<VncUrlResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        // Probe rather than trust `cloud.lastState`: it lags an out-of-band stop,
+        // and a signed URL minted against a stopped sandbox 502s in the browser.
+        const state = await rp.provider.probeState(rp.box);
+        const why = vncUnavailableReason(rp.box, state);
+        if (why) return { ok: false, error: why };
+        const url = await resolveVncViewerUrl(rp.box, rp.provider, opts ?? {});
+        return { ok: true, url, ...(opts?.ttl === undefined ? {} : { ttl: opts.ttl }) };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }
