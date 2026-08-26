@@ -22,7 +22,6 @@ import {
 import { resolveDriveSession } from '../lib/drive/session.js';
 import { sendKey, sendLiteral } from '../lib/drive/tmux.js';
 import { providerForBox } from '../provider/registry.js';
-import { withOwningHub } from '../control-plane/with-hub.js';
 import { resolveBoxPromptSource, type BoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiClient } from './control-plane.js';
 import { HubApiError } from '../control-plane/hub-api-client.js';
@@ -94,31 +93,34 @@ const agentWaitForCommand = new Command('wait-for')
           ? parsePositiveInt(opts.timeout, '--timeout')
           : DEFAULT_WAIT_TIMEOUT_MS;
 
-      // Poll the box's agent snapshot through the owning hub until it reaches the
+      // Poll the box's agent snapshot on the hub that owns it until it reaches the
       // target state (or the timeout elapses). Polling — not an event subscription
       // — because `/api/v1` carries no agent-event stream; the command's own docs
-      // already sanction it, and `agent approvals --wait` polls the same way. One
-      // withOwningHub call wraps the whole loop so the owner-first + not_found
-      // retry happens once, not per poll.
+      // already sanction it, and `agent approvals --wait` polls the same way. The
+      // source is resolved ONCE, outside the loop.
+      const source = await resolveBoxPromptSource(box);
+      if (!source) {
+        log.error("Could not reach a hub to read this box's agent state.");
+        process.exit(1);
+      }
       let matched: BoxStatusClaude | undefined;
       let elapsedMs = 0;
-      const r = await withOwningHub(box, async (client) => {
-        const start = Date.now();
-        for (;;) {
-          const claude = (await client.getAgentState(box.id)).claude as BoxStatusClaude | null;
-          if (claude && matchesAgentWaitState(claude, target)) {
-            matched = claude;
-            return;
+      const start = Date.now();
+      for (;;) {
+        const claude = await agentClaudeFrom(source, box.id).catch((err: unknown) => {
+          if (err instanceof HubApiError && err.code === 'not_found') {
+            log.error(`box ${box.name} was not found on ${describeHub(source)}.`);
+            process.exit(2);
           }
-          elapsedMs = Date.now() - start;
-          if (elapsedMs >= timeoutMs) return;
-          await sleep(Math.min(500, timeoutMs - elapsedMs));
+          throw err;
+        });
+        if (claude && matchesAgentWaitState(claude, target)) {
+          matched = claude;
+          break;
         }
-      });
-      if (r === undefined) return; // hub error; withHubClient reported + set exit code
-      if (r === 'not-found') {
-        log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
-        process.exit(2);
+        elapsedMs = Date.now() - start;
+        if (elapsedMs >= timeoutMs) break;
+        await sleep(Math.min(500, timeoutMs - elapsedMs));
       }
       if (matched) {
         emitMatch(matched, opts.json === true);
@@ -407,7 +409,7 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
     claude = await agentClaudeFrom(source, box.id);
   } catch (err) {
     log.error(
-      `could not read the agent snapshot for ${box.name} from the ${source.remote ? 'control box' : 'hub'}: ` +
+      `could not read the agent snapshot for ${box.name} from ${describeHub(source)}: ` +
         (err instanceof Error ? err.message : String(err)),
     );
     process.exit(1);
@@ -638,29 +640,56 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Sentinel: `withOwningHub` already reported a hub error + set the exit code. */
+/** Sentinel: the hub read failed and was already reported (+ exit code set). */
 const HUB_ERROR = Symbol('hub-error');
 /** Sentinel: no hub AgentBox knows owns the box (distinct from a null snapshot). */
 const HUB_NOT_FOUND = Symbol('hub-not-found');
 
 /**
- * Read the box's Claude status snapshot through the hub that owns it. Returns:
+ * Read the box's Claude status snapshot from the hub that owns it, resolved by
+ * `resolveBoxPromptSource` — the SAME resolver `approvals`/`approve` use, so all
+ * five agent commands agree about ownership.
+ *
+ * It cannot be `withOwningHub` here. That routes by provider family and retries
+ * the other hub on `not_found`, which sounds equivalent but isn't: a hub box the
+ * local registry knows (every hub create adopts one) makes the local hub answer
+ * `{claude: null}` — a 200, not a `not_found` — so the retry never fires and the
+ * command reports "no snapshot yet" for a box that is parked on a prompt.
+ * Observed live on a `docker:hub` box: `approvals` listed its plan while `state`
+ * and `get-plan-question` both said there was nothing.
+ *
+ * Returns:
  *   - the snapshot, or null when the box is known but has no snapshot yet,
- *   - {@link HUB_NOT_FOUND} when no hub owns the box (a missing box is NOT the same
- *     as a null snapshot — conflating them would hide an unreachable box behind a
- *     misleading "no snapshot yet, exit 0", the inconsistency `wait-for` avoids),
+ *   - {@link HUB_NOT_FOUND} when its hub does not know the box (a missing box is
+ *     NOT the same as a null snapshot — conflating them would hide an unreachable
+ *     box behind a misleading "no snapshot yet, exit 0"),
  *   - {@link HUB_ERROR} when the hub call itself failed (already reported).
  */
 async function fetchAgentClaude(
   box: BoxRecord,
 ): Promise<BoxStatusClaude | null | typeof HUB_ERROR | typeof HUB_NOT_FOUND> {
-  let claude: BoxStatusClaude | null = null;
-  const r = await withOwningHub(box, async (client) => {
-    claude = ((await client.getAgentState(box.id)).claude ?? null) as BoxStatusClaude | null;
-  });
-  if (r === undefined) return HUB_ERROR;
-  if (r === 'not-found') return HUB_NOT_FOUND;
-  return claude;
+  const source = await resolveBoxPromptSource(box);
+  if (!source) {
+    log.error("Could not reach a hub to read this box's agent state.");
+    process.exitCode = 1;
+    return HUB_ERROR;
+  }
+  try {
+    return await agentClaudeFrom(source, box.id);
+  } catch (err) {
+    if (err instanceof HubApiError && err.code === 'not_found') return HUB_NOT_FOUND;
+    log.error(
+      `could not read the agent snapshot for ${box.name} from ${describeHub(source)}: ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    process.exitCode = 1;
+    return HUB_ERROR;
+  }
+}
+
+/** "the control box" / "the hub", for messages that name where a read went. */
+function describeHub(source: BoxPromptSource): string {
+  return source.remote ? 'the control box' : 'the hub';
 }
 
 /**
@@ -672,7 +701,7 @@ function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
   if (asJson) {
     process.stdout.write(JSON.stringify(null) + '\n');
   } else {
-    log.error(`box ${box.name} was not found on any hub AgentBox knows.`);
+    log.error(`box ${box.name} was not found on the hub that owns it.`);
   }
   process.exit(2);
 }

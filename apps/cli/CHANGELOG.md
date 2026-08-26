@@ -195,6 +195,11 @@ CLI, not the raw commits.
   parked on a prompt" — and `agent approve` refused the same prompt as already
   changed. Both now read the snapshot from the hub that owns the box, and a half
   that could not be read is reported instead of rendering as "nothing pending".
+- **`agent state`, `wait-for` and `get-plan-question` reported no snapshot for a
+  box the control box created.** They asked this machine's hub first, and a hub
+  box the local registry knows answers "no snapshot" rather than "no such box" —
+  so the fallback to the control box never happened. All five `agent` readers now
+  resolve the owning hub the same way.
 - **A remote-docker box's approvals were looked for on the wrong hub** when a
   control box was configured. It registers with the local relay, but an inline
   provider check treated only `docker` as local, so its host-action mailbox was
