@@ -195,6 +195,10 @@ CLI, not the raw commits.
   parked on a prompt" — and `agent approve` refused the same prompt as already
   changed. Both now read the snapshot from the hub that owns the box, and a half
   that could not be read is reported instead of rendering as "nothing pending".
+- **`agent` commands were silent about a control box they could not authenticate
+  to.** They fell back to this machine's hub, whose empty answer for a box it
+  never held was reported as "no snapshot" — they now name the plane and the
+  missing `AGENTBOX_HUB_API_KEY`, as `agent approvals` already did.
 - **`agent state`, `wait-for` and `get-plan-question` reported no snapshot for a
   box the control box created.** They asked this machine's hub first, and a hub
   box the local registry knows answers "no snapshot" rather than "no such box" —

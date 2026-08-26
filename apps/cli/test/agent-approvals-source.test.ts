@@ -150,3 +150,19 @@ describe('boxAnswersOnLocalHub', () => {
     }
   });
 });
+
+// A plane we can NAME but not authenticate to: `resolveBoxPromptSource` falls
+// back to the local hub, which holds nothing for that box. Every reader has to
+// say so — an empty answer from a hub we never asked is not "no snapshot".
+describe('gatherApprovals on an unauthenticated plane', () => {
+  it('does not let the local hub’s empty answer read as "nothing pending"', async () => {
+    const s = source({ claude: null }, false);
+    const withPlane: BoxPromptSource = { ...s, unauthenticatedPlane: 'https://cp.example' };
+    const g = await gatherApprovals(withPlane, BOX);
+    expect(g.rows).toEqual([]);
+    // Both halves "answered" — so the caller must key off unauthenticatedPlane,
+    // which is exactly what the approvals command does before saying anything.
+    expect(missingHalves(g)).toEqual([]);
+    expect(withPlane.unauthenticatedPlane).toBe('https://cp.example');
+  });
+});

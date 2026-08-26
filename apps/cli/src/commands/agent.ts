@@ -103,6 +103,10 @@ const agentWaitForCommand = new Command('wait-for')
         log.error("Could not reach a hub to read this box's agent state.");
         process.exit(1);
       }
+      // Never poll the local hub for a box we know lives on a plane we can't
+      // reach: it would answer `{claude: null}` for the full timeout, then
+      // report the agent "did not reach" a state nobody ever asked about.
+      if (reportedUnauthenticatedPlane(source)) process.exit(1);
       let matched: BoxStatusClaude | undefined;
       let elapsedMs = 0;
       const start = Date.now();
@@ -404,6 +408,7 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
     log.error("Could not reach a hub to read this box's agent state.");
     process.exit(1);
   }
+  if (reportedUnauthenticatedPlane(source)) process.exit(1);
   let claude: BoxStatusClaude | null;
   try {
     claude = await agentClaudeFrom(source, box.id);
@@ -674,6 +679,7 @@ async function fetchAgentClaude(
     process.exitCode = 1;
     return HUB_ERROR;
   }
+  if (reportedUnauthenticatedPlane(source)) return HUB_ERROR;
   try {
     return await agentClaudeFrom(source, box.id);
   } catch (err) {
@@ -690,6 +696,24 @@ async function fetchAgentClaude(
 /** "the control box" / "the hub", for messages that name where a read went. */
 function describeHub(source: BoxPromptSource): string {
   return source.remote ? 'the control box' : 'the hub';
+}
+
+/**
+ * True (having reported it) when the box's plane is one we can name but cannot
+ * authenticate to. {@link resolveBoxPromptSource} then falls back to the LOCAL
+ * hub, which answers `{claude: null}` for a box it does not hold — and passing
+ * that off as "no snapshot yet", or as "the prompt changed", states an answer
+ * about a hub we never actually asked. `approvals` already refuses to; every
+ * snapshot reader has to as well.
+ */
+function reportedUnauthenticatedPlane(source: BoxPromptSource): boolean {
+  if (source.unauthenticatedPlane === undefined) return false;
+  log.error(
+    `this box's agent state lives on ${source.unauthenticatedPlane}, but no hub API key is ` +
+      'available here — set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to read it.',
+  );
+  process.exitCode = 1;
+  return true;
 }
 
 /**
