@@ -460,20 +460,32 @@ export function createCloudProvider(
     // Re-apply the box's configured session window. A resumed sandbox does NOT
     // come back with the timeout it was created with: E2B's `Sandbox.connect`
     // always posts a deadline and defaults it to 5 minutes, so without this the
-    // box would die minutes after waking. Best-effort and only forward — a
-    // backend without `renewTimeout` (hetzner/digitalocean VPS) has no session
-    // to renew, and a failed renew must not fail the wake.
+    // box would die minutes after waking. Best-effort — a backend without
+    // `renewTimeout` (hetzner/digitalocean VPS) has no session to renew, and a
+    // failed renew must not fail the wake.
+    //
+    // `current` must be our best estimate of the box's REAL remaining deadline,
+    // not `now`: vercel's `extendTimeout` is additive, so claiming zero time
+    // left would stack a full window on top of whatever the box already has,
+    // every time this runs (`reconnect` hits a live box). A recorded deadline
+    // still in the future is that estimate; past/absent means we know nothing
+    // and the full window is the honest ask. Skip entirely when the box already
+    // has at least the window we'd be asking for.
     const sessionTimeoutMs = box.cloud?.sessionTimeoutMs;
     let sessionDeadlineEpochMs = box.cloud?.sessionDeadlineEpochMs;
     if (backend.renewTimeout && sessionTimeoutMs != null && sessionTimeoutMs > 0) {
       const now = Date.now();
       const target = now + sessionTimeoutMs;
-      try {
-        await backend.renewTimeout(h, target, now);
-        sessionDeadlineEpochMs = target;
-      } catch {
-        // Plan-cap rejection or a transient SDK error. Leave the recorded
-        // deadline alone rather than claiming a window we didn't get.
+      const recorded = box.cloud?.sessionDeadlineEpochMs;
+      const current = recorded != null && recorded > now ? recorded : now;
+      if (current < target) {
+        try {
+          await backend.renewTimeout(h, target, current);
+          sessionDeadlineEpochMs = target;
+        } catch {
+          // Plan-cap rejection or a transient SDK error. Leave the recorded
+          // deadline alone rather than claiming a window we didn't get.
+        }
       }
     }
 
