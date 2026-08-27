@@ -320,6 +320,14 @@ Two design assumptions did not survive contact with a real box:
    files the box needs — an ungranted tool is one missing command, so
    failing the create would be the worse outcome.
 
+3. **The watcher started before the relay forwarder.** Only surfaced once a
+   real credentialed CLI (`ntn`) was granted *before* the box existed — the
+   natural order. The daemon's first tick hit `ECONNREFUSED` on :8788, and a
+   failed tick just waited out the interval, so an already-granted tool was
+   missing for a full minute on every fresh box. The watcher now starts after
+   the forwarder is listening, and a failed tick retries on a short backoff.
+   Synthetic tools hid this: they were granted *after* the box was up.
+
 Also learned: `box.autoApproveSafeHostActions` rides the box **registration**,
 fixed at create time. Flipping the config does not change an existing box; the
 strict-mode check needs a fresh one.
@@ -342,6 +350,22 @@ strict-mode check needs a fresh one.
   another project
 - box env carries only `AGENTBOX_RELAY_TOKEN`; no host credential crosses
 - `gh` regression guard: the generic proxy refuses it, its own shim still works
+
+### With real credentialed CLIs
+
+Re-run against the host's authenticated `ntn` (Notion) and a real GitHub repo,
+because synthetic tools (`sw_vers`, `say`, `date`) could not exercise the parts
+that matter:
+
+- `ntn whoami` and `ntn api v1/users/me` from inside the box return the host
+  bot's real Notion identity — the full credentialed round-trip
+- `ntn auth token` → exit 65, refused by the built-in credential guard (the
+  invariant the deleted Linear connector used to hard-code)
+- the box holds no Notion credential: no `NOTION_*` env, no `~/.config/notion`
+- `gh pr list --json number,title` in a real GitHub repo → exit 0, so the
+  built-in `gh` grant still works end-to-end alongside the generic proxy
+- a fresh box links an already-granted tool in ~4s (was ~60s before the
+  startup-ordering fix)
 
 Not exercised: the remote-hub (box→hub→host) path — deferred to its own
 session, since grants resolve against the host filesystem a hosted control

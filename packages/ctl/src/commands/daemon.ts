@@ -1,9 +1,5 @@
 import { Command } from 'commander';
-import {
-  DEFAULT_BOX_RELAY_PORT,
-  startRelayServer,
-  type RelayServerHandle,
-} from '@agentbox/relay';
+import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
 import { loadConfig } from '../config.js';
 import { writeRelayEnvFile } from '../relay-env.js';
 import { selectInBoxTransport } from './in-box-transport.js';
@@ -14,10 +10,7 @@ import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
 import { ToolLinksWatcher } from '../tool-links-watcher.js';
-import {
-  startBoxRelayForwarder,
-  type BoxRelayForwarderHandle,
-} from '../box-relay-forwarder.js';
+import { startBoxRelayForwarder, type BoxRelayForwarderHandle } from '../box-relay-forwarder.js';
 import {
   DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CONFIG_PATH,
@@ -104,7 +97,6 @@ export const daemonCommand = new Command('daemon')
         }
       },
     });
-    toolLinks.start();
 
     // Codex's JSON-hook firing is unreliable in 0.134.0 (see
     // packages/sandbox-docker/scripts/agentbox-codex-hooks.json header). Run a
@@ -233,6 +225,12 @@ export const daemonCommand = new Command('daemon')
         process.stderr.write(`agentbox-ctl: in-box relay forwarder failed to start: ${msg}\n`);
       }
     }
+
+    // AFTER the forwarder is listening: the watcher's first tick posts an RPC
+    // through :8788, and starting it earlier meant a guaranteed ECONNREFUSED
+    // on a fresh box, leaving already-granted tools unlinked until the next
+    // reconcile a minute later.
+    toolLinks.start();
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
