@@ -206,8 +206,30 @@ export async function ghToolEnabled(
     const cfg = await loader(cwd);
     return cfg.effective.tools?.gh?.enabled !== false;
   } catch {
+    // Unlike a tool grant, gh fails OPEN on an unreadable config: it is on by
+    // default and agent flows (Claude Code's PR badge) depend on it, so a
+    // malformed config should not silently break PR operations.
     return true;
   }
+}
+
+/**
+ * Ready-to-send refusal when `tools.gh.enabled` is false, else null. The
+ * relay-side half of revoking the built-in grant — without this the config
+ * key would be documentation with no effect.
+ */
+export async function refuseIfGhDisabled(
+  cwd: string,
+  loader?: Parameters<typeof ghToolEnabled>[1],
+): Promise<GitRpcResult | null> {
+  if (await ghToolEnabled(cwd, loader)) return null;
+  return {
+    exitCode: 65,
+    stdout: '',
+    stderr:
+      'gh is disabled for this project — re-enable with ' +
+      '`agentbox config set --project tools.gh.enabled true`\n',
+  };
 }
 
 /** Probe the host for a binary the box asked for. */

@@ -72,6 +72,7 @@ import {
   argvIsExplicitlyAllowed,
   refuseCredentialArgv,
   refuseDeniedArgv,
+  refuseIfGhDisabled,
   renderToolList,
   renderToolListJson,
   hostToolInstalled,
@@ -1918,6 +1919,13 @@ async function handleGhPrRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
+  // (per call, layered config) so a flip takes effect without bouncing the
+  // relay, and before any host probe — a revoked gh should never surface as
+  // an approval prompt.
+  const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
+  if (ghRevoked) return ghRevoked;
+
   const ghTarget = await resolveGhTarget(reg.originUrl);
   if (ghTarget.error) return ghTarget.error;
 
@@ -2032,6 +2040,13 @@ async function handleGhRunRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
+  // (per call, layered config) so a flip takes effect without bouncing the
+  // relay, and before any host probe — a revoked gh should never surface as
+  // an approval prompt.
+  const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
+  if (ghRevoked) return ghRevoked;
+
   const ghTarget = await resolveGhTarget(reg.originUrl);
   if (ghTarget.error) return ghTarget.error;
 
@@ -2096,6 +2111,13 @@ async function handleGhApiRpc(
     : [];
   const callRefusal = refuseGhApiCall(endpoint, args);
   if (callRefusal) return callRefusal;
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
+  // (per call, layered config) so a flip takes effect without bouncing the
+  // relay, and before any host probe — a revoked gh should never surface as
+  // an approval prompt.
+  const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
+  if (ghRevoked) return ghRevoked;
+
   const ghTarget = await resolveGhTarget(reg.originUrl);
   if (ghTarget.error) return ghTarget.error;
   // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
@@ -2167,7 +2189,7 @@ async function handleToolRpc(
   }
 
   if (method !== 'tool.run') {
-    return { exitCode: 501, stdout: '', stderr: `unknown tool method: ${method}\n` };
+    return { exitCode: 64, stdout: '', stderr: `unknown tool method: ${method}\n` };
   }
 
   const resolved = await resolveToolGrant(name, cwd);

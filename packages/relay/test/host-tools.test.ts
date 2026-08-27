@@ -7,6 +7,7 @@ import {
   refuseDeniedArgv,
   renderToolList,
   renderToolListJson,
+  refuseIfGhDisabled,
   resolveToolGrant,
   toolRequestsEnabled,
 } from '../src/host-tools.js';
@@ -174,5 +175,30 @@ describe('host binary readiness', () => {
     const r = await assertHostBinReady('definitely-not-a-real-binary-xyz');
     expect(r?.exitCode).toBe(127);
     expect(r?.stderr).toContain('not installed on the host');
+  });
+});
+
+describe('tools.gh.enabled', () => {
+  // The key would be documentation with no effect if the relay never asked.
+  it('refuses gh operations when revoked', async () => {
+    const r = await refuseIfGhDisabled('/repo', async () => ({
+      effective: { tools: { gh: { enabled: false } } },
+    }));
+    expect(r?.exitCode).toBe(65);
+    expect(r?.stderr).toContain('tools.gh.enabled true');
+  });
+
+  it('passes when enabled (the default)', async () => {
+    await expect(refuseIfGhDisabled('/repo', async () => ({ effective: {} }))).resolves.toBeNull();
+  });
+
+  // Unlike a tool grant, gh fails OPEN: it is on by default and agent flows
+  // depend on it, so a malformed config must not silently break PR ops.
+  it('fails open on an unreadable config', async () => {
+    await expect(
+      refuseIfGhDisabled('/repo', () => {
+        throw new Error('bad yaml');
+      }),
+    ).resolves.toBeNull();
   });
 });
