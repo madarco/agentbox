@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GLOBAL_CONFIG_FILE } from '../src/paths.js';
 import { setConfigValue, unsetConfigValue } from '../src/write.js';
 import { parse as parseYaml } from 'yaml';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 /**
  * `config set` rewrites the whole file from the doc it read back. Now that the
@@ -22,7 +23,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tmpCwd, { recursive: true, force: true });
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 
 describe('unknown keys survive a write', () => {

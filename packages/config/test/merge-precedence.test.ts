@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadEffectiveConfig } from '../src/load.js';
 import { GLOBAL_CONFIG_FILE, projectConfigFile } from '../src/paths.js';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 let tmpCwd: string;
 
@@ -16,7 +17,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(tmpCwd, { recursive: true, force: true });
   // Wipe the per-file temp HOME between tests.
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 
 async function writeYamlAt(path: string, body: string): Promise<void> {
@@ -104,18 +105,12 @@ describe('layered merge precedence', () => {
   });
 
   it('integrations.notion.enabled cascades global → project → cli', async () => {
-    await writeYamlAt(
-      GLOBAL_CONFIG_FILE,
-      'integrations:\n  notion:\n    enabled: true\n',
-    );
+    await writeYamlAt(GLOBAL_CONFIG_FILE, 'integrations:\n  notion:\n    enabled: true\n');
     const fromGlobal = await loadEffectiveConfig(tmpCwd);
     expect(fromGlobal.effective.integrations.notion.enabled).toBe(true);
     expect(fromGlobal.sources['integrations.notion.enabled']).toBe('global');
 
-    await writeYamlAt(
-      projectConfigFile(tmpCwd),
-      'integrations:\n  notion:\n    enabled: false\n',
-    );
+    await writeYamlAt(projectConfigFile(tmpCwd), 'integrations:\n  notion:\n    enabled: false\n');
     const fromProject = await loadEffectiveConfig(tmpCwd);
     expect(fromProject.effective.integrations.notion.enabled).toBe(false);
     expect(fromProject.sources['integrations.notion.enabled']).toBe('project');

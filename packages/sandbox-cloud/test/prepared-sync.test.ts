@@ -1,8 +1,9 @@
 import { mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 // Redirect HOME before importing anything that resolves ~/.agentbox — prepared
 // state lives there and these tests write it.
@@ -15,12 +16,11 @@ const {
   pushPreparedToCustody,
   writePreparedToCustodyStore,
 } = await import('../src/prepared-sync.js');
-const { claudeInstallFingerprint, readPreparedStateRaw, writePreparedStateRaw } = await import(
-  '@agentbox/sandbox-core'
-);
+const { claudeInstallFingerprint, readPreparedStateRaw, writePreparedStateRaw } =
+  await import('@agentbox/sandbox-core');
 
 afterEach(async () => {
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 afterAll(async () => {
   await rm(TEST_HOME, { recursive: true, force: true });
@@ -91,7 +91,8 @@ describe('pushPreparedToCustody', () => {
 
   it('reports failure rather than throwing when the control box rejects it', async () => {
     writePreparedStateRaw('hetzner', record(FINGERPRINT));
-    const fetchImpl = (() => Promise.resolve(new Response(null, { status: 500 }))) as unknown as typeof fetch;
+    const fetchImpl = (() =>
+      Promise.resolve(new Response(null, { status: 500 }))) as unknown as typeof fetch;
     await expect(pushPreparedToCustody('hetzner', target(fetchImpl))).resolves.toBe(false);
   });
 });
@@ -144,7 +145,8 @@ describe('pullPreparedFromCustody', () => {
 
   it('treats a 400 from an older control box like "nothing shared"', async () => {
     // A control box predating the `prepared` scope rejects the path outright.
-    const fetchImpl = (() => Promise.resolve(new Response(null, { status: 400 }))) as unknown as typeof fetch;
+    const fetchImpl = (() =>
+      Promise.resolve(new Response(null, { status: 400 }))) as unknown as typeof fetch;
     await expect(pullPreparedFromCustody('e2b', FINGERPRINT, target(fetchImpl))).resolves.toEqual({
       adopted: false,
     });
@@ -164,7 +166,7 @@ describe('pullPreparedFromCustody', () => {
     await pushPreparedToCustody('e2b', target(fetchImpl));
 
     // Machine B: same CLI (same fingerprint), nothing baked locally.
-    await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+    await resetTempAgentboxHome();
     expect(readPreparedStateRaw('e2b')).toBeNull();
     const { fetchImpl: fetchB } = fakeCustody({ 'prepared/e2b.json': puts[0]!.body });
     const res = await pullPreparedFromCustody('e2b', FINGERPRINT, target(fetchB));

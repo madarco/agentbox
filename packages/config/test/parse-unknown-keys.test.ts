@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseUserConfig } from '../src/parse.js';
 import { loadEffectiveConfig, setConfigWarningSink } from '../src/load.js';
 import { UserConfigError } from '../src/types.js';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 /**
  * Unknown keys must WARN, never throw. The parser is inlined into provider
@@ -73,7 +74,7 @@ describe('loadEffectiveConfig surfaces warnings', () => {
   afterEach(async () => {
     setConfigWarningSink(null);
     await rm(cwd, { recursive: true, force: true });
-    await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+    await resetTempAgentboxHome();
   });
 
   it('collects warnings on LoadedConfig and emits them to the sink', async () => {
