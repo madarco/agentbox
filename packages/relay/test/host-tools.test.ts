@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { ToolGrant } from '@agentbox/config';
+import { _resetHostBinReadyCacheForTests, assertHostBinReady } from '../src/host-exec.js';
 import {
   argvIsExplicitlyAllowed,
   refuseCredentialArgv,
@@ -153,5 +154,25 @@ describe('tool.list rendering', () => {
   it('json form drops built-ins (the daemon must not symlink gh)', () => {
     const json = renderToolListJson([grant(), grant({ name: 'gh', bin: 'gh', source: 'builtin' })]);
     expect(JSON.parse(json)).toEqual({ tools: [{ name: 'terraform', bin: 'terraform' }] });
+  });
+});
+
+describe('host binary readiness', () => {
+  beforeEach(() => {
+    _resetHostBinReadyCacheForTests();
+  });
+
+  // Regression: readiness used to run `<bin> --version` and propagate a
+  // non-zero exit as "not ready". Plenty of real CLIs reject that flag
+  // (`sw_vers`, `tar`, many subcommand-style tools), so a perfectly usable
+  // tool was blocked with its own usage error. Readiness is existence.
+  it('accepts a binary that does not support --version', async () => {
+    await expect(assertHostBinReady('sh')).resolves.toBeNull();
+  });
+
+  it('reports a missing binary as exit 127', async () => {
+    const r = await assertHostBinReady('definitely-not-a-real-binary-xyz');
+    expect(r?.exitCode).toBe(127);
+    expect(r?.stderr).toContain('not installed on the host');
   });
 });

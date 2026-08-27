@@ -807,7 +807,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.autoApproveSafeHostActions',
     type: 'bool',
     description:
-      "Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, integration writes, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.",
+      "Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, calls to a granted host tool, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.",
   },
   {
     key: 'box.isolateClaudeConfig',

@@ -69,33 +69,40 @@ export function runHostBinary(
 }
 
 interface ReadyCacheEntry {
-  /** null on success; ready-to-send error envelope when the binary isn't usable. */
+  /** null when the binary resolves; ready-to-send envelope when it doesn't. */
   result: GitRpcResult | null;
   expiresAt: number;
 }
 const readyCache = new Map<string, ReadyCacheEntry>();
 
 /**
- * Returns `null` when `bin` is on the host's PATH and its version probe
- * succeeds; otherwise a ready-to-send envelope describing what's missing.
- * Cached per binary for ~60s so a burst of tool calls doesn't reprobe on
- * every one (same TTL as `assertGhReady`).
+ * Returns `null` when `bin` resolves on the host's PATH, otherwise a
+ * ready-to-send exit-127 envelope. Cached ~60s so a burst of tool calls
+ * doesn't reprobe every time (same TTL as `assertGhReady`).
  *
- * - binary missing → exit 127 (matches Bash's "command not found").
- * - binary present but the probe exits non-zero → propagate that exit.
+ * Deliberately an EXISTENCE check, not a `--version` run. `--version` is a
+ * bad proxy for "is this usable": plenty of real CLIs don't accept it
+ * (`sw_vers`, `tar`, many subcommand-style tools), and treating their usage
+ * error as "not ready" would block a perfectly good tool. If the binary is
+ * broken in some other way, its own error text passes straight through to
+ * the agent on the real call, which is more useful than a probe's guess.
  *
- * Auth state is deliberately NOT probed: an unauthed CLI exits non-zero with
- * its own clear message on the real call, which the relay passes through
- * verbatim. Auth probing is `agentbox doctor`'s job, not the hot path.
+ * Auth state is likewise not probed: an unauthed CLI exits non-zero with its
+ * own clear message, which the relay passes through verbatim. Auth reporting
+ * is `agentbox doctor`'s job, not the hot path.
  */
-export async function assertHostBinReady(
-  bin: string,
-  versionArgs: readonly string[] = ['--version'],
-): Promise<GitRpcResult | null> {
+export async function assertHostBinReady(bin: string): Promise<GitRpcResult | null> {
   const now = Date.now();
   const cached = readyCache.get(bin);
   if (cached && cached.expiresAt > now) return cached.result;
-  const result = await probeHostBin(bin, versionArgs);
+  const exists = await hostBinExists(bin);
+  const result: GitRpcResult | null = exists
+    ? null
+    : {
+        exitCode: 127,
+        stdout: '',
+        stderr: `${bin} is not installed on the host\n`,
+      };
   readyCache.set(bin, { result, expiresAt: now + READY_CACHE_TTL_MS });
   return result;
 }
@@ -103,31 +110,6 @@ export async function assertHostBinReady(
 /** Test-only: clear the readiness cache between cases. */
 export function _resetHostBinReadyCacheForTests(): void {
   readyCache.clear();
-}
-
-async function probeHostBin(
-  bin: string,
-  versionArgs: readonly string[],
-): Promise<GitRpcResult | null> {
-  const version = await runHostBinary(bin, versionArgs, process.cwd(), 10_000);
-  if (version.exitCode === 127 || /ENOENT/.test(version.stderr)) {
-    return {
-      exitCode: 127,
-      stdout: '',
-      stderr: `${bin} is not installed on the host\n`,
-    };
-  }
-  if (version.exitCode !== 0) {
-    return {
-      exitCode: version.exitCode,
-      stdout: '',
-      stderr:
-        `${bin} ${versionArgs.join(' ')} failed: ` +
-        (version.stderr || version.stdout).trimEnd() +
-        '\n',
-    };
-  }
-  return null;
 }
 
 /**

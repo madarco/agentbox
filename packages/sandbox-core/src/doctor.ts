@@ -15,7 +15,7 @@ import type { CloudBackend, Provider } from '@agentbox/core';
 import type { FileManifest } from './prepared-state.js';
 
 /**
- * `info` is for rows that are intentionally inert (e.g. an integration the
+ * `info` is for rows that are intentionally inert (e.g. a host tool the
  * user hasn't enabled). It surfaces as a distinct glyph but rolls up like
  * `ok` so it never pushes the overall doctor status to "warn".
  */
