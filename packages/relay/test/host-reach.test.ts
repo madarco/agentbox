@@ -150,6 +150,28 @@ describe('HostReachQueue', () => {
     await expect(pending).resolves.toMatchObject({ kind: 'result' });
   });
 
+  it('never re-offers a declined action to the machine that refused it', async () => {
+    // Otherwise the only machine on the hub takes it, declines, takes it again —
+    // a tight loop that also starves the fallback, since the went-away sweep
+    // only inspects delivered work.
+    const q = new HostReachQueue({ graceMs: 5_000 });
+    void q.request('box1', 'cp.fromHost', {});
+    const [taken] = await q.poll(50, 'poller-a');
+    q.decline(taken!.id, 'poller-a');
+    expect(await q.poll(10, 'poller-a')).toHaveLength(0);
+    expect(await q.poll(10, 'poller-a')).toHaveLength(0);
+  });
+
+  it('settles a declined action nobody else claims, so the box falls back', async () => {
+    // Delivery cleared the grace timer; a decline has to re-arm it or the box
+    // waits forever on a copy no machine will ever make.
+    const q = new HostReachQueue({ graceMs: 60 });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const [taken] = await q.poll(50, 'poller-a');
+    q.decline(taken!.id, 'poller-a');
+    await expect(pending).resolves.toEqual({ kind: 'unreachable', reason: 'never-connected' });
+  });
+
   it('ignores a decline from a machine that no longer owns the action', async () => {
     const q = new HostReachQueue({ graceMs: 5_000 });
     void q.request('box1', 'cp.fromHost', {});

@@ -71,7 +71,9 @@ interface Pending {
    * machine "reachable". Seen live: a `relay restart` mid-copy hung the box.
    */
   deliveredTo?: string;
-  /** Grace timer, cleared on delivery. */
+  /** Pollers that refused this action; never offered to them again. */
+  declinedBy?: Set<string>;
+  /** Grace timer, cleared on delivery and re-armed on a decline. */
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -224,6 +226,22 @@ export class HostReachQueue {
     }
     pending.delivered = false;
     pending.deliveredTo = undefined;
+    // Never offer it back to the machine that just refused it: it would take,
+    // decline, take again — a tight loop that also starves the fallback, since
+    // the went-away sweep only looks at delivered work.
+    if (pollerId !== undefined) (pending.declinedBy ??= new Set()).add(pollerId);
+    // Delivery cleared the grace timer, so without re-arming it a declined
+    // action could sit undelivered forever and the box would wait on a copy no
+    // machine is ever going to make. Re-armed, an unclaimed decline falls
+    // through to the cache / outbox / error like any other unreachable copy.
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      if (this.map.get(id) === pending && !pending.delivered) {
+        this.map.delete(id);
+        pending.settle({ kind: 'unreachable', reason: 'never-connected' });
+      }
+    }, this.graceMs);
+    pending.timer.unref?.();
     // Another machine may already be waiting for work.
     this.handOff();
     return true;
@@ -258,15 +276,17 @@ export class HostReachQueue {
 
   /** Hand any undelivered actions to a waiting poller. */
   private handOff(): void {
-    if (this.waiters.size === 0) return;
-    const [first] = this.waiters;
-    const ready = this.takeUndelivered(first?.pollerId);
-    if (ready.length === 0) return;
-    const waiter = first;
-    if (!waiter) return;
-    this.waiters.delete(waiter);
-    clearTimeout(waiter.timer);
-    waiter.resolve(ready);
+    // Every waiter gets a look: the first one may be the machine that just
+    // declined this action, and stopping there would leave work parked while
+    // another machine sits idle on an open poll.
+    for (const waiter of [...this.waiters]) {
+      const ready = this.takeUndelivered(waiter.pollerId);
+      if (ready.length === 0) continue;
+      this.waiters.delete(waiter);
+      clearTimeout(waiter.timer);
+      waiter.resolve(ready);
+      return;
+    }
   }
 
   private takeUndelivered(pollerId?: string): HostAction[] {
@@ -287,6 +307,8 @@ export class HostReachQueue {
         (ownerSeenAt === undefined || now - ownerSeenAt > this.reachTimeoutMs);
       const orphaned = pending.delivered && pollerId !== undefined && ownerGone;
       if (pending.delivered && !orphaned) continue;
+      // A machine that already refused this action does not get asked twice.
+      if (pollerId !== undefined && pending.declinedBy?.has(pollerId)) continue;
       pending.delivered = true;
       pending.deliveredTo = pollerId;
       // Delivery ends the grace window: from here the wait is unbounded, and
