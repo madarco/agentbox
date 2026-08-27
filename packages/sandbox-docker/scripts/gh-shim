@@ -95,7 +95,9 @@ handle_pr() {
   local body_flags='--body|-b|--body-file|-F'
   local value_flags='--repo|-R'
   case "$op" in
-    view|checks) value_flags="$value_flags|$json_flags" ;;
+    view) value_flags="$value_flags|$json_flags" ;;
+    # `checks` adds --interval/-i on top of the JSON flags (watch mode).
+    checks) value_flags="$value_flags|$json_flags|--interval|-i" ;;
     list)
       value_flags="$value_flags|$json_flags|--app|--assignee|-a|--author|-A|--base|-B|--head|-H|--label|-l|--limit|-L|--search|-S|--state|-s"
       ;;
