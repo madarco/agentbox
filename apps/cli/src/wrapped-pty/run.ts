@@ -34,6 +34,7 @@ import {
   type AlertBandState,
   type FooterState,
 } from './footer.js';
+import { appendTail, endsMidEscape } from './escape-boundary.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
 import { isValidBoxStatus } from '@agentbox/relay';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
@@ -140,6 +141,26 @@ const STATUS_POLL_INTERVAL_MS = 3000;
 const SPINNER_INTERVAL_MS = 120;
 /** How long the post-action confirmation flash stays in the footer. */
 const FLASH_DURATION_MS = 2000;
+/**
+ * Coalescing window for chrome writes. The inner program's output arrives in
+ * however many pieces the transport feels like; repainting the footer after
+ * each one costs a chrome payload per chunk — on a fine-grained transport that
+ * was 1.3 MB of chrome for 81 KB of content. One repaint per frame is all the
+ * user can see anyway.
+ */
+const CHROME_COALESCE_MS = 16;
+/**
+ * Retry delay when the coalescing timer fires while the forwarded stream is
+ * still mid-escape-sequence. Short enough to be invisible, long enough that a
+ * stalled sequence doesn't spin the timer.
+ */
+const CHROME_BOUNDARY_RETRY_MS = 2;
+/**
+ * Hard ceiling on how long a repaint may be deferred waiting for a sequence
+ * boundary. A sequence that never completes means the inner stream is already
+ * broken; freezing the footer forever on top of that helps nobody.
+ */
+const CHROME_DEFER_LIMIT_MS = 250;
 /** A respawned session that dies within this window counts as a rapid failure. */
 const RAPID_RECONNECT_MS = 8000;
 /** Give up reconnecting after this many consecutive rapid failures (crash loop). */
@@ -389,7 +410,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // may be in the middle of a graphics run when the redraw happens — wrap the
   // redraw in cursor save/restore + sync output so the inner program never
   // sees our cursor moves and the user sees one atomic frame.
-  const redrawChrome = (): void => {
+  const chromePayload = (): string => {
     const cs = process.stdout.columns ?? cols;
     const rs = process.stdout.rows ?? rows;
     const footerLine = renderFooter(footerState, cs);
@@ -402,7 +423,95 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       }
     }
     payload += cursorMoveTo(rs, 1) + footerLine + CURSOR_RESTORE + SYNC_END;
-    process.stdout.write(payload);
+    return payload;
+  };
+
+  // ── The chrome gate ────────────────────────────────────────────────────
+  //
+  // Everything the wrapper writes to the user's terminal goes through here.
+  // Two rules, both learned from agent-box/agentbox#260:
+  //
+  //  1. NEVER write while the forwarded stream ends mid-escape-sequence. The
+  //     inner program's bytes arrive in transport-sized pieces, and a piece
+  //     can end halfway through a CSI. Chrome written there is spliced into
+  //     that sequence — the terminal eats the mangled result and the leftovers
+  //     print as literal junk in the content area. See `escape-boundary.ts`
+  //     for the measurements; on a fine-grained transport 1 chunk boundary in
+  //     5 is unsafe.
+  //  2. Coalesce. The footer only needs repainting as fast as the user can
+  //     see it, not once per arriving packet.
+  //
+  // `pendingOps` holds one-shot payloads that must land in order (scroll-region
+  // changes, region clears from a relayout). `chromeDirty` is the repaint,
+  // rendered at flush time so a deferred paint shows current state rather than
+  // a stale frame.
+  /** Tail of the inner stream, for the mid-sequence check. */
+  let outTail = '';
+  let pendingOps: string[] = [];
+  let chromeDirty = false;
+  let chromeTimer: NodeJS.Timeout | null = null;
+  let deferredSince = 0;
+
+  const flushChrome = (): void => {
+    if (chromeTimer) {
+      clearTimeout(chromeTimer);
+      chromeTimer = null;
+    }
+    if (!pendingOps.length && !chromeDirty) {
+      deferredSince = 0;
+      return;
+    }
+    if (endsMidEscape(outTail)) {
+      const now = Date.now();
+      if (deferredSince === 0) deferredSince = now;
+      if (now - deferredSince < CHROME_DEFER_LIMIT_MS) {
+        chromeTimer = setTimeout(flushChrome, CHROME_BOUNDARY_RETRY_MS);
+        if (typeof chromeTimer.unref === 'function') chromeTimer.unref();
+        return;
+      }
+      // Ceiling hit: the inner stream is stuck mid-sequence. Paint anyway
+      // rather than leave the footer frozen for the rest of the session.
+    }
+    deferredSince = 0;
+    let out = '';
+    if (pendingOps.length > 0) {
+      out += pendingOps.join('');
+      pendingOps = [];
+    }
+    if (chromeDirty) {
+      out += chromePayload();
+      chromeDirty = false;
+    }
+    if (out.length > 0) process.stdout.write(out);
+  };
+
+  const scheduleChrome = (): void => {
+    if (chromeTimer) return;
+    chromeTimer = setTimeout(flushChrome, CHROME_COALESCE_MS);
+    if (typeof chromeTimer.unref === 'function') chromeTimer.unref();
+  };
+
+  /** Queue a repaint of the band + footer. Coalesced; boundary-gated. */
+  const redrawChrome = (): void => {
+    chromeDirty = true;
+    scheduleChrome();
+  };
+
+  /** Queue a one-shot control payload (scroll region, region clear) in order. */
+  const emitChromeOp = (payload: string): void => {
+    pendingOps.push(payload);
+    scheduleChrome();
+  };
+
+  /**
+   * Ask for a repaint without waiting out the coalescing window — used for the
+   * first paint, where the user should see the footer immediately rather than
+   * a frame later. Still boundary-gated: `wireOutput` runs well before this, so
+   * the pty may already be mid-sequence, and `flushChrome` will defer if it is.
+   */
+  const redrawChromeSoon = (): void => {
+    chromeDirty = true;
+    flushChrome();
   };
 
   // Derive `footerState` from flash > leader/idle. Prompt/notice/question are
@@ -457,14 +566,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     const rs = process.stdout.rows ?? rows;
     const inner = Math.max(1, rs - reservedRows());
     resizePty(cs, inner);
-    process.stdout.write(`\x1b[1;${String(inner)}r`);
     // Clear the chrome area (band + footer rows) so stale agent output left
     // over from the previous scroll region doesn't show through under the
-    // newly painted band/footer.
+    // newly painted band/footer. Queued through the chrome gate with the
+    // scroll-region change so neither lands inside an in-flight escape
+    // sequence from the inner program.
     let clear = SYNC_BEGIN + CURSOR_SAVE;
     for (let r = inner + 1; r <= rs; r++) clear += cursorMoveTo(r, 1) + '\x1b[2K';
     clear += CURSOR_RESTORE + SYNC_END;
-    process.stdout.write(clear);
+    emitChromeOp(`\x1b[1;${String(inner)}r` + clear);
   };
 
   /** Re-derive the band state and, if visibility changed, resize + reflow.
@@ -523,6 +633,9 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   const wireOutput = (): void => {
     pty.onData((d: string) => {
       process.stdout.write(d);
+      // Track where the forwarded stream ends so the chrome gate knows whether
+      // it is safe to write. See `escape-boundary.ts`.
+      outTail = appendTail(outTail, d);
       redrawChrome();
     });
   };
@@ -785,7 +898,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     bandReservedRows = bandState && bandFits() ? ALERT_BAND_ROWS : 0;
     const inner = Math.max(1, rs - reservedRows());
     resizePty(cs, inner);
-    process.stdout.write(`\x1b[1;${String(inner)}r`);
+    emitChromeOp(`\x1b[1;${String(inner)}r`);
     recomputeFooter();
     redrawChrome();
   };
@@ -1045,7 +1158,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   }
 
   // Initial paint so the idle footer appears immediately.
-  redrawChrome();
+  redrawChromeSoon();
 
   /**
    * Keep the wrapper open across a drop: show the "box rebooting — reconnecting…"
@@ -1156,8 +1269,11 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     checkpointNoticeAt = 0;
     checkpointNoticeClearedAt = 0;
     // Re-assert the scroll region (the fresh session repaints into it) and
-    // repaint chrome so the footer/band survive the respawn.
-    process.stdout.write(`\x1b[1;${String(innerNow)}r`);
+    // repaint chrome so the footer/band survive the respawn. The old pty is
+    // gone, so nothing is mid-sequence — but going through the gate keeps the
+    // ordering with any repaint the reconnect banner queued.
+    outTail = '';
+    emitChromeOp(`\x1b[1;${String(innerNow)}r`);
     redrawChrome();
   }
 
@@ -1167,6 +1283,15 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   process.stdin.off('data', onStdinData);
   process.stdout.off('resize', onResize);
   clearInterval(statusTimer);
+  // Drop any queued chrome BEFORE the teardown paint — a coalesced repaint
+  // firing after we've cleared the band/footer rows would put them straight
+  // back, on top of the next shell prompt.
+  if (chromeTimer) {
+    clearTimeout(chromeTimer);
+    chromeTimer = null;
+  }
+  pendingOps = [];
+  chromeDirty = false;
   if (cmuxOn) restoreCmuxWorkspace(cmuxOrig);
   if (herdrOn) clearHerdrAgentState(opts.mode, opts.boxName);
   stopSpinner();
