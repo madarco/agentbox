@@ -44,8 +44,10 @@ import {
   readState,
 } from '@agentbox/sandbox-core';
 import {
+  checkoutGuards,
   ghDestructiveTarget,
   ghRunContext,
+  ghVerbArgv,
   injectPrCreateHead,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
@@ -444,8 +446,9 @@ async function runGhExecRpc(
   const blocked = refuseBlockedGhCall(args);
   if (blocked) return blocked;
 
-  const family = args[0] ?? '';
-  const op = args[1] ?? '';
+  const verb = ghVerbArgv(args);
+  const family = verb[0] ?? '';
+  const op = verb[1] ?? '';
   if (family === 'pr') {
     const checkoutOptIn = refuseCheckoutByDefault(op);
     if (checkoutOptIn) return checkoutOptIn;
@@ -462,8 +465,37 @@ async function runGhExecRpc(
   const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
   if (ghRevoked) return ghRevoked;
 
+  if (family === 'pr' && op === 'checkout') {
+    // Same guard the docker path applies: never check the host repo out onto
+    // a branch a box occupies, and never over a dirty tree.
+    const branches = lookup.sanctionedBranch ? [lookup.sanctionedBranch] : [];
+    const guard = await checkoutGuards(lookup.workspacePath, branches);
+    if (guard) return guard;
+  }
+
+  // Host-initiated calls carry a scope- and params-hash-bound one-time token.
+  // A present-but-invalid token is a hard reject — an attack signal, not a
+  // retry — and this must hold on cloud too, not just docker.
+  const tokenClaimed = typeof params.hostInitiated === 'string';
+  const hostInitiatedOk =
+    tokenClaimed &&
+    (deps.hostInitiatedTokens?.consume(
+      params.hostInitiated,
+      deps.boxId,
+      'gh.exec',
+      hashRpcParams(params),
+    ) ??
+      false);
+  if (tokenClaimed && !hostInitiatedOk) {
+    return {
+      exitCode: 10,
+      stdout: '',
+      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
+    };
+  }
+
   const destructive = ghDestructiveTarget(args);
-  if (destructive || deps.autoApproveSafeHostActions === false) {
+  if (!hostInitiatedOk && (destructive || deps.autoApproveSafeHostActions === false)) {
     const label = destructive
       ? `gh ${args.slice(0, 2).join(' ')} (destroys a ${destructive})`
       : `gh ${args.slice(0, 2).join(' ')}`;
@@ -473,9 +505,10 @@ async function runGhExecRpc(
 
   let finalArgs = args;
   if (family === 'pr') {
-    const rest = injectPrCreateHead(op, lookup.sanctionedBranch, args.slice(2));
+    const head = args.slice(0, args.length - verb.length);
+    const rest = injectPrCreateHead(op, lookup.sanctionedBranch, verb.slice(2));
     if (prCreateNeedsHead(op, rest)) return PR_CREATE_NO_HEAD_REFUSAL;
-    finalArgs = [family, op, ...rest];
+    finalArgs = [...head, family, op, ...rest];
   }
   const run = ghRunContext(lookup.workspacePath, deps.originUrl, finalArgs);
   return runHostGh(run.args, run.cwd, { host: ghTarget.host });

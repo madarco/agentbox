@@ -335,6 +335,29 @@ describe('gh-shim: open surface + pr branch injection', () => {
 
   // `pr create` takes its ref as `--head`, which the RELAY injects from the
   // box's sanctioned branch — the shim must not guess at it here.
+  // Reported by review: --jq/--template values start with `.` or `{`, which
+  // read as a positional ref if not consumed — injection was then skipped and
+  // the host resolved against its own checkout.
+  it('pr view --jq still injects the branch', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'view', '--jq', '.title'], env);
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr view agentbox/test-branch --jq .title');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pr view --template still injects the branch', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'view', '--template', '{{.title}}'], env);
+      expect(out.stdout).toContain('pr view agentbox/test-branch --template');
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('pr create is forwarded without a positional branch', () => {
     const env = makeStubShell();
     try {

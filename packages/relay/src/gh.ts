@@ -87,11 +87,42 @@ export const GH_DESTRUCTIVE: readonly { pattern: RegExp; what: string }[] = [
   // accepts `-X DELETE`, `-X=DELETE`, `-XDELETE` and `--method[= ]DELETE`,
   // so match every spelling — a missed one is a silent hole, not a typo.
   { pattern: /(^|\s)(-X=?\s*|--method[=\s]+)(DELETE|PUT|PATCH)\b/i, what: 'raw API write' },
+  // `gh api graphql -f query='mutation { deleteRepository ... }'` is a POST,
+  // so no method flag betrays it. GraphQL is a raw write channel with the same
+  // reach as the REST verbs above; agents rarely need it, so confirming every
+  // mutation is a cheap way to keep the hole shut.
+  { pattern: /^api\s+graphql\b[\s\S]*\bmutation\b/i, what: 'raw GraphQL mutation' },
 ];
+
+/**
+ * gh accepts a few global flags BEFORE the subcommand (`gh -R o/r issue list`),
+ * and every policy pattern here is anchored at the start of argv. Without
+ * stripping them, `gh -R o/r auth token` would present as argv starting with
+ * `-R` and match nothing — sailing past the blocklist, the destructive
+ * confirm, and the `pr checkout` opt-in alike.
+ *
+ * Returns argv from the first non-flag token onward. Value-taking global flags
+ * consume their value; unknown leading flags are dropped conservatively (a
+ * dropped flag can only make a pattern MORE likely to match, never less).
+ */
+const GH_GLOBAL_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
+
+export function ghVerbArgv(args: readonly string[]): string[] {
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i] ?? '';
+    if (!arg.startsWith('-')) break;
+    // `--repo=o/r` / `-Ro/r` carry their value inline; the split forms eat the
+    // next token.
+    if (GH_GLOBAL_VALUE_FLAGS.has(arg)) i += 2;
+    else i += 1;
+  }
+  return args.slice(i);
+}
 
 /** Ready-to-send refusal when the argv is on the hard blocklist. */
 export function refuseBlockedGhCall(args: readonly string[]): GitRpcResult | null {
-  const joined = args.join(' ');
+  const joined = ghVerbArgv(args).join(' ');
   for (const { pattern, why } of GH_BLOCKED) {
     if (pattern.test(joined)) {
       return {
@@ -112,7 +143,7 @@ export function refuseBlockedGhCall(args: readonly string[]): GitRpcResult | nul
  * auto-approve setting.
  */
 export function ghDestructiveTarget(args: readonly string[]): string | null {
-  const joined = args.join(' ');
+  const joined = ghVerbArgv(args).join(' ');
   for (const { pattern, what } of GH_DESTRUCTIVE) {
     if (pattern.test(joined)) return what;
   }
