@@ -44,19 +44,43 @@ export function cpCachePrefix(opts: { projectSlug?: string; boxId: string }): st
   return slug.length > 0 ? `projects/${slug}/cp` : `boxes/${opts.boxId}/cp`;
 }
 
-/** Hex sha256 of a resolved host path — the cache key's single segment. */
-export function cpCacheKey(absHostPath: string): string {
-  return createHash('sha256').update(absHostPath).digest('hex').slice(0, 32);
+/**
+ * Normalize a source into the string both sides key on.
+ *
+ * **Not** the resolved absolute path. That was the mistake a live run caught:
+ * the machine that owns the files resolves `./data.csv` against the real
+ * project, while the control box resolves it against the create job's temp
+ * clone — two different absolute paths for one request, so every write landed
+ * under a key the read could never compute, and the cache always missed.
+ *
+ * What both sides do agree on is the path as the box asked for it. A
+ * project-relative request keys as `rel:data.csv`, an absolute one as
+ * `abs:/Users/me/data.csv`. That also gives `agentbox cp <file> hub:` a precise
+ * meaning: run inside the project, it pre-loads exactly the key a box's own
+ * `cp fromHost ./data.csv` looks up.
+ */
+export function cpCacheKeyInput(source: string): string {
+  const trimmed = source.trim().replace(/\/+$/, '');
+  if (trimmed.startsWith('/')) return `abs:${trimmed}`;
+  // `./x`, `x` and `././x` are one request. `../x` keeps its shape — it escapes
+  // the project, and both sides still spell it identically.
+  const rel = trimmed.replace(/^(\.\/)+/, '').replace(/\/\.\//g, '/');
+  return `rel:${rel}`;
 }
 
-/** Custody path of the tar for `absHostPath` under `prefix`. */
-export function cpCacheTarPath(prefix: string, absHostPath: string): string {
-  return `${prefix}/${cpCacheKey(absHostPath)}.tar`;
+/** Hex sha256 of a {@link cpCacheKeyInput} — the cache key's single segment. */
+export function cpCacheKey(source: string): string {
+  return createHash('sha256').update(cpCacheKeyInput(source)).digest('hex').slice(0, 32);
 }
 
-/** Custody path of the sidecar metadata for `absHostPath` under `prefix`. */
-export function cpCacheMetaPath(prefix: string, absHostPath: string): string {
-  return `${prefix}/${cpCacheKey(absHostPath)}.json`;
+/** Custody path of the tar for `source` under `prefix`. */
+export function cpCacheTarPath(prefix: string, source: string): string {
+  return `${prefix}/${cpCacheKey(source)}.tar`;
+}
+
+/** Custody path of the sidecar metadata for `source` under `prefix`. */
+export function cpCacheMetaPath(prefix: string, source: string): string {
+  return `${prefix}/${cpCacheKey(source)}.json`;
 }
 
 /**

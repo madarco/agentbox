@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { log } from '@clack/prompts';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
@@ -54,12 +54,24 @@ export async function uploadToHubCache(hostSrcs: string[], projectRoot: string):
     // Fail on a missing source rather than reporting "0 uploaded": a typo here
     // surfaces much later, as an unexplained cache miss inside a box.
     await stat(abs);
-    const ok = await captureCpCacheEntry(abs, prefix, {
-      controlPlaneUrl: url,
-      adminToken,
-      maxBytes,
-      logger: (line) => log.info(line),
-    });
+    // Key it the way a box will ask for it. A file inside the project is keyed
+    // by its project-relative path — which is what `cp fromHost ./data.csv`
+    // sends — so pre-loading and a box's own request meet at the same entry.
+    // Anything outside the project keeps its absolute path, which is likewise
+    // what a box would have to name.
+    const rel = relative(projectRoot, abs);
+    const requestPath = rel.startsWith('..') || isAbsolute(rel) ? abs : rel;
+    const ok = await captureCpCacheEntry(
+      abs,
+      prefix,
+      {
+        controlPlaneUrl: url,
+        adminToken,
+        maxBytes,
+        logger: (line) => log.info(line),
+      },
+      requestPath,
+    );
     if (ok) {
       stored++;
       process.stdout.write(`uploaded ${abs} to the hub\n`);

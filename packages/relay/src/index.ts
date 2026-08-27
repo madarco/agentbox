@@ -50,6 +50,7 @@ export {
 export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';
 export {
   cpCacheKey,
+  cpCacheKeyInput,
   cpCacheMetaPath,
   cpCachePrefix,
   cpCacheTarPath,

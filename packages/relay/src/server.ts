@@ -2469,12 +2469,10 @@ async function serveCachedCp(args: {
   } catch {
     return null;
   }
-  // The cache is keyed by the path the OWNING machine resolved, which is what
-  // it stored; an absolute source is already that, and a relative one is
-  // resolved against the box's workspace exactly as the live path does.
-  const workspacePath = await boxWorkspacePath(reg.boxId);
-  const resolved = sources.map((s) => resolveHostPath(workspacePath, s));
-  const lookup = await lookupCpCache(resolved, { custody, cachePrefix });
+  // Keyed by the request as the box spelled it — NOT by a path resolved here.
+  // This machine's idea of the box's workspace is the create job's temp clone,
+  // so resolving would produce a key the owning machine never writes.
+  const lookup = await lookupCpCache(sources, { custody, cachePrefix });
   if (lookup.missing.length > 0) return null;
 
   const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
@@ -2485,12 +2483,17 @@ async function serveCachedCp(args: {
       describeCpCacheEntries(lookup),
     ].join('\n'),
     defaultAnswer: 'n',
-    context: { command: 'cp.fromHost (cached)', argv: resolved },
+    // Shows the paths the entries were CAPTURED from, not the box's spelling:
+    // the user is approving a copy of files on their own disk.
+    context: {
+      command: 'cp.fromHost (cached)',
+      argv: lookup.entries.map((e) => e.meta.sourcePath),
+    },
   });
   if (verdict.answer !== 'y') {
     return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
   }
-  return serveCpFromCache(params, resolved, {
+  return serveCpFromCache(params, sources, {
     custody,
     cliEntry: process.env.AGENTBOX_CLI_ENTRY,
     boxName: reg.name,

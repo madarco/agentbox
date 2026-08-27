@@ -712,7 +712,9 @@ export async function cacheCpSources(
     const { sources } = normalizeCpParams('cp.fromHost', action.params as CpRpcParams | undefined);
     const workspacePath = await boxWorkspacePath(action.boxId);
     for (const src of sources) {
-      await captureCpCacheEntry(resolveHostPath(workspacePath, src), prefix, deps);
+      // Tar the resolved file; key it by what the box asked for, which is the
+      // only spelling the control box can reproduce when it later looks it up.
+      await captureCpCacheEntry(resolveHostPath(workspacePath, src), prefix, deps, src);
     }
   } catch (err) {
     deps.logger?.(

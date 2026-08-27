@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   cpCacheKey,
+  cpCacheKeyInput,
   cpCacheMetaPath,
   cpCachePrefix,
   cpCacheTarPath,
@@ -30,6 +31,22 @@ describe('cp cache keys', () => {
     const segments = p.split('/');
     expect(segments).toHaveLength(4);
     expect(segments[3]).toMatch(/^[a-f0-9]{32}\.tar$/);
+  });
+
+  it('keys on the request, not on a resolved path — the two machines resolve differently', () => {
+    // The owning machine resolves `./data.csv` against the real project; the
+    // control box against a temp clone it has already deleted. Keying on either
+    // resolution meant every write landed where the read could not look.
+    expect(cpCacheKeyInput('./data.csv')).toBe('rel:data.csv');
+    expect(cpCacheKeyInput('data.csv')).toBe('rel:data.csv');
+    expect(cpCacheKeyInput('././sub/data.csv')).toBe('rel:sub/data.csv');
+    expect(cpCacheKeyInput('/Users/me/data.csv')).toBe('abs:/Users/me/data.csv');
+    expect(cpCacheKeyInput('/Users/me/dir/')).toBe('abs:/Users/me/dir');
+    // A box asking `./data.csv` and an upload of the same project-relative path
+    // must meet at one entry.
+    expect(cpCacheKey('./data.csv')).toBe(cpCacheKey('data.csv'));
+    // ...and a relative path is never confused with an absolute one.
+    expect(cpCacheKey('data.csv')).not.toBe(cpCacheKey('/data.csv'));
   });
 
   it('gives one path one key, and different paths different keys', () => {

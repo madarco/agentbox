@@ -43,6 +43,14 @@ export async function captureCpCacheEntry(
   absPath: string,
   prefix: string,
   deps: CpCacheCaptureDeps,
+  /**
+   * The path AS REQUESTED, which is what the key is derived from — the resolved
+   * `absPath` is only what gets tarred. The two differ on every relative
+   * request, and keying on the resolved one is unreadable to the control box
+   * (see {@link cpCacheKeyInput}). Defaults to `absPath` for an absolute
+   * request, where they are the same string.
+   */
+  requestPath: string = absPath,
 ): Promise<boolean> {
   const log = deps.logger ?? ((): void => {});
   const maxBytes = deps.maxBytes ?? DEFAULT_MAX_CACHE_BYTES;
@@ -73,12 +81,12 @@ export async function captureCpCacheEntry(
     };
     const base = deps.controlPlaneUrl.replace(/\/+$/, '');
     await putBlob(
-      `${base}/admin/custody-blob/${cpCacheTarPath(prefix, absPath)}`,
+      `${base}/admin/custody-blob/${cpCacheTarPath(prefix, requestPath)}`,
       tarPath,
       deps.adminToken,
     );
     await putJson(
-      `${base}/admin/custody/${cpCacheMetaPath(prefix, absPath)}`,
+      `${base}/admin/custody/${cpCacheMetaPath(prefix, requestPath)}`,
       { data: Buffer.from(JSON.stringify(meta), 'utf8').toString('base64') },
       deps.adminToken,
     );
