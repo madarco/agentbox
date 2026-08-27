@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { postRpcAndExit } from '../relay-rpc.js';
+import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
+import { syncToolLinks } from '../tool-links.js';
+import { parseToolNames } from '../tool-links-watcher.js';
 
 /**
  * In-box surface for host tools — the CLIs the host has granted this box,
@@ -43,6 +45,12 @@ toolCommand
     const code = await postRpcAndExit('tool.request', params, {
       errorPrefix: `agentbox-ctl tool request ${name}`,
     });
+    // Materialize the new shim right here rather than waiting for the
+    // daemon's reconcile tick — an approval the agent just waited on should
+    // leave the command usable on the very next line, not up to a minute
+    // later. The daemon poll stays as the slow reconciler for grants changed
+    // out-of-band (`agentbox tools add/rm` on the host).
+    if (code === 0) await refreshToolLinks(opts.cwd ?? process.cwd());
     process.exit(code);
   });
 
@@ -60,3 +68,19 @@ toolCommand
     const code = await postRpcAndExit('tool.run', params, { errorPrefix: name });
     process.exit(code);
   });
+
+/** Best-effort: pull the current grant list and re-link. Never throws. */
+async function refreshToolLinks(cwd: string): Promise<void> {
+  try {
+    const res = await postRpcAwait(
+      'tool.list',
+      { path: cwd, format: 'json' },
+      { errorPrefix: 'agentbox-ctl tool' },
+    );
+    if (res.exitCode !== 0) return;
+    const names = parseToolNames(res.stdout);
+    if (names) await syncToolLinks(names);
+  } catch {
+    // The daemon's reconcile tick will pick it up.
+  }
+}

@@ -8,15 +8,18 @@ import { syncToolLinks } from './tool-links.js';
  * channel every provider already has (docker forwards it, cloud parks it on
  * the host-action queue), so this needs no new event type and no
  * provider-specific plumbing. The call is cheap — the host reads two small
- * yaml files — and the interval is what turns an approved
- * `agentbox-ctl tool request` into a usable command without restarting the
- * box.
+ * yaml files.
  *
  * Failures are silent by design: a box whose relay is briefly unreachable
  * should keep the links it already has, not tear them down.
  */
 
-const DEFAULT_INTERVAL_MS = 15_000;
+// Slow on purpose. This is a reconciler for grants changed out-of-band
+// (`agentbox tools add/rm` on the host); the path that actually needs to be
+// instant — an approved in-box `tool request` — re-links itself in
+// `commands/tool.ts`. Every tick costs a host action on the cloud providers,
+// so there is no reason to be chatty.
+const DEFAULT_INTERVAL_MS = 60_000;
 
 export interface ToolLinksWatcherOptions {
   intervalMs?: number;

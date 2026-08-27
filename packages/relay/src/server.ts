@@ -65,7 +65,7 @@ import type { CustodyStore } from './custody/store.js';
 import {
   isValidToolName,
   loadGrantedTools,
-  projectToolsFile,
+  resolveProjectToolsFile,
   writeToolGrant,
 } from '@agentbox/config';
 import {
@@ -2280,7 +2280,7 @@ async function handleToolRequest(
   if (verdict.answer !== 'y') {
     return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
   }
-  await writeToolGrant(projectToolsFile(cwd), {
+  await writeToolGrant(await resolveProjectToolsFile(cwd), {
     name,
     bin: name,
     source: 'request',

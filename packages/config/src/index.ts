@@ -112,6 +112,7 @@ export {
   loadGrantedTools,
   readToolsFile,
   removeToolGrant,
+  resolveProjectToolsFile,
   writeToolGrant,
   type ToolGrant,
   type ToolGrantSource,

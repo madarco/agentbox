@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { confirm, isCancel, log } from '@clack/prompts';
-import { loadGrantedTools, projectToolsFile, writeToolGrant } from '@agentbox/config';
+import { loadGrantedTools, resolveProjectToolsFile, writeToolGrant } from '@agentbox/config';
 import { parseToolsSection, type ToolRequest } from '@agentbox/ctl';
 
 /**
@@ -86,14 +86,19 @@ export async function runToolsGate(args: ToolsGateArgs): Promise<ToolsGateResult
       );
       return declined();
     }
+    // Show what is ACTUALLY being granted, not just the names. The yaml is
+    // untrusted: it can point a familiar-looking name at a different host
+    // binary, and its `allow` patterns skip the per-call approval prompt. If
+    // the user is going to consent, they have to be able to see both.
+    printRequestSummary(pending);
     const answer = await confirm({
-      message: `This project requests access to host CLIs: ${names}. Grant them?`,
+      message: `Grant this project access to ${String(pending.length)} host CLI(s)?`,
       initialValue: false,
     });
     if (isCancel(answer) || !answer) return declined();
   }
 
-  const file = projectToolsFile(args.projectRoot);
+  const file = await resolveProjectToolsFile(args.projectRoot);
   const approvedAt = new Date().toISOString();
   for (const req of pending) {
     await writeToolGrant(file, {
@@ -111,4 +116,30 @@ export async function runToolsGate(args: ToolsGateArgs): Promise<ToolsGateResult
   // capability for this box, so it should never happen silently.
   log.info(`tools: granted ${names} — this box can now run them on the host.`);
   return { granted: pending.map((r) => r.name), declined: [] };
+}
+
+/**
+ * Render each pending request so the approval is informed: the command name
+ * the box will type, the host binary it actually runs when those differ, and
+ * any `allow` patterns (which bypass the per-call prompt) or `deny` patterns
+ * (which only narrow, so they are reassurance rather than risk).
+ */
+function printRequestSummary(pending: readonly ToolRequest[]): void {
+  const lines = pending.map((r) => {
+    const parts = [`  ${r.name}`];
+    if (r.bin && r.bin !== r.name) parts.push(`-> runs host \`${r.bin}\``);
+    if (r.allow) parts.push(`[${String(r.allow.length)} allow rule(s): ${r.allow.join(', ')}]`);
+    if (r.deny) parts.push(`[${String(r.deny.length)} deny rule(s)]`);
+    return parts.join('  ');
+  });
+  log.message(
+    [
+      'This project requests access to host CLIs. They will run on the host,',
+      "with the host's own credentials, in this project directory:",
+      '',
+      ...lines,
+      '',
+      'Allow rules run without a per-call approval prompt.',
+    ].join('\n'),
+  );
 }

@@ -9,9 +9,10 @@ import {
   loadGrantedTools,
   readToolsFile,
   removeToolGrant,
+  resolveProjectToolsFile,
   writeToolGrant,
 } from '../src/tools.js';
-import { GLOBAL_TOOLS_FILE, projectToolsFile } from '../src/paths.js';
+import { GLOBAL_TOOLS_FILE } from '../src/paths.js';
 
 // The vitest setup file points HOME at a scratch dir, so GLOBAL_TOOLS_FILE
 // and projectToolsFile() already resolve under it.
@@ -42,11 +43,11 @@ describe('tool name validation', () => {
 describe('grant file round-trip', () => {
   beforeEach(async () => {
     await writeYaml(GLOBAL_TOOLS_FILE, 'tools: {}\n');
-    await writeYaml(projectToolsFile(tmpRoot), 'tools: {}\n');
+    await writeYaml(await resolveProjectToolsFile(tmpRoot), 'tools: {}\n');
   });
 
   it('writes and reads a grant', async () => {
-    const file = projectToolsFile(tmpRoot);
+    const file = await resolveProjectToolsFile(tmpRoot);
     await writeToolGrant(file, {
       name: 'terraform',
       bin: 'terraform',
@@ -65,7 +66,7 @@ describe('grant file round-trip', () => {
   });
 
   it('preserves siblings when writing another grant', async () => {
-    const file = projectToolsFile(tmpRoot);
+    const file = await resolveProjectToolsFile(tmpRoot);
     await writeToolGrant(file, { name: 'terraform', bin: 'terraform', source: 'cli' });
     await writeToolGrant(file, { name: 'aws', bin: 'aws', source: 'request' });
     const names = (await readToolsFile(file)).map((g) => g.name);
@@ -73,7 +74,7 @@ describe('grant file round-trip', () => {
   });
 
   it('removes a grant and reports whether it was there', async () => {
-    const file = projectToolsFile(tmpRoot);
+    const file = await resolveProjectToolsFile(tmpRoot);
     await writeToolGrant(file, { name: 'terraform', bin: 'terraform', source: 'cli' });
     await expect(removeToolGrant(file, 'terraform')).resolves.toBe(true);
     await expect(removeToolGrant(file, 'terraform')).resolves.toBe(false);
@@ -81,8 +82,11 @@ describe('grant file round-trip', () => {
   });
 
   it('defaults bin to the tool name', async () => {
-    await writeYaml(projectToolsFile(tmpRoot), 'tools:\n  terraform:\n    source: cli\n');
-    const read = await readToolsFile(projectToolsFile(tmpRoot));
+    await writeYaml(
+      await resolveProjectToolsFile(tmpRoot),
+      'tools:\n  terraform:\n    source: cli\n',
+    );
+    const read = await readToolsFile(await resolveProjectToolsFile(tmpRoot));
     expect(read[0]?.bin).toBe('terraform');
   });
 });
@@ -108,7 +112,7 @@ describe('fail-closed reads', () => {
 describe('layering', () => {
   beforeEach(async () => {
     await writeYaml(GLOBAL_TOOLS_FILE, 'tools: {}\n');
-    await writeYaml(projectToolsFile(tmpRoot), 'tools: {}\n');
+    await writeYaml(await resolveProjectToolsFile(tmpRoot), 'tools: {}\n');
   });
 
   it('includes the built-in gh grant', async () => {
@@ -125,11 +129,28 @@ describe('layering', () => {
   it('a project grant wins over a global one of the same name', async () => {
     await writeYaml(GLOBAL_TOOLS_FILE, 'tools:\n  aws:\n    bin: aws\n    source: cli\n');
     await writeYaml(
-      projectToolsFile(tmpRoot),
+      await resolveProjectToolsFile(tmpRoot),
       'tools:\n  aws:\n    bin: aws\n    source: cli\n    deny:\n      - "^s3 rm"\n',
     );
     const grants = await loadGrantedTools(tmpRoot);
     expect(grants.get('aws')?.deny).toEqual(['^s3 rm']);
+  });
+
+  // Reported by review: hashing the raw cwd keyed a subdirectory to a
+  // different project, so `agentbox doctor` two levels down reported no
+  // grants even though the project had them.
+  it('resolves the project root, so a subdirectory sees the same grants', async () => {
+    const { writeFile: wf, mkdir: md } = await import('node:fs/promises');
+    await md(join(tmpRoot, 'a', 'b'), { recursive: true });
+    await wf(join(tmpRoot, 'agentbox.yaml'), 'tasks: {}\n', 'utf8');
+    await writeYaml(
+      await resolveProjectToolsFile(tmpRoot),
+      'tools:\n  aws:\n    bin: aws\n    source: cli\n',
+    );
+    const fromRoot = await loadGrantedTools(tmpRoot);
+    const fromSubdir = await loadGrantedTools(join(tmpRoot, 'a', 'b'));
+    expect(fromSubdir.has('aws')).toBe(true);
+    expect([...fromSubdir.keys()].sort()).toEqual([...fromRoot.keys()].sort());
   });
 
   it('opts.includeBuiltins=false leaves gh out (what the daemon symlinks from)', async () => {
