@@ -63,6 +63,14 @@ interface Pending {
   settle: (outcome: HostReachOutcome) => void;
   /** True once a poll handed this action out. */
   delivered: boolean;
+  /**
+   * Which poller took it. A restarted relay is a NEW process with a new id, and
+   * the work its predecessor accepted but never finished must be re-offered to
+   * it — otherwise the box waits forever on a result nobody is going to post,
+   * invisible to the went-away sweep because the replacement poller keeps this
+   * machine "reachable". Seen live: a `relay restart` mid-copy hung the box.
+   */
+  deliveredTo?: string;
   /** Grace timer, cleared on delivery. */
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -70,6 +78,8 @@ interface Pending {
 interface Waiter {
   resolve: (actions: HostAction[]) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Identity of the polling process, for the orphan re-offer above. */
+  pollerId?: string;
 }
 
 export class HostReachQueue {
@@ -147,13 +157,14 @@ export class HostReachQueue {
    * Calling this marks the machine present, whether or not anything is queued:
    * an idle poll is exactly how a laptop says "I'm here".
    */
-  poll(timeoutMs: number): Promise<HostAction[]> {
+  poll(timeoutMs: number, pollerId?: string): Promise<HostAction[]> {
     this.lastPollAtMs = this.now();
-    const ready = this.takeUndelivered();
+    const ready = this.takeUndelivered(pollerId);
     if (ready.length > 0) return Promise.resolve(ready);
     return new Promise<HostAction[]>((resolve) => {
       const waiter: Waiter = {
         resolve,
+        pollerId,
         timer: setTimeout(() => {
           this.waiters.delete(waiter);
           resolve([]);
@@ -204,20 +215,29 @@ export class HostReachQueue {
   /** Hand any undelivered actions to a waiting poller. */
   private handOff(): void {
     if (this.waiters.size === 0) return;
-    const ready = this.takeUndelivered();
+    const [first] = this.waiters;
+    const ready = this.takeUndelivered(first?.pollerId);
     if (ready.length === 0) return;
-    const [waiter] = this.waiters;
+    const waiter = first;
     if (!waiter) return;
     this.waiters.delete(waiter);
     clearTimeout(waiter.timer);
     waiter.resolve(ready);
   }
 
-  private takeUndelivered(): HostAction[] {
+  private takeUndelivered(pollerId?: string): HostAction[] {
     const out: HostAction[] = [];
     for (const pending of this.map.values()) {
-      if (pending.delivered) continue;
+      // Re-offer work a previous poller took and never finished. Same poller
+      // asking again gets nothing: it may be sitting on a confirm.
+      const orphaned =
+        pending.delivered &&
+        pollerId !== undefined &&
+        pending.deliveredTo !== undefined &&
+        pending.deliveredTo !== pollerId;
+      if (pending.delivered && !orphaned) continue;
       pending.delivered = true;
+      pending.deliveredTo = pollerId;
       // Delivery ends the grace window: from here the wait is unbounded, and
       // only the went-away sweep can cut it short.
       if (pending.timer) {

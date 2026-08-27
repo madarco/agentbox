@@ -656,7 +656,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         const waitMs = Number.isFinite(requested)
           ? Math.min(Math.max(requested, 0), MAX_HOSTREACH_WAIT_MS)
           : DEFAULT_HOSTREACH_WAIT_MS;
-        const actions = await hostReach.poll(waitMs);
+        // The polling process's identity, so a restarted relay is offered the
+        // work its predecessor accepted but never finished.
+        const pollerId = url.searchParams.get('poller') ?? undefined;
+        const actions = await hostReach.poll(waitMs, pollerId);
         send(res, 200, { actions });
         return;
       }

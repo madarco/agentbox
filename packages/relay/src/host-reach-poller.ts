@@ -15,6 +15,7 @@
  * for a live copy or fall back to the custody cache.
  */
 
+import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -65,6 +66,12 @@ export class HostReachPoller {
   private backoffMs = 0;
   /** Suppresses repeat log lines while a control box stays unreachable. */
   private loggedFailure = false;
+  /**
+   * Identity of THIS process. Sent with every poll so the control box can tell a
+   * restarted relay from the one that took an action and never came back — and
+   * re-offer that orphaned work instead of leaving the box waiting forever.
+   */
+  private readonly pollerId = randomUUID();
   /** Set while a drain is in flight, so only one runs at a time. */
   private drainingOutbox = false;
   /** Epoch ms of the last drain, for the periodic re-check. */
@@ -89,7 +96,9 @@ export class HostReachPoller {
     this.log(`host-reach: polling ${base} for host actions`);
     while (!this.stopped) {
       try {
-        const res = await this.get(`${base}/admin/hostreach/poll?wait=${String(POLL_WAIT_MS)}`);
+        const res = await this.get(
+          `${base}/admin/hostreach/poll?wait=${String(POLL_WAIT_MS)}&poller=${this.pollerId}`,
+        );
         if (res.status === 404) {
           // An older control box has no host-reach surface. Nothing this loop
           // can do until it is updated; say so once and stop pestering it.

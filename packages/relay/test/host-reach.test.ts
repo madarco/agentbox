@@ -92,6 +92,22 @@ describe('HostReachQueue', () => {
     expect(second).toHaveLength(0);
   });
 
+  it('re-offers work to a RESTARTED poller, so a relay restart mid-copy cannot hang a box', async () => {
+    // The predecessor took the action and died without posting a result. The
+    // went-away sweep cannot see it — the replacement keeps this machine
+    // "reachable" — so the queue has to notice the new identity itself.
+    const q = new HostReachQueue({ graceMs: 5_000 });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const first = await q.poll(50, 'poller-a');
+    expect(first).toHaveLength(1);
+    // Same poller asking again gets nothing: it may be sitting on a confirm.
+    expect(await q.poll(10, 'poller-a')).toHaveLength(0);
+    const second = await q.poll(50, 'poller-b');
+    expect(second.map((a) => a.id)).toEqual(first.map((a) => a.id));
+    q.resolve(second[0]!.id, { exitCode: 0, stdout: 'done', stderr: '' });
+    await expect(pending).resolves.toMatchObject({ kind: 'result' });
+  });
+
   it('settles everything as unreachable on stop, so a hub restart cannot hang a box', async () => {
     const q = new HostReachQueue({ graceMs: 5_000 });
     const pending = q.request('box1', 'cp.fromHost', {});
