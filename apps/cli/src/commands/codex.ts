@@ -71,6 +71,7 @@ import {
 import { resolveCreateRouting } from '../control-plane/route-create.js';
 import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
+import { runToolsGate } from '../lib/tools-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../provider/registry.js';
@@ -737,6 +738,18 @@ export const codexCommand = new Command('codex')
       log.error(err instanceof Error ? err.message : String(err));
       cmdLog.close();
       process.exit(1);
+    }
+
+    // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
+    // only REQUEST host CLIs; the grant is the host's decision. Never blocks.
+    try {
+      await runToolsGate({
+        projectRoot,
+        yes: !!opts.yes,
+        onLog: (line) => cmdLog.write(line),
+      });
+    } catch (err) {
+      log.warn(`tools: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     carryEntries = await resolveGitCredsCarry({
