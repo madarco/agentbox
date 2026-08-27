@@ -10,9 +10,15 @@
  * which ships no node_modules. `Record<ProviderKind, …>` keeps the map
  * exhaustive: a new provider in the config `PROVIDERS` table forces an entry.
  */
+import { pathToFileURL } from 'node:url';
 import { isProviderKind, type ProviderKind } from '@agentbox/config';
 import type { CloudBackendLoader, CloudCpModule } from '@agentbox/relay';
-import type { ProviderModule } from '@agentbox/sandbox-core';
+import {
+  isSupportedApiVersion,
+  pluginForProvider,
+  pluginProviderNames,
+  type ProviderModule,
+} from '@agentbox/sandbox-core';
 
 export const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: ProviderModule }>> = {
   docker: () => import('@agentbox/sandbox-docker'),
@@ -44,3 +50,55 @@ export const cloudBackendLoader: CloudBackendLoader = {
   },
   loadCloudCp: async (): Promise<CloudCpModule> => import('@agentbox/sandbox-cloud'),
 };
+
+/**
+ * `import()` no bundler can see. Turbopack rewrites every literal `import()` in
+ * this app into its own module registry, which resolves the plugin's specifier
+ * to a bundle entry that does not exist; building the function at runtime keeps
+ * the specifier on Node's own resolver.
+ */
+const runtimeImport = new Function('specifier', 'return import(specifier);') as (
+  specifier: string,
+) => Promise<unknown>;
+
+/**
+ * Resolve a provider module by name, built-in OR registered plugin.
+ *
+ * Built-ins go through the literal-specifier `IMPORTERS` map above. A plugin
+ * name falls back to the on-disk registry and a TRUE variable `import()` of the
+ * externally-installed package — the same extension seam the CLI uses
+ * (`apps/cli/src/provider/loaders.ts`). The import goes through `runtimeImport`
+ * so the bundler never sees an `import()` it would try to resolve — the path
+ * only exists in the user's global node_modules.
+ */
+export async function loadProviderModuleByName(name: string): Promise<ProviderModule> {
+  if (isProviderKind(name)) return (await IMPORTERS[name]()).providerModule;
+  const plugin = pluginForProvider(name);
+  if (!plugin) {
+    throw new Error(
+      `unknown provider "${name}" — not built in and no registered plugin provides it (run \`agentbox plugin list\`)`,
+    );
+  }
+  if (!isSupportedApiVersion(plugin.apiVersion)) {
+    throw new Error(
+      `plugin "${plugin.packageName}" targets provider SDK v${String(plugin.apiVersion)}, which this AgentBox does not support — update the plugin or AgentBox`,
+    );
+  }
+  const mod = (await runtimeImport(pathToFileURL(plugin.resolvedEntry).href)) as {
+    providerModule?: ProviderModule;
+    providerModules?: ProviderModule[];
+  };
+  const all = mod.providerModules ?? (mod.providerModule ? [mod.providerModule] : []);
+  const picked = all.find((pm) => pm.provider?.name === name);
+  if (!picked) {
+    throw new Error(
+      `plugin "${plugin.packageName}" does not export a providerModule for "${name}"`,
+    );
+  }
+  return picked;
+}
+
+/** True if `name` is a built-in provider or a registered plugin provider. */
+export function isRuntimeProviderName(name: string): boolean {
+  return isProviderKind(name) || pluginProviderNames().includes(name);
+}

@@ -244,6 +244,26 @@ export interface CloudBackend {
    */
   readonly webProxyPort?: number;
 
+  /**
+   * Run the in-box file-staging chains (today: the `carry:` extract) as root
+   * instead of as the box user.
+   *
+   * Two backends need it for different reasons. Vercel's is shell re-parsing:
+   * its exec wraps a non-root command in `sudo -u vscode -H bash -lc '<cmd>'`,
+   * and that extra nesting mangles the `$(...)`/`while` in the parent-chain
+   * walk. E2B's — and any backend whose default exec user is unprivileged — is
+   * permissions: `tar --no-same-owner` leaves the extracted files owned by
+   * whoever ran the extract, and only root can then hand them to someone else,
+   * so the trailing `chown` fails with EPERM.
+   *
+   * Declared by the backend rather than matched on `name` so an out-of-tree
+   * provider plugin can opt in. Ownership stays correct under root because the
+   * chown resolves the box user from `--reference=$BOX_HOME`, not a hardcoded
+   * uid. Backends whose non-root path already works (hetzner, daytona — whose
+   * S3-backed FUSE volumes reject a root chown anyway) leave this unset.
+   */
+  readonly stageFilesAsRoot?: boolean;
+
   provision(req: CloudProvisionRequest): Promise<CloudHandle>;
   /** Resolve an existing sandbox by id; null when it no longer exists. */
   get(sandboxId: string): Promise<CloudHandle | null>;
@@ -322,7 +342,11 @@ export interface CloudBackend {
    * Optional: backends without a signed-URL primitive omit this and callers
    * must surface a header-token workaround (today: error out clearly).
    */
-  signedPreviewUrl?(h: CloudHandle, port: number, expiresInSeconds: number): Promise<CloudPreviewUrl>;
+  signedPreviewUrl?(
+    h: CloudHandle,
+    port: number,
+    expiresInSeconds: number,
+  ): Promise<CloudPreviewUrl>;
 
   /**
    * Optional: SSH connect argv for an interactive attach. Returns argv where

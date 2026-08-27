@@ -121,7 +121,7 @@ describe('uploadCarryPaths', () => {
     const cmd = String(execCalls[0]!.args[1]);
     expect(cmd).toContain('mv ');
     expect(cmd).toContain('chmod -R 0600');
-    expect(cmd).toContain('while [ "$parent" != "/home/vscode" ]');
+    expect(cmd).toContain('[ "$parent" != "/home/vscode" ]');
     // The leaf chown and the parent-chain chown must name the SAME owner —
     // a drift there leaves the file readable but its directory not.
     expect(cmd).toContain('chown -R --reference=/home/vscode');
@@ -152,7 +152,10 @@ describe('uploadCarryPaths', () => {
       ],
     });
     const homeCmd = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
-    expect(homeCmd).toContain('while [ "$parent" != "/home/vscode" ]');
+    expect(homeCmd).toContain('[ "$parent" != "/home/vscode" ]');
+    // Braced: the walk must be ONE command in the `&&` chain, so a failed
+    // earlier step can't drop into the loop with `$parent` unset.
+    expect(homeCmd).toContain('{ parent=$(dirname ');
 
     // Dest outside $HOME → no parent walk (system paths untouched).
     backend.clearCalls();
@@ -162,7 +165,7 @@ describe('uploadCarryPaths', () => {
       entries: [entry({ absSrc: src, absDest: '/etc/agentbox/x', kind: 'file', bytes: 1 })],
     });
     const sysCmd = String(backend.calls.filter((c) => c.method === 'exec')[0]!.args[1]);
-    expect(sysCmd).not.toContain('while [ "$parent"');
+    expect(sysCmd).not.toContain('while [ -n "$parent"');
   });
 
   it('honors explicit user: override (default is the box user; explicit is literal)', async () => {
@@ -217,10 +220,10 @@ describe('uploadCarryPaths', () => {
     expect(res.errors[0]).toMatch(/tar pack failed/);
   });
 
-  it('runs the extract as root on Vercel (avoids the sudo -u vscode exec-nesting hang)', async () => {
+  it('runs the extract as root when the backend declares stageFilesAsRoot', async () => {
     const src = join(workspace, 'marker.txt');
     await writeFile(src, 'hi');
-    const backend = makeMockCloudBackend({ name: 'vercel' });
+    const backend = makeMockCloudBackend({ name: 'vercel', stageFilesAsRoot: true });
     const handle = await backend.provision({ name: 'b', image: 'i' });
     await uploadCarryPaths({
       backend,
@@ -231,7 +234,7 @@ describe('uploadCarryPaths', () => {
     expect(execCall!.args[2]).toMatchObject({ user: 'root' });
   });
 
-  it('leaves the exec user unset on non-Vercel backends', async () => {
+  it('leaves the exec user unset when the backend does not declare stageFilesAsRoot', async () => {
     const src = join(workspace, 'marker.txt');
     await writeFile(src, 'hi');
     const backend = makeMockCloudBackend({ name: 'hetzner' });

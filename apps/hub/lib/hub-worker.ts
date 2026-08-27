@@ -16,7 +16,7 @@ import { readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { isProviderKind, loadEffectiveConfig, parseProviderSpec } from '@agentbox/config';
+import { loadEffectiveConfig, parseProviderSpec } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -49,7 +49,7 @@ import {
 import { resolveAgentLauncher, type AgentKind, type ResolvedCarryEntry } from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
-import { IMPORTERS } from './provider-importers.js';
+import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -299,7 +299,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // a provider: the provider is remote-docker and the alias is threaded to it
       // as a provider option (the CLI does the same, via buildProviderOptions).
       const { name: providerName, remoteHost } = parseProviderSpec(provider);
-      if (!isProviderKind(providerName)) throw new Error(`unknown provider ${provider}`);
+      if (!isRuntimeProviderName(providerName)) throw new Error(`unknown provider ${provider}`);
       if (remoteHost) {
         const rd = await import('@agentbox/sandbox-remote-docker');
         if (!rd.getHostAlias(remoteHost)) {
@@ -308,7 +308,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
           );
         }
       }
-      const mod = (await IMPORTERS[providerName]()).providerModule;
+      const mod = await loadProviderModuleByName(providerName);
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.

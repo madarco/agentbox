@@ -61,6 +61,8 @@ that:
      async previewUrl(h, port) { return { url: `https://…:${port}` }; },
      // optional: createSnapshot/deleteSnapshot (checkpoints), list (prune),
      // refreshPreviewUrl, signedPreviewUrl, attachArgv, renewTimeout, …
+     // If `exec` defaults to an UNPRIVILEGED user, set `stageFilesAsRoot: true`
+     // — see "The box user" below.
    };
 
    const provider = createCloudProvider(backend, { defaultResources: { cpu: 2, memory: 4, disk: 40 } });
@@ -78,6 +80,32 @@ that:
    the entire lifecycle (workspace seeding, ctl launch, relay wiring, preview URLs,
    checkpoints, cp) on top of the thin ~13-method `CloudBackend` — "a cloud is one
    file."
+
+## The box user
+
+Everything AgentBox puts in a box belongs to **`vscode`** with `$HOME` at
+`/home/vscode`: the seeded agent credentials (`~/.agentbox-creds/*`, symlinked to
+the paths each agent reads), the agent static config, `/workspace`, and the ctl
+daemon's tmux server. Two consequences for a plugin whose platform runs commands
+as some *other* user by default:
+
+- **`backend.exec` must hop to the box user** (`sudo -n -E -u vscode -H …` or the
+  platform's own user switch), and so must **`buildAttach`**. An attach that
+  lands in a different `$HOME` finds no credentials — the agent starts and asks
+  the user to log in — and cannot see the supervisor's tmux sessions at all.
+- **Set `stageFilesAsRoot: true` on the backend** when that exec user is
+  unprivileged. The `carry:` extract untars with `--no-same-owner` (so the files
+  land owned by whoever ran the extract) and then hands them to the box user;
+  only root can do that, so without the flag every carry entry fails with
+  `chown: Operation not permitted`. Ownership stays correct under root because
+  the chown resolves the owner from `--reference=/home/vscode`, never a
+  hardcoded uid — the box user's uid differs per platform (1000 on
+  docker/hetzner, 1001 on vercel, 1002 on e2b, whatever `useradd` picked on
+  yours), so never hardcode one yourself either.
+
+If your base image ships the coding agents under a different user's home, make
+them reachable on the box user's `PATH` — an agent AgentBox can't exec is an
+agent the box can't run.
 
 ## Box-side runtime (VPS-style providers)
 
@@ -148,6 +176,14 @@ agentbox doctor                            # shows your provider's group
 agentbox create --provider myprovider      # first create triggers ensureCredentials
 agentbox plugin remove myprovider          # unregister (does not uninstall the npm package)
 ```
+
+Every create goes through the hub's `POST /api/v1/boxes` (see
+[`hub-api-single-path-plan.md`](./hub-api-single-path-plan.md)), so the hub
+resolves plugin providers off the same `~/.agentbox/plugins.json` registry the
+CLI reads — including the local hub a plain `agentbox create` talks to. A plugin
+registered while the hub is running is picked up on the next request; no hub
+restart. The hub applies no prepared-state gate to a plugin provider (plugins own
+their own setup story, and a `prepare` step is optional for them).
 
 ## Trust
 

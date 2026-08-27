@@ -140,41 +140,34 @@ async function uploadOneEntry(args: UploadOneArgs): Promise<void> {
   // $HOME and dirname(boxDest) are root-owned. Walk back up to $HOME
   // (exclusive) and chown each. Only when dest is under $HOME — system
   // paths like /etc/* keep their existing ownership.
+  //
+  // Braced so the whole `parent=…; while …; done` is ONE command in the `&&`
+  // chain. Unbraced, the `;` splits the chain and the loop runs even when an
+  // earlier step failed — with `$parent` never assigned, so `dirname ""` yields
+  // `.`, which is neither $HOME nor `/` and `dirname .` is `.` again: an
+  // unkillable spin that hangs `create` for as long as the exec has no timeout.
+  // The `-n` / `!= "."` guards make that unreachable a second way.
   if (plan.parentChainNeeded) {
     parts.push(
-      `parent=$(dirname ${shellQuote(boxDest)}); ` +
-        `while [ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
+      `{ parent=$(dirname ${shellQuote(boxDest)}); ` +
+        `while [ -n "$parent" ] && [ "$parent" != "." ] && ` +
+        `[ "$parent" != "${BOX_HOME}" ] && [ "$parent" != "/" ]; do ` +
         `chown ${chownTarget} "$parent"; ` +
         `parent=$(dirname "$parent"); ` +
-        `done`,
+        `done; }`,
     );
   }
   parts.push(`rm -f ${remoteTar}`);
   const cmd = parts.join(' && ');
 
-  // Vercel + E2B: force the whole chain to run as root.
-  //
-  // Vercel's reason is shell re-parsing: its exec wraps a non-root command in
-  // `sudo -u vscode -H bash -lc '<cmd>'`, and that extra `bash -lc` nesting
-  // mangles the `$(...)`/`$var`/`while` in the parent-chain walk (the parent var
-  // expands empty → `dirname "."` loops forever → the exec hangs until timeout,
-  // surfacing as "Stream ended before command finished"). Its single-`bash -lc`
-  // root path doesn't re-parse, so the command runs cleanly.
-  //
-  // E2B's reason is permissions: tar extracts with `--no-same-owner`, so every
-  // carried file is owned by whoever runs the extract. Only root can then hand
-  // it to someone else, and E2B's default exec user is `vscode` — as vscode the
-  // final `chown` fails with "Operation not permitted" and the parent-chain loop
-  // never reaches its terminator.
-  //
-  // Running as root is safe for ownership because the chown resolves the box
-  // user from `--reference=/home/vscode` (see CarryPlan.chownArgs) rather than a
-  // hardcoded number, so the files land on the real vscode uid — 1000 on
-  // docker/hetzner/digitalocean/daytona, whatever `useradd` picked on
-  // vercel/e2b. Scoped to these two backends rather than made unconditional so
-  // Hetzner/Daytona keep their existing (working, non-root) carry path.
-  const wantsRoot = args.backend.name === 'vercel' || args.backend.name === 'e2b';
-  const execOpts = wantsRoot ? { user: 'root' as const } : undefined;
+  // Backends that declare `stageFilesAsRoot` (vercel, e2b, and any plugin whose
+  // exec user is unprivileged) run the whole chain as root — see that field's
+  // doc for why each one needs it. Ownership stays correct because the chown
+  // resolves the box user from `--reference=/home/vscode` (see
+  // CarryPlan.chownArgs) rather than a hardcoded number, so the files land on
+  // the real vscode uid whatever `useradd` picked. Backends that leave it unset
+  // (hetzner, daytona) keep their existing, working non-root path.
+  const execOpts = args.backend.stageFilesAsRoot ? { user: 'root' as const } : undefined;
   const res = await args.backend.exec(args.handle, cmd, execOpts);
   if (res.exitCode !== 0) {
     throw new Error(

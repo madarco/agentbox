@@ -66,14 +66,19 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   const isHostSpec =
     typeof provider === 'string' &&
     /^(?:docker|remote-docker):[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider);
+  // A name outside the built-in list may still be a registered provider PLUGIN.
+  // The plugin registry lives behind @agentbox/sandbox-core, which must stay out
+  // of the Next bundle (see PROVIDERS above), so this boundary only checks the
+  // SHAPE of an unknown name — the backend resolves it against the registry and
+  // rejects it there with a precise message.
   if (
     provider !== undefined &&
     !isHostSpec &&
-    (typeof provider !== 'string' || !(PROVIDERS as readonly string[]).includes(provider))
+    (typeof provider !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(provider))
   ) {
     return {
       ok: false,
-      message: `provider must be one of ${PROVIDERS.join(', ')} (or a docker:<host> spec)`,
+      message: `provider must be one of ${PROVIDERS.join(', ')}, a registered plugin provider, or a docker:<host> spec`,
       details: { got: provider },
     };
   }

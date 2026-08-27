@@ -156,6 +156,9 @@ export const e2bBackend: CloudBackend = {
   // staying on 8080 keeps the in-box ctl flag (AGENTBOX_WEB_PROXY_PORT)
   // identical across cloud providers.
   webProxyPort: E2B_WEB_PORT,
+  // See CloudBackend.stageFilesAsRoot: exec runs as the unprivileged `vscode`,
+  // so the carry extract's trailing chown needs root.
+  stageFilesAsRoot: true,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const apiKey = resolveApiKey();

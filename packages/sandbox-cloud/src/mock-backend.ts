@@ -36,6 +36,8 @@ interface SandboxRecord {
 export interface MockCloudBackendOptions {
   /** Name reported by `backend.name`. Defaults to `'mock'`. */
   name?: string;
+  /** Mirrors `CloudBackend.stageFilesAsRoot`; defaults to unset (non-root). */
+  stageFilesAsRoot?: boolean;
   /** Initial sandboxes pre-loaded into the backend (e.g. for list() tests). */
   preloaded?: Array<{ id: string; name?: string; state?: CloudState; createdAt?: string }>;
   /**
@@ -90,6 +92,7 @@ export function makeMockCloudBackend(opts: MockCloudBackendOptions = {}): MockCl
 
   const backend: MockCloudBackend = {
     name,
+    ...(opts.stageFilesAsRoot ? { stageFilesAsRoot: true } : {}),
     get calls() {
       return calls;
     },
@@ -159,11 +162,7 @@ export function makeMockCloudBackend(opts: MockCloudBackendOptions = {}): MockCl
       return sb ? sb.state : 'missing';
     },
 
-    async exec(
-      h: CloudHandle,
-      cmd: string,
-      opts?: CloudExecOptions,
-    ): Promise<CloudExecResult> {
+    async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
       await record('exec', [h, cmd, opts]);
       requireSandbox(h.sandboxId);
       return { exitCode: 0, stdout: '', stderr: '' };

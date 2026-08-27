@@ -245,6 +245,9 @@ export const vercelBackend: CloudBackend = {
   // in-box WebProxy binds 8080 (exposed at create via VERCEL_EXPOSED_PORTS) and
   // `agentbox url` resolves sandbox.domain(8080) → WebProxy → the in-box service.
   webProxyPort: 8080,
+  // See CloudBackend.stageFilesAsRoot: vercel's `sudo -u vscode -H bash -lc`
+  // wrapper re-parses the carry script and mangles its `$(...)`/`while`.
+  stageFilesAsRoot: true,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     await ensureFreshCredentials();
@@ -372,8 +375,7 @@ export const vercelBackend: CloudBackend = {
         const snapId = sb.currentSnapshotId;
         const source = sb.sourceSnapshotId;
         const base = readPreparedState().base?.snapshotId;
-        const ownSnapshot =
-          snapId !== undefined && snapId !== source && snapId !== base;
+        const ownSnapshot = snapId !== undefined && snapId !== source && snapId !== base;
         await sb.delete();
         if (ownSnapshot) {
           try {

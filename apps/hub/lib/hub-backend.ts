@@ -56,7 +56,11 @@ import {
 import { mergeRemoteProviders } from './boxes/provider-origin.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
-import { IMPORTERS } from './provider-importers.js';
+import {
+  IMPORTERS,
+  isRuntimeProviderName,
+  loadProviderModuleByName,
+} from './provider-importers.js';
 import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
@@ -180,10 +184,7 @@ const prepareEnqueueChain = new Map<string, Promise<unknown>>();
 
 async function providerForBox(box: BoxRecord): Promise<Provider> {
   const name = box.provider ?? 'docker';
-  if (!isProviderKind(name)) {
-    throw new Error(`box ${box.id}: unsupported provider "${name}" (built-in providers only)`);
-  }
-  const mod = (await IMPORTERS[name]()).providerModule;
+  const mod = await loadProviderModuleByName(name);
   if (mod.ensureCredentials) await mod.ensureCredentials();
   return mod.provider;
 }
@@ -1466,8 +1467,8 @@ async function allCloudBackends(): Promise<string[]> {
 
 /** A built-in cloud provider by backend name (plugin backends aren't bundled here). */
 async function cloudProviderForBackend(backend: string): Promise<Provider | null> {
-  if (!isProviderKind(backend)) return null;
-  return (await IMPORTERS[backend]()).providerModule.provider;
+  if (!isRuntimeProviderName(backend)) return null;
+  return (await loadProviderModuleByName(backend)).provider;
 }
 
 function dockerItemView(c: CheckpointInfo, def: string): CheckpointItemView {
@@ -1715,8 +1716,8 @@ async function enumerateCloudOrphans(
   | { ok: true; backend: import('@agentbox/core').CloudBackend; orphans: CloudSandboxSummary[] }
   | { ok: false; error: string }
 > {
-  if (!isProviderKind(provider)) return { ok: false, error: `unknown provider ${provider}` };
-  const mod = (await IMPORTERS[provider]()).providerModule;
+  if (!isRuntimeProviderName(provider)) return { ok: false, error: `unknown provider ${provider}` };
+  const mod = await loadProviderModuleByName(provider);
   if (mod.ensureCredentials) await mod.ensureCredentials();
   const backend = mod.backend;
   if (!backend?.list) {
@@ -2155,9 +2156,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
               error: `unknown remote-docker host '${alias}' — add it in Settings`,
             };
           }
-        } else {
-          if (!isProviderKind(provider))
+        } else if (!isProviderKind(provider)) {
+          // Provider PLUGIN: registration in ~/.agentbox/plugins.json is the
+          // gate. Plugins own their own setup story (a `prepare` step is
+          // optional for them), so there is no prepared-state `base` marker to
+          // check — `isProviderConfigured` would reject every one of them.
+          if (!isRuntimeProviderName(provider))
             return { ok: false, error: `unknown provider ${provider}` };
+        } else {
           if (!isProviderConfigured(provider)) {
             // With a control box configured, cloud boxes are ITS job — this UI
             // is a mirror, not a second create path — so say where to go rather
