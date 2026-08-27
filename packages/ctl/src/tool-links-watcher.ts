@@ -1,5 +1,5 @@
 import { postRpcAwait } from './relay-rpc.js';
-import { syncToolLinks } from './tool-links.js';
+import { listToolLinks, syncToolLinks } from './tool-links.js';
 
 /**
  * Keeps the box's per-tool shim symlinks in sync with the host's grant list.
@@ -64,6 +64,10 @@ export class ToolLinksWatcher {
     if (this.running) return;
     this.running = true;
     try {
+      // Snapshot BEFORE asking, so a link created while the RPC is in flight
+      // (an approved `tool request` re-linking itself) is never pruned by
+      // this tick's now-stale list.
+      const prunable = await listToolLinks();
       const res = await postRpcAwait(
         'tool.list',
         { path: this.cwd, format: 'json' },
@@ -74,7 +78,7 @@ export class ToolLinksWatcher {
       if (names === null) return;
       const signature = names.join(',');
       if (signature === this.lastSignature) return;
-      const result = await syncToolLinks(names);
+      const result = await syncToolLinks(names, { prunable });
       this.lastSignature = signature;
       if (result.added.length || result.removed.length || result.conflicts.length) {
         this.onChange?.(result.added, result.removed, result.conflicts);

@@ -33,6 +33,24 @@ export interface ToolLinkSyncResult {
   conflicts: string[];
 }
 
+export interface SyncToolLinksOptions {
+  dir?: string;
+  shim?: string;
+  /**
+   * Which existing links this call is allowed to remove. Defaults to "any of
+   * ours", which is what a full reconcile wants.
+   *
+   * Two processes sync these links: the daemon's reconciler and an approved
+   * in-box `tool request`. Both make the directory match a list, so a
+   * reconciler tick holding a list fetched *before* a grant landed would
+   * delete the symlink the request just created — the exact opposite of the
+   * immediate-use guarantee. Passing a snapshot taken before the list was
+   * fetched confines pruning to links that already existed then, so a link
+   * created during the fetch survives to the next tick.
+   */
+  prunable?: readonly string[];
+}
+
 /**
  * Make `~/.local/bin` hold exactly one shim symlink per name in `names`.
  *
@@ -44,7 +62,7 @@ export interface ToolLinkSyncResult {
  */
 export async function syncToolLinks(
   names: readonly string[],
-  opts: { dir?: string; shim?: string } = {},
+  opts: SyncToolLinksOptions = {},
 ): Promise<ToolLinkSyncResult> {
   const dir = opts.dir ?? toolLinkDir();
   const shim = opts.shim ?? TOOL_SHIM_PATH;
@@ -61,8 +79,10 @@ export async function syncToolLinks(
   } catch {
     entries = [];
   }
+  const prunable = opts.prunable ? new Set(opts.prunable) : null;
   for (const entry of entries) {
     if (wanted.has(entry)) continue;
+    if (prunable && !prunable.has(entry)) continue;
     if (await isOurLink(join(dir, entry), shim)) {
       await unlink(join(dir, entry)).catch(() => undefined);
       result.removed.push(entry);
@@ -98,3 +118,24 @@ async function isOurLink(path: string, shim: string): Promise<boolean> {
 }
 
 const VALID_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,63}$/;
+
+/**
+ * The tool links currently present in `dir`. Used by the reconciler to
+ * snapshot state *before* it fetches the grant list, so it never prunes a
+ * link that appeared while it was asking.
+ */
+export async function listToolLinks(opts: { dir?: string; shim?: string } = {}): Promise<string[]> {
+  const dir = opts.dir ?? toolLinkDir();
+  const shim = opts.shim ?? TOOL_SHIM_PATH;
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (await isOurLink(join(dir, entry), shim)) out.push(entry);
+  }
+  return out;
+}

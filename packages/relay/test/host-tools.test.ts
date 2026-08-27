@@ -47,6 +47,18 @@ describe('built-in credential deny list', () => {
     expect(refuseCredentialArgv('linear', ['AUTH', 'TOKEN'])).not.toBeNull();
   });
 
+  // Reported by review: the haystack was the tool NAME plus argv, but the
+  // process that runs is grant.bin. A bland name pointed at a hazardous
+  // binary would have slipped past every bin-keyed pattern.
+  it('matches the resolved host binary, not just the granted name', () => {
+    expect(refuseCredentialArgv('safe', ['get', 'svc', 'user'], 'keyring')).not.toBeNull();
+    expect(refuseCredentialArgv('helper', [], 'get-token-helper')).not.toBeNull();
+  });
+
+  it('a benign bin with benign argv still passes', () => {
+    expect(refuseCredentialArgv('infra', ['plan'], 'terraform')).toBeNull();
+  });
+
   it('lets ordinary argv through', () => {
     expect(refuseCredentialArgv('terraform', ['plan'])).toBeNull();
     expect(refuseCredentialArgv('linear', ['issue', 'list'])).toBeNull();

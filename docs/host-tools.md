@@ -146,10 +146,16 @@ with the host's grant list two ways:
 - An approved in-box `tool request` re-links **immediately**, in the same ctl
   process that made the request (`packages/ctl/src/commands/tool.ts`) — an
   approval the agent just waited on leaves the command usable on the next line.
+  That path is **additive**: it only adds what was just granted.
 - The daemon's `ToolLinksWatcher` polls `tool.list` every 60s as a reconciler,
   catching grants changed out-of-band (`agentbox tools add/rm` on the host).
   Slow on purpose: on the cloud providers every tick costs a host action, and
   the path that needs to be instant already is.
+
+Both write the same directory, so pruning is confined to a snapshot taken
+*before* the reconciler fetches its list. Otherwise a tick already in flight
+when a grant landed would delete the link the request had just created —
+exactly the guarantee the immediate re-link exists to provide.
 
 The links land in `~/.local/bin`, not `/usr/local/bin`, for a concrete reason:
 the ctl daemon runs as `vscode`, not root. `~/.local/bin` is vscode-owned and is
