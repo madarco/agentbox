@@ -1324,9 +1324,10 @@ confirmed in the hub log). `hub restart`/`hub status` work off the sandbox-core 
   is the CLI's own `dist/` regardless of which source package authored them, so moving them to
   sandbox-core changed nothing at runtime. Keep that property in mind before moving these to a package
   that is NOT inlined into the CLI.
-- **`@agentbox/sandbox-core` still cannot import `@agentbox/relay`** (relay depends on core — cycle), so
-  `hub-process.ts` hardcodes `HUB_RELAY_PORT = 8787` mirroring `DEFAULT_RELAY_PORT`. If the relay port
-  ever becomes configurable, thread it rather than duplicating.
+- **`@agentbox/sandbox-core` still cannot import `@agentbox/relay`** (relay depends on core — cycle).
+  RESOLVED: the port is now configurable (`relay.port`) and threaded through a single resolver,
+  `relay-port.ts`'s `relayPort()`, rather than duplicated — `HUB_RELAY_PORT` is gone and the one
+  remaining literal is that module's `FALLBACK_RELAY_PORT`.
 - **Two more one-slot hooks now exist alongside `credential-publish.ts`** (`hub-hooks.ts`,
   `credential-refresh.ts`). The CLI registers all of them in `apps/cli/src/index.ts`. A docker-free
   build simply never registers the docker ones and the seams no-op — that is the whole point.

@@ -9,12 +9,8 @@
  * and `agentbox agent approvals` used to show nothing for a hub box.
  */
 import type { BoxRecord } from '@agentbox/core';
-import { DEFAULT_RELAY_PORT } from '@agentbox/relay';
 import { HubApiClient } from './hub-api-client.js';
 import { boxOwningHubIsLocal } from './with-hub.js';
-
-/** The laptop's own relay daemon. */
-export const LOCAL_RELAY_URL = `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`;
 
 /**
  * - a target      — the control box this box registered with, plus its bearer.

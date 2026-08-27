@@ -112,7 +112,8 @@ With a [control box](/docs/deployed-hub) configured, `agentbox hub` opens **that
 ## How it relates to the relay
 
 The hub is a **superset of the host relay** — it embeds the relay and adds the UI,
-on the same port (8787). The two are mutually exclusive there, so:
+on the same port (8787, or whatever [`relay.port`](/docs/configuration) is set to —
+one key moves both). The two are mutually exclusive there, so:
 
 - `agentbox hub` takes over from a bare `agentbox relay` if one is already running.
 - Once the hub is up, ordinary box commands (`agentbox create`, `claude`, …) reuse

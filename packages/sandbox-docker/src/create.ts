@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
-import { makeSyncContext, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { makeSyncContext, relayPort, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { makeDockerSync } from './sync/docker-sync.js';
 import { buildClaudeMounts, resolveClaudeVolume } from './sync/agents/claude.js';
@@ -805,14 +806,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const relayEnv: Record<string, string> = relayUp
     ? {
         // The in-box ctl client always talks to its own in-box relay/forwarder
-        // on AGENTBOX_BOX_RELAY_PORT (default 8788). For docker boxes the
-        // forwarder transparently proxies to the host relay at
-        // host.docker.internal:8787 (the matching `--add-host` is set in
-        // runBox). This keeps :8787 inside the box free for a nested
-        // agentbox to claim its own host relay.
-        AGENTBOX_RELAY_URL: `http://127.0.0.1:8788`,
+        // on AGENTBOX_BOX_RELAY_PORT (DEFAULT_BOX_RELAY_PORT, 8788). For docker
+        // boxes the forwarder transparently proxies to the host relay at
+        // host.docker.internal:<relay.port> (the matching `--add-host` is set in
+        // runBox). The two ports stay distinct so :8787 inside the box remains
+        // free for a nested agentbox to claim its own host relay.
+        AGENTBOX_RELAY_URL: `http://127.0.0.1:${String(DEFAULT_BOX_RELAY_PORT)}`,
         AGENTBOX_RELAY_TOKEN: relayToken,
-        AGENTBOX_HOST_RELAY_URL: `http://host.docker.internal:8787`,
+        AGENTBOX_HOST_RELAY_URL: `http://host.docker.internal:${String(relayPort())}`,
       }
     : {};
 

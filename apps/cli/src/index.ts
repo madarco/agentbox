@@ -35,6 +35,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
+import { applyRelayPortAtStartup } from './relay-port-override.js';
 import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
@@ -281,6 +282,10 @@ program.addCommand(
 guardDefaultSubcommands(program);
 
 await applyEngineOverrideAtStartup();
+// Must run before anything can touch the relay/hub: it pins the port every
+// probe, spawn and box-facing URL resolves through.
+const relayPortWarning = await applyRelayPortAtStartup();
+if (relayPortWarning !== null) process.stderr.write(`agentbox: ${relayPortWarning}\n`);
 
 const argv = rewriteProviderPrefix(process.argv);
 

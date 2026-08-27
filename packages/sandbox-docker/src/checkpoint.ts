@@ -348,6 +348,9 @@ const RUNTIME_ENV_BLOCKLIST = new Set([
   'AGENTBOX_PROJECT_INDEX',
   'AGENTBOX_RELAY_URL',
   'AGENTBOX_RELAY_TOKEN',
+  // Carries this machine's `relay.port`. Baking it would point every box
+  // restored from the checkpoint at the creating host's port.
+  'AGENTBOX_HOST_RELAY_URL',
   'AGENTBOX_VNC_PASSWORD',
   'CLAUDE_EFFORT',
   'CLAUDE_CODE_OAUTH_TOKEN',

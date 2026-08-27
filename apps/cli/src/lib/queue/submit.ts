@@ -6,7 +6,7 @@ import {
   type QueueJobCreateOpts,
   type QueueJobOpenTerminal,
 } from '@agentbox/relay';
-import { DEFAULT_RELAY_PORT, ensureRelay } from '@agentbox/sandbox-docker';
+import { ensureRelay, relayPort } from '@agentbox/sandbox-docker';
 import { loadEffectiveConfig, resolveBoxSize } from '@agentbox/config';
 import { sizeIgnoredReason } from '../size-advisory.js';
 
@@ -78,7 +78,7 @@ function postEnqueue(id: string): Promise<void> {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: DEFAULT_RELAY_PORT,
+        port: relayPort(),
         method: 'POST',
         path: '/admin/queue/enqueue',
         headers: {
