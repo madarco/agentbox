@@ -295,9 +295,54 @@ codes.
 
 ## Phase status
 
-- [ ] Phase 0 — durable doc + delete Notion/Linear
-- [ ] Phase 1 — tools model + config
-- [ ] Phase 2 — relay `tool.*`
-- [ ] Phase 3 — in-box surface
-- [ ] Phase 4 — request + create-time approval
-- [ ] Phase 5 — doctor, docs, e2e
+- [x] Phase 0 — durable doc + delete Notion/Linear
+- [x] Phase 1 — tools model + config
+- [x] Phase 2 — relay `tool.*`
+- [x] Phase 3 — in-box surface
+- [x] Phase 4 — request + create-time approval
+- [x] Phase 5 — doctor, docs, e2e
+
+## What the live run changed
+
+Two design assumptions did not survive contact with a real box:
+
+1. **Readiness was `<bin> --version`.** Granting `sw_vers` and calling it
+   failed with `sw_vers --version failed: unrecognized option '--version'`.
+   The probe asked a question the binary never agreed to answer, and plenty
+   of real CLIs are in that camp (`sw_vers`, `tar`, subcommand-style tools).
+   Readiness is now an existence check; a binary broken some other way
+   surfaces its own error on the real call, which beats a probe's guess.
+
+2. **The create-time gate assumed a TTY.** `@clack`'s `confirm` throws
+   `uv_tty_init` on a non-TTY stdin, so `agentbox create` in a pipeline hit
+   that instead of a decision. The gate now checks `isTTY` and declines
+   cleanly. Unlike `carry:` — which throws, because its whole purpose is
+   files the box needs — an ungranted tool is one missing command, so
+   failing the create would be the worse outcome.
+
+Also learned: `box.autoApproveSafeHostActions` rides the box **registration**,
+fixed at create time. Flipping the config does not change an existing box; the
+strict-mode check needs a fresh one.
+
+## Live results (docker, local relay)
+
+- ungranted `tool.run` → exit 65 naming both remedies; `tool list` shows only
+  the built-in `gh`, never a host PATH scan
+- `tool request <missing>` → exit 127, **no** approval raised
+- `tool request sw_vers` → prompt naming box + binary + reason, default `n`;
+  approve → grant written, symlink appeared in ~2s, `sw_vers` in the Linux box
+  printed **macOS 14.4.1** (proof the host ran it)
+- `--allow '^--version$'` ran silently even in strict mode; `--deny '^push'`
+  → exit 65; built-in guard refused `credential get` and `hostdate -s`
+  (which would have set the host clock)
+- strict mode (`autoApproveSafeHostActions=false`, fresh box): every call
+  prompted; deny → exit 10, approve → ran
+- `agentbox tools rm` → symlink gone in ~14s, command stopped resolving
+- `agentbox.yaml` `tools:` grants are project-scoped — invisible to a box in
+  another project
+- box env carries only `AGENTBOX_RELAY_TOKEN`; no host credential crosses
+- `gh` regression guard: the generic proxy refuses it, its own shim still works
+
+Not exercised: the remote-hub (box→hub→host) path — deferred to its own
+session, since grants resolve against the host filesystem a hosted control
+plane does not share.
