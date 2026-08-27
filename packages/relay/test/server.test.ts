@@ -523,7 +523,6 @@ describe('relay /rpc gh.pr.* flow', () => {
   let stubLog: string;
   let prevPath: string | undefined;
   let prevPrompt: string | undefined;
-  let prevForce: string | undefined;
   let prevCheckout: string | undefined;
   let prevAuthedHost: string | undefined;
   let prevSshMap: string | undefined;
@@ -552,9 +551,8 @@ case "$1" in
           exit 0 ;;
       esac
     fi ;;
-  pr)
-    shift
-    echo "stub: gh pr $*"
+  *)
+    echo "stub: gh $*"
     exit 0
     ;;
 esac
@@ -584,10 +582,8 @@ exit 0
     prevPath = process.env.PATH;
     process.env.PATH = `${stubDir}:${prevPath ?? ''}`;
     prevPrompt = process.env.AGENTBOX_PROMPT;
-    prevForce = process.env.AGENTBOX_GH_FORCE;
     prevCheckout = process.env.AGENTBOX_GH_PR_CHECKOUT;
     delete process.env.AGENTBOX_PROMPT;
-    delete process.env.AGENTBOX_GH_FORCE;
     delete process.env.AGENTBOX_GH_PR_CHECKOUT;
     prevAuthedHost = process.env.STUB_AUTHED_HOST;
     prevSshMap = process.env.STUB_SSH_MAP;
@@ -608,8 +604,6 @@ exit 0
     else process.env.PATH = prevPath;
     if (prevPrompt === undefined) delete process.env.AGENTBOX_PROMPT;
     else process.env.AGENTBOX_PROMPT = prevPrompt;
-    if (prevForce === undefined) delete process.env.AGENTBOX_GH_FORCE;
-    else process.env.AGENTBOX_GH_FORCE = prevForce;
     if (prevCheckout === undefined) delete process.env.AGENTBOX_GH_PR_CHECKOUT;
     else process.env.AGENTBOX_GH_PR_CHECKOUT = prevCheckout;
     if (prevAuthedHost === undefined) delete process.env.STUB_AUTHED_HOST;
@@ -639,22 +633,43 @@ exit 0
     expect(r.status).toBe(204);
   }
 
-  it('rejects unknown gh.pr.* op with 400', async () => {
+  it('rejects an empty gh.exec argv', async () => {
     await register(handle, 'b1', 't1', 'box-one');
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'gh.pr.bogus' },
+      body: { method: 'gh.exec', params: { args: [] } },
     });
-    expect(r.status).toBe(400);
-    const body = r.body as { error?: string };
-    expect(body.error).toContain('unknown gh.pr.*');
+    expect(r.status).toBe(500);
+    expect((r.body as { exitCode: number }).exitCode).toBe(64);
+  });
+
+  // The surface is open now, so an unrecognised subcommand is forwarded to the
+  // host's gh rather than refused — that is the whole point of issue #304.
+  it('forwards a subcommand the relay has never heard of', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['issue', 'list'] } },
+    });
+    expect(r.status).toBe(200);
+    expect((r.body as { stdout: string }).stdout).toContain('stub: gh issue list');
+  });
+
+  it('refuses a blocked call before spawning gh', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['auth', 'token'] } },
+    });
+    expect(r.status).toBe(500);
+    expect((r.body as { exitCode: number }).exitCode).toBe(65);
   });
 
   it('gh.pr.checkout refused by default (env-gated)', async () => {
     await registerWithWorktree();
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'gh.pr.checkout', params: { path: '/workspace', args: ['123'] } },
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['pr', 'checkout', '123'] } },
     });
     expect(r.status).toBe(500);
     const body = r.body as { exitCode: number; stderr: string };
@@ -662,54 +677,29 @@ exit 0
     expect(body.stderr).toMatch(/disabled by default/);
   });
 
-  it('gh.pr.merge with AGENTBOX_PROMPT=off but no GH_FORCE refuses bypass', async () => {
-    await registerWithWorktree();
-    process.env.AGENTBOX_PROMPT = 'off';
-    const r = await fetchJson(handle, 'POST', '/rpc', {
-      token: 't1',
-      body: { method: 'gh.pr.merge', params: { path: '/workspace', args: ['42', '--squash'] } },
-    });
-    expect(r.status).toBe(500);
-    const body = r.body as { exitCode: number; stderr: string };
-    expect(body.exitCode).toBe(10);
-    expect(body.stderr).toMatch(/AGENTBOX_GH_FORCE=1/);
-  });
-
-  it('gh.pr.view (read-only) runs gh without an askPrompt entry', async () => {
-    await registerWithWorktree();
-    const r = await fetchJson(handle, 'POST', '/rpc', {
-      token: 't1',
-      body: { method: 'gh.pr.view', params: { path: '/workspace', args: ['7'] } },
-    });
-    expect(r.status).toBe(200);
-    const body = r.body as { exitCode: number; stdout: string };
-    expect(body.exitCode).toBe(0);
-    expect(body.stdout).toContain('stub: gh pr view 7');
-    expect(handle.prompts.size()).toBe(0);
-  });
-
-  it('gh.pr.create auto-approves under the default safe flag (no prompt)', async () => {
+  // Merging is ordinary agent work and revertable, so it runs under the
+  // default allow-once flag rather than prompting.
+  it('gh pr merge runs without a prompt under the default flag', async () => {
     await registerWithWorktree();
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--title', 'T', '--body', 'B'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'merge', '42', '--squash'] },
       },
     });
     expect(r.status).toBe(200);
     expect(handle.prompts.size()).toBe(0);
   });
 
-  it('gh.pr.create with an explicit --head still prompts (outside the safe subset)', async () => {
-    // An explicit head can name any branch (e.g. main), so it is NOT auto —
-    // it parks a confirm prompt even under the default safe flag.
+  // ...but deleting a repo is not, and confirms even with the flag on.
+  it('a destructive op confirms even under the default auto-approve flag', async () => {
     await registerWithWorktree();
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--head', 'main', '--title', 'T'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['repo', 'delete', 'o/r', '--yes'] },
       },
     });
     let pendingId: string | null = null;
@@ -723,8 +713,48 @@ exit 0
       body: { id: pendingId, answer: 'n' },
     });
     const rpc = await rpcPromise;
-    expect(rpc.status).toBe(500);
     expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
+  });
+
+  it('gh.pr.view (read-only) runs gh without an askPrompt entry', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['pr', 'view', '7'] } },
+    });
+    expect(r.status).toBe(200);
+    const body = r.body as { exitCode: number; stdout: string };
+    expect(body.exitCode).toBe(0);
+    expect(body.stdout).toContain('stub: gh pr view 7');
+    expect(handle.prompts.size()).toBe(0);
+  });
+
+  it('gh.pr.create auto-approves under the default safe flag (no prompt)', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--title', 'T', '--body', 'B'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    expect(handle.prompts.size()).toBe(0);
+  });
+
+  it('an explicit --head is respected and not double-injected', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--head', 'main', '--title', 'T'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    const { readFile } = await import('node:fs/promises');
+    const log = await readFile(stubLog, 'utf8');
+    expect(log.match(/--head/g)?.length).toBe(1);
   });
 
   it('gh.pr.create denial via /admin/prompts/answer returns exit 10 (strict flag)', async () => {
@@ -733,8 +763,8 @@ exit 0
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--title', 'T', '--body', 'B'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--title', 'T', '--body', 'B'] },
       },
     });
     let pendingId: string | null = null;
@@ -763,8 +793,8 @@ exit 0
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--title', 'T', '--body', 'B', '--draft'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--title', 'T', '--body', 'B', '--draft'] },
       },
     });
     expect(r.status).toBe(200);
@@ -794,8 +824,8 @@ exit 0
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--title', 'T'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--title', 'T'] },
       },
     });
     expect(r.status).toBe(500);
@@ -812,8 +842,8 @@ exit 0
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.pr.create',
-        params: { path: '/workspace', args: ['--head', 'feature/x', '--title', 'T'] },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['pr', 'create', '--head', 'feature/x', '--title', 'T'] },
       },
     });
     expect(r.status).toBe(200);
@@ -823,11 +853,11 @@ exit 0
     expect(body.stdout).not.toContain('agentbox/box-one');
   });
 
-  it('gh.pr.view returns 500 with exit 64 when no worktree is registered', async () => {
+  it('gh.exec returns 500 with exit 64 when no worktree is registered', async () => {
     await register(handle, 'b1', 't1', 'box-one');
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'gh.pr.view', params: { path: '/workspace' } },
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['pr', 'view'] } },
     });
     expect(r.status).toBe(500);
     const body = r.body as { exitCode: number; stderr: string };
@@ -843,7 +873,7 @@ exit 0
     gh._resetGhReadyCacheForTests();
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'gh.pr.view', params: { path: '/workspace' } },
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['pr', 'view'] } },
     });
     expect(r.status).toBe(500);
     const body = r.body as { exitCode: number; stderr: string };
@@ -872,7 +902,7 @@ exit 0
   async function viewPr(): Promise<{ status: number; body: unknown }> {
     return fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'gh.pr.view', params: { path: '/workspace', args: ['123'] } },
+      body: { method: 'gh.exec', params: { path: '/workspace', args: ['pr', 'view', '123'] } },
     });
   }
 
@@ -942,14 +972,14 @@ exit 0
     expect(body.stderr).toContain('gh auth login --hostname ghe.corp.example');
   });
 
-  it('sets GH_HOST for gh.api without ever adding a --repo flag', async () => {
+  it('sets GH_HOST for gh api without ever adding a --repo flag', async () => {
     process.env.STUB_AUTHED_HOST = 'ghe.corp.example';
     await registerWithWorktree({ originUrl: 'https://ghe.corp.example/team/svc.git' });
     const r = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: {
-        method: 'gh.api',
-        params: { path: '/workspace', endpoint: 'repos/team/svc/pulls/1/comments' },
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['api', 'repos/team/svc/pulls/1/comments'] },
       },
     });
     expect(r.status).toBe(200);

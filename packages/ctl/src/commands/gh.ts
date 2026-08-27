@@ -10,13 +10,18 @@ interface GhRepoCloneRpcParams {
 }
 
 const repoCommand = new Command('repo')
-  .description('GitHub repo operations via the host `gh` CLI (host runs `gh repo …` then ships results to the box)')
+  .description(
+    'GitHub repo operations via the host `gh` CLI (host runs `gh repo …` then ships results to the box)',
+  )
   .addCommand(
     new Command('clone')
       .description(
-        "Clone a github repo into the box via host `gh repo clone`. The host clones into a tmpdir with its creds, bundles, and ships the bundle back; the box materialises the working copy and resets origin to the original URL.",
+        'Clone a github repo into the box via host `gh repo clone`. The host clones into a tmpdir with its creds, bundles, and ships the bundle back; the box materialises the working copy and resets origin to the original URL.',
       )
-      .option('--cwd <path>', 'container path identifying which registered worktree to use (default: cwd)')
+      .option(
+        '--cwd <path>',
+        'container path identifying which registered worktree to use (default: cwd)',
+      )
       .option('--branch <name>', 'pass --branch <name> to host gh repo clone')
       .option('--depth <n>', 'pass --depth <n> to host gh repo clone')
       .argument('<repo>', 'github repo: owner/name shorthand or full URL')
@@ -44,83 +49,39 @@ const repoCommand = new Command('repo')
       ),
   );
 
-interface RunSubcommandSpec {
-  op: 'list' | 'view' | 'rerun';
-  description: string;
+interface GhExecRpcParams {
+  path: string;
+  args?: string[];
 }
 
 /**
- * `gh run` subcommands exposed via the relay. Each maps to RPC method
- * `gh.run.<op>`; the relay validates the op server-side (`GH_RUN_OPS`).
- * `list` / `view` are read-only (no prompt); `rerun` re-triggers CI and is
- * gated by the host confirm prompt. `watch` is deliberately not proxied.
+ * `agentbox-ctl gh exec -- <argv...>` — the whole GitHub CLI, forwarded to the
+ * host's authenticated `gh`. This is what the in-box `gh` shim execs, and it
+ * replaced the old per-subcommand surface (`gh run <op>`, `gh api <endpoint>`)
+ * that could only proxy what it had been taught.
+ *
+ * Gating is host-side: a small blocklist, a short list of destructive ops that
+ * always confirm, and allow-once for everything else.
  */
-const RUN_SUBCOMMANDS: RunSubcommandSpec[] = [
-  { op: 'list', description: 'Run `gh run list` on the host (read-only; no prompt).' },
-  { op: 'view', description: 'Run `gh run view` on the host (read-only; no prompt).' },
-  {
-    op: 'rerun',
-    description: 'Run `gh run rerun` on the host (prompted; re-triggers CI).',
-  },
-];
-
-interface GhRunRpcParams {
-  path: string;
-  args?: string[];
-}
-
-/** Builds the `run` Command with all subcommands wired to `gh.run.<op>` RPCs. */
-function buildRunCommand(errorPrefix: string): Command {
-  const runCommand = new Command('run').description(
-    'GitHub Actions run operations via the host `gh` CLI (requires `gh` installed and `gh auth login` on the host)',
-  );
-  for (const spec of RUN_SUBCOMMANDS) {
-    runCommand.addCommand(
-      new Command(spec.op)
-        .description(spec.description)
-        .option('--cwd <path>', 'container path identifying which registered worktree to use')
-        .allowExcessArguments(true)
-        .allowUnknownOption(true)
-        .argument(
-          '[args...]',
-          'extra flags forwarded to `gh run <op>` verbatim (e.g. `--json`, `--limit`, `<run-id>`).',
-        )
-        .action(async (args: string[], opts: { cwd?: string }) => {
-          const params: GhRunRpcParams = { path: opts.cwd ?? process.cwd() };
-          if (args.length > 0) params.args = args;
-          const code = await postRpcAndExit(`gh.run.${spec.op}`, params, { errorPrefix });
-          process.exit(code);
-        }),
-    );
-  }
-  return runCommand;
-}
-
-interface GhApiRpcParams {
-  path: string;
-  endpoint: string;
-  args?: string[];
-}
-
-const apiCommand = new Command('api')
-  .description(
-    'Allowlisted `gh api` (host runs `gh api`): GET on proxied endpoints, plus POST to add a PR review comment. Other methods are rejected.',
-  )
+const execCommand = new Command('exec')
+  .description('Run the host `gh` with these arguments (the box never sees a GitHub token)')
   .option('--cwd <path>', 'container path identifying which registered worktree to use')
   .allowExcessArguments(true)
   .allowUnknownOption(true)
-  .argument('<endpoint>', 'REST endpoint, e.g. repos/:owner/:repo/pulls/:number/comments')
-  .argument('[args...]', 'extra flags forwarded to `gh api` verbatim (e.g. `--jq`, `-f body=…`).')
-  .action(async (endpoint: string, args: string[], opts: { cwd?: string }) => {
-    const params: GhApiRpcParams = { path: opts.cwd ?? process.cwd(), endpoint };
+  .argument('[args...]', 'gh argv, forwarded verbatim (e.g. `issue list --state open`)')
+  .action(async (args: string[], opts: { cwd?: string }) => {
+    const params: GhExecRpcParams = { path: opts.cwd ?? process.cwd() };
     if (args.length > 0) params.args = args;
-    const code = await postRpcAndExit('gh.api', params, { errorPrefix: 'agentbox-ctl gh api' });
+    const code = await postRpcAndExit('gh.exec', params, {
+      errorPrefix: args[0] ? `agentbox-ctl gh ${args[0]}` : 'agentbox-ctl gh',
+    });
     process.exit(code);
   });
 
 export const ghCommand = new Command('gh')
-  .description('GitHub CLI operations routed through the relay (host `gh` runs with host creds; box never sees a token)')
+  .description(
+    'GitHub CLI operations routed through the relay (host `gh` runs with host creds; box never sees a token)',
+  )
+  .addCommand(execCommand)
   .addCommand(buildPrCommand('agentbox-ctl gh pr'))
-  .addCommand(buildRunCommand('agentbox-ctl gh run'))
-  .addCommand(apiCommand)
   .addCommand(repoCommand);

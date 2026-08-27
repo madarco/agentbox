@@ -62,11 +62,10 @@ agentbox tools rm terraform
 ```
 
 `gh` is granted built-in — Claude Code's PR badge and our documented agent flows
-call it — and keeps its own relay handler (`packages/relay/src/gh.ts`: PR-branch
-injection, the `gh api` endpoint allowlist, the safe auto-approve op set).
-Routing it through the generic proxy would silently drop those guards, so
+call it — and keeps its own relay handler (`packages/relay/src/gh.ts`). Routing
+it through the generic proxy would drop the PR-branch injection it needs, so
 `tool.run` refuses it by name. Revoke with
-`agentbox config set tools.gh.enabled false`.
+`agentbox config set tools.gh.enabled false`. Its policy is described below.
 
 ## The `tools:` block
 
@@ -165,6 +164,54 @@ cloud provider's `/etc/profile.d/agentbox.sh` both prepend it.
 A real binary already owning the name is reported as a **conflict** and left
 alone. Clobbering it would lose the user's install; silently shadowing it with a
 host proxy would be a nasty surprise.
+
+## `gh` policy
+
+`gh` used to proxy a curated allowlist of subcommands and refuse the rest,
+which meant every new agent workflow (`gh issue`, `gh search`, `gh release`)
+hit "not proxied" and needed a code change to unblock — issue #304. The surface
+is now open, with three tiers in `packages/relay/src/gh.ts`:
+
+**Blocked** (`GH_BLOCKED`) — refused outright, because the host owns its own
+GitHub credential and a box must not read it or move it:
+
+```
+gh auth token | refresh | login | logout | switch | setup-git
+gh config set ...
+gh alias set|delete|import ...        # an alias can be a shell escape
+gh extension install|remove|exec ...  # third-party code on the host
+gh ssh-key|gpg-key add|delete ...
+```
+
+**Always confirmed** (`GH_DESTRUCTIVE`) — prompts even when the box carries
+`box.autoApproveSafeHostActions`, because the flag means "don't interrupt me
+for ordinary work", not "delete things without asking":
+
+```
+gh repo delete|archive|rename|transfer
+gh release delete, gh secret set|delete, gh variable delete
+gh gist delete, gh label delete, gh cache delete, gh project delete
+gh api -X DELETE|PUT|PATCH ...        # the same reach, raw
+```
+
+**Everything else** — allow-once. `gh issue`, `gh pr` (including `merge`),
+`gh search`, `gh release create`, `gh api` reads and POSTs all run silently
+under the default flag, and prompt per-call in strict mode.
+
+Two things survive from the old model because they are about correctness, not
+policy:
+
+- The shim injects the box's branch into `gh pr view|list|diff|checks|comment|
+  review|merge|close|reopen`, and the relay injects `--head` into a headless
+  `gh pr create`. The host's `gh` runs in the *host* checkout, so without this
+  a bare `gh pr view` in a box reports on whatever the host has checked out.
+- `gh pr checkout` stays behind `AGENTBOX_GH_PR_CHECKOUT=allow`. It is the one
+  subcommand that moves the HOST's working tree, and the box's bind-mounted
+  `.git/HEAD` follows it.
+
+`gh api --input` is refused for a transport reason rather than a policy one:
+the host `gh` runs with stdin ignored, so the body would silently be empty.
+Use `-f`/`-F` fields.
 
 ## Limits
 

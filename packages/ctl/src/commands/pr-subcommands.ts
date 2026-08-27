@@ -18,40 +18,38 @@ export interface PrSubcommandSpec {
 }
 
 /**
- * `gh pr` subcommands exposed via the relay. Each maps to RPC method
- * `gh.pr.<op>`. The relay validates the op server-side (must match `GH_PR_OPS`
- * in `@agentbox/relay/src/gh.ts`).
+ * `gh pr` subcommands surfaced as named commands, for discoverability and
+ * for the host CLI's `agentbox git pr <op>`. All of them post the same
+ * `gh.exec` RPC the shim uses — this is a nicer front door, not a separate
+ * capability.
  *
- * Confirmation matrix lives host-side:
- *   - `view`, `list` → read-only, no prompt.
- *   - `create`, `comment`, `review`, `close`, `reopen` → prompt.
- *   - `merge` → prompt; AGENTBOX_PROMPT=off bypass requires AGENTBOX_GH_FORCE=1.
- *   - `checkout` → prompt + dirty-tree guard + opt-in (AGENTBOX_GH_PR_CHECKOUT=allow).
+ * Gating lives host-side (`@agentbox/relay/src/gh.ts`): a small blocklist, a
+ * short list of destructive ops that always confirm, and allow-once for
+ * everything else. `checkout` additionally needs
+ * `AGENTBOX_GH_PR_CHECKOUT=allow` because it moves the HOST's working tree.
  */
 export const PR_SUBCOMMANDS: PrSubcommandSpec[] = [
   {
     op: 'create',
-    description:
-      'Run `gh pr create` on the host (creates a PR for this box\'s branch). User is prompted on the host wrapper.',
+    description: "Run `gh pr create` on the host (creates a PR for this box's branch).",
   },
-  { op: 'view', description: 'Run `gh pr view` on the host (read-only; no prompt).' },
-  { op: 'list', description: 'Run `gh pr list` on the host (read-only; no prompt).' },
-  { op: 'diff', description: 'Run `gh pr diff` on the host (read-only; no prompt).' },
-  { op: 'checks', description: 'Run `gh pr checks` on the host (read-only; no prompt).' },
-  { op: 'comment', description: 'Run `gh pr comment` on the host (prompted; visible to others).' },
-  { op: 'review', description: 'Run `gh pr review` on the host (prompted; visible to others).' },
+  { op: 'view', description: 'Run `gh pr view` on the host.' },
+  { op: 'list', description: 'Run `gh pr list` on the host.' },
+  { op: 'diff', description: 'Run `gh pr diff` on the host.' },
+  { op: 'checks', description: 'Run `gh pr checks` on the host.' },
+  { op: 'comment', description: 'Run `gh pr comment` on the host (visible to others).' },
+  { op: 'review', description: 'Run `gh pr review` on the host (visible to others).' },
   {
     op: 'merge',
-    description:
-      'Run `gh pr merge` on the host (prompted; destructive — AGENTBOX_PROMPT=off bypass requires AGENTBOX_GH_FORCE=1).',
+    description: 'Run `gh pr merge` on the host.',
   },
   {
     op: 'checkout',
     description:
-      'Run `gh pr checkout` on the host (prompted + clean-tree guard; opt-in via AGENTBOX_GH_PR_CHECKOUT=allow because it switches the host main repo branch).',
+      'Run `gh pr checkout` on the host (clean-tree guard; opt-in via AGENTBOX_GH_PR_CHECKOUT=allow because it switches the HOST repo branch).',
   },
-  { op: 'close', description: 'Run `gh pr close` on the host (prompted).' },
-  { op: 'reopen', description: 'Run `gh pr reopen` on the host (prompted).' },
+  { op: 'close', description: 'Run `gh pr close` on the host.' },
+  { op: 'reopen', description: 'Run `gh pr reopen` on the host.' },
 ];
 
 interface PrCommonOptions {
@@ -60,14 +58,14 @@ interface PrCommonOptions {
   hostInitiatedToken?: string;
 }
 
-interface GhPrRpcParams {
+interface GhExecRpcParams {
   path: string;
   args?: string[];
   hostInitiated?: string;
 }
 
 /**
- * Builds the `pr` Command with all subcommands wired to `gh.pr.<op>` RPCs.
+ * Builds the `pr` Command with all subcommands wired to the `gh.exec` RPC.
  * Used by both `agentbox-ctl git pr` and `agentbox-ctl gh pr` so the two
  * surfaces stay byte-for-byte identical.
  */
@@ -93,10 +91,12 @@ export function buildPrCommand(errorPrefix: string): Command {
           'extra flags forwarded to `gh pr <op>` verbatim (e.g. `--title`, `--body`, `--label`, `--draft`, `--json`).',
         )
         .action(async (args: string[], opts: PrCommonOptions) => {
-          const params: GhPrRpcParams = { path: opts.cwd ?? process.cwd() };
-          if (args.length > 0) params.args = args;
+          const params: GhExecRpcParams = {
+            path: opts.cwd ?? process.cwd(),
+            args: ['pr', spec.op, ...args],
+          };
           if (opts.hostInitiatedToken) params.hostInitiated = opts.hostInitiatedToken;
-          const code = await postRpcAndExit(`gh.pr.${spec.op}`, params, { errorPrefix });
+          const code = await postRpcAndExit('gh.exec', params, { errorPrefix });
           process.exit(code);
         }),
     );

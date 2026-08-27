@@ -166,12 +166,10 @@ These govern the host actions the relay performs on a box's behalf (see [Sync & 
 | Variable                        | Effect                                                                              |
 | ------------------------------- | ----------------------------------------------------------------------------------- |
 | `AGENTBOX_PROMPT=off`           | Auto-accept host-action permission prompts (e.g. `git push`). Headless mode.        |
-| `AGENTBOX_GH_FORCE=1`           | Required, even with `AGENTBOX_PROMPT=off`, to allow the irreversible `gh pr merge`. |
 | `AGENTBOX_GH_PR_CHECKOUT=allow` | Opt in to `gh pr checkout` (it switches the host repo's branch; off by default).    |
 
 <Callout type="warn" title="HEADS UP">
   `AGENTBOX_PROMPT=off` lets a box run host git operations without asking. Use it only in trusted or
-  CI contexts. Even then, `gh pr merge` is gated separately behind `AGENTBOX_GH_FORCE=1` because
   it's irreversible.
 </Callout>
 

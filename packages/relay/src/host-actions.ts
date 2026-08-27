@@ -44,27 +44,17 @@ import {
   readState,
 } from '@agentbox/sandbox-core';
 import {
-  checkoutGuards,
-  GH_API_ENDPOINT_REFUSAL,
-  GH_PR_READ_ONLY_OPS,
-  GH_PR_SAFE_AUTO_APPROVE_OPS,
-  GH_RUN_READ_ONLY_OPS,
-  injectPrCreateHead,
-  isAllowedGhApiEndpoint,
-  isGhPrOp,
-  isGhRunOp,
-  PR_CREATE_NO_HEAD_REFUSAL,
-  prCreateHasExplicitHead,
-  prCreateNeedsHead,
-  refuseCheckoutByDefault,
-  refuseGhApiCall,
-  refuseMergeBypass,
+  ghDestructiveTarget,
   ghRunContext,
+  injectPrCreateHead,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
+  refuseBlockedGhCall,
+  refuseCheckoutByDefault,
+  refuseGhApiInput,
   resolveGhTarget,
   runHostGh,
-  type GhApiRpcParams,
-  type GhPrRpcParams,
-  type GhRunRpcParams,
+  type GhExecRpcParams,
 } from './gh.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
@@ -369,14 +359,8 @@ export async function executeCloudAction(
   if (action.method === 'browser.open.mirror') {
     return runBrowserOpenMirror(action, deps);
   }
-  if (action.method.startsWith('gh.pr.')) {
-    return runGhPrRpc(action, deps);
-  }
-  if (action.method.startsWith('gh.run.')) {
-    return runGhRunRpc(action, deps);
-  }
-  if (action.method === 'gh.api') {
-    return runGhApiRpc(action, deps);
+  if (action.method === 'gh.exec') {
+    return runGhExecRpc(action, deps);
   }
   if (action.method.startsWith('tool.')) {
     return runToolRpc(action, deps);
@@ -393,181 +377,6 @@ export async function executeCloudAction(
     stdout: '',
     stderr: `host executor for '${action.method}' is not yet supported for cloud boxes\n`,
   };
-}
-
-/**
- * Cloud `gh.pr.<op>` executor. Simpler than `runGitRpc` because nothing
- * needs to round-trip into the sandbox — `gh` only needs the host repo
- * (already at the right remote in `lookup.workspacePath`).
- *
- * Mirrors the docker handler's confirmation matrix exactly: `view` / `list`
- * are silent, write ops go through `askPrompt`, `checkout` is opt-in via
- * `AGENTBOX_GH_PR_CHECKOUT=allow`, and `merge` refuses `AGENTBOX_PROMPT=off`
- * bypass unless `AGENTBOX_GH_FORCE=1`. When no SSE subscriber is attached,
- * write-op behavior is gated by `AGENTBOX_GH_NO_SUB` (`deny` default,
- * `allow`, or `prompt`) — same shape as `AGENTBOX_GIT_PUSH_NO_SUB`.
- */
-async function runGhPrRpc(
-  action: HostAction,
-  deps: CloudActionExecutorDeps,
-): Promise<HostActionResult> {
-  const op = action.method.slice('gh.pr.'.length);
-  if (!isGhPrOp(op)) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `unknown gh.pr.* op: ${op}\n`,
-    };
-  }
-  // Env-only refusals first — cheap, deterministic, no fs/process calls.
-  const mergeBypass = refuseMergeBypass(op);
-  if (mergeBypass) return mergeBypass;
-  const checkoutOptIn = refuseCheckoutByDefault(op);
-  if (checkoutOptIn) return checkoutOptIn;
-
-  const params = (action.params ?? {}) as GhPrRpcParams;
-  const args = Array.isArray(params.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-
-  const ghTarget = await resolveGhTarget(deps.originUrl);
-  if (ghTarget.error) return ghTarget.error;
-
-  const lookup = await lookupCloudBox(deps.boxId);
-
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
-  // docker path runs, per the "fix across all providers" rule.
-  const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
-  if (ghRevoked) return ghRevoked;
-
-  if (op === 'checkout') {
-    // The cloud host repo isn't bind-mounted by anything; the only "branch
-    // we must not stomp" concern is the host's own current branch, which is
-    // a generic dirty-tree / "already on this branch" question gh itself
-    // surfaces. We still refuse a dirty tree.
-    const guard = await checkoutGuards(lookup.workspacePath, []);
-    if (guard) return guard;
-  }
-
-  // Host-initiated `gh pr <op>` (from `agentbox git pr <op> <box>`) skips
-  // the confirm prompt — but only with a valid scope-matched, params-hash-
-  // bound one-time token. If a token is *present* but invalid, reject
-  // hard: attack signal. Only fall through to the prompt when no token was
-  // claimed. Destructive-op env opt-ins above still apply.
-  const tokenClaimedGhCloud = typeof params.hostInitiated === 'string';
-  const incomingHashGhCloud = hashRpcParams(params);
-  const hostInitiatedGhOk =
-    !GH_PR_READ_ONLY_OPS.has(op) &&
-    tokenClaimedGhCloud &&
-    (deps.hostInitiatedTokens?.consume(
-      params.hostInitiated,
-      deps.boxId,
-      `gh.pr.${op}`,
-      incomingHashGhCloud,
-    ) ??
-      false);
-  if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGhCloud && !hostInitiatedGhOk) {
-    return {
-      exitCode: 10,
-      stdout: '',
-      stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
-    };
-  }
-  // Safe subset: opening a PR (relay forces `--head <box-branch>`) and PR
-  // comments auto-approve under the flag, audited. merge/checkout/review/close
-  // keep prompting.
-  // A `create` with an EXPLICIT `--head` is excluded from the safe subset — that
-  // head could name any branch (e.g. `main`); it falls back to the prompt. A
-  // headless `create` has its head forced to the box's sanctioned branch below.
-  const ghSafeAuto =
-    GH_PR_SAFE_AUTO_APPROVE_OPS.has(op) &&
-    deps.autoApproveSafeHostActions !== false &&
-    !prCreateHasExplicitHead(op, args);
-  if (ghSafeAuto && !hostInitiatedGhOk) {
-    deps.prompts?.noteAutoApprove(
-      deps.boxId,
-      {
-        kind: 'confirm',
-        message: `gh pr ${op} from cloud box ${deps.boxName ?? deps.boxId}`,
-        detail: args.join(' ').slice(0, 200),
-        context: { command: `gh pr ${op}`, cwd: params.path, argv: args },
-      },
-      `safe: gh pr ${op}`,
-    );
-  }
-  if (
-    !GH_PR_READ_ONLY_OPS.has(op) &&
-    !ghSafeAuto &&
-    !hostInitiatedGhOk &&
-    deps.prompts &&
-    deps.subscribers
-  ) {
-    const detail = args.join(' ').slice(0, 200);
-    const ctx = {
-      kind: 'confirm' as const,
-      message: `Allow gh pr ${op} from cloud box ${deps.boxName ?? deps.boxId}?`,
-      detail,
-      defaultAnswer: 'n' as const,
-      context: {
-        command: `gh pr ${op}`,
-        cwd: params.path,
-        argv: args,
-      },
-    };
-    const hasSubscriber = deps.subscribers.count(deps.boxId) > 0;
-    if (!hasSubscriber && process.env['AGENTBOX_PROMPT'] !== 'off') {
-      const noSubMode = (process.env['AGENTBOX_GH_NO_SUB'] ?? 'deny').toLowerCase();
-      if (noSubMode === 'deny') {
-        return {
-          exitCode: 10,
-          stdout: '',
-          stderr:
-            'denied automatically — no attached wrapper to confirm. Attach `agentbox claude` (or similar) and retry, or set AGENTBOX_GH_NO_SUB=allow.\n',
-        };
-      }
-      if (noSubMode === 'allow') {
-        deps.log?.(`gh.pr.${op} auto-approved (no subscribers, AGENTBOX_GH_NO_SUB=allow)`);
-        // fall through
-      } else {
-        const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, ctx, {
-          ttlMs: 5 * 60 * 1000,
-        });
-        if (verdict.answer !== 'y') {
-          return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
-        }
-      }
-    } else {
-      const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, ctx);
-      if (verdict.answer !== 'y') {
-        return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
-      }
-    }
-  }
-
-  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
-  // on the box branch, so gh can't infer it). Probed from the box; a failed
-  // probe leaves args unchanged (today's behavior).
-  let finalArgs = args;
-  const containerPath = params.path ?? '/workspace';
-  const needsHeadProbe =
-    op === 'create' && !args.some((a) => a === '--head' || a.startsWith('--head='));
-  if (needsHeadProbe) {
-    const backend = await resolveCloudBackend(deps.backendName);
-    const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
-    const branchProbe = await backend.exec(
-      handle,
-      `git -C ${shellQuote(containerPath)} rev-parse --abbrev-ref HEAD`,
-    );
-    const branch = branchProbe.exitCode === 0 ? (branchProbe.stdout ?? '').trim() : '';
-    // Prefer the host-sanctioned branch so a headless PR targets the box's own
-    // work (and matches the safe-auto gate above), not whatever HEAD the agent
-    // may have switched to. Fall back to the probed HEAD when unknown.
-    finalArgs = injectPrCreateHead(op, lookup.sanctionedBranch ?? branch, finalArgs);
-  }
-  // Never let `gh` fall back to the host repo's checked-out branch.
-  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  const prRun = ghRunContext(lookup.workspacePath, deps.originUrl, finalArgs);
-  return runHostGh(['pr', op, ...prRun.args], prRun.cwd, { host: ghTarget.host });
 }
 
 /**
@@ -614,79 +423,62 @@ async function cloudWriteConfirm(
 }
 
 /**
- * Cloud `gh.run.<op>` executor (list / view / rerun). `list` / `view` are
- * silent reads; `rerun` re-triggers CI and goes through `cloudWriteConfirm`.
+ * Cloud `gh.exec`. Mirrors `handleGhExecRpc` in server.ts step for step —
+ * same blocklist, same destructive-confirm set, same allow-once default — so
+ * `gh` behaves identically whichever provider the box runs on. The only
+ * difference is the confirm helper: cloud goes through `cloudWriteConfirm`,
+ * which carries the no-subscriber fallback every gated cloud action shares.
  */
-async function runGhRunRpc(
+async function runGhExecRpc(
   action: HostAction,
   deps: CloudActionExecutorDeps,
 ): Promise<HostActionResult> {
-  const op = action.method.slice('gh.run.'.length);
-  if (!isGhRunOp(op)) {
-    return { exitCode: 64, stdout: '', stderr: `unknown gh.run.* op: ${op}\n` };
-  }
-  const params = (action.params ?? {}) as GhRunRpcParams;
+  const params = (action.params ?? {}) as GhExecRpcParams;
   const args = Array.isArray(params.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
     : [];
+  if (args.length === 0) {
+    return { exitCode: 64, stdout: '', stderr: 'gh: no arguments\n' };
+  }
+
+  const blocked = refuseBlockedGhCall(args);
+  if (blocked) return blocked;
+
+  const family = args[0] ?? '';
+  const op = args[1] ?? '';
+  if (family === 'pr') {
+    const checkoutOptIn = refuseCheckoutByDefault(op);
+    if (checkoutOptIn) return checkoutOptIn;
+  }
+  if (family === 'api') {
+    const inputRefusal = refuseGhApiInput(args);
+    if (inputRefusal) return inputRefusal;
+  }
+
   const ghTarget = await resolveGhTarget(deps.originUrl);
   if (ghTarget.error) return ghTarget.error;
   const lookup = await lookupCloudBox(deps.boxId);
 
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
-  // docker path runs, per the "fix across all providers" rule.
   const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
   if (ghRevoked) return ghRevoked;
-  if (!GH_RUN_READ_ONLY_OPS.has(op)) {
-    if (deps.autoApproveSafeHostActions !== false) {
-      // `gh run rerun` only re-triggers the project's own CI — safe subset.
-      deps.prompts?.noteAutoApprove(
-        deps.boxId,
-        {
-          kind: 'confirm',
-          message: `gh run ${op} from cloud box ${deps.boxName ?? deps.boxId}`,
-          detail: args.join(' ').slice(0, 200),
-          context: { command: `gh run ${op}`, cwd: params.path, argv: args },
-        },
-        `safe: gh run ${op}`,
-      );
-    } else {
-      const denied = await cloudWriteConfirm(deps, `gh run ${op}`, params.path, args);
-      if (denied) return denied;
-    }
+
+  const destructive = ghDestructiveTarget(args);
+  if (destructive || deps.autoApproveSafeHostActions === false) {
+    const label = destructive
+      ? `gh ${args.slice(0, 2).join(' ')} (destroys a ${destructive})`
+      : `gh ${args.slice(0, 2).join(' ')}`;
+    const denied = await cloudWriteConfirm(deps, label.trim(), params.path, [...args]);
+    if (denied) return denied;
   }
-  const runRun = ghRunContext(lookup.workspacePath, deps.originUrl, args);
-  return runHostGh(['run', op, ...runRun.args], runRun.cwd, { host: ghTarget.host });
-}
 
-/**
- * Cloud `gh.api` executor. Read-only, allowlisted endpoints only — same guards
- * as the docker `handleGhApiRpc`. No prompt (matches `gh pr view`).
- */
-async function runGhApiRpc(
-  action: HostAction,
-  deps: CloudActionExecutorDeps,
-): Promise<HostActionResult> {
-  const params = (action.params ?? {}) as GhApiRpcParams;
-  const endpoint = typeof params.endpoint === 'string' ? params.endpoint : '';
-  if (!isAllowedGhApiEndpoint(endpoint)) return GH_API_ENDPOINT_REFUSAL;
-  const args = Array.isArray(params.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-  const callRefusal = refuseGhApiCall(endpoint, args);
-  if (callRefusal) return callRefusal;
-  const ghTarget = await resolveGhTarget(deps.originUrl);
-  if (ghTarget.error) return ghTarget.error;
-  const lookup = await lookupCloudBox(deps.boxId);
-
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
-  // docker path runs, per the "fix across all providers" rule.
-  const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
-  if (ghRevoked) return ghRevoked;
-  // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
-  // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
-  const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
-  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
+  let finalArgs = args;
+  if (family === 'pr') {
+    const rest = injectPrCreateHead(op, lookup.sanctionedBranch, args.slice(2));
+    if (prCreateNeedsHead(op, rest)) return PR_CREATE_NO_HEAD_REFUSAL;
+    finalArgs = [family, op, ...rest];
+  }
+  const run = ghRunContext(lookup.workspacePath, deps.originUrl, finalArgs);
+  return runHostGh(run.args, run.cwd, { host: ghTarget.host });
 }
 
 /**

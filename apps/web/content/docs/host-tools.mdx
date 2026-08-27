@@ -31,7 +31,7 @@ tools:
 
 Running boxes pick up a new grant within a minute. No restart, no image rebuild.
 
-`gh` is granted out of the box — Claude Code's PR badge depends on it — and has its own richer handling (PR branch injection, a `gh api` endpoint allowlist). Turn it off with `agentbox config set tools.gh.enabled false`.
+`gh` is granted out of the box — Claude Code's PR badge depends on it — and has its own handling (see below). Turn it off with `agentbox config set tools.gh.enabled false`.
 
 ## Declaring tools in `agentbox.yaml`
 
@@ -110,6 +110,38 @@ agentbox tools add linear
 ```
 
 Then in the box, `ntn api v1/users/me` or `linear issue list` runs against your authenticated host CLI. `linear auth token` is refused by the credential guard above.
+
+## The GitHub CLI
+
+`gh` used to proxy only a curated list of subcommands, so `gh issue`, `gh search` and `gh release` came back as "not proxied". The whole CLI is available now, with two exceptions.
+
+**Refused outright** — the host owns its GitHub credential, and a box must not read it or move it:
+
+```bash
+gh auth token          # and refresh / login / logout / switch
+gh config set ...
+gh alias set ...       # an alias can be a shell escape that runs on the host
+gh extension install ...
+gh ssh-key add ...
+```
+
+**Always asks first**, even when approvals are otherwise silent — because "don't interrupt me for ordinary work" is not "delete things without asking":
+
+```bash
+gh repo delete | archive | rename | transfer
+gh release delete
+gh secret set | delete
+gh api -X DELETE ...
+```
+
+Everything else just runs: `gh issue`, `gh pr` (including `merge`), `gh search`, `gh release create`, `gh api` reads and writes.
+
+<Callout title="YOUR BRANCH, NOT THE HOST'S">
+  The host's `gh` runs in your host checkout, so a bare `gh pr view` would report on whatever *you*
+  have checked out. AgentBox injects the box's branch into `gh pr` commands so they describe the
+  box's work. `gh pr checkout` stays opt-in (`AGENTBOX_GH_PR_CHECKOUT=allow`) since it moves your
+  working tree.
+</Callout>
 
 ## Limits
 
