@@ -255,7 +255,7 @@ async function checkConfig(): Promise<CheckResult[]> {
  * Probe a binary, treating ENOENT (missing on PATH) as a distinct outcome
  * from a non-zero exit. `execa({reject:false})` returns a result envelope
  * even on spawn failure — `{ failed: true, code: 'ENOENT', exitCode: undefined }`
- * — rather than throwing. We map that to `missing: true` so the integration
+ * — rather than throwing. We map that to `missing: true` so the host-tool
  * check has a single, easy-to-read branch. Wrapped in try/catch in case a
  * future execa release reverts to throwing on spawn errors.
  */

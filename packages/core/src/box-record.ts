@@ -354,7 +354,7 @@ export interface BoxRecord {
    * Resolved `box.autoApproveSafeHostActions` at create time (default true).
    * Forwarded to the relay so the SAFE subset of host actions (open PR, PR
    * comments, sanctioned-branch push, contained non-secret file copy, CI
-   * rerun, checkpoint, integration writes) auto-resolves without a prompt.
+   * rerun, checkpoint, granted host-tool calls) auto-resolves without a prompt.
    * Absent is treated as enabled (default on) by the relay. Persisted so a
    * `relay` rehydrate re-registers with the same policy.
    */

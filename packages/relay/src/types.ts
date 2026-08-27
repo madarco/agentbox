@@ -93,7 +93,7 @@ export interface BoxRegistration {
    * Mirrors `box.autoApproveSafeHostActions` (default true). When not `false`,
    * the SAFE subset of host actions (open PR, PR/review comments,
    * sanctioned-branch push, contained non-secret file copy/download, CI rerun,
-   * checkpoint, integration writes) auto-resolves without a prompt — each
+   * checkpoint, granted host-tool calls) auto-resolves without a prompt — each
    * still emits a `host-action-auto-approved` event. Absent → enabled.
    */
   autoApproveSafeHostActions?: boolean;

@@ -52,7 +52,7 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   restart-all). The same operations are on the [REST API](/docs/api) and the
   [CLI](/docs/cli) (`agentbox git`, `agentbox services`, `agentbox open`).
 - **Approvals** — the host-action requests a box is blocked on (a `git push` to a
-  protected branch, `cp`, `download`, gh/integration writes). **Approve** unblocks
+  protected branch, `cp`, `download`, gh writes, host-tool calls). **Approve** unblocks
   the box; **Deny** returns an error to it. This is the same gate the relay prompts
   for in an attached terminal — surfaced in the browser so you can answer from
   anywhere on your machine.
