@@ -1,8 +1,8 @@
 # Plan: box `cp` reaches the real host, with custody as the cache
 
-Status: **not started**. One session per phase; tick each phase's box as it lands.
+Status: **Phase 0 done** (2026-08-27). One session per phase; tick each phase's box as it lands.
 
-- [ ] Phase 0 — measure the current behavior live
+- [x] Phase 0 — measure the current behavior live
 - [ ] Phase 1 — host-reach channel (control box ⇄ PC)
 - [ ] Phase 2 — custody as the cp cache + the explicit upload surface
 - [ ] Phase 3 — `cp toHost` and the offline outbox
@@ -61,15 +61,34 @@ resolves the box locally, prompts, shells `agentbox cp`), the streaming custody 
 
 ---
 
-## Phase 0 — measure first
+## Phase 0 — measured 2026-08-27 ✅
 
-Before any code change, against the live control box (`https://46.225.235.16.sslip.io`), from a
-non-LFS test project: create `--via-hub` on e2b, then in the box run
-`agentbox-ctl cp toHost /workspace/probe.txt ./` and `cp fromHost ~/probe-host.txt /workspace/`.
+Fresh Hetzner control box (`116.203.120.179`, hub 0.28.1), hub-created e2b box `cpprobe` from
+`agentbox-herdr-plugin` (non-LFS). Every result below is ground truth, not an exit code alone.
 
-Record the exact exit/stderr, whether an approval parks and where, and — by inspecting the VPS —
-where any bytes actually landed. **Confirm or correct the deleted-temp-clone reading above before
-building on it.**
+| probe (run inside the box) | result |
+| --- | --- |
+| `cp fromHost ./probe-live.txt /workspace/pulled-live.txt` (Mac-only file in the project) | control box logs `auto-approved … (safe: contained copy from host)`, then **exit 127**, `spawn /usr/local/bin/node ENOENT`. Nothing arrives. |
+| `cp toHost /workspace/probe-box.txt ./out-from-box.txt` | **exit 127**, same error. Nothing on the Mac, nothing on the VPS. |
+| `cp fromHost ~/probe-outside.txt …` (uncontained) | approval **parks on the control box** (`GET /api/v1/approvals`), the in-box call blocks with no TTL — killed at 45 s (exit 124). |
+
+**Root cause, confirmed and sharper than assumed.** The control box's `state.json` records
+`workspacePath: /tmp/agentbox-hub-worker-<jobId>` — the create job's temp clone — and the worker
+deletes it in its `finally`. `handleCpRpc` passes that path as the **cwd** of the spawned CLI, and
+Node reports a missing cwd as `spawn <bin> ENOENT`. Proven directly in the hub container: spawning
+the very same, definitely-present `/usr/local/bin/node` with `cwd:"/tmp/agentbox-hub-worker-gone"`
+reproduces the identical message. So cp on a hub box does not merely read the wrong machine — it
+never runs at all.
+
+Two findings to carry into the later phases:
+
+- **The auto-approve gate ran against the phantom path** and returned "safe: contained copy from
+  host". Whatever executes must also be what decides containment; a gate evaluated against a
+  directory that no longer exists is meaningless.
+- **`~` cannot express a host path.** The box's shell expands it before `agentbox-ctl` sees it, so
+  `cp fromHost ~/x` sends `/home/vscode/x` — the docs' own example. Phase 2's cache key is derived
+  from the resolved host path, so this needs an explicit answer (reject a box-home path, or add a
+  `host:~` form) rather than silently keying on a path that means nothing on the Mac.
 
 ## Phase 1 — host-reach channel (control box ⇄ PC)
 

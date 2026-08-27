@@ -160,6 +160,13 @@ async function main(): Promise<void> {
     // The streaming blob surface's own cap (`relay.custodyMaxBlobBytes`), which
     // governs `carry:` payloads rather than seed tars.
     custodyMaxBlobBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES),
+    // A password profile IS the control box: it brokers host actions that need
+    // the user's own files (`cp`) out to that machine's relay over
+    // `/admin/hostreach/*` instead of running them here, where the box's
+    // recorded workspace is a temp clone the create worker already deleted.
+    // Same signal as the durable-subscriber floor below.
+    controlPlane: authMode() === 'password',
+    hostReachTimeoutMs: positiveIntFromEnv(process.env.AGENTBOX_HOST_REACH_TIMEOUT_MS),
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {

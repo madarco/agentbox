@@ -9,6 +9,7 @@ import {
 } from './host-actions.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
 import { HostActionQueue } from './host-action-queue.js';
+import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
@@ -42,7 +43,7 @@ import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './gi
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
-import { adminGateAllows } from './admin-gate.js';
+import { adminGateAllows, timingSafeEqualStr } from './admin-gate.js';
 import {
   handleCustodyBlobRequest,
   handleCustodyRequest,
@@ -79,7 +80,7 @@ import { MemoryStore } from './store/memory-store.js';
 import { WriteThroughStore } from './store/write-through-store.js';
 import type { Store } from './store/store.js';
 import { DEFAULT_BOX_RELAY_PORT } from './types.js';
-import { buildCpArgv, cpFlags, normalizeCpParams } from './cp-rpc.js';
+import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
 import type {
   BoxRegistration,
   BoxWorktree,
@@ -171,6 +172,23 @@ export interface RelayServerOptions {
    */
   adminToken?: string;
   /**
+   * True on a control box (the hub's password profile). Turns on the
+   * `/admin/hostreach/*` surface and makes host actions that need the user's
+   * own filesystem — `cp.*` — park for that machine instead of running here.
+   *
+   * They cannot run here: a control box's record of a box it created points at
+   * the create job's temp clone, which the worker deletes, so executing locally
+   * spawns the CLI with a cwd that no longer exists. Even when it does exist,
+   * it is the wrong machine's files. See `docs/plans/box-cp-host-reach-plan.md`.
+   */
+  controlPlane?: boolean;
+  /**
+   * How long a parked host action waits for the user's machine before the
+   * control box gives up on it (`relay.hostReachTimeoutMs`). Only meaningful
+   * with `controlPlane`.
+   */
+  hostReachTimeoutMs?: number;
+  /**
    * Optional delegate for requests that matched no relay route (e.g. Next's
    * `getRequestHandler()`). Invoked at the top-level 404 fallthrough, so every
    * relay route still matches first and the UI can never shadow `/admin`,
@@ -195,6 +213,12 @@ export interface RelayServerHandle {
   custody?: CustodyStore | null;
   /** Present only in `mode === 'box'`: the parking lot for host-only RPCs. */
   hostActions?: HostActionQueue;
+  /**
+   * Present only on a control box (`controlPlane`): the parking lot for actions
+   * that need the user's own machine, drained by that machine's relay over
+   * `/admin/hostreach/*`.
+   */
+  hostReach?: HostReachQueue;
   url: string;
   /**
    * Wire a "kick the queue scheduler now" callback. Called by
@@ -242,6 +266,10 @@ const CP_RPC_TIMEOUT_MS = 300_000; // single-file/dir cp; tar pipe through docke
 const BROWSER_OPEN_RPC_TIMEOUT_MS = 15_000; // `open` hands off to the browser and returns at once.
 const BROWSER_OPEN_PROMPT_TTL_MS = 25_000; // the "open on host too?" offer auto-dismisses if ignored.
 const SSE_HEARTBEAT_MS = 15_000; // every 15s; wrapper reconnects if it sees no traffic for ~30s.
+/** Default hold for an idle `/admin/hostreach/poll` — under Caddy's 30s idle default. */
+const DEFAULT_HOSTREACH_WAIT_MS = 25_000;
+/** Ceiling for a client-requested hold, for the same proxy reason. */
+const MAX_HOSTREACH_WAIT_MS = 60_000;
 
 function send(
   res: ServerResponse,
@@ -402,6 +430,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // Box mode parks host-only RPCs until the host poller answers; host mode
   // executes them inline (the historical behavior).
   const hostActions = mode === 'box' ? new HostActionQueue() : null;
+  // A control box brokers rather than executes: actions that need the user's own
+  // files park here for that machine's relay to drain.
+  const hostReach =
+    opts.controlPlane === true
+      ? new HostReachQueue(
+          typeof opts.hostReachTimeoutMs === 'number' && opts.hostReachTimeoutMs > 0
+            ? { reachTimeoutMs: opts.hostReachTimeoutMs }
+            : {},
+        )
+      : null;
   // Host-mode handler for refreshed agent credentials (newest-wins backup
   // write + debounced `agentbox credentials propagate` spawn). In box mode the
   // event rides the local ring buffer to the bridge instead — the host's
@@ -585,6 +623,64 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         return;
       }
+    }
+
+    // The user's machine draining actions this control box parked for it.
+    //
+    // Admin-bearer-gated, NOT loopback-gated — the same rule, and the same
+    // reason, as custody: on a control box every request arrives through Caddy
+    // on the same host, so "looks loopback" proves nothing, and a box could
+    // otherwise poll this surface to read other boxes' actions or forge their
+    // results. Dispatched before the loopback gate below for that reason.
+    if (url.pathname.startsWith('/admin/hostreach')) {
+      if (!hostReach) {
+        send(res, 404, { error: 'host-reach is served only by a control box' });
+        return;
+      }
+      if (custodyAdminToken.length === 0) {
+        send(res, 503, { error: 'host-reach not configured: admin token unset' });
+        return;
+      }
+      if (!timingSafeEqualStr(bearerToken(req) ?? '', custodyAdminToken)) {
+        send(res, 401, { error: 'invalid admin token' });
+        return;
+      }
+      if (route === 'GET /admin/hostreach/poll') {
+        const requested = Number.parseInt(url.searchParams.get('wait') ?? '', 10);
+        // Bounded server-side: a client asking to be held for an hour would tie
+        // up a connection past every proxy's idle timeout.
+        const waitMs = Number.isFinite(requested)
+          ? Math.min(Math.max(requested, 0), MAX_HOSTREACH_WAIT_MS)
+          : DEFAULT_HOSTREACH_WAIT_MS;
+        const actions = await hostReach.poll(waitMs);
+        send(res, 200, { actions });
+        return;
+      }
+      if (route === 'POST /admin/hostreach/result') {
+        const body = await readJsonBody<BridgeActionResultBody>(req);
+        if (
+          !body ||
+          typeof body.id !== 'string' ||
+          body.id.length === 0 ||
+          typeof body.exitCode !== 'number'
+        ) {
+          send(res, 400, { error: 'expected {id, exitCode, stdout, stderr}' });
+          return;
+        }
+        const ok = hostReach.resolve(body.id, {
+          exitCode: body.exitCode,
+          stdout: typeof body.stdout === 'string' ? body.stdout : '',
+          stderr: typeof body.stderr === 'string' ? body.stderr : '',
+        });
+        if (!ok) {
+          send(res, 404, { error: 'no parked action with that id' });
+          return;
+        }
+        send(res, 204, null);
+        return;
+      }
+      send(res, 404, { error: 'not found', route });
+      return;
     }
 
     // Custody (`/admin/custody/*`) is admin-bearer-gated, NOT loopback-gated:
@@ -905,6 +1001,31 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         const result = await leaseTokenResult(leaser, reg);
         send(res, result.exitCode === 0 ? 200 : 500, result);
+        return;
+      }
+      if (
+        hostReach &&
+        reg.kind === 'cloud' &&
+        (body.method === 'cp.toHost' || body.method === 'cp.fromHost')
+      ) {
+        // A control box has neither the user's files nor a live checkout to
+        // resolve them against, so it brokers instead of executing: park the
+        // action for the machine that does, and let THAT machine gate it. The
+        // gate belongs with the executor — deciding "contained in the project"
+        // here would judge a path that does not exist on this disk (it is the
+        // create job's deleted temp clone), which is how a copy the user never
+        // saw got auto-approved as safe.
+        const outcome = await hostReach.request(reg.boxId, body.method, body.params);
+        if (outcome.kind === 'result') {
+          send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
+          return;
+        }
+        log(`cp ${body.method} for ${reg.boxId}: host unreachable (${outcome.reason})`);
+        send(res, 500, {
+          exitCode: 69,
+          stdout: '',
+          stderr: cpUnreachableMessage(body.method, reg.name, outcome.reason),
+        });
         return;
       }
       if (body.method === 'cp.toHost' || body.method === 'cp.fromHost') {
@@ -1693,6 +1814,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     hubNotifier,
     custody,
     hostActions: hostActions ?? undefined,
+    hostReach: hostReach ?? undefined,
     url: `http://${host}:${String(opts.port)}`,
     setQueuePoke: (fn) => {
       queuePoke = fn;
@@ -1705,6 +1827,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     },
     close: async () => {
       if (pollers) await pollers.stopAll();
+      // Settles every parked copy as unreachable, so an in-flight `cp` fails
+      // fast on hub restart instead of hanging until the box's own timeout.
+      hostReach?.stop();
       await new Promise<void>((resolve, reject) => {
         server.close((err) => {
           if (err) reject(err);
@@ -2150,6 +2275,35 @@ async function handleToolRequest(
     stdout: `${name} granted for this project\n`,
     stderr: '',
   };
+}
+
+/**
+ * What a box is told when its `cp` could not reach the machine that holds the
+ * files. Distinguishes the two ways that happens, because the fixes differ: a
+ * machine that never connected needs starting, one that vanished mid-copy needs
+ * the copy retried.
+ *
+ * Exit 69 (EX_UNAVAILABLE) rather than a generic 1, so an agent can tell "your
+ * side is offline, try later" apart from "that path is wrong".
+ */
+function cpUnreachableMessage(
+  method: CpMethod,
+  boxName: string,
+  reason: HostReachUnreachable,
+): string {
+  const direction = method === 'cp.toHost' ? 'to' : 'from';
+  const lead =
+    reason === 'went-away'
+      ? 'the machine holding these files stopped responding part-way through the copy'
+      : 'the machine holding these files is not connected to this hub';
+  return [
+    `cp ${direction} the host could not run: ${lead}.`,
+    '',
+    'This hub brokers the copy; it does not hold your project files.',
+    `Start AgentBox on that machine (\`agentbox relay start\`) and retry, or run it there directly:`,
+    `  agentbox cp ${boxName}:<src> <dst>`,
+    '',
+  ].join('\n');
 }
 
 /**

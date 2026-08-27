@@ -250,6 +250,13 @@ export interface UserConfig {
      * own via `AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, so raise both.
      */
     custodyMaxBlobBytes?: number;
+    /**
+     * How long a control box waits for the user's machine to pick up a host
+     * action that only that machine can run (`cp` between box and host), before
+     * it treats the machine as offline. Also the silence after which a machine
+     * that took an action is presumed gone, so the box is never left hanging.
+     */
+    hostReachTimeoutMs?: number;
   };
   git?: {
     pushMode?: GitPushMode;
@@ -424,6 +431,7 @@ export interface EffectiveConfig {
     controlPlaneUrl: string | undefined;
     custodyMaxBodyBytes: number;
     custodyMaxBlobBytes: number;
+    hostReachTimeoutMs: number;
   };
   git: {
     pushMode: GitPushMode;
@@ -621,6 +629,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     controlPlaneUrl: undefined,
     custodyMaxBodyBytes: 32 * 1024 * 1024,
     custodyMaxBlobBytes: 100 * 1024 * 1024,
+    hostReachTimeoutMs: 60_000,
   },
   git: {
     pushMode: 'auto',
@@ -1086,6 +1095,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       "Per-request cap (bytes) for the streaming custody blob API (default 104857600 = 100 MiB), which carries payloads too large to buffer as base64 — chiefly a project's `carry:` material. Defaults to the same value as box.cpMaxBytes so an entry the carry gate accepted at resolve time can actually be stored on a control box; if the two disagree the CLI promises a copy the transport then refuses. Enforced mid-stream (an over-cap upload is cut off, not landed). A control box enforces its own cap via AGENTBOX_CUSTODY_MAX_BLOB_BYTES, so raise both.",
+    advanced: true,
+  },
+  {
+    key: 'relay.hostReachTimeoutMs',
+    type: 'int',
+    description:
+      'How long a control box waits (ms, default 60000) for your machine to pick up a copy between a box and your files, before treating it as offline — and how long a silence must last before a machine that already took the copy is presumed gone. Your machine long-polls the control box while its relay runs, so this is a missed-heartbeat window, not a per-copy timeout: once your machine has the action it can sit on a confirmation prompt for as long as you like. Only meaningful with relay.controlPlaneUrl set; lower it to fail over to the hub cache sooner on a flaky link, raise it if your machine sleeps often.',
     advanced: true,
   },
   {

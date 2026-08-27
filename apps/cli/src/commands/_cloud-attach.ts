@@ -22,6 +22,7 @@ import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
 import { clipboardCaptureAvailable } from '../lib/host-clipboard.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
+import { ensureHostReachDrainer } from '../control-plane/host-reach-drainer.js';
 
 /** Give up reconnecting a dropped attach after this long (box likely gone). */
 const RECONNECT_TIMEOUT_MS = 5 * 60_000;
@@ -90,6 +91,10 @@ export interface CloudAgentAttachArgs {
 }
 
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {
+  // Working with a control-box box means this machine should be draining the
+  // `cp` actions that box parks for it. Nothing else on the hub-box path starts
+  // the relay. Fire-and-forget: an attach must not wait on a daemon.
+  void ensureHostReachDrainer(args.box);
   const provider = await providerForBox(args.box);
   if (!provider.buildAttach) {
     throw new Error(`provider '${provider.name}' does not support interactive attach`);

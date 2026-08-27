@@ -3,6 +3,9 @@ import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
+import { HostReachPoller } from './host-reach-poller.js';
+import { executeCloudAction, lookupCloudBoxOwner } from './host-actions.js';
+import type { HostAction, HostActionResult } from './types.js';
 
 // Re-exported here (not just from index.ts) so the two processes that own a
 // relay — the CLI's `agentbox-relay serve` bin and the hub server — can register
@@ -13,6 +16,20 @@ export {
   type CloudBackendLoader,
   type CloudCpModule,
 } from './host-actions.js';
+
+export interface RelayDaemonOptions extends RelayServerOptions {
+  /**
+   * Control box this machine works with (`relay.controlPlaneUrl`). Set → the
+   * daemon runs a {@link HostReachPoller} against it. Falls back to
+   * `AGENTBOX_CONTROL_PLANE_URL`, which is how the CLI's `spawnRelay` passes it.
+   */
+  controlPlaneUrl?: string;
+  /**
+   * Bearer for that control box's `/admin/hostreach/*`. Falls back to
+   * `AGENTBOX_RELAY_ADMIN_TOKEN`. Absent → no poller (logged, never silent).
+   */
+  hostReachAdminToken?: string;
+}
 
 export interface RelayDaemonHandle {
   /** The underlying relay server (url, store, close, …). */
@@ -31,9 +48,45 @@ export interface RelayDaemonHandle {
  * stay with the caller so the same daemon works under both the relay bin and
  * the hub server.
  */
-export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayDaemonHandle> {
+export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayDaemonHandle> {
   const handle = await startRelayServer(opts);
   const log = opts.logger ?? (() => {});
+  // With a control box configured, this relay is also the user's side of the
+  // host-reach channel: it drains the `cp` actions the control box parked for
+  // this machine and runs them against the real project files here.
+  const controlPlaneUrl = (opts.controlPlaneUrl ?? process.env.AGENTBOX_CONTROL_PLANE_URL ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  const hostReachToken = (
+    opts.hostReachAdminToken ??
+    process.env.AGENTBOX_RELAY_ADMIN_TOKEN ??
+    ''
+  ).trim();
+  // Never on the control box itself: it is the one parking the actions, and a
+  // poller there would race the PC for work it cannot do.
+  const hostReachPoller =
+    controlPlaneUrl.length > 0 && hostReachToken.length > 0 && opts.controlPlane !== true
+      ? new HostReachPoller({
+          controlPlaneUrl,
+          adminToken: hostReachToken,
+          logger: log,
+          execute: (action) =>
+            executeHostReachAction(action, {
+              prompts: handle.prompts,
+              subscribers: handle.subscribers,
+              log,
+            }),
+        })
+      : null;
+  hostReachPoller?.start();
+  if (controlPlaneUrl.length > 0 && hostReachToken.length === 0 && opts.controlPlane !== true) {
+    // Silence here would look exactly like "cp is broken again": the box's copy
+    // falls back to the hub's cache (or fails) with nothing on this side saying why.
+    log(
+      'host-reach: a control box is configured but no admin token is available; ' +
+        'cp between a hub box and this machine will not reach it (re-run `agentbox hub setup`)',
+    );
+  }
   const autopause = startAutopauseLoop({
     registry: handle.registry,
     statusStore: handle.statusStore,
@@ -73,8 +126,48 @@ export async function startRelayDaemon(opts: RelayServerOptions): Promise<RelayD
         cloudKeepalive.stop(),
         queue.stop(),
         retention.stop(),
+        hostReachPoller?.stop() ?? Promise.resolve(),
       ]);
       await handle.close();
     },
   };
+}
+
+/**
+ * Run one host-reach action on this machine, with this relay's own prompt
+ * surfaces — so the confirm lands in the attach footer / local hub / tray of the
+ * person whose files are about to move, and containment is judged against the
+ * real project path rather than the control box's idea of one.
+ *
+ * Resolving the box locally is also the authorization step: this machine only
+ * acts for boxes it already knows. A box it has never adopted gets a result
+ * telling the user how to adopt it, never a hang.
+ */
+async function executeHostReachAction(
+  action: HostAction,
+  deps: {
+    prompts: RelayServerHandle['prompts'];
+    subscribers: RelayServerHandle['subscribers'];
+    log: (line: string) => void;
+  },
+): Promise<HostActionResult> {
+  const owner = await lookupCloudBoxOwner(action.boxId);
+  if (!owner) {
+    return {
+      exitCode: 69,
+      stdout: '',
+      stderr:
+        `this machine has no record of box ${action.boxId}, so it cannot copy files for it.\n` +
+        'Use the box here once — `agentbox ls` or `agentbox attach <box>` — to adopt it, then retry.\n',
+    };
+  }
+  return executeCloudAction(action, {
+    backendName: owner.backendName,
+    boxId: action.boxId,
+    boxName: owner.name,
+    prompts: deps.prompts,
+    subscribers: deps.subscribers,
+    autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
+    log: deps.log,
+  });
 }

@@ -329,11 +329,22 @@ const statusSub = new Command('status')
           );
           return;
         }
+        // Copies between a box and THIS machine are served by this machine's
+        // relay draining the control box's queue. With it down they fall back to
+        // the hub's cached copy (or fail) — a degradation worth naming here,
+        // where someone is already asking how the hub is doing.
+        const drainer = (await getHubStatus()).running
+          ? []
+          : [
+              '  local:   this machine is not draining host actions — `cp` between a box and',
+              '           your files will use the hub cache; run `agentbox relay start` to serve live',
+            ];
         process.stdout.write(
           [
             `hub: remote (${st.healthy ? 'reachable' : 'UNREACHABLE'})`,
             `  url:     ${st.url}`,
             `  health:  ${st.detail}`,
+            ...drainer,
             ...(b.version
               ? [`  version: ${b.version}${b.versionSource === 'deployed' ? ' (as deployed)' : ''}`]
               : []),

@@ -168,7 +168,8 @@
         "port": { "type": "integer" },
         "controlPlaneUrl": { "type": "string" },
         "custodyMaxBodyBytes": { "type": "integer" },
-        "custodyMaxBlobBytes": { "type": "integer" }
+        "custodyMaxBlobBytes": { "type": "integer" },
+        "hostReachTimeoutMs": { "type": "integer" }
       }
     },
     "ssh": {

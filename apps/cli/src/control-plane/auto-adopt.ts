@@ -136,6 +136,10 @@ export async function tryAutoAdopt(
       controlPlaneUrl: target.url,
       cwd,
     });
+    // Adopting is the moment this machine starts driving a control-box box, so
+    // it is also the moment it should start answering that box's `cp` requests.
+    const { ensureHostReachDrainer } = await import('./host-reach-drainer.js');
+    void ensureHostReachDrainer(res.record);
     return res.record;
   } catch {
     // A network failure, an expired budget, or a bad token mean we never got an

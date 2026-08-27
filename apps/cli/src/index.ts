@@ -36,6 +36,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { applyRelayPortAtStartup } from './relay-port-override.js';
+import { applyHostReachEnvAtStartup } from './host-reach-env.js';
 import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
@@ -288,6 +289,9 @@ await applyEngineOverrideAtStartup();
 // probe, spawn and box-facing URL resolves through.
 const relayPortWarning = await applyRelayPortAtStartup();
 if (relayPortWarning !== null) process.stderr.write(`agentbox: ${relayPortWarning}\n`);
+// Same reason and same timing: any command may spawn the relay, and it can only
+// serve this machine's side of a control box's `cp` if it inherits both values.
+await applyHostReachEnvAtStartup();
 
 const argv = rewriteProviderPrefix(process.argv);
 

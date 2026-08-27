@@ -41,6 +41,13 @@ export {
   type RegistrationToRecordOptions,
 } from './registration-to-record.js';
 export { HostActionQueue } from './host-action-queue.js';
+export {
+  HostReachQueue,
+  DEFAULT_HOST_REACH_TIMEOUT_MS,
+  type HostReachOutcome,
+  type HostReachUnreachable,
+} from './host-reach.js';
+export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {

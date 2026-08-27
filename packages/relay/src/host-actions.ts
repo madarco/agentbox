@@ -694,6 +694,44 @@ async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
 }
 
 /**
+ * What this machine knows about a box it owns a record for. Deliberately not
+ * `originUrl`: that lives on the *registration* (never the record) precisely so
+ * a box can't nominate its own push target, and no cp path needs it.
+ */
+export interface CloudBoxOwner {
+  name: string;
+  /** `cloud.backend` — which provider's executor the action needs. */
+  backendName: string;
+  autoApproveSafeHostActions?: boolean;
+}
+
+/**
+ * Resolve a box from THIS machine's `~/.agentbox/state.json`, for the host-reach
+ * poller: a control box hands over an action by box id, and only the machine
+ * that actually has the box's record (and therefore its project checkout) can
+ * carry it out.
+ *
+ * Null rather than throwing when the box is unknown — an un-adopted box is an
+ * ordinary state the caller answers with instructions, not a failure.
+ */
+export async function lookupCloudBoxOwner(boxId: string): Promise<CloudBoxOwner | null> {
+  try {
+    const state = await readState();
+    const hit = findBox(boxId, state);
+    if (hit.kind !== 'ok') return null;
+    const backendName = hit.box.cloud?.backend ?? hit.box.provider;
+    if (!backendName) return null;
+    return {
+      name: hit.box.name,
+      backendName,
+      autoApproveSafeHostActions: hit.box.autoApproveSafeHostActions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The box's registered host workspace (the host dir that mirrors `/workspace`),
  * used as the base for resolving relative host paths in `cp`/`download` RPCs.
  * Returns `undefined` when the box isn't in state. Shared by the docker
