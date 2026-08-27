@@ -39,9 +39,9 @@ async function granted(): Promise<string[]> {
   return [...map.keys()].sort();
 }
 
-async function runGate(yes: boolean) {
+async function runGate(yes: boolean, isTTY = false) {
   const { runToolsGate } = await import('../src/lib/tools-gate.js');
-  return runToolsGate({ projectRoot, yes });
+  return runToolsGate({ projectRoot, yes, isTTY });
 }
 
 describe('agentbox.yaml tools: gate', () => {
@@ -94,6 +94,17 @@ describe('agentbox.yaml tools: gate', () => {
   it('warns and grants nothing on a malformed block', async () => {
     await writeYaml("tools:\n  aws:\n    deny: ['([unclosed']\n");
     const r = await runGate(true);
+    expect(r.granted).toEqual([]);
+    expect(await granted()).toEqual([]);
+  });
+
+  // @clack's confirm throws uv_tty_init on a non-TTY stdin, so the gate has
+  // to check rather than catch. Declining beats failing the create: an
+  // ungranted tool is one missing command, not a broken box.
+  it('declines cleanly with no TTY and no --yes, instead of throwing', async () => {
+    await writeYaml('tools:\n  - terraform\n');
+    const r = await runGate(false, false);
+    expect(r.declined).toEqual(['terraform']);
     expect(r.granted).toEqual([]);
     expect(await granted()).toEqual([]);
   });

@@ -24,6 +24,8 @@ export interface ToolsGateArgs {
   projectRoot: string;
   /** `-y` / `--yes`: approve the project's declared tools without asking. */
   yes: boolean;
+  /** Caller-controlled TTY check; default `process.stdin.isTTY`. */
+  isTTY?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -65,16 +67,30 @@ export async function runToolsGate(args: ToolsGateArgs): Promise<ToolsGateResult
   }
 
   const names = pending.map((r) => r.name).join(', ');
+  const declined = (): ToolsGateResult => {
+    emit(`tools: declined ${names}`);
+    log.info(`tools: not granted (${names}). Grant later with \`agentbox tools add <name>\`.`);
+    return { granted: [], declined: pending.map((r) => r.name) };
+  };
+
   if (!args.yes) {
+    // No TTY and no --yes: decline cleanly rather than throwing. Unlike
+    // `carry:` (whose whole point is copying files the box needs), an
+    // ungranted tool just means one missing command — failing the create
+    // would be worse than proceeding without it. `@clack`'s confirm throws
+    // `uv_tty_init` on a non-TTY stdin, so this has to be checked, not caught.
+    if (!(args.isTTY ?? process.stdin.isTTY)) {
+      log.info(
+        `tools: ${names} requested but stdin is not a TTY — not granted. ` +
+          'Re-run with --yes, or grant on the host with `agentbox tools add <name>`.',
+      );
+      return declined();
+    }
     const answer = await confirm({
       message: `This project requests access to host CLIs: ${names}. Grant them?`,
       initialValue: false,
     });
-    if (isCancel(answer) || !answer) {
-      emit(`tools: declined ${names}`);
-      log.info(`tools: not granted (${names}). Grant later with \`agentbox tools add <name>\`.`);
-      return { granted: [], declined: pending.map((r) => r.name) };
-    }
+    if (isCancel(answer) || !answer) return declined();
   }
 
   const file = projectToolsFile(args.projectRoot);
@@ -91,5 +107,8 @@ export async function runToolsGate(args: ToolsGateArgs): Promise<ToolsGateResult
     });
   }
   emit(`tools: granted ${names}`);
+  // Always visible, including under --yes: granting a host CLI is a standing
+  // capability for this box, so it should never happen silently.
+  log.info(`tools: granted ${names} — this box can now run them on the host.`);
   return { granted: pending.map((r) => r.name), declined: [] };
 }
