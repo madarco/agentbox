@@ -353,6 +353,14 @@ export class HostReachQueue {
       const owner = pending.deliveredTo;
       const seenAt = owner === undefined ? this.lastPollAtMs : (this.pollerSeen.get(owner) ?? null);
       if (seenAt !== null && now - seenAt <= this.reachTimeoutMs) continue;
+      // Offer it before declaring it lost. A relay that restarted mid-copy is
+      // sitting in its long poll right now, and `takeUndelivered` only runs when
+      // a poll *arrives* — so without this the box fails over to the cache while
+      // the machine that owns the files waits, connected, for work to appear.
+      pending.delivered = false;
+      pending.deliveredTo = undefined;
+      this.handOff();
+      if (this.map.get(id) !== pending || pending.delivered) continue;
       this.map.delete(id);
       pending.settle({ kind: 'unreachable', reason: 'went-away' });
     }

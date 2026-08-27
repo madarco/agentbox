@@ -88,6 +88,29 @@ describe('HostReachQueue', () => {
     await expect(pending).resolves.toEqual({ kind: 'unreachable', reason: 'went-away' });
   });
 
+  it('hands an orphan to a poller already waiting, rather than declaring it lost', async () => {
+    // A relay that restarted mid-copy is blocked in its long poll. Work is only
+    // re-offered when a poll ARRIVES, so a sweep that settles on the spot fails
+    // the box over to the cache while the machine holding the files sits idle.
+    let now = 1_000;
+    const q = new HostReachQueue({
+      graceMs: 10_000,
+      reachTimeoutMs: 200,
+      sweepIntervalMs: 10,
+      now: () => now,
+    });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const [taken] = await q.poll(20, 'owner');
+    expect(taken).toBeDefined();
+    // The replacement opens a long poll and waits; the old owner goes silent.
+    const waiting = q.poll(5_000, 'restarted');
+    now += 300;
+    const handed = await waiting;
+    expect(handed.map((a) => a.id)).toEqual([taken!.id]);
+    q.resolve(handed[0]!.id, { exitCode: 0, stdout: 'done', stderr: '' }, 'restarted');
+    await expect(pending).resolves.toMatchObject({ kind: 'result' });
+  });
+
   it('reports reachability from polls alone, so an idle machine still counts as present', async () => {
     let now = 1_000;
     const q = new HostReachQueue({ reachTimeoutMs: 100, now: () => now });
