@@ -73,7 +73,11 @@ export async function lookupCpCache(
 /** One line per entry, so the age is visible in both the approval and the box. */
 export function describeCpCacheEntries(lookup: CpCacheLookup, now: number = Date.now()): string {
   return lookup.entries
-    .map((e) => `  ${e.sourcePath} (${describeCacheAge(e.meta.capturedAt, now)})`)
+    .map(
+      // The path it was captured FROM on the owning machine, not the box's
+      // spelling of it: the person approving is being asked about their own disk.
+      (e) => `  ${e.meta.sourcePath} (${describeCacheAge(e.meta.capturedAt, now)})`,
+    )
     .join('\n');
 }
 

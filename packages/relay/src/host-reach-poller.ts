@@ -33,8 +33,8 @@ export interface HostReachPollerDeps {
   execute: (action: HostAction) => Promise<HostActionResult>;
   /**
    * Land any copies that were parked for this machine while it was offline.
-   * Called once per reconnect (not per poll) — the parked set only changes when
-   * a box writes to it, and a prompt per poll cycle would be intolerable.
+   * Started (never awaited) on first contact and re-checked periodically; it
+   * opens a confirm per item, so it must not gate the poll loop.
    */
   drainOutbox?: () => Promise<void>;
   logger?: (line: string) => void;
@@ -51,6 +51,8 @@ const REQUEST_TIMEOUT_MS = 40_000;
 const RESULT_TIMEOUT_MS = 30_000;
 const BACKOFF_BASE_MS = 2_000;
 const BACKOFF_MAX_MS = 60_000;
+/** How often a long-lived poller re-checks the outbox after its first look. */
+const OUTBOX_RECHECK_MS = 5 * 60_000;
 
 interface JsonResponse {
   status: number;
@@ -63,8 +65,10 @@ export class HostReachPoller {
   private backoffMs = 0;
   /** Suppresses repeat log lines while a control box stays unreachable. */
   private loggedFailure = false;
-  /** The outbox drain runs once per process, on first contact. */
-  private drainedOutbox = false;
+  /** Set while a drain is in flight, so only one runs at a time. */
+  private drainingOutbox = false;
+  /** Epoch ms of the last drain, for the periodic re-check. */
+  private lastDrainAtMs = 0;
 
   constructor(private readonly deps: HostReachPollerDeps) {}
 
@@ -108,18 +112,7 @@ export class HostReachPoller {
           this.log('host-reach: control box reachable again');
           this.loggedFailure = false;
         }
-        if (!this.drainedOutbox) {
-          // First successful contact of this session: collect whatever piled up
-          // while this machine was away, before handling new work.
-          this.drainedOutbox = true;
-          try {
-            await this.deps.drainOutbox?.();
-          } catch (err) {
-            this.log(
-              `host-reach: could not land parked copies: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+        this.maybeDrainOutbox();
         const parsed = JSON.parse(res.text.length > 0 ? res.text : '{}') as {
           actions?: HostAction[];
         };
@@ -145,6 +138,37 @@ export class HostReachPoller {
         await delay(this.backoffMs);
       }
     }
+  }
+
+  /**
+   * Kick off an outbox drain, **without** waiting for it.
+   *
+   * Deliberately not awaited inside the poll loop: a drain opens a confirm per
+   * parked copy and blocks until the user answers, so awaiting it here stops
+   * this machine polling — the control box then declares it gone and live
+   * copies start failing over to the cache while the user is sitting right
+   * there. Found exactly that way in a live run.
+   *
+   * Re-checked periodically rather than once per process: a copy can be parked
+   * while this machine is up (a network blip on the control box's side is
+   * enough), and a machine that stays online for days would otherwise never
+   * look again.
+   */
+  private maybeDrainOutbox(): void {
+    if (!this.deps.drainOutbox || this.drainingOutbox) return;
+    if (this.lastDrainAtMs > 0 && Date.now() - this.lastDrainAtMs < OUTBOX_RECHECK_MS) return;
+    this.drainingOutbox = true;
+    this.lastDrainAtMs = Date.now();
+    void this.deps
+      .drainOutbox()
+      .catch((err: unknown) => {
+        this.log(
+          `host-reach: could not land parked copies: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        this.drainingOutbox = false;
+      });
   }
 
   private async handle(base: string, action: HostAction): Promise<void> {
