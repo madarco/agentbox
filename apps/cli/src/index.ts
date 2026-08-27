@@ -66,6 +66,7 @@ import { forkCommand } from './commands/fork.js';
 import { installCommand, runInstallWizard } from './commands/install.js';
 import { pluginCommand } from './commands/plugin.js';
 import { doctorCommand } from './commands/doctor.js';
+import { toolsCommand } from './commands/tools.js';
 import { isFirstRun } from './lib/first-run.js';
 import { printCliError } from './lib/print-cli-error.js';
 import { gitCommand } from './commands/git.js';
@@ -250,6 +251,7 @@ program.addCommand(installCommand);
 program.addCommand(appCommand);
 program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
+program.addCommand(toolsCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildCompactHelp(program));

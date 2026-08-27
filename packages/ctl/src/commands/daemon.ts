@@ -13,6 +13,7 @@ import { Supervisor } from '../supervisor.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
+import { ToolLinksWatcher } from '../tool-links-watcher.js';
 import {
   startBoxRelayForwarder,
   type BoxRelayForwarderHandle,
@@ -84,6 +85,26 @@ export const daemonCommand = new Command('daemon')
       credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
       credentialsWatcher.start();
     }
+
+    // Keep the per-tool shim symlinks in step with the host's grant list, so
+    // an approved `agentbox-ctl tool request` makes the command usable in a
+    // running box. Cheap poll; see tool-links-watcher.ts for why not a push.
+    const toolLinks = new ToolLinksWatcher({
+      onChange: (added, removed, conflicts) => {
+        if (added.length) {
+          process.stdout.write(`agentbox-ctl: host tools linked: ${added.join(', ')}\n`);
+        }
+        if (removed.length) {
+          process.stdout.write(`agentbox-ctl: host tools unlinked: ${removed.join(', ')}\n`);
+        }
+        if (conflicts.length) {
+          process.stderr.write(
+            `agentbox-ctl: host tools NOT linked (a real binary owns the name): ${conflicts.join(', ')}\n`,
+          );
+        }
+      },
+    });
+    toolLinks.start();
 
     // Codex's JSON-hook firing is unreliable in 0.134.0 (see
     // packages/sandbox-docker/scripts/agentbox-codex-hooks.json header). Run a
@@ -218,6 +239,7 @@ export const daemonCommand = new Command('daemon')
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
       if (credentialsWatcher) credentialsWatcher.stop();
+      toolLinks.stop();
       reporter.stop();
       reporter.flush();
       server.close();

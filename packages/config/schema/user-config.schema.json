@@ -52,27 +52,7 @@
         "claudeInstall": { "enum": ["native", "npm"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
-        "tools": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "gh": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "enabled": { "type": "boolean" }
-          }
-        },
-        "request": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "enabled": { "type": "boolean" }
-          }
-        }
-      }
-    },
-    "vnc": { "type": "boolean" },
+        "vnc": { "type": "boolean" },
         "autoApproveHostActions": { "type": "boolean" },
         "autoApproveSafeHostActions": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
@@ -219,6 +199,26 @@
       "properties": {
         "useCurrentBranch": { "type": "boolean" },
         "viaHub": { "type": "boolean" }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gh": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
       }
     },
     "vnc": {

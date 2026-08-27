@@ -14,6 +14,7 @@ import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docke
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
+import { runToolsGate } from '../lib/tools-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '../lib/log-file.js';
@@ -543,6 +544,20 @@ export const createCommand = new Command('create')
       log.error(err instanceof Error ? err.message : String(err));
       cmdLog.close();
       process.exit(1);
+    }
+
+    // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
+    // only REQUEST host CLIs; the grant is the host's decision and lands in
+    // the host-only grant file. Never blocks creation — a declined request
+    // just means the box doesn't get that command.
+    try {
+      await runToolsGate({
+        projectRoot,
+        yes: !!opts.yes,
+        onLog: (line) => cmdLog.write(line),
+      });
+    } catch (err) {
+      log.warn(`tools: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // git.pushMode=direct (--dangerously-with-credentials): copy the user's git credentials

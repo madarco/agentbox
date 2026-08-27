@@ -56,9 +56,9 @@ afterAll(async () => {
 // Dynamic import so @agentbox/config evaluates AFTER the HOME redirect above
 // (see the module-top comment). resetModules() in beforeEach makes this a fresh
 // instance per test; it still resolves STATE_DIR under TEST_HOME.
-async function setProjectNotionEnabled(): Promise<void> {
+async function setProjectGhDisabled(): Promise<void> {
   const { setConfigValue } = await import('@agentbox/config');
-  await setConfigValue('project', 'tools.gh.enabled', 'true', tmpCwd, {
+  await setConfigValue('project', 'tools.gh.enabled', 'false', tmpCwd, {
     raw: true,
   });
 }
@@ -88,33 +88,33 @@ async function runConfigGet(args: string[]): Promise<{ stdout: string; stderr: s
 
 describe('config get on a nested 3-level key', () => {
   it('returns the leaf value, not <unset>', async () => {
-    await setProjectNotionEnabled();
+    await setProjectGhDisabled();
     const { stdout } = await runConfigGet(['get', 'tools.gh.enabled']);
-    expect(stdout).toContain('tools.gh.enabled = true');
+    expect(stdout).toContain('tools.gh.enabled = false');
     expect(stdout).toMatch(/from: project /);
     expect(stdout).not.toContain('<unset>');
   });
 
   it('--json carries the value and source', async () => {
-    await setProjectNotionEnabled();
+    await setProjectGhDisabled();
     const { stdout } = await runConfigGet(['get', 'tools.gh.enabled', '--json']);
     const parsed = JSON.parse(stdout) as { key: string; value: unknown; source: string };
     expect(parsed.key).toBe('tools.gh.enabled');
-    expect(parsed.value).toBe(true);
+    expect(parsed.value).toBe(false);
     expect(parsed.source).toBe('project');
   });
 
   it('--all walks every layer (no silent <unset> for the project layer)', async () => {
-    await setProjectNotionEnabled();
+    await setProjectGhDisabled();
     const { stdout } = await runConfigGet(['get', 'tools.gh.enabled', '--all']);
-    expect(stdout).toMatch(/effective: true /);
-    expect(stdout).toMatch(/project:\s+true /);
-    expect(stdout).toMatch(/default:\s+false/);
+    expect(stdout).toMatch(/effective: false /);
+    expect(stdout).toMatch(/project:\s+false /);
+    expect(stdout).toMatch(/default:\s+true/);
   });
 
-  it('unset key falls back to the built-in default (false)', async () => {
+  it('unset key falls back to the built-in default (true)', async () => {
     const { stdout } = await runConfigGet(['get', 'tools.gh.enabled']);
-    expect(stdout).toContain('tools.gh.enabled = false');
+    expect(stdout).toContain('tools.gh.enabled = true');
     expect(stdout).toMatch(/from: built-in default/);
   });
 });
