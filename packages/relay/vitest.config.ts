@@ -12,6 +12,7 @@ export default defineConfig({
     // (HOME / PATH / AGENTBOX_PROMPT) and rely on per-file process isolation.
     hookTimeout: 30_000,
     testTimeout: 30_000,
+    setupFiles: ['./test/setup.ts'],
     pool: 'forks',
     poolOptions: { forks: { minForks: 1, maxForks: 4 } },
   },
