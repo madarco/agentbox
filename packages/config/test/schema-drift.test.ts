@@ -210,7 +210,7 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
   /**
    * The fixture lists above are curated, so a key added to `KEY_REGISTRY` but not
    * to the schema slipped through silently — 15 of them had, including whole
-   * branches (`git`, `ssh`, `cloud`, `integrations`). Since the schema is
+   * branches (`git`, `ssh`, `cloud`, `tools`). Since the schema is
    * `additionalProperties: false`, that means a user writing a perfectly valid
    * key gets a red squiggle in their editor. Check every registered key
    * exhaustively so the two can't drift again.

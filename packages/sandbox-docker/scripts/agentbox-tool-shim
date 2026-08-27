@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# agentbox generic host-tool shim.
+#
+# One file, installed once per image, symlinked as /usr/local/bin/<tool> for
+# every host tool the user has granted this box. It forwards verbatim to
+# `agentbox-ctl tool run <name> -- <args...>`, which posts an RPC the host
+# relay gates and executes with the host's own credentials. The box never
+# holds a token for the tool it is calling.
+#
+# Deliberately does no argv filtering. The shim was never the security
+# boundary (see docs/architecture.md) — the relay is, and it applies the
+# built-in credential deny list, the per-tool allow/deny rules and the host
+# approval prompt. Filtering here would only buy a confusing second opinion.
+#
+# The tool name comes from argv[0], so a symlink is all it takes to add one:
+# no rebake, no new file. `AGENTBOX_CTL_PATH` exists purely so unit tests can
+# substitute a stub `agentbox-ctl` on PATH.
+
+set -euo pipefail
+
+exec "${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}" tool run "$(basename "$0")" -- "$@"

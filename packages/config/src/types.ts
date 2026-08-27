@@ -301,11 +301,11 @@ export interface UserConfig {
      */
     channel?: 'auto' | 'stable' | 'nightly';
   };
-  integrations?: {
-    notion?: {
+  tools?: {
+    gh?: {
       enabled?: boolean;
     };
-    linear?: {
+    request?: {
       enabled?: boolean;
     };
   };
@@ -463,11 +463,11 @@ export interface EffectiveConfig {
     check: boolean;
     channel: 'auto' | 'stable' | 'nightly';
   };
-  integrations: {
-    notion: {
+  tools: {
+    gh: {
       enabled: boolean;
     };
-    linear: {
+    request: {
       enabled: boolean;
     };
   };
@@ -660,9 +660,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     check: true,
     channel: 'auto',
   },
-  integrations: {
-    notion: { enabled: false },
-    linear: { enabled: false },
+  tools: {
+    gh: { enabled: true },
+    request: { enabled: true },
   },
 };
 
@@ -1214,16 +1214,16 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Which release channel `agentbox self-update` and `install app` follow: `auto` (default) follows the installed build, `nightly` opts into pre-release builds cut from the nightly branch, `stable` opts back out. Nightly always installs the newest build of EITHER channel, so a stable release supersedes the nightlies that preceded it.',
   },
   {
-    key: 'integrations.notion.enabled',
+    key: 'tools.gh.enabled',
     type: 'bool',
     description:
-      'Enable the in-box Notion integration shim (`ntn`/`notion` commands routed via the host relay). When false (default), the relay refuses dispatch with a clear "disabled" error and no host process is touched.',
+      'Whether the built-in `gh` host-tool grant is active. True (default) keeps the in-box `gh` shim routing GitHub operations through the host relay with the host\'s own `gh` auth; false revokes the grant so `gh` stops resolving in new boxes. Every other host tool is opt-in via `agentbox tools add` or an `agentbox.yaml` `tools:` request.',
   },
   {
-    key: 'integrations.linear.enabled',
+    key: 'tools.request.enabled',
     type: 'bool',
     description:
-      'Enable the in-box Linear integration shim (`linear` commands routed via the host relay; backed by `@schpet/linear-cli`). When false (default), the relay refuses dispatch with a clear "disabled" error and no host process is touched.',
+      'Whether a box may ask the host for access to a new host CLI (`agentbox-ctl tool request <bin>`). True (default) raises a host approval prompt naming the box, the binary and the reason; false refuses the request outright so boxes can only use tools already granted.',
   },
 ];
 

@@ -18,11 +18,11 @@ import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'agentbox-cfg-get-home-'));
 process.env['HOME'] = TEST_HOME;
 
-// Regression guard: `agentbox config get integrations.notion.enabled` must
+// Regression guard: `agentbox config get tools.gh.enabled` must
 // return the deeply-nested boolean, not `<unset>`. The first iteration of the
 // `leafValue`/`rawLeafFromValues` helpers in config.ts split on the FIRST dot
-// only, so the 3-level key `integrations.notion.enabled` resolved to
-// `effective.integrations["notion.enabled"]` (undefined), even though
+// only, so the 3-level key `tools.gh.enabled` resolved to
+// `effective.tools["gh.enabled"]` (undefined), even though
 // `config set` and `loadEffectiveConfig` correctly walked the full path.
 
 let tmpCwd: string;
@@ -58,7 +58,7 @@ afterAll(async () => {
 // instance per test; it still resolves STATE_DIR under TEST_HOME.
 async function setProjectNotionEnabled(): Promise<void> {
   const { setConfigValue } = await import('@agentbox/config');
-  await setConfigValue('project', 'integrations.notion.enabled', 'true', tmpCwd, {
+  await setConfigValue('project', 'tools.gh.enabled', 'true', tmpCwd, {
     raw: true,
   });
 }
@@ -89,32 +89,32 @@ async function runConfigGet(args: string[]): Promise<{ stdout: string; stderr: s
 describe('config get on a nested 3-level key', () => {
   it('returns the leaf value, not <unset>', async () => {
     await setProjectNotionEnabled();
-    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled']);
-    expect(stdout).toContain('integrations.notion.enabled = true');
+    const { stdout } = await runConfigGet(['get', 'tools.gh.enabled']);
+    expect(stdout).toContain('tools.gh.enabled = true');
     expect(stdout).toMatch(/from: project /);
     expect(stdout).not.toContain('<unset>');
   });
 
   it('--json carries the value and source', async () => {
     await setProjectNotionEnabled();
-    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled', '--json']);
+    const { stdout } = await runConfigGet(['get', 'tools.gh.enabled', '--json']);
     const parsed = JSON.parse(stdout) as { key: string; value: unknown; source: string };
-    expect(parsed.key).toBe('integrations.notion.enabled');
+    expect(parsed.key).toBe('tools.gh.enabled');
     expect(parsed.value).toBe(true);
     expect(parsed.source).toBe('project');
   });
 
   it('--all walks every layer (no silent <unset> for the project layer)', async () => {
     await setProjectNotionEnabled();
-    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled', '--all']);
+    const { stdout } = await runConfigGet(['get', 'tools.gh.enabled', '--all']);
     expect(stdout).toMatch(/effective: true /);
     expect(stdout).toMatch(/project:\s+true /);
     expect(stdout).toMatch(/default:\s+false/);
   });
 
   it('unset key falls back to the built-in default (false)', async () => {
-    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled']);
-    expect(stdout).toContain('integrations.notion.enabled = false');
+    const { stdout } = await runConfigGet(['get', 'tools.gh.enabled']);
+    expect(stdout).toContain('tools.gh.enabled = false');
     expect(stdout).toMatch(/from: built-in default/);
   });
 });

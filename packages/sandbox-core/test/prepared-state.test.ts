@@ -234,8 +234,8 @@ describe('resolveContextFilesFrom', () => {
 
   // Derived from Dockerfile.box rather than spot-checked: the previous version
   // asserted four known keys and so happily passed while EIGHT COPY'd files were
-  // missing from the map — meaning edits to gh-shim, git-shim, ntn-shim,
-  // linear-shim, chromium-resolver, agentbox-sshd-start, agentbox-portless-trust
+  // missing from the map — meaning edits to gh-shim, git-shim,
+  // agentbox-tool-shim, chromium-resolver, agentbox-sshd-start, agentbox-portless-trust
   // and opencode-agentbox-plugin.js never invalidated the image.
   it('DOCKER_CONTEXT_FILE_MAP covers every file Dockerfile.box COPYs', async () => {
     const dockerfile = join(__dirname, '..', '..', 'sandbox-docker', 'Dockerfile.box');

@@ -39,7 +39,6 @@
   "dependencies": {
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
-    "@agentbox/integrations": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "commander": "^12.1.0",
     "drizzle-orm": "^0.45.2",

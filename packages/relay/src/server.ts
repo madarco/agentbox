@@ -22,7 +22,6 @@ import {
   sanitizeGitArgs,
   upstreamRef,
 } from '@agentbox/core';
-import { getConnector } from '@agentbox/integrations';
 import {
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
@@ -49,15 +48,6 @@ import {
   type GhRunRpcParams,
 } from './gh.js';
 import { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
-import {
-  assertIntegrationReady,
-  makeIntegrationOpRefusal,
-  parseIntegrationMethod,
-  refuseIfIntegrationDisabled,
-  refuseIntegrationCall,
-  runHostIntegration,
-  type IntegrationRpcParams,
-} from './integrations.js';
 import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
@@ -1032,19 +1022,6 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (body.method === 'gh.api') {
         const result = await handleGhApiRpc(reg, body.params as GhApiRpcParams | undefined);
-        const status = result.exitCode === 0 ? 200 : 500;
-        send(res, status, result);
-        return;
-      }
-      if (body.method.startsWith('integration.')) {
-        const result = await handleIntegrationRpc(
-          body.method,
-          reg,
-          body.params as IntegrationRpcParams | undefined,
-          prompts,
-          subscribers,
-          hostInitiatedTokens,
-        );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -2095,141 +2072,6 @@ async function handleGhApiRpc(
   // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
   return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
-}
-
-/**
- * `integration.<service>.<op>`: generic dispatch for any connector
- * registered in `@agentbox/integrations`. Mirrors the `gh.pr.<op>` flow
- * (worktree resolve → `assertReady` → host-initiated token / askPrompt for
- * writes → shell out). Reads bypass the prompt; writes are always gated.
- * Op-level `refuseCall` (e.g. `notion.api`'s GET-only check) runs after
- * worktree resolve but before any host process is touched.
- *
- * All failures return the same `{exitCode, stdout, stderr}` envelope as
- * `handleGhPrRpc` — including unknown-method/service shapes (exit 64) —
- * so the cloud and docker paths emit identical wire shapes per the
- * "fix across all providers" rule.
- */
-async function handleIntegrationRpc(
-  method: string,
-  reg: BoxRegistration,
-  params: IntegrationRpcParams | undefined,
-  prompts: PendingPrompts,
-  subscribers: PromptSubscribers,
-  hostInitiatedTokens: HostInitiatedTokens,
-): Promise<GitRpcResult> {
-  const parsed = parseIntegrationMethod(method);
-  if (!parsed) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `unknown integration method shape: ${method}\n`,
-    };
-  }
-  const connector = getConnector(parsed.service);
-  if (!connector) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `unknown integration service: ${parsed.service}\n`,
-    };
-  }
-  const opDesc = connector.ops[parsed.op];
-  if (!opDesc) {
-    return makeIntegrationOpRefusal(
-      parsed.service,
-      parsed.op,
-      connector.hostBin,
-      Object.keys(connector.ops),
-    );
-  }
-  const containerPath = params?.path ?? '/workspace';
-  const worktree = resolveWorktree(reg, containerPath);
-  if (!worktree) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
-    };
-  }
-  const args = Array.isArray(params?.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-
-  const callRefusal = refuseIntegrationCall(opDesc, args);
-  if (callRefusal) return callRefusal;
-
-  // Layered enablement gate — the in-box shim and ctl both transparently
-  // forward to here, so this one check covers every caller. Reads the
-  // worktree's project config so a single project can opt in without
-  // flipping it globally. Placed after `refuseIntegrationCall` so the
-  // ordering matches the cloud handler (`runIntegrationRpc` in
-  // host-actions.ts) — keeps the wire envelope identical across providers
-  // for the malformed-args-to-disabled-integration edge case. Runs before
-  // `assertIntegrationReady`, the prompt, and the host spawn so a disabled
-  // integration is never user-visible as a permission prompt.
-  const enableRefusal = await refuseIfIntegrationDisabled(parsed.service, worktree.hostMainRepo);
-  if (enableRefusal) return enableRefusal;
-
-  const ready = await assertIntegrationReady(connector);
-  if (ready) return ready;
-
-  // Host-initiated calls (from a host CLI mint) skip the prompt — but only
-  // with a valid scope-matched, params-hash-bound one-time token. Hard
-  // reject a *present-but-invalid* token (attack signal). Only fall through
-  // to the prompt when no token was claimed. Reads never need a token.
-  if (opDesc.write) {
-    if (reg.autoApproveSafeHostActions !== false) {
-      // Integration writes hit the connected external service (not the host) —
-      // safe subset, audited, no prompt.
-      prompts.noteAutoApprove(
-        reg.boxId,
-        {
-          kind: 'confirm',
-          message: `${parsed.service} ${parsed.op} from box ${reg.name}`,
-          detail: args.join(' ').slice(0, 200),
-          context: {
-            command: `integration ${parsed.service} ${parsed.op}`,
-            cwd: containerPath,
-            argv: args,
-          },
-        },
-        `safe: integration ${parsed.service} ${parsed.op}`,
-      );
-    } else {
-      const tokenClaimed = typeof params?.hostInitiated === 'string';
-      const incomingHash = hashRpcParams(params);
-      const tokenOk =
-        tokenClaimed &&
-        hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, method, incomingHash);
-      if (tokenClaimed && !tokenOk) {
-        return {
-          exitCode: 10,
-          stdout: '',
-          stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
-        };
-      }
-      if (!tokenOk) {
-        const detail = args.join(' ').slice(0, 200);
-        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-          kind: 'confirm',
-          message: `Allow ${parsed.service} ${parsed.op} from box ${reg.name}?`,
-          detail,
-          defaultAnswer: 'n',
-          context: {
-            command: `integration ${parsed.service} ${parsed.op}`,
-            cwd: containerPath,
-            argv: args,
-          },
-        });
-        if (verdict.answer !== 'y') {
-          return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
-        }
-      }
-    }
-  }
-
-  return runHostIntegration(connector, opDesc, args, worktree.hostMainRepo);
 }
 
 /**

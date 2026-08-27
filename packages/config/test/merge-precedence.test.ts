@@ -96,29 +96,35 @@ describe('layered merge precedence', () => {
 
   // Nested 3-level path (branch.subbranch.leaf) — the parser, merger, and
   // writer all needed teaching to walk dotted leaves. Worth its own cascade
-  // test so a future refactor doesn't silently regress the integrations
+  // test so a future refactor doesn't silently regress the tools
   // surface.
-  it('integrations.notion.enabled defaults to false', async () => {
+  it('tools.gh.enabled defaults to true (gh is the one built-in grant)', async () => {
     const r = await loadEffectiveConfig(tmpCwd);
-    expect(r.effective.integrations.notion.enabled).toBe(false);
-    expect(r.sources['integrations.notion.enabled']).toBe('default');
+    expect(r.effective.tools.gh.enabled).toBe(true);
+    expect(r.sources['tools.gh.enabled']).toBe('default');
   });
 
-  it('integrations.notion.enabled cascades global → project → cli', async () => {
-    await writeYamlAt(GLOBAL_CONFIG_FILE, 'integrations:\n  notion:\n    enabled: true\n');
-    const fromGlobal = await loadEffectiveConfig(tmpCwd);
-    expect(fromGlobal.effective.integrations.notion.enabled).toBe(true);
-    expect(fromGlobal.sources['integrations.notion.enabled']).toBe('global');
+  it('tools.request.enabled defaults to true', async () => {
+    const r = await loadEffectiveConfig(tmpCwd);
+    expect(r.effective.tools.request.enabled).toBe(true);
+    expect(r.sources['tools.request.enabled']).toBe('default');
+  });
 
-    await writeYamlAt(projectConfigFile(tmpCwd), 'integrations:\n  notion:\n    enabled: false\n');
+  it('tools.gh.enabled cascades global → project → cli', async () => {
+    await writeYamlAt(GLOBAL_CONFIG_FILE, 'tools:\n  gh:\n    enabled: false\n');
+    const fromGlobal = await loadEffectiveConfig(tmpCwd);
+    expect(fromGlobal.effective.tools.gh.enabled).toBe(false);
+    expect(fromGlobal.sources['tools.gh.enabled']).toBe('global');
+
+    await writeYamlAt(projectConfigFile(tmpCwd), 'tools:\n  gh:\n    enabled: true\n');
     const fromProject = await loadEffectiveConfig(tmpCwd);
-    expect(fromProject.effective.integrations.notion.enabled).toBe(false);
-    expect(fromProject.sources['integrations.notion.enabled']).toBe('project');
+    expect(fromProject.effective.tools.gh.enabled).toBe(true);
+    expect(fromProject.sources['tools.gh.enabled']).toBe('project');
 
     const fromCli = await loadEffectiveConfig(tmpCwd, {
-      cliOverrides: { integrations: { notion: { enabled: true } } },
+      cliOverrides: { tools: { gh: { enabled: false } } },
     });
-    expect(fromCli.effective.integrations.notion.enabled).toBe(true);
-    expect(fromCli.sources['integrations.notion.enabled']).toBe('cli');
+    expect(fromCli.effective.tools.gh.enabled).toBe(false);
+    expect(fromCli.sources['tools.gh.enabled']).toBe('cli');
   });
 });
