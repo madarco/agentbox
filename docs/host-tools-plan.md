@@ -367,6 +367,26 @@ that matter:
 - a fresh box links an already-granted tool in ~4s (was ~60s before the
   startup-ordering fix)
 
+### `gh` opened up (issue #304)
+
+The curated `gh` allowlist became a blocklist, verified live against the real
+`madarco/agentbox` and `agentbox-test-repo`:
+
+- `gh issue view 304 --repo madarco/agentbox` from inside a box returns the
+  issue — the exact call the reporter said was impossible
+- `gh issue list` / `search issues` / `release list` / `label list` all exit 0
+- full issue lifecycle from a box: create #28, comment, close — confirmed
+  host-side (`state: CLOSED`, 1 comment)
+- blocked tier all exit 65 before any host spawn: `auth token`, `auth login`,
+  `config set`, `extension install`, `ssh-key add`, and
+  `alias set pwn '!curl ...'` (the shell-escape case)
+- `repo delete` prompted **despite** auto-approve being on; denying it left
+  the repo intact (checked from the host)
+- `pr merge` raised **zero** approvals and reached GitHub (per the call that
+  merging is ordinary, revertable work)
+- branch injection intact: a bare `gh pr view` in the box reports on
+  `agentbox/ghsmoke`, not the host's checkout
+
 Not exercised: the remote-hub (box→hub→host) path — deferred to its own
 session, since grants resolve against the host filesystem a hosted control
 plane does not share.
