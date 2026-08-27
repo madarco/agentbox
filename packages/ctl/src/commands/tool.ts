@@ -79,7 +79,10 @@ async function refreshToolLinks(cwd: string): Promise<void> {
     );
     if (res.exitCode !== 0) return;
     const names = parseToolNames(res.stdout);
-    if (names) await syncToolLinks(names);
+    // Additive: this process only needs to ADD what was just granted.
+    // Pruning is the reconciler's job, and doing it here from a list that
+    // races the daemon's would be the same bug from the other side.
+    if (names) await syncToolLinks(names, { prunable: [] });
   } catch {
     // The daemon's reconcile tick will pick it up.
   }

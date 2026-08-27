@@ -771,7 +771,7 @@ async function runToolRpc(
     ? (params['args'] as unknown[]).filter((a): a is string => typeof a === 'string')
     : [];
 
-  const credRefusal = refuseCredentialArgv(name, args);
+  const credRefusal = refuseCredentialArgv(name, args, grant.bin);
   if (credRefusal) return credRefusal;
   const denyRefusal = refuseDeniedArgv(grant, args);
   if (denyRefusal) return denyRefusal;

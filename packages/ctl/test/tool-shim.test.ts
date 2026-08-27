@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseToolNames } from '../src/tool-links-watcher.js';
-import { syncToolLinks } from '../src/tool-links.js';
+import { listToolLinks, syncToolLinks } from '../src/tool-links.js';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..');
 const TOOL_SHIM = join(REPO_ROOT, 'packages/sandbox-docker/scripts/agentbox-tool-shim');
@@ -120,6 +120,44 @@ describe('syncToolLinks', () => {
     writeFileSync(join(dir, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
     const r = await syncToolLinks(['terraform'], { dir, shim });
     expect(r.removed).toEqual([]);
+  });
+
+  // Reported by review: the daemon reconciler and an approved `tool request`
+  // both sync these links. A reconciler holding a list fetched before the
+  // grant landed would delete the link the request just created — killing the
+  // immediate-use guarantee. Pruning is confined to a pre-fetch snapshot.
+  it('a stale reconcile does not delete a link created after its snapshot', async () => {
+    const dir = scratch();
+    await syncToolLinks(['terraform'], { dir, shim });
+    const snapshot = await listToolLinks({ dir, shim });
+    expect(snapshot).toEqual(['terraform']);
+
+    // The request path adds `say` while the reconciler's list is in flight.
+    await syncToolLinks(['terraform', 'say'], { dir, shim, prunable: [] });
+
+    // The reconciler now applies its stale list (no `say`) — but may only
+    // prune what it saw before it asked.
+    const stale = await syncToolLinks(['terraform'], { dir, shim, prunable: snapshot });
+    expect(stale.removed).toEqual([]);
+    const after = await listToolLinks({ dir, shim });
+    expect(after.sort()).toEqual(['say', 'terraform']);
+  });
+
+  it('the additive path never prunes, even when the list shrinks', async () => {
+    const dir = scratch();
+    await syncToolLinks(['terraform', 'aws'], { dir, shim });
+    const r = await syncToolLinks(['terraform'], { dir, shim, prunable: [] });
+    expect(r.removed).toEqual([]);
+    expect((await listToolLinks({ dir, shim })).sort()).toEqual(['aws', 'terraform']);
+  });
+
+  // The next tick, with a fresh snapshot, still converges.
+  it('a fresh reconcile prunes a revoked link', async () => {
+    const dir = scratch();
+    await syncToolLinks(['terraform', 'aws'], { dir, shim });
+    const snapshot = await listToolLinks({ dir, shim });
+    const r = await syncToolLinks(['terraform'], { dir, shim, prunable: snapshot });
+    expect(r.removed).toEqual(['aws']);
   });
 
   it('ignores names that could escape the link dir', async () => {

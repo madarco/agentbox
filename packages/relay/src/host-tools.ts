@@ -77,13 +77,22 @@ export const CREDENTIAL_ARGV_PATTERNS: readonly RegExp[] = [
   /\btoken\s+--raw\b/i,
 ];
 
-/** Ready-to-send refusal when the call would print a host credential. */
-export function refuseCredentialArgv(name: string, args: readonly string[]): GitRpcResult | null {
+/**
+ * Ready-to-send refusal when the call would print a host credential.
+ *
+ * `bin` matters as much as `name`: a grant can point a bland name at a
+ * hazardous binary (`tools add safe --bin keyring`, or a yaml `bin:`), and
+ * the process that actually runs is the bin. Both go in the haystack, along
+ * with the argv — some hazards are named by the subcommand, others by the
+ * binary itself.
+ */
+export function refuseCredentialArgv(
+  name: string,
+  args: readonly string[],
+  bin?: string,
+): GitRpcResult | null {
   const joined = args.join(' ');
-  // Match against the tool name too: some hazards are named by the binary
-  // rather than the subcommand (`keyring get x`, `get-token-helper`), and the
-  // argv alone would miss them.
-  const haystack = `${name} ${joined}`;
+  const haystack = bin && bin !== name ? `${name} ${bin} ${joined}` : `${name} ${joined}`;
   for (const re of CREDENTIAL_ARGV_PATTERNS) {
     if (re.test(haystack)) {
       return {

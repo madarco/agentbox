@@ -78,7 +78,14 @@ export {
   type CarryItem,
 } from './carry.js';
 export { ToolLinksWatcher, parseToolNames } from './tool-links-watcher.js';
-export { syncToolLinks, toolLinkDir, TOOL_SHIM_PATH, type ToolLinkSyncResult } from './tool-links.js';
+export {
+  listToolLinks,
+  syncToolLinks,
+  toolLinkDir,
+  TOOL_SHIM_PATH,
+  type SyncToolLinksOptions,
+  type ToolLinkSyncResult,
+} from './tool-links.js';
 export {
   parseToolsRaw,
   parseToolsSection,
