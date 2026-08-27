@@ -21,11 +21,7 @@ export { WriteThroughStore, type WriteThroughParts } from './store/write-through
 export { makeStore } from './store/index.js';
 export { MemoryStore } from './store/memory-store.js';
 export { type Store, type PromptRow } from './store/store.js';
-export {
-  GitHubAppLeaser,
-  loadGitHubAppConfig,
-  type GitHubAppConfig,
-} from './github-app.js';
+export { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
 export {
   drainOneCreateJob,
   drainCreateJobs,

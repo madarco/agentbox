@@ -124,6 +124,34 @@ describe('cp outbox', () => {
     expect(await readFile(join(dest, 'report.txt'), 'utf8')).toBe('into dir\n');
   });
 
+  it('leaves the destination intact when landing cannot complete', async () => {
+    // Landing used to `rm` the destination and then rename from the system
+    // tmpdir — a different filesystem in most setups, so the rename fails EXDEV
+    // and the file the copy meant to update is simply gone. Staging beside the
+    // destination makes the replace atomic; a corrupt payload must leave the
+    // existing file untouched.
+    const dest = join(dir, 'keep', 'existing.txt');
+    await mkdir(join(dir, 'keep'), { recursive: true });
+    await writeFile(dest, 'ORIGINAL\n', 'utf8');
+    const bogus = join(dir, 'not-a.tar');
+    await writeFile(bogus, 'this is not a tar archive', 'utf8');
+    await expect(landCpOutboxTar(bogus, dest, { destEndsWithSlash: false })).rejects.toBeTruthy();
+    expect(await readFile(dest, 'utf8')).toBe('ORIGINAL\n');
+  });
+
+  it('replaces an existing file at the destination', async () => {
+    const src = join(dir, 'src4');
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, 'report.txt'), 'NEW\n', 'utf8');
+    const tarPath = join(dir, 'replace.tar');
+    await run('tar', ['-cf', tarPath, '-C', src, 'report.txt']);
+    const dest = join(dir, 'replace', 'target.txt');
+    await mkdir(join(dir, 'replace'), { recursive: true });
+    await writeFile(dest, 'OLD\n', 'utf8');
+    await landCpOutboxTar(tarPath, dest, { destEndsWithSlash: false });
+    expect(await readFile(dest, 'utf8')).toBe('NEW\n');
+  });
+
   it('keys the outbox per project, falling back to the box', () => {
     expect(cpOutboxPrefix({ projectSlug: 'acme__web', boxId: 'b1' })).toBe(
       'projects/acme__web/cp-out',

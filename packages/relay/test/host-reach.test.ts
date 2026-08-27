@@ -136,6 +136,27 @@ describe('HostReachQueue', () => {
     await expect(pending).resolves.toMatchObject({ kind: 'result', result: { exitCode: 0 } });
   });
 
+  it('returns a declined action to the pool instead of settling it', async () => {
+    // A machine that does not hold the box must not answer for it: with two
+    // machines on one hub, its "unknown box" would settle someone else's copy.
+    const q = new HostReachQueue({ graceMs: 5_000 });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const [taken] = await q.poll(50, 'poller-a');
+    expect(q.decline(taken!.id, 'poller-a')).toBe(true);
+    // Still parked, and offered to the next machine that asks.
+    const [again] = await q.poll(50, 'poller-b');
+    expect(again?.id).toBe(taken!.id);
+    q.resolve(again!.id, { exitCode: 0, stdout: 'done', stderr: '' }, 'poller-b');
+    await expect(pending).resolves.toMatchObject({ kind: 'result' });
+  });
+
+  it('ignores a decline from a machine that no longer owns the action', async () => {
+    const q = new HostReachQueue({ graceMs: 5_000 });
+    void q.request('box1', 'cp.fromHost', {});
+    const [taken] = await q.poll(50, 'poller-a');
+    expect(q.decline(taken!.id, 'poller-b')).toBe(false);
+  });
+
   it('settles everything as unreachable on stop, so a hub restart cannot hang a box', async () => {
     const q = new HostReachQueue({ graceMs: 5_000 });
     const pending = q.request('box1', 'cp.fromHost', {});

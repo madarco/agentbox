@@ -31,7 +31,7 @@ export interface HostReachPollerDeps {
    * on failure (a rejection is caught and turned into a non-zero result), or the
    * box on the other end waits forever.
    */
-  execute: (action: HostAction) => Promise<HostActionResult>;
+  execute: (action: HostAction) => Promise<HostActionResult | 'not-mine'>;
   /**
    * Land any copies that were parked for this machine while it was offline.
    * Started (never awaited) on first contact and re-checked periodically; it
@@ -203,7 +203,7 @@ export class HostReachPoller {
 
   private async handle(base: string, action: HostAction): Promise<void> {
     this.log(`host-reach: executing ${action.method} for box ${action.boxId}`);
-    let result: HostActionResult;
+    let result: HostActionResult | 'not-mine';
     try {
       result = await this.deps.execute(action);
     } catch (err) {
@@ -214,6 +214,15 @@ export class HostReachPoller {
       };
     }
     try {
+      if (result === 'not-mine') {
+        // Hand it back rather than answering for a box this machine has never
+        // seen: on a hub with two machines the other one may own it.
+        await this.post(`${base}/admin/hostreach/decline`, {
+          id: action.id,
+          poller: this.pollerId,
+        });
+        return;
+      }
       await this.post(`${base}/admin/hostreach/result`, {
         id: action.id,
         poller: this.pollerId,

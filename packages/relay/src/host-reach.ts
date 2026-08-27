@@ -202,6 +202,33 @@ export class HostReachQueue {
     return true;
   }
 
+  /**
+   * Hand an action back unexecuted, because the machine that took it does not
+   * own that box.
+   *
+   * Settling it instead would be wrong with more than one machine on a hub: the
+   * first poller to see fresh work is not necessarily the one holding the files,
+   * and its "I don't know that box" would answer a question meant for someone
+   * else. Declining returns the action to the pool, and the grace/heartbeat
+   * timers still bound the case where *nobody* claims it.
+   */
+  decline(id: string, pollerId?: string): boolean {
+    const pending = this.map.get(id);
+    if (!pending) return false;
+    if (
+      pollerId !== undefined &&
+      pending.deliveredTo !== undefined &&
+      pending.deliveredTo !== pollerId
+    ) {
+      return false;
+    }
+    pending.delivered = false;
+    pending.deliveredTo = undefined;
+    // Another machine may already be waiting for work.
+    this.handOff();
+    return true;
+  }
+
   size(): number {
     return this.map.size;
   }

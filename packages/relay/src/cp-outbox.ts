@@ -194,14 +194,24 @@ export async function landCpOutboxTar(
     await run('tar', ['-xf', tarFile, '-C', destAbs], TAR_TIMEOUT_MS);
     return;
   }
-  // Unpack aside so the member's own name never appears at the destination.
-  const staging = await mkdtemp(join(tmpdir(), 'agentbox-cp-land-'));
+  // Unpack aside so the member's own name never appears at the destination —
+  // but stage inside the destination's OWN directory, not the system tmpdir.
+  // `/tmp` is routinely a different filesystem, where `rename` fails with EXDEV;
+  // deleting the destination first and then discovering that would destroy the
+  // file the copy was meant to update. Same-filesystem staging makes the final
+  // step an atomic replace that either happens or leaves everything as it was.
+  await run('mkdir', ['-p', dirname(destAbs)], TAR_TIMEOUT_MS);
+  const staging = await mkdtemp(join(dirname(destAbs), '.agentbox-cp-'));
   try {
     await run('tar', ['-xf', tarFile, '-C', staging], TAR_TIMEOUT_MS);
     const members = await readdir(staging);
-    await run('mkdir', ['-p', dirname(destAbs)], TAR_TIMEOUT_MS);
     if (members.length === 1) {
-      await rm(destAbs, { recursive: true, force: true });
+      // rename() replaces an existing FILE atomically, so nothing is removed
+      // first. A directory in the way cannot be replaced that way and is the
+      // only case that needs clearing.
+      if (existsSync(destAbs) && (await stat(destAbs)).isDirectory()) {
+        await rm(destAbs, { recursive: true, force: true });
+      }
       await rename(join(staging, members[0]!), destAbs);
       return;
     }
@@ -209,8 +219,11 @@ export async function landCpOutboxTar(
     // directory they belong in, which is also what `cp a b dir/` means.
     await run('mkdir', ['-p', destAbs], TAR_TIMEOUT_MS);
     for (const m of members) {
-      await rm(join(destAbs, m), { recursive: true, force: true });
-      await rename(join(staging, m), join(destAbs, m));
+      const target = join(destAbs, m);
+      if (existsSync(target) && (await stat(target)).isDirectory()) {
+        await rm(target, { recursive: true, force: true });
+      }
+      await rename(join(staging, m), target);
     }
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => {});

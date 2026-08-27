@@ -97,9 +97,7 @@ function canonicalJson(v: unknown): string {
       .filter(([, val]) => val !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     return (
-      '{' +
-      entries.map(([k, val]) => JSON.stringify(k) + ':' + canonicalJson(val)).join(',') +
-      '}'
+      '{' + entries.map(([k, val]) => JSON.stringify(k) + ':' + canonicalJson(val)).join(',') + '}'
     );
   }
   return 'null';

@@ -682,6 +682,23 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 204, null);
         return;
       }
+      if (route === 'POST /admin/hostreach/decline') {
+        const body = await readJsonBody<{ id?: string; poller?: string }>(req);
+        if (!body || typeof body.id !== 'string' || body.id.length === 0) {
+          send(res, 400, { error: 'expected {id}' });
+          return;
+        }
+        const ok = hostReach.decline(
+          body.id,
+          typeof body.poller === 'string' ? body.poller : undefined,
+        );
+        send(
+          res,
+          ok ? 204 : 404,
+          ok ? null : { error: 'no parked action with that id for this machine' },
+        );
+        return;
+      }
       if (route === 'POST /admin/hostreach/result') {
         const body = await readJsonBody<BridgeActionResultBody>(req);
         if (

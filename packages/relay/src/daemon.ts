@@ -150,8 +150,8 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
  * real project path rather than the control box's idea of one.
  *
  * Resolving the box locally is also the authorization step: this machine only
- * acts for boxes it already knows. A box it has never adopted gets a result
- * telling the user how to adopt it, never a hang.
+ * acts for boxes it already knows. An unknown box is DECLINED rather than
+ * answered — see the note below.
  */
 async function executeHostReachAction(
   action: HostAction,
@@ -161,16 +161,14 @@ async function executeHostReachAction(
     log: (line: string) => void;
     cache: { controlPlaneUrl: string; adminToken: string };
   },
-): Promise<HostActionResult> {
+): Promise<HostActionResult | 'not-mine'> {
   const owner = await lookupCloudBoxOwner(action.boxId);
+  // Not an answer, a refusal: another machine on this hub may hold the box, and
+  // answering "unknown box" here would settle its user's copy. The hub returns
+  // the action to the pool; if nobody claims it, its own timers report that.
   if (!owner) {
-    return {
-      exitCode: 69,
-      stdout: '',
-      stderr:
-        `this machine has no record of box ${action.boxId}, so it cannot copy files for it.\n` +
-        'Use the box here once — `agentbox ls` or `agentbox attach <box>` — to adopt it, then retry.\n',
-    };
+    deps.log(`host-reach: declining ${action.method} — box ${action.boxId} is not known here`);
+    return 'not-mine';
   }
   const result = await executeCloudAction(action, {
     backendName: owner.backendName,

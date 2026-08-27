@@ -120,7 +120,10 @@ export async function handleRemoteBoxesRequest(
     }
     const body = parseJson<CreateJobRequest>(req.bodyText);
     if (!body || typeof body.repoUrl !== 'string' || typeof body.provider !== 'string') {
-      return { status: 400, body: { error: 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}' } };
+      return {
+        status: 400,
+        body: { error: 'expected {repoUrl, provider, branch?, name?, agent?, prompt?}' },
+      };
     }
     const allowed = deps.createProviders;
     if (allowed && allowed.length > 0 && !allowed.includes(body.provider)) {

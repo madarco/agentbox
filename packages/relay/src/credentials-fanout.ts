@@ -158,10 +158,7 @@ export class CredentialsFanout {
  * started with — the CLI owns provider resolution and per-box transports
  * (same pattern as the checkpoint/cp host actions).
  */
-async function defaultRunPropagate(
-  agent: CredentialAgentKind,
-  sourceBoxId: string,
-): Promise<void> {
+async function defaultRunPropagate(agent: CredentialAgentKind, sourceBoxId: string): Promise<void> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) {
     throw new Error('AGENTBOX_CLI_ENTRY not set; cannot run credential propagate host-side');

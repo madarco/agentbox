@@ -154,19 +154,23 @@ export class GitHubAppLeaser {
     }
     const id = await this.installationId(owner, repo);
     const jwt = appJwt(this.cfg, this.now());
-    const res = await this.fetchImpl(`${this.apiBase}/app/installations/${String(id)}/access_tokens`, {
-      method: 'POST',
-      headers: { ...this.headers(jwt), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        repositories: [repo],
-        permissions: { contents: 'write', pull_requests: 'write' },
-      }),
-    });
+    const res = await this.fetchImpl(
+      `${this.apiBase}/app/installations/${String(id)}/access_tokens`,
+      {
+        method: 'POST',
+        headers: { ...this.headers(jwt), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repositories: [repo],
+          permissions: { contents: 'write', pull_requests: 'write' },
+        }),
+      },
+    );
     if (!res.ok) {
       throw new Error(`failed to mint installation token for ${key} (→ ${String(res.status)})`);
     }
     const body = (await res.json()) as { token?: string; expires_at?: string };
-    if (!body.token || !body.expires_at) throw new Error('access_tokens response missing token/expires_at');
+    if (!body.token || !body.expires_at)
+      throw new Error('access_tokens response missing token/expires_at');
     this.cache.set(key, {
       token: body.token,
       expiresAt: body.expires_at,
