@@ -26,6 +26,7 @@ import {
   checkoutGuards,
   ghDestructiveTarget,
   ghRunContext,
+  ghVerbArgv,
   injectPrCreateHead,
   PR_CREATE_NO_HEAD_REFUSAL,
   prCreateNeedsHead,
@@ -1876,8 +1877,11 @@ async function handleGhExecRpc(
   const blocked = refuseBlockedGhCall(args);
   if (blocked) return blocked;
 
-  const family = args[0] ?? '';
-  const op = args[1] ?? '';
+  // Read the verb past any leading global flags, so `gh -R o/r pr checkout`
+  // is still recognised as a checkout.
+  const verb = ghVerbArgv(args);
+  const family = verb[0] ?? '';
+  const op = verb[1] ?? '';
   if (family === 'pr') {
     const checkoutOptIn = refuseCheckoutByDefault(op);
     if (checkoutOptIn) return checkoutOptIn;

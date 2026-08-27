@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ghDestructiveTarget,
+  ghVerbArgv,
   injectPrCreateHead,
   prCreateNeedsHead,
   refuseBlockedGhCall,
@@ -200,5 +201,49 @@ describe('refuseCheckoutByDefault', () => {
 
   it('leaves other pr ops alone', () => {
     expect(refuseCheckoutByDefault('view')).toBeNull();
+  });
+});
+
+describe('ghVerbArgv — leading global flags', () => {
+  // Reported by review: every policy pattern is anchored at the start of argv,
+  // so a global flag in front of the verb hid it entirely. `gh -R o/r auth
+  // token` matched nothing and ran under the default allow-once flag.
+  it('skips value-taking global flags to find the verb', () => {
+    expect(ghVerbArgv(['-R', 'o/r', 'auth', 'token'])).toEqual(['auth', 'token']);
+    expect(ghVerbArgv(['--repo', 'o/r', 'issue', 'list'])).toEqual(['issue', 'list']);
+    expect(ghVerbArgv(['--hostname', 'ghe.corp', 'repo', 'delete'])).toEqual(['repo', 'delete']);
+  });
+
+  it('skips glued and equals forms', () => {
+    expect(ghVerbArgv(['--repo=o/r', 'auth', 'token'])).toEqual(['auth', 'token']);
+    expect(ghVerbArgv(['-Ro/r', 'auth', 'token'])).toEqual(['auth', 'token']);
+  });
+
+  it('leaves a plain argv alone', () => {
+    expect(ghVerbArgv(['issue', 'list'])).toEqual(['issue', 'list']);
+    expect(ghVerbArgv([])).toEqual([]);
+  });
+
+  it('closes the bypass for every tier', () => {
+    expect(refuseBlockedGhCall(['-R', 'o/r', 'auth', 'token'])).not.toBeNull();
+    expect(refuseBlockedGhCall(['--repo=o/r', 'config', 'set', 'x', 'y'])).not.toBeNull();
+    expect(ghDestructiveTarget(['-R', 'o/r', 'repo', 'delete'])).toBe('repository');
+    expect(ghDestructiveTarget(['--repo', 'o/r', 'secret', 'delete', 'K'])).toBe(
+      'repository secret',
+    );
+  });
+});
+
+describe('GraphQL mutations', () => {
+  // A mutation is a POST, so no method flag betrays it — but it has the same
+  // reach as `-X DELETE`.
+  it('flags a graphql mutation as destructive', () => {
+    expect(
+      ghDestructiveTarget(['api', 'graphql', '-f', 'query=mutation { deleteRepository }']),
+    ).toBe('raw GraphQL mutation');
+  });
+
+  it('leaves graphql queries alone', () => {
+    expect(ghDestructiveTarget(['api', 'graphql', '-f', 'query={ viewer { login } }'])).toBeNull();
   });
 });

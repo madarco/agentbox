@@ -86,7 +86,10 @@ handle_pr() {
       view|diff|checks|comment|review|merge|close|reopen)
         # These take the ref as a positional. Skip known value-taking flags so
         # a flag's value is not mistaken for the ref.
-        if [ -z "$(first_positional "--json|--body|--body-file|-b|-F|--color|--repo|-R" "$@")" ]; then
+        # `--jq`/`--template` take a value that starts with `.` or `{`, which reads
+        # as a positional if it is not consumed — the branch then never gets
+        # injected and the host resolves against its own checkout.
+        if [ -z "$(first_positional "--json|--jq|-q|--template|-t|--body|--body-file|-b|-F|--color|--repo|-R|--search|-S|--label|-l|--assignee|-a|--author|-A|--limit|-L|--state|-s|--comment|--subject" "$@")" ]; then
           set -- "$branch" "$@"
         fi
         ;;
