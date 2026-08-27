@@ -14,8 +14,6 @@ import {
   isProviderKind,
   listProjectsConfigured,
   loadEffectiveConfig,
-  PROVIDER_NAMES,
-  providerMeta,
   pruneOrphanProjectConfigs,
   registerProject,
   resolveDefaultCheckpoint,
@@ -56,11 +54,7 @@ import {
 import { mergeRemoteProviders } from './boxes/provider-origin.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
-import {
-  IMPORTERS,
-  isRuntimeProviderName,
-  loadProviderModuleByName,
-} from './provider-importers.js';
+import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
 import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
   BOX_WORKSPACE,
@@ -85,6 +79,8 @@ import {
   setBoxDisplayName,
   syncAgentboxSshConfig,
   diffFileManifests,
+  listProviderDescriptors,
+  resolveProviderDescriptor,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import {
@@ -647,29 +643,17 @@ function remoteDockerHostCount(): number {
   }
 }
 
-function isProviderConfigured(id: ProviderKind): boolean {
-  if (id === 'docker') return true;
+function isProviderConfigured(id: string): boolean {
   // remote-docker is usable as soon as one host alias is registered (the image
   // builds lazily on first create); it never writes a top-level `base` marker.
   if (id === 'remote-docker') return remoteDockerHostCount() > 0;
+  // A provider whose base self-heals on create (docker) — or a plugin that owns
+  // its own setup story and declares no bake — is ready as soon as it exists.
+  // Demanding a `base` marker of those would report every one of them as broken.
+  if (!resolveProviderDescriptor(id)?.bake.required) return true;
   const raw = readPreparedStateRaw(id);
   return !!(raw && typeof raw === 'object' && (raw as { base?: unknown }).base);
 }
-
-// secrets.env key(s) whose presence means a provider has credentials. Checked by
-// name only (never the value) so credential status is cheap + SDK-free. docker
-// needs none.
-const PROVIDER_CRED_KEYS: Record<ProviderKind, readonly string[]> = {
-  docker: [],
-  e2b: ['E2B_API_KEY'],
-  daytona: ['DAYTONA_API_KEY', 'DAYTONA_JWT_TOKEN'],
-  hetzner: ['HCLOUD_TOKEN'],
-  vercel: ['VERCEL_TOKEN', 'VERCEL_OIDC_TOKEN', 'VERCEL_AUTH_SOURCE'],
-  digitalocean: ['DIGITALOCEAN_TOKEN'],
-  // remote-docker authenticates as you, over your own ~/.ssh/config — there is
-  // no credential to store, so there is none to check.
-  'remote-docker': [],
-};
 
 /** Set of KEY names present in `~/.agentbox/secrets.env` (values ignored). */
 function readSecretsKeys(): Set<string> {
@@ -688,10 +672,19 @@ function readSecretsKeys(): Set<string> {
   return out;
 }
 
-/** Whether a provider has credentials configured (secrets.env or the shell env). */
-function hasProviderCredentials(id: ProviderKind, keys: Set<string>): boolean {
-  if (id === 'docker') return true;
-  return PROVIDER_CRED_KEYS[id].some((k) => keys.has(k) || !!process.env[k]);
+/**
+ * Whether a provider has credentials configured (secrets.env or the shell env).
+ *
+ * The key NAMES come from the provider's descriptor; the values are never read,
+ * so this stays cheap and SDK-free. A provider that declares no keys needs no
+ * credentials (docker, remote-docker) and is therefore always satisfied — which
+ * is also the right answer for a plugin that hasn't declared any, since a `false`
+ * there would disable its bake button for a credential it never wanted.
+ */
+function hasProviderCredentials(id: string, keys: Set<string>): boolean {
+  const envKeys = resolveProviderDescriptor(id)?.credentials.envKeys ?? [];
+  if (envKeys.length === 0) return true;
+  return envKeys.some((k) => keys.has(k) || !!process.env[k]);
 }
 
 /** Cheap `docker info` reachability probe (short timeout) for the bake precheck. */
@@ -721,7 +714,7 @@ async function binOnPath(name: string): Promise<boolean> {
  * fast with a clear message instead of a confusing mid-bake error. Returns an
  * error string when unmet, else null.
  */
-async function preparePrecheck(id: ProviderKind): Promise<string | null> {
+async function preparePrecheck(id: string): Promise<string | null> {
   if (id === 'docker') {
     return (await dockerDaemonReachable())
       ? null
@@ -740,13 +733,20 @@ async function preparePrecheck(id: ProviderKind): Promise<string | null> {
   return null;
 }
 
+/**
+ * Every provider a box can be created on — built-ins AND registered plugins.
+ *
+ * Iterating descriptors rather than `PROVIDER_NAMES` is what makes a community
+ * provider visible: the create path has always accepted plugin names, but a
+ * provider absent from this list never reaches a picker in the web UI or tray.
+ */
 function listProviders(jobs: QueueJob[]): ProviderOption[] {
   const keys = readSecretsKeys();
-  return PROVIDER_NAMES.map((id) => {
+  return listProviderDescriptors().map((d) => {
+    const id = d.name;
     // Keep "Docker (local)" but drop the "(cloud …)" qualifier from cloud labels
     // — the picker just wants the provider name.
-    const label =
-      id === 'docker' ? providerMeta(id).label : providerMeta(id).label.replace(/\s*\(.*\)$/, '');
+    const label = id === 'docker' ? d.label : d.label.replace(/\s*\(.*\)$/, '');
     const configured = isProviderConfigured(id);
     const hasCredentials = hasProviderCredentials(id, keys);
     // An in-flight bake for this provider (queued or running) — lets the UI show
@@ -766,7 +766,25 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
             ? 'Credentials set — bake the base image to finish setup.'
             : 'Not set up — add credentials, then bake the base image.';
     }
-    return { id, label, configured, hasCredentials, jobId: bake?.id, reason };
+    return {
+      id,
+      label,
+      configured,
+      hasCredentials,
+      jobId: bake?.id,
+      reason,
+      // The declarative half of the descriptor, straight through to the client.
+      // It comes from a sync snapshot (the config table, or plugins.json for a
+      // plugin), so serving it costs nothing and needs no opt-in flag — clients
+      // use it to render credential forms, pace progress bars, and gate
+      // capability-specific UI without hardcoding provider names.
+      kind: d.kind,
+      credentials: d.credentials,
+      bake: d.bake,
+      capabilities: d.capabilities,
+      ...(d.sizes ? { sizes: d.sizes } : {}),
+      ...(d.regions ? { regions: d.regions } : {}),
+    };
   });
 }
 
@@ -792,14 +810,11 @@ async function withRemoteProviders(local: ProviderOption[]): Promise<ProviderOpt
 // entry misses and recomputes, so a fresh bake is reflected immediately (no
 // stale window from a TTL that outlives the bake — Bugbot #151).
 const FRESHNESS_TTL_MS = 60_000;
-const freshnessCache = new Map<
-  ProviderKind,
-  { at: number; stored: string; live: string | undefined }
->();
+const freshnessCache = new Map<string, { at: number; stored: string; live: string | undefined }>();
 
 /**
  * Live base-image/snapshot freshness for one provider, over the hub's own
- * provider `IMPORTERS` — the one place this now runs (the CLI reads it back from
+ * provider loader — the one place this now runs (the CLI reads it back from
  * `GET /api/v1/providers?freshness=1`). Docker gets a real check too (unlike the
  * CLI, which lets `ensureImage` self-heal silently): the tray/web create
  * flows use `unprepared`/`stale` to announce the upcoming bake instead of
@@ -807,7 +822,7 @@ const freshnessCache = new Map<
  * the live fingerprint degrades to 'unknown' (never a false 'stale').
  */
 async function providerBaseFreshness(
-  id: ProviderKind,
+  id: string,
   claudeInstall?: 'native' | 'npm',
 ): Promise<BaseStatus> {
   if (id === 'docker') {
@@ -827,7 +842,7 @@ async function providerBaseFreshness(
   // shared bakes instead of showing every provider as "needs baking". No-op on a
   // local hub (local prepared-state already set) or when custody has no match.
   try {
-    const mod = (await IMPORTERS[id]()).providerModule;
+    const mod = await loadProviderModuleByName(id);
     await hydratePreparedFromCustody(
       new FsCustodyStore(),
       id,
@@ -853,7 +868,7 @@ async function providerBaseFreshness(
     live = cached.live;
   } else {
     try {
-      const mod = (await IMPORTERS[id]()).providerModule;
+      const mod = await loadProviderModuleByName(id);
       live = await mod.currentBaseFingerprintLive?.('native');
     } catch {
       live = undefined;
@@ -882,7 +897,13 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
   }
   return Promise.all(
     base.map(async (p) => {
-      if (!isProviderKind(p.id)) return p;
+      // Plugins are probed too, not just built-ins: a plugin that implements
+      // `currentBaseFingerprintLive` gets the same staleness nagging, and one
+      // that doesn't degrades to 'unknown' inside providerBaseFreshness rather
+      // than being skipped here. (docker is probed despite needing no bake — the
+      // create flows use `unprepared`/`stale` to ANNOUNCE the upcoming build
+      // instead of hiding it inside the create job.)
+      //
       // A control-box row already carries THAT machine's freshness, computed
       // against ITS build context. Recomputing it here would answer a question
       // about the wrong host — the "adopted-then-nagged" bug, one level up.
@@ -908,12 +929,12 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
  * answer is to say so — inventing a diff from mtimes or from the aggregate hash
  * would be a guess dressed as a fact.
  */
-async function providerBakeDiff(id: ProviderKind): Promise<BakeDiff | undefined> {
+async function providerBakeDiff(id: string): Promise<BakeDiff | undefined> {
   try {
     const raw = readPreparedStateRaw(id) as { base?: { files?: FileManifest } } | null;
     const stored = raw?.base?.files;
     if (!stored || Object.keys(stored).length === 0) return { hasManifest: false };
-    const mod = (await IMPORTERS[id]()).providerModule;
+    const mod = await loadProviderModuleByName(id);
     const current = await mod.currentBaseFileHashes?.();
     // A manifest IS recorded here — the live side just couldn't be hashed (a dev
     // tree with no staged runtime). Reporting `hasManifest: false` would tell the
@@ -2268,9 +2289,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     async setProviderCredentials(id, fields): Promise<ActionResult> {
       try {
-        if (!isProviderKind(id)) return { ok: false, error: `unknown provider ${id}` };
-        if (id === 'docker') return { ok: true }; // docker needs no credentials
-        const mod = (await IMPORTERS[id]()).providerModule;
+        if (!isRuntimeProviderName(id)) return { ok: false, error: `unknown provider ${id}` };
+        // Nothing to store for a provider that declares no credential fields
+        // (docker; remote-docker connects as you over your own ssh config).
+        if (resolveProviderDescriptor(id)?.credentials.fields.length === 0) return { ok: true };
+        const mod = await loadProviderModuleByName(id);
         if (!mod.setCredentials) {
           return { ok: false, error: `provider ${id} does not support credential setup` };
         }
@@ -2282,7 +2305,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
     },
     prepareProvider(id, opts): Promise<CreateBoxResult> {
-      if (!isProviderKind(id))
+      if (!isRuntimeProviderName(id))
         return Promise.resolve({ ok: false, error: `unknown provider ${id}` });
       // Serialize per provider so concurrent POSTs can't both miss the in-flight
       // job and enqueue duplicates (the check+enqueue below isn't atomic on its own).
