@@ -1,7 +1,7 @@
 # Provider plugins — external / community providers
 
-AgentBox ships seven built-in providers (local-docker, remote-docker, hetzner,
-digitalocean, daytona, vercel, e2b),
+AgentBox ships seven built-in providers (`docker`, `remote-docker`, `hetzner`,
+`digitalocean`, `daytona`, `vercel`, `e2b`),
 but the provider surface is open: anyone can publish a **provider plugin** as its
 own npm package and users can add it with `agentbox plugin add` — no changes to
 AgentBox itself. This doc is the authoring + operating guide. The user-facing
