@@ -535,8 +535,10 @@ describe.skipIf(!hasGh)('gh-shim value-flag map matches the installed gh', () =>
       const m = /^\s+(?:(-\w), )?(--[\w-]+)(?: (\S+))?\s{2,}\S/.exec(raw);
       if (!m) continue;
       if (!m[3]) continue; // no type word => boolean
-      if (m[1]) flags.add(m[1]);
-      flags.add(m[2]);
+      const short = m[1];
+      const long = m[2];
+      if (short) flags.add(short);
+      if (long) flags.add(long);
     }
     return flags;
   }
