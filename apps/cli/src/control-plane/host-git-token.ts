@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { parseGitRemote } from '@agentbox/relay';
+import { resolveOriginGitHost } from '../lib/git-host.js';
 
 /**
  * Find a GitHub token on THIS machine to hand to a control box (`hub.gitAuth=gh`).
@@ -100,8 +100,10 @@ export async function resolveTokenLogin(
 
 /**
  * The GitHub host a checkout's `origin` points at — github.com unless the repo
- * lives on a GitHub Enterprise Server instance. Falls back to github.com when
- * there is no origin to read (a fresh dir, a non-git cwd).
+ * lives on a GitHub Enterprise Server instance. ssh aliases are expanded (see
+ * `resolveOriginGitHost`), so `git@github.com-work:o/r` asks github.com for its
+ * credential rather than a host that doesn't exist. Falls back to github.com
+ * when there is no origin to read (a fresh dir, a non-git cwd).
  */
 export async function originGitHost(cwd: string): Promise<string> {
   try {
@@ -110,7 +112,7 @@ export async function originGitHost(cwd: string): Promise<string> {
       timeout: 15_000,
     });
     if (r.exitCode !== 0) return 'github.com';
-    return parseGitRemote((r.stdout ?? '').trim()).host.toLowerCase();
+    return await resolveOriginGitHost((r.stdout ?? '').trim());
   } catch {
     return 'github.com';
   }

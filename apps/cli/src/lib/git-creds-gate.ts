@@ -6,6 +6,7 @@ import { execa } from 'execa';
 import { parseGitRemote } from '@agentbox/relay';
 import { resolveSshConfigTarget } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
+import { resolveOriginGitHost } from './git-host.js';
 import { log, select } from './prompt.js';
 
 /**
@@ -113,6 +114,7 @@ async function originHost(projectRoot: string): Promise<string | null> {
 async function fillHttpsToken(
   projectRoot: string,
   host: string,
+  ghHost: string,
 ): Promise<{ username: string; password: string } | null> {
   const filled = await git(projectRoot, ['credential', 'fill'], {
     input: `protocol=https\nhost=${host}\n\n`,
@@ -123,9 +125,10 @@ async function fillHttpsToken(
     if (password) return { username: username || 'x-access-token', password };
   }
   // `--hostname` so a GitHub Enterprise Server remote gets ITS token rather
-  // than whichever host gh defaults to (and nothing at all if it has none).
+  // than whichever host gh defaults to. `ghHost` is the alias-expanded host —
+  // gh knows `github.com`, never an ~/.ssh/config name for it.
   try {
-    const r = await execa('gh', ['auth', 'token', '--hostname', host.toLowerCase()], {
+    const r = await execa('gh', ['auth', 'token', '--hostname', ghHost], {
       reject: false,
     });
     const token = (r.stdout ?? '').trim();
@@ -224,7 +227,12 @@ async function pushKeyPair(
 /** Token plan: copy just `~/.git-credentials` (box pushes over HTTPS). */
 async function planTokenCreds(projectRoot: string, onLog: (l: string) => void): Promise<CredPlan> {
   const host = (await originHost(projectRoot)) ?? 'github.com';
-  const creds = await fillHttpsToken(projectRoot, host);
+  // The credential line is keyed by the host git will put in the remote URL, so
+  // it stays unexpanded; only the gh lookup follows the alias to a real host.
+  const ghHost = await resolveOriginGitHost(
+    await git(projectRoot, ['remote', 'get-url', 'origin']),
+  );
+  const creds = await fillHttpsToken(projectRoot, host, ghHost);
   if (!creds) {
     onLog(
       `with-credentials: could not obtain a token for ${host} (credential helper + gh both empty)`,
