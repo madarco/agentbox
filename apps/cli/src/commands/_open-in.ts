@@ -11,6 +11,7 @@
 import { existsSync as realExistsSync } from 'node:fs';
 import { homedir as realHomedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { listProviderDescriptors } from '@agentbox/sandbox-core';
 
 // `finder` is a first-class open target: `agentbox open <box>` (no `--in`) is
 // equivalent to `--in finder` and sshfs-mounts /workspace + reveals it. It's an
@@ -30,6 +31,22 @@ export const OPEN_IN_APPS: readonly OpenInApp[] = [
 ];
 
 /**
+ * Providers matching a capability, from the descriptor table — built-ins AND
+ * registered plugins. Sync + offline (the descriptor is a snapshot, never a
+ * module load), which is what `detectOpenTargets` needs: it must stay a cheap
+ * fs-only probe.
+ *
+ * These replaced hardcoded name arrays, so a community provider that declares
+ * the capability is listed here automatically instead of being permanently
+ * opted out.
+ */
+function providersWith(cap: 'persistentSsh' | 'ssh'): string[] {
+  return listProviderDescriptors()
+    .filter((d) => d.capabilities[cap])
+    .map((d) => d.name);
+}
+
+/**
  * Providers whose per-box SSH identity outlives the CLI call (see
  * packages/sandbox-core/src/cloud-ssh.ts). Codex connects on its own later, so
  * an expiring token credential (Daytona) or no SSH at all (vercel/e2b)
@@ -37,35 +54,21 @@ export const OPEN_IN_APPS: readonly OpenInApp[] = [
  * per-box key that persists under the box dir (only the loopback host port
  * changes across restart, and `agentbox open`/start re-syncs `~/.ssh/config`).
  */
-export const PERSISTENT_SSH_PROVIDERS: readonly string[] = [
-  'docker',
-  'hetzner',
-  // remote-docker qualifies for the same reason docker does: a per-box key that
-  // outlives the CLI call. Its box sshd is reached by `ProxyJump`ing through the
-  // engine (ssh's own transport — no AgentBox-held tunnel to keep alive), and
-  // start/open re-resolve the published port into `~/.ssh/config`.
-  'remote-docker',
-];
+export function persistentSshProviders(): string[] {
+  return providersWith('persistentSsh');
+}
 
 /**
- * Providers `agentbox code` can attach an IDE to: docker via the Dev Containers
- * attached-container URI, clouds via a Remote-SSH alias.
+ * Providers `agentbox code` can attach an IDE to (docker via the Dev Containers
+ * attached-container URI, clouds via a Remote-SSH alias) and `agentbox open` can
+ * sshfs-mount `/workspace` from. Both need the same thing — real SSH into the
+ * box — so both read `capabilities.ssh`. Vercel/E2B have none (their
+ * `buildAttach` yields an SDK PTY bridge), so `open` fails fast with a readable
+ * pointer to `agentbox download`.
  */
-export const IDE_PROVIDERS: readonly string[] = ['docker', 'hetzner', 'daytona', 'remote-docker'];
-
-/**
- * Providers `agentbox open` can sshfs-mount `/workspace` from — they expose real
- * SSH: docker's localhost sshd, Hetzner's VPS, Daytona's token gateway. Vercel/E2B
- * have no SSH (their `buildAttach` yields a non-SSH `sbx exec` / SDK PTY bridge),
- * so `open` fails fast with a readable pointer to `agentbox download`. Plugin
- * providers stay opted out until they declare SSH support.
- */
-export const SSH_MOUNT_PROVIDERS: readonly string[] = [
-  'docker',
-  'hetzner',
-  'daytona',
-  'remote-docker',
-];
+export function sshProviders(): string[] {
+  return providersWith('ssh');
+}
 
 export interface DetectSeams {
   env: NodeJS.ProcessEnv;
@@ -163,7 +166,10 @@ const VSCODE_APPS: readonly VscodeApp[] = [
  * is a flavor CLI name (`code` / `cursor`); returns undefined when neither the
  * CLI nor its bundle is present.
  */
-export function resolveVscodeCli(cli: string, seams: DetectSeams = realSeams()): string | undefined {
+export function resolveVscodeCli(
+  cli: string,
+  seams: DetectSeams = realSeams(),
+): string | undefined {
   if (pathHasBinary(cli, seams)) return cli;
   if (seams.platform !== 'darwin') return undefined;
   const app = VSCODE_APPS.find((a) => a.cli === cli);
@@ -196,7 +202,10 @@ export function resolveCmuxBinary(seams: DetectSeams = realSeams()): string | un
 }
 
 /** `{ available, reason? }` — reason present only when unavailable. */
-function targetInfo(available: boolean, reason: string): Pick<OpenTargetInfo, 'available' | 'reason'> {
+function targetInfo(
+  available: boolean,
+  reason: string,
+): Pick<OpenTargetInfo, 'available' | 'reason'> {
   return available ? { available } : { available, reason };
 }
 
@@ -208,11 +217,11 @@ export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargets
       // box into the app's own settings (sshConfigs) instead — same persistent
       // SSH requirement as codex, since the app connects on its own later.
       ...targetInfo(macAppInstalled('Claude.app', seams), 'Claude desktop is not installed'),
-      providers: [...PERSISTENT_SSH_PROVIDERS],
+      providers: persistentSshProviders(),
     },
     codex: {
       ...targetInfo(macAppInstalled('Codex.app', seams), 'Codex is not installed'),
-      providers: [...PERSISTENT_SSH_PROVIDERS],
+      providers: persistentSshProviders(),
     },
     herdr: targetInfo(
       pathHasBinary('herdr', seams) || defaultHerdrSocketPath(seams) !== undefined,
@@ -230,7 +239,7 @@ export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargets
         VSCODE_APPS.some((a) => pathHasBinary(a.cli, seams) || macAppInstalled(a.appName, seams)),
         'VS Code / Cursor is not installed',
       ),
-      providers: [...IDE_PROVIDERS],
+      providers: sshProviders(),
     },
     iterm2: targetInfo(macAppInstalled('iTerm.app', seams), 'iTerm2 is not installed'),
     finder: {
@@ -241,7 +250,7 @@ export function detectOpenTargets(seams: DetectSeams = realSeams()): OpenTargets
         pathHasBinary('sshfs', seams),
         'sshfs is not installed — install with `brew install macfuse sshfs`',
       ),
-      providers: [...SSH_MOUNT_PROVIDERS],
+      providers: sshProviders(),
     },
   };
 }

@@ -9,6 +9,7 @@ import type {
   HubApiPruneResult,
 } from '../control-plane/hub-api-client.js';
 import { handleLifecycleError } from './_errors.js';
+import { listProviderDescriptors, resolveProviderDescriptor } from '@agentbox/sandbox-core';
 
 /**
  * `agentbox prune` — fleet cleanup through the hub's public `/api/v1`
@@ -77,18 +78,21 @@ function summary(r: HubApiPruneResult, projectConfigs: string[]): string {
   return lines.length > 0 ? lines.join('\n') : '  (nothing to remove)';
 }
 
-/** Cloud providers whose orphan sandboxes `prune --provider <p>` can enumerate + delete. */
-const CLOUD_PRUNE_PROVIDERS = [
-  'daytona',
-  'hetzner',
-  'vercel',
-  'e2b',
-  'digitalocean',
-  'remote-docker',
-] as const;
-
+/**
+ * Whether `prune --provider <p>` can enumerate + delete this provider's orphan
+ * sandboxes — i.e. whether its backend implements `list`. Read from the
+ * descriptor rather than a hardcoded name list, so a community provider with a
+ * listable backend is prunable too.
+ */
 function isCloudPruneProvider(name: string): boolean {
-  return (CLOUD_PRUNE_PROVIDERS as readonly string[]).includes(name);
+  return resolveProviderDescriptor(name)?.capabilities.prune ?? false;
+}
+
+/** Prunable provider names, for the `--provider` error message. */
+function cloudPruneProviders(): string[] {
+  return listProviderDescriptors()
+    .filter((d) => d.capabilities.prune)
+    .map((d) => d.name);
 }
 
 export const pruneCommand = new Command('prune')
@@ -108,7 +112,7 @@ export const pruneCommand = new Command('prune')
       const provider = opts.provider;
       if (provider !== undefined && provider !== 'docker' && !isCloudPruneProvider(provider)) {
         log.error(
-          `unknown provider '${provider}'; expected docker, daytona, hetzner, vercel, e2b, or digitalocean`,
+          `unknown provider '${provider}'; expected docker or one of ${cloudPruneProviders().join(', ')}`,
         );
         process.exit(2);
       }

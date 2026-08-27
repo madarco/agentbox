@@ -3,9 +3,8 @@ import {
   codexAddUrl,
   defaultHerdrSocketPath,
   detectOpenTargets,
-  IDE_PROVIDERS,
-  PERSISTENT_SSH_PROVIDERS,
-  SSH_MOUNT_PROVIDERS,
+  persistentSshProviders,
+  sshProviders,
   pathHasBinary,
   renderTargets,
   resolveCmuxBinary,
@@ -47,7 +46,7 @@ describe('detectOpenTargets', () => {
     const mac = seams({ existing: ['/Applications/Claude.app'] });
     expect(detectOpenTargets(mac).claude).toEqual({
       available: true,
-      providers: [...PERSISTENT_SSH_PROVIDERS],
+      providers: persistentSshProviders(),
     });
     const home = seams({ existing: ['/home/u/Applications/Claude.app'] });
     expect(detectOpenTargets(home).claude.available).toBe(true);
@@ -60,7 +59,7 @@ describe('detectOpenTargets', () => {
     const mac = seams({ existing: ['/Applications/Codex.app'] });
     expect(detectOpenTargets(mac).codex).toEqual({
       available: true,
-      providers: [...PERSISTENT_SSH_PROVIDERS],
+      providers: persistentSshProviders(),
     });
     const linux = seams({ platform: 'linux', existing: ['/Applications/Codex.app'] });
     expect(detectOpenTargets(linux).codex.available).toBe(false);
@@ -96,7 +95,7 @@ describe('detectOpenTargets', () => {
     const viaCode = seams({ path: '/bin', existing: ['/bin/code'] });
     expect(detectOpenTargets(viaCode).vscode).toEqual({
       available: true,
-      providers: [...IDE_PROVIDERS],
+      providers: sshProviders(),
     });
     const viaCursor = seams({ platform: 'linux', path: '/bin', existing: ['/bin/cursor'] });
     expect(detectOpenTargets(viaCursor).vscode.available).toBe(true);
@@ -127,7 +126,7 @@ describe('detectOpenTargets', () => {
     const withSshfs = seams({ path: '/usr/local/bin', existing: ['/usr/local/bin/sshfs'] });
     expect(detectOpenTargets(withSshfs).finder).toEqual({
       available: true,
-      providers: [...SSH_MOUNT_PROVIDERS],
+      providers: sshProviders(),
     });
     // sshfs is cross-platform — PATH presence is the gate on linux too.
     const linux = seams({ platform: 'linux', path: '/usr/bin', existing: ['/usr/bin/sshfs'] });
@@ -157,31 +156,56 @@ describe('detectOpenTargets', () => {
   });
 });
 
-describe('provider eligibility constants', () => {
-  it('codex/persistent-ssh covers docker + hetzner + remote-docker; vscode covers docker + ssh clouds', () => {
-    expect(PERSISTENT_SSH_PROVIDERS).toEqual(['docker', 'hetzner', 'remote-docker']);
-    expect(IDE_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
+// These lists now come from each provider's declared capabilities rather than a
+// hardcoded array, so a community provider that declares the capability is
+// included automatically. The built-in membership is still pinned here: it is
+// user-visible behavior (which boxes the tray's Open In… menu offers).
+describe('provider eligibility from capabilities', () => {
+  it('codex/persistent-ssh covers the providers with a per-box key that outlives the call', () => {
+    // digitalocean joins hetzner here for the same reason: a cloud-init-injected
+    // per-box identity file that survives across sessions.
+    expect(persistentSshProviders()).toEqual([
+      'docker',
+      'hetzner',
+      'digitalocean',
+      'remote-docker',
+    ]);
   });
 
-  it('open sshfs-mounts docker + hetzner + daytona + remote-docker; vercel/e2b excluded (no SSH)', () => {
-    expect(SSH_MOUNT_PROVIDERS).toEqual(['docker', 'hetzner', 'daytona', 'remote-docker']);
-    expect(SSH_MOUNT_PROVIDERS).not.toContain('vercel');
-    expect(SSH_MOUNT_PROVIDERS).not.toContain('e2b');
+  it('ssh (vscode + sshfs mount) covers the providers with a real sshd', () => {
+    // digitalocean is a VPS with the same sshd as hetzner. The pre-capability
+    // arrays omitted it while listing it in the direct-box-ssh set — an
+    // oversight, so `agentbox code` / `open` now work there too.
+    expect(sshProviders()).toEqual([
+      'docker',
+      'daytona',
+      'hetzner',
+      'digitalocean',
+      'remote-docker',
+    ]);
+  });
+
+  it('excludes the no-SSH providers — their attach is an SDK PTY bridge', () => {
+    expect(sshProviders()).not.toContain('vercel');
+    expect(sshProviders()).not.toContain('e2b');
+    expect(persistentSshProviders()).not.toContain('daytona'); // expiring token
   });
 });
 
 describe('codexAddUrl', () => {
   it('encodes the alias', () => {
-    expect(codexAddUrl('my box+1')).toBe(
-      'codex://settings/connections/ssh/add?name=my%20box%2B1',
-    );
+    expect(codexAddUrl('my box+1')).toBe('codex://settings/connections/ssh/add?name=my%20box%2B1');
     expect(codexAddUrl('smoke')).toBe('codex://settings/connections/ssh/add?name=smoke');
   });
 });
 
 describe('resolveCmuxBinary', () => {
   it('prefers the env override', () => {
-    const s = seams({ env: { CMUX_BUNDLED_CLI_PATH: '/custom/cmux' }, path: '/bin', existing: ['/bin/cmux'] });
+    const s = seams({
+      env: { CMUX_BUNDLED_CLI_PATH: '/custom/cmux' },
+      path: '/bin',
+      existing: ['/bin/cmux'],
+    });
     expect(resolveCmuxBinary(s)).toBe('/custom/cmux');
   });
 

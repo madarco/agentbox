@@ -1,4 +1,5 @@
 import type { BoxRecord, Provider } from '@agentbox/core';
+import { resolveProviderDescriptor } from './provider-descriptor.js';
 import { recordBoxSsh } from './state.js';
 import { agentboxAliasFor, parseSshTarget, syncAgentboxSshConfig } from './ssh-config.js';
 
@@ -132,6 +133,20 @@ export async function ensureCloudSshAlias(
 }
 
 /**
+ * Whether a provider's `buildAttach` yields a plain `ssh … <user>@<host>` argv
+ * pointing AT the box — the only shape `resolveCloudSshTarget` can parse a box
+ * SSH target out of. Vercel/E2B have no SSH at all, and must not warn about it
+ * on every start. A provider with its own `sshTarget` needs this false.
+ *
+ * Read from the provider's descriptor rather than a hardcoded name list, so a
+ * community provider that attaches over plain SSH gets its `~/.ssh/config`
+ * entry written too.
+ */
+function hasDirectBoxSsh(name: string): boolean {
+  return resolveProviderDescriptor(name)?.capabilities.directBoxSsh ?? false;
+}
+
+/**
  * Proactive, default-on SSH-config write on create/start/resume — gated by the
  * `ssh.autoConfig` config key so a user who manages `~/.ssh/config` themselves
  * can opt out. Only persistent-identity providers qualify (Hetzner/DigitalOcean:
@@ -144,14 +159,6 @@ export async function ensureCloudSshAlias(
  * brought it up), so `bringOnline: false` avoids a redundant lifecycle pass.
  * Re-resolving on start is what refreshes a Hetzner box's changed public IP.
  */
-/**
- * Cloud providers whose `buildAttach` yields a plain `ssh … <user>@<host>` argv
- * pointing AT the box — the only shape `resolveCloudSshTarget` can parse a box
- * SSH target out of. Vercel/E2B have no SSH at all, and must not warn about it
- * on every start. A provider with its own `sshTarget` needs no entry here.
- */
-const PROVIDERS_WITH_DIRECT_BOX_SSH: readonly string[] = ['hetzner', 'digitalocean', 'daytona'];
-
 export async function autoWriteSshConfig(
   box: BoxRecord,
   provider: Provider,
@@ -162,7 +169,7 @@ export async function autoWriteSshConfig(
   // A provider with neither its own `sshTarget` nor a direct-ssh attach argv has
   // no box target to write (vercel/e2b have no SSH at all). That is a shape, not
   // a failure, and must not warn on every start/unpause.
-  if (!provider.sshTarget && !PROVIDERS_WITH_DIRECT_BOX_SSH.includes(provider.name)) return;
+  if (!provider.sshTarget && !hasDirectBoxSsh(provider.name)) return;
   try {
     const conn = await resolveCloudSshTarget(box, provider, { bringOnline: false });
     if (!conn.identityFile) return;
