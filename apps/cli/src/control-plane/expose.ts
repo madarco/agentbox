@@ -21,6 +21,7 @@ import {
   buildExposedHubEnv,
   ensureHub,
   getHubStatus,
+  relayPort,
   stopHub,
   type ControlPlaneDeployRecord,
   type HubEndpoint,
@@ -35,7 +36,6 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
-const DEFAULT_HUB_PORT = 8787;
 
 export interface ExposeOptions {
   /** Bind address: `0.0.0.0` (LAN, default) or `127.0.0.1` (loopback + tunnel only). */
@@ -136,7 +136,7 @@ export async function resolvePublicUrl(
  */
 export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
   const log = opts.onLog ?? (() => {});
-  const port = opts.port ?? DEFAULT_HUB_PORT;
+  const port = opts.port ?? relayPort();
   const bind = opts.bind ?? '0.0.0.0';
 
   // A named-tunnel token is a secret, so it rides control-plane.env (not the
@@ -245,7 +245,7 @@ export async function ensureTunnelForRecord(
   await stopTunnel().catch(() => {});
   const handle = await startTunnel({
     kind,
-    port: record.port ?? DEFAULT_HUB_PORT,
+    port: record.port ?? relayPort(),
     ...(env.AGENTBOX_TUNNEL_TOKEN ? { token: env.AGENTBOX_TUNNEL_TOKEN } : {}),
     onLog: log,
   });

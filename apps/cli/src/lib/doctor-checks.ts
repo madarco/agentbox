@@ -14,6 +14,7 @@ import { loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
 import {
   errSummary,
   firstLine,
+  relayPort,
   statusBadge,
   type CheckResult,
   type CheckStatus,
@@ -163,11 +164,67 @@ export async function runSystemChecks(): Promise<CheckResult[]> {
     checkConfig(),
   ]);
   const results = [checkNode(), checkPlatform(), checkAgentboxHome(), git, ssh, sshfs];
+  results.push(...(await checkBoxesOnStaleRelayPort()));
   // macFUSE is a macOS concept; on Linux FUSE is a kernel module and sshfs alone
   // is the signal, so don't show a spurious row.
   if (process.platform === 'darwin') results.push(checkMacfuse());
   results.push(...config);
   return results;
+}
+
+/**
+ * Docker boxes still dialling a relay port the host no longer serves.
+ *
+ * `AGENTBOX_HOST_RELAY_URL` is baked in by `docker run -e`, so it is fixed for
+ * the container's life: changing `relay.port` leaves every existing box pointing
+ * at the old port. The box does not fail loudly — its host actions come back as
+ * `relay returned 502`, which reads like a flaky relay rather than a port
+ * change. Naming it here is the whole point; the fix is to recreate the box.
+ *
+ * Best-effort and offline-safe: no docker daemon, no containers, or an
+ * unreadable env all mean "nothing to report", never a failed check.
+ */
+async function checkBoxesOnStaleRelayPort(): Promise<CheckResult[]> {
+  const port = relayPort();
+  let stale: string[];
+  try {
+    const { stdout } = await execa(
+      'docker',
+      ['ps', '--filter', 'name=^/agentbox-', '--format', '{{.Names}}'],
+      { timeout: 5000 },
+    );
+    const names = stdout
+      .split('\n')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (names.length === 0) return [];
+    const inspected = await execa(
+      'docker',
+      ['inspect', '--format', '{{.Name}}\t{{range .Config.Env}}{{println .}}{{end}}', ...names],
+      { timeout: 8000 },
+    );
+    stale = [];
+    for (const block of inspected.stdout.split(/^\/(?=agentbox-)/m)) {
+      const name = /^(agentbox-[^\s\t]+)/.exec(block)?.[1];
+      const url = /AGENTBOX_HOST_RELAY_URL=(\S+)/.exec(block)?.[1];
+      if (!name || !url) continue;
+      const boxPort = Number.parseInt(new URL(url).port, 10);
+      if (Number.isFinite(boxPort) && boxPort !== port) stale.push(`${name} (:${String(boxPort)})`);
+    }
+  } catch {
+    return [];
+  }
+  if (stale.length === 0) return [];
+  return [
+    {
+      label: 'box relay port',
+      status: 'warn',
+      detail:
+        `${stale.join(', ')} still dial a relay port this host no longer serves ` +
+        `(relay.port is now ${String(port)}). Their host actions (git push, cp, checkpoint) ` +
+        `will fail with a 502 — the port is baked in at create time, so recreate these boxes.`,
+    },
+  ];
 }
 
 /**

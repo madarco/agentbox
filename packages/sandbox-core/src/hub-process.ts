@@ -5,21 +5,16 @@
  * docker — so they live in `@agentbox/sandbox-core`: a docker-free host that
  * only needs to start / probe the hub imports these, not the docker package.
  *
- * The relay and the embedded hub are mutually exclusive on the same port
- * (8787), so a single `127.0.0.1:8787` probe serves both.
+ * The relay and the embedded hub are mutually exclusive on the same port, so a
+ * single `127.0.0.1:<relayPort()>` probe serves both.
  */
 import { existsSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-
-/**
- * The relay/hub port. Mirrors `DEFAULT_RELAY_PORT` in `@agentbox/relay`, which
- * this package cannot import (`@agentbox/relay` depends on
- * `@agentbox/sandbox-core`, so the edge would be a cycle).
- */
-export const HUB_RELAY_PORT = 8787;
+import { relayPort } from './relay-port.js';
 
 export interface RelayReuseHealth {
   cliEntry?: boolean;
@@ -83,12 +78,33 @@ export async function killPid(pid: number): Promise<void> {
   }
 }
 
+/**
+ * Raw TCP liveness on the relay/hub port, independent of what speaks HTTP there.
+ *
+ * The difference between this and {@link fetchHealthz} is the whole diagnostic:
+ * TCP open + `/healthz` invalid means SOMETHING ELSE holds the port, which is
+ * the case a relay that dies on EADDRINUSE needs to name.
+ */
+export function portIsOccupied(timeoutMs: number, port: number = relayPort()): Promise<boolean> {
+  return new Promise<boolean>((resolveP) => {
+    const sock = netConnect({ host: '127.0.0.1', port });
+    const done = (occupied: boolean): void => {
+      sock.destroy();
+      resolveP(occupied);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
+
 export function pingHealthz(timeoutMs: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: HUB_RELAY_PORT,
+        port: relayPort(),
         method: 'GET',
         path: '/healthz',
         timeout: timeoutMs,
@@ -133,7 +149,7 @@ export function fetchHealthz(timeoutMs: number): Promise<HealthzBody | null> {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: HUB_RELAY_PORT,
+        port: relayPort(),
         method: 'GET',
         path: '/healthz',
         timeout: timeoutMs,

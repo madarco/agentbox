@@ -121,13 +121,21 @@ export {
   fetchHealthz,
   killPid,
   pingHealthz,
+  portIsOccupied,
   processAlive,
   resolveCliEntry,
   shouldReclaimForVersion,
-  HUB_RELAY_PORT,
   type HealthzBody,
   type RelayReuseHealth,
 } from './hub-process.js';
+export {
+  FALLBACK_RELAY_PORT,
+  isValidRelayPort,
+  RELAY_PORT_ENV,
+  relayPort,
+  resetRelayPort,
+  setRelayPort,
+} from './relay-port.js';
 export {
   ensureHub,
   getHubStatus,

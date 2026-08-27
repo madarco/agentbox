@@ -18,6 +18,7 @@ import {
   DEFAULT_ENV_PATTERNS,
   projectSlugFromOriginUrl,
   readPreparedStateRaw,
+  relayPort,
 } from '@agentbox/sandbox-core';
 import {
   applyProjectSeed,
@@ -749,7 +750,7 @@ const exposeSub = new Command('expose')
  */
 export async function localExposedLoopbackUrl(): Promise<string | null> {
   const rec = await readDeployRecord();
-  if (rec?.provider === 'local') return `http://127.0.0.1:${String(rec.port ?? 8787)}`;
+  if (rec?.provider === 'local') return `http://127.0.0.1:${String(rec.port ?? relayPort())}`;
   return null;
 }
 
@@ -2030,7 +2031,7 @@ async function runLocalUpdateFlow(opts: UpdateOpts, logWrite: (l: string) => voi
         '`agentbox self-update` (it reloads the hub too); `hub update` just restarts the exposed hub.',
     );
   }
-  const loopback = (await localExposedLoopbackUrl()) ?? 'http://127.0.0.1:8787';
+  const loopback = (await localExposedLoopbackUrl()) ?? `http://127.0.0.1:${String(relayPort())}`;
   const before = await probeControlPlaneStatus(loopback);
   log.info(`control box: this machine (${loopback}) — ${before.version ?? 'running'}`);
   if (!opts.yes) {
@@ -2069,7 +2070,7 @@ async function runLocalDestroyFlow(
   record: ControlPlaneDeployRecord,
   opts: DestroyOpts,
 ): Promise<void> {
-  const loopback = `http://127.0.0.1:${String(record.port ?? 8787)}`;
+  const loopback = `http://127.0.0.1:${String(record.port ?? relayPort())}`;
   // Registered cloud boxes outlive the hub and its store may be their only
   // record — the same hard gate as the VPS path, probed over loopback.
   const boxes = await listHubBoxesForDestroy({ ...record, url: loopback });

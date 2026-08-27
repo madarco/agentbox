@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { log, spinner } from '@clack/prompts';
 import {
   ensureRelay,
@@ -47,7 +48,8 @@ async function probeControlPlane(): Promise<ControlPlaneInfo | null> {
 function renderControlPlane(cp: ControlPlaneInfo): string {
   const head = `control box: ${cp.reachable ? 'reachable' : 'UNREACHABLE'} (this PC operates through it)`;
   const lines = [head, `  url:    ${cp.url}`];
-  if (cp.reachable) lines.push(`  health: ${String(cp.boxes ?? 0)} box(es), ${String(cp.events ?? 0)} event(s)`);
+  if (cp.reachable)
+    lines.push(`  health: ${String(cp.boxes ?? 0)} box(es), ${String(cp.events ?? 0)} event(s)`);
   return lines.join('\n');
 }
 
@@ -87,7 +89,9 @@ interface StatusOpts {
 function renderStatus(s: RelayStatus): string {
   if (s.running && s.health) {
     return [
-      'relay: running',
+      // A hub answering here means no lean relay process exists at all — and no
+      // relay.pid, which is why `pid` falls back to the one /healthz reports.
+      s.health.ui === true ? 'relay: running (served by the hub)' : 'relay: running',
       `  pid:     ${s.pid === null ? '?' : String(s.pid)}`,
       `  port:    ${String(s.port)}`,
       `  url:     ${s.endpoint.hostUrl}`,
@@ -132,14 +136,47 @@ const stopSub = new Command('stop')
       s.start('stopping relay');
       const result = await stopRelay();
       s.stop(
-        result.stopped
-          ? `stopped relay (pid ${String(result.pid)})`
-          : 'relay was not running',
+        result.stopped ? `stopped relay (pid ${String(result.pid)})` : 'relay was not running',
       );
     } catch (err) {
       handleLifecycleError(err);
     }
   });
+
+/**
+ * Bring the relay up and REPORT WHAT IS ACTUALLY THERE.
+ *
+ * `ensureRelay()` returning an endpoint is not proof of liveness — it also
+ * returns when it reused an incumbent, handed off to a hub, or gave up on a pid
+ * whose /healthz stays silent. Printing its URL unconditionally is how a relay
+ * that died on EADDRINUSE reported success while the box's RPCs went to whatever
+ * else held the port. So: re-probe, and say `hub` when a hub is what answers
+ * (there is no lean relay process in that case).
+ */
+async function startAndReport(s: ReturnType<typeof spinner>): Promise<void> {
+  await ensureRelay();
+  await rehydrateFromState();
+  const status = await getRelayStatus();
+  if (!status.running) {
+    s.stop('relay failed to start');
+    log.error(`nothing is answering /healthz on ${status.endpoint.hostUrl}`);
+    const tail = await tailLog(status.logFile);
+    log.info(tail ? `last lines of ${status.logFile}:\n${tail}` : `see ${status.logFile}`);
+    process.exit(1);
+  }
+  const what = status.health?.ui === true ? 'hub (serving the relay)' : 'relay';
+  s.stop(`${what} running on ${status.endpoint.hostUrl}`);
+}
+
+/** Last few non-empty lines of the relay log, or '' when unreadable. */
+async function tailLog(file: string): Promise<string> {
+  try {
+    const lines = (await readFile(file, 'utf8')).split('\n').filter((l) => l.trim().length > 0);
+    return lines.slice(-10).join('\n');
+  } catch {
+    return '';
+  }
+}
 
 const startSub = new Command('start')
   .description('Start the host relay if not already running (idempotent)')
@@ -147,9 +184,7 @@ const startSub = new Command('start')
     try {
       const s = spinner();
       s.start('starting relay');
-      const ep = await ensureRelay();
-      await rehydrateFromState();
-      s.stop(`relay running on ${ep.hostUrl}`);
+      await startAndReport(s);
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -163,16 +198,12 @@ const restartSub = new Command('restart')
       s.start('stopping relay');
       const stopped = await stopRelay();
       s.stop(
-        stopped.stopped
-          ? `stopped relay (pid ${String(stopped.pid)})`
-          : 'relay was not running',
+        stopped.stopped ? `stopped relay (pid ${String(stopped.pid)})` : 'relay was not running',
       );
       const s2 = spinner();
       s2.start('starting relay');
       try {
-        const ep = await ensureRelay();
-        await rehydrateFromState();
-        s2.stop(`relay running on ${ep.hostUrl}`);
+        await startAndReport(s2);
       } catch (err) {
         s2.stop('relay start failed');
         log.warn(err instanceof Error ? err.message : String(err));

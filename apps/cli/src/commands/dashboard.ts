@@ -14,12 +14,12 @@ import {
   createBox,
   DEFAULT_CODEX_SESSION,
   DEFAULT_OPENCODE_SESSION,
-  DEFAULT_RELAY_PORT,
   destroyBox,
   ensureBoxBrowser,
   ensureCodexInstalled,
   ensureOpencodeInstalled,
   listBoxes,
+  relayPort,
   pauseBox,
   rebuildPluginNativeDeps,
   seedCodexHooks,
@@ -716,7 +716,7 @@ export const dashboardCommand = new Command('dashboard')
           // getHubStatus); only a genuinely-down local hub leaves it unset, and
           // then a LOCAL box's stream degrades visibly to "approvals unavailable"
           // while a control-box row still resolves its own remote key per box.
-          hubBaseUrl: localHub?.url ?? `http://127.0.0.1:${String(DEFAULT_RELAY_PORT)}`,
+          hubBaseUrl: localHub?.url ?? `http://127.0.0.1:${String(relayPort())}`,
           hubApiKey: localHub?.apiKey,
           // ...but a box created against a control box keeps its approvals
           // there, so resolve per box and fall back to the above.

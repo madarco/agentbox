@@ -19,6 +19,9 @@ vi.mock('@agentbox/sandbox-core', async (orig) => {
     ...actual,
     fetchHealthz: vi.fn(async () => health.value),
     pingHealthz: vi.fn(async () => false),
+    // The port now comes from the shared resolver rather than a module constant.
+    relayPort: () => 8787,
+    portIsOccupied: vi.fn(async () => false),
     processAlive: vi.fn(async () => true),
     killPid: vi.fn(async (pid: number) => {
       calls.killed.push(pid);

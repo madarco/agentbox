@@ -13,6 +13,15 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- `relay.port` now actually moves the host daemon. It was documented and
+  settable but never read, so the relay always bound 8787. It governs the hub
+  too — the two share the port — and 8788 is refused (boxes bind it internally).
+  `agentbox doctor` names docker boxes left dialling a port the host no longer
+  serves, since their host actions would otherwise just fail with a 502.
+- `agentbox relay start` no longer reports success when the relay failed to
+  bind. It verifies `/healthz` really is our relay, names a foreign process
+  holding the port, inlines the log tail, clears the stale pidfile, and exits
+  non-zero.
 - A `box.size` / `box.size<Provider>` that Daytona or E2B will ignore (both fix
   resources when the base image is baked) is now called out when you set it and
   when you queue a `-i` create, instead of only in a detached job's log where

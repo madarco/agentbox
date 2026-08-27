@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { buildExposedHubEnv, EXPOSED_HUB_PROFILE, parseEnvFileBody } from './hub-expose.js';
 import { controlPlaneDeployPath, type ControlPlaneDeployRecord } from './ssh-config.js';
 import { resolveStagedRuntimeRoot, RUNTIME_ROOT_ENV } from './runtime-root.js';
+import { isValidRelayPort, relayPort, setRelayPort } from './relay-port.js';
 import {
   fetchHealthz,
-  HUB_RELAY_PORT,
   killPid,
   pingHealthz,
   processAlive,
@@ -27,9 +27,9 @@ import {
 
 /**
  * `agentbox hub` lifecycle. The hub is the embedded relay + Next UI in ONE
- * process on the relay port (8787) — a superset of the lean `agentbox-relay`.
- * The two are mutually exclusive on the port, so:
- *   - starting the hub reclaims any lean relay already holding 8787;
+ * process on the relay port (`relayPort()`, default 8787) — a superset of the
+ * lean `agentbox-relay`. The two are mutually exclusive on the port, so:
+ *   - starting the hub reclaims any lean relay already holding it;
  *   - a running hub answers /healthz with `ui:true`, so the create path's
  *     `ensureRelay()` reuses it (it also sets AGENTBOX_CLI_ENTRY so the capability
  *     gate is satisfied and it's never reclaimed for that reason).
@@ -53,7 +53,6 @@ const HUB_PID_FILE = join(STATE_DIR, 'hub.pid');
 const RELAY_PID_FILE = join(STATE_DIR, 'relay.pid');
 const HUB_LOG_FILE = join(STATE_DIR, 'hub.log');
 export const HUB_TOKEN_FILE = join(STATE_DIR, 'hub', 'token');
-const PORT = HUB_RELAY_PORT;
 // Bind wide (like the bare relay in relay.ts) so docker boxes can reach the hub's
 // embedded relay at host.docker.internal:8787 for their box-initiated RPCs (git
 // push/cp/download, and the /api/v1 prompt stream the attach footer subscribes to
@@ -177,11 +176,11 @@ async function endpointFor(portlessUrl?: string): Promise<HubEndpoint> {
   const token = await readToken();
   // Prefer the friendly Portless URL when one is registered; else the loopback
   // (NOT the bind host — `http://0.0.0.0` is not a usable browser/client URL).
-  const hostUrl = portlessUrl ?? `http://${LOOPBACK_HOST}:${String(PORT)}`;
+  const hostUrl = portlessUrl ?? `http://${LOOPBACK_HOST}:${String(relayPort())}`;
   return {
     hostUrl,
     openUrl: token ? `${hostUrl}/?token=${token}` : hostUrl,
-    port: PORT,
+    port: relayPort(),
     token,
   };
 }
@@ -257,7 +256,7 @@ async function reclaimPort(
     if (typeof pid !== 'number' || pid <= 0 || seen.has(pid)) continue;
     seen.add(pid);
     if (!(await processAlive(pid))) continue;
-    log(`stopping process on :${String(PORT)} (pid ${String(pid)})`);
+    log(`stopping process on :${String(relayPort())} (pid ${String(pid)})`);
     await killPid(pid);
   }
   await unlink(HUB_PID_FILE).catch(() => {});
@@ -266,7 +265,7 @@ async function reclaimPort(
   await unlink(RELAY_PID_FILE).catch(() => {});
   if (await pingHealthz(300)) {
     throw new Error(
-      `something is still listening on :${String(PORT)} and could not be stopped ` +
+      `something is still listening on :${String(relayPort())} and could not be stopped ` +
         `(reported pid ${String(reportedPid ?? 'unknown')}); kill it manually and retry`,
     );
   }
@@ -287,6 +286,21 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   // `localhost` — a plain hub.
   const exposed = await resolveExposedSpawn();
   const desiredProfile = exposed?.profile ?? 'localhost';
+  // An exposed hub's port is a DEPLOYMENT fact: the bind address, the tunnel and
+  // the firewall rule were all provisioned against the port in the record, so it
+  // is what the child will bind. Adopt it as this process's relay port before any
+  // probing, or every /healthz here targets `relay.port` while the hub listens on
+  // the record's port — the hub then reads as dead (or as a collision) when it is
+  // running fine. Whoever changes the port must re-run `hub expose --port`, which
+  // moves the tunnel and firewall with it.
+  const exposedPort = Number.parseInt(exposed?.env['AGENTBOX_HUB_PORT'] ?? '', 10);
+  if (isValidRelayPort(exposedPort) && exposedPort !== relayPort()) {
+    log(
+      `this machine's hub is exposed on :${String(exposedPort)}, so relay.port ` +
+        `(${String(relayPort())}) does not apply here — re-run \`agentbox hub expose --port\` to move it`,
+    );
+    setRelayPort(exposedPort);
+  }
 
   const currentVersion = process.env.AGENTBOX_CLI_VERSION;
   // A hub running in the wrong profile (a plain localhost hub while this machine
@@ -301,11 +315,11 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   if (health !== null) {
     const profileMismatch = (health.profile ?? 'localhost') !== desiredProfile;
     if (reusable(health)) {
-      return endpointFor(await hubPortlessSync(opts.portlessEnabled, PORT)); // a hub already runs here
+      return endpointFor(await hubPortlessSync(opts.portlessEnabled, relayPort())); // a hub already runs here
     }
     log(
       profileMismatch
-        ? `a hub in the ${health.profile ?? 'localhost'} profile holds :${String(PORT)} — reclaiming to run ${desiredProfile}`
+        ? `a hub in the ${health.profile ?? 'localhost'} profile holds :${String(relayPort())} — reclaiming to run ${desiredProfile}`
         : health.ui === true
           ? 'a hub from a different agentbox version holds :8787 — reclaiming'
           : 'a lean relay holds :8787 — reclaiming to start the hub',
@@ -327,11 +341,11 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
         await delay(200);
       }
       if (late !== null && reusable(late)) {
-        return endpointFor(await hubPortlessSync(opts.portlessEnabled, PORT));
+        return endpointFor(await hubPortlessSync(opts.portlessEnabled, relayPort()));
       }
       if (late !== null) {
         log(
-          `a hub in the ${late.profile ?? 'localhost'} profile holds :${String(PORT)} — reclaiming to run ${desiredProfile}`,
+          `a hub in the ${late.profile ?? 'localhost'} profile holds :${String(relayPort())} — reclaiming to run ${desiredProfile}`,
         );
       }
       // Still unresponsive after ~2s: replace it rather than report a false
@@ -378,6 +392,10 @@ async function spawnHub(
       // so docker boxes reach its embedded relay via host.docker.internal; the
       // profile is set independently of the bind host in server.ts.
       AGENTBOX_HUB_HOST: HOST,
+      // Load-bearing for `relay.port`: server.ts defaults to 8787 on its own, so
+      // without this the hub keeps binding 8787 while everything here probes the
+      // configured port.
+      AGENTBOX_HUB_PORT: String(relayPort()),
       // The hub bundle ships no staged build context of its own, so its
       // in-process freshness checks couldn't fingerprint (degrading to
       // 'unknown'). Hand it the CLI's resolved roots so hub-side fingerprints
@@ -399,13 +417,13 @@ async function spawnHub(
   });
   if (typeof child.pid === 'number') {
     await writeFile(HUB_PID_FILE, String(child.pid), 'utf8');
-    log(`spawned hub process (pid ${String(child.pid)}, port ${String(PORT)})`);
+    log(`spawned hub process (pid ${String(child.pid)}, port ${String(relayPort())})`);
   }
   // Next prepare takes a beat longer than the lean relay; give it ~25s.
   for (let i = 0; i < 50; i++) {
     if (await pingHealthz(300)) {
-      log(`hub reachable on http://${LOOPBACK_HOST}:${String(PORT)}`);
-      const purl = await hubPortlessSync(portlessEnabled, PORT);
+      log(`hub reachable on http://${LOOPBACK_HOST}:${String(relayPort())}`);
+      const purl = await hubPortlessSync(portlessEnabled, relayPort());
       if (purl) log(`hub also reachable on ${purl}`);
       return endpointFor(purl);
     }
@@ -421,7 +439,7 @@ async function spawnHub(
   }
   throw new Error(
     await hubStartupError(
-      `hub did not become reachable on http://${LOOPBACK_HOST}:${String(PORT)} within ~25s`,
+      `hub did not become reachable on http://${LOOPBACK_HOST}:${String(relayPort())} within ~25s`,
     ),
   );
 }
@@ -512,7 +530,7 @@ export async function getHubStatus(): Promise<HubStatus> {
     ui: health?.ui === true,
     pid,
     pidAlive,
-    port: PORT,
+    port: relayPort(),
     hostUrl: ep.hostUrl,
     openUrl: ep.openUrl,
     token: ep.token,

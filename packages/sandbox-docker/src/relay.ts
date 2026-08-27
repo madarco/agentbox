@@ -20,7 +20,9 @@ import {
   fetchHealthz,
   killPid,
   pingHealthz,
+  portIsOccupied,
   processAlive,
+  relayPort,
   resolveCliEntry,
   shouldReclaimForVersion,
   type HealthzBody,
@@ -37,7 +39,9 @@ export {
   fetchHealthz,
   killPid,
   pingHealthz,
+  portIsOccupied,
   processAlive,
+  relayPort,
   resolveCliEntry,
   shouldReclaimForVersion,
   type HealthzBody,
@@ -59,16 +63,24 @@ export interface RelayEndpoint {
   port: number;
 }
 
-const PORT = DEFAULT_RELAY_PORT;
-const ENDPOINT: RelayEndpoint = {
-  // host.docker.internal is the Docker Desktop / OrbStack-supplied alias for
-  // the host's loopback as seen from inside a container. The corresponding
-  // `--add-host=host.docker.internal:host-gateway` flag in runBox makes the
-  // resolution work on Linux native Docker too.
-  url: `http://host.docker.internal:${String(PORT)}`,
-  hostUrl: `http://127.0.0.1:${String(PORT)}`,
-  port: PORT,
-};
+/**
+ * The relay's URLs at the CURRENTLY resolved port (`relay.port`, seeded into
+ * `relayPort()` at CLI startup). Built per call rather than frozen at import so
+ * a configured port is honoured — the module constant this replaced is exactly
+ * why `relay.port` did nothing.
+ */
+export function relayEndpoint(): RelayEndpoint {
+  const port = relayPort();
+  return {
+    // host.docker.internal is the Docker Desktop / OrbStack-supplied alias for
+    // the host's loopback as seen from inside a container. The corresponding
+    // `--add-host=host.docker.internal:host-gateway` flag in runBox makes the
+    // resolution work on Linux native Docker too.
+    url: `http://host.docker.internal:${String(port)}`,
+    hostUrl: `http://127.0.0.1:${String(port)}`,
+    port,
+  };
+}
 
 export interface EnsureRelayOptions {
   onLog?: (line: string) => void;
@@ -76,9 +88,15 @@ export interface EnsureRelayOptions {
 
 /**
  * Idempotently bring up the host relay. Spawns the bundled `agentbox-relay`
- * bin as a detached node process bound to 0.0.0.0:8787 (so boxes can reach
- * it via host.docker.internal, and the CLI via 127.0.0.1). Best-effort:
+ * bin as a detached node process bound to `0.0.0.0:<relayPort()>` (so boxes can
+ * reach it via host.docker.internal, and the CLI via 127.0.0.1). Best-effort:
  * failures throw and the caller treats it as "relay not reachable".
+ *
+ * NOTE for callers that report to a user: several paths here return an endpoint
+ * WITHOUT a relay process of ours running — an incumbent reused, a hub serving
+ * the port, or a live pid whose /healthz stays silent. Returning is therefore
+ * not proof of liveness; `agentbox relay start` re-checks with
+ * {@link getRelayStatus} before it claims success.
  *
  * If a legacy relay container from a previous version of agentbox is still
  * around, it's removed first so its bound DNS name doesn't shadow the new
@@ -89,7 +107,7 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
   await mkdir(STATE_DIR, { recursive: true });
 
   // Migration: kill the old in-docker relay if it's around. The host process
-  // wants the same port; the container did NOT publish to host:8787, so there
+  // wants the same port; the container did NOT publish to the host, so there
   // is no actual port collision. We still remove it to avoid confusion (it'd
   // show up in `docker ps -a` forever otherwise).
   if (await containerExists(RELAY_CONTAINER_NAME)) {
@@ -106,7 +124,7 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     // by a different agentbox install — e.g. a stale npx cache entry — so its
     // code may not match this CLI). See shouldReclaimForVersion for the gates.
     if (!shouldReclaimForVersion(health, currentVersion)) {
-      return ENDPOINT;
+      return relayEndpoint();
     }
     // The incumbent is a HUB, not a lean relay (the hub embeds this same relay
     // daemon and adds the UI). Replacing it with a bare relay would drop the UI
@@ -117,11 +135,11 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
     // hub at the right version. (No recursion: ensureHub never calls back here.)
     if (health.ui === true) {
       log(
-        `a hub from agentbox ${health.version ?? '?'} holds :${String(PORT)} but this CLI is ` +
+        `a hub from agentbox ${health.version ?? '?'} holds :${String(relayPort())} but this CLI is ` +
           `${currentVersion ?? '?'} — restarting the hub rather than replacing it with a relay`,
       );
       await ensureHub({ onLog: log });
-      return ENDPOINT;
+      return relayEndpoint();
     }
     if (health.cliEntry === false) {
       log(
@@ -142,11 +160,11 @@ export async function ensureRelay(opts: EnsureRelayOptions = {}): Promise<RelayE
       // startup. If it stays unresponsive, leave it alone (someone might be
       // debugging it) and let downstream POSTs fail as best-effort.
       for (let i = 0; i < 10; i++) {
-        if (await pingHealthz(300)) return ENDPOINT;
+        if (await pingHealthz(300)) return relayEndpoint();
         await delay(200);
       }
       log(`relay pid ${String(existingPid)} alive but /healthz unresponsive — proceeding anyway`);
-      return ENDPOINT;
+      return relayEndpoint();
     }
     if (existingPid !== null) {
       await unlink(PID_FILE).catch(() => {});
@@ -204,7 +222,7 @@ async function reclaimRelay(
   // broken one again on the next call. Surface it rather than loop silently.
   if (await pingHealthz(300)) {
     throw new Error(
-      `a relay is still listening on :${String(PORT)} and could not be ` +
+      `a relay is still listening on :${String(relayPort())} and could not be ` +
         `stopped (reported pid ${String(reportedPid ?? 'unknown')}); kill it manually and retry`,
     );
   }
@@ -230,7 +248,7 @@ async function spawnRelay(
     process.env.AGENTBOX_CLOUD_BACKENDS ?? join(dirname(cliEntry), 'cloud-backends.js');
   const child = spawn(
     process.execPath,
-    [relayBin, 'serve', '--port', String(PORT), '--host', '0.0.0.0'],
+    [relayBin, 'serve', '--port', String(relayPort()), '--host', '0.0.0.0'],
     {
       detached: true,
       stdio: ['ignore', logFd, logFd],
@@ -242,21 +260,79 @@ async function spawnRelay(
     },
   );
   child.unref();
+  // Note when the child dies before it ever answers /healthz — almost always a
+  // bind failure (EADDRINUSE) whose message the child has already written to
+  // LOG_FILE. Surfacing that beats making the user wait out the full timeout and
+  // then go read the log by hand. Mirrors spawnHub.
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  child.on('exit', (code, signal) => {
+    exit = { code, signal };
+  });
   if (typeof child.pid === 'number') {
     await writeFile(PID_FILE, String(child.pid), 'utf8');
-    log(`spawned relay host process (pid ${String(child.pid)}, port ${String(PORT)})`);
+    log(`spawned relay host process (pid ${String(child.pid)}, port ${String(relayPort())})`);
   }
 
+  const ep = relayEndpoint();
   for (let i = 0; i < 25; i++) {
-    if (await pingHealthz(300)) {
-      log(`relay reachable on ${ENDPOINT.hostUrl}`);
-      return ENDPOINT;
+    // fetchHealthz, NOT pingHealthz: it validates the response BODY, so an
+    // unrelated service that happens to 2xx on /healthz can't be mistaken for
+    // our relay. A bare 2xx check is exactly how a foreign process holding the
+    // port read as a healthy relay while our own child was dead.
+    if ((await fetchHealthz(300)) !== null) {
+      log(`relay reachable on ${ep.hostUrl}`);
+      return ep;
+    }
+    if (exit !== null) {
+      await unlink(PID_FILE).catch(() => {});
+      // Let the child flush its last stderr line into the log before we tail it.
+      await delay(150);
+      throw new Error(
+        await relayStartupError(`relay process exited (${describeExit(exit)}) during startup`),
+      );
     }
     await delay(200);
   }
+  await unlink(PID_FILE).catch(() => {});
   throw new Error(
-    `relay did not become reachable on ${ENDPOINT.hostUrl} within 5s; see ${LOG_FILE}`,
+    await relayStartupError(`relay did not become reachable on ${ep.hostUrl} within 5s`),
   );
+}
+
+function describeExit(exit: { code: number | null; signal: NodeJS.Signals | null }): string {
+  if (exit.signal !== null) return `killed by ${exit.signal}`;
+  return `exit code ${String(exit.code ?? 'unknown')}`;
+}
+
+/**
+ * Build a startup-failure message with the tail of the relay log inlined, and —
+ * when the port is held by something that is NOT an agentbox relay — name that
+ * collision and the way out of it. That case (an unrelated local service on the
+ * port) is the one that reads as a flaky relay rather than a port conflict,
+ * because the box's RPCs then reach the other service and get its errors back.
+ */
+async function relayStartupError(headline: string): Promise<string> {
+  const parts = [headline];
+  if (await portIsOccupied(300)) {
+    parts.push(
+      `\nport ${String(relayPort())} is held by a process that is not an agentbox relay. ` +
+        `Free it, or move the relay with \`agentbox config set relay.port <port> --global\` ` +
+        `(then \`agentbox relay restart\`).`,
+    );
+  }
+  const tail = await tailFile(LOG_FILE, 20);
+  parts.push(tail ? `\n--- last lines of ${LOG_FILE} ---\n${tail}` : `\nsee ${LOG_FILE}`);
+  return parts.join('');
+}
+
+/** Last `maxLines` non-empty lines of a file, or '' when unreadable/empty. */
+async function tailFile(file: string, maxLines: number): Promise<string> {
+  try {
+    const lines = (await readFile(file, 'utf8')).split('\n').filter((l) => l.trim().length > 0);
+    return lines.slice(-maxLines).join('\n');
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -483,7 +559,18 @@ export interface RelayStatus {
   /** URLs boxes / host-side callers use to reach the relay. */
   endpoint: RelayEndpoint;
   /** Parsed /healthz body; null when the relay isn't responding. */
-  health: { boxes: number; events: number; version?: string; commit?: string } | null;
+  health: {
+    boxes: number;
+    events: number;
+    version?: string;
+    commit?: string;
+    /**
+     * True when a HUB (relay + Next UI in one process) is what answers here.
+     * Then there is no lean relay process at all, and no `relay.pid` — callers
+     * that report to a user must say "hub", not "relay".
+     */
+    ui?: boolean;
+  } | null;
   /** Absolute path to the pidfile. */
   pidFile: string;
   /** Absolute path to the process log. */
@@ -502,7 +589,7 @@ export async function getRelayStatus(): Promise<RelayStatus> {
   const fromFile = await readPidFile();
   const health = await fetchHealthz(300);
   // Fall back to the pid /healthz reports: when the HUB holds the port there is
-  // no relay pidfile (whoever takes :8787 clears the loser's), and a bare `?`
+  // no relay pidfile (whoever takes the port clears the loser's), and a bare `?`
   // reads as "we lost it" rather than "the hub is serving this".
   const pid = fromFile ?? health?.pid ?? null;
   const pidAlive = pid !== null && (await processAlive(pid));
@@ -510,8 +597,8 @@ export async function getRelayStatus(): Promise<RelayStatus> {
     running: health !== null,
     pid,
     pidAlive,
-    port: PORT,
-    endpoint: ENDPOINT,
+    port: relayPort(),
+    endpoint: relayEndpoint(),
     health:
       health === null
         ? null
@@ -520,6 +607,7 @@ export async function getRelayStatus(): Promise<RelayStatus> {
             events: health.events,
             version: health.version,
             commit: health.commit,
+            ui: health.ui,
           },
     pidFile: PID_FILE,
     logFile: LOG_FILE,
@@ -732,7 +820,7 @@ async function adminPost(path: string, body: unknown): Promise<void> {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: PORT,
+        port: relayPort(),
         method: 'POST',
         path,
         headers: {
@@ -772,7 +860,7 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
     const req = httpRequest(
       {
         host: '127.0.0.1',
-        port: PORT,
+        port: relayPort(),
         method: 'POST',
         path,
         headers: {
