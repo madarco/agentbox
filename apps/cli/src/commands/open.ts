@@ -34,10 +34,10 @@ import {
   codexAddUrl,
   defaultHerdrSocketPath,
   detectOpenTargets,
-  PERSISTENT_SSH_PROVIDERS,
+  persistentSshProviders,
   renderTargets,
   resolveCmuxBinary,
-  SSH_MOUNT_PROVIDERS,
+  sshProviders,
   type OpenTarget,
 } from './_open-in.js';
 
@@ -84,10 +84,7 @@ export const openCommand = new Command('open')
   )
   .option('--path', 'print the host mount path instead of launching Finder')
   .option('--print', 'alias of --path')
-  .option(
-    '--unmount',
-    'unmount any existing sshfs mount for the box and exit',
-  )
+  .option('--unmount', 'unmount any existing sshfs mount for the box and exit')
   .option(
     '--in <app>',
     'open the box in a host app instead of Finder: codex | herdr | cmux | vscode | iterm2 | finder',
@@ -140,7 +137,7 @@ export const openCommand = new Command('open')
       // localhost sshd, Hetzner's VPS, Daytona's token gateway). A docker box
       // that predates the localhost sshd (no `sshEnabled`) still falls through to
       // the rsync-snapshot export below.
-      if (SSH_MOUNT_PROVIDERS.includes(providerName) && (providerName !== 'docker' || box.sshEnabled)) {
+      if (sshProviders().includes(providerName) && (providerName !== 'docker' || box.sshEnabled)) {
         await runSshfsMount(box, opts);
         return;
       }
@@ -188,7 +185,7 @@ export const openCommand = new Command('open')
  */
 async function ensurePersistentSshAlias(box: BoxRecord, appLabel: string): Promise<string> {
   const providerName = box.provider ?? 'docker';
-  if (!PERSISTENT_SSH_PROVIDERS.includes(providerName)) {
+  if (!persistentSshProviders().includes(providerName)) {
     throw new Error(
       `'--in ${appLabel.toLowerCase()}' needs a box with a persistent SSH key — docker (localhost sshd) and ` +
         `Hetzner cloud boxes qualify (this box is '${providerName}'). Daytona uses a 60-min ` +
@@ -197,7 +194,7 @@ async function ensurePersistentSshAlias(box: BoxRecord, appLabel: string): Promi
   }
 
   // A docker box created before the localhost sshd shipped has no SSH surface —
-  // `PERSISTENT_SSH_PROVIDERS` gates by provider, so catch that here with a clear
+  // `persistentSshProviders()` gates by provider, so catch that here with a clear
   // message instead of a confusing "sshd may have failed to start" downstream.
   if (providerName === 'docker' && !box.sshEnabled) {
     throw new Error(
@@ -383,7 +380,9 @@ async function openInTerminalApp(box: BoxRecord, host: 'herdr' | 'cmux' | 'iterm
           : ' Is iTerm2 installed?';
     throw new Error(`could not open in ${host}: ${r.error ?? 'unknown error'}.${hint}`);
   }
-  log.success(`opened ${box.name} in a new ${host} ${host === 'iterm2' ? 'window' : 'workspace'} (agentbox attach)`);
+  log.success(
+    `opened ${box.name} in a new ${host} ${host === 'iterm2' ? 'window' : 'workspace'} (agentbox attach)`,
+  );
 }
 
 /**
@@ -433,7 +432,7 @@ async function runSshfsMount(box: BoxRecord, opts: OpenOpts): Promise<void> {
   const sshfsBin = await locateBinary('sshfs');
   if (!sshfsBin) {
     throw new Error(
-      'sshfs not found on PATH. Install with `brew install macfuse sshfs` (macOS) or your distro\'s package manager, then retry. `agentbox open` mounts the box /workspace via sshfs.',
+      "sshfs not found on PATH. Install with `brew install macfuse sshfs` (macOS) or your distro's package manager, then retry. `agentbox open` mounts the box /workspace via sshfs.",
     );
   }
 
@@ -530,4 +529,3 @@ async function tryUnmount(path: string): Promise<boolean> {
   }
   return false;
 }
-

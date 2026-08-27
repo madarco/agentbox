@@ -1,7 +1,6 @@
 import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
-  CLOUD_PROVIDER_NAMES,
   defaultCheckpointConfigKey,
   findProjectRoot,
   setConfigValue,
@@ -16,6 +15,7 @@ import type {
 } from '../control-plane/hub-api-client.js';
 import { boxOwningHubIsLocal, withHubClient, withOwningHub } from '../control-plane/with-hub.js';
 import { handleLifecycleError } from './_errors.js';
+import { listProviderDescriptors, resolveProviderDescriptor } from '@agentbox/sandbox-core';
 
 /**
  * `agentbox checkpoint` — capture and manage the warm box states new boxes start
@@ -38,8 +38,22 @@ import { handleLifecycleError } from './_errors.js';
  * of path-hash-keyed stores, not a routing gap.)
  */
 
-/** Docker + built-in cloud providers, for `set-default --provider` validation. */
-const KNOWN_PROVIDERS: ProviderKind[] = ['docker', ...CLOUD_PROVIDER_NAMES];
+/**
+ * Providers `set-default --provider` accepts: every runtime provider — built-in
+ * or registered plugin — that supports checkpoints at all. Read from the
+ * descriptor rather than a hardcoded list, so a community provider with a
+ * `checkpoint` capability can carry a project default like any built-in.
+ */
+function checkpointProviders(): string[] {
+  return listProviderDescriptors()
+    .filter((d) => d.capabilities.checkpoints)
+    .map((d) => d.name);
+}
+
+/** Whether capturing a checkpoint stops and reboots the box (vercel, daytona). */
+function checkpointReboots(name: string): boolean {
+  return resolveProviderDescriptor(name)?.capabilities.checkpointReboots ?? false;
+}
 
 interface CreateOpts {
   name?: string;
@@ -75,11 +89,7 @@ const createSub = new Command('create')
       // The vercel/daytona snapshot stops + reboots the box (the live agent process
       // doesn't survive). Confirm here on the laptop before yanking it — a TTY
       // interaction that must stay client-side; -y skips it.
-      if (
-        (providerName === 'vercel' || providerName === 'daytona') &&
-        !opts.yes &&
-        process.stdin.isTTY
-      ) {
+      if (checkpointReboots(providerName) && !opts.yes && process.stdin.isTTY) {
         const ok = await confirm({
           message: `Create checkpoint? The ${providerName} box will stop and reboot.`,
           initialValue: false,
@@ -197,21 +207,35 @@ const setDefaultSub = new Command('set-default')
   .option('--clear', 'unset the project default instead of setting one')
   .option(
     '--provider <name>',
-    'set the default for only this provider (docker|daytona|hetzner|vercel); without it, sets the cross-provider fallback',
+    'set the default for only this provider; without it, sets the cross-provider fallback',
   )
   .action(async (ref: string | undefined, opts: { clear?: boolean; provider?: string }) => {
     try {
       const projectRoot = (await findProjectRoot(process.cwd())).root;
       const providerArg = opts.provider as ProviderKind | undefined;
-      if (providerArg !== undefined && !KNOWN_PROVIDERS.includes(providerArg)) {
+      if (providerArg !== undefined && !checkpointProviders().includes(providerArg)) {
         throw new Error(
-          `unknown provider '${opts.provider ?? ''}' (known: ${KNOWN_PROVIDERS.join(', ')})`,
+          `unknown provider '${opts.provider ?? ''}' (known: ${checkpointProviders().join(', ')})`,
         );
       }
       const configKey = defaultCheckpointConfigKey(providerArg);
-      const label = providerArg
-        ? `${providerArg} default checkpoint`
-        : 'project default checkpoint';
+      // Only BUILT-IN providers have a `box.defaultCheckpoint<P>` key; for a
+      // plugin, `defaultCheckpointConfigKey` falls back to the generic
+      // `box.defaultCheckpoint`, which EVERY provider without its own default
+      // reads. Writing that silently under a `--provider` flag would hand a
+      // plugin's snapshot to docker boxes, so say so instead of implying a
+      // per-provider write happened.
+      const perProvider = configKey !== 'box.defaultCheckpoint';
+      if (providerArg !== undefined && !perProvider) {
+        log.warn(
+          `${providerArg} is a plugin provider, which has no per-provider default key — ` +
+            `this sets the cross-provider ${configKey}, used by every provider without its own default.`,
+        );
+      }
+      const label =
+        providerArg && perProvider
+          ? `${providerArg} default checkpoint`
+          : 'project default checkpoint';
       if (opts.clear) {
         if (ref !== undefined) throw new Error('pass either a <ref> or --clear, not both');
         // Pure local config write — no hub round-trip needed to CLEAR a pointer.

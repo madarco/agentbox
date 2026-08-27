@@ -1,8 +1,5 @@
-import {
-  resolveBoxSize,
-  resolveDaytonaClass,
-  type EffectiveConfig,
-} from '@agentbox/config';
+import { resolveBoxSize, resolveDaytonaClass, type EffectiveConfig } from '@agentbox/config';
+import { resolveProviderDescriptor } from '@agentbox/sandbox-core';
 
 /** Per-create overrides from the CLI; each wins over the resolved config value. */
 export interface CloudSizingFlags {
@@ -36,8 +33,12 @@ export interface CloudSizingFlags {
  * - **digitalocean**: `project` — the DO Project the box is placed in (name or
  *   UUID), from `box.digitaloceanProject`. Config-only, no flag. Absent = the
  *   account's default project.
- * - **hetzner + digitalocean**: `inbound` — per-box firewall access policy
- *   (`locked`/`open`/CIDR list), `--inbound` flag first, else `box.inbound`.
+ * - **any provider declaring `capabilities.inbound`** (hetzner + digitalocean
+ *   today): `inbound` — per-box firewall access policy (`locked`/`open`/CIDR
+ *   list), `--inbound` flag first, else `box.inbound`.
+ * - **any provider declaring `regions`**: an explicit `--location`. The built-in
+ *   arms above take precedence since they also read a per-provider config key;
+ *   this is the flag-only path a community provider gets.
  * - **vercel**: `timeoutMs` (session length before auto-snapshot), `networkPolicy`.
  * - **e2b**: `timeoutMs` — the session timeout the box is created with (and
  *   records as `cloud.sessionTimeoutMs`, which seeds the host keepalive loop so
@@ -61,6 +62,7 @@ export function cloudSizingProviderOptions(
 ): Record<string, unknown> {
   const size = flags.size?.trim() || resolveBoxSize(cfg, providerName);
   const out: Record<string, unknown> = size.length > 0 ? { size } : {};
+  const descriptor = resolveProviderDescriptor(providerName);
   if (providerName === 'hetzner') {
     const location = (flags.location?.trim() || cfg.box.hetznerLocation || '').trim();
     if (location.length > 0) out.location = location;
@@ -76,11 +78,20 @@ export function cloudSizingProviderOptions(
     const project = (cfg.box.digitaloceanProject || '').trim();
     if (project.length > 0) out.project = project;
   }
-  // VPS-only inbound-access policy (`--inbound` / `box.inbound`). Passed through
-  // to the backend's per-box firewall; other providers ignore it. Only emitted
-  // when non-default — the backend treats an absent value as `locked`, so the
-  // common case carries nothing.
-  if (providerName === 'hetzner' || providerName === 'digitalocean') {
+  // An explicit `--location` for a provider with no per-provider region config
+  // key of its own — i.e. a community provider that declares `regions`. The
+  // built-in arms above win because they also read their config key; this is the
+  // flag-only path, so a plugin isn't silently denied a region it supports.
+  if (out.location === undefined && descriptor?.regions?.length) {
+    const location = flags.location?.trim() ?? '';
+    if (location.length > 0) out.location = location;
+  }
+  // Per-box inbound-access policy (`--inbound` / `box.inbound`), for providers
+  // whose backend implements `setInbound`. Passed through to the per-box
+  // firewall; other providers ignore it. Only emitted when non-default — the
+  // backend treats an absent value as `locked`, so the common case carries
+  // nothing.
+  if (descriptor?.capabilities.inbound) {
     const inbound = (flags.inbound?.trim() || cfg.box.inbound || '').trim();
     if (inbound.length > 0 && !/^lock(ed)?$/i.test(inbound)) out.inbound = inbound;
   }

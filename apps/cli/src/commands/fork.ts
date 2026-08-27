@@ -1,12 +1,12 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
-import { PROVIDER_NAMES } from '@agentbox/config';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { detectHostTerminal } from '../terminal/host.js';
 import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
 import { claudeCommand } from './claude.js';
+import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { codexCommand } from './codex.js';
 import { opencodeCommand } from './opencode.js';
 
@@ -14,8 +14,11 @@ type ForkAgent = 'claude' | 'codex' | 'opencode';
 const FORK_AGENTS = ['claude', 'codex', 'opencode'] as const;
 
 /** Providers fork accepts positionally (`agentbox fork hetzner`) or via
- *  --provider. Sourced from the central `PROVIDERS` table (single source of truth). */
-const FORK_PROVIDERS = PROVIDER_NAMES;
+ *  --provider: every runtime provider, built-in or registered plugin. Resolved
+ *  per call, not at import — a plugin can be registered while the process runs. */
+function forkProviders(): string[] {
+  return getRuntimeProviderNames();
+}
 
 /** Resolve the provider from the positional arg (`agentbox fork <provider>`,
  *  the skill's `$ARGUMENTS` shape) and/or --provider. A blank value (an LLM
@@ -29,11 +32,13 @@ export function resolveForkProvider(
   const pos = positional?.trim();
   const fl = flag?.trim();
   if (pos && fl && pos !== fl) {
-    throw new Error(`provider given twice: "${pos}" (positional) and --provider "${fl}" — pass it once.`);
+    throw new Error(
+      `provider given twice: "${pos}" (positional) and --provider "${fl}" — pass it once.`,
+    );
   }
   const provider = fl || pos;
-  if (provider && !(FORK_PROVIDERS as readonly string[]).includes(provider)) {
-    throw new Error(`provider: expected one of ${FORK_PROVIDERS.join(', ')}, got "${provider}"`);
+  if (provider && !forkProviders().includes(provider)) {
+    throw new Error(`provider: expected one of ${forkProviders().join(', ')}, got "${provider}"`);
   }
   return provider || undefined;
 }
@@ -149,7 +154,7 @@ function resolveAttachArgs(attachIn: string): string[] {
 
 export const forkCommand = new Command('fork')
   .description(
-    'Fork the current host agent session into a new box and resume it there. Autodetects the agent (Claude / Codex) and the current session from the launching agent\'s env, so a bare `agentbox fork` forks whatever you ran it from. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.',
+    "Fork the current host agent session into a new box and resume it there. Autodetects the agent (Claude / Codex) and the current session from the launching agent's env, so a bare `agentbox fork` forks whatever you ran it from. Opens the box in a new terminal tab under iTerm/tmux; otherwise starts it in the background.",
   )
   .argument(
     '[provider]',
