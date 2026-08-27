@@ -6,7 +6,7 @@ import { postRpcAndExit } from '../relay-rpc.js';
  * reached through the relay so the host runs them with its own credentials
  * and the box never holds a token.
  *
- * `tool run` is what the generic shim (`/usr/local/bin/<name>`, a symlink to
+ * `tool run` is what the generic shim (`~/.local/bin/<name>`, a symlink to
  * `agentbox-tool-shim`) execs, so an agent normally types the tool's real
  * name and never sees this command. `list` and `request` are the discovery
  * surface: an agent that needs something it doesn't have can ask, and the

@@ -155,7 +155,7 @@ async function persist(file: string, grants: ToolGrant[]): Promise<void> {
 }
 
 /**
- * A tool name becomes a `/usr/local/bin/<name>` symlink inside the box, so it
+ * A tool name becomes a `~/.local/bin/<name>` symlink inside the box, so it
  * has to be a plain command name — no path separators, no leading dash, no
  * shell metacharacters.
  */

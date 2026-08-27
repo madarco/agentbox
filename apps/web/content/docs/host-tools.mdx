@@ -1,0 +1,118 @@
+---
+title: Host tools
+description: Let a box drive your host's CLIs — gh, terraform, aws, ntn, linear — without ever putting their credentials in the box
+---
+
+Your agent needs `terraform`, or `aws`, or `gh`, or the Notion CLI. Those tools hold credentials you do not want inside a sandbox. Host tools solve that: the box gets a lightweight shim, **your machine** runs the real binary with its real auth, and only the output crosses back.
+
+<Callout title="HOW IT WORKS">
+  The box calls `terraform plan`. That resolves to a shim which forwards the argv to the **host
+  relay**. The relay checks the tool is granted, refuses anything that would print a credential,
+  then runs your real `terraform` in the project directory and ships stdout/stderr/exit code back.
+  The box never sees a token.
+</Callout>
+
+## Granting a tool
+
+```bash
+agentbox tools add terraform          # this project
+agentbox tools add aws --global       # every project
+agentbox tools list
+agentbox tools rm terraform
+```
+
+The binary has to exist on the host — `agentbox doctor` tells you if it doesn't:
+
+```text
+tools:
+  [ ok ] terraform          Terraform v1.9.5
+  [warn] aws                aws not installed on the host  (install aws, or drop the grant with `agentbox tools rm aws`)
+```
+
+Running boxes pick up a new grant within about 15 seconds. No restart, no image rebuild.
+
+`gh` is granted out of the box — Claude Code's PR badge depends on it — and has its own richer handling (PR branch injection, a `gh api` endpoint allowlist). Turn it off with `agentbox config set tools.gh.enabled false`.
+
+## Declaring tools in `agentbox.yaml`
+
+A project can say what it needs, so a teammate cloning the repo is offered the same setup:
+
+```yaml
+tools:
+  - terraform
+  - ntn
+```
+
+Or with options:
+
+```yaml
+tools:
+  aws:
+    allow: ['^s3 ls', '^sts '] # run with no approval prompt
+    deny: ['^s3 rm', '^iam '] # refused outright
+    timeoutMs: 300000 # default is 120000
+```
+
+<Callout type="warn" title="A YAML ENTRY IS A REQUEST, NOT A GRANT">
+  `agentbox.yaml` is committed, so a repo you cloned could otherwise wire its own box to your AWS
+  credentials just by declaring it. It can't. AgentBox asks you once at create time and records the
+  answer on the host; the relay only ever reads that host-side record. Decline and the tool simply
+  isn't available — the box still gets created.
+</Callout>
+
+## Asking for a tool from inside a box
+
+An agent that discovers it needs something can ask:
+
+```bash
+agentbox-ctl tool list
+agentbox-ctl tool request terraform --reason "plan the infra changes"
+```
+
+You get an approval prompt naming the box, the binary, and the reason. Approve and the command works immediately in that running box.
+
+`tool list` only ever shows tools you've granted — a box can't inventory your machine. And if the binary isn't on your host, the request fails fast with "not installed on the host" rather than nagging you for an approval that couldn't work.
+
+## Approvals
+
+By default a granted tool runs without a per-call prompt: granting it was the decision. Every call is still recorded in the relay's event log.
+
+For a stricter setup, make every call ask:
+
+```bash
+agentbox config set --project box.autoApproveSafeHostActions false
+```
+
+Then each invocation shows the exact argv and waits for `y`/`n`. Use `allow:` patterns to let the read-only subcommands through quietly.
+
+## Credentials can't leak back
+
+Some CLIs will happily print their own token. Those are refused unconditionally — before any prompt, before the binary runs:
+
+```text
+$ linear auth token
+linear: refused — 'auth token' prints a host credential, which would land inside
+the box. The host runs this tool so the box never needs its token.
+```
+
+The same applies to `gh auth token`, `aws configure get`, `gcloud auth print-access-token`, `vault secrets get`, and similar shapes. Add your own with `deny:` patterns.
+
+## Notion and Linear
+
+Both are ordinary host tools:
+
+```bash
+brew install notion-cli && ntn login       # https://developers.notion.com/reference/notion-cli
+agentbox tools add ntn
+
+npm i -g @schpet/linear-cli && linear auth login
+agentbox tools add linear
+```
+
+Then in the box, `ntn api v1/users/me` or `linear issue list` runs against your authenticated host CLI. `linear auth token` is refused by the credential guard above.
+
+## Limits
+
+Host tools are for short, non-interactive commands. There's no TTY and no stdin, output is buffered until the command exits, and each call has a timeout (120s by default — raise it with `timeoutMs` for slow plans). Anything that wants to prompt you interactively won't work.
+
+A tool never shadows a binary you actually installed in the box: if the name is already taken by a real file, AgentBox leaves it alone and logs the conflict.

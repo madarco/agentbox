@@ -30,7 +30,7 @@ describe('tool name validation', () => {
     }
   });
 
-  // The name becomes a /usr/local/bin/<name> symlink inside the box, so a
+  // The name becomes a ~/.local/bin/<name> symlink inside the box, so a
   // path separator or a leading dash would be a real escape.
   it('rejects anything that is not a bare command name', () => {
     for (const n of ['../etc/passwd', 'a/b', '-rf', '', 'a b', 'x'.repeat(65)]) {

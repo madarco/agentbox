@@ -8,18 +8,22 @@
   "properties": {
     "services": {
       "type": "object",
-      "description": "Map of service name → service spec. Names must match [A-Za-z0-9_-]+.",
+      "description": "Map of service name \u2192 service spec. Names must match [A-Za-z0-9_-]+.",
       "additionalProperties": false,
       "patternProperties": {
-        "^[A-Za-z0-9_-]+$": { "$ref": "#/$defs/service" }
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/$defs/service"
+        }
       }
     },
     "tasks": {
       "type": "object",
-      "description": "Map of task name → task spec. Tasks are one-shot units that run before dependent services (via `needs:`).",
+      "description": "Map of task name \u2192 task spec. Tasks are one-shot units that run before dependent services (via `needs:`).",
       "additionalProperties": false,
       "patternProperties": {
-        "^[A-Za-z0-9_-]+$": { "$ref": "#/$defs/task" }
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/$defs/task"
+        }
       }
     },
     "ide": {
@@ -32,7 +36,9 @@
       "description": "Host-side AgentBox layered-config defaults for this project. Same shape as ~/.agentbox/config.yaml. The supervisor ignores this; @agentbox/config validates it strictly when loaded. See https://agent-box.sh/schema/user-config.schema.json for the full key set.",
       "additionalProperties": true
     },
-    "carry": { "$ref": "#/$defs/carry" },
+    "carry": {
+      "$ref": "#/$defs/carry"
+    },
     "replacements": {
       "type": "object",
       "description": "Named reusable replacement rule-sets. Reference them by name from `carry[].rules` (host-side) and `agentbox-ctl render --rules` (in-box). Each value is an ordered list of {from,to,regex?} rules; `to` may contain {{AGENTBOX_*}} placeholders.",
@@ -40,28 +46,37 @@
       "patternProperties": {
         "^[A-Za-z0-9_-]+$": {
           "type": "array",
-          "items": { "$ref": "#/$defs/replaceRule" }
+          "items": {
+            "$ref": "#/$defs/replaceRule"
+          }
         }
       }
+    },
+    "tools": {
+      "$ref": "#/$defs/tools"
     }
   },
   "$defs": {
     "carry": {
       "type": "array",
-      "description": "Host-applied declarative host→box file copy, read by the agentbox CLI at create time (NOT by the supervisor). Bypasses .gitignore. Each entry is a {src,dest,...} mapping or a \"src=dest\" shorthand string. The host prompts once to approve before copying; auto-approve with --carry-yes, skip with --carry skip. When copying a directory, heavy regenerable dirs (.git, node_modules, bin, obj, packages, dist, .next, target) are dropped by default. Use case: develop AgentBox inside an AgentBox by carrying ~/.agentbox/secrets.env + ~/.agentbox/claude-credentials.json.",
-      "items": { "$ref": "#/$defs/carryItem" }
+      "description": "Host-applied declarative host\u2192box file copy, read by the agentbox CLI at create time (NOT by the supervisor). Bypasses .gitignore. Each entry is a {src,dest,...} mapping or a \"src=dest\" shorthand string. The host prompts once to approve before copying; auto-approve with --carry-yes, skip with --carry skip. When copying a directory, heavy regenerable dirs (.git, node_modules, bin, obj, packages, dist, .next, target) are dropped by default. Use case: develop AgentBox inside an AgentBox by carrying ~/.agentbox/secrets.env + ~/.agentbox/claude-credentials.json.",
+      "items": {
+        "$ref": "#/$defs/carryItem"
+      }
     },
     "carryItem": {
       "oneOf": [
         {
           "type": "string",
           "minLength": 1,
-          "description": "Shorthand: \"src\" (mirror src→src; src must be absolute or ~/) or \"src=dest\"."
+          "description": "Shorthand: \"src\" (mirror src\u2192src; src must be absolute or ~/) or \"src=dest\"."
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["src"],
+          "required": [
+            "src"
+          ],
           "properties": {
             "src": {
               "type": "string",
@@ -76,8 +91,14 @@
             "mode": {
               "description": "Octal file mode applied in-box, e.g. \"0600\", \"0o600\", or 384.",
               "oneOf": [
-                { "type": "string", "minLength": 1 },
-                { "type": "integer", "minimum": 0 }
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
               ]
             },
             "user": {
@@ -88,7 +109,10 @@
             },
             "exclude": {
               "type": "array",
-              "items": { "type": "string", "minLength": 1 },
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
               "description": "tar globs (e.g. \"*/cache\") or bare dir names to drop when copying a directory. Additive on top of the default heavy-dir excludes."
             },
             "optional": {
@@ -102,12 +126,17 @@
             "replace": {
               "type": "array",
               "description": "Inline replacement rules applied (in order) before copying. File entries only.",
-              "items": { "$ref": "#/$defs/replaceRule" }
+              "items": {
+                "$ref": "#/$defs/replaceRule"
+              }
             },
             "rules": {
               "type": "array",
               "description": "Names of top-level `replacements:` rule-sets to apply before copying. File entries only.",
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -116,7 +145,10 @@
     "replaceRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["from", "to"],
+      "required": [
+        "from",
+        "to"
+      ],
       "description": "A single text substitution. `to` may contain {{AGENTBOX_*}} placeholders.",
       "properties": {
         "from": {
@@ -141,52 +173,107 @@
     "command": {
       "description": "Shell string (run via `bash -c`) or argv array. Non-empty.",
       "oneOf": [
-        { "type": "string", "minLength": 1 },
+        {
+          "type": "string",
+          "minLength": 1
+        },
         {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "minItems": 1
         }
       ]
     },
     "env": {
       "type": "object",
-      "description": "Extra environment variables. Values must be scalars (string, number, or boolean) — they are coerced to strings.",
+      "description": "Extra environment variables. Values must be scalars (string, number, or boolean) \u2014 they are coerced to strings.",
       "additionalProperties": {
-        "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }]
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
       }
     },
     "needs": {
       "type": "array",
       "description": "Names of tasks or services that must reach their terminal-good state before this unit starts.",
-      "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
       "uniqueItems": true
     },
     "service": {
       "type": "object",
       "additionalProperties": false,
-      "oneOf": [{ "required": ["command"] }, { "required": ["image"] }],
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ]
+        },
+        {
+          "required": [
+            "image"
+          ]
+        }
+      ],
       "properties": {
-        "command": { "$ref": "#/$defs/command" },
+        "command": {
+          "$ref": "#/$defs/command"
+        },
         "image": {
           "description": "Run a docker container instead of a command. AgentBox synthesizes a start-or-run shell (the in-box container is reused by name across restarts). Mutually exclusive with command. Either a bare image ref string, or a mapping with ports/env/args/container_name.",
           "oneOf": [
-            { "type": "string", "minLength": 1 },
+            {
+              "type": "string",
+              "minLength": 1
+            },
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["name"],
+              "required": [
+                "name"
+              ],
               "properties": {
-                "name": { "type": "string", "minLength": 1, "description": "Image ref, e.g. postgres:17-alpine." },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Image ref, e.g. postgres:17-alpine."
+                },
                 "ports": {
                   "type": "array",
                   "description": "Port publishes: \"<host>:<container>\" or \"<port>\". Reachable from other in-box services at 127.0.0.1:<host>.",
-                  "items": { "type": "string", "pattern": "^[0-9]+(:[0-9]+)?$" }
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9]+(:[0-9]+)?$"
+                  }
                 },
-                "env": { "$ref": "#/$defs/env" },
+                "env": {
+                  "$ref": "#/$defs/env"
+                },
                 "args": {
                   "description": "Extra args appended after the image. A string or a list of strings; shell word-split.",
-                  "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
                 },
                 "container_name": {
                   "type": "string",
@@ -201,7 +288,9 @@
           "type": "string",
           "description": "Working directory. Relative paths resolve against /workspace."
         },
-        "env": { "$ref": "#/$defs/env" },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
         "autostart": {
           "type": "boolean",
           "description": "Start automatically when the daemon boots.",
@@ -209,16 +298,28 @@
         },
         "restart": {
           "description": "When to restart after the process exits. `always` ignores exit code, `on-failure` (default) restarts only on non-zero, `never` leaves it dead.",
-          "enum": ["always", "on-failure", "never"],
+          "enum": [
+            "always",
+            "on-failure",
+            "never"
+          ],
           "default": "on-failure"
         },
-        "backoff": { "$ref": "#/$defs/backoff" },
-        "needs": { "$ref": "#/$defs/needs" },
-        "ready_when": { "$ref": "#/$defs/ready_when" },
+        "backoff": {
+          "$ref": "#/$defs/backoff"
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
+        "ready_when": {
+          "$ref": "#/$defs/ready_when"
+        },
         "expose": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["port"],
+          "required": [
+            "port"
+          ],
           "description": "Mark this as THE web service. AgentBox forwards container port `as` to `127.0.0.1:port` inside the box and publishes it on the host. At most one service may set this.",
           "properties": {
             "port": {
@@ -247,20 +348,34 @@
       "type": "object",
       "description": "A one-shot unit that runs to completion. Tasks cannot have restart, autostart, backoff, or ready_when.",
       "additionalProperties": false,
-      "required": ["command"],
+      "required": [
+        "command"
+      ],
       "properties": {
-        "command": { "$ref": "#/$defs/command" },
-        "cwd": { "type": "string" },
-        "env": { "$ref": "#/$defs/env" },
-        "needs": { "$ref": "#/$defs/needs" },
+        "command": {
+          "$ref": "#/$defs/command"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
         "run_once": {
           "description": "Skip the task when already satisfied. `true` stores a marker keyed by a hash of the command (re-runs when the command changes). `{ check: <command> }` runs a probe first and skips when it exits 0 (right for state outside the checkpointed filesystem, e.g. a containerized DB).",
           "oneOf": [
-            { "type": "boolean" },
+            {
+              "type": "boolean"
+            },
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["check"],
+              "required": [
+                "check"
+              ],
               "properties": {
                 "check": {
                   "type": "string",
@@ -346,15 +461,87 @@
           "description": "Give up after this long. Behavior on timeout is governed by `on_timeout`."
         },
         "on_timeout": {
-          "enum": ["kill", "mark_unhealthy"],
+          "enum": [
+            "kill",
+            "mark_unhealthy"
+          ],
           "default": "kill",
           "description": "`kill` re-enters the service's restart policy. `mark_unhealthy` leaves it running but flags it (escape hatch for slow cold starts)."
         }
       },
       "oneOf": [
-        { "required": ["port"] },
-        { "required": ["log_match"] },
-        { "required": ["http"] }
+        {
+          "required": [
+            "port"
+          ]
+        },
+        {
+          "required": [
+            "log_match"
+          ]
+        },
+        {
+          "required": [
+            "http"
+          ]
+        }
+      ]
+    },
+    "tools": {
+      "description": "Host CLIs this project requests for its boxes. A committed yaml only REQUESTS; the host grants once at create time and the relay reads only the host-side grant. See https://agent-box.sh/docs/host-tools",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,63}$"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,63}$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "bin": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Host binary to run. Defaults to the tool name."
+                  },
+                  "allow": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Regexes matched against the argv; matches run with no approval prompt."
+                  },
+                  "deny": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Regexes refused outright, on top of the built-in credential guard."
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Per-call wall-clock budget in milliseconds (default 120000)."
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       ]
     }
   }

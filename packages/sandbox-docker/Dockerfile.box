@@ -175,7 +175,7 @@ COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
 RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
 
 # Generic host-tool shim. One file for every host CLI a box is granted:
-# `agentbox-ctl` symlinks /usr/local/bin/<tool> to it at box start from the
+# `agentbox-ctl` symlinks ~/.local/bin/<tool> to it at box start from the
 # host-side grant list, so adding a tool never needs an image rebake. The
 # shim resolves its own name from argv[0] and forwards to the relay, which
 # owns the gating. See packages/sandbox-docker/scripts/agentbox-tool-shim
