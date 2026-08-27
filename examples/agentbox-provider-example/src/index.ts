@@ -28,6 +28,7 @@ import {
   type BoxRecord,
   type Provider,
   type ProviderCheckpoint,
+  type ProviderDescriptor,
   type ProviderModule,
 } from '@madarco/agentbox-provider-sdk';
 import {
@@ -114,10 +115,65 @@ export const exampleProvider: Provider = {
   baseFingerprint: () => currentExampleBaseFingerprintLive(),
 };
 
+/**
+ * Declarative metadata for AgentBox's UIs (the tray create picker, the hub web
+ * settings card, `agentbox install`). Optional — omit it and AgentBox derives a
+ * usable descriptor from the module below — but declaring one is what buys a
+ * real label, the right credential form, and correct capability gating.
+ *
+ * Declare only what code can't reveal. Do NOT try to mirror method presence
+ * here: `createCloudProvider` gives every cloud provider a `checkpoint` /
+ * `setInbound` / `enableDirectGit`, so those say nothing about YOUR backend.
+ * AgentBox cross-checks `prune`, `inbound` and `timeoutModel` against your
+ * `CloudBackend`, which is authored by you and therefore meaningful.
+ */
+export const exampleDescriptor: ProviderDescriptor = {
+  name: BACKEND_NAME,
+  kind: 'cloud',
+  label: 'Example (community provider)',
+  loginHint: 'paste an API token for the example cloud',
+  credentials: {
+    // Presence of the KEY in ~/.agentbox/secrets.env means "configured". The
+    // value is never read for this check.
+    envKeys: ['EXAMPLE_API_TOKEN'],
+    fields: [{ key: 'token', label: 'API token' }],
+  },
+  bake: {
+    // This provider snapshots a base before first use, so a create can't run
+    // until `agentbox prepare --provider example` has. A provider whose base
+    // self-heals (like docker) sets this false.
+    required: true,
+    approxMinutes: '5-10',
+    createProgressSteps: 33,
+    bakeProgressSteps: 400,
+  },
+  capabilities: {
+    checkpoints: true,
+    // Our snapshot stops the box, so the CLI confirms before yanking a live agent.
+    checkpointReboots: true,
+    // No SSH: attach rides the SDK, so `agentbox code` / `open` can't work here.
+    ssh: false,
+    persistentSsh: false,
+    directBoxSsh: false,
+    inbound: false,
+    directGit: true,
+    resync: true,
+    prune: true,
+    vnc: true,
+    dind: true,
+    pauseSemantics: 'freeze',
+    hubRoutable: true,
+  },
+  blurb: 'the example community provider',
+  sizeDesc: 'Per-provider override of `box.size` for example (vCPU count).',
+  imageDesc: 'Per-provider override of `box.image` for example (snapshot id).',
+};
+
 /** Uniform surface the CLI provider loader resolves this package through. */
 export const providerModule: ProviderModule = {
   provider: exampleProvider,
   backend: exampleBackend,
+  descriptor: exampleDescriptor,
   ensureCredentials: ensureExampleCredentials,
   readCredStatus: readCredStatusSummary,
   currentBaseFingerprintLive: (claudeInstall) => currentExampleBaseFingerprintLive(claudeInstall),

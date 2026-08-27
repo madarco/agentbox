@@ -369,7 +369,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
  * daytona: docker Image.build).
  */
 function rebuildMinutesFor(provider: ProviderName): string {
-  return isProviderKind(provider) ? providerMeta(provider).rebuildMinutes : '1';
+  return isProviderKind(provider) ? providerMeta(provider).bake.approxMinutes : '1';
 }
 
 /**

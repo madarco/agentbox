@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addPluginRecord,
   isSupportedApiVersion,
+  PLUGINS_FILE_VERSION,
   pluginForProvider,
   pluginProviderNames,
   readPluginRegistry,
@@ -35,14 +36,14 @@ const rec = (overrides: Partial<PluginRecord> = {}): PluginRecord => ({
 
 describe('plugin registry', () => {
   it('missing file reads as empty (sync + async)', async () => {
-    expect(readPluginRegistrySync(path)).toEqual({ version: 1, plugins: [] });
-    expect(await readPluginRegistry(path)).toEqual({ version: 1, plugins: [] });
+    expect(readPluginRegistrySync(path)).toEqual({ version: PLUGINS_FILE_VERSION, plugins: [] });
+    expect(await readPluginRegistry(path)).toEqual({ version: PLUGINS_FILE_VERSION, plugins: [] });
   });
 
   it('add → read round-trips and is atomic JSON', async () => {
     await addPluginRecord(rec(), path);
     const file = readPluginRegistrySync(path);
-    expect(file.version).toBe(1);
+    expect(file.version).toBe(PLUGINS_FILE_VERSION);
     expect(file.plugins).toHaveLength(1);
     expect(file.plugins[0]?.providers).toEqual(['fly']);
     // valid JSON with trailing newline
@@ -59,7 +60,10 @@ describe('plugin registry', () => {
 
   it('resolves a provider name to its plugin and lists names', async () => {
     await addPluginRecord(rec(), path);
-    await addPluginRecord(rec({ packageName: 'agentbox-provider-render', providers: ['render'] }), path);
+    await addPluginRecord(
+      rec({ packageName: 'agentbox-provider-render', providers: ['render'] }),
+      path,
+    );
     expect(pluginProviderNames(path).sort()).toEqual(['fly', 'render']);
     expect(pluginForProvider('render', path)?.packageName).toBe('agentbox-provider-render');
     expect(pluginForProvider('nope', path)).toBeNull();
@@ -76,9 +80,9 @@ describe('plugin registry', () => {
 
   it('corrupt registry degrades to empty on READ, never throws', () => {
     writeFileSync(path, '{ not json', 'utf8');
-    expect(readPluginRegistrySync(path)).toEqual({ version: 1, plugins: [] });
+    expect(readPluginRegistrySync(path)).toEqual({ version: PLUGINS_FILE_VERSION, plugins: [] });
     writeFileSync(path, JSON.stringify({ version: 99, plugins: [] }), 'utf8');
-    expect(readPluginRegistrySync(path)).toEqual({ version: 1, plugins: [] });
+    expect(readPluginRegistrySync(path)).toEqual({ version: PLUGINS_FILE_VERSION, plugins: [] });
   });
 
   it('a WRITE refuses to clobber a corrupt registry (no data loss)', async () => {

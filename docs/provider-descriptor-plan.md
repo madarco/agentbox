@@ -79,32 +79,84 @@ export interface ProviderDescriptor {
   imageDesc: string;              // unchanged — drives the box.image<P> KEY_REGISTRY entry
 }
 
+/**
+ * All DECLARED. See "Why capabilities are declared, not derived" below — method
+ * presence on `Provider` signals which scaffold a provider was built with, not
+ * what it can do.
+ */
 export interface ProviderCapabilities {
-  // ── DERIVED from the module (see "derivation" below) ──
-  checkpoints: boolean;      // !!provider.checkpoint
-  bakeable: boolean;         // !!provider.prepare
-  ssh: boolean;              // !!provider.sshTarget
-  resync: boolean;           // !!provider.resyncWorkspace
-  directGit: boolean;        // !!provider.enableDirectGit
-  inbound: boolean;          // !!provider.setInbound
-  prune: boolean;            // !!backend?.list
-  timeoutModel?: 'absolute' | 'inactivity';   // backend?.timeoutModel
-
-  // ── DECLARED (not knowable from code shape) ──
-  vnc: boolean;
-  dind: boolean;
-  /** true = pause preserves state; false = pause degrades to stop. */
-  realPause: boolean;
+  /** Checkpoint capture/restore is supported at all. */
+  checkpoints: boolean;
   /** Capturing a checkpoint stops + reboots the box (vercel, daytona). */
   checkpointReboots: boolean;
-  /** `buildAttach` yields a plain `ssh user@host` at the box (cloud-ssh auto-config). */
-  directBoxSsh: boolean;
+  /** Real SSH into the box: `agentbox code` (IDE) and `open` (sshfs mount). */
+  ssh: boolean;
   /** Per-box SSH identity outlives the CLI call (`open --in claude|codex`). */
   persistentSsh: boolean;
-  /** Creates can be handed to a remote control box. Default `kind === 'cloud'`. */
+  /** `buildAttach` yields a plain `ssh user@host` at the box (cloud-ssh auto-config). */
+  directBoxSsh: boolean;
+  /** Per-box inbound firewall policy (`--inbound`, `agentbox inbound`). */
+  inbound: boolean;
+  /** `git.pushMode=direct` can be switched on post-create (`--with-credentials`). */
+  directGit: boolean;
+  /** Host->box workspace resync. */
+  resync: boolean;
+  /** Orphan sandboxes are enumerable + deletable (`prune --provider`). */
+  prune: boolean;
+  vnc: boolean;
+  dind: boolean;
+  /**
+   * What `pause` does. 'freeze' preserves the running process tree (docker
+   * pause, daytona linux-vm, vercel/e2b snapshot-resume); 'stop' powers the box
+   * off and only the disk survives (hetzner, digitalocean — both literally
+   * `pause ≡ stop`). NOT a gate on showing a pause control: powering a VPS down
+   * is useful (it stops billing), so a UI should relabel, not hide.
+   */
+  pauseSemantics: 'freeze' | 'stop';
+  /** Creates can be handed to a remote control box. */
   hubRoutable: boolean;
+  /** Session-lifetime model, when the backend declares one. */
+  timeoutModel?: 'absolute' | 'inactivity';
 }
 ```
+
+### Why capabilities are declared, not derived
+
+The original design derived most of this from optional-method presence. **Probing the
+real modules showed that does not work**, and the table is hand-authored instead:
+
+- `packages/sandbox-cloud/src/cloud-provider.ts` unconditionally defines
+  `repairReachability` (1448), `setInbound` (1454), `enableDirectGit` (1475) and `checkpoint`
+  (1783) on *every* cloud provider, each delegating to an optional `backend.*?` at call time.
+  So `!!provider.setInbound` is `true` for vercel and e2b, which have no firewall — the flag
+  signals *"built on the cloud scaffold"*, not *"has this capability"*.
+- `sandbox-docker`'s provider has **no** `checkpoint` key at all (verified: its keys are
+  `create, destroy, downloadPath, exec, inspect, name, pause, prepare, probeState, reconnect,
+  resolveUrl, resume, resyncWorkspace, start, stats, stop, sync, syncTransport, uploadPath`),
+  yet docker checkpoints are the oldest feature in the repo — they run through a hardcoded
+  `providerName === 'docker'` branch at `hub-backend.ts:2609`.
+- `provider.prepare` is present on all seven including docker, so it cannot mean
+  "must bake before first use".
+
+The dividing line is **which object the method hangs off**. `CloudBackend` methods are written
+by the provider author, so they are honest signals; `Provider` methods are supplied by the
+scaffold, so they are not. Verified against the live backends:
+
+| Derivation | Result | Verdict |
+|---|---|---|
+| `!!backend.list` | true for all 6 clouds, false for docker | matches `CLOUD_PRUNE_PROVIDERS` exactly ✓ |
+| `!!backend.setInbound` | true for hetzner + digitalocean only | matches the `--inbound` reality exactly ✓ |
+| `backend.timeoutModel` | `'inactivity'` for daytona + e2b | authoritative ✓ |
+| `!!provider.setInbound` | true for **all 6 clouds** | scaffold artifact ✗ |
+| `!!provider.checkpoint` | **false for docker** | wrong ✗ |
+| `!!provider.prepare` | true for all 7 incl. docker | can't mean "must bake" ✗ |
+
+So `prune`, `inbound` and `timeoutModel` are asserted by the guard test against the live
+modules; every other capability is declared.
+
+Derivation survives as the **fallback for a descriptor-less plugin**, where it is sound
+precisely because such plugins are nearly always `createCloudProvider`-based — a scaffold-given
+`checkpoint` really does work for them. It is the built-in table that can't be derived.
 
 ### Where descriptors live, and why everything stays synchronous
 
@@ -175,17 +227,21 @@ working UI from an existing provider:
 |---|---|---|
 | `kind` | `backend ? 'cloud' : 'local'` | derived |
 | `label` | provider name | what the UI shows today |
-| `bake.required` | `!!provider.prepare` | derived. Must **not** default true — the hub's create gate deliberately skips `isProviderConfigured` for plugins (`hub-backend.ts:2159`), so a `true` default would newly block creates |
+| `bake.required` | **`false`** | must **not** default true — the hub's create gate deliberately skips `isProviderConfigured` for plugins (`hub-backend.ts:2159`), so a `true` default would newly block creates. (`!!provider.prepare` is *not* usable: all seven built-ins including docker have `prepare`.) |
 | `bake.approxMinutes` | `'1'` | matches `wizard.ts:372`'s existing plugin fallback |
 | `credentials.fields` | `setCredentials ? [{key:'apiKey',label:'API key'}] : []` | matches the tray's current `metaFor` fallback (`SettingsPanel.swift:63`) |
 | `credentials.envKeys` | `[]`, and `hasCredentials` answered by `ProviderModule.readCredStatus()` when present, else left **undefined** | `undefined` = "unknown", which consumers must treat as *don't block* — a `false` would disable the tray's bake button |
 | `capabilities.vnc` | **`true`** | `createCloudProvider` wires VNC unconditionally and degrades best-effort; `false` would delete a working VNC button |
 | `capabilities.dind` | **`true`** | `launchDockerd` defaults true in `cloud-provider.ts:127` |
-| `capabilities.realPause` | **`true`** | the tray shows Pause for every running box today |
+| `capabilities.pauseSemantics` | **`'freeze'`** | the tray shows an unqualified Pause for every running box today |
+| `capabilities.checkpoints` | `!!provider.checkpoint` | sound for a plugin (scaffold-based ⇒ working checkpoints); only *docker* breaks this derivation |
+| `capabilities.prune` | `!!backend.list` | honest derivation |
+| `capabilities.timeoutModel` | `backend.timeoutModel` | honest derivation |
+| `capabilities.ssh` | `!!provider.sshTarget` | matches the existing escape hatch in `cloud-ssh.ts:153` |
 | `capabilities.checkpointReboots` | `false` | the confirm prompt only fires for vercel/daytona today |
 | `capabilities.directBoxSsh` / `persistentSsh` | `false` | plugins are excluded from those arrays today — `false` is the status quo, and a plugin opts *in* |
+| `capabilities.inbound` / `directGit` / `resync` | `false` / `false` / `true` | **not** derived (the scaffold defines all three on every cloud provider); `resync: true` matches the scaffold actually providing it |
 | `capabilities.hubRoutable` | `kind === 'cloud'` | matches `HUB_ROUTABLE_PROVIDER_NAMES` |
-| everything else | derived from method presence | exact, never a guess |
 
 Net effect for an un-migrated plugin: it **gains** the dropdown, a credential form, and
 `prune`/`checkpoint`/`fork` eligibility (all derived), and loses nothing. Declaring a descriptor
