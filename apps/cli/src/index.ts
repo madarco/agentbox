@@ -109,6 +109,7 @@ import { urlCommand } from './commands/url.js';
 import { waitCommand } from './commands/wait.js';
 import { rewriteProviderPrefix } from './provider/argv-prefix.js';
 import { installConfigWarningSink } from './lib/config-warnings.js';
+import { guardDefaultSubcommands } from './lib/unknown-subcommand.js';
 import {
   setCredentialPublisher,
   setDockerCredentialRefresh,
@@ -273,6 +274,11 @@ program.addCommand(
     }),
   { hidden: true },
 );
+
+// Last, so it covers every group registered above: an unrecognised subcommand
+// on a group with a default (`agentbox e2b bogus`, `agentbox hub bogus`) errors
+// instead of silently running that default.
+guardDefaultSubcommands(program);
 
 await applyEngineOverrideAtStartup();
 
