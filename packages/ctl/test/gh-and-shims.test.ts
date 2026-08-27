@@ -400,6 +400,11 @@ describe('gh-shim: open surface + pr branch injection', () => {
     [['pr', 'merge', '--author-email', 'a@b.c'], 'pr merge agentbox/test-branch --author-email'],
     [['pr', 'checks', '--template', '{{.x}}'], 'pr checks agentbox/test-branch --template'],
     [['pr', 'diff', '--color', 'always'], 'pr diff agentbox/test-branch --color'],
+    [['pr', 'diff', '-e', '*.lock'], 'pr diff agentbox/test-branch -e'],
+    [['pr', 'checks', '--interval', '10'], 'pr checks agentbox/test-branch --interval'],
+    [['pr', 'checks', '-i', '10'], 'pr checks agentbox/test-branch -i'],
+    [['pr', 'list', '--limit', '5'], 'pr list'],
+    [['pr', 'merge', '--match-head-commit', 'abc123'], 'pr merge agentbox/test-branch --match'],
   ])('injects the branch for %s', (argv, expected) => {
     const env = makeStubShell();
     try {
@@ -416,6 +421,10 @@ describe('gh-shim: open surface + pr branch injection', () => {
     [['pr', 'merge', '--squash'], 'pr merge agentbox/test-branch --squash'],
     [['pr', 'close', '--delete-branch'], 'pr close agentbox/test-branch --delete-branch'],
     [['pr', 'checks', '--required'], 'pr checks agentbox/test-branch --required'],
+    [['pr', 'checks', '--watch'], 'pr checks agentbox/test-branch --watch'],
+    // `-e` is --editor (boolean) on comment but --exclude (value) on diff.
+    [['pr', 'comment', '-e'], 'pr comment agentbox/test-branch -e'],
+    [['pr', 'merge', '--admin'], 'pr merge agentbox/test-branch --admin'],
   ])('treats %s as a boolean and still injects', (argv, expected) => {
     const env = makeStubShell();
     try {
@@ -492,6 +501,68 @@ describe('gh-shim: open surface + pr branch injection', () => {
       env.cleanup();
     }
   });
+});
+
+/**
+ * The shim's per-op value-taking flag map is transcribed from `gh pr <op>
+ * --help`, and a wrong entry silently breaks branch injection — a flag's value
+ * gets read as the PR ref, and the op runs against the HOST's checkout. That
+ * has been missed by hand twice, so derive the truth from the installed gh and
+ * compare.
+ *
+ * Skipped when gh is absent (CI), and it reads the LOCAL gh, so a newer gh
+ * that adds a flag shows up here as a failure the maintainer can act on rather
+ * than as a silent drift.
+ */
+const hasGh = (() => {
+  try {
+    return spawnSync('gh', ['--version'], { encoding: 'utf8' }).status === 0;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!hasGh)('gh-shim value-flag map matches the installed gh', () => {
+  /** Value-taking flags gh reports for `pr <op>`: a flag followed by a type word. */
+  function realValueFlags(op: string): Set<string> {
+    const help = spawnSync('gh', ['pr', op, '--help'], { encoding: 'utf8' }).stdout ?? '';
+    const flags = new Set<string>();
+    for (const raw of help.split('\n')) {
+      // gh separates the optional TYPE word from the flag by a SINGLE space,
+      // and the description by two or more:
+      //   "  -t, --subject text      Subject text ..."  -> value-taking
+      //   "  -d, --delete-branch     Delete the ..."    -> boolean
+      const m = /^\s+(?:(-\w), )?(--[\w-]+)(?: (\S+))?\s{2,}\S/.exec(raw);
+      if (!m) continue;
+      if (!m[3]) continue; // no type word => boolean
+      if (m[1]) flags.add(m[1]);
+      flags.add(m[2]);
+    }
+    return flags;
+  }
+
+  /** What the shim would consume, by probing it with `<flag> SENTINEL`. */
+  function shimConsumes(op: string, flag: string): boolean {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', op, flag, 'SENTINEL'], env);
+      // If the flag's value was consumed, no positional was found and the
+      // branch got injected.
+      return out.stdout.includes('agentbox/test-branch');
+    } finally {
+      env.cleanup();
+    }
+  }
+
+  it.each(['view', 'checks', 'diff', 'comment', 'review', 'merge', 'close', 'reopen'])(
+    'pr %s consumes every value-taking flag gh declares',
+    (op) => {
+      const missed = [...realValueFlags(op)]
+        .filter((f) => f !== '--repo' && f !== '-R')
+        .filter((f) => !shimConsumes(op, f));
+      expect(missed, `pr ${op}: shim does not consume ${missed.join(', ')}`).toEqual([]);
+    },
+  );
 });
 
 describe('git-shim arg whitelist + passthrough', () => {
