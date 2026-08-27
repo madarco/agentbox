@@ -91,7 +91,13 @@ export const GH_DESTRUCTIVE: readonly { pattern: RegExp; what: string }[] = [
   // so no method flag betrays it. GraphQL is a raw write channel with the same
   // reach as the REST verbs above; agents rarely need it, so confirming every
   // mutation is a cheap way to keep the hole shut.
-  { pattern: /^api\s+graphql\b[\s\S]*\bmutation\b/i, what: 'raw GraphQL mutation' },
+  // Lookaheads rather than adjacency: the endpoint may be spelled `/graphql`,
+  // and cobra accepts flags before it (`gh api --paginate graphql …`), so
+  // requiring `api graphql` side by side left the hole open.
+  {
+    pattern: /^api\b(?=[\s\S]*\bgraphql\b)(?=[\s\S]*\bmutation\b)/i,
+    what: 'raw GraphQL mutation',
+  },
 ];
 
 /**

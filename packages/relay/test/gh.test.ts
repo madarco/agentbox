@@ -243,6 +243,18 @@ describe('GraphQL mutations', () => {
     ).toBe('raw GraphQL mutation');
   });
 
+  // Reported by review: requiring `api graphql` side by side missed the
+  // `/graphql` spelling and any flag placed before the endpoint.
+  it('flags a mutation however the endpoint is spelled', () => {
+    for (const argv of [
+      ['api', '/graphql', '-f', 'query=mutation { deleteRepository }'],
+      ['api', '--paginate', 'graphql', '-f', 'query=mutation { deleteRepository }'],
+      ['-R', 'o/r', 'api', 'graphql', '-f', 'query=mutation { x }'],
+    ]) {
+      expect(ghDestructiveTarget(argv)).toBe('raw GraphQL mutation');
+    }
+  });
+
   it('leaves graphql queries alone', () => {
     expect(ghDestructiveTarget(['api', 'graphql', '-f', 'query={ viewer { login } }'])).toBeNull();
   });
