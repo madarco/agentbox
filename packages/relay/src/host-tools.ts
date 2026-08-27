@@ -15,6 +15,7 @@
  * as `gh.ts`.
  */
 
+import { basename } from 'node:path';
 import { loadEffectiveConfig, loadGrantedTools, type ToolGrant } from '@agentbox/config';
 import { assertHostBinReady, hostBinExists, runHostBinary } from './host-exec.js';
 import type { GitRpcResult } from './types.js';
@@ -82,9 +83,18 @@ export const CREDENTIAL_ARGV_PATTERNS: readonly RegExp[] = [
  *
  * `bin` matters as much as `name`: a grant can point a bland name at a
  * hazardous binary (`tools add safe --bin keyring`, or a yaml `bin:`), and
- * the process that actually runs is the bin. Both go in the haystack, along
- * with the argv — some hazards are named by the subcommand, others by the
- * binary itself.
+ * the process that actually runs is the bin.
+ *
+ * The two are matched as SEPARATE candidates rather than concatenated into
+ * one string, for two reasons a single haystack got wrong:
+ *   - Only the binary's basename is considered. `--bin` may be an absolute
+ *     path, and scanning its directory components would let an innocent
+ *     folder name (`~/tools/get-token-helper/bin/x`) refuse every call to an
+ *     unrelated tool — with no way to override, since this guard runs ahead
+ *     of `allow`.
+ *   - Splicing the bin between the name and the argv breaks patterns that
+ *     key on `<command> <subcommand>`: `keyring get` would no longer match
+ *     once a path sat in the middle.
  */
 export function refuseCredentialArgv(
   name: string,
@@ -92,9 +102,11 @@ export function refuseCredentialArgv(
   bin?: string,
 ): GitRpcResult | null {
   const joined = args.join(' ');
-  const haystack = bin && bin !== name ? `${name} ${bin} ${joined}` : `${name} ${joined}`;
+  const candidates = [`${name} ${joined}`];
+  const binName = bin ? basename(bin) : undefined;
+  if (binName && binName !== name) candidates.push(`${binName} ${joined}`);
   for (const re of CREDENTIAL_ARGV_PATTERNS) {
-    if (re.test(haystack)) {
+    if (candidates.some((c) => re.test(c))) {
       return {
         exitCode: 65,
         stdout: '',
