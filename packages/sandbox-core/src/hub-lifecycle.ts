@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { buildExposedHubEnv, EXPOSED_HUB_PROFILE, parseEnvFileBody } from './hub-expose.js';
 import { controlPlaneDeployPath, type ControlPlaneDeployRecord } from './ssh-config.js';
 import { resolveStagedRuntimeRoot, RUNTIME_ROOT_ENV } from './runtime-root.js';
-import { relayPort } from './relay-port.js';
+import { isValidRelayPort, relayPort, setRelayPort } from './relay-port.js';
 import {
   fetchHealthz,
   killPid,
@@ -286,6 +286,21 @@ export async function ensureHub(opts: EnsureHubOptions = {}): Promise<HubEndpoin
   // `localhost` — a plain hub.
   const exposed = await resolveExposedSpawn();
   const desiredProfile = exposed?.profile ?? 'localhost';
+  // An exposed hub's port is a DEPLOYMENT fact: the bind address, the tunnel and
+  // the firewall rule were all provisioned against the port in the record, so it
+  // is what the child will bind. Adopt it as this process's relay port before any
+  // probing, or every /healthz here targets `relay.port` while the hub listens on
+  // the record's port — the hub then reads as dead (or as a collision) when it is
+  // running fine. Whoever changes the port must re-run `hub expose --port`, which
+  // moves the tunnel and firewall with it.
+  const exposedPort = Number.parseInt(exposed?.env['AGENTBOX_HUB_PORT'] ?? '', 10);
+  if (isValidRelayPort(exposedPort) && exposedPort !== relayPort()) {
+    log(
+      `this machine's hub is exposed on :${String(exposedPort)}, so relay.port ` +
+        `(${String(relayPort())}) does not apply here — re-run \`agentbox hub expose --port\` to move it`,
+    );
+    setRelayPort(exposedPort);
+  }
 
   const currentVersion = process.env.AGENTBOX_CLI_VERSION;
   // A hub running in the wrong profile (a plain localhost hub while this machine
