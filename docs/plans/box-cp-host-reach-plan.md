@@ -1,12 +1,36 @@
 # Plan: box `cp` reaches the real host, with custody as the cache
 
-Status: **Phase 0 done** (2026-08-27). One session per phase; tick each phase's box as it lands.
+Status: **all phases implemented** on `feat/cp-host-reach` (2026-08-27), live-verified against a
+real control box except for one open case (below).
 
 - [x] Phase 0 — measure the current behavior live
-- [ ] Phase 1 — host-reach channel (control box ⇄ PC)
-- [ ] Phase 2 — custody as the cp cache + the explicit upload surface
-- [ ] Phase 3 — `cp toHost` and the offline outbox
-- [ ] Phase 4 — docs, backlog, changelog
+- [x] Phase 1 — host-reach channel (control box ⇄ PC)
+- [x] Phase 2 — custody as the cp cache + the explicit upload surface
+- [x] Phase 3 — `cp toHost` and the offline outbox
+- [x] Phase 4 — docs, backlog, changelog
+
+## Live verification (control box `46.225.235.16`, built from this branch)
+
+| path | result |
+| --- | --- |
+| live `fromHost` | ✅ a file created on the Mac after the box existed reaches the box; approval + copy happen on the Mac (~20 s worst case: one long-poll cycle) |
+| live `toHost` | ✅ lands on the Mac at the requested path |
+| cached `fromHost` (Mac relay stopped) | ✅ approval parks on the control box with the entry's age, answered from the API/web UI; the box gets the file at its requested destination and a `served from the hub's cache` note |
+| cold miss | ✅ non-zero exit naming both the offline machine and the empty cache, with the `hub:` fix |
+| `cp <file> hub:` upload | ✅ stores the entry (verified in custody: right key, 4 KiB tar, sidecar) |
+| parked `toHost` | ✅ exit 75, item visible in `/admin/hostreach/outbox` |
+| outbox drain on reconnect | ✅ prompt on the Mac, file landed after approval |
+
+**Open — do not merge without resolving.** Reading a **`hub:`-uploaded** entry from a box, with the
+Mac offline, reports success on the control box (`cp cache: served 1 entr(y|ies)`) but the file never
+appears in the box. The entry itself is fine (right key, same 4 KiB tar as entries that DO serve),
+and an entry captured automatically by a live copy serves correctly through the same code — so the
+difference is in the entry, not the serve path. This worked on an earlier build, before the cache
+key changed from the resolved path to the request path, which is the first place to look.
+
+Also worth knowing: an offline copy takes at least `relay.hostReachTimeoutMs` (60 s) plus the time
+to answer the approval, so an agent wrapping `agentbox-ctl cp` in a short `timeout` will see its own
+client give up while the copy still completes afterwards.
 
 ## Context
 
