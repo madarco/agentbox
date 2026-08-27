@@ -26,4 +26,4 @@
 - [ ] cp cache eviction: entries under `projects/<slug>/cp/` persist until deleted from the custody UI. Decide a policy (size cap / age) before a big dataset silently pins hub disk.
 - [ ] `download.workspace` / `download.env` / `download.claude` still run on the control box with a cwd that no longer exists — the same defect `cp` had. The host-reach channel is built so each is a routing line.
 - [ ] a box's `~` in a `cp fromHost` path expands to the BOX's home before ctl sees it, so a host-home path cannot be expressed. Decide: reject it, or add an explicit `host:~` form.
-- [ ] a `hub:`-uploaded cache entry serves as a no-op: the control box logs `cp cache: served` but nothing lands in the box, while an entry captured by a live copy serves fine through the same code. Suspect the request-path keying change. Blocks merging `feat/cp-host-reach`.
+- [ ] watch for a cached cp serving nothing: seen once (hub logged `served`, box got no file), not reproducible afterwards and never root-caused. The serve now refuses to report success without the CLI's `copied to` line and logs what it actually said, so a recurrence names itself.

@@ -21,12 +21,18 @@ real control box except for one open case (below).
 | parked `toHost` | ✅ exit 75, item visible in `/admin/hostreach/outbox` |
 | outbox drain on reconnect | ✅ prompt on the Mac, file landed after approval |
 
-**Open — do not merge without resolving.** Reading a **`hub:`-uploaded** entry from a box, with the
-Mac offline, reports success on the control box (`cp cache: served 1 entr(y|ies)`) but the file never
-appears in the box. The entry itself is fine (right key, same 4 KiB tar as entries that DO serve),
-and an entry captured automatically by a live copy serves correctly through the same code — so the
-difference is in the entry, not the serve path. This worked on an earlier build, before the cache
-key changed from the resolved path to the request path, which is the first place to look.
+**The one previously-open case now passes, but its root cause was never observed.** Reading a
+`hub:`-uploaded entry from a box with the machine offline delivered nothing while the control box
+logged `cp cache: served` — and now delivers correctly (box exit 0, file present with the right
+bytes, `served from the hub's cache` note). What changed is a guard, not a repair: the serve had
+trusted the inner CLI's exit code, so *any* way of exiting 0 without copying read as success. It now
+requires the CLI's own `copied to` line, checks the staged sources exist before handing them over,
+and logs the CLI's stdout/stderr when the two disagree.
+
+Ruled out along the way: the stored entry (right key, valid tar, correct member name, valid
+sidecar), the serve's command shape (hand-run inside the hub container copies fine), and a workspace
+re-sync wiping the file (a stop/start cycle leaves copied files in place). If it recurs, the control
+box now logs exactly what the copy said — start there.
 
 Also worth knowing: an offline copy takes at least `relay.hostReachTimeoutMs` (60 s) plus the time
 to answer the approval, so an agent wrapping `agentbox-ctl cp` in a short `timeout` will see its own
