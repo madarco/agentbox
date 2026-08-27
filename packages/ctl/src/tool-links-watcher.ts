@@ -34,7 +34,9 @@ interface ToolListPayload {
 
 export class ToolLinksWatcher {
   private timer: NodeJS.Timeout | null = null;
+  private retryTimer: NodeJS.Timeout | null = null;
   private running = false;
+  private failures = 0;
   private readonly intervalMs: number;
   private readonly cwd: string;
   private readonly onChange: ToolLinksWatcherOptions['onChange'];
@@ -54,9 +56,31 @@ export class ToolLinksWatcher {
   }
 
   stop(): void {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * A tick that couldn't reach the relay retries on a short backoff instead
+   * of waiting out the full interval. Startup is the case that matters: the
+   * box comes up, the daemon's first tick may still race the relay, and a
+   * tool the user granted before the box existed should not be missing for a
+   * minute. Capped at the normal interval, and reset by any success.
+   */
+  private scheduleRetry(): void {
+    if (!this.timer || this.retryTimer) return;
+    this.failures += 1;
+    const delay = Math.min(1_000 * 2 ** (this.failures - 1), this.intervalMs);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.tick();
+    }, delay);
+    this.retryTimer.unref?.();
   }
 
   /** Exposed so `tool request` can refresh links the moment it is approved. */
@@ -73,9 +97,16 @@ export class ToolLinksWatcher {
         { path: this.cwd, format: 'json' },
         { errorPrefix: 'agentbox-ctl tool-links' },
       );
-      if (res.exitCode !== 0) return;
+      if (res.exitCode !== 0) {
+        this.scheduleRetry();
+        return;
+      }
       const names = parseToolNames(res.stdout);
-      if (names === null) return;
+      if (names === null) {
+        this.scheduleRetry();
+        return;
+      }
+      this.failures = 0;
       const signature = names.join(',');
       if (signature === this.lastSignature) return;
       const result = await syncToolLinks(names, { prunable });
@@ -84,7 +115,8 @@ export class ToolLinksWatcher {
         this.onChange?.(result.added, result.removed, result.conflicts);
       }
     } catch {
-      // Keep whatever links exist; try again on the next tick.
+      // Keep whatever links exist; retry shortly.
+      this.scheduleRetry();
     } finally {
       this.running = false;
     }
