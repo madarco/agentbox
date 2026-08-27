@@ -386,6 +386,46 @@ describe('gh-shim: open surface + pr branch injection', () => {
     }
   });
 
+  // Reported by review: making the flag list per-op dropped ones the shared
+  // list had, so their values were read as the PR ref and injection was
+  // skipped. This table is transcribed from `gh pr <op> --help`; each case is
+  // a flag whose VALUE would otherwise look like a ref.
+  it.each([
+    [['pr', 'merge', '--subject', 'Release v2'], 'pr merge agentbox/test-branch --subject'],
+    [['pr', 'merge', '-t', 'Release v2'], 'pr merge agentbox/test-branch -t'],
+    [['pr', 'reopen', '--comment', 'reopening'], 'pr reopen agentbox/test-branch --comment'],
+    [['pr', 'reopen', '-c', 'reopening'], 'pr reopen agentbox/test-branch -c'],
+    [['pr', 'close', '-c', 'done'], 'pr close agentbox/test-branch -c'],
+    [['pr', 'comment', '-b', 'hi'], 'pr comment agentbox/test-branch -b'],
+    [['pr', 'merge', '--author-email', 'a@b.c'], 'pr merge agentbox/test-branch --author-email'],
+    [['pr', 'checks', '--template', '{{.x}}'], 'pr checks agentbox/test-branch --template'],
+    [['pr', 'diff', '--color', 'always'], 'pr diff agentbox/test-branch --color'],
+  ])('injects the branch for %s', (argv, expected) => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, argv as string[], env);
+      expect(out.stdout).toContain(expected);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // ...and the booleans must NOT swallow the flag that follows them.
+  it.each([
+    [['pr', 'review', '--approve'], 'pr review agentbox/test-branch --approve'],
+    [['pr', 'merge', '--squash'], 'pr merge agentbox/test-branch --squash'],
+    [['pr', 'close', '--delete-branch'], 'pr close agentbox/test-branch --delete-branch'],
+    [['pr', 'checks', '--required'], 'pr checks agentbox/test-branch --required'],
+  ])('treats %s as a boolean and still injects', (argv, expected) => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, argv as string[], env);
+      expect(out.stdout).toContain(expected);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('pr create is forwarded without a positional branch', () => {
     const env = makeStubShell();
     try {
