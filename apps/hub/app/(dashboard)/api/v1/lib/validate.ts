@@ -236,8 +236,14 @@ export function isLifecycleAction(v: string): v is LifecycleAction {
 }
 
 // ── provider install / bake ──
+// A community provider has credentials to set and (often) a base to bake, so
+// rejecting unknown names here would leave a registered plugin creatable but
+// unconfigurable. Same treatment as `parseCreateBox`: check only the SHAPE of an
+// unknown name — the plugin registry lives behind @agentbox/sandbox-core, which
+// stays out of the Next bundle — and let the backend resolve it against the
+// registry and reject it there with a precise message.
 export function isProviderId(v: string): boolean {
-  return (PROVIDERS as readonly string[]).includes(v);
+  return (PROVIDERS as readonly string[]).includes(v) || /^[a-z][a-z0-9-]{0,39}$/.test(v);
 }
 
 // Credential fields are a provider-specific record of string values (e.g.

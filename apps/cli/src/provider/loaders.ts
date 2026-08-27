@@ -23,6 +23,7 @@
 import { pathToFileURL } from 'node:url';
 import { PROVIDER_NAMES, isProviderKind, type ProviderKind } from '@agentbox/config';
 import {
+  ensureProviderDescriptor,
   pluginForProvider,
   pluginProviderNames,
   isSupportedApiVersion,
@@ -86,6 +87,12 @@ export async function loadProviderModule(name: string): Promise<ProviderModule> 
       `plugin "${plugin.packageName}" does not export a providerModule for "${name}"`,
     );
   }
+  // Back-fill the descriptor snapshot for a plugin registered before descriptors
+  // existed (a v1 plugins.json) — we hold the module here, which is the only
+  // moment deriving one is free. Deliberately NOT awaited: it is a cache write
+  // whose only cost when lost is another derivation later, so it must never add
+  // latency or a new failure mode to loading a provider.
+  void ensureProviderDescriptor(name, providerModule).catch(() => {});
   return providerModule;
 }
 

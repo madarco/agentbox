@@ -160,6 +160,49 @@ export interface ProviderOption {
   id: string;
   label: string;
   configured: boolean;
+  // ── the provider's declarative descriptor, straight through ──
+  // Sourced from a sync snapshot (the built-in table, or `~/.agentbox/plugins.json`
+  // for a community provider), so these are always present and cost nothing to
+  // serve. Clients use them INSTEAD of hardcoding provider names: render the
+  // credential form from `credentials.fields`, pace a progress bar with
+  // `bake.*ProgressSteps`, gate capability-specific UI on `capabilities`.
+  kind?: 'local' | 'cloud';
+  credentials?: {
+    envKeys: readonly string[];
+    fields: readonly {
+      key: string;
+      label: string;
+      optional?: boolean;
+      /** Absent means secret — mask it. */
+      secret?: boolean;
+      hint?: string;
+    }[];
+  };
+  bake?: {
+    required: boolean;
+    approxMinutes: string;
+    createProgressSteps?: number;
+    bakeProgressSteps?: number;
+  };
+  capabilities?: {
+    checkpoints: boolean;
+    checkpointReboots: boolean;
+    ssh: boolean;
+    persistentSsh: boolean;
+    directBoxSsh: boolean;
+    inbound: boolean;
+    directGit: boolean;
+    resync: boolean;
+    prune: boolean;
+    vnc: boolean;
+    dind: boolean;
+    /** 'stop' = pause powers the box off. Relabel the control; don't hide it. */
+    pauseSemantics: 'freeze' | 'stop';
+    hubRoutable: boolean;
+    timeoutModel?: 'absolute' | 'inactivity';
+  };
+  sizes?: readonly { key: string; label: string }[];
+  regions?: readonly { key: string; label: string }[];
   // Whether the provider has credentials on this host (docker: always true). A
   // cloud provider can have credentials but not yet be `configured` (baked).
   hasCredentials?: boolean;
