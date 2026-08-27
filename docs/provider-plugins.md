@@ -82,6 +82,131 @@ that:
    checkpoints, cp) on top of the thin ~13-method `CloudBackend` — "a cloud is one
    file."
 
+## Declaring a descriptor
+
+A **`ProviderDescriptor`** is how your provider tells AgentBox's UIs what it is
+and what it can do — a real label in the tray/web create pickers, the right
+credential form, and correct capability gating. Built-in providers declare the
+same shape in `@agentbox/config`'s `PROVIDERS` table; you declare it on your
+`providerModule`:
+
+```ts
+import type { ProviderDescriptor } from '@madarco/agentbox-provider-sdk';
+
+const descriptor: ProviderDescriptor = {
+  name: 'myprovider',
+  kind: 'cloud',                       // 'local' = a docker-style local engine
+  label: 'MyProvider (cloud microVM)',
+  loginHint: 'paste an API token from the MyProvider console',
+  credentials: {
+    // secrets.env key NAMES that mean "configured". Only names are ever read.
+    envKeys: ['MYPROVIDER_TOKEN'],
+    // The form a UI renders. Each `key` is passed verbatim to setCredentials.
+    fields: [
+      { key: 'token', label: 'API token' },
+      { key: 'region', label: 'Region', optional: true, secret: false },
+    ],
+  },
+  bake: {
+    required: true,                    // false if your base self-heals on create
+    approxMinutes: '5-10',
+    createProgressSteps: 40,           // typical streamed log lines, for pacing
+    bakeProgressSteps: 500,
+  },
+  capabilities: {
+    checkpoints: true, checkpointReboots: false,
+    ssh: false, persistentSsh: false, directBoxSsh: false,
+    inbound: false, directGit: true, resync: true, prune: true,
+    vnc: true, dind: true,
+    pauseSemantics: 'freeze',
+    hubRoutable: true,
+  },
+  blurb: 'MyProvider microVMs',
+  sizeDesc: 'Per-provider override of `box.size` for myprovider (vCPU count).',
+  imageDesc: 'Per-provider override of `box.image` for myprovider (snapshot id).',
+};
+
+export const providerModule: ProviderModule = { provider, backend, descriptor, /* … */ };
+```
+
+`agentbox plugin add` snapshots this into `~/.agentbox/plugins.json`, so every
+consumer — the CLI's sync `open --targets` probe, the hub's hot `listProviders`
+path, the tray — resolves it without importing your package.
+
+**Declare what code can't reveal; don't mirror method presence.** AgentBox
+deliberately does *not* infer capabilities from your `Provider` object, because
+`createCloudProvider` defines `checkpoint`, `setInbound`, `repairReachability`
+and `enableDirectGit` on *every* cloud provider — their presence says which
+scaffold you used, not what you support. (The built-in docker provider is the
+sharp end of this: it has working `docker commit` checkpoints and no
+`provider.checkpoint` at all.)
+
+Three values ARE cross-checked against your `CloudBackend`, which you wrote and
+which therefore means something — declare them to match or a test will disagree:
+
+| Descriptor field | Must equal |
+|---|---|
+| `capabilities.prune` | `!!backend.list` |
+| `capabilities.inbound` | `!!backend.setInbound` |
+| `capabilities.timeoutModel` | `backend.timeoutModel` |
+
+## Choosing capability values
+
+Most fields are obvious. These three are the ones people get wrong:
+
+- **`pauseSemantics`** — what `pause` *actually* does. `'freeze'` preserves the
+  running process tree (a real pause/resume or snapshot-resume). `'stop'` powers
+  the box off so only the disk survives — that's what hetzner and digitalocean
+  do (`pause ≡ stop` in both backends). This is **not** a gate on showing a pause
+  control: powering a VPS down is useful, it stops the billing. A UI should
+  relabel on `'stop'`, never hide.
+- **`persistentSsh`** — whether the per-box SSH identity outlives the CLI call.
+  An app like Codex connects again on its own later, so a gateway handing out an
+  expiring token (Daytona's 60-minute credential) does **not** qualify even
+  though SSH works right now. A per-box key file on disk does.
+- **`checkpointReboots`** — whether capturing a checkpoint stops and restarts the
+  box. If your snapshot API requires a stopped sandbox, this is `true` and the
+  CLI will confirm before yanking a live agent.
+
+`ssh` means a real sshd you can `agentbox code` (IDE) and `agentbox open`
+(sshfs-mount) into. `directBoxSsh` is narrower: your `buildAttach` yields a plain
+`ssh … user@host` pointing AT the box, the one shape AgentBox can parse a target
+out of — leave it false if you implement `sshTarget` yourself.
+
+## Migrating an existing plugin
+
+**You don't have to.** `descriptor` is optional and `SDK_API_VERSION` did not
+change, so a plugin built against an older SDK loads exactly as before. When one
+is missing, AgentBox derives what it can from your module and fills the rest with
+defaults chosen to reproduce pre-descriptor behavior:
+
+| Field | Without a descriptor | Why |
+|---|---|---|
+| `label` | your provider name | what UIs showed before |
+| `kind` | `'cloud'` if you export a `backend` | derived |
+| `bake.required` | **`false`** | a `true` default would newly BLOCK creates that work today |
+| `credentials.fields` | one `apiKey` field if you export `setCredentials`, else none | matches the old tray fallback |
+| `capabilities.vnc` / `dind` | **`true`** | the scaffold wires both; `false` would delete working UI |
+| `capabilities.pauseSemantics` | `'freeze'` | UIs showed an unqualified pause |
+| `capabilities.checkpoints` / `ssh` | `!!provider.checkpoint` / `!!provider.sshTarget` | sound for a scaffold-based plugin |
+| `capabilities.prune` / `inbound` / `timeoutModel` | from your `CloudBackend` | authored by you, so honest |
+| `persistentSsh` / `directBoxSsh` / `inbound` | `false` | plugins were excluded from those paths before; opt in by declaring |
+
+So an un-migrated plugin **gains** the create dropdown, a credential form, and
+`prune` / `checkpoint` / `fork` eligibility, and loses nothing. AgentBox
+back-fills the derived descriptor into `plugins.json` the first time it loads
+your module, so this happens with no user action.
+
+Migrating is two lines: bump to `@madarco/agentbox-provider-sdk@^2.8`, export a
+`descriptor`, then `agentbox plugin add <pkg>` to refresh the snapshot.
+
+One thing a plugin still doesn't get: a `box.image<P>` / `box.size<P>` /
+`box.defaultCheckpoint<P>` config key. Those are statically typed per built-in.
+Your provider falls back to the generic `box.image` / `box.size`, and
+`checkpoint set-default --provider <you>` warns that it is writing the
+cross-provider default. Own your base via your own prepared-state file instead
+(see "Prepare, attach, and checkpoints" below).
+
 ## The box user
 
 Everything AgentBox puts in a box belongs to **`vscode`** with `$HOME` at

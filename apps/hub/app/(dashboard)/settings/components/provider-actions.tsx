@@ -26,31 +26,37 @@ interface CredField {
   optional?: boolean;
 }
 
-// Per-provider credential fields (token/key only — no interactive browser flow).
-const CRED_FIELDS: Record<string, CredField[]> = {
-  docker: [],
-  e2b: [{ key: 'apiKey', label: 'API key', placeholder: 'e2b_…' }],
-  daytona: [{ key: 'apiKey', label: 'API key', placeholder: 'dtn_…' }],
-  hetzner: [{ key: 'token', label: 'API token', placeholder: 'project read+write token' }],
-  vercel: [
-    { key: 'token', label: 'Access token', placeholder: 'vercel token' },
-    { key: 'teamId', label: 'Team ID', placeholder: 'team_… (optional)', optional: true },
-    { key: 'projectId', label: 'Project ID', placeholder: 'prj_… (optional)', optional: true },
-  ],
-  digitalocean: [
-    { key: 'token', label: 'API token', placeholder: 'personal access token (read+write)' },
-    // Not a secret — this writes the `box.digitaloceanProject` config key. Blank means
-    // "leave as-is", NOT "clear": the form drops empty fields before sending and never
-    // shows the saved value, so treating blank as a clear would wipe the setting on any
-    // save. Clearing is `agentbox config unset box.digitaloceanProject`.
-    {
-      key: 'project',
-      label: 'Project',
-      placeholder: 'name or UUID — blank leaves it unchanged',
-      optional: true,
-    },
-  ],
+/**
+ * Credential fields for a provider row, from the descriptor the API serves.
+ *
+ * This replaced a hardcoded per-provider table, which is what let a registered
+ * community provider render a correct form: the hub sends `credentials.fields`
+ * for built-ins and plugins alike. `PLACEHOLDERS` is cosmetic only — an example
+ * value AgentBox happens to know for a built-in — and its absence just means a
+ * plain input.
+ *
+ * A field with `optional` is one the form drops when left empty (blank means
+ * "leave as-is", never "clear"; clearing is a CLI `config unset`).
+ */
+const PLACEHOLDERS: Record<string, string> = {
+  'e2b.apiKey': 'e2b_…',
+  'daytona.apiKey': 'dtn_…',
+  'hetzner.token': 'project read+write token',
+  'vercel.token': 'vercel token',
+  'vercel.teamId': 'team_… (optional)',
+  'vercel.projectId': 'prj_… (optional)',
+  'digitalocean.token': 'personal access token (read+write)',
+  'digitalocean.project': 'name or UUID — blank leaves it unchanged',
 };
+
+function credFields(p: ProviderOption): CredField[] {
+  return (p.credentials?.fields ?? []).map((f) => ({
+    key: f.key,
+    label: f.label,
+    placeholder: PLACEHOLDERS[`${p.id}.${f.key}`] ?? f.hint,
+    optional: f.optional,
+  }));
+}
 
 export function ProvidersSection() {
   const { state } = useStore();
@@ -143,7 +149,7 @@ const MASK = '••••••••••••';
 
 function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   const router = useRouter();
-  const fields = CRED_FIELDS[p.id] ?? [];
+  const fields = credFields(p);
   // Required fields re-mask when emptied; optional ones (e.g. vercel team/project) don't.
   const maskableKeys = new Set(fields.filter((f) => !f.optional).map((f) => f.key));
   const [values, setValues] = useState<Record<string, string>>({});
@@ -236,7 +242,9 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   // alternative (proxying every action through this hub) would make two UIs
   // responsible for one machine's state.
   const onHub = p.origin === 'hub';
-  const canBake = p.id === 'docker' || p.hasCredentials;
+  // A bake needs credentials only when the provider actually takes some. Gating
+  // on `id === 'docker'` left every credential-free plugin unbakeable.
+  const canBake = fields.length === 0 || p.hasCredentials;
   const hasFields = fields.length > 0;
   const expandable = !onHub && (hasFields || isRD);
 

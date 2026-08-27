@@ -11,6 +11,16 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Added
+
+- Community providers now appear in the create pickers (web UI and tray) and get
+  a real credential form, from a new `ProviderDescriptor` a plugin declares and
+  `agentbox plugin add` snapshots. Existing plugins keep working unchanged —
+  declaring one is optional.
+- `agentbox code`, `open`, `prune`, `checkpoint set-default` and `fork` now gate
+  on a provider's declared capabilities instead of hardcoded name lists, so a
+  plugin that supports them gets them. DigitalOcean gains `code`/`open` this way.
+
 ### Fixed
 
 - `relay.port` now actually moves the host daemon. It was documented and
