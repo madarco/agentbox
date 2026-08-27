@@ -911,6 +911,7 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
       const fresh = await providerBaseFreshness(p.id, claudeInstall);
       return {
         ...p,
+        hasCredentials: await refineCredStatus(p),
         baseStatus: fresh.state,
         baseStaleReason: fresh.state === 'stale' ? fresh.reason : undefined,
         // Only stale rows pay for the diff: it re-hashes the whole build context,
@@ -919,6 +920,30 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
       };
     }),
   );
+}
+
+/**
+ * Ask the provider itself whether it has credentials, for providers whose
+ * descriptor names no `secrets.env` keys.
+ *
+ * The sync `listProviders` path can only check key NAMES, and answers "yes" when
+ * a provider declares none — the non-blocking default. But a plugin may hold its
+ * credentials somewhere we can't see (a CLI keychain, an OAuth cache) and still
+ * know whether it is authenticated; `readCredStatus()` is how it says so. Only
+ * this async path can ask, since it means loading the module.
+ *
+ * Best-effort: any failure keeps the row's existing answer rather than reporting
+ * a provider as unconfigured because its probe threw.
+ */
+async function refineCredStatus(p: ProviderOption): Promise<boolean | undefined> {
+  if ((p.credentials?.envKeys.length ?? 0) > 0) return p.hasCredentials;
+  try {
+    const mod = await loadProviderModuleByName(p.id);
+    if (!mod.readCredStatus) return p.hasCredentials;
+    return (await mod.readCredStatus()).configured;
+  } catch {
+    return p.hasCredentials;
+  }
 }
 
 /**
