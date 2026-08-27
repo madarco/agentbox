@@ -37,8 +37,14 @@ export function normalizeCpParams(
       }
     }
   }
-  if (!Array.isArray(sources) || sources.length === 0 || sources.some((s) => typeof s !== 'string')) {
-    throw new Error('cp.* requires a non-empty {sources} string array (or legacy {boxPath, hostPath})');
+  if (
+    !Array.isArray(sources) ||
+    sources.length === 0 ||
+    sources.some((s) => typeof s !== 'string')
+  ) {
+    throw new Error(
+      'cp.* requires a non-empty {sources} string array (or legacy {boxPath, hostPath})',
+    );
   }
   if (typeof dest !== 'string') {
     throw new Error('cp.* requires a {dest} string (or legacy {boxPath, hostPath})');

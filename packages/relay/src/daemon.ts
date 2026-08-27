@@ -4,7 +4,8 @@ import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
 import { HostReachPoller } from './host-reach-poller.js';
-import { executeCloudAction, lookupCloudBoxOwner } from './host-actions.js';
+import { drainCpOutbox } from './cp-outbox-drain.js';
+import { cacheCpSources, executeCloudAction, lookupCloudBoxOwner } from './host-actions.js';
 import type { HostAction, HostActionResult } from './types.js';
 
 // Re-exported here (not just from index.ts) so the two processes that own a
@@ -72,6 +73,15 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
           logger: log,
           execute: (action) =>
             executeHostReachAction(action, {
+              prompts: handle.prompts,
+              subscribers: handle.subscribers,
+              log,
+              cache: { controlPlaneUrl, adminToken: hostReachToken },
+            }),
+          drainOutbox: () =>
+            drainCpOutbox({
+              controlPlaneUrl,
+              adminToken: hostReachToken,
               prompts: handle.prompts,
               subscribers: handle.subscribers,
               log,
@@ -149,6 +159,7 @@ async function executeHostReachAction(
     prompts: RelayServerHandle['prompts'];
     subscribers: RelayServerHandle['subscribers'];
     log: (line: string) => void;
+    cache: { controlPlaneUrl: string; adminToken: string };
   },
 ): Promise<HostActionResult> {
   const owner = await lookupCloudBoxOwner(action.boxId);
@@ -161,7 +172,7 @@ async function executeHostReachAction(
         'Use the box here once — `agentbox ls` or `agentbox attach <box>` — to adopt it, then retry.\n',
     };
   }
-  return executeCloudAction(action, {
+  const result = await executeCloudAction(action, {
     backendName: owner.backendName,
     boxId: action.boxId,
     boxName: owner.name,
@@ -170,4 +181,15 @@ async function executeHostReachAction(
     autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
     log: deps.log,
   });
+  // File a copy with the control box so this same request answers when this
+  // machine is offline. Strictly after the real copy succeeded, and awaited only
+  // so the log lands in order — a failure here cannot change `result`.
+  if (result.exitCode === 0 && action.method === 'cp.fromHost' && action.cachePrefix) {
+    await cacheCpSources(action, action.cachePrefix, {
+      controlPlaneUrl: deps.cache.controlPlaneUrl,
+      adminToken: deps.cache.adminToken,
+      logger: deps.log,
+    });
+  }
+  return result;
 }

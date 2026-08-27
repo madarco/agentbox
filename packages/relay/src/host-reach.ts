@@ -106,7 +106,12 @@ export class HostReachQueue {
    * Resolves with `unreachable` rather than rejecting: "no machine there" is a
    * normal, expected state (a closed laptop), not an error condition.
    */
-  request(boxId: string, method: string, params: unknown): Promise<HostReachOutcome> {
+  request(
+    boxId: string,
+    method: string,
+    params: unknown,
+    opts: { cachePrefix?: string } = {},
+  ): Promise<HostReachOutcome> {
     const id = randomUUID();
     const action: HostAction = {
       id,
@@ -114,6 +119,7 @@ export class HostReachQueue {
       method,
       params,
       createdAt: new Date(this.now()).toISOString(),
+      ...(opts.cachePrefix ? { cachePrefix: opts.cachePrefix } : {}),
     };
     return new Promise<HostReachOutcome>((resolve) => {
       const pending: Pending = { action, settle: resolve, delivered: false };

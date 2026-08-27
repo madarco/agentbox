@@ -126,6 +126,15 @@ interface Parsed {
  * the side opposite the destination (no box-to-box, no mixed sides), and all
  * box sources must name the same box.
  */
+/**
+ * `hub:` as the destination — upload to the control box's cache rather than into
+ * a box. Accepted with or without a trailing path (there is nowhere to put it:
+ * entries are keyed by the source path), so `hub:` and `hub:/` mean the same.
+ */
+export function isHubDest(arg: string): boolean {
+  return arg === 'hub:' || arg === 'hub:/';
+}
+
 export function parseArgs(paths: string[]): Parsed {
   if (paths.length === 0) {
     throw new Error('cp requires at least one path.');
@@ -207,10 +216,18 @@ export const cpCommand = new Command('cp')
       '  agentbox cp a.txt b.txt src/ mybox:/workspace/dest/   # many sources into a dir',
       '  agentbox cp ./*.log mybox:/workspace/logs/  # shell-expanded wildcard',
       '  agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"',
+      '  agentbox cp ./data.csv hub:                 # upload to the control box, readable by',
+      '                                              # this project\'s boxes with this machine off',
     ].join('\n'),
   )
   .action(async (paths: string[], opts: CpOptions) => {
     try {
+      // `hub:` is not a box, so it never reaches parseArgs' box/host split.
+      if (paths.length >= 2 && isHubDest(paths[paths.length - 1]!)) {
+        const { uploadToHubCache } = await import('../lib/cp-hub-upload.js');
+        await uploadToHubCache(paths.slice(0, -1), process.cwd());
+        return;
+      }
       const parsed = parseArgs(paths);
       const box = await resolveBoxOrExit(parsed.boxRef);
       const isCloud = (box.provider ?? 'docker') !== 'docker';

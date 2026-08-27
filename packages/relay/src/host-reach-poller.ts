@@ -31,6 +31,12 @@ export interface HostReachPollerDeps {
    * box on the other end waits forever.
    */
   execute: (action: HostAction) => Promise<HostActionResult>;
+  /**
+   * Land any copies that were parked for this machine while it was offline.
+   * Called once per reconnect (not per poll) — the parked set only changes when
+   * a box writes to it, and a prompt per poll cycle would be intolerable.
+   */
+  drainOutbox?: () => Promise<void>;
   logger?: (line: string) => void;
 }
 
@@ -57,6 +63,8 @@ export class HostReachPoller {
   private backoffMs = 0;
   /** Suppresses repeat log lines while a control box stays unreachable. */
   private loggedFailure = false;
+  /** The outbox drain runs once per process, on first contact. */
+  private drainedOutbox = false;
 
   constructor(private readonly deps: HostReachPollerDeps) {}
 
@@ -99,6 +107,18 @@ export class HostReachPoller {
         if (this.loggedFailure) {
           this.log('host-reach: control box reachable again');
           this.loggedFailure = false;
+        }
+        if (!this.drainedOutbox) {
+          // First successful contact of this session: collect whatever piled up
+          // while this machine was away, before handling new work.
+          this.drainedOutbox = true;
+          try {
+            await this.deps.drainOutbox?.();
+          } catch (err) {
+            this.log(
+              `host-reach: could not land parked copies: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
         const parsed = JSON.parse(res.text.length > 0 ? res.text : '{}') as {
           actions?: HostAction[];

@@ -48,6 +48,15 @@ export {
   type HostReachUnreachable,
 } from './host-reach.js';
 export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';
+export {
+  cpCacheKey,
+  cpCacheMetaPath,
+  cpCachePrefix,
+  cpCacheTarPath,
+  describeCacheAge,
+  type CpCacheMeta,
+} from './cp-cache.js';
+export { captureCpCacheEntry, type CpCacheCaptureDeps } from './cp-cache-capture.js';
 export { CloudBoxPoller, CloudBoxPollers, type CloudBoxPollerDeps } from './cloud-poller.js';
 export { BoxRegistry, EventBuffer } from './registry.js';
 export {

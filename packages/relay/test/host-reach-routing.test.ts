@@ -18,12 +18,21 @@ import { startRelayServer, type RelayServerHandle } from '../src/server.js';
 
 const ADMIN = 'admin-token';
 
+/** The union of shapes these routes answer with — enough to assert on, no `any`. */
+interface RelayReply {
+  actions?: { id: string; boxId: string; method: string; params: unknown }[];
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+}
+
 async function req(
   handle: RelayServerHandle,
   method: string,
   path: string,
   init: { token?: string; body?: unknown } = {},
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: RelayReply }> {
   const port = (handle.server.address() as AddressInfo).port;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
@@ -33,7 +42,7 @@ async function req(
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const text = await res.text();
-  return { status: res.status, body: text.length > 0 ? JSON.parse(text) : null };
+  return { status: res.status, body: text.length > 0 ? (JSON.parse(text) as RelayReply) : {} };
 }
 
 describe('control box host-reach routing', () => {
@@ -66,7 +75,7 @@ describe('control box host-reach routing', () => {
     const polled = await req(handle, 'GET', '/admin/hostreach/poll?wait=2000', { token: ADMIN });
     expect(polled.status).toBe(200);
     expect(polled.body.actions).toHaveLength(1);
-    const action = polled.body.actions[0];
+    const action = polled.body.actions![0]!;
     expect(action.method).toBe('cp.fromHost');
     expect(action.boxId).toBe('b1');
     // The params reach the machine untouched — it, not the broker, resolves them.
@@ -74,13 +83,21 @@ describe('control box host-reach routing', () => {
 
     const posted = await req(handle, 'POST', '/admin/hostreach/result', {
       token: ADMIN,
-      body: { id: action.id, exitCode: 0, stdout: 'copied to cpbox:/workspace/data.csv', stderr: '' },
+      body: {
+        id: action.id,
+        exitCode: 0,
+        stdout: 'copied to cpbox:/workspace/data.csv',
+        stderr: '',
+      },
     });
     expect(posted.status).toBe(204);
 
     const answer = await rpc;
     expect(answer.status).toBe(200);
-    expect(answer.body).toMatchObject({ exitCode: 0, stdout: 'copied to cpbox:/workspace/data.csv' });
+    expect(answer.body).toMatchObject({
+      exitCode: 0,
+      stdout: 'copied to cpbox:/workspace/data.csv',
+    });
   });
 
   it('tells the box how to fix it when no machine is connected', async () => {

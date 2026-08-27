@@ -11,9 +11,12 @@ import {
 import { canAutoApproveTransfer } from './safe-transfer.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
+import { cpCachePrefix } from './cp-cache.js';
+import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-cache-serve.js';
+import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import { hostOpenCommand, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
   isSanctionedPushBranch,
   isScratchBranch,
@@ -657,6 +660,25 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 200, { actions });
         return;
       }
+      // The outbox: copies out of a box that were waiting for this machine.
+      if (route === 'GET /admin/hostreach/outbox') {
+        const items = custody ? await listCpOutbox(custody) : [];
+        send(res, 200, { items });
+        return;
+      }
+      if (req.method === 'DELETE' && url.pathname.startsWith('/admin/hostreach/outbox/')) {
+        const id = decodeURIComponent(url.pathname.slice('/admin/hostreach/outbox/'.length));
+        const items = custody ? await listCpOutbox(custody) : [];
+        const hit = items.find((i) => i.meta.id === id);
+        if (!hit || !custody) {
+          send(res, 404, { error: 'no such parked copy' });
+          return;
+        }
+        await removeCpOutboxItem(custody, hit);
+        log(`cp outbox: ${id} landed and cleared`);
+        send(res, 204, null);
+        return;
+      }
       if (route === 'POST /admin/hostreach/result') {
         const body = await readJsonBody<BridgeActionResultBody>(req);
         if (
@@ -1017,16 +1039,59 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // here would judge a path that does not exist on this disk (it is the
         // create job's deleted temp clone), which is how a copy the user never
         // saw got auto-approved as safe.
-        const outcome = await hostReach.request(reg.boxId, body.method, body.params);
+        const cachePrefix = cpCachePrefix({
+          projectSlug: reg.originUrl
+            ? (projectSlugFromOriginUrl(reg.originUrl) ?? undefined)
+            : undefined,
+          boxId: reg.boxId,
+        });
+        const outcome = await hostReach.request(reg.boxId, body.method, body.params, {
+          cachePrefix,
+        });
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
         }
         log(`cp ${body.method} for ${reg.boxId}: host unreachable (${outcome.reason})`);
+        // The machine is offline — but a copy it made earlier may be in custody.
+        // Only reads can be served that way: an outbound copy has nowhere to go
+        // until that machine is back (see the outbox in `cp.toHost` below).
+        if (body.method === 'cp.fromHost') {
+          const cached = await serveCachedCp({
+            params: body.params as CpRpcParams | undefined,
+            reg,
+            custody,
+            cachePrefix,
+            prompts,
+            subscribers,
+            log,
+          });
+          if (cached) {
+            send(res, cached.exitCode === 0 ? 200 : 500, cached);
+            return;
+          }
+        } else {
+          // Outbound: nothing to fall back to, but the bytes are still in the
+          // box. Take them now and hold them for the machine, rather than
+          // letting an agent's output evaporate because a laptop was shut.
+          const parked = await parkOutboundCp({
+            params: body.params as CpRpcParams | undefined,
+            reg,
+            custody,
+            maxBytes: custodyMaxBlobBytes,
+            log,
+          });
+          if (parked) {
+            send(res, parked.exitCode === 0 ? 200 : 500, parked);
+            return;
+          }
+        }
         send(res, 500, {
           exitCode: 69,
           stdout: '',
-          stderr: cpUnreachableMessage(body.method, reg.name, outcome.reason),
+          stderr: cpUnreachableMessage(body.method, reg.name, outcome.reason, {
+            cacheMiss: body.method === 'cp.fromHost',
+          }),
         });
         return;
       }
@@ -2280,6 +2345,42 @@ async function handleToolRequest(
 }
 
 /**
+ * Park an outbound copy for a machine that is offline. Returns null when there
+ * is nothing to park (no custody, nothing pulled, over the cap), in which case
+ * the caller reports the plain unreachable error.
+ */
+async function parkOutboundCp(args: {
+  params: CpRpcParams | undefined;
+  reg: BoxRegistration;
+  custody: CustodyStore | null;
+  maxBytes: number;
+  log: (line: string) => void;
+}): Promise<GitRpcResult | null> {
+  const { params, reg, custody, maxBytes, log } = args;
+  if (!custody) return null;
+  let norm: { sources: string[]; dest: string };
+  try {
+    norm = normalizeCpParams('cp.toHost', params);
+  } catch {
+    return null;
+  }
+  return parkCpOutbox(norm.sources, norm.dest, {
+    custody,
+    cliEntry: process.env.AGENTBOX_CLI_ENTRY,
+    boxId: reg.boxId,
+    boxName: reg.name,
+    prefix: cpOutboxPrefix({
+      projectSlug: reg.originUrl
+        ? (projectSlugFromOriginUrl(reg.originUrl) ?? undefined)
+        : undefined,
+      boxId: reg.boxId,
+    }),
+    maxBytes,
+    log,
+  });
+}
+
+/**
  * Whether this machine still has the box's registered workspace on disk — the
  * test for "are the files here, or on someone else's machine?".
  *
@@ -2317,6 +2418,7 @@ function cpUnreachableMessage(
   method: CpMethod,
   boxName: string,
   reason: HostReachUnreachable,
+  opts: { cacheMiss?: boolean } = {},
 ): string {
   const direction = method === 'cp.toHost' ? 'to' : 'from';
   const lead =
@@ -2325,12 +2427,76 @@ function cpUnreachableMessage(
       : 'the machine holding these files is not connected to this hub';
   return [
     `cp ${direction} the host could not run: ${lead}.`,
+    // Naming BOTH facts matters: "offline" alone reads as "wait and retry",
+    // when the fix for a cold cache is to pre-load the file instead.
+    ...(opts.cacheMiss ? ['This hub has no cached copy of those paths either.'] : []),
     '',
     'This hub brokers the copy; it does not hold your project files.',
     `Start AgentBox on that machine (\`agentbox relay start\`) and retry, or run it there directly:`,
     `  agentbox cp ${boxName}:<src> <dst>`,
+    ...(opts.cacheMiss
+      ? [
+          'To make a file readable with that machine offline, upload it there once:',
+          '  agentbox cp <file> hub:',
+        ]
+      : []),
     '',
   ].join('\n');
+}
+
+/**
+ * Serve a `cp.fromHost` from custody when the owning machine is offline, behind
+ * the same approval a live copy gets — parked on this control box, so it can be
+ * answered from the web UI or the tray with the laptop shut.
+ *
+ * Returns null when there is nothing cached (the caller then reports the
+ * two-fact error) or when the user declines.
+ */
+async function serveCachedCp(args: {
+  params: CpRpcParams | undefined;
+  reg: BoxRegistration;
+  custody: CustodyStore | null;
+  cachePrefix: string;
+  prompts: PendingPrompts;
+  subscribers: PromptSubscribers;
+  log: (line: string) => void;
+}): Promise<GitRpcResult | null> {
+  const { params, reg, custody, cachePrefix, prompts, subscribers, log } = args;
+  if (!custody) return null;
+  let sources: string[];
+  try {
+    sources = normalizeCpParams('cp.fromHost', params).sources;
+  } catch {
+    return null;
+  }
+  // The cache is keyed by the path the OWNING machine resolved, which is what
+  // it stored; an absolute source is already that, and a relative one is
+  // resolved against the box's workspace exactly as the live path does.
+  const workspacePath = await boxWorkspacePath(reg.boxId);
+  const resolved = sources.map((s) => resolveHostPath(workspacePath, s));
+  const lookup = await lookupCpCache(resolved, { custody, cachePrefix });
+  if (lookup.missing.length > 0) return null;
+
+  const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+    kind: 'confirm',
+    message: `Allow ${reg.name} to read a CACHED copy of these files?`,
+    detail: [
+      'The machine holding them is offline; this hub has an older copy:',
+      describeCpCacheEntries(lookup),
+    ].join('\n'),
+    defaultAnswer: 'n',
+    context: { command: 'cp.fromHost (cached)', argv: resolved },
+  });
+  if (verdict.answer !== 'y') {
+    return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+  }
+  return serveCpFromCache(params, resolved, {
+    custody,
+    cliEntry: process.env.AGENTBOX_CLI_ENTRY,
+    boxName: reg.name,
+    cachePrefix,
+    log,
+  });
 }
 
 /**

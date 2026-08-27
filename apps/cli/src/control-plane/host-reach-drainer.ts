@@ -15,7 +15,9 @@ import type { BoxRecord } from '@agentbox/core';
  * relay that won't start is not worth failing an attach over — the copy degrades
  * to the cache and says so.
  */
-export async function ensureHostReachDrainer(box: Pick<BoxRecord, 'provider' | 'cloud'>): Promise<void> {
+export async function ensureHostReachDrainer(
+  box: Pick<BoxRecord, 'provider' | 'cloud'>,
+): Promise<void> {
   try {
     if ((box.provider ?? 'docker') === 'docker') return;
     if (!box.cloud?.controlPlaneUrl) return;

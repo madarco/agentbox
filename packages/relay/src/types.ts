@@ -235,6 +235,14 @@ export interface HostAction {
   params: unknown;
   /** ISO-8601 enqueue time. */
   createdAt: string;
+  /**
+   * Host-reach only: custody prefix under which the executing machine should
+   * cache what it copies out, so the same request still answers when that
+   * machine is offline. Carried beside `params` rather than inside it — the
+   * executor hands `params` to the normal RPC path untouched, and the box must
+   * never be able to name a custody location.
+   */
+  cachePrefix?: string;
 }
 
 export interface HostActionResult {

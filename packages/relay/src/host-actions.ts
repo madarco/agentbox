@@ -60,6 +60,7 @@ import {
 } from './gh.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
+import { captureCpCacheEntry, type CpCacheCaptureDeps } from './cp-cache-capture.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 import {
   isValidToolName,
@@ -691,6 +692,33 @@ async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
     cloudSandboxId: sid,
     sanctionedBranch: hit.box.cloud?.sanctionedBranch ?? hit.box.cloud?.workspaceBranch,
   };
+}
+
+/**
+ * Cache every host source a just-completed `cp.fromHost` read, under `prefix`.
+ *
+ * Lives here because resolving "what did that copy actually read?" is this
+ * module's job: the box sends paths relative to its own project, and only the
+ * machine holding that project can turn them into absolute ones — the same
+ * resolution `runCpRpc` just did. Re-deriving it (rather than having the copy
+ * report its sources back) keeps one definition of the source set.
+ */
+export async function cacheCpSources(
+  action: HostAction,
+  prefix: string,
+  deps: CpCacheCaptureDeps,
+): Promise<void> {
+  try {
+    const { sources } = normalizeCpParams('cp.fromHost', action.params as CpRpcParams | undefined);
+    const workspacePath = await boxWorkspacePath(action.boxId);
+    for (const src of sources) {
+      await captureCpCacheEntry(resolveHostPath(workspacePath, src), prefix, deps);
+    }
+  } catch (err) {
+    deps.logger?.(
+      `cp cache: nothing stored for ${action.boxId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /**
