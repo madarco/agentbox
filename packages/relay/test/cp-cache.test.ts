@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -11,7 +13,7 @@ import {
   describeCacheAge,
   parseCpCacheMeta,
 } from '../src/cp-cache.js';
-import { describeCpCacheEntries, lookupCpCache } from '../src/cp-cache-serve.js';
+import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from '../src/cp-cache-serve.js';
 import { FsCustodyStore } from '../src/custody/fs-store.js';
 
 describe('cp cache keys', () => {
@@ -127,5 +129,116 @@ describe('cache lookup', () => {
     expect(describeCpCacheEntries(lookup)).toMatch(
       /\/Users\/marco\/p\/a\.csv \(captured 60m ago\)/,
     );
+  });
+});
+
+describe('serving a cached entry', () => {
+  let dir: string;
+  let custody: FsCustodyStore;
+  const prefix = 'projects/acme__web/cp';
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agentbox-cp-serve-test-'));
+    custody = new FsCustodyStore({ root: dir });
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** A real tar of one file, exactly as `captureCpCacheEntry` writes it. */
+  async function seedEntry(requestPath: string, memberName: string): Promise<void> {
+    const src = join(dir, 'src');
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, memberName), 'cached bytes\n', 'utf8');
+    const tarPath = join(dir, 'e.tar');
+    await promisify(execFile)('tar', ['-cf', tarPath, '-C', src, memberName]);
+    await custody.put(cpCacheTarPath(prefix, requestPath), await readFile(tarPath));
+    await custody.put(
+      cpCacheMetaPath(prefix, requestPath),
+      Buffer.from(
+        JSON.stringify({
+          sourcePath: `/Users/me/proj/${memberName}`,
+          isDir: false,
+          capturedAt: new Date().toISOString(),
+          size: 10240,
+        }),
+      ),
+    );
+  }
+
+  /** Stands in for the CLI: records its argv, and behaves as told. */
+  async function stubCli(behavior: 'copies' | 'silent-success' | 'fails'): Promise<string> {
+    const p = join(dir, `cli-${behavior}.mjs`);
+    const body =
+      behavior === 'copies'
+        ? "console.log('copied to box:/workspace/x'); process.exit(0);"
+        : behavior === 'silent-success'
+          ? 'process.exit(0);'
+          : "console.error('boom'); process.exit(3);";
+    await writeFile(
+      p,
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.ARGV_LOG, JSON.stringify(process.argv.slice(2)));\n${body}\n`,
+      'utf8',
+    );
+    return p;
+  }
+
+  it('stages the tar member and hands the CLI an existing file', async () => {
+    await seedEntry('./data.csv', 'data.csv');
+    const argvLog = join(dir, 'argv.json');
+    process.env.ARGV_LOG = argvLog;
+    const res = await serveCpFromCache(
+      { sources: ['./data.csv'], dest: '/workspace/pulled.csv' },
+      ['./data.csv'],
+      { custody, cliEntry: await stubCli('copies'), boxName: 'mybox', cachePrefix: prefix },
+    );
+    expect(res.exitCode).toBe(0);
+    // The provenance an agent needs to distinguish this from a live read.
+    expect(res.stdout).toMatch(/served from the hub's cache/);
+    const argv = JSON.parse(await readFile(argvLog, 'utf8')) as string[];
+    expect(argv[0]).toBe('cp');
+    expect(argv[argv.length - 2]).toBe('mybox:/workspace/pulled.csv');
+    // The staged source must have existed when the CLI ran.
+    expect(argv[1]!.endsWith('/data.csv')).toBe(true);
+  });
+
+  it('refuses to report success when the copy said nothing was copied', async () => {
+    // The live failure this exists for: the hub logged "served" on a zero exit
+    // while the box got no file, which is worse than any error.
+    await seedEntry('./data.csv', 'data.csv');
+    process.env.ARGV_LOG = join(dir, 'argv2.json');
+    const res = await serveCpFromCache(
+      { sources: ['./data.csv'], dest: '/workspace/pulled.csv' },
+      ['./data.csv'],
+      { custody, cliEntry: await stubCli('silent-success'), boxName: 'mybox', cachePrefix: prefix },
+    );
+    expect(res.exitCode).not.toBe(0);
+    expect(res.stderr).toMatch(/could not deliver it into this box/);
+  });
+
+  it('surfaces a failing copy rather than swallowing it', async () => {
+    await seedEntry('./data.csv', 'data.csv');
+    process.env.ARGV_LOG = join(dir, 'argv3.json');
+    const res = await serveCpFromCache(
+      { sources: ['./data.csv'], dest: '/workspace/pulled.csv' },
+      ['./data.csv'],
+      { custody, cliEntry: await stubCli('fails'), boxName: 'mybox', cachePrefix: prefix },
+    );
+    expect(res.exitCode).toBe(3);
+    expect(res.stderr).toMatch(/boom/);
+  });
+
+  it('fails loudly when the tar holds a different name than the key implies', async () => {
+    // Belt and braces for the class of bug above: a mismatch must not reach the
+    // CLI as a missing source.
+    await seedEntry('./data.csv', 'other.csv');
+    process.env.ARGV_LOG = join(dir, 'argv4.json');
+    const res = await serveCpFromCache(
+      { sources: ['./data.csv'], dest: '/workspace/pulled.csv' },
+      ['./data.csv'],
+      { custody, cliEntry: await stubCli('copies'), boxName: 'mybox', cachePrefix: prefix },
+    );
+    expect(res.exitCode).not.toBe(0);
+    expect(res.stderr).toMatch(/missing after unpacking/);
   });
 });

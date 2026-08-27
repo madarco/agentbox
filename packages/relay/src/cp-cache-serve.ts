@@ -13,7 +13,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -121,15 +121,40 @@ export async function serveCpFromCache(
       await rm(tarPath, { force: true });
       names.push(basename(entry.sourcePath));
     }
-    const argv = [
-      deps.cliEntry,
-      'cp',
-      ...names.map((n) => join(dir, n)),
-      `${deps.boxName}:${dest}`,
-      '--yes',
-    ];
+    const staged = names.map((n) => join(dir, n));
+    // The staged files must exist before we hand them to the CLI. A silent
+    // mismatch here (a tar member named differently from the key's basename)
+    // would otherwise reach `agentbox cp` as a missing source — and a missing
+    // source is exactly the kind of thing a CLI can report in a way this code
+    // reads as success.
+    const absent = staged.filter((p) => !existsSync(p));
+    if (absent.length > 0) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: `the hub's cached copy is unusable: ${absent.join(', ')} missing after unpacking\n`,
+      };
+    }
+    const argv = [deps.cliEntry, 'cp', ...staged, `${deps.boxName}:${dest}`, '--yes'];
     const out = await runCapture(process.execPath, argv, dir, CP_TIMEOUT_MS);
     if (out.exitCode !== 0) return out;
+    // Exit 0 is not proof of delivery. `agentbox cp` announces `copied to
+    // <box>:<path>` when it actually moves bytes; without that line the copy did
+    // not happen, and reporting success would hand the box a file that is not
+    // there — the worst failure mode this whole path has.
+    if (!/copied to /.test(out.stdout)) {
+      log(
+        `cp cache: the copy into ${deps.boxName} reported success but said nothing was copied ` +
+          `(stdout: ${JSON.stringify(out.stdout.slice(0, 300))}, stderr: ${JSON.stringify(out.stderr.slice(0, 300))})`,
+      );
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr:
+          `the hub had a cached copy but could not deliver it into this box.\n` +
+          `${out.stderr.trim()}\n`,
+      };
+    }
     const age = describeCpCacheEntries(lookup);
     log(`cp cache: served ${String(lookup.entries.length)} entr(y|ies) for ${deps.boxName}`);
     return {
