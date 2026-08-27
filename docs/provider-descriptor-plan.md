@@ -259,11 +259,19 @@ One phase per session. Tick a phase off here as it lands.
 
 | # | Phase | Status |
 |---|---|---|
-| 1 | Descriptor type, built-in table, registry snapshot | not started |
-| 2 | Hub API serves plugin providers + capabilities | not started |
-| 3 | Tray consumes descriptors | not started |
-| 4 | Retire the CLI provider-name arrays | not started |
-| 5 | Docs, web UI, changelog | not started |
+| 1 | Descriptor type, built-in table, registry snapshot | done |
+| 2 | Hub API serves plugin providers + capabilities | done |
+| 3 | Tray consumes descriptors | done (agentbox-tray `3db893a`) |
+| 4 | Retire the CLI provider-name arrays | done |
+| 5 | Docs, web UI, changelog | done |
+
+Live-verified against the published third-party `agentbox-provider-sprites`
+(SDK v2, declares no descriptor): it lists as `configured`, derives
+`prune`/`timeoutModel: inactivity` correctly from its backend, and
+`prune --provider sprites` enumerated real orphan sandboxes — a command that
+was rejected outright before. Two things its derived descriptor gets wrong that
+only a declared one can fix: the guessed `apiKey` credential field (it wants
+`SPRITE_TOKEN`) and `vnc: true` (Sprites ships no VNC stack and forces it off).
 
 ### Phase 1 — the descriptor + registry snapshot
 
