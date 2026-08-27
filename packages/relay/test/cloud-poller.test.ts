@@ -51,7 +51,9 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   while (cleanups.length > 0) {
     const fn = cleanups.pop();
-    try { await fn?.(); } catch {
+    try {
+      await fn?.();
+    } catch {
       // ignore
     }
   }
@@ -84,7 +86,9 @@ describe('CloudBoxPoller recoverPreviewUrl', () => {
     }
     await poller.stop();
     expect(recoveryCount).toBeGreaterThanOrEqual(1);
-    expect(calls.some((l) => l.includes(`preview URL recovered: ${dead} → ${live.url}`))).toBe(true);
+    expect(calls.some((l) => l.includes(`preview URL recovered: ${dead} → ${live.url}`))).toBe(
+      true,
+    );
   });
 
   it('does not loop the recover call on a single failure burst (in-flight de-dupe)', async () => {
@@ -143,6 +147,82 @@ describe('CloudBoxPoller recoverPreviewUrl', () => {
     poller.start();
     await new Promise((r) => setTimeout(r, 400));
     await poller.stop();
+    expect(recoveryCount).toBe(0);
+  });
+});
+
+describe('CloudBoxPoller stop', () => {
+  /** A bridge that accepts `/bridge/poll` and never answers — a real long-poll. */
+  function hangingBridge(): Promise<{ url: string; close: () => Promise<void> }> {
+    return new Promise((resolve) => {
+      const open: import('node:http').ServerResponse[] = [];
+      const server = createServer((req, res) => {
+        if (req.url?.startsWith('/bridge/poll')) {
+          open.push(res); // never respond
+          return;
+        }
+        res.statusCode = 404;
+        res.end('');
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        if (!addr || typeof addr === 'string') throw new Error('no addr');
+        resolve({
+          url: `http://127.0.0.1:${String(addr.port)}`,
+          close: () =>
+            new Promise((r) => {
+              for (const res of open) res.destroy();
+              server.close(() => r());
+            }),
+        });
+      });
+    });
+  }
+
+  it('aborts the in-flight poll instead of waiting it out', async () => {
+    // Measured before the abort landed: stop() took 26s against a bridge that
+    // never answers. That is a 26s window in which a late poll can revive a box
+    // the caller just paused on an auto-resuming backend (e2b).
+    const bridge = await hangingBridge();
+    cleanups.push(bridge.close);
+    const poller = new CloudBoxPoller({
+      boxId: 'test-box',
+      previewUrl: bridge.url,
+      bridgeToken: 'tok',
+      logger: () => {},
+    });
+
+    poller.start();
+    await new Promise((r) => setTimeout(r, 300)); // let the poll get established
+    const t0 = Date.now();
+    await poller.stop();
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it('does not report the stop-abort as a poll error', async () => {
+    // The abort surfaces as a socket error; logging it would cry wolf on every
+    // pause, and falling through to backoff/recovery would be actively wrong.
+    const bridge = await hangingBridge();
+    cleanups.push(bridge.close);
+    const lines: string[] = [];
+    let recoveryCount = 0;
+    const poller = new CloudBoxPoller({
+      boxId: 'test-box',
+      previewUrl: bridge.url,
+      bridgeToken: 'tok',
+      logger: (l: string) => lines.push(l),
+      recoverPreviewUrl: async () => {
+        recoveryCount += 1;
+        return null;
+      },
+    });
+
+    poller.start();
+    await new Promise((r) => setTimeout(r, 300));
+    await poller.stop();
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(lines.filter((l) => l.includes('poll error'))).toEqual([]);
     expect(recoveryCount).toBe(0);
   });
 });

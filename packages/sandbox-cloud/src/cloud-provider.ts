@@ -369,6 +369,62 @@ export function createCloudProvider(
   // VNC) skips the spawn when a healthy instance is already serving (so a
   // host-only `reconnect` on a
   // live box doesn't pile up duplicate daemons).
+  /**
+   * Re-register a still-running box so the relay starts a fresh poller for it.
+   * Uses the persisted preview URL/token rather than re-minting: the box never
+   * went down, so the recorded values are still current.
+   */
+  async function reRegisterCloudBoxWithRelay(box: BoxRecord): Promise<void> {
+    const previewUrl = box.cloud?.relayPreviewUrl;
+    const bridgeToken = box.cloud?.bridgeToken;
+    if (!previewUrl || !bridgeToken || !box.relayToken) return;
+    await registerBoxWithRelay({
+      boxId: box.id,
+      token: box.relayToken,
+      name: box.name,
+      kind: 'cloud',
+      backend: backend.name,
+      previewUrl,
+      previewToken: box.cloud?.relayPreviewToken,
+      bridgeToken,
+      createdAt: box.createdAt,
+      projectIndex: box.projectIndex,
+      autoApproveHostActions: box.autoApproveHostActions,
+      autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+    });
+  }
+
+  /**
+   * Put a box to sleep so that it STAYS asleep.
+   *
+   * The poller is stopped BEFORE the pause, not after: a paused box has no
+   * in-box relay to talk to, and on a backend whose paused sandboxes auto-resume
+   * on inbound traffic (e2b) a long-poll landing after the pause revives the box
+   * we just paused. Stopping first also means `CloudBoxPoller.stop()` aborts the
+   * in-flight request while the box is still up, so nothing is left racing.
+   *
+   * If the pause then fails the box is still running but no longer polled — it
+   * would silently stop servicing host actions — so we re-register it, which
+   * starts a fresh poller, before rethrowing.
+   */
+  async function pauseWithPollerStopped(
+    box: BoxRecord,
+    doPause: () => Promise<void>,
+  ): Promise<void> {
+    await stopBoxPollerOnRelay(box.id);
+    try {
+      await doPause();
+    } catch (err) {
+      try {
+        await reRegisterCloudBoxWithRelay(box);
+      } catch {
+        // Best-effort: the pause failure is the error worth surfacing.
+      }
+      throw err;
+    }
+    await persistLastState(box, 'paused');
+  }
+
   async function reEnsureCloudBox(box: BoxRecord, h: CloudHandle): Promise<BoxRecord> {
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
@@ -1455,13 +1511,7 @@ export function createCloudProvider(
     },
 
     async pause(box: BoxRecord): Promise<void> {
-      await backend.pause(handleFor(box));
-      // Silence the poller: a paused box has no in-box relay to talk to, and on
-      // an auto-resuming backend (e2b) the next long-poll would wake the box we
-      // just paused — measured, `agentbox stop` did not stick without this. The
-      // wake path re-registers and starts a fresh poller.
-      await stopBoxPollerOnRelay(box.id);
-      await persistLastState(box, 'paused');
+      await pauseWithPollerStopped(box, () => backend.pause(handleFor(box)));
     },
 
     async resume(box: BoxRecord): Promise<void> {
@@ -1476,10 +1526,8 @@ export function createCloudProvider(
     },
 
     async stop(box: BoxRecord): Promise<void> {
-      await backend.stop(handleFor(box));
-      // Same as pause — on e2b, stop IS pause, and a live poller undoes it.
-      await stopBoxPollerOnRelay(box.id);
-      await persistLastState(box, 'paused');
+      // On e2b, stop IS pause, so it needs the same poller handling.
+      await pauseWithPollerStopped(box, () => backend.stop(handleFor(box)));
     },
 
     async destroy(box: BoxRecord): Promise<void> {

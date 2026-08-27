@@ -891,21 +891,33 @@ brief:
   next inbound request revives it with a fresh window. The hour mark is a brief
   stall, not a lost box. (The SDK default is `onTimeout: 'kill'` — leaving it
   there was why boxes were observed dying at exactly 60 min.)
-- **Any pause must also stop the box's poller.** Auto-resume means inbound
-  traffic revives a paused box, and the relay's `CloudBoxPoller` long-polls
-  every cloud box's preview URL every ~25 s — so a pause that leaves the poller
+- **Any pause must also stop the box's poller — and stop it FIRST.** Auto-resume
+  means inbound traffic revives a paused box, and the relay's `CloudBoxPoller`
+  long-polls every cloud box's preview URL — so a pause that leaves the poller
   running is undone within seconds. Measured 2026-08-26: `agentbox stop` on an
   e2b box read back `running` on every sample for two minutes; with the poller
-  stopped first, the pause held on every sample. So **both** pause paths stop
-  the poller — the user-initiated one (`provider.pause`/`stop` →
+  stopped first, the pause held on every sample. Both pause paths therefore stop
+  the poller before pausing — the user-initiated one (`provider.pause`/`stop` →
   `stopBoxPollerOnRelay` → `POST /admin/stop-poller`, which unlike
   `/admin/forget-box` keeps the registration and status) and the host idle one
-  (the keepalive loop's `stopCloudPoller`). A later wake re-registers the box,
-  which starts a fresh poller, so neither needs a restart counterpart.
-- **Host-owned idle policy (`timeoutModel: 'inactivity'`).** Because any request
-  revives a paused box, E2B falls into the same trap Daytona does (see §3, "Idle
-  handling") and the host must do the stopping itself: the keepalive loop pauses
-  a box whose agent has been idle for a full `box.e2bTimeoutMs`.
+  (the keepalive loop's `stopPoller`). Ordering matters: a poll landing between
+  the pause and the stop revives the box. `CloudBoxPoller.stop()` aborts the
+  in-flight request rather than waiting it out — measured at **26 s** against a
+  bridge that never answers, which was exactly that revival window. A later wake
+  re-registers the box and starts a fresh poller, so there is no restart
+  counterpart; if the pause itself fails, `provider.pause` re-registers the box
+  so it does not sit unpolled.
+- **Host-owned idle policy (`timeoutModel: 'inactivity'`).** E2B's raw timer is
+  absolute, but our own polling holds the deadline open indefinitely, so in
+  practice it behaves exactly like Daytona's inactivity window (see §3, "Idle
+  handling") and the host must do the stopping itself. Measured 2026-08-26 on a
+  live box: with the poller running the deadline never expired — it was pushed
+  back to a full window and the box never paused on its own, across both 20 s
+  and 2 s sampling, with **zero** state flips. What actually stops it is the
+  keepalive, which pauses a box whose agent has been idle for a full
+  `box.e2bTimeoutMs` and logs
+  `cloud-keepalive: paused idle box … — e2b's own idle timer never fires while we poll it`;
+  the pause then held on every subsequent sample.
 - **Pause/resume is free.** `Sandbox.pause(id)` pauses; `Sandbox.connect(id)`
   auto-resumes lazily on the next op. The provider's `state()`/`get()` use
   the non-resuming `Sandbox.getInfo()` so existence checks don't wake (and

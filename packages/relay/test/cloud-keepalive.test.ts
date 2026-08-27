@@ -524,21 +524,18 @@ describe('startCloudKeepaliveLoop', () => {
     expect(stopped).toEqual(['b1']); // once, not per tick
   });
 
-  it('does not stop the poller when the pause itself fails', async () => {
-    // The box is still running, so it must keep being polled.
+  it('stops the poller BEFORE pausing, so no late poll can revive the box', async () => {
+    // Ordering is the fix for the race: a long-poll landing after the pause
+    // revives an auto-resuming sandbox. Stopping first also means the in-flight
+    // request is aborted while the box is still up.
     const registry = new BoxRegistry();
     registerCloud(registry, 'b1', 'e2b');
-    const stopped: string[] = [];
-    const attempted = deferred<void>();
-    const backend = {
-      name: 'e2b',
-      timeoutModel: 'inactivity',
-      renewTimeout: async () => {},
-      pause: async () => {
-        attempted.resolve();
-        throw new Error('sandbox mid-transition');
-      },
-    } as unknown as CloudBackend;
+    const order: string[] = [];
+    const got = deferred<void>();
+    const backend = inactivityBackend(() => {
+      order.push('pause');
+      got.resolve();
+    });
 
     const loop = startCloudKeepaliveLoop({
       registry,
@@ -549,14 +546,14 @@ describe('startCloudKeepaliveLoop', () => {
       loadConfig: async () => CFG,
       resolveBackend: async () => backend,
       lookupBox: lookupIdleWindow,
-      stopPoller: async (boxId: string) => {
-        stopped.push(boxId);
+      stopPoller: async () => {
+        order.push('stopPoller');
       },
     });
 
-    await attempted.promise;
+    await got.promise;
     await loop.stop();
-    expect(stopped).toEqual([]);
+    expect(order.slice(0, 2)).toEqual(['stopPoller', 'pause']);
   });
 
   it('keeps the box paused even if stopping the poller fails', async () => {

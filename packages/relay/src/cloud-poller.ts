@@ -10,7 +10,7 @@
  * layer, tracked alongside Phase 4's host-RPC execution.
  */
 
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, type ClientRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
 import type {
@@ -130,6 +130,15 @@ export class CloudBoxPoller {
   private currentPreviewUrl: string;
   /** Guards against recovery storms — at most one recovery attempt in flight. */
   private recovering: Promise<void> | null = null;
+  /**
+   * The in-flight `/bridge/poll` request, so {@link stop} can abort it instead
+   * of waiting it out. Without this, `stop()` blocks for the remainder of the
+   * current long-poll — measured at **26s** against a bridge that never answers
+   * — and on an auto-resuming backend (e2b) that late request revives the very
+   * box the caller just paused. A healthy bridge answers in milliseconds, so
+   * this matters exactly when the box is slow or wedged.
+   */
+  private inFlight: ClientRequest | null = null;
 
   constructor(private readonly deps: CloudBoxPollerDeps) {
     this.currentPreviewUrl = deps.previewUrl;
@@ -144,6 +153,10 @@ export class CloudBoxPoller {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    // Abort the in-flight poll rather than waiting it out. `run()` treats an
+    // abort after `stopped` as a normal shutdown, not a poll error.
+    this.inFlight?.destroy();
+    this.inFlight = null;
     if (this.loopPromise) await this.loopPromise;
   }
 
@@ -244,6 +257,11 @@ export class CloudBoxPoller {
           this.cursor = body.cursor;
         }
       } catch (err) {
+        // `stop()` destroys the in-flight request; that surfaces here as a
+        // socket error. It's a clean shutdown, not a poll failure — logging it
+        // would cry wolf on every pause, and falling through to the backoff /
+        // preview-URL recovery below would be actively wrong.
+        if (this.stopped) return;
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('→ 504') || msg.includes('504:')) {
           // Edge proxy timeout — the box is likely fine; arm fast-mode so the
@@ -358,7 +376,15 @@ export class CloudBoxPoller {
           res.on('error', reject);
         },
       );
-      req.on('error', reject);
+      this.inFlight = req;
+      const done = (): void => {
+        if (this.inFlight === req) this.inFlight = null;
+      };
+      req.on('close', done);
+      req.on('error', (err) => {
+        done();
+        reject(err);
+      });
       req.on('timeout', () => {
         req.destroy();
         reject(new Error('bridge/poll timeout'));

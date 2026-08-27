@@ -373,6 +373,13 @@ export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeep
         const idleWindowMs = lookup.createTimeoutMs ?? (await fallbackCreateTimeoutMs(e.backend));
         if (idleWindowMs <= 0) continue;
         if (!shouldIdlePause(e, idleWindowMs, now)) continue;
+        // Stop polling BEFORE pausing. On a backend with auto-resume (e2b) a
+        // long-poll landing after the pause wakes the box straight back up, and
+        // `CloudBoxPoller.stop()` aborts the in-flight request — measured at 26s
+        // if we instead wait it out. A later wake re-registers the box
+        // (`/admin/register-box`), which starts a fresh poller, so this needs no
+        // restart path here. Best-effort: a poller that's already gone is fine.
+        await stopPoller(boxId).catch(() => {});
         try {
           // Pass the recorded class: daytona freezes a linux-vm but archives a
           // container, and each call is rejected for the other class.
@@ -382,13 +389,6 @@ export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeep
           });
           idlePaused.set(boxId, e.lastActivityMs);
           backoffUntil.delete(boxId);
-          // Stop polling the box we just paused. On a backend with auto-resume
-          // (e2b) the poller's next long-poll would wake it straight back up,
-          // and the pause would never stick. A later wake re-registers the box
-          // (`/admin/register-box`), which starts a fresh poller — so this is
-          // symmetric and needs no restart path here. Best-effort: a failure
-          // here must not look like a failed pause and re-arm the box.
-          await stopPoller(boxId).catch(() => {});
           // The tracked deadline belongs to a session that no longer exists;
           // drop it so the next wake re-seeds from the record.
           tracked.delete(boxId);
