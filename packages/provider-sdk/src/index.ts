@@ -76,6 +76,26 @@ export {
   type CredStatusSummary,
 } from '@agentbox/sandbox-core';
 
+// ---- declarative provider metadata ----
+// Declare a `descriptor` on your `providerModule` and AgentBox's UIs can render
+// your provider properly: a real label, the right credential fields, and correct
+// checkpoint / SSH / pause / VNC gating. `agentbox plugin add` snapshots it into
+// `~/.agentbox/plugins.json`, so every consumer reads it without importing you.
+//
+// OPTIONAL: omit it and you get a descriptor derived from your module plus
+// defaults that reproduce pre-descriptor behavior — nothing breaks, you just
+// show up as your bare provider name.
+export {
+  type ProviderDescriptor,
+  type ProviderCapabilities,
+  type ProviderCredentialField,
+} from '@agentbox/config';
+export {
+  resolveProviderDescriptor,
+  listProviderDescriptors,
+  deriveDescriptor,
+} from '@agentbox/sandbox-core';
+
 // ---- box-state + host helpers a backend/CLI surface may touch ----
 export {
   recordBox,
@@ -103,11 +123,7 @@ export {
 } from '@agentbox/sandbox-core';
 
 // ---- config access ----
-export {
-  loadEffectiveConfig,
-  findProjectRoot,
-  type EffectiveConfig,
-} from '@agentbox/config';
+export { loadEffectiveConfig, findProjectRoot, type EffectiveConfig } from '@agentbox/config';
 
 // ---- interactive attach helpers (build a cloud box's `buildAttach` argv) ----
 // A provider with no SSH (like vercel/e2b) overrides `buildAttach` and drives

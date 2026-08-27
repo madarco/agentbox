@@ -165,9 +165,18 @@ export {
   removePluginRecord,
   pluginProviderNames,
   pluginForProvider,
+  recordPluginDescriptor,
+  PLUGINS_FILE_VERSION,
   type PluginRecord,
   type PluginsFile,
+  type PluginsFileVersion,
 } from './plugin-registry.js';
+export {
+  resolveProviderDescriptor,
+  listProviderDescriptors,
+  deriveDescriptor,
+  ensureProviderDescriptor,
+} from './provider-descriptor.js';
 export {
   carryPlaceholderContext,
   renderCarryEntries,

@@ -19,6 +19,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import type { ProviderDescriptor } from '@agentbox/config';
 
 export const PLUGINS_FILE = join(homedir(), '.agentbox', 'plugins.json');
 
@@ -46,18 +47,41 @@ export interface PluginRecord {
   version: string;
   /** Provider names this package contributes (from each `providerModule.provider.name`). */
   providers: string[];
+  /**
+   * Per-provider descriptor snapshot, captured at `plugin add` from the module's
+   * declared `ProviderModule.descriptor` merged with what could be derived from
+   * the loaded module. Keyed by provider name.
+   *
+   * Snapshotting is what lets every consumer — the CLI's sync `open --targets`
+   * probe, the hub's hot `listProviders` path — resolve capabilities WITHOUT an
+   * `import()` of an external package. Absent on a v1 record; back-filled the
+   * first time something loads the module anyway.
+   */
+  descriptors?: Record<string, ProviderDescriptor>;
   /** `SDK_API_VERSION` the package declared (compat gate). */
   apiVersion: number;
   /** ISO timestamp the package was added. */
   addedAt: string;
 }
 
+/**
+ * v2 added `PluginRecord.descriptors`. A v1 file is read as-is and upgraded in
+ * place on the next write — the field is optional, so nothing breaks in between.
+ */
+export type PluginsFileVersion = 1 | 2;
+
 export interface PluginsFile {
-  version: 1;
+  version: PluginsFileVersion;
   plugins: PluginRecord[];
 }
 
-const EMPTY: PluginsFile = { version: 1, plugins: [] };
+export const PLUGINS_FILE_VERSION = 2;
+
+const EMPTY: PluginsFile = { version: PLUGINS_FILE_VERSION, plugins: [] };
+
+function isKnownVersion(v: unknown): v is PluginsFileVersion {
+  return v === 1 || v === 2;
+}
 
 const LOCK_STALE_MS = 15_000;
 const LOCK_ACQUIRE_TIMEOUT_MS = 20_000;
@@ -99,7 +123,7 @@ async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
 
 function normalize(raw: unknown): PluginsFile {
   const parsed = raw as PluginsFile;
-  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.plugins)) {
+  if (!parsed || !isKnownVersion(parsed.version) || !Array.isArray(parsed.plugins)) {
     // Unrecognized shape → treat as empty (a fresh registry), never throw:
     // a corrupt plugins.json must not brick every CLI command.
     return { ...EMPTY };
@@ -150,7 +174,7 @@ async function readForWrite(path: string): Promise<PluginsFile> {
     );
   }
   const p = parsed as PluginsFile;
-  if (!p || p.version !== 1 || !Array.isArray(p.plugins)) {
+  if (!p || !isKnownVersion(p.version) || !Array.isArray(p.plugins)) {
     throw new Error(
       `refusing to modify an unrecognized plugin registry at ${path} — fix or delete the file and retry.`,
     );
@@ -161,8 +185,31 @@ async function readForWrite(path: string): Promise<PluginsFile> {
 async function writeRegistry(file: PluginsFile, path: string = PLUGINS_FILE): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${String(process.pid)}.${String(Date.now())}`;
-  await writeFile(tmp, JSON.stringify(file, null, 2) + '\n', 'utf8');
+  // Any write upgrades a v1 file: the added field is optional, so an older CLI
+  // reading the result still sees every record it understands.
+  const out: PluginsFile = { ...file, version: PLUGINS_FILE_VERSION };
+  await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
   await rename(tmp, path);
+}
+
+/**
+ * Record a descriptor snapshot for one provider of an already-registered
+ * package (the back-fill path for a v1 record, or a plugin that declared none).
+ * A no-op when the package isn't registered — losing a snapshot only costs the
+ * next caller another derivation, so this must never throw into a hot path.
+ */
+export async function recordPluginDescriptor(
+  providerName: string,
+  descriptor: ProviderDescriptor,
+  path: string = PLUGINS_FILE,
+): Promise<void> {
+  await withFileLock(path, async () => {
+    const file = await readForWrite(path);
+    const rec = file.plugins.find((p) => p.providers.includes(providerName));
+    if (!rec) return;
+    rec.descriptors = { ...rec.descriptors, [providerName]: descriptor };
+    await writeRegistry(file, path);
+  });
 }
 
 /** Upsert a plugin by `packageName` (idempotent re-add updates the record). */
@@ -174,7 +221,7 @@ export async function addPluginRecord(
     const file = await readForWrite(path);
     const next = file.plugins.filter((p) => p.packageName !== record.packageName);
     next.push(record);
-    await writeRegistry({ version: 1, plugins: next }, path);
+    await writeRegistry({ version: PLUGINS_FILE_VERSION, plugins: next }, path);
   });
 }
 
@@ -194,7 +241,7 @@ export async function removePluginRecord(
       if (match) removed += 1;
       return !match;
     });
-    await writeRegistry({ version: 1, plugins: next }, path);
+    await writeRegistry({ version: PLUGINS_FILE_VERSION, plugins: next }, path);
   });
   return removed;
 }

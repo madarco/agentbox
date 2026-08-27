@@ -19,12 +19,14 @@ import { Command } from 'commander';
 import { confirm, log } from '../lib/prompt.js';
 import {
   addPluginRecord,
+  deriveDescriptor,
   isSupportedApiVersion,
   readPluginRegistrySync,
   removePluginRecord,
   SUPPORTED_SDK_API_VERSIONS,
+  type ProviderModule,
 } from '@agentbox/sandbox-core';
-import { PROVIDER_NAMES } from '@agentbox/config';
+import { PROVIDER_NAMES, type ProviderDescriptor } from '@agentbox/config';
 
 interface ResolvedPackage {
   packageName: string;
@@ -123,6 +125,12 @@ function pickEntry(pkgJson: { main?: string; module?: string; exports?: unknown 
 interface LoadedProvider {
   name: string;
   hasBackend: boolean;
+  /**
+   * What the module declares, else what could be derived from it. Snapshotted
+   * into the registry so every later consumer resolves capabilities without
+   * re-importing an external package.
+   */
+  descriptor: ProviderDescriptor;
 }
 
 /** Import the resolved package and validate it exposes provider module(s). */
@@ -130,8 +138,8 @@ async function loadAndValidate(
   pkg: ResolvedPackage,
 ): Promise<{ providers: LoadedProvider[]; apiVersion: number }> {
   const mod = (await import(pathToFileURL(pkg.entryPath).href)) as {
-    providerModule?: { provider?: { name?: string }; backend?: unknown };
-    providerModules?: { provider?: { name?: string }; backend?: unknown }[];
+    providerModule?: ProviderModule;
+    providerModules?: ProviderModule[];
     SDK_API_VERSION?: number;
     apiVersion?: number;
   };
@@ -145,14 +153,20 @@ async function loadAndValidate(
   for (const pm of all) {
     const name = pm.provider?.name;
     if (!name || typeof name !== 'string') {
-      throw new Error(`package "${pkg.packageName}" has a providerModule with no \`provider.name\``);
+      throw new Error(
+        `package "${pkg.packageName}" has a providerModule with no \`provider.name\``,
+      );
     }
     if ((PROVIDER_NAMES as readonly string[]).includes(name)) {
       throw new Error(
         `package "${pkg.packageName}" tries to register provider "${name}", which is a built-in — a plugin cannot shadow a built-in provider`,
       );
     }
-    providers.push({ name, hasBackend: Boolean(pm.backend) });
+    providers.push({
+      name,
+      hasBackend: Boolean(pm.backend),
+      descriptor: deriveDescriptor(name, pm),
+    });
   }
   const apiVersion = pkg.agentboxApiVersion ?? mod.apiVersion ?? mod.SDK_API_VERSION ?? 1;
   if (!isSupportedApiVersion(apiVersion)) {
@@ -222,6 +236,7 @@ pluginCommand
       resolvedEntry: pkg.entryPath,
       version: pkg.version,
       providers: validated.providers.map((p) => p.name),
+      descriptors: Object.fromEntries(validated.providers.map((p) => [p.name, p.descriptor])),
       apiVersion: validated.apiVersion,
       addedAt: new Date().toISOString(),
     });

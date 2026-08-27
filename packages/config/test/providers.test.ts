@@ -36,7 +36,10 @@ describe('provider table is the single source of truth', () => {
     for (const p of PROVIDERS) {
       for (const base of BASES) {
         const leaf = perProviderConfigKey(base, p.name).slice('box.'.length);
-        expect(boxSchemaKeys[leaf], `box.${leaf} missing from user-config.schema.json`).toBeDefined();
+        expect(
+          boxSchemaKeys[leaf],
+          `box.${leaf} missing from user-config.schema.json`,
+        ).toBeDefined();
       }
     }
   });
@@ -82,6 +85,65 @@ describe('provider table is the single source of truth', () => {
     expect(isHubRoutableProvider('docker')).toBe(false);
     expect(isHubRoutableProvider('remote-docker')).toBe(false);
     expect(isHubRoutableProvider('nonsense')).toBe(false);
+  });
+
+  // The descriptor is the contract every UI reads. A row missing a field would
+  // surface as an undefined capability in the tray/web create pickers rather than
+  // as a type error, since `satisfies` only checks what is present.
+  describe('every row declares a complete descriptor', () => {
+    const CAPS = [
+      'checkpoints',
+      'checkpointReboots',
+      'ssh',
+      'persistentSsh',
+      'directBoxSsh',
+      'inbound',
+      'directGit',
+      'resync',
+      'prune',
+      'vnc',
+      'dind',
+      'pauseSemantics',
+      'hubRoutable',
+    ] as const;
+
+    it.each(PROVIDERS.map((p) => p.name))('%s', (name) => {
+      const p = PROVIDERS.find((x) => x.name === name);
+      expect(p).toBeDefined();
+      if (!p) return;
+      expect(Array.isArray(p.credentials.envKeys)).toBe(true);
+      expect(Array.isArray(p.credentials.fields)).toBe(true);
+      expect(typeof p.bake.required).toBe('boolean');
+      expect(p.bake.approxMinutes).toBeTruthy();
+      const caps = p.capabilities as unknown as Record<string, unknown>;
+      for (const c of CAPS) expect(caps[c], `${name}.capabilities.${c}`).toBeDefined();
+      expect(['freeze', 'stop']).toContain(p.capabilities.pauseSemantics);
+    });
+
+    it('a credential field maps to a key setCredentials understands', () => {
+      // The field `key` is passed verbatim to ProviderModule.setCredentials, so a
+      // provider that declares fields must have somewhere to put them.
+      for (const p of PROVIDERS) {
+        if (p.credentials.fields.length === 0) continue;
+        expect(
+          p.credentials.envKeys.length,
+          `${p.name} declares fields but no envKeys`,
+        ).toBeGreaterThan(0);
+        for (const f of p.credentials.fields) {
+          expect(f.key).toMatch(/^[a-zA-Z][a-zA-Z0-9]*$/);
+          expect(f.label).toBeTruthy();
+        }
+      }
+    });
+
+    it('only providers that need a bake demand one', () => {
+      // docker's base self-heals on create; remote-docker builds lazily on first
+      // create. Everything else is unusable until `agentbox prepare` has run.
+      expect(PROVIDERS.filter((p) => !p.bake.required).map((p) => p.name)).toEqual([
+        'docker',
+        'remote-docker',
+      ]);
+    });
   });
 
   it('cloud.viaHub defaults on (remote hub is the default for cloud creates)', () => {

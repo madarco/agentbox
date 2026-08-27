@@ -31,7 +31,9 @@ export {
   providerMeta,
   providerKeyCap,
   perProviderConfigKey,
-  type ProviderMeta,
+  type ProviderDescriptor,
+  type ProviderCapabilities,
+  type ProviderCredentialField,
 } from './providers.js';
 export {
   parseProviderSpec,

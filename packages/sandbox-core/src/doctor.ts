@@ -10,6 +10,7 @@
  * generically via a lazy `import()`.
  */
 
+import type { ProviderDescriptor } from '@agentbox/config';
 import type { CloudBackend, Provider } from '@agentbox/core';
 import type { FileManifest } from './prepared-state.js';
 
@@ -57,6 +58,18 @@ export interface ProviderModule {
   provider: Provider;
   /** Cloud backend (host-side executor). Absent for the local docker provider. */
   backend?: CloudBackend;
+  /**
+   * Declarative metadata — label, credential fields, bake story, capabilities —
+   * for UIs and the CLI. Built-in providers declare this in `@agentbox/config`'s
+   * `PROVIDERS` table instead; an external plugin declares it here and
+   * `agentbox plugin add` snapshots it into `~/.agentbox/plugins.json`.
+   *
+   * OPTIONAL, and safe to omit: a plugin without one gets a descriptor derived
+   * from this module plus defaults chosen to reproduce pre-descriptor behavior
+   * (see `provider-descriptor.ts`). Declaring one buys a real label, a credential
+   * form, and correct SSH / pause / VNC gating.
+   */
+  descriptor?: ProviderDescriptor;
   /**
    * First-run credential gate. Called before `create`/`claude`/etc. hand out
    * the provider. Absent for docker (no login). `force` re-runs the flow.
