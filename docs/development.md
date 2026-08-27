@@ -173,7 +173,7 @@ fingerprint — verified equal locally).
 
 There is deliberately **no `paths:` filter**: the context contains
 `packages/ctl/dist/bin.cjs`, which tsup builds with `noExternal`, so it inlines
-`@agentbox/core`, `sandbox-core`, `relay` and `integrations` — an edit to any of
+`@agentbox/core`, `sandbox-core` and `relay` — an edit to any of
 ctl's transitive deps shifts the fingerprint, and a path filter would have to
 track that whole graph. Instead the job runs every time and skips the ~10-minute
 two-arch buildx when the fingerprint tag is already published (the tag *is* the

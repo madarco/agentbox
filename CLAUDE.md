@@ -120,7 +120,7 @@ Each topic has a dedicated file under [`docs/`](./docs). Read the relevant one b
 - [`docs/cloud-create-flow.md`](./docs/cloud-create-flow.md) — step-by-step walk of a cloud create: how `.git` and workspace files reach the box (git bundle + stash + untracked tar), and the base-vs-project snapshot tiers.
 - [`docs/sync-architecture.md`](./docs/sync-architecture.md) — the sync layer: one provider-agnostic way to move files/credentials in and out of a box.
 - [`docs/terminal-integration.md`](./docs/terminal-integration.md) — host-terminal attach placement (tmux/cmux/Herdr/iTerm2), terminal titles, the cmux sidebar status, and the Herdr integration + plugin.
-- [`docs/integrations.md`](./docs/integrations.md) — relay-gated service connectors (Notion, Linear): the descriptor model, the allowlist, and the in-box shims.
+- [`docs/host-tools.md`](./docs/host-tools.md) — the box→host CLI proxy: how any host CLI (`gh`, `terraform`, `aws`, `ntn`, `linear`) reaches a box through one generic shim, the request-vs-grant trust split, and the built-in credential deny list.
 - [`docs/provider-plugins.md`](./docs/provider-plugins.md) — external / community providers on the published `@madarco/agentbox-provider-sdk`, the `agentbox plugin add` registry, and the SDK-version gate.
 - [`docs/development.md`](./docs/development.md) — build + verify commands, manual end-to-end runs, the image-rebuild checklist, assumed host environment, and the release + nightly-cut flows.
 - [`docs/nightly-channel-plan.md`](./docs/nightly-channel-plan.md) — the nightly release channel: how `stable` vs `nightly` resolves, the version scheme, and the silent-failure gotchas (publishing without `--tag nightly` moves `latest`).

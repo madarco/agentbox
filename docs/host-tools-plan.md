@@ -51,7 +51,7 @@ set -euo pipefail
 exec "${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}" tool run "$(basename "$0")" -- "$@"
 ```
 
-Per-tool `/usr/local/bin/<name>` symlinks to it are created **at box start by the ctl daemon**,
+Per-tool `~/.local/bin/<name>` symlinks to it are created **at box start by the ctl daemon**,
 not at image build — that is what makes arbitrary tools possible without a rebake, and what makes
 a `tools request` grant take effect live. `/usr/local/bin` already precedes `/usr/bin` on PATH
 (`Dockerfile.box:49-52`; Vercel reorders it in `provision.sh:275-282`), so the symlink wins.
@@ -195,7 +195,7 @@ experiment wholesale:
 - `packages/ctl/src/commands/tool.ts`: `agentbox-ctl tool run <name> -- <args…>`,
   `tool list`, `tool request <bin> [--reason …]`. All via `postRpcAndExit`
   (`packages/ctl/src/relay-rpc.ts:207`).
-- `packages/ctl/src/tool-links.ts`: materialize `/usr/local/bin/<name>` symlinks from a granted
+- `packages/ctl/src/tool-links.ts`: materialize `~/.local/bin/<name>` symlinks from a granted
   list; called by the daemon at startup and on `tools-changed`. Refuse to clobber a non-symlink
   that ctl did not create.
 - Daemon wiring in `packages/ctl/src/daemon.ts` + `credentials-watcher.ts`-style subscription.

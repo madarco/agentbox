@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agentbox generic host-tool shim.
 #
-# One file, installed once per image, symlinked as /usr/local/bin/<tool> for
+# One file, installed once per image, symlinked as ~/.local/bin/<tool> for
 # every host tool the user has granted this box. It forwards verbatim to
 # `agentbox-ctl tool run <name> -- <args...>`, which posts an RPC the host
 # relay gates and executes with the host's own credentials. The box never

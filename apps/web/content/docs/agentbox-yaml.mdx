@@ -3,7 +3,7 @@ title: agentbox.yaml
 description: Reference for the in-box services and tasks configuration file
 ---
 
-`agentbox.yaml` lives at your workspace root and is read inside the box by the supervisor (`@agentbox/ctl`, shipped as `agentbox-ctl`). It declares **tasks** (one-shot setup units) and **services** (long-running processes) run under a DAG scheduler, plus a few host-side blocks (`carry`, `defaults`, `ide`).
+`agentbox.yaml` lives at your workspace root and is read inside the box by the supervisor (`@agentbox/ctl`, shipped as `agentbox-ctl`). It declares **tasks** (one-shot setup units) and **services** (long-running processes) run under a DAG scheduler, plus a few host-side blocks (`carry`, `tools`, `defaults`, `ide`).
 
 The file is validated twice: the host CLI pre-validates it before any box work on `agentbox create` (a config error aborts the run), and the in-box daemon re-validates on start. Editor autocomplete and validation come free from the JSON Schema. For the conceptual guide, see [services and tasks](/docs/services-and-tasks).
 
@@ -30,7 +30,7 @@ All top-level keys are optional, and unknown keys are rejected (`additionalPrope
 | `ide`          | host (`agentbox code`)    | VS Code attach customizations; the supervisor ignores it.                       |
 | `defaults`     | host (`@agentbox/config`) | Project-level AgentBox config defaults.                                         |
 
-`carry` is also declared at the top level but is host-applied and parsed separately — see its [own section](#carry) below. Service and task **names** must match `[A-Za-z0-9_-]+`.
+`carry` and `tools` are also declared at the top level but are host-applied and parsed separately — see [carry](#carry) and [tools](#tools) below. Service and task **names** must match `[A-Za-z0-9_-]+`.
 
 A minimal valid file can be just one task — no web app or port required:
 
@@ -352,6 +352,43 @@ You can also set `AGENTBOX_CARRY_YES=1` or `AGENTBOX_CARRY=skip`. Note that `-y`
 </Callout>
 
 Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).
+
+## tools
+
+Host CLIs the project's agents need — `terraform`, `aws`, `ntn`, `linear`. The box gets a shim; the **host** runs the real binary with its real credentials. Full guide: [Host tools](/docs/host-tools).
+
+```yaml
+tools:
+  - terraform
+  - ntn
+```
+
+Or with per-tool options:
+
+```yaml
+tools:
+  aws:
+    bin: aws # host binary, when it differs from the name
+    allow: ['^s3 ls', '^sts '] # run with no approval prompt
+    deny: ['^s3 rm', '^iam '] # refused outright
+    timeoutMs: 300000 # per-call budget (default 120000)
+```
+
+| Field       | Type     | Purpose                                                             |
+| ----------- | -------- | ------------------------------------------------------------------- |
+| `bin`       | string   | Host binary to run. Defaults to the tool name.                      |
+| `allow`     | string[] | Regexes matched against the argv; matches skip the approval prompt. |
+| `deny`      | string[] | Regexes refused outright, on top of the built-in credential guard.  |
+| `timeoutMs` | int      | Per-call wall-clock budget. Host tools are non-interactive.         |
+
+`allow` and `deny` patterns are compile-checked when the file is parsed, so a typo fails loudly instead of silently never matching.
+
+<Callout type="warn" title="THIS BLOCK REQUESTS, IT DOES NOT GRANT">
+  `agentbox.yaml` is committed, so a repo you cloned must not be able to reach your host credentials
+  just by declaring a tool. AgentBox asks you once at create time and records the answer host-side;
+  the relay reads only that record. Decline and the tools stay unavailable — the box is still
+  created.
+</Callout>
 
 ## replacements
 

@@ -40,7 +40,7 @@ const ITEM_KEYS = new Set(['bin', 'allow', 'deny', 'timeoutMs']);
 
 /**
  * Same shape rule as the grant store's `isValidToolName`: the name becomes a
- * `/usr/local/bin/<name>` symlink, so it must be a plain command name.
+ * `~/.local/bin/<name>` symlink, so it must be a plain command name.
  * Duplicated rather than imported because `@agentbox/ctl` ships inside the
  * box and does not depend on `@agentbox/config`.
  */
