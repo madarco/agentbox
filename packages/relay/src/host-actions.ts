@@ -72,7 +72,7 @@ import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompt
 import {
   isValidToolName,
   loadGrantedTools,
-  projectToolsFile,
+  resolveProjectToolsFile,
   writeToolGrant,
 } from '@agentbox/config';
 import {
@@ -750,7 +750,7 @@ async function runToolRpc(
       reason ? [name, `reason: ${reason}`] : [name],
     );
     if (denied) return denied;
-    await writeToolGrant(projectToolsFile(cwd), {
+    await writeToolGrant(await resolveProjectToolsFile(cwd), {
       name,
       bin: name,
       source: 'request',

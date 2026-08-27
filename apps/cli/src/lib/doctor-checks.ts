@@ -348,9 +348,14 @@ async function checkOneTool(grant: ToolGrant): Promise<CheckResult> {
   if (version.exitCode === 124) {
     return { label: grant.name, status: 'warn', detail: 'version probe timed out' };
   }
-  const detail = firstLine((version.stdout || version.stderr).trim()) || grant.bin;
-  // A non-zero `--version` is common for CLIs that spell it differently; the
-  // binary resolving is what matters for the relay, so this stays `ok`.
+  // A non-zero `--version` is common for CLIs that spell it differently (or
+  // reject the flag outright, like `sw_vers`). The binary resolving is what
+  // the relay cares about, so this stays `ok` — but its usage spew is not a
+  // version string, so don't print it as one.
+  const detail =
+    version.exitCode === 0
+      ? firstLine((version.stdout || version.stderr).trim()) || grant.bin
+      : `${grant.bin} (no --version)`;
   return { label: grant.name, status: 'ok', detail };
 }
 

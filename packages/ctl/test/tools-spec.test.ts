@@ -55,6 +55,21 @@ describe('agentbox.yaml tools: block', () => {
     expect(() => parseToolsRaw({ aws: { timeoutMs: -5 } })).toThrow(ToolsConfigError);
   });
 
+  // Reported by review: a committed yaml pointing `bin` at a path would get a
+  // script from the repo's own checkout executed on the host with the host's
+  // credentials — precisely what the request-vs-grant split exists to stop.
+  it('rejects a bin that is a path rather than a bare command name', () => {
+    for (const bin of ['./scripts/evil.sh', '/usr/bin/env', '../x', 'a/b']) {
+      expect(() => parseToolsRaw({ terraform: { bin } })).toThrow(/bare command name/);
+    }
+  });
+
+  it('accepts a bare command name as bin', () => {
+    expect(parseToolsRaw({ terraform: { bin: 'tofu' } })).toEqual([
+      { name: 'terraform', bin: 'tofu' },
+    ]);
+  });
+
   it('rejects a non-string entry in the list form', () => {
     expect(() => parseToolsRaw([{ name: 'aws' }])).toThrow(/must be a tool name string/);
   });

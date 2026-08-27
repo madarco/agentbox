@@ -29,6 +29,14 @@ describe('built-in credential deny list', () => {
     ['aws', ['ecr', 'get-token']],
     ['vault', ['secrets', 'get', 'db/creds']],
     ['op', ['item', 'get', 'x', '--show-secret']],
+    // Reported by review: the first cut matched only `print-access-token`.
+    ['az', ['account', 'get-access-token']],
+    ['aws', ['sts', 'get-session-token']],
+    ['aws', ['sts', 'assume-role', '--role-arn', 'x']],
+    ['aws', ['iam', 'create-access-key']],
+    ['aws', ['secretsmanager', 'get-secret-value', '--secret-id', 'x']],
+    ['doctl', ['auth', 'token']],
+    ['keyring', ['get', 'svc', 'user']],
   ])('refuses %s %s', (name, args) => {
     const refusal = refuseCredentialArgv(name, args);
     expect(refusal?.exitCode).toBe(65);
@@ -44,6 +52,11 @@ describe('built-in credential deny list', () => {
     expect(refuseCredentialArgv('linear', ['issue', 'list'])).toBeNull();
     // `whoami` is the identity op the old connector allowed — still fine.
     expect(refuseCredentialArgv('linear', ['auth', 'whoami'])).toBeNull();
+    // Near-misses that must still pass: these read state, not secrets.
+    expect(refuseCredentialArgv('aws', ['s3', 'ls'])).toBeNull();
+    expect(refuseCredentialArgv('aws', ['sts', 'get-caller-identity'])).toBeNull();
+    expect(refuseCredentialArgv('kubectl', ['get', 'pods'])).toBeNull();
+    expect(refuseCredentialArgv('terraform', ['plan'])).toBeNull();
   });
 });
 

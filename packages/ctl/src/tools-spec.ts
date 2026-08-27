@@ -87,7 +87,19 @@ export function parseToolsRaw(raw: unknown): ToolRequest[] {
       if (typeof value['bin'] !== 'string' || value['bin'].trim().length === 0) {
         throw new ToolsConfigError(`${where}.bin must be a non-empty string`);
       }
-      req.bin = value['bin'].trim();
+      const bin = value['bin'].trim();
+      // Must be a bare command name resolved on the host's PATH — never a
+      // path. A committed yaml that could say `bin: ./scripts/thing` would
+      // get a script from its own checkout executed on the host with the
+      // host's credentials, which is exactly what the request-vs-grant split
+      // exists to prevent. (`agentbox tools add --bin` is unrestricted: that
+      // is the user typing on their own machine.)
+      if (!TOOL_NAME_RE.test(bin)) {
+        throw new ToolsConfigError(
+          `${where}.bin "${bin}" must be a bare command name resolved on PATH, not a path`,
+        );
+      }
+      req.bin = bin;
     }
     const allow = parsePatternList(value['allow'], `${where}.allow`);
     if (allow) req.allow = allow;

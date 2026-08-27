@@ -813,6 +813,58 @@ EOF`
 
 ---
 
+### agentbox tools
+
+- [ ] **TOOLS-001** an ungranted tool is refused, and the message names both remedies.
+  - **Providers:** [all]
+  - **Run:** in a box, `agentbox-ctl tool run sw_vers -- -productVersion`.
+  - **Signal:** exit 65; stderr names `agentbox tools add` AND `agentbox-ctl tool request`.
+  - **Note:** The relay reads the host-only grant file, so "no grant" is the default state.
+
+- [ ] **TOOLS-002** `tool list` never enumerates the host PATH.
+  - **Providers:** [all]
+  - **Run:** in a box, `agentbox-ctl tool list`.
+  - **Signal:** only granted tools (plus the built-in `gh`) — never a host binary the user did not grant.
+
+- [ ] **TOOLS-003** requesting a binary the host lacks fails fast with no prompt.
+  - **Providers:** [all]
+  - **Run:** in a box, `agentbox-ctl tool request definitely-not-a-real-binary`; then check `GET /api/v1/approvals`.
+  - **Signal:** exit 127, and the approvals list is **empty** — a wrong guess must not interrupt the user.
+
+- [ ] **TOOLS-004** an approved request works immediately, no restart.
+  - **Providers:** [all]
+  - **Run:** `agentbox-ctl tool request <a host-only binary> --reason x`; approve on the host; then run the bare command name in the same box.
+  - **Signal:** the command runs and its output is the **host's** (e.g. a macOS-only binary answering inside a Linux box).
+  - **Note:** The request re-links in-process; the daemon's 60s poll is only the out-of-band reconciler.
+
+- [ ] **TOOLS-005** argv rules and the built-in credential guard hold.
+  - **Providers:** [all]
+  - **Run:** grant with `--allow '^--version$' --deny '^push'`; run each, plus something matching the built-in guard (e.g. `<tool> auth token`).
+  - **Signal:** allowed runs silently; denied → exit 65 naming the rule; credential-shaped argv → exit 65 naming the credential refusal, with no host process spawned.
+
+- [ ] **TOOLS-006** strict mode prompts every call.
+  - **Providers:** [all]
+  - **Run:** create a box with `box.autoApproveSafeHostActions=false` (it rides the **registration**, so an existing box keeps its old value), then run a granted tool.
+  - **Signal:** an approval appears carrying the exact argv; deny → exit 10; approve → runs.
+
+- [ ] **TOOLS-007** revoking removes the command.
+  - **Providers:** [all]
+  - **Run:** `agentbox tools rm <name>`; wait up to a minute.
+  - **Signal:** the symlink is gone from `~/.local/bin` and the command no longer resolves.
+
+- [ ] **TOOLS-008** an `agentbox.yaml` `tools:` block requests but does not grant.
+  - **Providers:** [docker]
+  - **Run:** add `tools: [<binary>]` to a project's `agentbox.yaml`; `create` and **decline** the prompt.
+  - **Signal:** the box is still created, and the tool is not granted (`tool run` exits 65). Approving instead writes the grant and the command works.
+  - **Note:** The security invariant — a committed yaml must never grant itself host credentials.
+
+- [ ] **TOOLS-009** no host credential reaches the box.
+  - **Providers:** [all]
+  - **Run:** in a box, `printenv | grep -iE 'token|secret'`.
+  - **Signal:** only `AGENTBOX_RELAY_TOKEN`.
+
+---
+
 ### agentbox top
 
 - [ ] **TOP-001** `top --once -j` returns one snapshot.

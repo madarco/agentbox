@@ -17,7 +17,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { GLOBAL_TOOLS_FILE, projectToolsFile } from './paths.js';
+import { findProjectRoot, GLOBAL_TOOLS_FILE, projectToolsFile } from './paths.js';
 
 /** Where a grant came from; surfaced by `agentbox tools list`. */
 export type ToolGrantSource = 'builtin' | 'cli' | 'yaml' | 'request';
@@ -67,6 +67,12 @@ export const BUILTIN_GH_GRANT: ToolGrant = {
  * Every granted tool for `cwd`, keyed by name. Global grants first, project
  * grants layered on top. Never throws: a malformed or unreadable grant file
  * yields no grants, so the relay fails closed.
+ *
+ * `cwd` is resolved to its project root first, exactly as `loadEffectiveConfig`
+ * does. Hashing the raw cwd would key a subdirectory to a different project
+ * (so `agentbox doctor` two levels down would report no grants) and would
+ * miss on symlinked paths, where the writer canonicalises and the reader
+ * would not.
  */
 export async function loadGrantedTools(
   cwd: string,
@@ -74,10 +80,29 @@ export async function loadGrantedTools(
 ): Promise<Map<string, ToolGrant>> {
   const merged = new Map<string, ToolGrant>();
   if (opts.includeBuiltins !== false) merged.set(BUILTIN_GH_GRANT.name, BUILTIN_GH_GRANT);
-  for (const file of [GLOBAL_TOOLS_FILE, projectToolsFile(cwd)]) {
+  let root = cwd;
+  try {
+    root = (await findProjectRoot(cwd)).root;
+  } catch {
+    // Fall back to the literal cwd; a lookup failure must not throw here.
+  }
+  for (const file of [GLOBAL_TOOLS_FILE, projectToolsFile(root)]) {
     for (const grant of await readToolsFile(file)) merged.set(grant.name, grant);
   }
   return merged;
+}
+
+/**
+ * Where a project-scoped grant for `cwd` is written. Shares the project-root
+ * resolution with {@link loadGrantedTools} so a write and the relay's read
+ * always land on the same file.
+ */
+export async function resolveProjectToolsFile(cwd: string): Promise<string> {
+  try {
+    return projectToolsFile((await findProjectRoot(cwd)).root);
+  } catch {
+    return projectToolsFile(cwd);
+  }
 }
 
 /** Read one grant file; `[]` when absent or malformed (fail closed). */

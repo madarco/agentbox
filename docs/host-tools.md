@@ -140,10 +140,16 @@ restarting the box** — see below.
 
 ## How a tool reaches the box
 
-The shim is baked once. The *set* of tools is a set of symlinks that the in-box
-`agentbox-ctl` daemon keeps in step with the host's grant list, polling
-`tool.list` (`packages/ctl/src/tool-links-watcher.ts`) every ~15s. Approving a
-request makes the command appear; revoking a grant makes it disappear.
+The shim is baked once. The *set* of tools is a set of symlinks kept in step
+with the host's grant list two ways:
+
+- An approved in-box `tool request` re-links **immediately**, in the same ctl
+  process that made the request (`packages/ctl/src/commands/tool.ts`) — an
+  approval the agent just waited on leaves the command usable on the next line.
+- The daemon's `ToolLinksWatcher` polls `tool.list` every 60s as a reconciler,
+  catching grants changed out-of-band (`agentbox tools add/rm` on the host).
+  Slow on purpose: on the cloud providers every tick costs a host action, and
+  the path that needs to be instant already is.
 
 The links land in `~/.local/bin`, not `/usr/local/bin`, for a concrete reason:
 the ctl daemon runs as `vscode`, not root. `~/.local/bin` is vscode-owned and is

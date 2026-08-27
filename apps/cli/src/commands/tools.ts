@@ -5,8 +5,8 @@ import {
   GLOBAL_TOOLS_FILE,
   isValidToolName,
   loadGrantedTools,
-  projectToolsFile,
   removeToolGrant,
+  resolveProjectToolsFile,
   writeToolGrant,
   type ToolGrant,
 } from '@agentbox/config';
@@ -34,8 +34,7 @@ function collect(val: string, acc: string[]): string[] {
 
 async function scopeFile(global: boolean): Promise<string> {
   if (global) return GLOBAL_TOOLS_FILE;
-  const { root } = await findProjectRoot(process.cwd());
-  return projectToolsFile(root);
+  return resolveProjectToolsFile(process.cwd());
 }
 
 toolsCommand
@@ -129,14 +128,14 @@ toolsCommand
         `granted ${name} (${opts.global ? 'all projects' : 'this project'}) -> host \`${grant.bin}\``,
       );
       log.info(
-        'Running boxes pick it up within ~15s; no restart needed. `agentbox doctor` shows whether the host binary resolves.',
+        'Running boxes pick it up within a minute; no restart needed. `agentbox doctor` shows whether the host binary resolves.',
       );
     },
   );
 
 toolsCommand
   .command('rm')
-  .description('Revoke a grant. Running boxes drop the command within ~15s.')
+  .description('Revoke a grant. Running boxes drop the command within a minute.')
   .argument('<name>', 'granted tool name')
   .option('--global', 'remove the global grant instead of this project’s', false)
   .action(async (name: string, opts: { global: boolean }) => {

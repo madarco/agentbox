@@ -29,7 +29,7 @@ tools:
   [warn] aws                aws not installed on the host  (install aws, or drop the grant with `agentbox tools rm aws`)
 ```
 
-Running boxes pick up a new grant within about 15 seconds. No restart, no image rebuild.
+Running boxes pick up a new grant within a minute. No restart, no image rebuild.
 
 `gh` is granted out of the box — Claude Code's PR badge depends on it — and has its own richer handling (PR branch injection, a `gh api` endpoint allowlist). Turn it off with `agentbox config set tools.gh.enabled false`.
 
@@ -69,7 +69,7 @@ agentbox-ctl tool list
 agentbox-ctl tool request terraform --reason "plan the infra changes"
 ```
 
-You get an approval prompt naming the box, the binary, and the reason. Approve and the command works immediately in that running box.
+You get an approval prompt naming the box, the binary, and the reason. Approve and the command works immediately in that running box — the request re-links itself, so there's no wait.
 
 `tool list` only ever shows tools you've granted — a box can't inventory your machine. And if the binary isn't on your host, the request fails fast with "not installed on the host" rather than nagging you for an approval that couldn't work.
 
