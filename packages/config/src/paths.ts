@@ -131,3 +131,16 @@ export async function configPathFor(
   if (scope === 'project') return projectConfigFile(root.root);
   return workspaceConfigFile(root.root);
 }
+
+/**
+ * Host-side host-tool grant files. Kept out of `config.yaml` on purpose:
+ * `KEY_REGISTRY` is a closed registry of typed scalar keys, and the grant
+ * list is an open map whose entries are written by an approval flow, not
+ * typed by hand. Layered the same way as config — a global grant applies
+ * everywhere, a project grant only to that project. See docs/host-tools.md.
+ */
+export const GLOBAL_TOOLS_FILE = join(STATE_DIR, 'tools.yaml');
+
+export function projectToolsFile(absPath: string): string {
+  return join(projectConfigDir(absPath), 'tools.yaml');
+}

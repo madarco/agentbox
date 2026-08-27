@@ -69,6 +69,23 @@ import {
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
+import {
+  isValidToolName,
+  loadGrantedTools,
+  projectToolsFile,
+  writeToolGrant,
+} from '@agentbox/config';
+import {
+  argvIsExplicitlyAllowed,
+  hostToolInstalled,
+  refuseCredentialArgv,
+  refuseDeniedArgv,
+  renderToolList,
+  renderToolListJson,
+  resolveToolGrant,
+  runGrantedTool,
+  toolRequestsEnabled,
+} from './host-tools.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
 import type {
   CheckpointRpcParams,
@@ -359,6 +376,9 @@ export async function executeCloudAction(
   }
   if (action.method === 'gh.api') {
     return runGhApiRpc(action, deps);
+  }
+  if (action.method.startsWith('tool.')) {
+    return runToolRpc(action, deps);
   }
   if (action.method === 'git.clone' || action.method === 'gh.repo.clone') {
     return {
@@ -651,6 +671,103 @@ async function runGhApiRpc(
   // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
   return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
+}
+
+/**
+ * Cloud `tool.*` executor. Mirrors `handleToolRpc` in server.ts step for
+ * step — same grant lookup, same built-in credential deny list, same
+ * per-tool rules, same gate — so a host tool behaves identically whichever
+ * provider the box runs on. The only difference is the confirm helper:
+ * cloud goes through `cloudWriteConfirm`, which carries the no-subscriber
+ * fallback every gated cloud action shares.
+ */
+async function runToolRpc(
+  action: HostAction,
+  deps: CloudActionExecutorDeps,
+): Promise<HostActionResult> {
+  const params = (action.params ?? {}) as Record<string, unknown>;
+  const containerPath = typeof params['path'] === 'string' ? params['path'] : '/workspace';
+  const lookup = await lookupCloudBox(deps.boxId);
+  const cwd = lookup.workspacePath;
+
+  if (action.method === 'tool.list') {
+    const grants = await loadGrantedTools(cwd);
+    const json = params['format'] === 'json';
+    return {
+      exitCode: 0,
+      stdout: json ? renderToolListJson(grants.values()) : renderToolList(grants.values()),
+      stderr: '',
+    };
+  }
+
+  const name = typeof params['name'] === 'string' ? params['name'].trim() : '';
+  if (!name || !isValidToolName(name)) {
+    return { exitCode: 64, stdout: '', stderr: `${action.method}: missing or invalid tool name\n` };
+  }
+
+  if (action.method === 'tool.request') {
+    if (!(await toolRequestsEnabled(cwd))) {
+      return {
+        exitCode: 65,
+        stdout: '',
+        stderr:
+          'host-tool requests are disabled for this project ' +
+          '(`agentbox config set --project tools.request.enabled true` to allow them)\n',
+      };
+    }
+    const existing = await loadGrantedTools(cwd);
+    if (existing.has(name)) {
+      return { exitCode: 0, stdout: `${name} is already granted\n`, stderr: '' };
+    }
+    if (!(await hostToolInstalled(name))) {
+      return {
+        exitCode: 127,
+        stdout: '',
+        stderr: `${name} is not installed on the host — nothing to grant\n`,
+      };
+    }
+    const reason = typeof params['reason'] === 'string' ? params['reason'].slice(0, 500) : '';
+    const denied = await cloudWriteConfirm(
+      deps,
+      `tool request ${name}`,
+      containerPath,
+      reason ? [name, `reason: ${reason}`] : [name],
+    );
+    if (denied) return denied;
+    await writeToolGrant(projectToolsFile(cwd), {
+      name,
+      bin: name,
+      source: 'request',
+      approvedAt: new Date().toISOString(),
+    });
+    return { exitCode: 0, stdout: `${name} granted for this project\n`, stderr: '' };
+  }
+
+  if (action.method !== 'tool.run') {
+    return { exitCode: 501, stdout: '', stderr: `unknown tool method: ${action.method}\n` };
+  }
+
+  const resolved = await resolveToolGrant(name, cwd);
+  if ('refusal' in resolved) return resolved.refusal;
+  const grant = resolved.grant;
+
+  const args = Array.isArray(params['args'])
+    ? (params['args'] as unknown[]).filter((a): a is string => typeof a === 'string')
+    : [];
+
+  const credRefusal = refuseCredentialArgv(name, args);
+  if (credRefusal) return credRefusal;
+  const denyRefusal = refuseDeniedArgv(grant, args);
+  if (denyRefusal) return denyRefusal;
+
+  const silent =
+    argvIsExplicitlyAllowed(grant, args) || deps.autoApproveSafeHostActions !== false;
+  if (!silent) {
+    const denied = await cloudWriteConfirm(deps, `tool ${name}`, containerPath, [...args]);
+    if (denied) return denied;
+  }
+
+  return runGrantedTool(grant, args, cwd);
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   runAllChecks,
   runProviderChecks,
   runSystemChecks,
+  toolsChecks,
   worstStatus,
   type CheckGroup,
   type ProviderName,
@@ -43,11 +44,16 @@ export const doctorCommand = new Command('doctor')
         );
         process.exit(1);
       }
-      const [sys, prov] = await Promise.all([
+      // Host tools are host-side, not provider-side, but a user running
+      // `doctor -p hetzner` still wants to see whether their granted CLIs are
+      // installed — otherwise the only way to reach the tools group is the
+      // unscoped doctor, which is a discoverability gap.
+      const [sys, prov, tools] = await Promise.all([
         runSystemChecks(),
         runProviderChecks(name as ProviderName),
+        toolsChecks(),
       ]);
-      groups = [{ title: 'system', results: sys }, prov];
+      groups = [{ title: 'system', results: sys }, prov, { title: 'tools', results: tools }];
     } else {
       groups = await runAllChecks();
     }

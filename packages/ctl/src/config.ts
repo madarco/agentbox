@@ -669,7 +669,19 @@ function assertBool(raw: unknown, where: string): boolean {
 // `replacements` is the top-level reusable replacement-rule block, consumed by
 // the in-box `agentbox-ctl render` CLI and host-side `carry:` rule refs. We
 // parse + validate it here (regex compile-check) so a typo fails loud in-box.
-const TOP_LEVEL_KEYS = new Set(['services', 'tasks', 'ide', 'defaults', 'carry', 'replacements']);
+// `tools` is the host-side host-tool REQUEST block (read by the apps/cli layer
+// via @agentbox/ctl/tools-spec, approved at create time). Same deal as `carry`:
+// the supervisor never reads it, listing it here only keeps a project yaml that
+// declares `tools:` parsing cleanly inside the box.
+const TOP_LEVEL_KEYS = new Set([
+  'services',
+  'tasks',
+  'ide',
+  'defaults',
+  'carry',
+  'replacements',
+  'tools',
+]);
 
 function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();

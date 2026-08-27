@@ -53,11 +53,13 @@ export {
   configPathFor,
   findProjectRoot,
   GLOBAL_CONFIG_FILE,
+  GLOBAL_TOOLS_FILE,
   hashProjectPath,
   projectConfigDir,
   projectConfigFile,
   projectDirSegment,
   projectMetaFile,
+  projectToolsFile,
   PROJECTS_DIR,
   sanitizeMnemonic,
   STATE_DIR,
@@ -103,3 +105,14 @@ export {
   type PruneOrphanProjectConfigsOptions,
   type PruneOrphanProjectConfigsResult,
 } from './write.js';
+
+export {
+  BUILTIN_GH_GRANT,
+  isValidToolName,
+  loadGrantedTools,
+  readToolsFile,
+  removeToolGrant,
+  writeToolGrant,
+  type ToolGrant,
+  type ToolGrantSource,
+} from './tools.js';

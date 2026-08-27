@@ -10,7 +10,12 @@ import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'nod
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { loadEffectiveConfig, type ProviderKind } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  loadGrantedTools,
+  type ProviderKind,
+  type ToolGrant,
+} from '@agentbox/config';
 import {
   errSummary,
   firstLine,
@@ -25,12 +30,12 @@ import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 
 // The per-provider health probes live in each `@agentbox/sandbox-<name>`
 // package (`providerModule.doctorChecks`); this module just aggregates them
-// with the system + integration checks. `CheckResult`/`CheckStatus` are the
+// with the system + host-tool checks. `CheckResult`/`CheckStatus` are the
 // shared shape from sandbox-core.
 export type { CheckResult, CheckStatus };
 
 export interface CheckGroup {
-  /** Group title: 'system' | a provider name. */
+  /** Group title: 'system' | a provider name | 'tools'. */
   title: string;
   results: CheckResult[];
 }
@@ -299,6 +304,56 @@ async function probeHostToolBin(
   }
 }
 
+/**
+ * One row per host tool granted to the project at `cwd`: is the host binary
+ * actually installed, and does it run. Driven off the grant store, so a tool
+ * added by `agentbox tools add` or by an approved in-box request shows up
+ * here with no doctor change.
+ *
+ * The probe runs each binary with no forced env, exactly as the relay does —
+ * so what doctor reports is the state the relay would actually hit.
+ *
+ * `loader` is injectable for unit tests.
+ */
+export async function toolsChecks(
+  loader: (cwd: string) => Promise<Map<string, ToolGrant>> = (c) => loadGrantedTools(c),
+): Promise<CheckResult[]> {
+  let grants: Map<string, ToolGrant>;
+  try {
+    grants = await loader(process.cwd());
+  } catch {
+    grants = new Map();
+  }
+  const rows = [...grants.values()].sort((a, b) => a.name.localeCompare(b.name));
+  // Independent probes; Promise.all keeps doctor latency flat as the grant
+  // list grows.
+  return Promise.all(rows.map((g) => checkOneTool(g)));
+}
+
+async function checkOneTool(grant: ToolGrant): Promise<CheckResult> {
+  // `gh` is proxied by its own relay handler, which has its own doctor row
+  // under the provider checks. Report it as present-by-default, not probed.
+  if (grant.source === 'builtin') {
+    return { label: grant.name, status: 'info', detail: 'built-in grant' };
+  }
+  const version = await probeHostToolBin(grant.bin, ['--version']);
+  if (version.missing || version.exitCode === 127) {
+    return {
+      label: grant.name,
+      status: 'warn',
+      detail: `${grant.bin} not installed on the host`,
+      hint: `install ${grant.bin}, or drop the grant with \`agentbox tools rm ${grant.name}\``,
+    };
+  }
+  if (version.exitCode === 124) {
+    return { label: grant.name, status: 'warn', detail: 'version probe timed out' };
+  }
+  const detail = firstLine((version.stdout || version.stderr).trim()) || grant.bin;
+  // A non-zero `--version` is common for CLIs that spell it differently; the
+  // binary resolving is what matters for the relay, so this stays `ok`.
+  return { label: grant.name, status: 'ok', detail };
+}
+
 // `box.claudeInstall` folds into the base-image fingerprint, so freshness must
 // compare against the variant the user would actually bake with. Resolve it once
 // per doctor run (memoized) from the effective config at cwd; default 'native'.
@@ -368,11 +423,16 @@ export async function runAllChecks(): Promise<CheckGroup[]> {
   // The three phases are independent, so run them together: wall time is the
   // slowest phase, not their sum. (`doctor --provider X` already did this —
   // see runDoctor's Promise.all — so unscoped doctor was the slow path.)
-  const [sysResults, providerGroups] = await Promise.all([
+  const [sysResults, providerGroups, toolResults] = await Promise.all([
     runSystemChecks(),
     Promise.all(providerNames.map((n) => runProviderChecks(n))),
+    toolsChecks(),
   ]);
-  return [{ title: 'system', results: sysResults }, ...providerGroups];
+  return [
+    { title: 'system', results: sysResults },
+    ...providerGroups,
+    { title: 'tools', results: toolResults },
+  ];
 }
 
 function worstInResults(results: CheckResult[]): CheckStatus {
@@ -411,6 +471,13 @@ function summaryToken(group: CheckGroup): string {
       return `system warn: ${parts.join(', ')}`;
     }
     return 'system ok';
+  }
+  if (group.title === 'tools') {
+    if (worst === 'fail') return 'tools FAIL';
+    if (worst === 'warn') return 'tools check';
+    // Every row info (only the built-in gh grant) reads as "none granted".
+    const anyGranted = group.results.some((r) => r.status === 'ok');
+    return anyGranted ? 'tools ready' : 'tools none';
   }
   if (worst === 'fail') return `${group.title} FAIL`;
   if (worst === 'warn') {
