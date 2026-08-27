@@ -11,8 +11,10 @@
  * (after `next build`). The standalone/`agentbox hub` bin packaging is Phase 5.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import next from 'next';
+import { loadEffectiveConfig } from '@agentbox/config';
 import {
   makeStore,
   FsCustodyStore,
@@ -145,6 +147,10 @@ async function main(): Promise<void> {
   // name for the life of the process.
   setCloudBackendLoader(cloudBackendLoader);
 
+  const hostReachTimeoutFromConfig = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.relay.hostReachTimeoutMs)
+    .catch(() => undefined);
+
   const daemon = await startRelayDaemon({
     port,
     host,
@@ -166,7 +172,12 @@ async function main(): Promise<void> {
     // recorded workspace is a temp clone the create worker already deleted.
     // Same signal as the durable-subscriber floor below.
     controlPlane: authMode() === 'password',
-    hostReachTimeoutMs: positiveIntFromEnv(process.env.AGENTBOX_HOST_REACH_TIMEOUT_MS),
+    // Env first (a deploy can set it without a config file), then this control
+    // box's own `relay.hostReachTimeoutMs`. Read HERE because this is the machine
+    // that does the waiting — the key on a user's laptop governs nothing, which
+    // is what made it inert when it was only ever read from the env.
+    hostReachTimeoutMs:
+      positiveIntFromEnv(process.env.AGENTBOX_HOST_REACH_TIMEOUT_MS) ?? hostReachTimeoutFromConfig,
     logger: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // Next parses req.url itself when parsedUrl is omitted.
     uiHandler: (req, res) => {

@@ -90,6 +90,8 @@ export class HostReachQueue {
   private readonly now: () => number;
   private readonly sweepIntervalMs: number;
   private lastPollAtMs: number | null = null;
+  /** pollerId → last poll time, so "did the owner of this copy go away?" is answerable. */
+  private readonly pollerSeen = new Map<string, number>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: HostReachQueueOptions = {}) {
@@ -159,6 +161,7 @@ export class HostReachQueue {
    */
   poll(timeoutMs: number, pollerId?: string): Promise<HostAction[]> {
     this.lastPollAtMs = this.now();
+    if (pollerId !== undefined) this.pollerSeen.set(pollerId, this.lastPollAtMs);
     const ready = this.takeUndelivered(pollerId);
     if (ready.length > 0) return Promise.resolve(ready);
     return new Promise<HostAction[]>((resolve) => {
@@ -175,10 +178,24 @@ export class HostReachQueue {
     });
   }
 
-  /** Settle a parked action with the machine's result. Returns whether it matched. */
-  resolve(id: string, result: HostActionResult): boolean {
+  /**
+   * Settle a parked action with the machine's result. Returns whether it matched.
+   *
+   * `pollerId`, when given, must be the poller the action was handed to: after a
+   * re-offer the previous owner may still be running, and letting its late
+   * result land would settle the box's request with the answer of a machine that
+   * no longer owns the copy.
+   */
+  resolve(id: string, result: HostActionResult, pollerId?: string): boolean {
     const pending = this.map.get(id);
     if (!pending) return false;
+    if (
+      pollerId !== undefined &&
+      pending.deliveredTo !== undefined &&
+      pending.deliveredTo !== pollerId
+    ) {
+      return false;
+    }
     this.map.delete(id);
     if (pending.timer) clearTimeout(pending.timer);
     pending.settle({ kind: 'result', result });
@@ -227,14 +244,21 @@ export class HostReachQueue {
 
   private takeUndelivered(pollerId?: string): HostAction[] {
     const out: HostAction[] = [];
+    const now = this.now();
     for (const pending of this.map.values()) {
-      // Re-offer work a previous poller took and never finished. Same poller
-      // asking again gets nothing: it may be sitting on a confirm.
-      const orphaned =
-        pending.delivered &&
-        pollerId !== undefined &&
-        pending.deliveredTo !== undefined &&
-        pending.deliveredTo !== pollerId;
+      // Re-offer work whose owner has gone quiet — but only then. Handing an
+      // in-flight copy to whichever poller asks next lets a second machine (or
+      // an old process still finishing) claim it, answer "I don't know that box"
+      // (exit 69), and settle the request; the real machine's success then
+      // arrives with nowhere to go. So an owner that is still polling keeps its
+      // work, however long the user takes to answer its confirm.
+      const owner = pending.deliveredTo;
+      const ownerSeenAt = owner === undefined ? undefined : this.pollerSeen.get(owner);
+      const ownerGone =
+        owner !== undefined &&
+        owner !== pollerId &&
+        (ownerSeenAt === undefined || now - ownerSeenAt > this.reachTimeoutMs);
+      const orphaned = pending.delivered && pollerId !== undefined && ownerGone;
       if (pending.delivered && !orphaned) continue;
       pending.delivered = true;
       pending.deliveredTo = pollerId;

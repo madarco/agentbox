@@ -693,13 +693,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'expected {id, exitCode, stdout, stderr}' });
           return;
         }
-        const ok = hostReach.resolve(body.id, {
-          exitCode: body.exitCode,
-          stdout: typeof body.stdout === 'string' ? body.stdout : '',
-          stderr: typeof body.stderr === 'string' ? body.stderr : '',
-        });
+        const ok = hostReach.resolve(
+          body.id,
+          {
+            exitCode: body.exitCode,
+            stdout: typeof body.stdout === 'string' ? body.stdout : '',
+            stderr: typeof body.stderr === 'string' ? body.stderr : '',
+          },
+          typeof body.poller === 'string' ? body.poller : undefined,
+        );
         if (!ok) {
-          send(res, 404, { error: 'no parked action with that id' });
+          // Also the answer for a poller whose copy was re-offered while it was
+          // still working: its result is stale, and the current owner's counts.
+          send(res, 404, { error: 'no parked action with that id for this machine' });
           return;
         }
         send(res, 204, null);

@@ -96,16 +96,44 @@ describe('HostReachQueue', () => {
     // The predecessor took the action and died without posting a result. The
     // went-away sweep cannot see it — the replacement keeps this machine
     // "reachable" — so the queue has to notice the new identity itself.
-    const q = new HostReachQueue({ graceMs: 5_000 });
+    let now = 1_000;
+    const q = new HostReachQueue({ graceMs: 5_000, reachTimeoutMs: 200, now: () => now });
     const pending = q.request('box1', 'cp.fromHost', {});
     const first = await q.poll(50, 'poller-a');
     expect(first).toHaveLength(1);
     // Same poller asking again gets nothing: it may be sitting on a confirm.
     expect(await q.poll(10, 'poller-a')).toHaveLength(0);
+    // 'poller-a' dies; only after its heartbeat lapses is the work re-offered.
+    now += 300;
     const second = await q.poll(50, 'poller-b');
     expect(second.map((a) => a.id)).toEqual(first.map((a) => a.id));
     q.resolve(second[0]!.id, { exitCode: 0, stdout: 'done', stderr: '' });
     await expect(pending).resolves.toMatchObject({ kind: 'result' });
+  });
+
+  it('does not let a second machine steal a copy whose owner is still polling', async () => {
+    // Two machines can hold the same admin token, and an old process can still be
+    // finishing after a restart. Handing in-flight work to whoever asks next lets
+    // the wrong one answer "I don't know that box" and settle the request, so the
+    // real machine's success arrives with nowhere to go.
+    let now = 1_000;
+    const q = new HostReachQueue({ graceMs: 5_000, reachTimeoutMs: 500, now: () => now });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const mine = await q.poll(50, 'poller-a');
+    expect(mine).toHaveLength(1);
+    // 'poller-a' keeps heartbeating while its user thinks about the confirm.
+    now += 100;
+    await q.poll(10, 'poller-a');
+    now += 100;
+    expect(await q.poll(10, 'poller-b')).toHaveLength(0);
+    // A result from the interloper is refused; the owner's still counts.
+    expect(
+      q.resolve(mine[0]!.id, { exitCode: 69, stdout: '', stderr: 'not mine' }, 'poller-b'),
+    ).toBe(false);
+    expect(q.resolve(mine[0]!.id, { exitCode: 0, stdout: 'ok', stderr: '' }, 'poller-a')).toBe(
+      true,
+    );
+    await expect(pending).resolves.toMatchObject({ kind: 'result', result: { exitCode: 0 } });
   });
 
   it('settles everything as unreachable on stop, so a hub restart cannot hang a box', async () => {

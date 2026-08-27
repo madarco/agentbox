@@ -17,6 +17,7 @@ import {
 import { FsCustodyStore } from '../src/custody/fs-store.js';
 
 const run = promisify(execFile);
+import { existsSync } from 'node:fs';
 
 describe('cp outbox', () => {
   let dir: string;
@@ -90,9 +91,37 @@ describe('cp outbox', () => {
     const dest = join(dir, 'landed', 'nested');
     // The destination directory does not exist yet — landing must create it,
     // since the user's target dir may have been removed since the copy was made.
-    await landCpOutboxTar(staged.tarPath, dest);
+    await landCpOutboxTar(staged.tarPath, dest, { destEndsWithSlash: true });
     expect(await readFile(join(dest, 'report.txt'), 'utf8')).toBe('agent output\n');
     await rm(staged.dir, { recursive: true, force: true });
+  });
+
+  it('honors a destination that NAMES the file, like `cp` does', async () => {
+    // `cp toHost /workspace/report.txt ./out/summary.txt` must produce
+    // summary.txt. Stripping the destination to its parent directory (the naive
+    // version) silently kept the box's own filename instead.
+    const src = join(dir, 'src2');
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, 'report.txt'), 'renamed\n', 'utf8');
+    const tarPath = join(dir, 'rename.tar');
+    await run('tar', ['-cf', tarPath, '-C', src, 'report.txt']);
+    const dest = join(dir, 'out', 'summary.txt');
+    await landCpOutboxTar(tarPath, dest, { destEndsWithSlash: false });
+    expect(await readFile(dest, 'utf8')).toBe('renamed\n');
+    // ...and NOT under its original name beside it.
+    expect(existsSync(join(dir, 'out', 'report.txt'))).toBe(false);
+  });
+
+  it('treats an existing directory as the destination even without a trailing slash', async () => {
+    const src = join(dir, 'src3');
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, 'report.txt'), 'into dir\n', 'utf8');
+    const tarPath = join(dir, 'intodir.tar');
+    await run('tar', ['-cf', tarPath, '-C', src, 'report.txt']);
+    const dest = join(dir, 'existing');
+    await mkdir(dest, { recursive: true });
+    await landCpOutboxTar(tarPath, dest, { destEndsWithSlash: false });
+    expect(await readFile(join(dest, 'report.txt'), 'utf8')).toBe('into dir\n');
   });
 
   it('keys the outbox per project, falling back to the box', () => {

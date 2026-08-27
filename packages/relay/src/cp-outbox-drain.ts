@@ -11,7 +11,6 @@
 import { rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { dirname } from 'node:path';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 import { boxWorkspacePath, lookupCloudBoxOwner } from './host-actions.js';
 import { landCpOutboxTar, stageOutboxTar, type CpOutboxItem } from './cp-outbox.js';
@@ -64,13 +63,14 @@ export async function drainCpOutbox(deps: CpOutboxDrainDeps): Promise<void> {
       const stream = await getStream(`${base}/admin/custody-blob/${item.tarPath}`, deps.adminToken);
       const staged = await stageOutboxTar(stream);
       stagedDir = staged.dir;
-      // A dest ending in `/` (or naming a directory) is the directory itself;
-      // otherwise the tar's entries land beside the named path, matching what a
-      // live `cp` into that destination would have done.
-      const destDir = item.meta.dest.endsWith('/') ? destAbs : dirname(destAbs);
-      await landCpOutboxTar(staged.tarPath, destDir);
+      // Destination semantics live in landCpOutboxTar, which follows `cp`: a
+      // trailing slash or an existing directory receives the members, anything
+      // else NAMES the file and a single member is renamed onto it.
+      await landCpOutboxTar(staged.tarPath, destAbs, {
+        destEndsWithSlash: /[/\\]$/.test(item.meta.dest),
+      });
       await del(`${base}/admin/hostreach/outbox/${item.meta.id}`, deps.adminToken);
-      deps.log(`host-reach: landed a parked copy from ${owner.name} at ${destDir}`);
+      deps.log(`host-reach: landed a parked copy from ${owner.name} at ${destAbs}`);
     } catch (err) {
       // Left on the hub deliberately: a failure here must not consume the only
       // copy of an agent's output.

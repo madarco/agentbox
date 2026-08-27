@@ -76,6 +76,8 @@ export class HostReachPoller {
   private drainingOutbox = false;
   /** Epoch ms of the last drain, for the periodic re-check. */
   private lastDrainAtMs = 0;
+  /** Serializes execution beside the poll loop (see {@link enqueue}). */
+  private workQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: HostReachPollerDeps) {}
 
@@ -89,6 +91,8 @@ export class HostReachPoller {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.loopPromise) await this.loopPromise;
+    // Let an in-flight copy finish rather than abandoning a box mid-transfer.
+    await this.workQueue.catch(() => {});
   }
 
   private async run(): Promise<void> {
@@ -126,12 +130,7 @@ export class HostReachPoller {
           actions?: HostAction[];
         };
         const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
-        // Sequential on purpose: each action can open a confirm prompt on this
-        // machine, and two prompts racing for one terminal is not a UX.
-        for (const action of actions) {
-          if (this.stopped) break;
-          await this.handle(base, action);
-        }
+        for (const action of actions) this.enqueue(base, action);
       } catch (err) {
         if (this.stopped) break;
         if (!this.loggedFailure) {
@@ -180,6 +179,28 @@ export class HostReachPoller {
       });
   }
 
+  /**
+   * Queue an action for execution **off** the poll loop.
+   *
+   * Executing inline stops this machine polling for as long as the copy takes —
+   * and a copy takes as long as the user takes to answer its confirm. The
+   * control box reads that silence as "the machine went away", tells the box so,
+   * and then has nowhere to put the result that eventually arrives. The poll
+   * loop's only job is the heartbeat; work happens beside it.
+   *
+   * Still strictly sequential: each action can open a confirm, and two prompts
+   * competing for one terminal is not a UX.
+   */
+  private enqueue(base: string, action: HostAction): void {
+    this.workQueue = this.workQueue
+      .then(() => (this.stopped ? undefined : this.handle(base, action)))
+      .catch((err: unknown) => {
+        this.log(
+          `host-reach: ${action.method} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
   private async handle(base: string, action: HostAction): Promise<void> {
     this.log(`host-reach: executing ${action.method} for box ${action.boxId}`);
     let result: HostActionResult;
@@ -193,7 +214,11 @@ export class HostReachPoller {
       };
     }
     try {
-      await this.post(`${base}/admin/hostreach/result`, { id: action.id, ...result });
+      await this.post(`${base}/admin/hostreach/result`, {
+        id: action.id,
+        poller: this.pollerId,
+        ...result,
+      });
     } catch (err) {
       // The box is still blocked on this action; the control box will time it
       // out as 'went-away' once we stop polling, so it can't hang forever.

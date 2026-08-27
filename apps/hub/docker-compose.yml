@@ -27,6 +27,7 @@ services:
       # them from its own env, and nothing was passing them through.
       AGENTBOX_CUSTODY_MAX_BODY_BYTES: ${AGENTBOX_CUSTODY_MAX_BODY_BYTES:-}
       AGENTBOX_CUSTODY_MAX_BLOB_BYTES: ${AGENTBOX_CUSTODY_MAX_BLOB_BYTES:-}
+      AGENTBOX_HOST_REACH_TIMEOUT_MS: ${AGENTBOX_HOST_REACH_TIMEOUT_MS:-}
       # Secrets (from the compose env-file / shell). Login is secret-gated: with
       # no BETTER_AUTH_SECRET the UI stays open; the deploy sets these so a
       # network-reachable hub is gated.

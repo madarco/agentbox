@@ -1101,7 +1101,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'relay.hostReachTimeoutMs',
     type: 'int',
     description:
-      'How long a control box waits (ms, default 60000) for your machine to pick up a copy between a box and your files, before treating it as offline — and how long a silence must last before a machine that already took the copy is presumed gone. Your machine long-polls the control box while its relay runs, so this is a missed-heartbeat window, not a per-copy timeout: once your machine has the action it can sit on a confirmation prompt for as long as you like. Only meaningful with relay.controlPlaneUrl set; lower it to fail over to the hub cache sooner on a flaky link, raise it if your machine sleeps often.',
+      'How long a control box waits (ms, default 60000) for your machine to pick up a copy between a box and your files, before treating it as offline — and how long a silence must last before a machine that already took the copy is presumed gone. Your machine long-polls the control box while its relay runs, so this is a missed-heartbeat window, not a per-copy timeout: once your machine has the action it can sit on a confirmation prompt for as long as you like. Read on the machine that does the waiting — set it ON THE CONTROL BOX (its own config, or AGENTBOX_HOST_REACH_TIMEOUT_MS in its deploy env); setting it on your laptop governs nothing, since your laptop is not the one parking the copy. Lower it to fall back to the hub cache sooner on a flaky link, raise it if your machine sleeps often.',
     advanced: true,
   },
   {
@@ -1233,7 +1233,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'tools.gh.enabled',
     type: 'bool',
     description:
-      'Whether the built-in `gh` host-tool grant is active. True (default) keeps the in-box `gh` shim routing GitHub operations through the host relay with the host\'s own `gh` auth; false revokes the grant so `gh` stops resolving in new boxes. Every other host tool is opt-in via `agentbox tools add` or an `agentbox.yaml` `tools:` request.',
+      "Whether the built-in `gh` host-tool grant is active. True (default) keeps the in-box `gh` shim routing GitHub operations through the host relay with the host's own `gh` auth; false revokes the grant so `gh` stops resolving in new boxes. Every other host tool is opt-in via `agentbox tools add` or an `agentbox.yaml` `tools:` request.",
   },
   {
     key: 'tools.request.enabled',

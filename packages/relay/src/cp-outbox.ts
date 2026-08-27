@@ -17,10 +17,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { CustodyStore } from './custody/store.js';
 import type { HostActionResult } from './types.js';
@@ -170,12 +170,51 @@ export async function parkCpOutbox(
 }
 
 /**
- * Land one parked item on this machine: unpack the tar into `destDir`.
- * The caller owns the approval and the custody download.
+ * Land one parked item at `destAbs`, following the same rules a live `cp` does:
+ *
+ * - a destination that exists as a directory, or was written with a trailing
+ *   slash, receives the tar's members under their own names;
+ * - otherwise the destination NAMES the file, so a single member is renamed onto
+ *   it (`cp toHost /workspace/report.md ./out/summary.md` must produce
+ *   `summary.md`, not `report.md`).
+ *
+ * The naive "strip to the parent directory" version silently did the first thing
+ * in both cases, so a renaming copy landed under the wrong name and a copy into
+ * `./out` (no slash) landed one level too high.
  */
-export async function landCpOutboxTar(tarFile: string, destDir: string): Promise<void> {
-  await run('mkdir', ['-p', destDir], TAR_TIMEOUT_MS);
-  await run('tar', ['-xf', tarFile, '-C', destDir], TAR_TIMEOUT_MS);
+export async function landCpOutboxTar(
+  tarFile: string,
+  destAbs: string,
+  opts: { destEndsWithSlash: boolean },
+): Promise<void> {
+  const asDirectory =
+    opts.destEndsWithSlash || (existsSync(destAbs) && (await stat(destAbs)).isDirectory());
+  if (asDirectory) {
+    await run('mkdir', ['-p', destAbs], TAR_TIMEOUT_MS);
+    await run('tar', ['-xf', tarFile, '-C', destAbs], TAR_TIMEOUT_MS);
+    return;
+  }
+  // Unpack aside so the member's own name never appears at the destination.
+  const staging = await mkdtemp(join(tmpdir(), 'agentbox-cp-land-'));
+  try {
+    await run('tar', ['-xf', tarFile, '-C', staging], TAR_TIMEOUT_MS);
+    const members = await readdir(staging);
+    await run('mkdir', ['-p', dirname(destAbs)], TAR_TIMEOUT_MS);
+    if (members.length === 1) {
+      await rm(destAbs, { recursive: true, force: true });
+      await rename(join(staging, members[0]!), destAbs);
+      return;
+    }
+    // Several members cannot share one filename; the destination is the
+    // directory they belong in, which is also what `cp a b dir/` means.
+    await run('mkdir', ['-p', destAbs], TAR_TIMEOUT_MS);
+    for (const m of members) {
+      await rm(join(destAbs, m), { recursive: true, force: true });
+      await rename(join(staging, m), join(destAbs, m));
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** Write a readable to a temp file and return its path (caller removes the dir). */

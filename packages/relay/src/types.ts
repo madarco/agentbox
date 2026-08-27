@@ -269,6 +269,12 @@ export interface BridgeActionResultBody {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /**
+   * Host-reach only: which polling process is answering. The control box drops a
+   * result from a machine that no longer owns the action, so a previous owner
+   * still finishing after a re-offer cannot settle the box's request.
+   */
+  poller?: string;
 }
 
 // GitRpcParams's canonical wire-type home is `@agentbox/core`'s sync/git-refs.ts
