@@ -83,6 +83,63 @@ Only `provider` and `doctorChecks` are required — `createCloudProvider` suppli
 - Depend on `@madarco/agentbox-provider-sdk` (`^2`).
 - Export a `providerModule` (or `providerModules` for a multi-provider package).
 
+## Describe your provider
+
+Declare a `descriptor` and AgentBox's UIs can render your provider properly — a real name in the create pickers, the right credential form, and correct capability gating:
+
+```ts
+import type { ProviderDescriptor } from '@madarco/agentbox-provider-sdk';
+
+const descriptor: ProviderDescriptor = {
+  name: 'myprovider',
+  kind: 'cloud',
+  label: 'MyProvider (cloud microVM)',
+  loginHint: 'paste an API token from the MyProvider console',
+  credentials: {
+    envKeys: ['MYPROVIDER_TOKEN'], // presence = "configured"
+    fields: [{ key: 'token', label: 'API token' }], // the form a UI renders
+  },
+  bake: { required: true, approxMinutes: '5-10' },
+  capabilities: {
+    checkpoints: true,
+    checkpointReboots: false,
+    ssh: false,
+    persistentSsh: false,
+    directBoxSsh: false,
+    inbound: false,
+    directGit: true,
+    resync: true,
+    prune: true,
+    vnc: true,
+    dind: true,
+    pauseSemantics: 'freeze',
+    hubRoutable: true,
+  },
+  blurb: 'MyProvider microVMs',
+  sizeDesc: 'Per-provider override of `box.size` for myprovider.',
+  imageDesc: 'Per-provider override of `box.image` for myprovider.',
+};
+
+export const providerModule: ProviderModule = { provider, backend, descriptor /* … */ };
+```
+
+`agentbox plugin add` snapshots this, so the CLI, hub and tray all read it without importing your package.
+
+**Declare what code can't reveal.** AgentBox doesn't infer capabilities from your `Provider` object: `createCloudProvider` gives _every_ cloud provider a `checkpoint`, `setInbound` and `enableDirectGit`, so their presence says which scaffold you used, not what you support. Three values are cross-checked against your `CloudBackend` (which you wrote, so it means something) — `prune` must equal `!!backend.list`, `inbound` must equal `!!backend.setInbound`, and `timeoutModel` must equal `backend.timeoutModel`.
+
+Three capabilities are easy to get wrong:
+
+- **`pauseSemantics`** — `'freeze'` if pause preserves the running processes, `'stop'` if it powers the box off and only the disk survives. It's a labelling hint, not a reason to hide a pause control (powering a VPS down is what stops the billing).
+- **`persistentSsh`** — whether the per-box SSH identity outlives the CLI call. A gateway handing out an expiring token doesn't qualify, even though SSH works right now.
+- **`checkpointReboots`** — `true` if capturing a snapshot stops and restarts the box, so the CLI confirms before yanking a live agent.
+
+<Callout title="Already published a plugin?">
+  You don't have to change anything. `descriptor` is optional and the SDK's contract version didn't
+  move, so an existing plugin loads exactly as before — AgentBox derives what it can from your
+  module and defaults the rest to preserve current behavior. Declaring one just upgrades you from a
+  bare provider name to a real label, credential form and capability gating.
+</Callout>
+
 ## Cloud overrides (optional)
 
 A cloud provider that bakes its own base image typically overrides three optional capabilities on top of `createCloudProvider` — the SDK re-exports the helpers each one needs, so they're all buildable on the SDK alone:
