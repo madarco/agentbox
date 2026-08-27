@@ -59,6 +59,27 @@ describe('built-in credential deny list', () => {
     expect(refuseCredentialArgv('infra', ['plan'], 'terraform')).toBeNull();
   });
 
+  // Reported by review: splicing bin into one haystack scanned its directory
+  // components, so an innocent folder name refused every call — and this
+  // guard runs ahead of `allow`, so there was no way to override it.
+  it('ignores directory components of an absolute --bin path', () => {
+    expect(
+      refuseCredentialArgv('infra', ['plan'], '/Users/me/get-token-helper/bin/terraform'),
+    ).toBeNull();
+    expect(refuseCredentialArgv('vault', ['status'], '/opt/secrets get/bin/vault')).toBeNull();
+  });
+
+  // ...while still catching the hazardous basename at the end of a path.
+  it('still matches the binary basename inside an absolute path', () => {
+    expect(refuseCredentialArgv('safe', ['get', 'x'], '/usr/local/bin/keyring')).not.toBeNull();
+  });
+
+  // Regression: concatenating name + bin + argv put a path between the
+  // command and its subcommand, so `keyring get` stopped matching.
+  it('name-plus-subcommand patterns survive an absolute bin path', () => {
+    expect(refuseCredentialArgv('keyring', ['get', 'x'], '/usr/bin/keyring')).not.toBeNull();
+  });
+
   it('lets ordinary argv through', () => {
     expect(refuseCredentialArgv('terraform', ['plan'])).toBeNull();
     expect(refuseCredentialArgv('linear', ['issue', 'list'])).toBeNull();
