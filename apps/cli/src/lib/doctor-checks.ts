@@ -19,7 +19,6 @@ import {
   type CheckResult,
   type CheckStatus,
 } from '@agentbox/sandbox-core';
-import { ALL_CONNECTORS, type IntegrationConnector } from '@agentbox/integrations';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import { dockerProvidersHidden, isDockerProvider } from '../control-plane/remote-hub.js';
 import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
@@ -31,7 +30,7 @@ import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
 export type { CheckResult, CheckStatus };
 
 export interface CheckGroup {
-  /** Group title: 'system' | a provider name | 'integrations'. */
+  /** Group title: 'system' | a provider name. */
   title: string;
   results: CheckResult[];
 }
@@ -255,21 +254,20 @@ async function checkConfig(): Promise<CheckResult[]> {
  * check has a single, easy-to-read branch. Wrapped in try/catch in case a
  * future execa release reverts to throwing on spawn errors.
  */
-// Doctor probes a connector's auth state by running its CLI (e.g. `ntn api
-// v1/users/me`, `linear auth whoami`) — network calls that can stall, and that
-// would block on an interactive prompt. Keep doctor snappy and un-hangable:
+// Doctor probes a host tool by running its CLI — a call that can stall, and
+// that would block on an interactive prompt. Keep doctor snappy and un-hangable:
 // cap each probe with a short timeout and never inherit stdin. (The relay uses
 // a far longer budget for *real* ops; this is just a health check.)
-const INTEGRATION_PROBE_TIMEOUT_MS = 10_000;
+const HOST_TOOL_PROBE_TIMEOUT_MS = 10_000;
 
-async function probeIntegrationBin(
+async function probeHostToolBin(
   bin: string,
   args: readonly string[],
 ): Promise<{ exitCode: number; stdout: string; stderr: string; missing: boolean }> {
   try {
     const r = await execa(bin, [...args], {
       reject: false,
-      timeout: INTEGRATION_PROBE_TIMEOUT_MS,
+      timeout: HOST_TOOL_PROBE_TIMEOUT_MS,
       stdin: 'ignore',
     });
     const code = (r as { code?: string }).code;
@@ -280,7 +278,7 @@ async function probeIntegrationBin(
       return {
         exitCode: 124,
         stdout: '',
-        stderr: `timed out after ${String(INTEGRATION_PROBE_TIMEOUT_MS)}ms`,
+        stderr: `timed out after ${String(HOST_TOOL_PROBE_TIMEOUT_MS)}ms`,
         missing: false,
       };
     }
@@ -299,107 +297,6 @@ async function probeIntegrationBin(
       missing: code === 'ENOENT',
     };
   }
-}
-
-/** Shape `loadEffectiveConfig` returns; only the integrations slice matters here. */
-type IntegrationsConfigSlice = {
-  effective: { integrations?: Record<string, { enabled?: boolean } | undefined> };
-};
-
-export type IntegrationsConfigLoader = (cwd: string) => Promise<IntegrationsConfigSlice>;
-
-/**
- * Per-connector host-side detection: is each `integrations.<svc>.enabled`
- * flipped on, is the host CLI installed, and is the user logged in. Driven
- * off `ALL_CONNECTORS` so Linear/Trello light up here automatically when
- * they ship — no doctor change needed.
- *
- * `loader` is injectable for unit tests (mirrors `refuseIfIntegrationDisabled`'s
- * approach). The default reads layered config from `cwd`, so toggling the
- * flag via `agentbox config set` takes effect on the next doctor run with
- * no caching.
- *
- * The auth probe runs each connector's CLI with no forced env, exactly as the
- * relay does — so a host's real authed state (e.g. the macOS keychain after
- * `ntn login`) is what's reported, and doctor can't show "authed" for a path
- * the relay wouldn't actually use.
- */
-export async function integrationsChecks(
-  loader: IntegrationsConfigLoader = loadEffectiveConfig,
-): Promise<CheckResult[]> {
-  let cfg: IntegrationsConfigSlice;
-  try {
-    cfg = await loader(process.cwd());
-  } catch {
-    cfg = { effective: {} };
-  }
-  // Parallel: each connector's two probes (version + auth) are independent
-  // across connectors. With Linear / Trello / ClickUp queued, the serial
-  // walk would scale linearly; Promise.all keeps doctor latency flat.
-  return Promise.all(
-    ALL_CONNECTORS.map((connector) => checkOneIntegration(connector, cfg.effective.integrations)),
-  );
-}
-
-async function checkOneIntegration(
-  connector: IntegrationConnector,
-  integrations: Record<string, { enabled?: boolean } | undefined> | undefined,
-): Promise<CheckResult> {
-  const svc = connector.service;
-  const enabled = integrations?.[svc]?.enabled === true;
-  if (!enabled) {
-    return {
-      label: svc,
-      status: 'info',
-      detail: 'disabled',
-      hint: `enable with \`agentbox config set --project integrations.${svc}.enabled true\``,
-    };
-  }
-
-  const version = await probeIntegrationBin(connector.hostBin, connector.detect.versionArgs);
-  if (version.missing || version.exitCode === 127) {
-    return {
-      label: svc,
-      status: 'warn',
-      detail: `${connector.hostBin} not installed`,
-      hint:
-        connector.detect.installHint ??
-        `install the ${svc} CLI (\`${connector.hostBin}\`) on the host`,
-    };
-  }
-  if (version.exitCode !== 0) {
-    const tail = firstLine((version.stderr || version.stdout).trim());
-    return {
-      label: svc,
-      status: 'warn',
-      detail: `${connector.hostBin} ${connector.detect.versionArgs.join(' ')} failed${tail ? `: ${tail}` : ''}`,
-    };
-  }
-  const versionLine = firstLine((version.stdout || version.stderr).trim()) || connector.hostBin;
-
-  if (!connector.detect.authArgs || connector.detect.authArgs.length === 0) {
-    return { label: svc, status: 'ok', detail: versionLine };
-  }
-
-  const auth = await probeIntegrationBin(connector.hostBin, connector.detect.authArgs);
-  // A timed-out probe (124) means the CLI is installed but its auth check
-  // stalled — report that, don't claim the user is logged out.
-  if (auth.exitCode === 124) {
-    return {
-      label: svc,
-      status: 'warn',
-      detail: `auth check timed out after ${String(INTEGRATION_PROBE_TIMEOUT_MS / 1000)}s`,
-    };
-  }
-  if (auth.exitCode !== 0) {
-    return {
-      label: svc,
-      status: 'warn',
-      detail: 'not logged in',
-      hint: connector.detect.loginHint ?? `run \`${connector.hostBin} login\``,
-    };
-  }
-  return { label: svc, status: 'ok', detail: `${versionLine} · authed` };
 }
 
 // `box.claudeInstall` folds into the base-image fingerprint, so freshness must
@@ -471,16 +368,11 @@ export async function runAllChecks(): Promise<CheckGroup[]> {
   // The three phases are independent, so run them together: wall time is the
   // slowest phase, not their sum. (`doctor --provider X` already did this —
   // see runDoctor's Promise.all — so unscoped doctor was the slow path.)
-  const [sysResults, providerGroups, integrationResults] = await Promise.all([
+  const [sysResults, providerGroups] = await Promise.all([
     runSystemChecks(),
     Promise.all(providerNames.map((n) => runProviderChecks(n))),
-    integrationsChecks(),
   ]);
-  return [
-    { title: 'system', results: sysResults },
-    ...providerGroups,
-    { title: 'integrations', results: integrationResults },
-  ];
+  return [{ title: 'system', results: sysResults }, ...providerGroups];
 }
 
 function worstInResults(results: CheckResult[]): CheckStatus {
@@ -519,14 +411,6 @@ function summaryToken(group: CheckGroup): string {
       return `system warn: ${parts.join(', ')}`;
     }
     return 'system ok';
-  }
-  if (group.title === 'integrations') {
-    if (worst === 'fail') return 'integrations FAIL';
-    if (worst === 'warn') return 'integrations check';
-    // All rows ok or info (disabled) — render as "off" when every row is
-    // info, else "ready" when at least one is enabled and green.
-    const anyEnabled = group.results.some((r) => r.status === 'ok');
-    return anyEnabled ? 'integrations ready' : 'integrations off';
   }
   if (worst === 'fail') return `${group.title} FAIL`;
   if (worst === 'warn') {

@@ -68,18 +68,8 @@ import {
 } from './gh.js';
 import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
 import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
-import {
-  assertIntegrationReady,
-  makeIntegrationOpRefusal,
-  parseIntegrationMethod,
-  refuseIfIntegrationDisabled,
-  refuseIntegrationCall,
-  runHostIntegration,
-  type IntegrationRpcParams,
-} from './integrations.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
-import { getConnector } from '@agentbox/integrations';
 import type {
   CheckpointRpcParams,
   CpRpcParams,
@@ -369,9 +359,6 @@ export async function executeCloudAction(
   }
   if (action.method === 'gh.api') {
     return runGhApiRpc(action, deps);
-  }
-  if (action.method.startsWith('integration.')) {
-    return runIntegrationRpc(action, deps);
   }
   if (action.method === 'git.clone' || action.method === 'gh.repo.clone') {
     return {
@@ -664,118 +651,6 @@ async function runGhApiRpc(
   // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
   return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
-}
-
-/**
- * Cloud `integration.<service>.<op>` executor. Mirrors the docker handler
- * exactly — same descriptor lookup, same read/write gating, same host
- * binary invocation. Reuses the gh-pr `cloudWriteConfirm` helper because
- * the no-subscriber fallback (`AGENTBOX_GH_NO_SUB` env knob) covers every
- * gated host action by design.
- */
-async function runIntegrationRpc(
-  action: HostAction,
-  deps: CloudActionExecutorDeps,
-): Promise<HostActionResult> {
-  const parsed = parseIntegrationMethod(action.method);
-  if (!parsed) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `unknown integration method shape: ${action.method}\n`,
-    };
-  }
-  const connector = getConnector(parsed.service);
-  if (!connector) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `unknown integration service: ${parsed.service}\n`,
-    };
-  }
-  const opDesc = connector.ops[parsed.op];
-  if (!opDesc) {
-    return makeIntegrationOpRefusal(
-      parsed.service,
-      parsed.op,
-      connector.hostBin,
-      Object.keys(connector.ops),
-    );
-  }
-  const params = (action.params ?? {}) as IntegrationRpcParams;
-  const args = Array.isArray(params.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-
-  const callRefusal = refuseIntegrationCall(opDesc, args);
-  if (callRefusal) return callRefusal;
-
-  // Cloud boxes don't register worktrees the same way docker boxes do; the
-  // closest analogue is `lookupCloudBox`'s `workspacePath` (the host-side
-  // path the cloud provider records as the box's project root). Use it to
-  // read the layered config and fire the enablement gate — same envelope
-  // shape the docker handler returns. Placed after `refuseIntegrationCall`
-  // so the structural / op-level checks (which don't need the box record)
-  // still short-circuit cleanly on a malformed registry; the gate runs
-  // before `assertIntegrationReady`, the prompt, and the host spawn so a
-  // disabled integration is never user-visible as a permission prompt.
-  const lookup = await lookupCloudBox(deps.boxId);
-  const enableRefusal = await refuseIfIntegrationDisabled(parsed.service, lookup.workspacePath);
-  if (enableRefusal) return enableRefusal;
-
-  const ready = await assertIntegrationReady(connector);
-  if (ready) return ready;
-
-  if (opDesc.write) {
-    if (deps.autoApproveSafeHostActions !== false) {
-      // Integration writes go to the connected external service (not the
-      // host), so they're in the safe subset — audited, no prompt.
-      deps.prompts?.noteAutoApprove(
-        deps.boxId,
-        {
-          kind: 'confirm',
-          message: `integration ${parsed.service} ${parsed.op} from cloud box ${deps.boxName ?? deps.boxId}`,
-          detail: args.join(' ').slice(0, 200),
-          context: {
-            command: `integration ${parsed.service} ${parsed.op}`,
-            cwd: params.path,
-            argv: args,
-          },
-        },
-        `safe: integration ${parsed.service} ${parsed.op}`,
-      );
-    } else {
-      const tokenClaimed = typeof params.hostInitiated === 'string';
-      const incomingHash = hashRpcParams(params);
-      const tokenOk =
-        tokenClaimed &&
-        (deps.hostInitiatedTokens?.consume(
-          params.hostInitiated,
-          deps.boxId,
-          action.method,
-          incomingHash,
-        ) ??
-          false);
-      if (tokenClaimed && !tokenOk) {
-        return {
-          exitCode: 10,
-          stdout: '',
-          stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
-        };
-      }
-      if (!tokenOk) {
-        const denied = await cloudWriteConfirm(
-          deps,
-          `integration ${parsed.service} ${parsed.op}`,
-          params.path,
-          args,
-        );
-        if (denied) return denied;
-      }
-    }
-  }
-
-  return runHostIntegration(connector, opDesc, args, lookup.workspacePath);
 }
 
 /**

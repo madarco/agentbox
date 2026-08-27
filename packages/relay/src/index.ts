@@ -157,16 +157,12 @@ export {
   type LeasedToken,
 } from './github-app.js';
 export {
-  _resetIntegrationReadyCacheForTests,
-  assertIntegrationReady,
-  makeIntegrationOpRefusal,
-  parseIntegrationMethod,
-  refuseIfIntegrationDisabled,
-  refuseIntegrationCall,
-  runHostIntegration,
-  type IntegrationRpcParams,
-  type ParsedIntegrationMethod,
-} from './integrations.js';
+  _resetHostBinReadyCacheForTests,
+  assertHostBinReady,
+  hostBinExists,
+  runHostBinary,
+  HOST_EXEC_DEFAULT_TIMEOUT_MS,
+} from './host-exec.js';
 export {
   assertGhReady,
   checkoutGuards,

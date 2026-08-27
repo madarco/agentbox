@@ -115,42 +115,6 @@ carry:
     dest: ~/.agentbox/opencode-credentials.json
     mode: 0o600
     optional: true
-  # Notion CLI (`ntn`) file-based auth — INTERNAL AGENTBOX DEV ONLY, so a box
-  # that creates NESTED boxes can act as their relay host and shell out to `ntn`.
-  # Normal boxes never need this: they reach `ntn` through the host relay and
-  # carry no token. macOS `ntn` keeps its token in the keychain (uncarryable);
-  # the box is Linux, so for the nested path bootstrap the host once with
-  # `NOTION_KEYRING=0 ntn login` (writes ~/.config/notion/auth.json) and see
-  # docs/development.md for how the in-box `ntn` reads it (the connector no
-  # longer forces NOTION_KEYRING=0). All optional: a host without the file-auth
-  # still gets a working box (top-level boxes test through the host's own `ntn`).
-  - src: ~/.config/notion/auth.json
-    dest: ~/.config/notion/auth.json
-    mode: 0o600
-    optional: true
-  - src: ~/.config/notion/config.json
-    dest: ~/.config/notion/config.json
-    mode: 0o600
-    optional: true
-  - src: ~/.config/notion/workspaces.json
-    dest: ~/.config/notion/workspaces.json
-    mode: 0o600
-    optional: true
-  # Linear CLI (`@schpet/linear-cli`, the `linear` binary) auth, so a box that
-  # creates NESTED boxes can act as their relay host and shell out to `linear`
-  # for the integration's e2e test. The CLI stores a plaintext API token at
-  # ~/.config/linear/credentials.toml by default (keyring migration is opt-in
-  # and not used here), so the file carries directly — no keyring env toggle
-  # needed (unlike `ntn`). All optional: a host without the file still gets a
-  # working box (top-level boxes test through the host's own authed `linear`).
-  - src: ~/.config/linear/credentials.toml
-    dest: ~/.config/linear/credentials.toml
-    mode: 0o600
-    optional: true
-  - src: ~/.config/linear/linear.toml
-    dest: ~/.config/linear/linear.toml
-    mode: 0o600
-    optional: true
   # Per-provider base-snapshot pointers. With these, `agentbox prepare`
   # inside the box can skip-fast (existing snapshot detected) and just
   # exercise the post-prepare config write + migration — no bake needed.

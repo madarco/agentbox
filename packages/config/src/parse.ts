@@ -226,8 +226,8 @@ export function parseUserConfigObject(
 
 /**
  * Validate a YAML branch sub-tree against `branchSpec`'s registered leaf paths.
- * Handles nested keys like `integrations.notion.enabled` — the branch is
- * `integrations`, the leaf path is `notion.enabled`, so the YAML can be
+ * Handles nested keys like `tools.gh.enabled` — the branch is
+ * `tools`, the leaf path is `gh.enabled`, so the YAML can be
  * written as a nested mapping. `qualifiedPrefix` is the dotted path walked so
  * far within the branch (empty at top level).
  */

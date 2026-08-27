@@ -174,24 +174,14 @@ COPY packages/sandbox-docker/scripts/gh-shim /usr/local/bin/gh
 COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
 RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
 
-# `ntn` (Notion CLI) shim — same shape as gh-shim, routes a strict subset
-# of `ntn` subcommands through the host relay (the host's `ntn` runs the
-# call; the box never sees the Notion token). Symlinked as `notion` per
-# docs/integrations_backlog.md's per-service surface naming. Disabled by
-# default; flip `integrations.notion.enabled` to enable. See
-# packages/sandbox-docker/scripts/ntn-shim and docs/notion_backlog.md.
-COPY packages/sandbox-docker/scripts/ntn-shim /usr/local/bin/ntn
-RUN chmod +x /usr/local/bin/ntn && ln -s /usr/local/bin/ntn /usr/local/bin/notion
-
-# `linear` (Linear CLI — @schpet/linear-cli) shim — same shape as ntn-shim,
-# routes a strict subset of `linear` subcommands through the host relay
-# (the host's `linear` runs the call; the box never sees the Linear API
-# token). `linear auth token` (which would print the raw token to stdout)
-# is explicitly rejected by the shim. Disabled by default; flip
-# `integrations.linear.enabled` to enable. See
-# packages/sandbox-docker/scripts/linear-shim and docs/linear_backlog.md.
-COPY packages/sandbox-docker/scripts/linear-shim /usr/local/bin/linear
-RUN chmod +x /usr/local/bin/linear
+# Generic host-tool shim. One file for every host CLI a box is granted:
+# `agentbox-ctl` symlinks /usr/local/bin/<tool> to it at box start from the
+# host-side grant list, so adding a tool never needs an image rebake. The
+# shim resolves its own name from argv[0] and forwards to the relay, which
+# owns the gating. See packages/sandbox-docker/scripts/agentbox-tool-shim
+# and docs/host-tools.md.
+COPY packages/sandbox-docker/scripts/agentbox-tool-shim /usr/local/bin/agentbox-tool-shim
+RUN chmod +x /usr/local/bin/agentbox-tool-shim
 
 # Setup guide for the first-run wizard. This baked copy is the single source
 # of the /agentbox-setup skill: seedSetupSkillIntoVolume()

@@ -335,13 +335,9 @@ export const DOCKER_CONTEXT_FILE_MAP: Record<string, { staged: string; dev: stri
     staged: 'packages/sandbox-docker/scripts/git-shim',
     dev: 'scripts/git-shim',
   },
-  'scripts/ntn-shim': {
-    staged: 'packages/sandbox-docker/scripts/ntn-shim',
-    dev: 'scripts/ntn-shim',
-  },
-  'scripts/linear-shim': {
-    staged: 'packages/sandbox-docker/scripts/linear-shim',
-    dev: 'scripts/linear-shim',
+  'scripts/agentbox-tool-shim': {
+    staged: 'packages/sandbox-docker/scripts/agentbox-tool-shim',
+    dev: 'scripts/agentbox-tool-shim',
   },
   'scripts/chromium-resolver': {
     staged: 'packages/sandbox-docker/scripts/chromium-resolver',
