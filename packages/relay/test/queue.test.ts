@@ -1,6 +1,7 @@
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   countInFlightCreateJobs,
   countRunningPrepareJobsByProvider,
@@ -21,6 +22,16 @@ import {
 } from '../src/queue.js';
 import { BoxRegistry } from '../src/registry.js';
 import type { BoxStatusStore } from '../src/status-store.js';
+
+// QUEUE_DIR is derived from $HOME at module-eval time, so these tests write
+// real queue jobs — into a temp home, courtesy of `test/setup.ts`. A setup file
+// that silently stops loading (a package dropped from the workspace, a missing
+// vitest.config) is invisible, and the failure mode is writing jobs into the
+// developer's real `~/.agentbox/queue`, where a stray one shows up in
+// `agentbox list` as a phantom box. Fail loudly instead.
+beforeAll(() => {
+  assertTempHome();
+});
 
 function job(p: Partial<QueueJob> & { id: string }): QueueJob {
   return {
@@ -706,8 +717,9 @@ describe('startQueueLoop working-agent gate', () => {
 });
 
 describe('loadQueue / writeJob round trip', () => {
-  // QUEUE_DIR is captured at module load from $HOME → ~/.agentbox/queue. We
-  // write/cleanup with a unique prefix so a user's real queue isn't disturbed.
+  // QUEUE_DIR is captured at module load from $HOME → ~/.agentbox/queue, which
+  // `test/setup.ts` has pointed at a temp dir. The unique prefix keeps cases
+  // inside this file independent of each other.
   it('returns jobs sorted by createdAt ascending, ignoring malformed files', async () => {
     const { QUEUE_DIR } = await import('../src/queue.js');
     const prefix = `queue-vitest-${String(process.pid)}-`;
