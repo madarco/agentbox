@@ -232,6 +232,8 @@ agentbox cp ./local.txt mybox:/workspace/   # upload
 agentbox cp a.txt b.txt src/ mybox:/workspace/dest/   # many sources into a dir
 agentbox cp ./*.log mybox:/workspace/logs/   # shell-expanded wildcard
 agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"  # upload, trimmed
+agentbox cp ./data.csv hub:            # upload to a remote hub, readable by this
+                                       # project's boxes with this machine off
 
 # Git/gh through the host relay (your credentials stay on the host)
 agentbox git push 1

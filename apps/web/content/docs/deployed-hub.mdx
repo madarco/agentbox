@@ -449,7 +449,7 @@ Every **box and fleet operation** goes through the hub's `/api/v1`: `create`, li
 
 What deliberately stays on your machine, and why:
 
-- **The direct IO plane.** `shell`, `attach`, `cp`, `download`, `code`, `open`, `url`, and `screen` talk to the box **from your laptop**, not through the hub. Moving them behind the hub (a uniform tunnel with hub-side SSH termination) is future work, explicitly out of scope for now. So these commands need your laptop up and reachable to the box, and `cp`/`download` between host and box are meaningless with the laptop off (see the callout above).
+- **The direct IO plane.** `shell`, `attach`, `cp`, `download`, `code`, `open`, `url`, and `screen` talk to the box **from your laptop**, not through the hub. Moving them behind the hub (a uniform tunnel with hub-side SSH termination) is future work, explicitly out of scope for now. So these commands need your laptop up and reachable to the box. The exception is a copy a **box** starts (`agentbox-ctl cp`), which the hub brokers back to your machine — see [copying between a box and your files](#copying-between-a-box-and-your-files).
 - **Local adoption.** Because the IO plane is direct, the CLI still materializes a local box record (and pulls per-box SSH keys) so those commands can resolve a box. Adoption is re-sourced from `/api/v1` — it is a cache of the hub's truth, not a second source.
 - **`secrets.env` on both machines.** Your laptop needs the provider credentials to do direct SDK IO for **e2b / vercel / daytona** (`cp`, `attach`, `url`). So a provider login writes `~/.agentbox/secrets.env` **and** pushes the credential to the control box. This dual copy is intentional and temporary — it goes away when the IO plane moves behind the hub.
 - **The agent launchers' local foreground create.** `agentbox claude`/`codex`/`opencode` with **no** control box (or with a project checked out here) still build the box **inline** on your machine, then attach. `agentbox create` and the launchers' `--via-hub`/control-box path already go through `POST /api/v1/boxes`; only this one create-then-attach path stays inline, because converting it means moving the create + attach boundary behind the hub — the same out-of-scope IO plane. Everything else the launchers do (queued `-i` runs, cloud creates) is on `/api/v1`.
@@ -528,9 +528,50 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
 <Callout title="Approval is not execution">
   Answering is one thing, running is another. An approved `git push` executes **on the control box**
   with a leased token, so it works with your laptop off. A host action that inherently targets your
-  laptop's filesystem — `cp`/`download` between host and box — still needs your laptop up, whoever
-  approves it.
+  laptop's filesystem runs **there**: `cp` is brokered back to your machine and approved there (or
+  served from the hub's cache when it is offline — see below), and `download` still needs your
+  laptop up, whoever approves it.
 </Callout>
+
+## Copying between a box and your files
+
+A box that runs `agentbox-ctl cp` is asking for files that live on **your machine**, not on the
+control box — which holds no checkout of your project. So the hub brokers rather than executes: it
+parks the copy, and your machine's relay (running whenever you use AgentBox here) picks it up, asks
+you to approve it, and does the copy against the real files.
+
+```bash
+# inside a box
+agentbox-ctl cp fromHost ./data/q3.csv /workspace/   # reads from YOUR machine
+agentbox-ctl cp toHost /workspace/report.md ./out/   # writes to YOUR machine
+```
+
+With your machine **offline**, each direction degrades honestly rather than failing blind:
+
+- **`fromHost`** is served from the hub's **cache** — a copy of what an earlier `cp` read, kept in
+  custody. It still asks for approval (answerable from the web UI or the tray), and both the
+  approval and the box's own output say the copy is cached and how old it is, so an agent is never
+  handed a stale file that looks live. With nothing cached, the box is told both facts: your machine
+  is offline **and** there is no cached copy.
+- **`toHost`** has nowhere to land, so the hub takes the bytes out of the box and **parks** them.
+  Your machine lands them — behind the usual confirm — the next time it connects. The box gets a
+  non-zero exit meaning "accepted, not delivered yet", never a false success.
+
+To make a file readable by your boxes with this machine off, upload it to the hub yourself:
+
+```bash
+agentbox cp ./data/q3.csv hub:      # readable by this project's boxes, laptop or no laptop
+```
+
+That writes the same cache entry a live copy would, keyed by the file's path, so a box asking for
+`./data/q3.csv` finds it whether you pre-loaded it or an earlier copy warmed it. Uploads are bounded
+by [`relay.custodyMaxBlobBytes`](/docs/configuration#relay) and appear in the hub's **Custody** page.
+
+How long the hub waits for your machine before falling back is
+[`relay.hostReachTimeoutMs`](/docs/configuration#relay) (60s by default). Your machine long-polls the
+hub while its relay runs, so that is a missed-heartbeat window, not a per-copy timeout: once the copy
+reaches your machine it can sit on your approval for as long as you like. `agentbox hub status` says
+when a control box is configured but this machine is not currently draining for it.
 
 ## The menu-bar app follows your config
 

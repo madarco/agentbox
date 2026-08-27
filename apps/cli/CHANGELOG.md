@@ -23,6 +23,14 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- `cp` between a box and your files now works with a remote hub. A control box
+  holds no checkout of your project, so it brokers the copy back to your machine
+  — which gates and runs it — instead of failing on a workspace that isn't
+  there. With your machine offline, a read is served from a cache the hub keeps
+  (approved separately, and labelled with its age) and a write is parked for
+  your machine to land on its next connect. `agentbox cp <file> hub:` pre-loads
+  a file so a box can read it with your machine off; `relay.hostReachTimeoutMs`
+  tunes how long the hub waits before falling back.
 - `relay.port` now actually moves the host daemon. It was documented and
   settable but never read, so the relay always bound 8787. It governs the hub
   too — the two share the port — and 8788 is refused (boxes bind it internally).

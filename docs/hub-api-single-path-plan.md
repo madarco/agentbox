@@ -1474,8 +1474,11 @@ runs the poller, approvals, status store, keepalive and autopause.
 
 Two consequences that follow from the control-plane topology and are worth stating plainly:
 
-- **"The host" means the control box for anything box-initiated.** An agent calling `cp.toHost`
-  or `download.workspace` lands files on the VPS; `browser.open.mirror` is meaningless there.
+- **"The host" means the control box for anything box-initiated** — with `cp` now the exception.
+  `download.workspace` still lands files on the VPS and `browser.open.mirror` is meaningless there,
+  but `cp.toHost`/`cp.fromHost` are brokered back to the user's machine (and fall back to a custody
+  cache when it is offline), because the VPS holds no checkout of the project — see
+  [`plans/box-cp-host-reach-plan.md`](./plans/box-cp-host-reach-plan.md).
 - **`status.json` and credential fanout move with it** — the box reports to the control box's
   relay, so its status snapshot lives on that disk.
 

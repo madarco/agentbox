@@ -1014,6 +1014,19 @@ EOF`
   - **Run:** force a hung host-side git command (e.g. set remote to an unreachable host); call `git.push` from in-box.
   - **Signal:** in-box client gets a timeout error within 120s (not hang indefinitely).
 
+- [ ] **REL-EXT-006** A hub box's `cp` reaches the machine that holds the files (needs a control box on a DIFFERENT machine than the PC; `hub expose` cannot show this, since there the two are one).
+  - **Setup:** control box configured (`relay.controlPlaneUrl`), a box created through it, and this machine's relay running (`agentbox relay status`).
+  - **Run (live):** on the PC `echo live-$(date +%s) > ./probe.txt`, then in the box `agentbox-ctl cp fromHost ./probe.txt /workspace/pulled.txt`.
+  - **Signal:** the box's `/workspace/pulled.txt` matches the PC's file (a file created AFTER the box, so a create-time seed can't fake it); the approval appeared on the PC, not the control box.
+  - **Run (cached):** `agentbox relay stop` on the PC, repeat the same cp.
+  - **Signal:** exit 0, the box's stdout says `served from the hub's cache` with an age, and the approval was answerable from the web UI.
+  - **Run (cold miss):** with the relay still stopped, `cp fromHost ./never-copied.txt /workspace/`.
+  - **Signal:** non-zero exit whose message names BOTH the offline machine and the empty cache, and shows `agentbox cp <file> hub:`.
+  - **Run (pre-load):** on the PC `agentbox cp ./never-copied.txt hub:`, then retry the same cp with the relay still stopped.
+  - **Signal:** the file lands in the box, marked cached.
+  - **Run (outbox):** with the relay stopped, in the box `agentbox-ctl cp toHost /workspace/out.txt ./`; then `agentbox relay start` on the PC.
+  - **Signal:** the box got exit 75 with "parked"; on reconnect the PC prompts to land it, and the file appears in the project after approval.
+
 - [ ] **REL-EXT-005** SSE `/admin/prompts/stream` heartbeats every 15s.
   - **Run:** `curl -sNo - http://127.0.0.1:<port>/admin/prompts/stream` and watch for 30s.
   - **Signal:** at least one `ping` event in window; reconnects when stream drops.

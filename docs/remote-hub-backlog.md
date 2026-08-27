@@ -23,3 +23,6 @@
 - [x] `agentbox remote-docker add` bakes by calling the provider directly, so for a SHARED host it bakes from this machine instead of routing to the control box like `agentbox prepare` does. Same image, wrong streamer. (Done: `add` now goes through the CLI's bake hook -> `runPrepare` -> the hub's `/hosts/:alias/bake`.)
 - [ ] the hub's `preparePrecheck` only probes the LOCAL docker daemon; for a `docker:<alias>` bake it should probe that engine.
 - [ ] a LOCAL hub's provider list shows only its own remote-docker hosts — `mergeRemoteProviders` keeps them local. With hosts shared to a control box, the local UI could show the control box's engines as `origin: 'hub'` rows.
+- [ ] cp cache eviction: entries under `projects/<slug>/cp/` persist until deleted from the custody UI. Decide a policy (size cap / age) before a big dataset silently pins hub disk.
+- [ ] `download.workspace` / `download.env` / `download.claude` still run on the control box with a cwd that no longer exists — the same defect `cp` had. The host-reach channel is built so each is a routing line.
+- [ ] a box's `~` in a `cp fromHost` path expands to the BOX's home before ctl sees it, so a host-home path cannot be expressed. Decide: reject it, or add an explicit `host:~` form.

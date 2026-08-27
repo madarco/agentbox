@@ -509,7 +509,12 @@ supported" error so the in-box RPC unblocks):
   repo (lets the host's SSH keys do the real push without ever sending
   them into the sandbox).
 - `cp.toHost` / `cp.fromHost` — via `uploadToCloudBox` /
-  `downloadFromCloudBox` from sandbox-cloud, gated by `askPrompt`.
+  `downloadFromCloudBox` from sandbox-cloud, gated by `askPrompt`. On a
+  **control box** these are brokered instead of executed: the files are on the
+  user's machine, so the action parks on a `HostReachQueue` for that machine's
+  relay to drain, gate and run (`/admin/hostreach/*`). With that machine
+  offline, `fromHost` falls back to the custody cache a previous copy wrote and
+  `toHost` parks in custody for it to land later.
 - `download.workspace` — bulk pull via `pullCloudDirContents`.
 - `checkpoint.create` — shells to the host CLI's `agentbox checkpoint
   create`, which routes back through `provider.checkpoint.create`.
