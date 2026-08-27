@@ -62,6 +62,24 @@ import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
 import type { CustodyStore } from './custody/store.js';
+import {
+  isValidToolName,
+  loadGrantedTools,
+  projectToolsFile,
+  writeToolGrant,
+} from '@agentbox/config';
+import {
+  argvIsExplicitlyAllowed,
+  refuseCredentialArgv,
+  refuseDeniedArgv,
+  renderToolList,
+  renderToolListJson,
+  hostToolInstalled,
+  resolveToolGrant,
+  runGrantedTool,
+  toolRequestsEnabled,
+  type ToolRequestRpcParams,
+} from './host-tools.js';
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
@@ -1022,6 +1040,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       if (body.method === 'gh.api') {
         const result = await handleGhApiRpc(reg, body.params as GhApiRpcParams | undefined);
+        const status = result.exitCode === 0 ? 200 : 500;
+        send(res, status, result);
+        return;
+      }
+      if (body.method.startsWith('tool.')) {
+        const result = await handleToolRpc(
+          body.method,
+          reg,
+          body.params as Record<string, unknown> | undefined,
+          prompts,
+          subscribers,
+        );
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -2072,6 +2102,173 @@ async function handleGhApiRpc(
   // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
   return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
+}
+
+/**
+ * `tool.list` / `tool.request` / `tool.run`: the generic host-tool proxy.
+ *
+ * `tool.run`'s gate order is load-bearing, cheapest-and-most-absolute first:
+ *   1. worktree resolve      — exit 64, nothing to run in
+ *   2. grant lookup          — exit 65, re-read every call so an approval is live
+ *   3. built-in deny list    — exit 65, before any prompt or spawn
+ *   4. per-tool deny rules   — exit 65, layered on top, never replacing (3)
+ *   5. allow rules / gate    — silent when explicitly allowed or when the box
+ *                              runs with `box.autoApproveSafeHostActions`
+ *                              (default), else a host prompt; deny → exit 10
+ *   6. spawn in hostMainRepo — the host's own credentials, buffered, no TTY
+ *
+ * Every failure returns the same `{exitCode, stdout, stderr}` envelope as the
+ * gh handlers, and `host-actions.ts` runs the identical sequence for cloud
+ * boxes, per the "fix across all providers" rule.
+ */
+async function handleToolRpc(
+  method: string,
+  reg: BoxRegistration,
+  params: Record<string, unknown> | undefined,
+  prompts: PendingPrompts,
+  subscribers: PromptSubscribers,
+): Promise<GitRpcResult> {
+  const containerPath = typeof params?.['path'] === 'string' ? params['path'] : '/workspace';
+  const worktree = resolveWorktree(reg, containerPath);
+  if (!worktree) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+    };
+  }
+  const cwd = worktree.hostMainRepo;
+
+  if (method === 'tool.list') {
+    const grants = await loadGrantedTools(cwd);
+    const json = params?.['format'] === 'json';
+    return {
+      exitCode: 0,
+      stdout: json ? renderToolListJson(grants.values()) : renderToolList(grants.values()),
+      stderr: '',
+    };
+  }
+
+  const name = typeof params?.['name'] === 'string' ? params['name'].trim() : '';
+  if (!name || !isValidToolName(name)) {
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr: `${method}: missing or invalid tool name\n`,
+    };
+  }
+
+  if (method === 'tool.request') {
+    const reason =
+      typeof (params as ToolRequestRpcParams | undefined)?.reason === 'string'
+        ? String(params?.['reason']).slice(0, 500)
+        : '';
+    return handleToolRequest(name, reason, reg, cwd, containerPath, prompts, subscribers);
+  }
+
+  if (method !== 'tool.run') {
+    return { exitCode: 501, stdout: '', stderr: `unknown tool method: ${method}\n` };
+  }
+
+  const resolved = await resolveToolGrant(name, cwd);
+  if ('refusal' in resolved) return resolved.refusal;
+  const grant = resolved.grant;
+
+  const args = Array.isArray(params?.['args'])
+    ? (params['args'] as unknown[]).filter((a): a is string => typeof a === 'string')
+    : [];
+
+  const credRefusal = refuseCredentialArgv(name, args);
+  if (credRefusal) return credRefusal;
+  const denyRefusal = refuseDeniedArgv(grant, args);
+  if (denyRefusal) return denyRefusal;
+
+  const promptEvent = {
+    kind: 'confirm' as const,
+    message: `Allow \`${grant.bin} ${args.join(' ')}\` on the host from box ${reg.name}?`,
+    detail: `runs with the host's own ${grant.bin} credentials in ${cwd}`,
+    context: { command: `tool ${name}`, cwd: containerPath, argv: args },
+  };
+
+  if (argvIsExplicitlyAllowed(grant, args)) {
+    prompts.noteAutoApprove(reg.boxId, promptEvent, `allow-rule: tool ${name}`);
+  } else if (reg.autoApproveSafeHostActions !== false) {
+    // The grant itself was the human decision; the per-call prompt is the
+    // opt-in stricter mode. Still audited so every host-tool call is visible
+    // in the relay event ring buffer.
+    prompts.noteAutoApprove(reg.boxId, promptEvent, `safe: tool ${name}`);
+  } else {
+    const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+      ...promptEvent,
+      defaultAnswer: 'n',
+    });
+    if (verdict.answer !== 'y') {
+      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+    }
+  }
+
+  return runGrantedTool(grant, args, cwd);
+}
+
+/**
+ * A box asking for a host CLI it doesn't have. The host PATH probe runs
+ * BEFORE the prompt on purpose: the user explicitly wants a box that guesses
+ * wrong (`tool request terrafrom`) to get a direct "not installed" answer
+ * instead of interrupting them with an approval for a binary that could never
+ * run. That does let a box learn whether a given binary exists on the host,
+ * which is why requests are gated by `tools.request.enabled` and every one is
+ * recorded as a relay event.
+ */
+async function handleToolRequest(
+  name: string,
+  reason: string,
+  reg: BoxRegistration,
+  cwd: string,
+  containerPath: string,
+  prompts: PendingPrompts,
+  subscribers: PromptSubscribers,
+): Promise<GitRpcResult> {
+  if (!(await toolRequestsEnabled(cwd))) {
+    return {
+      exitCode: 65,
+      stdout: '',
+      stderr:
+        'host-tool requests are disabled for this project ' +
+        '(`agentbox config set --project tools.request.enabled true` to allow them)\n',
+    };
+  }
+  const existing = await loadGrantedTools(cwd);
+  if (existing.has(name)) {
+    return { exitCode: 0, stdout: `${name} is already granted\n`, stderr: '' };
+  }
+  if (!(await hostToolInstalled(name))) {
+    return {
+      exitCode: 127,
+      stdout: '',
+      stderr: `${name} is not installed on the host — nothing to grant\n`,
+    };
+  }
+  const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+    kind: 'confirm',
+    message: `Box ${reg.name} requests access to the host CLI \`${name}\`. Grant it?`,
+    detail: reason ? `reason: ${reason}` : 'no reason given',
+    defaultAnswer: 'n',
+    context: { command: `tool request ${name}`, cwd: containerPath, argv: [name] },
+  });
+  if (verdict.answer !== 'y') {
+    return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
+  }
+  await writeToolGrant(projectToolsFile(cwd), {
+    name,
+    bin: name,
+    source: 'request',
+    approvedAt: new Date().toISOString(),
+  });
+  return {
+    exitCode: 0,
+    stdout: `${name} granted for this project\n`,
+    stderr: '',
+  };
 }
 
 /**

@@ -78,6 +78,13 @@ export {
   type CarryItem,
 } from './carry.js';
 export {
+  parseToolsRaw,
+  parseToolsSection,
+  loadToolsSection,
+  ToolsConfigError,
+  type ToolRequest,
+} from './tools-spec.js';
+export {
   applyReplacements,
   substitutePlaceholders,
   placeholderContextFromEnv,

@@ -157,6 +157,22 @@ export {
   type LeasedToken,
 } from './github-app.js';
 export {
+  argvIsExplicitlyAllowed,
+  CREDENTIAL_ARGV_PATTERNS,
+  ghToolEnabled,
+  hostToolInstalled,
+  refuseCredentialArgv,
+  refuseDeniedArgv,
+  renderToolList,
+  renderToolListJson,
+  resolveToolGrant,
+  runGrantedTool,
+  toolRequestsEnabled,
+  type ToolListRpcParams,
+  type ToolRequestRpcParams,
+  type ToolRunRpcParams,
+} from './host-tools.js';
+export {
   _resetHostBinReadyCacheForTests,
   assertHostBinReady,
   hostBinExists,
