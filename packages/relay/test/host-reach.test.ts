@@ -64,6 +64,30 @@ describe('HostReachQueue', () => {
     await expect(pending).resolves.toEqual({ kind: 'unreachable', reason: 'went-away' });
   });
 
+  it('settles an orphan even while another machine keeps polling', async () => {
+    // The owner died; the only other machine already declined this work (it does
+    // not hold the box). A sweep that asks "has ANYONE polled recently?" sees
+    // that machine's polls and never settles, so the box waits forever instead
+    // of falling back to the cache.
+    let now = 1_000;
+    const q = new HostReachQueue({
+      graceMs: 10_000,
+      reachTimeoutMs: 200,
+      sweepIntervalMs: 10,
+      now: () => now,
+    });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    // The bystander sees it first, refuses it (it does not hold the box), and
+    // keeps polling; the owner then takes it and dies.
+    const [offered] = await q.poll(20, 'bystander');
+    q.decline(offered!.id, 'bystander');
+    const [taken] = await q.poll(20, 'owner');
+    expect(taken?.id).toBe(offered!.id);
+    now += 300; // the owner's heartbeat lapses; the bystander's polls continue
+    await q.poll(10, 'bystander');
+    await expect(pending).resolves.toEqual({ kind: 'unreachable', reason: 'went-away' });
+  });
+
   it('reports reachability from polls alone, so an idle machine still counts as present', async () => {
     let now = 1_000;
     const q = new HostReachQueue({ reachTimeoutMs: 100, now: () => now });

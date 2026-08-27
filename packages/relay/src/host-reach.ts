@@ -175,7 +175,9 @@ export class HostReachQueue {
           resolve([]);
         }, timeoutMs),
       };
-      waiter.timer.unref?.();
+      // NOT unref'd, unlike the grace/sweep timers: this one is the deadline of
+      // an in-flight HTTP request, and an unref'd timer does not fire on an
+      // otherwise-idle loop — the long poll would then never answer.
       this.waiters.add(waiter);
     });
   }
@@ -341,9 +343,16 @@ export class HostReachQueue {
       }
       return;
     }
-    if (this.reachable()) return;
+    const now = this.now();
     for (const [id, pending] of this.map) {
       if (!pending.delivered) continue;
+      // Ask whether THIS action's owner is still alive, not whether anyone is.
+      // A global "someone polled recently" check hangs the box whenever another
+      // machine keeps polling: the owner is gone, the survivor already declined
+      // the work (or does not hold the box), and nothing settles it.
+      const owner = pending.deliveredTo;
+      const seenAt = owner === undefined ? this.lastPollAtMs : (this.pollerSeen.get(owner) ?? null);
+      if (seenAt !== null && now - seenAt <= this.reachTimeoutMs) continue;
       this.map.delete(id);
       pending.settle({ kind: 'unreachable', reason: 'went-away' });
     }
