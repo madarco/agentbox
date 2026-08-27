@@ -1,12 +1,13 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadEffectiveConfig } from '../src/load.js';
 import { GLOBAL_CONFIG_FILE, projectConfigFile } from '../src/paths.js';
 import { setConfigValue, unsetConfigValue } from '../src/write.js';
 import { parse as parseYaml } from 'yaml';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 let tmpCwd: string;
 
@@ -18,7 +19,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tmpCwd, { recursive: true, force: true });
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 
 describe('set/unset roundtrip', () => {
@@ -51,7 +52,9 @@ describe('set/unset roundtrip', () => {
     expect(yaml['box']).toEqual({ vnc: false });
 
     await unsetConfigValue('global', 'box.vnc', tmpCwd);
-    yaml = (parseYaml(await readFile(GLOBAL_CONFIG_FILE, 'utf8')) as Record<string, unknown> | null) ?? {};
+    yaml =
+      (parseYaml(await readFile(GLOBAL_CONFIG_FILE, 'utf8')) as Record<string, unknown> | null) ??
+      {};
     expect(yaml).not.toHaveProperty('box');
   });
 
@@ -61,9 +64,7 @@ describe('set/unset roundtrip', () => {
   });
 
   it('set rejects unknown keys', async () => {
-    await expect(
-      setConfigValue('global', 'foo.bar', 'x', tmpCwd, { raw: true }),
-    ).rejects.toThrow();
+    await expect(setConfigValue('global', 'foo.bar', 'x', tmpCwd, { raw: true })).rejects.toThrow();
   });
 
   it('set rejects type-mismatched strings', async () => {
@@ -87,9 +88,10 @@ describe('set/unset roundtrip', () => {
 
     await unsetConfigValue('project', 'integrations.notion.enabled', tmpCwd);
     const after =
-      (parseYaml(await readFile(projectConfigFile(tmpCwd), 'utf8')) as
-        | Record<string, unknown>
-        | null) ?? {};
+      (parseYaml(await readFile(projectConfigFile(tmpCwd), 'utf8')) as Record<
+        string,
+        unknown
+      > | null) ?? {};
     // Both the deepest leaf AND the empty `notion` / `integrations` parents
     // must be pruned so the YAML stays tidy.
     expect(after).not.toHaveProperty('integrations');

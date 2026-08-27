@@ -3,6 +3,7 @@ import { readFile, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 // Redirect HOME before importing anything that resolves ~/.agentbox (apps/cli
 // tests share the real HOME otherwise — see project memory). `defaultBoxSshDir`
@@ -16,7 +17,7 @@ const { CustodyClient } = await import('../src/control-plane/custody-client.js')
 type HubApiBox = import('../src/control-plane/hub-api-client.js').HubApiBox;
 
 afterEach(async () => {
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 afterAll(async () => {
   await rm(TEST_HOME, { recursive: true, force: true });

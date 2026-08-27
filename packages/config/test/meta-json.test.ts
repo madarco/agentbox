@@ -1,10 +1,11 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hashProjectPath, projectMetaFile } from '../src/paths.js';
 import { listProjectsConfigured, setConfigValue, unsetConfigValue } from '../src/write.js';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 let tmpCwd: string;
 
@@ -16,7 +17,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tmpCwd, { recursive: true, force: true });
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 
 interface Meta {

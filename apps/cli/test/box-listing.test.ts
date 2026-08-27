@@ -1,8 +1,9 @@
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 // Redirect HOME before importing anything that resolves ~/.agentbox — the box
 // listing cache lives there and apps/cli tests share the real home otherwise.
@@ -40,7 +41,7 @@ beforeEach(() => {
   state.target = null; // default: unresolvable → the cache/offline path
 });
 afterEach(async () => {
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 afterAll(async () => {
   await rm(TEST_HOME, { recursive: true, force: true });

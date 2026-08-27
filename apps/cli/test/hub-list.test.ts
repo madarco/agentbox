@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 // Redirect HOME before importing anything that resolves ~/.agentbox — the hub
 // listing cache lives there and apps/cli tests share the real home otherwise.
@@ -12,7 +13,7 @@ process.env['HOME'] = TEST_HOME;
 const { cacheAge, hubBoxesCachePath } = await import('../src/control-plane/hub-list.js');
 
 afterEach(async () => {
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 afterAll(async () => {
   await rm(TEST_HOME, { recursive: true, force: true });

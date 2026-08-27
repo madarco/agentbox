@@ -1,8 +1,9 @@
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 // Isolate HOME to a throwaway dir BEFORE @agentbox/config is ever loaded.
 // `@agentbox/config` captures `STATE_DIR = join(homedir(), '.agentbox')` at
@@ -45,7 +46,7 @@ afterEach(async () => {
   // written under TEST_HOME/projects/ don't leak across cases. HOME is
   // redirected to a throwaway dir at module load (see top of file), so this
   // never touches the developer's real `~/.agentbox`.
-  await rm(join(homedir(), '.agentbox'), { recursive: true, force: true });
+  await resetTempAgentboxHome();
 });
 
 afterAll(async () => {
@@ -96,11 +97,7 @@ describe('config get on a nested 3-level key', () => {
 
   it('--json carries the value and source', async () => {
     await setProjectNotionEnabled();
-    const { stdout } = await runConfigGet([
-      'get',
-      'integrations.notion.enabled',
-      '--json',
-    ]);
+    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled', '--json']);
     const parsed = JSON.parse(stdout) as { key: string; value: unknown; source: string };
     expect(parsed.key).toBe('integrations.notion.enabled');
     expect(parsed.value).toBe(true);
@@ -109,11 +106,7 @@ describe('config get on a nested 3-level key', () => {
 
   it('--all walks every layer (no silent <unset> for the project layer)', async () => {
     await setProjectNotionEnabled();
-    const { stdout } = await runConfigGet([
-      'get',
-      'integrations.notion.enabled',
-      '--all',
-    ]);
+    const { stdout } = await runConfigGet(['get', 'integrations.notion.enabled', '--all']);
     expect(stdout).toMatch(/effective: true /);
     expect(stdout).toMatch(/project:\s+true /);
     expect(stdout).toMatch(/default:\s+false/);
