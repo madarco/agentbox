@@ -525,6 +525,9 @@ describe('relay /rpc gh.pr.* flow', () => {
   let prevPrompt: string | undefined;
   let prevForce: string | undefined;
   let prevCheckout: string | undefined;
+  let prevAuthedHost: string | undefined;
+  let prevSshMap: string | undefined;
+  let prevSshFail: string | undefined;
 
   beforeEach(async () => {
     const { mkdtemp, writeFile, chmod } = await import('node:fs/promises');
@@ -532,12 +535,23 @@ describe('relay /rpc gh.pr.* flow', () => {
     const { join } = await import('node:path');
     stubDir = await mkdtemp(join(tmpdir(), 'gh-stub-'));
     stubLog = join(stubDir, 'invocations.log');
+    // Logs the env the relay handed us, not just argv: GH_HOST is the whole
+    // point of the enterprise-host cases. STUB_AUTHED_HOST makes the stub "logged
+    // into exactly one host" (unset = every host authed, `none` = nothing authed).
     const script = `#!/usr/bin/env bash
-echo "$@" >> ${JSON.stringify(stubLog)}
+echo "GH_HOST=\${GH_HOST-}|$*" >> ${JSON.stringify(stubLog)}
 case "$1" in
   --version) echo "gh stub 0.0.0"; exit 0 ;;
   auth)
-    if [ "$2" = "status" ]; then exit 0; fi ;;
+    if [ "$2" = "status" ]; then
+      case "\${STUB_AUTHED_HOST-}" in
+        "") exit 0 ;;
+        none) exit 1 ;;
+        *)
+          if [ "$3" = "--hostname" ] && [ "$4" != "\${STUB_AUTHED_HOST}" ]; then exit 1; fi
+          exit 0 ;;
+      esac
+    fi ;;
   pr)
     shift
     echo "stub: gh pr $*"
@@ -549,6 +563,24 @@ exit 0
     const stubPath = join(stubDir, 'gh');
     await writeFile(stubPath, script, 'utf8');
     await chmod(stubPath, 0o755);
+    // `ssh -G` stub: the relay expands a remote's host through it so an
+    // ~/.ssh/config alias never becomes a bogus GH_HOST. STUB_SSH_MAP is
+    // `alias=real;alias=real`; anything unmapped resolves to itself.
+    const sshScript = `#!/usr/bin/env bash
+if [ -n "\${STUB_SSH_FAIL-}" ]; then exit 1; fi
+dest="$2"
+mapped="$dest"
+IFS=';' read -ra entries <<< "\${STUB_SSH_MAP-}"
+for e in "\${entries[@]}"; do
+  if [ "\${e%%=*}" = "$dest" ]; then mapped="\${e#*=}"; fi
+done
+echo "hostname $mapped"
+echo "user git"
+exit 0
+`;
+    const sshPath = join(stubDir, 'ssh');
+    await writeFile(sshPath, sshScript, 'utf8');
+    await chmod(sshPath, 0o755);
     prevPath = process.env.PATH;
     process.env.PATH = `${stubDir}:${prevPath ?? ''}`;
     prevPrompt = process.env.AGENTBOX_PROMPT;
@@ -557,6 +589,12 @@ exit 0
     delete process.env.AGENTBOX_PROMPT;
     delete process.env.AGENTBOX_GH_FORCE;
     delete process.env.AGENTBOX_GH_PR_CHECKOUT;
+    prevAuthedHost = process.env.STUB_AUTHED_HOST;
+    prevSshMap = process.env.STUB_SSH_MAP;
+    prevSshFail = process.env.STUB_SSH_FAIL;
+    delete process.env.STUB_AUTHED_HOST;
+    delete process.env.STUB_SSH_MAP;
+    delete process.env.STUB_SSH_FAIL;
     const gh = await import('../src/gh.js');
     gh._resetGhReadyCacheForTests();
     handle = await startRelayServer({ port: 0, host: '127.0.0.1' });
@@ -574,6 +612,12 @@ exit 0
     else process.env.AGENTBOX_GH_FORCE = prevForce;
     if (prevCheckout === undefined) delete process.env.AGENTBOX_GH_PR_CHECKOUT;
     else process.env.AGENTBOX_GH_PR_CHECKOUT = prevCheckout;
+    if (prevAuthedHost === undefined) delete process.env.STUB_AUTHED_HOST;
+    else process.env.STUB_AUTHED_HOST = prevAuthedHost;
+    if (prevSshMap === undefined) delete process.env.STUB_SSH_MAP;
+    else process.env.STUB_SSH_MAP = prevSshMap;
+    if (prevSshFail === undefined) delete process.env.STUB_SSH_FAIL;
+    else process.env.STUB_SSH_FAIL = prevSshFail;
     const gh = await import('../src/gh.js');
     gh._resetGhReadyCacheForTests();
   });
@@ -805,5 +849,123 @@ exit 0
     const body = r.body as { exitCode: number; stderr: string };
     expect(body.exitCode).toBe(127);
     expect(body.stderr).toMatch(/gh not installed/);
+  });
+
+  /**
+   * Which GitHub host the host's `gh` gets pointed at, derived from the box's
+   * REGISTERED origin. github.com must keep behaving exactly as before (no
+   * GH_HOST, no --hostname, no `ssh -G`); a GitHub Enterprise Server origin
+   * must set GH_HOST and scope the auth probe; and an ~/.ssh/config alias must
+   * be expanded rather than taken at face value.
+   */
+  async function readStubLog(): Promise<string[]> {
+    const { readFile } = await import('node:fs/promises');
+    const raw = await readFile(stubLog, 'utf8').catch(() => '');
+    return raw.split('\n').filter((l) => l.length > 0);
+  }
+
+  /** The `GH_HOST=…|argv` line for the gh invocation whose argv starts with `argv0`. */
+  function lineFor(lines: string[], argv0: string): string {
+    return lines.find((l) => l.split('|')[1]?.startsWith(argv0)) ?? '';
+  }
+
+  async function viewPr(): Promise<{ status: number; body: unknown }> {
+    return fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'gh.pr.view', params: { path: '/workspace', args: ['123'] } },
+    });
+  }
+
+  it('leaves gh on its default host for a github.com origin', async () => {
+    await registerWithWorktree({ originUrl: 'git@github.com:o/r.git' });
+    expect((await viewPr()).status).toBe(200);
+    const lines = await readStubLog();
+    expect(lineFor(lines, 'pr')).toMatch(/^GH_HOST=\|pr/);
+    // Bare probe, exactly as before this knew about enterprise hosts.
+    expect(lineFor(lines, 'auth')).toBe('GH_HOST=|auth status');
+  });
+
+  it('points gh at the enterprise host from an https origin', async () => {
+    process.env.STUB_AUTHED_HOST = 'ghe.corp.example';
+    await registerWithWorktree({ originUrl: 'https://ghe.corp.example/team/svc.git' });
+    expect((await viewPr()).status).toBe(200);
+    const lines = await readStubLog();
+    expect(lineFor(lines, 'pr')).toMatch(/^GH_HOST=ghe\.corp\.example\|pr/);
+    expect(lineFor(lines, 'auth')).toContain('auth status --hostname ghe.corp.example');
+  });
+
+  it('expands an ssh alias that resolves to github.com instead of inventing a host', async () => {
+    process.env.STUB_SSH_MAP = 'github.com-work=github.com';
+    process.env.STUB_AUTHED_HOST = 'github.com';
+    await registerWithWorktree({ originUrl: 'git@github.com-work:o/r.git' });
+    expect((await viewPr()).status).toBe(200);
+    const lines = await readStubLog();
+    // GH_HOST=github.com-work would have hard-failed gh ("none of the git
+    // remotes correspond to the GH_HOST environment variable").
+    expect(lineFor(lines, 'pr')).toMatch(/^GH_HOST=\|pr/);
+    expect(lineFor(lines, 'auth')).toBe('GH_HOST=|auth status');
+    // The alias is resolved, not probed: gh is never asked about a host that
+    // only exists in ~/.ssh/config.
+    expect(lines.some((l) => l.includes('github.com-work'))).toBe(false);
+  });
+
+  it('falls back to the default host when ssh cannot expand the remote', async () => {
+    process.env.STUB_SSH_FAIL = '1';
+    process.env.STUB_AUTHED_HOST = 'github.com';
+    await registerWithWorktree({ originUrl: 'git@ghe.corp.example:team/svc.git' });
+    expect((await viewPr()).status).toBe(200);
+    const lines = await readStubLog();
+    // Unverifiable host: prefer the behavior that worked before over a GH_HOST
+    // that might be an alias gh itself knows how to resolve.
+    expect(lineFor(lines, 'pr')).toMatch(/^GH_HOST=\|pr/);
+    expect(lines.some((l) => l.includes('auth status --hostname ghe.corp.example'))).toBe(true);
+    expect(lines.some((l) => l === 'GH_HOST=|auth status')).toBe(true);
+  });
+
+  it('expands an ssh alias that resolves to an enterprise host', async () => {
+    process.env.STUB_SSH_MAP = 'ghe-work=ghe.corp.example';
+    process.env.STUB_AUTHED_HOST = 'ghe.corp.example';
+    await registerWithWorktree({ originUrl: 'git@ghe-work:team/svc.git' });
+    expect((await viewPr()).status).toBe(200);
+    const lines = await readStubLog();
+    expect(lineFor(lines, 'pr')).toMatch(/^GH_HOST=ghe\.corp\.example\|pr/);
+  });
+
+  it('names the enterprise host when gh is not authenticated for it', async () => {
+    process.env.STUB_AUTHED_HOST = 'github.com';
+    await registerWithWorktree({ originUrl: 'https://ghe.corp.example/team/svc.git' });
+    const r = await viewPr();
+    expect(r.status).toBe(500);
+    const body = r.body as { exitCode: number; stderr: string };
+    expect(body.exitCode).toBe(4);
+    expect(body.stderr).toContain('ghe.corp.example');
+    expect(body.stderr).toContain('gh auth login --hostname ghe.corp.example');
+  });
+
+  it('sets GH_HOST for gh.api without ever adding a --repo flag', async () => {
+    process.env.STUB_AUTHED_HOST = 'ghe.corp.example';
+    await registerWithWorktree({ originUrl: 'https://ghe.corp.example/team/svc.git' });
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.api',
+        params: { path: '/workspace', endpoint: 'repos/team/svc/pulls/1/comments' },
+      },
+    });
+    expect(r.status).toBe(200);
+    const apiLine = lineFor(await readStubLog(), 'api');
+    expect(apiLine).toMatch(/^GH_HOST=ghe\.corp\.example\|api /);
+    expect(apiLine).not.toMatch(/--repo|-R /);
+  });
+
+  it('probes gh once per host across a burst of calls', async () => {
+    process.env.STUB_AUTHED_HOST = 'ghe.corp.example';
+    await registerWithWorktree({ originUrl: 'https://ghe.corp.example/team/svc.git' });
+    await viewPr();
+    await viewPr();
+    const lines = await readStubLog();
+    expect(lines.filter((l) => l.includes('|auth status'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('|--version'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('|pr view'))).toHaveLength(2);
   });
 });

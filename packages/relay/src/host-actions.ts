@@ -44,7 +44,6 @@ import {
   readState,
 } from '@agentbox/sandbox-core';
 import {
-  assertGhReady,
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
@@ -61,6 +60,7 @@ import {
   refuseGhApiCall,
   refuseMergeBypass,
   ghRunContext,
+  resolveGhTarget,
   runHostGh,
   type GhApiRpcParams,
   type GhPrRpcParams,
@@ -110,15 +110,17 @@ export interface CloudActionExecutorDeps {
    */
   autoApproveSafeHostActions?: boolean;
   /**
-   * The box's REGISTERED origin URL (`BoxRegistration.originUrl`), used only
-   * when this host has no working checkout for the box and `runGitRpc` has to
-   * push from a scratch repo (the control-box case — the create worker's clone
-   * is a temp dir it deletes).
+   * The box's REGISTERED origin URL (`BoxRegistration.originUrl`). Two uses:
+   * pushing from a scratch repo when this host has no working checkout for the
+   * box (the control-box case — the create worker's clone is a temp dir it
+   * deletes), and picking which GitHub host the `gh` proxy points at
+   * (`resolveGhTarget`, for GitHub Enterprise Server repos).
    *
    * It must come from the registration, never from the box: the box could
-   * rewrite its own `origin`, and pushing to an attacker-chosen URL with the
-   * host's credential helper attached would hand over the token. Same invariant
-   * the lease path states in `lease.ts`.
+   * rewrite its own `origin`, and either pushing to an attacker-chosen URL with
+   * the host's credential helper attached or aiming the host's authenticated
+   * `gh` at an attacker-chosen instance would hand over the token. Same
+   * invariant the lease path states in `lease.ts`.
    */
   originUrl?: string;
   /** Best-effort logger. */
@@ -420,8 +422,8 @@ async function runGhPrRpc(
     ? params.args.filter((a): a is string => typeof a === 'string')
     : [];
 
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(deps.originUrl);
+  if (ghTarget.error) return ghTarget.error;
 
   const lookup = await lookupCloudBox(deps.boxId);
 
@@ -552,7 +554,7 @@ async function runGhPrRpc(
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   const prRun = ghRunContext(lookup.workspacePath, deps.originUrl, finalArgs);
-  return runHostGh(['pr', op, ...prRun.args], prRun.cwd);
+  return runHostGh(['pr', op, ...prRun.args], prRun.cwd, { host: ghTarget.host });
 }
 
 /**
@@ -614,8 +616,8 @@ async function runGhRunRpc(
   const args = Array.isArray(params.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
     : [];
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(deps.originUrl);
+  if (ghTarget.error) return ghTarget.error;
   const lookup = await lookupCloudBox(deps.boxId);
   if (!GH_RUN_READ_ONLY_OPS.has(op)) {
     if (deps.autoApproveSafeHostActions !== false) {
@@ -636,7 +638,7 @@ async function runGhRunRpc(
     }
   }
   const runRun = ghRunContext(lookup.workspacePath, deps.originUrl, args);
-  return runHostGh(['run', op, ...runRun.args], runRun.cwd);
+  return runHostGh(['run', op, ...runRun.args], runRun.cwd, { host: ghTarget.host });
 }
 
 /**
@@ -655,11 +657,13 @@ async function runGhApiRpc(
     : [];
   const callRefusal = refuseGhApiCall(endpoint, args);
   if (callRefusal) return callRefusal;
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(deps.originUrl);
+  if (ghTarget.error) return ghTarget.error;
   const lookup = await lookupCloudBox(deps.boxId);
+  // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
+  // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
-  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd);
+  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
 }
 
 /**

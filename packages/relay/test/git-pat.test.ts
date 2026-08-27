@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { repoSlugFromRemote, toAuthedHttpsUrl, toHttpsUrl } from '../src/git-pat.js';
+import {
+  ghHostFromRemote,
+  parseGitRemote,
+  repoSlugFromRemote,
+  toAuthedHttpsUrl,
+  toHttpsUrl,
+} from '../src/git-pat.js';
 
 describe('toAuthedHttpsUrl', () => {
   const TOKEN = 'github_pat_ABC123';
@@ -85,6 +91,55 @@ describe('repoSlugFromRemote', () => {
   });
 
   it('prefixes the host for enterprise remotes', () => {
-    expect(repoSlugFromRemote('git@ghe.corp.example:team/svc.git')).toBe('ghe.corp.example/team/svc');
+    expect(repoSlugFromRemote('git@ghe.corp.example:team/svc.git')).toBe(
+      'ghe.corp.example/team/svc',
+    );
+  });
+});
+
+describe('parseGitRemote', () => {
+  it('reports the URL scheme, and null for the scp-like form', () => {
+    expect(parseGitRemote('https://github.com/owner/repo.git').scheme).toBe('https');
+    expect(parseGitRemote('SSH://git@ghe.corp.example/team/svc').scheme).toBe('ssh');
+    expect(parseGitRemote('git@github.com:owner/repo.git').scheme).toBeNull();
+  });
+});
+
+describe('ghHostFromRemote', () => {
+  it('returns null for github.com — gh needs no hint there', () => {
+    expect(ghHostFromRemote('https://github.com/owner/repo.git')).toBeNull();
+    expect(ghHostFromRemote('git@github.com:owner/repo.git')).toBeNull();
+    expect(ghHostFromRemote('https://GitHub.com/owner/repo')).toBeNull();
+  });
+
+  it('returns null when there is no usable remote', () => {
+    expect(ghHostFromRemote(undefined)).toBeNull();
+    expect(ghHostFromRemote('')).toBeNull();
+    expect(ghHostFromRemote('   ')).toBeNull();
+    expect(ghHostFromRemote('/srv/mirrors/r.git')).toBeNull();
+    expect(ghHostFromRemote('not a url')).toBeNull();
+  });
+
+  it('reports an enterprise host, lowercased, with creds stripped', () => {
+    expect(ghHostFromRemote('https://user:pw@GHE.Corp.Example/team/svc')).toEqual({
+      host: 'ghe.corp.example',
+      aliasable: false,
+    });
+  });
+
+  it('marks ssh-shaped remotes aliasable — their host may be an ~/.ssh/config alias', () => {
+    expect(ghHostFromRemote('git@ghe.corp.example:team/svc.git')).toEqual({
+      host: 'ghe.corp.example',
+      aliasable: true,
+    });
+    expect(ghHostFromRemote('ssh://git@ghe-work/team/svc.git')).toEqual({
+      host: 'ghe-work',
+      aliasable: true,
+    });
+    // An https URL has no aliasing layer, so its host is authoritative.
+    expect(ghHostFromRemote('http://ghe.corp.example/team/svc.git')).toEqual({
+      host: 'ghe.corp.example',
+      aliasable: false,
+    });
   });
 });

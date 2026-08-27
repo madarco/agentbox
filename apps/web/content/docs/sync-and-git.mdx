@@ -223,6 +223,8 @@ Notes: **token** mode can't sign commits (a token authenticates, it doesn't sign
 
 The relay also proxies the host `gh` CLI: `agentbox git pr <op> <box>` from the host, or — inside the box — plain `gh pr <op>`, which the box's `gh` shim routes through the relay the same way (the explicit form is `agentbox-ctl git pr <op>`). `gh` runs in the host main repo and infers the repo from `git remote -v`. This needs `gh` installed and `gh auth login` on the host.
 
+**GitHub Enterprise Server**: the relay reads the box's registered `origin` and points `gh` at that host (`GH_HOST`), so `gh pr`, `gh run` and `gh api` work against a self-hosted GitHub. Run `gh auth login --hostname ghe.your-company.com` on the host once — `GH_ENTERPRISE_TOKEN` works too — and the error names the host if you haven't. github.com repos are unaffected. An `~/.ssh/config` alias (`git@github.com-work:owner/repo`) is expanded the way ssh itself would, so it resolves to the real host rather than becoming a bogus one.
+
 `create` is the default op, so `agentbox git pr <box>` opens a PR for the box's branch. The full op set (`view`, `list`, `diff`, `merge`, `comment`, …) lives in [CLI commands](/docs/cli).
 
 ```bash

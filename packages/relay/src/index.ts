@@ -64,7 +64,15 @@ export {
   type CloneRepoRunGit,
 } from './create-worker.js';
 export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
-export { toAuthedHttpsUrl, toHttpsUrl, parseGitRemote, repoSlugFromRemote } from './git-pat.js';
+export {
+  ghHostFromRemote,
+  parseGitRemote,
+  repoSlugFromRemote,
+  toAuthedHttpsUrl,
+  toHttpsUrl,
+  type GhRemoteHost,
+  type ParsedGitRemote,
+} from './git-pat.js';
 export {
   handleRelayRequest,
   type ControlPlaneDeps,
@@ -179,12 +187,15 @@ export {
   refuseCheckoutByDefault,
   refuseGhApiCall,
   refuseMergeBypass,
+  resolveGhTarget,
   runHostGh,
   type GhApiRpcParams,
   type GhPrOp,
   type GhPrRpcParams,
   type GhRunOp,
   type GhRunRpcParams,
+  type GhTarget,
+  type RunHostGhOptions,
 } from './gh.js';
 export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './status-store.js';
 export {

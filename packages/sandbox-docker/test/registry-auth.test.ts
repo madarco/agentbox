@@ -84,6 +84,21 @@ describe('loginToGhcrWithGh', () => {
       return { exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     };
 
+  it('asks gh for the github.com token specifically, never the default host', async () => {
+    // A GHES-configured gh returns an ENTERPRISE token from a bare `gh auth
+    // token` — a credential GHCR has no business receiving.
+    let ghArgs: string[] = [];
+    const res = await loginToGhcrWithGh({
+      run: async (file, args) => {
+        if (file === 'gh') ghArgs = args;
+        return { exitCode: 0, stdout: file === 'gh' ? 'gho_tok' : '', stderr: '' };
+      },
+      fetchScopes: async () => ['read:packages'],
+    });
+    expect(res.ok).toBe(true);
+    expect(ghArgs).toEqual(['auth', 'token', '--hostname', 'github.com']);
+  });
+
   it('logs in when the gh token carries read:packages', async () => {
     const res = await loginToGhcrWithGh({
       run: runner({

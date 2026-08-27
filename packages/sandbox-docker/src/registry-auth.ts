@@ -151,10 +151,18 @@ export async function loginToGhcrWithGh(
 ): Promise<GhcrLoginResult> {
   const run = opts.run ?? realRunner;
 
-  const tok = await run('gh', ['auth', 'token']);
+  // Pinned to github.com: GHCR only accepts github.com tokens, while a bare
+  // `gh auth token` returns the DEFAULT host's token — which for someone whose
+  // gh is set up against GitHub Enterprise Server is an enterprise credential
+  // we would then hand to ghcr.io.
+  const tok = await run('gh', ['auth', 'token', '--hostname', 'github.com']);
   const token = tok.stdout.trim();
   if (tok.exitCode !== 0 || token.length === 0) {
-    return { ok: false, reason: 'no `gh` token on this machine (run `gh auth login`)' };
+    return {
+      ok: false,
+      reason:
+        'no github.com `gh` token on this machine (run `gh auth login --hostname github.com`)',
+    };
   }
 
   const scopes = await (opts.fetchScopes ?? fetchTokenScopes)(token);

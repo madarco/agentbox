@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { parseGitRemote } from '@agentbox/relay';
 
 /**
  * Find a GitHub token on THIS machine to hand to a control box (`hub.gitAuth=gh`).
@@ -19,47 +20,69 @@ import { execa } from 'execa';
  * environment. A developer exporting one for a shell session would otherwise
  * have it silently promoted to a long-lived server credential without ever being
  * shown what was taken.
+ *
+ * Both sources are asked about the host the project's `origin` actually points
+ * at, so a GitHub Enterprise Server repo gets its enterprise credential rather
+ * than whichever host `gh` happens to default to.
  */
 export interface HostGitToken {
   token: string;
   /** Where it came from — shown to the user before it leaves the machine. */
   source: 'gh' | 'git-credential';
+  /** The GitHub host it authenticates against (github.com, or a GHES instance). */
+  host: string;
   /** GitHub login the token resolves to, when we can cheaply determine it. */
   login?: string;
 }
 
-async function fromGhCli(): Promise<HostGitToken | null> {
+async function fromGhCli(host: string): Promise<HostGitToken | null> {
   try {
-    const r = await execa('gh', ['auth', 'token'], { reject: false, timeout: 15_000 });
+    const r = await execa('gh', ['auth', 'token', '--hostname', host], {
+      reject: false,
+      timeout: 15_000,
+    });
     const token = (r.stdout ?? '').trim();
     if (r.exitCode !== 0 || token.length === 0) return null;
-    return { token, source: 'gh' };
+    return { token, source: 'gh', host };
   } catch {
     return null;
   }
 }
 
-async function fromGitCredentialHelper(cwd: string): Promise<HostGitToken | null> {
+async function fromGitCredentialHelper(cwd: string, host: string): Promise<HostGitToken | null> {
   try {
     const r = await execa('git', ['credential', 'fill'], {
       cwd,
-      input: 'protocol=https\nhost=github.com\n\n',
+      input: `protocol=https\nhost=${host}\n\n`,
       reject: false,
       timeout: 15_000,
     });
     if (r.exitCode !== 0) return null;
     const password = /^password=(.*)$/m.exec(r.stdout ?? '')?.[1]?.trim() ?? '';
     if (password.length === 0) return null;
-    return { token: password, source: 'git-credential' };
+    return { token: password, source: 'git-credential', host };
   } catch {
     return null;
   }
 }
 
+/**
+ * REST base for a GitHub host: github.com and Enterprise Cloud tenancy hosts
+ * answer on `api.<host>`, self-hosted GHES on `<host>/api/v3`.
+ */
+export function githubApiBase(host: string): string {
+  const h = host.toLowerCase();
+  if (h === 'github.com' || h.endsWith('.ghe.com')) return `https://api.${h}`;
+  return `https://${h}/api/v3`;
+}
+
 /** Which GitHub account a token belongs to; undefined when it can't be checked. */
-export async function resolveTokenLogin(token: string): Promise<string | undefined> {
+export async function resolveTokenLogin(
+  token: string,
+  host = 'github.com',
+): Promise<string | undefined> {
   try {
-    const res = await fetch('https://api.github.com/user', {
+    const res = await fetch(`${githubApiBase(host)}/user`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/vnd.github+json',
@@ -75,9 +98,28 @@ export async function resolveTokenLogin(token: string): Promise<string | undefin
   }
 }
 
-/** The first token this machine can offer, or null when it has none. */
+/**
+ * The GitHub host a checkout's `origin` points at — github.com unless the repo
+ * lives on a GitHub Enterprise Server instance. Falls back to github.com when
+ * there is no origin to read (a fresh dir, a non-git cwd).
+ */
+export async function originGitHost(cwd: string): Promise<string> {
+  try {
+    const r = await execa('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
+      reject: false,
+      timeout: 15_000,
+    });
+    if (r.exitCode !== 0) return 'github.com';
+    return parseGitRemote((r.stdout ?? '').trim()).host.toLowerCase();
+  } catch {
+    return 'github.com';
+  }
+}
+
+/** The first token this machine can offer for `cwd`'s origin host, or null. */
 export async function findHostGitToken(cwd: string = process.cwd()): Promise<HostGitToken | null> {
-  return (await fromGhCli()) ?? (await fromGitCredentialHelper(cwd));
+  const host = await originGitHost(cwd);
+  return (await fromGhCli(host)) ?? (await fromGitCredentialHelper(cwd, host));
 }
 
 /**
@@ -85,9 +127,9 @@ export async function findHostGitToken(cwd: string = process.cwd()): Promise<Hos
  * header. Fine-grained PATs and App tokens report none, which is not an error —
  * it just means there is nothing to warn about.
  */
-export async function resolveTokenScopes(token: string): Promise<string[]> {
+export async function resolveTokenScopes(token: string, host = 'github.com'): Promise<string[]> {
   try {
-    const res = await fetch('https://api.github.com/user', {
+    const res = await fetch(`${githubApiBase(host)}/user`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/vnd.github+json',

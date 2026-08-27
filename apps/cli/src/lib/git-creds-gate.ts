@@ -122,14 +122,16 @@ async function fillHttpsToken(
     const password = /^password=(.*)$/m.exec(filled)?.[1] ?? '';
     if (password) return { username: username || 'x-access-token', password };
   }
-  if (host.toLowerCase() === 'github.com') {
-    try {
-      const r = await execa('gh', ['auth', 'token'], { reject: false });
-      const token = (r.stdout ?? '').trim();
-      if (r.exitCode === 0 && token) return { username: 'x-access-token', password: token };
-    } catch {
-      /* gh not installed / not logged in */
-    }
+  // `--hostname` so a GitHub Enterprise Server remote gets ITS token rather
+  // than whichever host gh defaults to (and nothing at all if it has none).
+  try {
+    const r = await execa('gh', ['auth', 'token', '--hostname', host.toLowerCase()], {
+      reject: false,
+    });
+    const token = (r.stdout ?? '').trim();
+    if (r.exitCode === 0 && token) return { username: 'x-access-token', password: token };
+  } catch {
+    /* gh not installed / not logged in */
   }
   return null;
 }

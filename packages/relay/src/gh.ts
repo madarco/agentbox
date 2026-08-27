@@ -16,7 +16,8 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { repoSlugFromRemote } from './git-pat.js';
+import { resolveSshConfigTarget } from '@agentbox/sandbox-core';
+import { ghHostFromRemote, repoSlugFromRemote } from './git-pat.js';
 import type { GitRpcResult } from './types.js';
 
 /** Whitelisted subset of `gh pr` ops exposed via RPC. Keep in sync with the ctl CLI. */
@@ -311,38 +312,151 @@ interface GhReadyCache {
   result: GitRpcResult | null;
   expiresAt: number;
 }
-let ghReadyCache: GhReadyCache | undefined;
+/** Auth verdicts, keyed by target host (`''` = gh's own default host). */
+const ghReadyCache = new Map<string, GhReadyCache>();
+/** `gh --version` is host-independent, so it caches on its own. */
+let ghInstalledCache: GhReadyCache | undefined;
+/** `ssh -G` expansions, keyed by the raw host read off the remote. */
+const sshHostCache = new Map<string, { host: string | null; expiresAt: number }>();
+
+/** Where this call's `gh` must be pointed, plus the readiness verdict. */
+export interface GhTarget {
+  /** `GH_HOST` for every gh spawn in this call; null leaves gh on its default. */
+  host: string | null;
+  /** Ready-to-send envelope when gh can't serve this host; null when good to go. */
+  error: GitRpcResult | null;
+}
 
 /**
- * Returns `null` when the host has a usable, authenticated `gh`. Otherwise
- * returns a ready-to-send `{ exitCode, stdout, stderr }` envelope describing
- * what's missing. Cached for ~60s so a burst of PR ops doesn't reprobe gh on
+ * Decide which GitHub host a box's `gh` ops belong to, and whether this machine
+ * can serve them. The host comes from the box's REGISTERED origin — never from
+ * anything the box says (see `CloudActionExecutorDeps.originUrl`): it selects
+ * which instance the host's own authenticated `gh` is pointed at.
+ *
+ * A github.com origin takes exactly the path it always did — same single
+ * `gh auth status` probe, no `GH_HOST`, no extra subprocess.
+ *
+ * For any other host, `gh` needs `GH_HOST` (without it `gh api` talks to
+ * api.github.com whatever the remote says) and the readiness probe needs
+ * `--hostname` (a bare `gh auth status` exits non-zero when ANY configured host
+ * has a stale token, so one dead github.com entry would mask a perfectly good
+ * enterprise login). Before trusting the hostname we expand it through
+ * `ssh -G`, exactly as git and gh do, so an `~/.ssh/config` alias
+ * (`git@github.com-work:owner/repo`, the usual multi-account setup) resolves to
+ * the host that actually answers instead of becoming a bogus `GH_HOST`.
+ */
+export async function resolveGhTarget(originUrl: string | undefined): Promise<GhTarget> {
+  const derived = ghHostFromRemote(originUrl);
+  if (!derived) return { host: null, error: await assertGhReady(null) };
+
+  const expanded = derived.aliasable ? await expandSshHost(derived.host) : derived.host;
+  // An alias pointing at github.com was never enterprise — take the default path.
+  if (expanded === 'github.com') return { host: null, error: await assertGhReady(null) };
+
+  const host = expanded ?? derived.host;
+  const scoped = await assertGhReady(host);
+  if (!scoped) return { host, error: null };
+  // gh missing / broken says nothing about the host; reprobing would just repeat it.
+  if (scoped.exitCode !== 4) return { host: null, error: scoped };
+  if (expanded === null) {
+    // ssh couldn't expand the host, so we can't tell an unauthenticated
+    // enterprise host from an alias only gh knows how to resolve. Fall back to
+    // what this relay did before it knew about GH_HOST rather than break a
+    // setup that works today; keep the host-scoped message if gh is unusable
+    // either way, since it is the more specific of the two.
+    const generic = await assertGhReady(null);
+    return { host: null, error: generic ? scoped : null };
+  }
+  return { host: null, error: scoped };
+}
+
+/**
+ * Expand a remote's host through `ssh -G` the way ssh itself would. Returns
+ * null when ssh can't answer (not installed, unresolvable) — the caller then
+ * treats the hostname as unverified.
+ */
+async function expandSshHost(host: string): Promise<string | null> {
+  const now = Date.now();
+  const cached = sshHostCache.get(host);
+  if (cached && cached.expiresAt > now) return cached.host;
+  let resolved: string | null = null;
+  try {
+    const target = await resolveSshConfigTarget(host);
+    const value = target?.host.trim().toLowerCase() ?? '';
+    resolved = value.length > 0 ? value : null;
+  } catch {
+    resolved = null;
+  }
+  sshHostCache.set(host, { host: resolved, expiresAt: now + GH_READY_CACHE_TTL_MS });
+  return resolved;
+}
+
+/**
+ * Returns `null` when the host has a usable, authenticated `gh` for `host`
+ * (or for gh's default host when `host` is null/omitted). Otherwise returns a
+ * ready-to-send `{ exitCode, stdout, stderr }` envelope describing what's
+ * missing. Cached per host for ~60s so a burst of PR ops doesn't reprobe gh on
  * every call.
  *
  * - `gh` missing → exit 127 (matches Bash's "command not found").
  * - `gh` present but `gh auth status` non-zero → exit 4 (gh's own conventional
  *   "not logged in" exit code).
  *
- * We don't pass `--hostname github.com` to `auth status` — agents pointed at
- * a GitHub Enterprise host should also pass. Any authed host is good enough.
+ * With no host we don't pass `--hostname` — any authed host is good enough,
+ * which is what every github.com box has always relied on.
  */
-export async function assertGhReady(): Promise<GitRpcResult | null> {
+export async function assertGhReady(host?: string | null): Promise<GitRpcResult | null> {
+  const key = host ?? '';
   const now = Date.now();
-  if (ghReadyCache && ghReadyCache.expiresAt > now) {
-    return ghReadyCache.result;
-  }
-  const result = await probeGh();
-  ghReadyCache = { result, expiresAt: now + GH_READY_CACHE_TTL_MS };
+  const cached = ghReadyCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.result;
+  const result = await probeGh(host ?? null);
+  ghReadyCache.set(key, { result, expiresAt: now + GH_READY_CACHE_TTL_MS });
   return result;
 }
 
-/** Test-only: clear the readiness cache between cases. */
+/** Test-only: clear the readiness caches between cases. */
 export function _resetGhReadyCacheForTests(): void {
-  ghReadyCache = undefined;
+  ghReadyCache.clear();
+  ghInstalledCache = undefined;
+  sshHostCache.clear();
 }
 
-async function probeGh(): Promise<GitRpcResult | null> {
-  const version = await runHostGh(['--version'], process.cwd(), 10_000);
+async function probeGh(host: string | null): Promise<GitRpcResult | null> {
+  const installed = await probeGhInstalled();
+  if (installed) return installed;
+  // gh authenticates directly from a token in the environment and ignores any
+  // stored `gh auth login`. When a token is supplied that way with no stored
+  // login, `gh auth status` would falsely report "not logged in" even though
+  // every API call succeeds. Treat a present token as authenticated.
+  if (firstNonEmptyEnv(ghTokenEnvNames(host))) return null;
+  const auth = await runHostGh(
+    host ? ['auth', 'status', '--hostname', host] : ['auth', 'status'],
+    process.cwd(),
+    { timeoutMs: 15_000 },
+  );
+  if (auth.exitCode !== 0) {
+    return {
+      exitCode: 4,
+      stdout: '',
+      stderr: host
+        ? `gh not authenticated on host for ${host} (run \`gh auth login --hostname ${host}\`)\n`
+        : 'gh not authenticated on host (run `gh auth login`)\n',
+    };
+  }
+  return null;
+}
+
+async function probeGhInstalled(): Promise<GitRpcResult | null> {
+  const now = Date.now();
+  if (ghInstalledCache && ghInstalledCache.expiresAt > now) return ghInstalledCache.result;
+  const result = await probeGhVersion();
+  ghInstalledCache = { result, expiresAt: now + GH_READY_CACHE_TTL_MS };
+  return result;
+}
+
+async function probeGhVersion(): Promise<GitRpcResult | null> {
+  const version = await runHostGh(['--version'], process.cwd(), { timeoutMs: 10_000 });
   if (version.exitCode === 127 || /ENOENT/.test(version.stderr)) {
     return {
       exitCode: 127,
@@ -357,20 +471,27 @@ async function probeGh(): Promise<GitRpcResult | null> {
       stderr: `gh --version failed: ${version.stderr || version.stdout}`.trimEnd() + '\n',
     };
   }
-  // gh authenticates directly from GH_TOKEN/GITHUB_TOKEN in the environment and
-  // ignores any stored `gh auth login`. When a token is supplied that way with
-  // no stored login, `gh auth status` would falsely report "not logged in" even
-  // though every API call succeeds. Treat a present token as authenticated.
-  if ((process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '').length > 0) {
-    return null;
-  }
-  const auth = await runHostGh(['auth', 'status'], process.cwd(), 15_000);
-  if (auth.exitCode !== 0) {
-    return {
-      exitCode: 4,
-      stdout: '',
-      stderr: 'gh not authenticated on host (run `gh auth login`)\n',
-    };
+  return null;
+}
+
+/**
+ * The env vars gh reads a token from for `host`. gh uses GH_TOKEN /
+ * GITHUB_TOKEN for github.com and for Enterprise Cloud tenancy hosts
+ * (`*.ghe.com`), and GH_ENTERPRISE_TOKEN / GITHUB_ENTERPRISE_TOKEN everywhere
+ * else — so a GH_TOKEN in the environment says nothing about whether a call to
+ * a self-hosted GHES will authenticate.
+ */
+function ghTokenEnvNames(host: string | null): string[] {
+  if (host === null) return ['GH_TOKEN', 'GITHUB_TOKEN'];
+  const enterprise = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
+  return host.endsWith('.ghe.com') ? [...enterprise, 'GH_TOKEN', 'GITHUB_TOKEN'] : enterprise;
+}
+
+/** First env var with a real value — `GH_TOKEN=''` means unset, not "set to empty". */
+function firstNonEmptyEnv(names: readonly string[]): string | null {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.length > 0) return value;
   }
   return null;
 }
@@ -403,6 +524,12 @@ export function ghRunContext(
   }
 }
 
+export interface RunHostGhOptions {
+  /** `GH_HOST` for this spawn; null/omitted leaves gh on its default host. */
+  host?: string | null;
+  timeoutMs?: number;
+}
+
 /**
  * Spawn `gh` on the host with the given argv inside `cwd`. Returns the
  * standard `{ exitCode, stdout, stderr }` envelope. Self-contained
@@ -414,12 +541,15 @@ export function ghRunContext(
 export function runHostGh(
   args: string[],
   cwd: string,
-  timeoutMs: number = GH_RPC_TIMEOUT_MS,
+  opts: RunHostGhOptions = {},
 ): Promise<GitRpcResult> {
+  const timeoutMs = opts.timeoutMs ?? GH_RPC_TIMEOUT_MS;
   return new Promise<GitRpcResult>((resolve) => {
     const child = spawn('gh', args, {
       cwd,
-      env: process.env,
+      // GH_HOST is what points gh at a GitHub Enterprise Server instance; without
+      // it gh targets github.com no matter what the repo's remote says.
+      env: opts.host ? { ...process.env, GH_HOST: opts.host } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

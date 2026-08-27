@@ -24,7 +24,6 @@ import {
 } from '@agentbox/core';
 import { getConnector } from '@agentbox/integrations';
 import {
-  assertGhReady,
   checkoutGuards,
   GH_API_ENDPOINT_REFUSAL,
   GH_PR_READ_ONLY_OPS,
@@ -41,6 +40,7 @@ import {
   ghRunContext,
   refuseCheckoutByDefault,
   refuseMergeBypass,
+  resolveGhTarget,
   runHostGh,
   type GhApiRpcParams,
   type GhPrOp,
@@ -1911,8 +1911,8 @@ async function handleGhPrRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(reg.originUrl);
+  if (ghTarget.error) return ghTarget.error;
 
   const args = Array.isArray(params?.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
@@ -2000,7 +2000,7 @@ async function handleGhPrRpc(
   // Never let `gh` fall back to the host repo's checked-out branch.
   if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
   const prRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
-  return runHostGh(['pr', op, ...prRun.args], prRun.cwd);
+  return runHostGh(['pr', op, ...prRun.args], prRun.cwd, { host: ghTarget.host });
 }
 
 /**
@@ -2025,8 +2025,8 @@ async function handleGhRunRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(reg.originUrl);
+  if (ghTarget.error) return ghTarget.error;
 
   const args = Array.isArray(params?.args)
     ? params.args.filter((a): a is string => typeof a === 'string')
@@ -2060,7 +2060,7 @@ async function handleGhRunRpc(
     }
   }
   const runRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, args);
-  return runHostGh(['run', op, ...runRun.args], runRun.cwd);
+  return runHostGh(['run', op, ...runRun.args], runRun.cwd, { host: ghTarget.host });
 }
 
 /**
@@ -2089,10 +2089,12 @@ async function handleGhApiRpc(
     : [];
   const callRefusal = refuseGhApiCall(endpoint, args);
   if (callRefusal) return callRefusal;
-  const ghReady = await assertGhReady();
-  if (ghReady) return ghReady;
+  const ghTarget = await resolveGhTarget(reg.originUrl);
+  if (ghTarget.error) return ghTarget.error;
+  // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
+  // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
-  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd);
+  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
 }
 
 /**

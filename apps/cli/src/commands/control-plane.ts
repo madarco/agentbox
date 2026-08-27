@@ -84,6 +84,7 @@ import {
 import { AGENTBOX_VERSION } from '../version.js';
 import {
   findHostGitToken,
+  originGitHost,
   overbroadScopes,
   resolveTokenLogin,
   resolveTokenScopes,
@@ -273,22 +274,26 @@ async function resolveHubGitToken(logLine: (line: string) => void): Promise<stri
   const found = await findHostGitToken();
   if (!found) {
     s.stop('no GitHub token found', 1);
+    // Name the host: on a GitHub Enterprise Server repo a plain `gh auth login`
+    // authenticates github.com and leaves this exactly as broken.
+    const host = await originGitHost(process.cwd());
+    const loginCmd = host === 'github.com' ? 'gh auth login' : `gh auth login --hostname ${host}`;
     log.error(
       'No GitHub credential found on this machine.\n' +
-        'Run `gh auth login` (browser flow, no admin approval needed) and try again.',
+        `Run \`${loginCmd}\` (browser flow, no admin approval needed) and try again.`,
     );
     return null;
   }
   const [login, scopes] = await Promise.all([
-    resolveTokenLogin(found.token),
-    resolveTokenScopes(found.token),
+    resolveTokenLogin(found.token, found.host),
+    resolveTokenScopes(found.token, found.host),
   ]);
   s.stop(
     `found a GitHub token via ${found.source === 'gh' ? '`gh auth token`' : "git's credential helper"}` +
       (login ? ` (@${login})` : ''),
   );
   logLine(
-    `git token source=${found.source} login=${login ?? '?'} scopes=${scopes.join(',') || '(none reported)'}`,
+    `git token source=${found.source} host=${found.host} login=${login ?? '?'} scopes=${scopes.join(',') || '(none reported)'}`,
   );
 
   const wide = overbroadScopes(scopes);
