@@ -111,6 +111,33 @@ describe('HostReachQueue', () => {
     await expect(pending).resolves.toMatchObject({ kind: 'result' });
   });
 
+  it('offers an orphan to a machine eligible for THAT copy, not just any waiter', async () => {
+    // 'picky' already refused this copy. When the machine that took it dies, the
+    // sweep must look past 'picky' to a machine that can actually take it —
+    // stopping at the first waiter would drop the copy with 'able' listening.
+    let now = 1_000;
+    const q = new HostReachQueue({
+      graceMs: 10_000,
+      reachTimeoutMs: 200,
+      sweepIntervalMs: 10,
+      now: () => now,
+    });
+    const pending = q.request('box1', 'cp.fromHost', {});
+    const [offered] = await q.poll(20, 'picky');
+    q.decline(offered!.id, 'picky');
+    const [taken] = await q.poll(20, 'doomed');
+    expect(taken?.id).toBe(offered!.id);
+
+    const pickyWait = q.poll(3_000, 'picky');
+    const ableWait = q.poll(3_000, 'able');
+    now += 300; // 'doomed' goes silent
+    const ableGot = await ableWait;
+    expect(ableGot.map((a) => a.id)).toEqual([taken!.id]);
+    expect(await pickyWait).toEqual([]);
+    q.resolve(taken!.id, { exitCode: 0, stdout: 'ok', stderr: '' }, 'able');
+    await expect(pending).resolves.toMatchObject({ kind: 'result' });
+  });
+
   it('reports reachability from polls alone, so an idle machine still counts as present', async () => {
     let now = 1_000;
     const q = new HostReachQueue({ reachTimeoutMs: 100, now: () => now });

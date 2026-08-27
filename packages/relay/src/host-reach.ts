@@ -284,11 +284,40 @@ export class HostReachQueue {
     for (const waiter of [...this.waiters]) {
       const ready = this.takeUndelivered(waiter.pollerId);
       if (ready.length === 0) continue;
+      if (waiter.pollerId !== undefined) this.pollerSeen.set(waiter.pollerId, this.now());
       this.waiters.delete(waiter);
       clearTimeout(waiter.timer);
       waiter.resolve(ready);
       return;
     }
+  }
+
+  /**
+   * Hand one specific action to any waiting poller eligible for it (i.e. one
+   * that has not refused it). Returns whether it found a taker.
+   */
+  private offerToWaiter(pending: Pending): boolean {
+    for (const waiter of [...this.waiters]) {
+      const pid = waiter.pollerId;
+      if (pid !== undefined && pending.declinedBy?.has(pid)) continue;
+      pending.delivered = true;
+      pending.deliveredTo = pid;
+      // Handing work to a waiter IS contact with that machine: without this the
+      // next sweep judges it by a stale heartbeat and takes back the copy it was
+      // just given.
+      if (pid !== undefined) this.pollerSeen.set(pid, this.now());
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = undefined;
+      }
+      this.waiters.delete(waiter);
+      clearTimeout(waiter.timer);
+      // Anything else that poller may take rides along, so it is not left
+      // waiting a full cycle for work already queued.
+      waiter.resolve([pending.action, ...this.takeUndelivered(pid)]);
+      return true;
+    }
+    return false;
   }
 
   private takeUndelivered(pollerId?: string): HostAction[] {
@@ -353,14 +382,17 @@ export class HostReachQueue {
       const owner = pending.deliveredTo;
       const seenAt = owner === undefined ? this.lastPollAtMs : (this.pollerSeen.get(owner) ?? null);
       if (seenAt !== null && now - seenAt <= this.reachTimeoutMs) continue;
-      // Offer it before declaring it lost. A relay that restarted mid-copy is
-      // sitting in its long poll right now, and `takeUndelivered` only runs when
-      // a poll *arrives* — so without this the box fails over to the cache while
-      // the machine that owns the files waits, connected, for work to appear.
+      // Offer THIS action before declaring it lost. A relay that restarted
+      // mid-copy is sitting in its long poll right now, and `takeUndelivered`
+      // only runs when a poll *arrives* — so without an offer the box fails over
+      // to the cache while the machine that owns the files waits, connected, for
+      // work to appear. Targeted rather than a generic hand-off, because that
+      // stops at the first waiter to receive *anything*: with two orphans in
+      // flight it can hand a waiter the other one and leave this one looking
+      // unclaimed while an eligible machine is still listening.
       pending.delivered = false;
       pending.deliveredTo = undefined;
-      this.handOff();
-      if (this.map.get(id) !== pending || pending.delivered) continue;
+      if (this.offerToWaiter(pending)) continue;
       this.map.delete(id);
       pending.settle({ kind: 'unreachable', reason: 'went-away' });
     }
