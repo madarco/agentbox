@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startRelayServer, type RelayServerHandle } from '../src/server.js';
 
 /**
@@ -114,6 +117,54 @@ describe('control box host-reach routing', () => {
       const answer = await rpc;
       expect(answer.body.stderr ?? '').not.toMatch(/not connected to this hub/);
     } finally {
+      if (prev === undefined) delete process.env.AGENTBOX_PROMPT;
+      else process.env.AGENTBOX_PROMPT = prev;
+    }
+  });
+
+  it('runs the copy locally when this machine does have the box workspace (`hub expose`)', async () => {
+    // `agentbox hub expose` makes the user's own laptop the control box, so the
+    // files ARE here and parking for a remote machine would break a flow that
+    // works today. The discriminator is the workspace on disk, not the profile.
+    const prev = process.env.AGENTBOX_PROMPT;
+    process.env.AGENTBOX_PROMPT = 'off';
+    const dir = await mkdtemp(join(tmpdir(), 'agentbox-hostreach-ws-'));
+    // The workspace is read from this machine's state.json (the relay's own
+    // registration carries no path), so that is what an exposed hub really has.
+    // HOME is per-file isolated by test/setup.ts.
+    const stateDir = join(homedir(), '.agentbox');
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      join(stateDir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        boxes: [
+          {
+            id: 'b3',
+            name: 'localbox',
+            provider: 'e2b',
+            workspacePath: dir,
+            projectRoot: dir,
+            cloud: { backend: 'e2b', sandboxId: 'sb-b3' },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    try {
+      await req(handle, 'POST', '/admin/register-box', {
+        body: { boxId: 'b3', token: 't3', name: 'localbox', kind: 'cloud', backend: 'e2b' },
+      });
+      const rpc = req(handle, 'POST', '/rpc', {
+        token: 't3',
+        body: { method: 'cp.toHost', params: { sources: ['/workspace/x'], dest: './' } },
+      });
+      const polled = await req(handle, 'GET', '/admin/hostreach/poll?wait=200', { token: ADMIN });
+      expect(polled.body.actions).toHaveLength(0);
+      const answer = await rpc;
+      expect(answer.body.stderr ?? '').not.toMatch(/not connected to this hub/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
       if (prev === undefined) delete process.env.AGENTBOX_PROMPT;
       else process.env.AGENTBOX_PROMPT = prev;
     }

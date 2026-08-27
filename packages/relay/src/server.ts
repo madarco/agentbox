@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
   boxCarriedHostPaths,
@@ -1006,7 +1007,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (
         hostReach &&
         reg.kind === 'cloud' &&
-        (body.method === 'cp.toHost' || body.method === 'cp.fromHost')
+        (body.method === 'cp.toHost' || body.method === 'cp.fromHost') &&
+        !(await boxWorkspaceExistsHere(reg.boxId))
       ) {
         // A control box has neither the user's files nor a live checkout to
         // resolve them against, so it brokers instead of executing: park the
@@ -2275,6 +2277,31 @@ async function handleToolRequest(
     stdout: `${name} granted for this project\n`,
     stderr: '',
   };
+}
+
+/**
+ * Whether this machine still has the box's registered workspace on disk — the
+ * test for "are the files here, or on someone else's machine?".
+ *
+ * A control box is not automatically the wrong place to run a copy. `agentbox
+ * hub expose` turns the user's own laptop into the control box, and there the
+ * workspace is right where the record says: parking a copy for a remote machine
+ * that does not exist would break a flow that works today. On a VPS control box
+ * the same check fails for both shapes that matter — a box created there records
+ * the create job's temp clone, which the worker deletes, and a box created on a
+ * PC records a path that never existed on the VPS — so those park.
+ *
+ * Existence rather than a flag, because that is literally the question: `cp`
+ * spawns the CLI with this directory as its cwd, and a missing cwd is what
+ * produced `spawn <node> ENOENT` on a live control box.
+ */
+async function boxWorkspaceExistsHere(boxId: string): Promise<boolean> {
+  try {
+    const path = await boxWorkspacePath(boxId);
+    return typeof path === 'string' && path.length > 0 && existsSync(path);
+  } catch {
+    return false;
+  }
 }
 
 /**
