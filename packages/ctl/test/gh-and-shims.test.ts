@@ -25,11 +25,9 @@ interface StubShellEnv {
 function makeStubShell(): StubShellEnv {
   const tmpDir = mkdtempSync(join(tmpdir(), 'agentbox-shim-test-'));
   const ctlPath = join(tmpDir, 'agentbox-ctl-stub');
-  writeFileSync(
-    ctlPath,
-    `#!/usr/bin/env bash\nprintf 'STUB: %s\\n' "$*"\nexit 0\n`,
-    { mode: 0o755 },
-  );
+  writeFileSync(ctlPath, `#!/usr/bin/env bash\nprintf 'STUB: %s\\n' "$*"\nexit 0\n`, {
+    mode: 0o755,
+  });
   chmodSync(ctlPath, 0o755);
   // Real git init + commit so `git rev-parse --abbrev-ref HEAD` returns the
   // branch name rather than "HEAD" (which is what an unborn branch yields).
@@ -187,7 +185,7 @@ describe('agentbox-ctl gh pr * wire shape', () => {
   });
 });
 
-describe('gh-shim arg whitelist + branch injection', () => {
+describe('gh-shim: open surface + pr branch injection', () => {
   it('--version emits a sniffable "gh version" line', () => {
     const env = makeStubShell();
     try {
@@ -204,18 +202,78 @@ describe('gh-shim arg whitelist + branch injection', () => {
     try {
       const out = runShim(GH_SHIM, ['auth', 'status'], env);
       expect(out.code).toBe(0);
-      expect(out.stderr).toMatch(/logged in to github\.com/i);
+      expect(out.stdout).not.toContain('STUB:');
     } finally {
       env.cleanup();
     }
   });
 
+  // Issue #304: the shim used to reject every subcommand it had not been
+  // taught, so "implement GitHub issue <link>" died at `gh issue`. The surface
+  // is open now; policy lives host-side.
+  it.each([
+    [['issue', 'list'], 'STUB: gh exec -- issue list'],
+    [['issue', 'view', '304'], 'STUB: gh exec -- issue view 304'],
+    [['issue', 'create', '--title', 'T'], 'STUB: gh exec -- issue create --title T'],
+    [['search', 'issues', 'flaky'], 'STUB: gh exec -- search issues flaky'],
+    [['release', 'list'], 'STUB: gh exec -- release list'],
+    [['run', 'watch', '5'], 'STUB: gh exec -- run watch 5'],
+    [['label', 'list'], 'STUB: gh exec -- label list'],
+  ])('forwards gh %s', (argv, expected) => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, argv as string[], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout.trim()).toBe(expected);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // Flags are forwarded verbatim too — the shim no longer second-guesses
+  // which ones a subcommand accepts.
+  it('forwards flags it has never heard of', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'view', '7', '--comments'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('--comments');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // ...including the ones the relay refuses. Rejecting here too would only
+  // duplicate the boundary in a place that is easy to bypass.
+  it('forwards gh api --input and lets the relay refuse it', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['api', 'repos/o/r/issues', '--input', 'f.json'], env);
+      expect(out.code).toBe(0);
+      expect(out.stdout).toContain('--input f.json');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('forwards gh auth token so the relay can refuse it by policy', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['auth', 'token'], env);
+      expect(out.stdout).toContain('STUB: gh exec -- auth token');
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // Branch injection is the shim's real job: the host's gh runs in the HOST
+  // checkout, so a bare `gh pr view` would report on the host's branch.
   it('pr view with no positional injects the current branch', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['pr', 'view'], env);
       expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh pr view -- agentbox/test-branch');
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr view agentbox/test-branch');
     } finally {
       env.cleanup();
     }
@@ -225,34 +283,31 @@ describe('gh-shim arg whitelist + branch injection', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['pr', 'view', '42'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh pr view -- 42');
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr view 42');
     } finally {
       env.cleanup();
     }
   });
 
-  it('pr view --json passes through the JSON field list AND still injects branch', () => {
-    // Regression: a naive `first_positional` treated `number,url` as the
-    // positional ref because it didn't know `--json` takes a value, so it
-    // skipped branch injection and the host resolved against `main`. The
-    // PR badge then went dark even though the box was on a branch with a PR.
+  // Regression: the JSON field list is a flag VALUE, not a positional. Reading
+  // it as one skipped injection and made PR-badge lookups report "no PR".
+  it('pr view --json passes the field list AND still injects branch', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['pr', 'view', '--json', 'number,url'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout).toContain('STUB: gh pr view -- agentbox/test-branch --json number,url');
+      expect(out.stdout.trim()).toBe(
+        'STUB: gh exec -- pr view agentbox/test-branch --json number,url',
+      );
     } finally {
       env.cleanup();
     }
   });
 
-  it('pr comment --body still injects branch as positional ref', () => {
+  it('pr comment --body still injects branch as the positional ref', () => {
     const env = makeStubShell();
     try {
-      const out = runShim(GH_SHIM, ['pr', 'comment', '--body', 'looks good'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout).toContain('STUB: gh pr comment -- agentbox/test-branch --body looks good');
+      const out = runShim(GH_SHIM, ['pr', 'comment', '--body', 'hi'], env);
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr comment agentbox/test-branch --body hi');
     } finally {
       env.cleanup();
     }
@@ -262,21 +317,7 @@ describe('gh-shim arg whitelist + branch injection', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['pr', 'list'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout).toContain('--head agentbox/test-branch');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('pr create injects --head <branch> when missing', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['pr', 'create', '--fill', '--draft'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout).toContain('--head agentbox/test-branch');
-      expect(out.stdout).toContain('--fill');
-      expect(out.stdout).toContain('--draft');
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr list --head agentbox/test-branch');
     } finally {
       env.cleanup();
     }
@@ -286,158 +327,19 @@ describe('gh-shim arg whitelist + branch injection', () => {
     const env = makeStubShell();
     try {
       const out = runShim(GH_SHIM, ['pr', 'diff'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh pr diff -- agentbox/test-branch');
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr diff agentbox/test-branch');
     } finally {
       env.cleanup();
     }
   });
 
-  it('pr checks --json injects branch and passes the field list', () => {
+  // `pr create` takes its ref as `--head`, which the RELAY injects from the
+  // box's sanctioned branch — the shim must not guess at it here.
+  it('pr create is forwarded without a positional branch', () => {
     const env = makeStubShell();
     try {
-      const out = runShim(GH_SHIM, ['pr', 'checks', '--json', 'name,state'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout).toContain('STUB: gh pr checks -- agentbox/test-branch --json name,state');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('run list forwards to ctl', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['run', 'list', '--limit', '5'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh run list -- --limit 5');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('run view forwards a run-id', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['run', 'view', '12345', '--log-failed'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh run view -- 12345 --log-failed');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('run view requires a run-id or --job', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['run', 'view'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/requires a positional <run-id>/);
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('run rerun forwards a run-id', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['run', 'rerun', '12345'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh run rerun -- 12345');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('run watch is rejected with a pointer to run view', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['run', 'watch', '12345'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/not proxied/);
-      expect(out.stderr).toMatch(/gh run view/);
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('api forwards an allowed endpoint to ctl', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh api repos/o/r/pulls/5/comments --');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('api requires a positional endpoint', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['api', '--paginate'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/requires a positional <endpoint>/);
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('api forwards POST method + field flags to ctl (relay enforces the policy)', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(
-        GH_SHIM,
-        ['api', 'repos/o/r/pulls/5/comments', '-X', 'POST', '-f', 'body=hi'],
-        env,
-      );
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe(
-        'STUB: gh api repos/o/r/pulls/5/comments -- -X POST -f body=hi',
-      );
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('api forwards field flags (field-implied POST) to ctl', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '-f', 'body=hi'], env);
-      expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe('STUB: gh api repos/o/r/pulls/5/comments -- -f body=hi');
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('api rejects --input at the shim (stdin/file body cannot cross the relay)', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['api', 'repos/o/r/pulls/5/comments', '--input', '-'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/--input/);
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('rejects unknown top-level subcommands (gh issue)', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['issue', 'list'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/not proxied/);
-    } finally {
-      env.cleanup();
-    }
-  });
-
-  it('rejects un-whitelisted gh pr view flags (e.g. --comments)', () => {
-    const env = makeStubShell();
-    try {
-      const out = runShim(GH_SHIM, ['pr', 'view', '--comments'], env);
-      expect(out.code).toBe(2);
-      expect(out.stderr).toMatch(/unsupported flag '--comments'/);
+      const out = runShim(GH_SHIM, ['pr', 'create', '--fill'], env);
+      expect(out.stdout.trim()).toBe('STUB: gh exec -- pr create --fill');
     } finally {
       env.cleanup();
     }
@@ -470,9 +372,7 @@ describe('gh-shim arg whitelist + branch injection', () => {
         env,
       );
       expect(out.code).toBe(0);
-      expect(out.stdout.trim()).toBe(
-        'STUB: gh repo clone foo/bar mydir --branch main --depth 1',
-      );
+      expect(out.stdout.trim()).toBe('STUB: gh repo clone foo/bar mydir --branch main --depth 1');
       // Critically: NO `--` separator anywhere in the ctl invocation.
       expect(out.stdout).not.toContain(' -- ');
     } finally {
@@ -812,7 +712,9 @@ describe('git-shim arg whitelist + passthrough', () => {
         env,
       );
       expect(out.code).toBe(0);
-      expect(out.stdout).toContain('git clone https://github.com/x/y.git mytarget --branch main --depth 1');
+      expect(out.stdout).toContain(
+        'git clone https://github.com/x/y.git mytarget --branch main --depth 1',
+      );
     } finally {
       env.cleanup();
     }

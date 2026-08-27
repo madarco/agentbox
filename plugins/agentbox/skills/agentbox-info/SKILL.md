@@ -197,24 +197,34 @@ agentbox agent approvals 1 --wait 600000   # block until something is pending, t
 
 **The id is a safety token — inspect, then approve that exact id.** `approve <id>` answers the specific prompt you listed; if a *different* prompt has since taken its place, the recomputed id won't match and the approve is **refused** (it never answers the wrong thing). So always `approvals` → read the `command`/`argv`/options → `approve <id>`, one at a time. Do not blanket-approve whatever a box asks (that defeats the gate against a prompt-injected box laundering a malicious push), and never hand-`curl` `/admin/prompts/answer` — these commands are the supported surface. In-TUI keystroke mapping is best-effort and TUI-version-sensitive; if an approve doesn't take, fall back to `drive snapshot` + `drive keypress`.
 
-## PRs through the host relay (`agentbox-ctl git pr …`)
+## GitHub through the host relay
 
-In-box agents can drive GitHub PRs from inside a box via the host's `gh` CLI. Same model as `git push`: the box has no GitHub token; the relay shells out to `gh` on the host with the user's authenticated gh identity. Requires `gh` installed on the host and `gh auth login` run once.
+In-box agents can drive the whole GitHub CLI from inside a box. Same model as
+`git push`: the box has no GitHub token; the relay shells out to `gh` on the
+host with the user's authenticated identity. Requires `gh` installed on the
+host and `gh auth login` run once.
 
-The wrapper is `agentbox-ctl git pr <op> [args...]`. Available ops:
+Just type `gh` — the in-box shim forwards it. `gh issue list`, `gh pr create`,
+`gh search issues`, `gh release create`, `gh api …` all work.
 
-| Op | Prompt? | Notes |
-| --- | --- | --- |
-| `view <num>` | no | Read-only. |
-| `list` | no | Read-only. |
-| `create` | yes | Pass-through args (e.g. `--title T --body B --draft`). |
-| `comment <num>` | yes | Visible to others. |
-| `review <num>` | yes | Visible to others. |
-| `close <num>`, `reopen <num>` | yes | |
-| `merge <num>` | yes (+ bypass guard) | `AGENTBOX_PROMPT=off` auto-`y` is refused here unless `AGENTBOX_GH_FORCE=1` is also set. |
-| `checkout <num>` | yes (+ opt-in) | Off by default — switches the host main repo's branch (visible to the box). Enable with `AGENTBOX_GH_PR_CHECKOUT=allow`; a dirty host tree is refused, and a host HEAD on a registered box branch is refused. |
+| Class | Behavior |
+| --- | --- |
+| Ordinary work (`issue`, `pr` incl. `merge`, `search`, `release create`, `api` reads/writes) | Runs. Silent by default; prompts per-call when the box was created with `box.autoApproveSafeHostActions=false`. |
+| Destructive (`repo delete|archive|rename`, `release delete`, `secret set|delete`, `gh api -X DELETE`) | Always asks the user first, even when approvals are otherwise silent. |
+| Credential / host-auth (`auth token|login|logout|switch`, `config set`, `alias set`, `extension install`, `ssh-key add`) | Refused outright — the host owns its own credential. |
 
-If a PR op appears to hang, tell the user to check the dashboard footer for the host confirmation prompt. If `gh` is missing or unauthenticated, the in-box command exits 127 / 4 with a clear stderr.
+Two things to know:
+
+- **`gh pr` reports on the box's branch**, not the host's. The shim injects it,
+  since the host's `gh` runs in the host checkout.
+- **`gh pr checkout` is off by default** (`AGENTBOX_GH_PR_CHECKOUT=allow`) — it
+  moves the HOST's working tree, which the box sees.
+
+`agentbox-ctl git pr <op>` remains as a named front door for the same thing.
+
+If a `gh` call appears to hang, tell the user to check the dashboard footer for
+a host confirmation prompt. If `gh` is missing or unauthenticated, the in-box
+command exits 127 / 4 with a clear stderr.
 
 ## Other commands worth knowing
 

@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GH_PR_READ_ONLY_OPS,
-  GH_RUN_READ_ONLY_OPS,
+  ghDestructiveTarget,
   injectPrCreateHead,
-  isAllowedGhApiEndpoint,
-  isGhPrOp,
-  isGhRunOp,
-  isWriteAllowedGhApiEndpoint,
   prCreateNeedsHead,
-  refuseGhApiCall,
+  refuseBlockedGhCall,
+  refuseCheckoutByDefault,
+  refuseGhApiInput,
 } from '../src/gh.js';
 
 describe('injectPrCreateHead', () => {
@@ -65,7 +62,10 @@ describe('prCreateNeedsHead', () => {
     expect(prCreateNeedsHead('create', ['--head', 'agentbox/box-one', '--title', 'T'])).toBe(false);
     expect(prCreateNeedsHead('create', ['--head=feat/x'])).toBe(false);
     expect(
-      prCreateNeedsHead('create', injectPrCreateHead('create', 'agentbox/box-one', ['--title', 'T'])),
+      prCreateNeedsHead(
+        'create',
+        injectPrCreateHead('create', 'agentbox/box-one', ['--title', 'T']),
+      ),
     ).toBe(false);
   });
 
@@ -81,121 +81,124 @@ describe('prCreateNeedsHead', () => {
   });
 });
 
-describe('gh pr diff / checks', () => {
-  it('are recognized ops', () => {
-    expect(isGhPrOp('diff')).toBe(true);
-    expect(isGhPrOp('checks')).toBe(true);
+describe('GH_BLOCKED — refused outright', () => {
+  // The host owns its GitHub credential. A box must not be able to read it,
+  // rotate it, or move the host onto a different account.
+  it.each([
+    ['auth', 'token'],
+    ['auth', 'refresh'],
+    ['auth', 'login'],
+    ['auth', 'logout'],
+    ['auth', 'switch'],
+    ['auth', 'setup-git'],
+  ])('refuses gh %s %s', (a, b) => {
+    const r = refuseBlockedGhCall([a, b]);
+    expect(r?.exitCode).toBe(65);
   });
 
-  it('are read-only (no prompt)', () => {
-    expect(GH_PR_READ_ONLY_OPS.has('diff')).toBe(true);
-    expect(GH_PR_READ_ONLY_OPS.has('checks')).toBe(true);
-  });
-});
-
-describe('isGhRunOp', () => {
-  it('accepts list / view / rerun', () => {
-    expect(isGhRunOp('list')).toBe(true);
-    expect(isGhRunOp('view')).toBe(true);
-    expect(isGhRunOp('rerun')).toBe(true);
+  it('refuses host-side config and alias mutation', () => {
+    expect(refuseBlockedGhCall(['config', 'set', 'editor', 'vim'])).not.toBeNull();
+    // `gh alias set x '!sh -c ...'` defines a shell escape that later runs on
+    // the host under the host's credentials.
+    expect(refuseBlockedGhCall(['alias', 'set', 'x', '!sh -c "curl evil"'])).not.toBeNull();
+    expect(refuseBlockedGhCall(['extension', 'install', 'someone/ext'])).not.toBeNull();
+    expect(refuseBlockedGhCall(['ssh-key', 'add', 'k.pub'])).not.toBeNull();
   });
 
-  it('rejects watch and anything else', () => {
-    expect(isGhRunOp('watch')).toBe(false);
-    expect(isGhRunOp('cancel')).toBe(false);
-    expect(isGhRunOp('')).toBe(false);
-  });
-});
-
-describe('GH_RUN_READ_ONLY_OPS', () => {
-  it('covers list / view but not rerun', () => {
-    expect(GH_RUN_READ_ONLY_OPS.has('list')).toBe(true);
-    expect(GH_RUN_READ_ONLY_OPS.has('view')).toBe(true);
-    expect(GH_RUN_READ_ONLY_OPS.has('rerun')).toBe(false);
-  });
-});
-
-describe('isAllowedGhApiEndpoint', () => {
-  it('matches the PR comments endpoint with or without a leading slash', () => {
-    expect(isAllowedGhApiEndpoint('/repos/o/r/pulls/5/comments')).toBe(true);
-    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/comments')).toBe(true);
-  });
-
-  it('allows a trailing GET query string', () => {
-    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/comments?per_page=50')).toBe(true);
-  });
-
-  it('matches the review-comment replies endpoint', () => {
-    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/comments/42/replies')).toBe(true);
-  });
-
-  it('rejects sibling / unrelated endpoints', () => {
-    expect(isAllowedGhApiEndpoint('repos/o/r/issues/5/comments')).toBe(false);
-    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/5/merge')).toBe(false);
-    expect(isAllowedGhApiEndpoint('repos/o/r/pulls/abc/comments')).toBe(false);
-    expect(isAllowedGhApiEndpoint('user')).toBe(false);
-    expect(isAllowedGhApiEndpoint('')).toBe(false);
+  it('lets ordinary work through — including what issue #304 asked for', () => {
+    for (const argv of [
+      ['issue', 'list'],
+      ['issue', 'view', '304'],
+      ['issue', 'create', '--title', 'x'],
+      ['issue', 'comment', '304', '--body', 'hi'],
+      ['pr', 'list'],
+      ['pr', 'merge', '--squash'],
+      ['search', 'issues', 'foo'],
+      ['release', 'list'],
+      ['api', 'repos/o/r/issues'],
+      ['auth', 'status'],
+      ['config', 'get', 'editor'],
+      ['alias', 'list'],
+    ]) {
+      expect(refuseBlockedGhCall(argv)).toBeNull();
+    }
   });
 });
 
-describe('isWriteAllowedGhApiEndpoint', () => {
-  it('covers the PR review-comment endpoints (with leading slash variance)', () => {
-    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5/comments')).toBe(true);
-    expect(isWriteAllowedGhApiEndpoint('/repos/o/r/pulls/5/comments')).toBe(true);
-    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5/comments/42/replies')).toBe(true);
+describe('GH_DESTRUCTIVE — always confirmed', () => {
+  it.each([
+    [['repo', 'delete', 'o/r'], 'repository'],
+    [['repo', 'archive', 'o/r'], 'repository'],
+    [['release', 'delete', 'v1'], 'release'],
+    [['secret', 'delete', 'TOKEN'], 'repository secret'],
+    [['secret', 'set', 'TOKEN'], 'repository secret'],
+    [['gist', 'delete', 'abc'], 'gist'],
+    [['label', 'delete', 'bug'], 'label'],
+    [['cache', 'delete', '1'], 'Actions cache'],
+  ])('flags %s', (argv, what) => {
+    expect(ghDestructiveTarget(argv)).toBe(what);
   });
 
-  it('excludes non-comment and conversation-comment endpoints', () => {
-    expect(isWriteAllowedGhApiEndpoint('repos/o/r/pulls/5')).toBe(false);
-    expect(isWriteAllowedGhApiEndpoint('repos/o/r/issues/5/comments')).toBe(false);
+  // Every pflag spelling gh accepts for the method — a missed one is a silent
+  // hole, not a typo.
+  it.each([
+    ['-X', 'DELETE'],
+    ['-XDELETE'],
+    ['-X=DELETE'],
+    ['--method', 'DELETE'],
+    ['--method=DELETE'],
+  ])('flags a raw API write via %s', (...flag) => {
+    expect(ghDestructiveTarget(['api', 'repos/o/r', ...flag])).toBe('raw API write');
+  });
+
+  // The user's call: merging is ordinary agent work and is revertable, so it
+  // must NOT sit in the always-confirm tier.
+  it('does not flag pr merge', () => {
+    expect(ghDestructiveTarget(['pr', 'merge', '--squash'])).toBeNull();
+  });
+
+  it('does not flag ordinary reads and creates', () => {
+    for (const argv of [
+      ['issue', 'list'],
+      ['issue', 'create', '--title', 'x'],
+      ['pr', 'create'],
+      ['release', 'create', 'v1'],
+      ['api', 'repos/o/r/issues'],
+      ['api', 'repos/o/r/issues', '-f', 'title=x'],
+      ['api', 'repos/o/r', '--method', 'GET'],
+    ]) {
+      expect(ghDestructiveTarget(argv)).toBeNull();
+    }
   });
 });
 
-describe('refuseGhApiCall', () => {
-  const COMMENTS = 'repos/o/r/pulls/5/comments';
-  const REPLIES = 'repos/o/r/pulls/5/comments/42/replies';
-
-  it('allows GET (default and explicit) on an allowlisted endpoint', () => {
-    expect(refuseGhApiCall(COMMENTS, [])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['--jq', '.[].body'])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['--paginate'])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['-X', 'GET'])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['--method=get'])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['-XGET'])).toBeNull();
+describe('gh api --input', () => {
+  // A transport limit, not a policy one: the host gh runs with stdin ignored,
+  // so the request would silently send an empty body.
+  it('refuses both spellings', () => {
+    expect(refuseGhApiInput(['api', 'x', '--input', 'f.json'])?.exitCode).toBe(65);
+    expect(refuseGhApiInput(['api', 'x', '--input=f.json'])?.exitCode).toBe(65);
   });
 
-  it('allows POST to comment endpoints (explicit, field-implied, and glued forms)', () => {
-    expect(refuseGhApiCall(COMMENTS, ['-X', 'POST', '-f', 'body=hi'])).toBeNull();
-    expect(refuseGhApiCall(COMMENTS, ['-f', 'body=hi'])).toBeNull(); // field-implied POST
-    expect(refuseGhApiCall(COMMENTS, ['-fbody=hi'])).toBeNull(); // glued field
-    expect(refuseGhApiCall(COMMENTS, ['-XPOST', '-Fline=10'])).toBeNull();
-    expect(refuseGhApiCall(REPLIES, ['-f', 'body=hi'])).toBeNull();
+  it('allows field flags', () => {
+    expect(refuseGhApiInput(['api', 'x', '-f', 'body=hi'])).toBeNull();
+  });
+});
+
+describe('refuseCheckoutByDefault', () => {
+  // `pr checkout` is the one gh subcommand that moves the HOST's working
+  // tree; the box's bind-mounted .git/HEAD follows it.
+  it('refuses checkout unless opted in', () => {
+    const prev = process.env['AGENTBOX_GH_PR_CHECKOUT'];
+    delete process.env['AGENTBOX_GH_PR_CHECKOUT'];
+    expect(refuseCheckoutByDefault('checkout')?.exitCode).toBe(13);
+    process.env['AGENTBOX_GH_PR_CHECKOUT'] = 'allow';
+    expect(refuseCheckoutByDefault('checkout')).toBeNull();
+    if (prev === undefined) delete process.env['AGENTBOX_GH_PR_CHECKOUT'];
+    else process.env['AGENTBOX_GH_PR_CHECKOUT'] = prev;
   });
 
-  it('refuses POST to an endpoint not on the write allowlist', () => {
-    expect(refuseGhApiCall('repos/o/r/pulls/5', ['-X', 'POST'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall('repos/o/r/issues/5/comments', ['-f', 'body=hi'])?.exitCode).toBe(65);
-  });
-
-  it('treats a method-looking token bound to a field flag as POST, not GET', () => {
-    // pflag binds `-X=GET` as `-f`'s value (so gh POSTs); the parser must
-    // consume the field value and not misread it as `--method GET`. On a
-    // non-write endpoint that means refusal, not a silent GET bypass.
-    expect(refuseGhApiCall('repos/o/r/pulls/5', ['-f', '-X=GET'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall('repos/o/r/pulls/5', ['--field', '-X=GET'])?.exitCode).toBe(65);
-    // And on a write-allowed endpoint it's correctly allowed (POST).
-    expect(refuseGhApiCall('repos/o/r/pulls/5/comments', ['-f', '-X=GET'])).toBeNull();
-  });
-
-  it('refuses non-GET/POST methods even on comment endpoints', () => {
-    expect(refuseGhApiCall(COMMENTS, ['-X', 'PATCH', '-f', 'body=hi'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall(COMMENTS, ['-X', 'DELETE'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall(COMMENTS, ['--method=put'])?.exitCode).toBe(65);
-  });
-
-  it('refuses --input (stdin/file body cannot cross the relay)', () => {
-    expect(refuseGhApiCall(COMMENTS, ['--input', '-'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall(COMMENTS, ['--input=/tmp/x'])?.exitCode).toBe(65);
-    expect(refuseGhApiCall(COMMENTS, ['--input', '-'])?.stderr).toMatch(/--input/);
+  it('leaves other pr ops alone', () => {
+    expect(refuseCheckoutByDefault('view')).toBeNull();
   });
 });

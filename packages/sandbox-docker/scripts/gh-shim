@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# agentbox `gh` shim — translates a strict subset of `gh` subcommands into
-# `agentbox-ctl gh ...` so the host's authenticated `gh` runs the operation
-# and only the result crosses back into the box. The in-box agent never sees
-# a GitHub token.
+# agentbox `gh` shim — forwards the GitHub CLI to the host, so the host's
+# authenticated `gh` runs the operation and only the result crosses back. The
+# in-box agent never sees a GitHub token.
 #
-# This shim ships only what Claude Code's PR badge and our documented agent
-# flows need. Anything outside the subset below is rejected with a clear
-# error — better safe than compatible. Add ops deliberately, not by default.
+# The whole CLI is forwarded. An earlier version proxied a curated allowlist
+# of subcommands and rejected the rest, which meant every new agent workflow
+# (`gh issue`, `gh search`, `gh release`) hit "not proxied" and needed a code
+# change to unblock — see issue #304. Policy now lives host-side in
+# packages/relay/src/gh.ts as a small blocklist plus a short list of
+# destructive ops that always confirm; everything else is allow-once.
+#
+# This shim is NOT the security boundary (see docs/architecture.md) — the
+# relay is. What it does do is fix up argv the host could not get right on its
+# own: `gh pr` subcommands resolve against the *current branch*, and the host's
+# gh runs in the host checkout, not the box's worktree. Without injection a
+# bare `gh pr view` in a box reports on whatever the host has checked out.
 
 set -euo pipefail
 
@@ -15,14 +23,8 @@ set -euo pipefail
 CTL="${AGENTBOX_CTL_PATH:-/usr/local/bin/agentbox-ctl}"
 REAL_GIT="${AGENTBOX_REAL_GIT_PATH:-/usr/bin/git}"
 
-die() {
-  printf 'agentbox gh shim: %s\n' "$*" >&2
-  exit 2
-}
-
-# Resolve the in-box current branch once. Used to inject the right ref into
-# `gh pr` commands so the host's `gh` (which runs in the host main repo, not
-# the box's worktree) doesn't fall back to the host's HEAD.
+# Resolve the in-box current branch once, so `gh pr` commands carry the box's
+# ref rather than falling back to the host's HEAD.
 box_branch() {
   "$REAL_GIT" -C "$PWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true
 }
@@ -37,33 +39,11 @@ needle_present() {
   return 1
 }
 
-# Walk argv: if any arg starts with `-` and isn't in the allowed set, die.
-# Doesn't try to validate flag _values_ (e.g. `--json number,url`); that's
-# real gh's job — we only block flags we don't expect to see.
-strict_flags() {
-  local subcmd="$1"; shift
-  local allowed="$1"; shift
-  local re="^(${allowed})$"
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --) ;;
-      -*)
-        if ! [[ "$arg" =~ $re ]]; then
-          die "unsupported flag '$arg' for '$subcmd'. Allowed: ${allowed//|/, }"
-        fi
-        ;;
-    esac
-  done
-}
-
-# Returns the first true positional arg of "$@" (skipping flags AND their
-# values), or '' if none. $1 is a `|`-separated list of value-taking flags
-# for the current subcommand — e.g. "--json|--title|--body|--base" means the
-# token after any of those flags is a value, not a positional. Without this
-# we'd treat `--json number,url`'s field list as the positional and miss
-# branch injection (real bug: PR-badge lookups returned "no PR for main"
-# because the JSON field list looked positional).
+# Returns the first true positional of "$@" (skipping flags AND their values),
+# or '' if none. $1 is a `|`-separated list of value-taking flags for the
+# current subcommand — without it we would treat `--json number,url`'s field
+# list as the positional and skip branch injection (a real bug: PR-badge
+# lookups returned "no PR for main").
 first_positional() {
   local value_taking="$1"; shift
   local re="^(${value_taking})$"
@@ -86,171 +66,53 @@ first_positional() {
   done
 }
 
+# `gh pr <op>` with no explicit ref resolves against the current branch. Inject
+# the box's branch for the ops that behave that way. Everything else in the pr
+# family (create, checkout, ...) is passed through untouched — `create` gets
+# its `--head` injected host-side, where the sanctioned branch is known.
+#
+# Done inline with `set --` rather than through a helper that echoes an array:
+# `mapfile` is bash 4+, and this file has to run under macOS's bash 3.2 in the
+# unit tests as well as bash 5 in the box.
 handle_pr() {
-  local op="${1-}"; shift || true
-  if [ -z "$op" ]; then
-    die "missing subcommand for 'gh pr'. Supported: view, list, diff, checks, create, comment, review, merge, checkout, close, reopen"
-  fi
+  local op="${1-}"
+  [ -n "$op" ] || { exec "$CTL" gh exec -- pr; }
+  shift
   local branch
   branch="$(box_branch)"
 
-  case "$op" in
-    view)
-      strict_flags "gh pr view" "--json" "$@"
-      if [ -z "$(first_positional "--json" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr view -- "$@"
-      ;;
-    list)
-      strict_flags "gh pr list" "--json|--state" "$@"
-      if ! needle_present "--head" "$@" && [ -n "$branch" ]; then
-        set -- "$@" "--head" "$branch"
-      fi
-      exec "$CTL" gh pr list -- "$@"
-      ;;
-    diff)
-      strict_flags "gh pr diff" "--color|--name-only|--patch" "$@"
-      if [ -z "$(first_positional "--color" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr diff -- "$@"
-      ;;
-    checks)
-      strict_flags "gh pr checks" "--json|--required" "$@"
-      if [ -z "$(first_positional "--json" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr checks -- "$@"
-      ;;
-    create)
-      strict_flags "gh pr create" "--fill|--draft|--title|--body|--base" "$@"
-      if ! needle_present "--head" "$@" && [ -n "$branch" ]; then
-        set -- "$@" "--head" "$branch"
-      fi
-      exec "$CTL" gh pr create -- "$@"
-      ;;
-    comment)
-      strict_flags "gh pr comment" "--body" "$@"
-      if [ -z "$(first_positional "--body" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr comment -- "$@"
-      ;;
-    review)
-      strict_flags "gh pr review" "--approve|--request-changes|--comment|--body" "$@"
-      if [ -z "$(first_positional "--body" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr review -- "$@"
-      ;;
-    merge)
-      strict_flags "gh pr merge" "--squash|--merge|--rebase|--delete-branch" "$@"
-      if [ -z "$(first_positional "" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr merge -- "$@"
-      ;;
-    close)
-      strict_flags "gh pr close" "--delete-branch" "$@"
-      if [ -z "$(first_positional "" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr close -- "$@"
-      ;;
-    reopen)
-      strict_flags "gh pr reopen" "" "$@"
-      if [ -z "$(first_positional "" "$@")" ] && [ -n "$branch" ]; then
-        set -- "$branch" "$@"
-      fi
-      exec "$CTL" gh pr reopen -- "$@"
-      ;;
-    checkout)
-      # gh pr checkout takes a required ref (number / URL / branch). No
-      # auto-inject — the relay also refuses checkout by default
-      # (AGENTBOX_GH_PR_CHECKOUT=allow opt-in).
-      strict_flags "gh pr checkout" "" "$@"
-      if [ -z "$(first_positional "" "$@")" ]; then
-        die "'gh pr checkout' requires a positional ref (PR number, URL, or branch)"
-      fi
-      exec "$CTL" gh pr checkout -- "$@"
-      ;;
-    *)
-      die "'gh pr $op' is not proxied (supported: view, list, diff, checks, create, comment, review, merge, checkout, close, reopen)"
-      ;;
-  esac
-}
-
-handle_run() {
-  local op="${1-}"; shift || true
-  if [ -z "$op" ]; then
-    die "missing subcommand for 'gh run'. Supported: list, view, rerun"
-  fi
-  case "$op" in
-    list)
-      strict_flags "gh run list" "--json|--limit|-L|--workflow|-w|--branch|-b|--status|--user" "$@"
-      exec "$CTL" gh run list -- "$@"
-      ;;
-    view)
-      strict_flags "gh run view" "--json|--log|--log-failed|--job" "$@"
-      # gh run view needs a run-id OR a --job <id>; refuse when neither is
-      # present (host-side gh would otherwise try an interactive picker and
-      # fail without a TTY).
-      if [ -z "$(first_positional "--json|--job" "$@")" ] && ! needle_present "--job" "$@"; then
-        die "'gh run view' requires a positional <run-id> (or --job <job-id>)"
-      fi
-      exec "$CTL" gh run view -- "$@"
-      ;;
-    rerun)
-      strict_flags "gh run rerun" "--failed|--job" "$@"
-      if [ -z "$(first_positional "--job" "$@")" ] && ! needle_present "--job" "$@"; then
-        die "'gh run rerun' requires a positional <run-id> (or --job <job-id>)"
-      fi
-      exec "$CTL" gh run rerun -- "$@"
-      ;;
-    watch)
-      die "'gh run watch' is not proxied (it blocks until CI finishes). Poll status with 'gh run view <run-id>' instead."
-      ;;
-    *)
-      die "'gh run $op' is not proxied (supported: list, view, rerun)"
-      ;;
-  esac
-}
-
-handle_api() {
-  local endpoint="${1-}"
-  if [ -z "$endpoint" ] || [ "${endpoint:0:1}" = "-" ]; then
-    die "'gh api' requires a positional <endpoint> (e.g. repos/:owner/:repo/pulls/:number/comments)"
-  fi
-  shift
-  # GET reads are proxied for any allowlisted endpoint; POST is proxied only to
-  # the PR review-comment endpoints (the relay enforces the endpoint + method
-  # policy). `--input` (stdin/file body) can't cross the relay — the host `gh`
-  # runs with stdin ignored — so reject it locally and point at -f/-F fields.
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --input|--input=*)
-        die "'gh api --input' (stdin/file body) isn't supported through the relay; use -f/-F fields"
+  if [ -n "$branch" ]; then
+    case "$op" in
+      view|diff|checks|comment|review|merge|close|reopen)
+        # These take the ref as a positional. Skip known value-taking flags so
+        # a flag's value is not mistaken for the ref.
+        if [ -z "$(first_positional "--json|--body|--body-file|-b|-F|--color|--repo|-R" "$@")" ]; then
+          set -- "$branch" "$@"
+        fi
+        ;;
+      list)
+        # `pr list` filters by head branch via a flag, not a positional.
+        if ! needle_present "--head" "$@"; then
+          set -- "$@" "--head" "$branch"
+        fi
         ;;
     esac
-  done
-  strict_flags "gh api" \
-    "--method|-X|-f|-F|--field|--raw-field|--jq|-q|--paginate|--cache|--hostname|-H|--header" "$@"
-  exec "$CTL" gh api "$endpoint" -- "$@"
+  fi
+  exec "$CTL" gh exec -- pr "$op" "$@"
 }
 
+# `gh repo clone` is the one subcommand that cannot be a plain host exec: the
+# clone has to land INSIDE the box. The host clones with its credentials,
+# bundles, and ships the bundle back, so it keeps its own ctl command and RPC.
 handle_repo() {
-  local op="${1-}"; shift || true
+  local op="${1-}"
   if [ "$op" != "clone" ]; then
-    die "'gh repo $op' is not proxied (supported: clone)"
+    exec "$CTL" gh exec -- repo ${op:+"$op"} "${@:2}"
   fi
-  # gh repo clone <repo> [<dir>] [--branch <n>] [--depth <n>]
-  strict_flags "gh repo clone" "--branch|--depth" "$@"
-  # Split argv into (repo, dir, flags). Pass positionals BEFORE options to the
-  # ctl so commander parses --branch/--depth as real options; using a `--`
-  # separator would force commander to treat them as extra positionals (the
-  # ctl `gh repo clone` command doesn't allowExcessArguments).
+  shift
+  # Split argv into (repo, dir, flags). Positionals go BEFORE options so
+  # commander parses --branch/--depth as real options; a `--` separator would
+  # force it to treat them as extra positionals.
   local repo='' dir=''
   local -a flags=()
   local pos=0
@@ -267,20 +129,21 @@ handle_repo() {
         flags+=("$arg")
         skip_value=1
         ;;
-      -*)
-        flags+=("$arg")
-        ;;
+      -*) flags+=("$arg") ;;
       *)
         if [ $pos -eq 0 ]; then repo="$arg"
         elif [ $pos -eq 1 ]; then dir="$arg"
-        else die "too many positionals for 'gh repo clone' (got '$arg' after repo + dir)"
+        else
+          printf 'agentbox gh shim: too many positionals for '"'"'gh repo clone'"'"' (got %s after repo + dir)\n' "$arg" >&2
+          exit 2
         fi
         pos=$((pos+1))
         ;;
     esac
   done
   if [ -z "$repo" ]; then
-    die "'gh repo clone' requires a positional <repo> (owner/name or full URL)"
+    printf "agentbox gh shim: 'gh repo clone' requires a positional <repo> (owner/name or full URL)\n" >&2
+    exit 2
   fi
   if [ -n "$dir" ]; then
     exec "$CTL" gh repo clone "$repo" "$dir" ${flags[@]+"${flags[@]}"}
@@ -289,56 +152,38 @@ handle_repo() {
   fi
 }
 
-# Top-level dispatch.
 if [ $# -eq 0 ]; then
-  die "no subcommand. Supported: pr {view,list,diff,checks,create,comment,review,merge,checkout,close,reopen}, run {list,view,rerun}, api <endpoint>, repo clone, auth status, --version"
+  exec "$CTL" gh exec --
 fi
 
 case "$1" in
   --version|-v)
-    # Real gh prints something like:
-    #   gh version 2.40.0 (2023-10-26)
-    #   https://github.com/cli/cli/releases/tag/v2.40.0
-    # Tools that sniff "gh version" succeed with our shim line too.
+    # Real gh prints "gh version X.Y.Z (date)". Tools that sniff for that
+    # string succeed against the shim line too. Answered locally so version
+    # probes don't round-trip to the host.
     printf 'gh version 2.0.0 (agentbox-shim)\n'
     printf 'https://github.com/cli/cli\n'
-    ;;
-  --help|-h)
-    printf 'agentbox gh shim — strict subset.\n' >&2
-    printf 'Supported: pr {view,list,diff,checks,create,comment,review,merge,checkout,close,reopen}, run {list,view,rerun}, api <endpoint>, repo clone, auth status, --version\n' >&2
-    printf 'Anything else is rejected. Run host `gh --help` for full upstream docs.\n' >&2
+    exit 0
     ;;
   auth)
-    shift
-    case "${1-}" in
-      status)
-        # Real auth state is verified host-side on the next real RPC (relay's
-        # assertGhReady returns exit 4 if the host is logged out). We don't
-        # round-trip on every refresh-driven poll Claude Code does.
-        printf 'agentbox gh shim: logged in to github.com (via agentbox host relay)\n' >&2
-        ;;
-      *)
-        die "'gh auth ${1-}' is not proxied (supported: status)"
-        ;;
-    esac
+    # Answered locally: Claude Code polls `auth status` on a refresh loop, and
+    # the real auth state is verified host-side on the next actual RPC (the
+    # relay's assertGhReady returns exit 4 when the host is logged out). Every
+    # other `gh auth` subcommand is refused by the relay's blocklist, since
+    # the host owns its own credential.
+    if [ "${2-}" = "status" ]; then
+      printf 'agentbox gh shim: logged in to github.com (via agentbox host relay)\n' >&2
+      exit 0
+    fi
     ;;
   pr)
     shift
     handle_pr "$@"
     ;;
-  run)
-    shift
-    handle_run "$@"
-    ;;
-  api)
-    shift
-    handle_api "$@"
-    ;;
   repo)
     shift
     handle_repo "$@"
     ;;
-  *)
-    die "'gh $1' is not proxied (supported: pr {…}, run {…}, api <endpoint>, repo clone, auth status, --version)"
-    ;;
 esac
+
+exec "$CTL" gh exec -- "$@"

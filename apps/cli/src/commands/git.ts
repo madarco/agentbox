@@ -1,10 +1,5 @@
 import type { BoxRecord, ExecResult } from '@agentbox/core';
-import {
-  GH_PR_OPS,
-  hashRpcParams,
-  injectPrCreateHead as injectHead,
-  type GhPrOp,
-} from '@agentbox/relay';
+import { hashRpcParams, injectPrCreateHead as injectHead } from '@agentbox/relay';
 import { mintHostInitiatedToken } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -112,11 +107,11 @@ function buildPredictedGitParams(
   return out;
 }
 
-/** Build the `{ path, args? }` ctl will send for gh.pr.<op> RPCs. */
-function buildPredictedGhPrParams(ghArgs: string[]): PredictedGhPrParams {
-  const out: PredictedGhPrParams = { path: WORKSPACE };
-  if (ghArgs.length > 0) out.args = ghArgs;
-  return out;
+/** Build the `{ path, args? }` ctl will send for the gh.exec RPC. */
+function buildPredictedGhPrParams(op: string, ghArgs: string[]): PredictedGhPrParams {
+  // Must mirror exactly what ctl posts, since the minted token is bound to a
+  // hash of these params.
+  return { path: WORKSPACE, args: ['pr', op, ...ghArgs] };
 }
 
 async function exitWith(code: number): Promise<never> {
@@ -300,21 +295,26 @@ const statusCommand = new Command('status')
 // default subcommand so `agentbox git pr <box>` is sugar for
 // `agentbox git pr create <box>` — matches how users naturally describe it.
 
-const PR_OP_DESCRIPTIONS: Record<GhPrOp, string> = {
-  create: "Open a PR for the box's branch (host `gh pr create`, no prompt).",
+// The host CLI keeps a fixed, named set of `agentbox git pr <op>` commands
+// for discoverability. The relay no longer enumerates gh ops (it forwards
+// whatever the box sends and gates by policy), so the union lives here now.
+const PR_OP_DESCRIPTIONS = {
+  create: "Open a PR for the box's branch (host `gh pr create`).",
   view: 'Show a PR (read-only).',
   list: 'List PRs (read-only).',
   diff: 'Show a PR diff (read-only).',
   checks: "Show a PR's CI check status (read-only).",
   comment: 'Comment on a PR.',
   review: 'Review a PR.',
-  merge:
-    'Merge a PR (host `gh pr merge`). AGENTBOX_PROMPT=off bypass still requires AGENTBOX_GH_FORCE=1.',
+  merge: 'Merge a PR (host `gh pr merge`).',
   checkout:
-    "Check out a PR's branch on the host main repo (opt-in via AGENTBOX_GH_PR_CHECKOUT=allow; switches the host repo branch).",
+    "Check out a PR's branch on the host main repo (opt-in via AGENTBOX_GH_PR_CHECKOUT=allow; switches the HOST repo branch).",
   close: 'Close a PR.',
   reopen: 'Reopen a PR.',
-};
+} as const;
+
+type GhPrOp = keyof typeof PR_OP_DESCRIPTIONS;
+const GH_PR_OPS = Object.keys(PR_OP_DESCRIPTIONS) as GhPrOp[];
 
 /**
  * Default to the box's root branch as `--head` on `gh pr create` so the PR
@@ -350,8 +350,8 @@ function buildPrSubcommand(op: GhPrOp): Command {
         const ghArgs = injectPrCreateHead(op, box, args);
         // Hash the args *after* injection so the bound paramsHash matches
         // what ctl will end up sending.
-        const predicted = buildPredictedGhPrParams(ghArgs);
-        const tokenArgs = await hostInitiatedArgs(box.id, `gh.pr.${op}`, predicted);
+        const predicted = buildPredictedGhPrParams(op, ghArgs);
+        const tokenArgs = await hostInitiatedArgs(box.id, 'gh.exec', predicted);
         const argv = ['agentbox-ctl', 'gh', 'pr', op, ...tokenArgs, ...ghArgs];
         await exitWith(await runAndStream(box, argv));
       } catch (err) {

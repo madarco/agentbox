@@ -24,28 +24,17 @@ import {
 } from '@agentbox/core';
 import {
   checkoutGuards,
-  GH_API_ENDPOINT_REFUSAL,
-  GH_PR_READ_ONLY_OPS,
-  GH_PR_SAFE_AUTO_APPROVE_OPS,
-  GH_RUN_READ_ONLY_OPS,
-  injectPrCreateHead,
-  isAllowedGhApiEndpoint,
-  refuseGhApiCall,
-  isGhPrOp,
-  isGhRunOp,
-  PR_CREATE_NO_HEAD_REFUSAL,
-  prCreateHasExplicitHead,
-  prCreateNeedsHead,
+  ghDestructiveTarget,
   ghRunContext,
+  injectPrCreateHead,
+  PR_CREATE_NO_HEAD_REFUSAL,
+  prCreateNeedsHead,
+  refuseBlockedGhCall,
   refuseCheckoutByDefault,
-  refuseMergeBypass,
+  refuseGhApiInput,
   resolveGhTarget,
   runHostGh,
-  type GhApiRpcParams,
-  type GhPrOp,
-  type GhPrRpcParams,
-  type GhRunOp,
-  type GhRunRpcParams,
+  type GhExecRpcParams,
 } from './gh.js';
 import { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
@@ -1004,43 +993,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, status, result);
         return;
       }
-      if (body.method.startsWith('gh.pr.')) {
-        const op = body.method.slice('gh.pr.'.length);
-        if (!isGhPrOp(op)) {
-          send(res, 400, { error: `unknown gh.pr.* op: ${op}` });
-          return;
-        }
-        const result = await handleGhPrRpc(
-          op,
+      if (body.method === 'gh.exec') {
+        const result = await handleGhExecRpc(
           reg,
-          body.params as GhPrRpcParams | undefined,
+          body.params as GhExecRpcParams | undefined,
           prompts,
           subscribers,
           hostInitiatedTokens,
         );
-        const status = result.exitCode === 0 ? 200 : 500;
-        send(res, status, result);
-        return;
-      }
-      if (body.method.startsWith('gh.run.')) {
-        const op = body.method.slice('gh.run.'.length);
-        if (!isGhRunOp(op)) {
-          send(res, 400, { error: `unknown gh.run.* op: ${op}` });
-          return;
-        }
-        const result = await handleGhRunRpc(
-          op,
-          reg,
-          body.params as GhRunRpcParams | undefined,
-          prompts,
-          subscribers,
-        );
-        const status = result.exitCode === 0 ? 200 : 500;
-        send(res, status, result);
-        return;
-      }
-      if (body.method === 'gh.api') {
-        const result = await handleGhApiRpc(reg, body.params as GhApiRpcParams | undefined);
         const status = result.exitCode === 0 ? 200 : 500;
         send(res, status, result);
         return;
@@ -1885,30 +1845,47 @@ async function handleGitRpc(
 }
 
 /**
- * gh.pr.<op>: shell to the host's `gh` CLI (with the user's gh auth) to drive
- * a PR operation requested from inside the box. Read-only ops (`view`,
- * `list`) bypass the confirm prompt; everything else surfaces an
- * `askPrompt` to the host wrapper before running. `merge` and `checkout`
- * have additional opt-in env guards — see `refuseMergeBypass` and
- * `refuseCheckoutByDefault` in `./gh.ts`.
+ * `gh.exec`: run the host's `gh` with the box's argv.
  *
- * Runs `gh` with `cwd = worktree.hostMainRepo` so `gh` infers the repo from
- * the host repo's `git remote -v`. The box's worktree branch is registered
- * (used to refuse `checkout` against the active per-box branch).
+ * One handler for the whole CLI, replacing the old per-subcommand allowlist
+ * (`gh.pr.<op>` / `gh.run.<op>` / `gh.api`) that refused anything it had not
+ * been taught — which is what made `gh issue` unreachable (issue #304).
+ * Policy now lives in three small lists in `gh.ts`: blocked outright,
+ * always-confirmed, and everything else allow-once.
+ *
+ * Runs with `cwd = worktree.hostMainRepo` so `gh` infers the repo from that
+ * repo's `git remote -v`. `pr` keeps two pieces of special handling that are
+ * about correctness rather than policy: the box's branch is injected into a
+ * headless `pr create`, and `pr checkout` stays opt-in because it moves the
+ * HOST's working tree.
  */
-async function handleGhPrRpc(
-  op: GhPrOp,
+async function handleGhExecRpc(
   reg: BoxRegistration,
-  params: GhPrRpcParams | undefined,
+  params: GhExecRpcParams | undefined,
   prompts: PendingPrompts,
   subscribers: PromptSubscribers,
   hostInitiatedTokens: HostInitiatedTokens,
 ): Promise<GitRpcResult> {
-  // Env-only refusals first — cheap, deterministic, no fs/process calls.
-  const mergeBypass = refuseMergeBypass(op);
-  if (mergeBypass) return mergeBypass;
-  const checkoutOptIn = refuseCheckoutByDefault(op);
-  if (checkoutOptIn) return checkoutOptIn;
+  const args = Array.isArray(params?.args)
+    ? params.args.filter((a): a is string => typeof a === 'string')
+    : [];
+  if (args.length === 0) {
+    return { exitCode: 64, stdout: '', stderr: 'gh: no arguments\n' };
+  }
+
+  const blocked = refuseBlockedGhCall(args);
+  if (blocked) return blocked;
+
+  const family = args[0] ?? '';
+  const op = args[1] ?? '';
+  if (family === 'pr') {
+    const checkoutOptIn = refuseCheckoutByDefault(op);
+    if (checkoutOptIn) return checkoutOptIn;
+  }
+  if (family === 'api') {
+    const inputRefusal = refuseGhApiInput(args);
+    if (inputRefusal) return inputRefusal;
+  }
 
   const containerPath = params?.path ?? '/workspace';
   const worktree = resolveWorktree(reg, containerPath);
@@ -1919,25 +1896,18 @@ async function handleGhPrRpc(
       stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
     };
   }
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
-  // (per call, layered config) so a flip takes effect without bouncing the
-  // relay, and before any host probe — a revoked gh should never surface as
-  // an approval prompt.
+  // `tools.gh.enabled: false` revokes the built-in grant. Per call, layered,
+  // and before any host probe, so a revoked gh never surfaces as a prompt.
   const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
   if (ghRevoked) return ghRevoked;
 
   const ghTarget = await resolveGhTarget(reg.originUrl);
   if (ghTarget.error) return ghTarget.error;
 
-  const args = Array.isArray(params?.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-
-  if (op === 'checkout') {
-    // Guard against the host repo checking out onto ANY branch a box currently
-    // occupies — its create-time scratch ref AND its host-sanctioned branch
-    // (the box's live HEAD after `agentbox git checkout`), either of which the
-    // bind-mounted `.git/HEAD` would corrupt.
+  if (family === 'pr' && op === 'checkout') {
+    // Refuse a host checkout onto ANY branch a box currently occupies — its
+    // create-time scratch ref AND its host-sanctioned branch — either of
+    // which the bind-mounted `.git/HEAD` would corrupt.
     const branches = (reg.worktrees ?? []).flatMap((w) =>
       w.sanctionedBranch && w.sanctionedBranch !== w.branch
         ? [w.branch, w.sanctionedBranch]
@@ -1947,183 +1917,64 @@ async function handleGhPrRpc(
     if (guard) return guard;
   }
 
-  // Host-initiated `gh pr <op>` (from `agentbox git pr <op> <box>`) skips
-  // the confirm prompt — but only with a valid scope-matched, params-hash-
-  // bound one-time token. If a token is *present* but invalid (mutated
-  // params, replayed, etc.) we reject hard — that's an attack signal. Only
-  // fall through to the prompt when no token was claimed. The
-  // `refuseMergeBypass` / `refuseCheckoutByDefault` guards above still run.
-  const tokenClaimedGh = typeof params?.hostInitiated === 'string';
-  const incomingHashGh = hashRpcParams(params);
+  // Host-initiated calls (from `agentbox git pr <op> <box>`) skip the confirm
+  // with a scope-matched, params-hash-bound one-time token. A token that is
+  // present but invalid is a hard reject — that is an attack signal, not a
+  // retry. Absent token falls through to the normal gate.
+  const tokenClaimed = typeof params?.hostInitiated === 'string';
   const hostInitiatedOk =
-    !GH_PR_READ_ONLY_OPS.has(op) &&
-    tokenClaimedGh &&
-    hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, `gh.pr.${op}`, incomingHashGh);
-  if (!GH_PR_READ_ONLY_OPS.has(op) && tokenClaimedGh && !hostInitiatedOk) {
+    tokenClaimed &&
+    hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, 'gh.exec', hashRpcParams(params));
+  if (tokenClaimed && !hostInitiatedOk) {
     return {
       exitCode: 10,
       stdout: '',
       stderr: 'host-initiated token rejected: invalid, expired, or bound to different params\n',
     };
   }
-  // Safe subset: open-PR + PR comment auto-approve under the flag (audited);
-  // review/close/reopen/merge/checkout keep prompting. A `create` with an
-  // EXPLICIT `--head` is excluded — that head could name any branch (e.g.
-  // `main`), so it falls back to the prompt; a headless `create` has its head
-  // forced to the box's sanctioned branch below, so it stays scoped.
-  const ghSafeAuto =
-    GH_PR_SAFE_AUTO_APPROVE_OPS.has(op) &&
-    reg.autoApproveSafeHostActions !== false &&
-    !prCreateHasExplicitHead(op, args);
-  if (ghSafeAuto && !hostInitiatedOk) {
-    prompts.noteAutoApprove(
-      reg.boxId,
-      {
-        kind: 'confirm',
-        message: `gh pr ${op} from box ${reg.name}`,
-        detail: args.join(' ').slice(0, 200),
-        context: { command: `gh pr ${op}`, cwd: containerPath, argv: args },
-      },
-      `safe: gh pr ${op}`,
-    );
-  }
-  if (!GH_PR_READ_ONLY_OPS.has(op) && !ghSafeAuto && !hostInitiatedOk) {
-    const detail = args.join(' ').slice(0, 200);
-    const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-      kind: 'confirm',
-      message: `Allow gh pr ${op} from box ${reg.name}?`,
-      detail,
-      defaultAnswer: 'n',
-      context: {
-        command: `gh pr ${op}`,
-        cwd: containerPath,
-        argv: args,
-      },
-    });
-    if (verdict.answer !== 'y') {
-      return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
-    }
-  }
 
-  // Default `--head` to the box's branch for `create` (the host repo cwd isn't
-  // on the box branch, so gh can't infer it). Done after token validation —
-  // which hashes the incoming `params`, not this post-injection argv.
-  // Inject the box's SANCTIONED branch (updated by `agentbox git checkout`),
-  // matching what `git.push` publishes — so a headless PR targets the branch
-  // the box's work is actually on, not the stale create-time scratch ref.
-  const finalArgs = injectPrCreateHead(op, worktree.sanctionedBranch ?? worktree.branch, args);
-  // Never let `gh` fall back to the host repo's checked-out branch.
-  if (prCreateNeedsHead(op, finalArgs)) return PR_CREATE_NO_HEAD_REFUSAL;
-  const prRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
-  return runHostGh(['pr', op, ...prRun.args], prRun.cwd, { host: ghTarget.host });
-}
-
-/**
- * `gh.run.<op>` (list / view / rerun). Runs `gh run …` in the host main repo
- * so gh infers the GitHub repo from its remotes. `list` / `view` are read-only;
- * `rerun` re-triggers CI and goes through the host confirm prompt. No
- * host-initiated token path — this is an in-box-only surface.
- */
-async function handleGhRunRpc(
-  op: GhRunOp,
-  reg: BoxRegistration,
-  params: GhRunRpcParams | undefined,
-  prompts: PendingPrompts,
-  subscribers: PromptSubscribers,
-): Promise<GitRpcResult> {
-  const containerPath = params?.path ?? '/workspace';
-  const worktree = resolveWorktree(reg, containerPath);
-  if (!worktree) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
+  if (!hostInitiatedOk) {
+    const destructive = ghDestructiveTarget(args);
+    const label = `gh ${args.slice(0, 2).join(' ')}`.trim();
+    const ctx = {
+      kind: 'confirm' as const,
+      message: destructive
+        ? `Allow \`gh ${args.join(' ')}\` from box ${reg.name}? This destroys a ${destructive}.`
+        : `Allow \`gh ${args.join(' ')}\` from box ${reg.name}?`,
+      detail: args.join(' ').slice(0, 200),
+      context: { command: label, cwd: containerPath, argv: args },
     };
-  }
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
-  // (per call, layered config) so a flip takes effect without bouncing the
-  // relay, and before any host probe — a revoked gh should never surface as
-  // an approval prompt.
-  const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
-  if (ghRevoked) return ghRevoked;
-
-  const ghTarget = await resolveGhTarget(reg.originUrl);
-  if (ghTarget.error) return ghTarget.error;
-
-  const args = Array.isArray(params?.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-
-  if (!GH_RUN_READ_ONLY_OPS.has(op)) {
-    const detail = args.join(' ').slice(0, 200);
-    if (reg.autoApproveSafeHostActions !== false) {
-      // `gh run rerun` only re-triggers the project's own CI — safe subset.
-      prompts.noteAutoApprove(
-        reg.boxId,
-        {
-          kind: 'confirm',
-          message: `gh run ${op} from box ${reg.name}`,
-          detail,
-          context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
-        },
-        `safe: gh run ${op}`,
-      );
-    } else {
+    // Destructive ops confirm even when the box carries the auto-approve
+    // flag: the flag says "don't interrupt me for ordinary work", not
+    // "delete things without asking".
+    if (destructive || reg.autoApproveSafeHostActions === false) {
       const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-        kind: 'confirm',
-        message: `Allow gh run ${op} from box ${reg.name}?`,
-        detail,
+        ...ctx,
         defaultAnswer: 'n',
-        context: { command: `gh run ${op}`, cwd: containerPath, argv: args },
       });
       if (verdict.answer !== 'y') {
         return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
       }
+    } else {
+      prompts.noteAutoApprove(reg.boxId, ctx, `allow-once: ${label}`);
     }
   }
-  const runRun = ghRunContext(worktree.hostMainRepo, reg.originUrl, args);
-  return runHostGh(['run', op, ...runRun.args], runRun.cwd, { host: ghTarget.host });
-}
 
-/**
- * `gh.api`: allowlisted REST calls. Runs `gh api <endpoint> …` in the host main
- * repo. The endpoint must match `GH_API_ALLOWED_ENDPOINTS`; `refuseGhApiCall`
- * then enforces the method policy (GET anywhere on the allowlist, POST only on
- * the comment endpoints). No prompt — reads and comment POSTs are both silent.
- */
-async function handleGhApiRpc(
-  reg: BoxRegistration,
-  params: GhApiRpcParams | undefined,
-): Promise<GitRpcResult> {
-  const containerPath = params?.path ?? '/workspace';
-  const worktree = resolveWorktree(reg, containerPath);
-  if (!worktree) {
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr: `no worktree registered for box ${reg.boxId} matching ${containerPath}`,
-    };
+  // A headless `pr create` must never fall back to the host repo's checked-out
+  // branch. Injected AFTER token validation, which hashes the incoming params
+  // rather than this rewritten argv.
+  let finalArgs = args;
+  if (family === 'pr') {
+    const rest = injectPrCreateHead(
+      op,
+      worktree.sanctionedBranch ?? worktree.branch,
+      args.slice(2),
+    );
+    if (prCreateNeedsHead(op, rest)) return PR_CREATE_NO_HEAD_REFUSAL;
+    finalArgs = [family, op, ...rest];
   }
-  const endpoint = typeof params?.endpoint === 'string' ? params.endpoint : '';
-  if (!isAllowedGhApiEndpoint(endpoint)) return GH_API_ENDPOINT_REFUSAL;
-  const args = Array.isArray(params?.args)
-    ? params.args.filter((a): a is string => typeof a === 'string')
-    : [];
-  const callRefusal = refuseGhApiCall(endpoint, args);
-  if (callRefusal) return callRefusal;
-  // `tools.gh.enabled: false` revokes the built-in gh grant. Checked here
-  // (per call, layered config) so a flip takes effect without bouncing the
-  // relay, and before any host probe — a revoked gh should never surface as
-  // an approval prompt.
-  const ghRevoked = await refuseIfGhDisabled(worktree.hostMainRepo);
-  if (ghRevoked) return ghRevoked;
-
-  const ghTarget = await resolveGhTarget(reg.originUrl);
-  if (ghTarget.error) return ghTarget.error;
-  // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
-  // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
-  const apiRun = ghRunContext(worktree.hostMainRepo, undefined, args);
-  return runHostGh(['api', endpoint, ...apiRun.args], apiRun.cwd, { host: ghTarget.host });
+  const run = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
+  return runHostGh(run.args, run.cwd, { host: ghTarget.host });
 }
 
 /**

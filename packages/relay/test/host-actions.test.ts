@@ -106,18 +106,28 @@ describe('executeCloudAction routing', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('gh.pr.bogus returns exit 64 (unknown op)', async () => {
-    const result = await executeCloudAction(action('gh.pr.bogus'), makeDeps());
+  // gh.exec parity with docker: the same blocklist / destructive / checkout
+  // decisions must apply whichever provider the box runs on.
+  it('gh.exec with no args returns exit 64', async () => {
+    const result = await executeCloudAction(action('gh.exec', { args: [] }), makeDeps());
     expect(result.exitCode).toBe(64);
-    expect(result.stderr).toContain('unknown gh.pr.*');
   });
 
-  it('gh.pr.checkout refused by default (env-gated)', async () => {
+  it('gh.exec refuses a blocked call before touching the host', async () => {
+    const result = await executeCloudAction(
+      action('gh.exec', { args: ['auth', 'token'] }),
+      makeDeps(),
+    );
+    expect(result.exitCode).toBe(65);
+    expect(result.stderr).toMatch(/credential/i);
+  });
+
+  it('gh.exec pr checkout stays refused by default (env-gated)', async () => {
     const prev = process.env['AGENTBOX_GH_PR_CHECKOUT'];
     delete process.env['AGENTBOX_GH_PR_CHECKOUT'];
     try {
       const result = await executeCloudAction(
-        action('gh.pr.checkout', { args: ['1'] }),
+        action('gh.exec', { args: ['pr', 'checkout', '1'] }),
         makeDeps(),
       );
       expect(result.exitCode).toBe(13);
@@ -127,43 +137,14 @@ describe('executeCloudAction routing', () => {
     }
   });
 
-  it('gh.pr.merge with AGENTBOX_PROMPT=off but no GH_FORCE refuses bypass', async () => {
-    const prevPrompt = process.env['AGENTBOX_PROMPT'];
-    const prevForce = process.env['AGENTBOX_GH_FORCE'];
-    process.env['AGENTBOX_PROMPT'] = 'off';
-    delete process.env['AGENTBOX_GH_FORCE'];
-    try {
-      const result = await executeCloudAction(action('gh.pr.merge', { args: ['1'] }), makeDeps());
-      expect(result.exitCode).toBe(10);
-      expect(result.stderr).toContain('AGENTBOX_GH_FORCE=1');
-    } finally {
-      if (prevPrompt !== undefined) process.env['AGENTBOX_PROMPT'] = prevPrompt;
-      else delete process.env['AGENTBOX_PROMPT'];
-      if (prevForce !== undefined) process.env['AGENTBOX_GH_FORCE'] = prevForce;
-    }
-  });
-
-  it('gh.run.bogus returns exit 64 (unknown op)', async () => {
-    const result = await executeCloudAction(action('gh.run.bogus'), makeDeps());
-    expect(result.exitCode).toBe(64);
-    expect(result.stderr).toContain('unknown gh.run.*');
-  });
-
-  it('gh.api with a non-allowlisted endpoint is refused (exit 65)', async () => {
-    const result = await executeCloudAction(action('gh.api', { endpoint: 'user' }), makeDeps());
-    expect(result.exitCode).toBe(65);
-    expect(result.stderr).toContain('not allowlisted');
-  });
-
-  it('gh.api DELETE on a comment endpoint is refused (only GET + POST proxied)', async () => {
+  it('gh.exec refuses gh api --input (stdin cannot traverse the relay)', async () => {
     const result = await executeCloudAction(
-      action('gh.api', { endpoint: 'repos/o/r/pulls/5/comments', args: ['-X', 'DELETE'] }),
+      action('gh.exec', { args: ['api', 'repos/o/r/issues', '--input', 'f.json'] }),
       makeDeps(),
     );
     expect(result.exitCode).toBe(65);
-    expect(result.stderr).toMatch(/DELETE|not proxied/);
+    expect(result.stderr).toContain('--input');
   });
-
 });
 
 /**

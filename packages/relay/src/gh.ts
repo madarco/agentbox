@@ -21,190 +21,126 @@ import { ghHostFromRemote, repoSlugFromRemote } from './git-pat.js';
 import type { GitRpcResult } from './types.js';
 
 /** Whitelisted subset of `gh pr` ops exposed via RPC. Keep in sync with the ctl CLI. */
-export const GH_PR_OPS = [
-  'create',
-  'view',
-  'list',
-  'diff',
-  'checks',
-  'comment',
-  'review',
-  'merge',
-  'checkout',
-  'close',
-  'reopen',
-] as const;
-
-export type GhPrOp = (typeof GH_PR_OPS)[number];
-
-export function isGhPrOp(value: string): value is GhPrOp {
-  return (GH_PR_OPS as readonly string[]).includes(value);
-}
-
-/** Read-only ops never trigger the host confirmation prompt. */
-export const GH_PR_READ_ONLY_OPS: ReadonlySet<GhPrOp> = new Set(['view', 'list', 'diff', 'checks']);
-
 /**
- * `gh pr` write ops that auto-approve under `box.autoApproveSafeHostActions`:
- * opening a PR for the box's branch (the relay forces `--head <box-branch>`, so
- * it can only ever target the box's own work) and commenting on a PR. The more
- * consequential writes (`review`, `close`, `reopen`, and especially `merge` /
- * `checkout`) are deliberately excluded — they keep prompting.
+ * `gh` policy: a blacklist, not an allowlist.
+ *
+ * The original model proxied a curated set of subcommands and refused the
+ * rest, which meant every new agent workflow (`gh issue`, `gh search`,
+ * `gh release`) hit "not proxied" and needed a code change to unblock —
+ * see issue #304. The surface is now open, with three narrow exceptions:
+ *
+ *   1. {@link GH_BLOCKED} — refused outright. Credential dumps, and anything
+ *      that mutates the HOST's auth state. The host owns the credential; a
+ *      box must not be able to read it or move it.
+ *   2. {@link GH_DESTRUCTIVE} — always confirmed with the user, even when
+ *      the box carries `box.autoApproveSafeHostActions`. Reserved for the
+ *      irreversible: deleting a repo, a release, a secret. `pr merge` is
+ *      deliberately NOT here — merging is ordinary agent work and is
+ *      revertable.
+ *   3. everything else — allow-once. The grant is the decision; calls run
+ *      silently by default, and prompt per-call when the box opts into
+ *      strict mode (`box.autoApproveSafeHostActions: false`).
+ *
+ * Patterns match the space-joined argv, case-insensitively.
  */
-export const GH_PR_SAFE_AUTO_APPROVE_OPS: ReadonlySet<GhPrOp> = new Set(['create', 'comment']);
-
-/**
- * Whitelisted subset of `gh run` ops exposed via RPC. `list` / `view` are
- * read-only; `rerun` re-triggers CI (a write — gated by the host confirm
- * prompt). `watch` is deliberately absent: it blocks until the run finishes,
- * which doesn't fit the relay's buffered request/response model (the in-box
- * `gh-shim` rejects it and points users at `gh run view`).
- */
-export const GH_RUN_OPS = ['list', 'view', 'rerun'] as const;
-
-export type GhRunOp = (typeof GH_RUN_OPS)[number];
-
-export function isGhRunOp(value: string): value is GhRunOp {
-  return (GH_RUN_OPS as readonly string[]).includes(value);
-}
-
-/** Read-only `gh run` ops never trigger the host confirmation prompt. */
-export const GH_RUN_READ_ONLY_OPS: ReadonlySet<GhRunOp> = new Set(['list', 'view']);
-
-// The PR review-comment endpoints. GET lists inline review comments; POST adds
-// one (the thing `gh pr comment` can't do). `…/comments/:id/replies` replies to
-// a review comment. The optional trailing `(\?…)` lets agents embed GET query
-// params in the path (e.g. `…/comments?per_page=50`) rather than via field flags.
-const PR_REVIEW_COMMENT = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments(\?.*)?$/;
-const PR_REVIEW_COMMENT_REPLY = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/comments\/\d+\/replies(\?.*)?$/;
-
-/**
- * `gh api` endpoints on which POST (create a comment) is proxied — unprompted,
- * since comments are low-risk. Kept separate from the read allowlist so adding
- * a read-only endpoint there later doesn't widen the POST surface.
- */
-export const GH_API_WRITE_ALLOWED_ENDPOINTS: readonly RegExp[] = [
-  PR_REVIEW_COMMENT,
-  PR_REVIEW_COMMENT_REPLY,
+export const GH_BLOCKED: readonly { pattern: RegExp; why: string }[] = [
+  {
+    pattern: /^auth\s+(token|refresh)\b/i,
+    why: 'prints or rotates the host credential',
+  },
+  {
+    pattern: /^auth\s+(login|logout|switch|setup-git)\b/i,
+    why: "changes the host's GitHub auth state, which the host owns",
+  },
+  {
+    pattern: /^config\s+set\b/i,
+    why: "rewrites the host's gh configuration",
+  },
+  {
+    // `gh alias set x '!sh -c ...'` defines a shell escape that later runs on
+    // the host under the host's credentials.
+    pattern: /^alias\s+(set|delete|import)\b/i,
+    why: 'defines host-side command aliases that later run with host credentials',
+  },
+  {
+    pattern: /^extension\s+(install|remove|upgrade|exec)\b/i,
+    why: 'installs or runs third-party code on the host',
+  },
+  {
+    pattern: /^(ssh-key|gpg-key)\s+(add|delete)\b/i,
+    why: "changes the host account's keys",
+  },
 ];
 
+export const GH_DESTRUCTIVE: readonly { pattern: RegExp; what: string }[] = [
+  { pattern: /^repo\s+(delete|archive|rename|transfer)\b/i, what: 'repository' },
+  { pattern: /^release\s+delete(-asset)?\b/i, what: 'release' },
+  { pattern: /^secret\s+(set|delete)\b/i, what: 'repository secret' },
+  { pattern: /^variable\s+delete\b/i, what: 'repository variable' },
+  { pattern: /^cache\s+delete\b/i, what: 'Actions cache' },
+  { pattern: /^ruleset\b.*\b(delete|edit)\b/i, what: 'repository ruleset' },
+  { pattern: /^org\s+\S*\b(delete|remove)\b/i, what: 'organization' },
+  { pattern: /^gist\s+delete\b/i, what: 'gist' },
+  { pattern: /^label\s+delete\b/i, what: 'label' },
+  { pattern: /^project\s+(delete|item-delete|field-delete)\b/i, what: 'project' },
+  // `gh api -X DELETE` reaches all of the above through the raw API. gh
+  // accepts `-X DELETE`, `-X=DELETE`, `-XDELETE` and `--method[= ]DELETE`,
+  // so match every spelling — a missed one is a silent hole, not a typo.
+  { pattern: /(^|\s)(-X=?\s*|--method[=\s]+)(DELETE|PUT|PATCH)\b/i, what: 'raw API write' },
+];
+
+/** Ready-to-send refusal when the argv is on the hard blocklist. */
+export function refuseBlockedGhCall(args: readonly string[]): GitRpcResult | null {
+  const joined = args.join(' ');
+  for (const { pattern, why } of GH_BLOCKED) {
+    if (pattern.test(joined)) {
+      return {
+        exitCode: 65,
+        stdout: '',
+        stderr:
+          `gh ${joined}: refused — ${why}. The host runs gh with its own credentials, ` +
+          `so the box never needs them.\n`,
+      };
+    }
+  }
+  return null;
+}
+
 /**
- * Allowlist of `gh api` endpoint patterns the relay will proxy at all (the
- * overall gate). Superset of the write-allowed list; meant to grow one
- * deliberate entry at a time. GET is allowed on every entry; POST only on the
- * write-allowed subset (see `refuseGhApiCall`).
+ * The thing this argv would irreversibly change, or null when it is ordinary
+ * work. A non-null result always raises a confirm, regardless of the box's
+ * auto-approve setting.
  */
-export const GH_API_ALLOWED_ENDPOINTS: readonly RegExp[] = [...GH_API_WRITE_ALLOWED_ENDPOINTS];
-
-/** True when `endpoint` matches an allowlisted `gh api` pattern (proxied at all). */
-export function isAllowedGhApiEndpoint(endpoint: string): boolean {
-  return GH_API_ALLOWED_ENDPOINTS.some((re) => re.test(normalizeGhApiEndpoint(endpoint)));
+export function ghDestructiveTarget(args: readonly string[]): string | null {
+  const joined = args.join(' ');
+  for (const { pattern, what } of GH_DESTRUCTIVE) {
+    if (pattern.test(joined)) return what;
+  }
+  return null;
 }
-
-/** True when POST is permitted on `endpoint` (the comment endpoints). */
-export function isWriteAllowedGhApiEndpoint(endpoint: string): boolean {
-  return GH_API_WRITE_ALLOWED_ENDPOINTS.some((re) => re.test(normalizeGhApiEndpoint(endpoint)));
-}
-
-/** Strip a leading slash so `/repos/...` and `repos/...` both match. */
-function normalizeGhApiEndpoint(endpoint: string): string {
-  return endpoint.replace(/^\/+/, '');
-}
-
-/** Ready-to-send refusal when a `gh api` endpoint isn't on the allowlist. */
-export const GH_API_ENDPOINT_REFUSAL: GitRpcResult = {
-  exitCode: 65,
-  stdout: '',
-  stderr:
-    'gh api: endpoint not allowlisted. Proxied: GET on ' +
-    'repos/:owner/:repo/pulls/:number/comments (and /:id/replies); POST to those ' +
-    'endpoints to add a review comment.\n',
-};
 
 /**
- * Endpoint-aware `gh api` policy. Returns a ready-to-send refusal, or `null`
- * when the call may proceed. The caller has already checked the endpoint is on
- * `GH_API_ALLOWED_ENDPOINTS`.
+ * The one thing `gh api` still cannot do through the relay, and it is a
+ * transport limit rather than a policy one: `--input` reads a body from stdin
+ * or a file, and the host `gh` runs with stdin ignored, so the request would
+ * silently send nothing. Point the caller at `-f`/`-F` fields instead.
  *
- * - GET → allowed everywhere on the allowlist.
- * - POST → allowed only on the write-allowed comment endpoints (unprompted).
- * - PATCH/PUT/DELETE/etc. → refused.
- * - `--input` → refused: the host `gh` runs with stdin ignored and a box-side
- *   file path wouldn't exist on the host, so it can't cross the relay. Agents
- *   pass fields via `-f`/`-F`.
- *
- * `gh` uses Go's pflag, which accepts a short flag's value glued on (`-XPOST`,
- * `-fbody=hi`) and the `=` form (`-X=POST`, `--method=POST`) as well as the
- * space-separated form. The box-side shim is the convenience gate; this relay
- * guard is the security boundary for a direct `agentbox-ctl` call, so it
- * recognizes every spelling.
+ * Method and endpoint are no longer gated here — `GH_DESTRUCTIVE` catches the
+ * irreversible verbs, and everything else is ordinary allow-once work.
  */
-export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult | null {
-  const refuse = (reason: string): GitRpcResult => ({
-    exitCode: 65,
-    stdout: '',
-    stderr: `gh api: ${reason}\n`,
-  });
-
-  let explicitMethod: string | null = null;
-  let hasFieldFlag = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i] ?? '';
-    // --method / -X with a separately-tokenized value.
-    if (arg === '-X' || arg === '--method') {
-      explicitMethod = args[i + 1] ?? '';
-      i++; // consumed the value
-      continue;
-    }
-    // --method=VALUE / -X=VALUE / -XVALUE (glued short form).
-    if (arg.startsWith('--method=')) {
-      explicitMethod = arg.slice('--method='.length);
-      continue;
-    }
-    if (arg.startsWith('-X') && arg.length > 2) {
-      explicitMethod = arg.slice(2).replace(/^=/, '');
-      continue;
-    }
-    // `--input` (stdin/file body) can't traverse the relay — refuse outright.
-    // Its spaced value (if any) is irrelevant; we return before consuming it.
+export function refuseGhApiInput(args: readonly string[]): GitRpcResult | null {
+  for (const arg of args) {
     if (arg === '--input' || arg.startsWith('--input=')) {
-      return refuse(
-        "'--input' (stdin/file body) isn't supported through the relay; use -f/-F fields",
-      );
-    }
-    // Field flags auto-switch gh api to POST. The SPACED forms take the next
-    // token as their value, so consume it — otherwise a method-looking value
-    // (e.g. `-f -X=GET`, where pflag binds `-X=GET` as `-f`'s value and POSTs)
-    // would be misread as a real `--method` next iteration and downgrade the
-    // detected method to GET, slipping a POST past a future read-only endpoint.
-    if (arg === '-f' || arg === '-F' || arg === '--field' || arg === '--raw-field') {
-      hasFieldFlag = true;
-      i++; // consume the value token
-      continue;
-    }
-    // Glued field forms carry their value inline (`-fbody=hi`, `--field=…`). No
-    // read-only flag starts with -f / -F, so the prefix match is safe.
-    if (
-      arg.startsWith('-f') ||
-      arg.startsWith('-F') ||
-      arg.startsWith('--field=') ||
-      arg.startsWith('--raw-field=')
-    ) {
-      hasFieldFlag = true;
+      return {
+        exitCode: 65,
+        stdout: '',
+        stderr:
+          "gh api: '--input' (stdin/file body) isn't supported through the relay " +
+          '(the host gh runs with stdin ignored); use -f/-F fields\n',
+      };
     }
   }
-
-  const method = (explicitMethod ?? (hasFieldFlag ? 'POST' : 'GET')).toUpperCase();
-  if (method === 'GET') return null;
-  if (method === 'POST') {
-    if (isWriteAllowedGhApiEndpoint(endpoint)) return null;
-    return refuse(
-      `POST is only proxied to PR review-comment endpoints (repos/:o/:r/pulls/:n/comments[/:id/replies]), not '${endpoint}'`,
-    );
-  }
-  return refuse(
-    `method '${method}' is not proxied — only GET, and POST to comment endpoints, are allowed`,
-  );
+  return null;
 }
 
 /**
@@ -219,7 +155,7 @@ export function refuseGhApiCall(endpoint: string, args: string[]): GitRpcResult 
  * `gh pr` path, which forwards args verbatim.
  */
 export function injectPrCreateHead(
-  op: GhPrOp,
+  op: string,
   branch: string | undefined,
   args: string[],
 ): string[] {
@@ -243,7 +179,7 @@ function hasHeadArg(args: string[]): boolean {
  * only ever target the box's own work. An explicit head (which could name any
  * branch, e.g. `main`) falls back to the confirm prompt.
  */
-export function prCreateHasExplicitHead(op: GhPrOp, args: string[]): boolean {
+export function prCreateHasExplicitHead(op: string, args: string[]): boolean {
   return op === 'create' && hasHeadArg(args);
 }
 
@@ -253,7 +189,7 @@ export function prCreateHasExplicitHead(op: GhPrOp, args: string[]): boolean {
  * relay must refuse rather than let `gh` fall back to the host repo's
  * *checked-out* branch, which would open a PR for the wrong branch.
  */
-export function prCreateNeedsHead(op: GhPrOp, args: string[]): boolean {
+export function prCreateNeedsHead(op: string, args: string[]): boolean {
   return op === 'create' && !hasHeadArg(args);
 }
 
@@ -269,39 +205,19 @@ export const PR_CREATE_NO_HEAD_REFUSAL: GitRpcResult = {
 };
 
 /** Wire params for every `gh.pr.<op>` method. Mirrors the new ctl command surface. */
-export interface GhPrRpcParams {
-  /** Container path the ctl ran in; used to pick the registered worktree. */
+/** Wire params for `gh.exec` — the whole `gh` CLI behind one method. */
+export interface GhExecRpcParams {
+  /** Container path the ctl ran in; picks the registered worktree. */
   path?: string;
-  /** Pass-through argv (`--title`, `--body`, `--label`, `--draft`, `--json`, …). */
+  /** Full gh argv, e.g. `['issue','list','--state','open']`. */
   args?: string[];
   /**
-   * One-time token minted by the host CLI via `/admin/host-initiated/mint`
-   * before invoking `agentbox git pr <op> <box>`. Validated against the
-   * relay's in-memory store, scoped to `(boxId, method=gh.pr.<op>)`;
-   * consumed on match and the confirm prompt is skipped. Boxes cannot mint
-   * tokens (admin endpoint is loopback-only). `AGENTBOX_GH_FORCE` /
-   * `AGENTBOX_GH_PR_CHECKOUT` opt-ins still apply — destructive guards do
-   * not weaken when host-initiated.
+   * One-time token minted by the host CLI before a host-driven
+   * `agentbox git pr <op> <box>`. Scope- and params-hash-bound, consumed on
+   * match, and skips the confirm. Boxes cannot mint tokens (the mint endpoint
+   * is loopback-only); a present-but-invalid token is a hard reject.
    */
   hostInitiated?: string;
-}
-
-/** Wire params for every `gh.run.<op>` method. In-box surface only (no token). */
-export interface GhRunRpcParams {
-  /** Container path the ctl ran in; used to pick the registered worktree. */
-  path?: string;
-  /** Pass-through argv (`--json`, `--limit`, `<run-id>`, …). */
-  args?: string[];
-}
-
-/** Wire params for the `gh.api` method. Read-only, allowlisted endpoints. */
-export interface GhApiRpcParams {
-  /** Container path the ctl ran in; used to pick the registered worktree. */
-  path?: string;
-  /** The REST endpoint, e.g. `repos/:owner/:repo/pulls/:number/comments`. */
-  endpoint?: string;
-  /** Pass-through argv (`--jq`, `--paginate`, `-H`, …). */
-  args?: string[];
 }
 
 const GH_RPC_TIMEOUT_MS = 120_000;
@@ -655,29 +571,14 @@ function runGitProbe(args: string[]): Promise<GitRpcResult> {
 }
 
 /**
- * `merge` is the most destructive op. `AGENTBOX_PROMPT=off` auto-`y`s every
- * other prompt in the relay; for `gh pr merge` we refuse that bypass unless
- * the user opted in via `AGENTBOX_GH_FORCE=1`. Returns a ready-to-send envelope
- * when the bypass should be refused; `null` otherwise.
- */
-export function refuseMergeBypass(op: GhPrOp): GitRpcResult | null {
-  if (op !== 'merge') return null;
-  if (process.env['AGENTBOX_PROMPT'] !== 'off') return null;
-  if (process.env['AGENTBOX_GH_FORCE'] === '1') return null;
-  return {
-    exitCode: 10,
-    stdout: '',
-    stderr:
-      'gh pr merge: AGENTBOX_PROMPT=off bypass requires AGENTBOX_GH_FORCE=1 (merge is irreversible)\n',
-  };
-}
-
-/**
- * `gh pr checkout` is gated behind an explicit opt-in env: it mutates the
- * host main repo's `HEAD`, which the bind-mounted box sees too. Returns a
+ * `gh pr checkout` stays gated behind an explicit opt-in env even under the
+ * open policy, and for a different reason than the rest: it is the one `gh`
+ * subcommand that mutates the HOST's working tree rather than something on
+ * GitHub. The box's bind-mounted `.git/HEAD` follows the host, so a checkout
+ * yanks the branch out from under whatever the user is doing. Returns a
  * ready-to-send envelope when the op should be refused; `null` otherwise.
  */
-export function refuseCheckoutByDefault(op: GhPrOp): GitRpcResult | null {
+export function refuseCheckoutByDefault(op: string): GitRpcResult | null {
   if (op !== 'checkout') return null;
   if (process.env['AGENTBOX_GH_PR_CHECKOUT'] === 'allow') return null;
   return {
