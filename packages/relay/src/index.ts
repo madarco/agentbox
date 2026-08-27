@@ -163,6 +163,7 @@ export {
   hostToolInstalled,
   refuseCredentialArgv,
   refuseDeniedArgv,
+  refuseIfGhDisabled,
   renderToolList,
   renderToolListJson,
   resolveToolGrant,

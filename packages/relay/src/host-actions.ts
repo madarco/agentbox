@@ -80,6 +80,7 @@ import {
   hostToolInstalled,
   refuseCredentialArgv,
   refuseDeniedArgv,
+  refuseIfGhDisabled,
   renderToolList,
   renderToolListJson,
   resolveToolGrant,
@@ -434,6 +435,11 @@ async function runGhPrRpc(
 
   const lookup = await lookupCloudBox(deps.boxId);
 
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
+  // docker path runs, per the "fix across all providers" rule.
+  const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
+  if (ghRevoked) return ghRevoked;
+
   if (op === 'checkout') {
     // The cloud host repo isn't bind-mounted by anything; the only "branch
     // we must not stomp" concern is the host's own current branch, which is
@@ -626,6 +632,11 @@ async function runGhRunRpc(
   const ghTarget = await resolveGhTarget(deps.originUrl);
   if (ghTarget.error) return ghTarget.error;
   const lookup = await lookupCloudBox(deps.boxId);
+
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
+  // docker path runs, per the "fix across all providers" rule.
+  const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
+  if (ghRevoked) return ghRevoked;
   if (!GH_RUN_READ_ONLY_OPS.has(op)) {
     if (deps.autoApproveSafeHostActions !== false) {
       // `gh run rerun` only re-triggers the project's own CI — safe subset.
@@ -667,6 +678,11 @@ async function runGhApiRpc(
   const ghTarget = await resolveGhTarget(deps.originUrl);
   if (ghTarget.error) return ghTarget.error;
   const lookup = await lookupCloudBox(deps.boxId);
+
+  // `tools.gh.enabled: false` revokes the built-in gh grant. Same check the
+  // docker path runs, per the "fix across all providers" rule.
+  const ghRevoked = await refuseIfGhDisabled(lookup.workspacePath);
+  if (ghRevoked) return ghRevoked;
   // The origin picks the HOST (`GH_HOST`), but `gh api` has no `--repo` flag —
   // so it deliberately never gets the `--repo` slug `ghRunContext` derives.
   const apiRun = ghRunContext(lookup.workspacePath, undefined, args);
@@ -744,7 +760,7 @@ async function runToolRpc(
   }
 
   if (action.method !== 'tool.run') {
-    return { exitCode: 501, stdout: '', stderr: `unknown tool method: ${action.method}\n` };
+    return { exitCode: 64, stdout: '', stderr: `unknown tool method: ${action.method}\n` };
   }
 
   const resolved = await resolveToolGrant(name, cwd);
@@ -760,8 +776,7 @@ async function runToolRpc(
   const denyRefusal = refuseDeniedArgv(grant, args);
   if (denyRefusal) return denyRefusal;
 
-  const silent =
-    argvIsExplicitlyAllowed(grant, args) || deps.autoApproveSafeHostActions !== false;
+  const silent = argvIsExplicitlyAllowed(grant, args) || deps.autoApproveSafeHostActions !== false;
   if (!silent) {
     const denied = await cloudWriteConfirm(deps, `tool ${name}`, containerPath, [...args]);
     if (denied) return denied;
