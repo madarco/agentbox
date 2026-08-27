@@ -26,21 +26,26 @@ export function useTempHome(prefix: string): string {
 }
 
 /**
- * Throw unless `os.homedir()` resolves inside the OS temp dir. Both paths go
- * through `realpath`-insensitive `resolve` — on macOS `tmpdir()` is a
- * `/var → /private/var` symlink, so a raw prefix compare gives false negatives.
+ * Throw unless `os.homedir()` resolves to a subdirectory INSIDE the OS temp dir.
+ *
+ * Strictly below, never equal: `HOME=/tmp` is a real configuration (containers,
+ * some CI images), and there the home's `.agentbox` is real state. Every caller
+ * here `mkdtemp`s a subdirectory, so equality is never something a legitimate
+ * setup produces — accepting it would only ever green-light the deletion this
+ * guard exists to stop.
+ *
+ * Both paths go through `resolve` — and the `/private` form is compared too,
+ * because on macOS `tmpdir()` is a `/var → /private/var` symlink and a raw
+ * prefix compare gives false negatives.
  */
 export function assertTempHome(): string {
   const home = resolve(homedir());
   const tmp = resolve(tmpdir());
-  const under = home === tmp || home.startsWith(tmp.endsWith(sep) ? tmp : tmp + sep);
-  // Compare the realpath-collapsed forms too (/var vs /private/var on macOS).
-  const collapsed = home.replace(/^\/private\//, '/');
-  const tmpCollapsed = tmp.replace(/^\/private\//, '/');
-  const underCollapsed =
-    collapsed === tmpCollapsed ||
-    collapsed.startsWith(tmpCollapsed.endsWith(sep) ? tmpCollapsed : tmpCollapsed + sep);
-  if (!under && !underCollapsed) {
+  const strictlyUnder = (child: string, parent: string): boolean =>
+    child !== parent && child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  const collapse = (p: string): string => p.replace(/^\/private\//, '/');
+  const under = strictlyUnder(home, tmp) || strictlyUnder(collapse(home), collapse(tmp));
+  if (!under) {
     throw new Error(
       `refusing to touch ${home}/.agentbox: $HOME is not an isolated temp dir.\n` +
         `This suite deletes $HOME/.agentbox between tests, so running it against a real ` +

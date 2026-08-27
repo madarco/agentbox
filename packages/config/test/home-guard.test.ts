@@ -28,6 +28,14 @@ describe('temp-home guard', () => {
     expect(() => assertTempHome()).not.toThrow();
   });
 
+  it('refuses HOME set to the temp dir ITSELF (HOME=/tmp in containers/CI)', () => {
+    // A real configuration, and there `$HOME/.agentbox` is real state. Every
+    // legitimate setup here mkdtemps a subdirectory, so equality is only ever
+    // the dangerous case.
+    process.env['HOME'] = tmpdir();
+    expect(() => assertTempHome()).toThrow(/not an isolated temp dir/);
+  });
+
   it('refuses a HOME outside the temp dir', () => {
     process.env['HOME'] = '/Users/somebody';
     expect(() => assertTempHome()).toThrow(/not an isolated temp dir/);
