@@ -1969,13 +1969,17 @@ async function handleGhExecRpc(
   // rather than this rewritten argv.
   let finalArgs = args;
   if (family === 'pr') {
+    // Rebuild around the ORIGINAL argv so leading global flags (`-R o/r`)
+    // survive, and slice the op's tail off the NORMALIZED argv so the verb is
+    // not duplicated.
+    const head = args.slice(0, args.length - verb.length);
     const rest = injectPrCreateHead(
       op,
       worktree.sanctionedBranch ?? worktree.branch,
-      args.slice(2),
+      verb.slice(2),
     );
     if (prCreateNeedsHead(op, rest)) return PR_CREATE_NO_HEAD_REFUSAL;
-    finalArgs = [family, op, ...rest];
+    finalArgs = [...head, family, op, ...rest];
   }
   const run = ghRunContext(worktree.hostMainRepo, reg.originUrl, finalArgs);
   return runHostGh(run.args, run.cwd, { host: ghTarget.host });

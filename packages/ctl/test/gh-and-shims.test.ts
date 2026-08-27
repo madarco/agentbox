@@ -358,6 +358,34 @@ describe('gh-shim: open surface + pr branch injection', () => {
     }
   });
 
+  // Reported by review: `--comment` takes a string for `pr close` but is a
+  // BOOLEAN for `pr review`. Treating it as value-taking everywhere made
+  // `pr review --comment --body "lgtm"` swallow `--body`, read `lgtm` as the
+  // ref, and skip injection — so the review landed on the HOST's branch.
+  it('pr review --comment --body still injects the branch', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'review', '--comment', '--body', 'lgtm'], env);
+      expect(out.stdout.trim()).toBe(
+        'STUB: gh exec -- pr review agentbox/test-branch --comment --body lgtm',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it('pr close --comment <text> treats the text as the flag value, not the ref', () => {
+    const env = makeStubShell();
+    try {
+      const out = runShim(GH_SHIM, ['pr', 'close', '--comment', 'done here'], env);
+      expect(out.stdout.trim()).toBe(
+        'STUB: gh exec -- pr close agentbox/test-branch --comment done here',
+      );
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it('pr create is forwarded without a positional branch', () => {
     const env = makeStubShell();
     try {

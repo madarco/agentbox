@@ -742,6 +742,26 @@ exit 0
     expect(handle.prompts.size()).toBe(0);
   });
 
+  // Reported by review: family/op came from the normalized argv but the pr
+  // rebuild still sliced the RAW argv, so `gh -R o/r pr create` was rewritten
+  // to `gh pr create --head <b> pr create` — leading globals dropped, verb
+  // duplicated.
+  it('preserves leading global flags and does not duplicate the pr verb', async () => {
+    await registerWithWorktree();
+    const r = await fetchJson(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: {
+        method: 'gh.exec',
+        params: { path: '/workspace', args: ['-R', 'o/r', 'pr', 'create', '--title', 'T'] },
+      },
+    });
+    expect(r.status).toBe(200);
+    const { readFile } = await import('node:fs/promises');
+    const log = await readFile(stubLog, 'utf8');
+    expect(log).toContain('-R o/r pr create');
+    expect(log.match(/\bpr create\b/g)?.length).toBe(1);
+  });
+
   it('an explicit --head is respected and not double-injected', async () => {
     await registerWithWorktree();
     const r = await fetchJson(handle, 'POST', '/rpc', {
@@ -794,7 +814,10 @@ exit 0
       token: 't1',
       body: {
         method: 'gh.exec',
-        params: { path: '/workspace', args: ['pr', 'create', '--title', 'T', '--body', 'B', '--draft'] },
+        params: {
+          path: '/workspace',
+          args: ['pr', 'create', '--title', 'T', '--body', 'B', '--draft'],
+        },
       },
     });
     expect(r.status).toBe(200);
@@ -843,7 +866,10 @@ exit 0
       token: 't1',
       body: {
         method: 'gh.exec',
-        params: { path: '/workspace', args: ['pr', 'create', '--head', 'feature/x', '--title', 'T'] },
+        params: {
+          path: '/workspace',
+          args: ['pr', 'create', '--head', 'feature/x', '--title', 'T'],
+        },
       },
     });
     expect(r.status).toBe(200);
