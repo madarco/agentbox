@@ -9,10 +9,29 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
-## [Unreleased]
+## [0.29.0] - 2026-08-28
 
 ### Added
 
+- **Host tools — any CLI on your machine, usable from a box.** `agentbox tools
+  add <name>` grants a box the right to run one of your host commands
+  (`terraform`, `aws`, `linear`, …) through the relay, so it uses your
+  credentials without ever receiving them. Grants live host-side; an
+  `agentbox.yaml` `tools:` block only *requests* one and raises a single
+  approval at create time, and a box can ask for a new tool at runtime
+  (`tools.request.enabled`). A built-in credential deny list — token printers,
+  `sts get-session-token`, keyring reads — refuses ahead of your own allow
+  rules. `agentbox doctor` grows a `tools` section. See
+  https://agent-box.sh/docs/host-tools.
+- **The whole `gh` CLI now works from a box** (#304). It was a curated
+  allowlist, so "implement GitHub issue `<link>`" died at `gh issue: not
+  proxied`. One forwarder now carries the entire CLI, with policy instead of a
+  list: credential and shell-escape commands (`auth token|login`, `config set`,
+  `alias set`, `extension install`, `key add`) are refused outright, destructive
+  ones (`repo delete/archive/rename`, `release delete`, `secret set/delete`,
+  `gh api -X DELETE|PUT|PATCH`, GraphQL mutations) always confirm even under
+  `autoApproveSafeHostActions`, and everything else is allow-once.
+  `tools.gh.enabled` revokes the built-in grant.
 - Community providers now appear in the create pickers (web UI and tray) and get
   a real credential form, from a new `ProviderDescriptor` a plugin declares and
   `agentbox plugin add` snapshots. Existing plugins keep working unchanged —
@@ -21,12 +40,39 @@ CLI, not the raw commits.
   on a provider's declared capabilities instead of hardcoded name lists, so a
   plugin that supports them gets them. DigitalOcean gains `code`/`open` this way.
 
+### Changed
+
+- Provider SDK 2.9.0 adds `ProviderModule.descriptor`,
+  `ProviderModule.sizeIgnoredReason` and `CloudBackend.stageFilesAsRoot`, and
+  ships `agentbox-tool-shim` in place of the per-CLI `ntn`/`linear` shims.
+  Additive (`SDK_API_VERSION` stays 2), but a plugin whose provision script
+  installs `/tmp/agentbox-ntn-shim` must switch to `/tmp/agentbox-tool-shim`.
+
+### Removed
+
+- The bespoke Notion and Linear connectors, along with
+  `integrations.notion.enabled` / `integrations.linear.enabled`. Both are
+  ordinary host tools now — `agentbox tools add ntn` does what the connector
+  did, for any CLI.
+
 ### Fixed
 
+- **Claude Code stopped claiming your login expired when it hadn't.** The check
+  read the ~8h access token rather than the ~30-day refresh token, so a healthy
+  login looked dead within a day of every sign-in — and accepting the prompt
+  rotated the shared token before you reached the browser, so cancelling left
+  every copy of that login holding a spent one. A lapsed access token is now
+  renewed silently, credential syncs are newest-wins in both directions, and a
+  rotation is re-sent until the relay confirms it instead of being lost to a
+  restart.
 - Claude Code now runs with its classic renderer inside a box. Its fullscreen
   renderer leaves stale characters in the blank areas of the screen over a
   network transport — visible while scrolling, and cleared only by resizing the
   terminal. `box.claudeTui` (`default` / `fullscreen` / `auto`) switches it back.
+- Attached sessions no longer print escape-sequence debris into the content
+  area (#260). The status footer was repainted after every stream chunk, so it
+  spliced itself into whatever sequence the transport had cut in half. Worst on
+  finely-chunked providers, where a screen could be left unreadable.
 - Host tools now run on the machine that granted them. With a remote hub they
   executed on the control box, against a project directory that no longer
   existed — so a box saw neither your grants nor your binaries. `agentbox tools
@@ -40,6 +86,21 @@ CLI, not the raw commits.
   your machine to land on its next connect. `agentbox cp <file> hub:` pre-loads
   a file so a box can read it with your machine off; `relay.hostReachTimeoutMs`
   tunes how long the hub waits before falling back.
+- `gh` from a box now targets the repo's own GitHub host (#242), so GitHub
+  Enterprise repos work and one stale `github.com` token no longer makes every
+  `gh` call look unauthenticated. `~/.ssh/config` host aliases in the remote are
+  expanded the way git and gh expand them.
+- `agentbox <group> <typo>` no longer silently runs the group's default (#259):
+  `agentbox hetzner ssh` ran `hetzner login`, turning a typo into a credential
+  prompt. Unknown subcommands now list what the group accepts and exit 1.
+- `agentbox create --provider <plugin>` failed with a 400 — creates go through
+  the hub, which only knew the built-in providers. `carry:` also failed, and
+  then hung the create, on any provider whose box user isn't root.
+- `agentbox stop` on an E2B box now sticks; auto-resume revived it on the
+  relay's own next poll. E2B boxes also pause at the platform session cap (1h on
+  Hobby) instead of being destroyed by it, and a resumed box gets a fresh window
+  instead of the SDK's 5-minute default. On Vercel, a reconnect no longer stacks
+  a whole extra timeout window each time.
 - `relay.port` now actually moves the host daemon. It was documented and
   settable but never read, so the relay always bound 8787. It governs the hub
   too — the two share the port — and 8788 is refused (boxes bind it internally).
@@ -49,16 +110,14 @@ CLI, not the raw commits.
   bind. It verifies `/healthz` really is our relay, names a foreign process
   holding the port, inlines the log tail, clears the stale pidfile, and exits
   non-zero.
+- A local hub no longer inherits a configured control box's identity — it picked
+  up the deployed profile, served the password UI, and switched off the very
+  host-action poller it was meant to enable.
 - A `box.size` / `box.size<Provider>` that Daytona or E2B will ignore (both fix
   resources when the base image is baked) is now called out when you set it and
   when you queue a `-i` create, instead of only in a detached job's log where
   nobody sees it. Daytona also records the resources a snapshot actually has, so
   the warning names real numbers rather than "the default size".
-
-### Changed
-
-- Provider SDK 2.6.0 adds an optional `ProviderModule.sizeIgnoredReason` so a
-  provider can explain when a requested box size cannot take effect.
 
 ## [0.28.2] - 2026-08-26
 
