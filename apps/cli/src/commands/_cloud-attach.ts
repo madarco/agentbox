@@ -9,7 +9,9 @@ import {
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
 import type { BoxRecord } from '@agentbox/core';
+import { claudeTuiEnv } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
 
 // Re-exported so existing importers (dashboard, unit tests) keep their paths; the
@@ -150,7 +152,15 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     const resume = await agentResumeArgs(provider, box, args.mode);
     if (resume) extraArgs = resume;
   }
-  const command = buildCloudAttachInnerCommand(args.binary, extraArgs);
+  // Renderer pin rides the launch command (see `buildCloudAttachInnerCommand`);
+  // claude is the only agent it applies to.
+  const command = buildCloudAttachInnerCommand(
+    args.binary,
+    extraArgs,
+    args.binary === 'claude'
+      ? claudeTuiEnv((await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui)
+      : undefined,
+  );
   // Every cloud provider honours `attach.openIn`.
   //
   // Daytona used to be pinned to inline here, on the theory that `spec.cleanup`

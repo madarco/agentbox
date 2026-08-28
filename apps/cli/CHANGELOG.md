@@ -23,6 +23,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- Claude Code now runs with its classic renderer inside a box. Its fullscreen
+  renderer leaves stale characters in the blank areas of the screen over a
+  network transport — visible while scrolling, and cleared only by resizing the
+  terminal. `box.claudeTui` (`default` / `fullscreen` / `auto`) switches it back.
 - Host tools now run on the machine that granted them. With a remote hub they
   executed on the control box, against a project directory that no longer
   existed — so a box saw neither your grants nor your binaries. `agentbox tools

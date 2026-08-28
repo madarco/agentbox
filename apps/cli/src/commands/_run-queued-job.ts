@@ -432,6 +432,7 @@ async function runDockerJob(
       claudeArgs: applyClaudeSkipPermissions(promptedArgs, cfg.effective),
       sessionName: cfg.effective.claude.sessionName,
       boxName: result.record.name,
+      claudeTui: cfg.effective.box.claudeTui,
     });
   } else if (job.agent === 'codex') {
     log.write(`checking codex`);

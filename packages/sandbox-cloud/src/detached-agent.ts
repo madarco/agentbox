@@ -13,11 +13,22 @@
  */
 import { spawn } from 'node:child_process';
 import type { BoxRecord, Provider } from '@agentbox/core';
+import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
+import { loadEffectiveConfig } from '@agentbox/config';
 
 /** Printed in the pane the instant the session command starts, so a freshly
  * attached pane is never blank during the agent's cold-start (node cold-start +
  * a large seed prompt + TUI init can take seconds). Plain ASCII on purpose — it
  * threads through several shell-quoting layers. */
+/**
+ * Quote a value for the single-quoted `bash -lc '…'` body. The body is already
+ * inside single quotes, so an embedded quote has to close, escape, and reopen.
+ * Values here are ours (`0`/`1` flags), but this keeps a future one safe.
+ */
+function shQuote(v: string): string {
+  return `"${v.replace(/(["$`\\])/g, '\\$1')}"`;
+}
+
 function agentStartBanner(binary: string): string {
   return `printf "  agentbox: starting ${binary} (first paint may take a few seconds)...\\r\\n"; `;
 }
@@ -31,9 +42,22 @@ function agentStartBanner(binary: string): string {
  * '…'`); `exec <binary>` replaces the shell so the agent keeps PID 2 (Ctrl-c in
  * the agent tears the session down cleanly).
  */
-export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[]): string {
+export function buildCloudAttachInnerCommand(
+  binary: string,
+  extraArgs?: string[],
+  env?: Record<string, string>,
+): string {
+  // Exported on the command itself, not left to /etc/agentbox/box.env. box.env
+  // only reaches processes that go through a login shell, and while THIS
+  // launcher does (`bash -lc`), the docker path's agent session does not — so
+  // the renderer pin lives on the launch command on both paths rather than
+  // being carried one way here and another way there. One mechanism, one place
+  // to look when it misbehaves.
+  const exports = Object.entries(env ?? {})
+    .map(([k, v]) => `export ${k}=${shQuote(v)}; `)
+    .join('');
   if (!extraArgs || extraArgs.length === 0) {
-    return `bash -lc '${agentStartBanner(binary)}exec ${binary}'`;
+    return `bash -lc '${agentStartBanner(binary)}${exports}exec ${binary}'`;
   }
   // Encode EACH arg to its own base64 token, newline-join the tokens, then
   // base64 that whole list once more into a single opaque `blob`. The launcher
@@ -56,7 +80,7 @@ export function buildCloudAttachInnerCommand(binary: string, extraArgs?: string[
   // the `bash -lc` body MUST be single-quoted — a double-quoted `"${A[@]}"`
   // expands eagerly under the outer `/bin/sh -c` before the loop runs, dropping
   // the seed prompt. Single quotes are inert to sh; bash runs `${A[@]}`/`$(…)`.
-  return `bash -lc '${agentStartBanner(binary)}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}${exports}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 /**
@@ -252,6 +276,19 @@ async function tmuxSessionExists(
  * on an auth error). Provider-parameterized so the hub worker can call it against
  * the `Provider` it already holds. Returns the possibly-started box record.
  */
+/**
+ * `box.claudeTui` for a box's project, defaulting to the schema default when
+ * the config can't be read (a moved workspace, the hub worker's ephemeral
+ * checkout). A renderer preference must never fail a session start.
+ */
+async function resolveBoxClaudeTui(box: BoxRecord): Promise<ClaudeTuiMode> {
+  try {
+    return (await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui;
+  } catch {
+    return 'default';
+  }
+}
+
 export async function startDetachedCloudAgent(
   args: StartDetachedCloudAgentArgs,
 ): Promise<BoxRecord> {
@@ -269,7 +306,12 @@ export async function startDetachedCloudAgent(
     const resume = await args.resolveResumeArgs(box);
     if (resume) extraArgs = resume;
   }
-  const command = buildCloudAttachInnerCommand(binary, extraArgs);
+  // Claude is the only agent with a renderer to pin; codex/opencode get nothing.
+  const command = buildCloudAttachInnerCommand(
+    binary,
+    extraArgs,
+    binary === 'claude' ? claudeTuiEnv(await resolveBoxClaudeTui(box)) : undefined,
+  );
   const attempts = Math.max(1, args.startRetry?.attempts ?? DEFAULT_START_ATTEMPTS);
   const backoffMs = args.startRetry?.backoffMs ?? DEFAULT_START_BACKOFF_MS;
   for (let attempt = 1; ; attempt++) {

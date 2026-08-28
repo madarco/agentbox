@@ -108,6 +108,37 @@ describe('buildCloudAttachInnerCommand', () => {
     const cmd = buildCloudAttachInnerCommand('claude', args);
     expect(decodeArgs(cmd)).toEqual(['fix the failing test', '--permission-mode=plan']);
   });
+  /**
+   * The renderer pin (`box.claudeTui`) rides the launch command on every
+   * provider, rather than /etc/agentbox/box.env. box.env only reaches processes
+   * that go through a login shell — true for THIS launcher, false for the
+   * docker path's `tmux new-session 'claude …'` — so carrying it two different
+   * ways was how the docker agent silently kept the old renderer.
+   */
+  it('exports the renderer env before exec, on the no-args path', () => {
+    const cmd = buildCloudAttachInnerCommand('claude', undefined, {
+      CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
+    });
+    expect(cmd).toContain('export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN="1"; ');
+    // Must be set before the agent replaces the shell, and after the banner.
+    expect(cmd.indexOf('export CLAUDE_CODE_')).toBeLessThan(cmd.indexOf('exec claude'));
+    expect(cmd.indexOf('agentbox: starting')).toBeLessThan(cmd.indexOf('export CLAUDE_CODE_'));
+  });
+
+  it('exports the renderer env on the args path too', () => {
+    const cmd = buildCloudAttachInnerCommand('claude', ['--model', 'sonnet'], {
+      CLAUDE_CODE_NO_FLICKER: '1',
+    });
+    expect(cmd).toContain('export CLAUDE_CODE_NO_FLICKER="1"; ');
+    expect(cmd.indexOf('export CLAUDE_CODE_')).toBeLessThan(cmd.indexOf('while IFS= read -r t'));
+    // …and the args still survive the base64 round-trip unchanged.
+    expect(decodeArgs(cmd)).toEqual(['--model', 'sonnet']);
+  });
+
+  it('adds nothing when no env is given (auto, or a non-claude agent)', () => {
+    expect(buildCloudAttachInnerCommand('codex', [], {})).not.toContain('export ');
+    expect(buildCloudAttachInnerCommand('claude')).not.toContain('export ');
+  });
 });
 
 /**
@@ -119,7 +150,9 @@ describe('buildCloudAttachInnerCommand', () => {
 describe('verifyDetachedSession', () => {
   const box = { name: 'kanban-buttons' } as BoxRecord;
   const fakeProvider = (exec: (argv: string[]) => ExecResult): Provider =>
-    ({ exec: (_b: BoxRecord, argv: string[]) => Promise.resolve(exec(argv)) }) as unknown as Provider;
+    ({
+      exec: (_b: BoxRecord, argv: string[]) => Promise.resolve(exec(argv)),
+    }) as unknown as Provider;
 
   it('throws "exited immediately" when the session is gone (probe exits 7)', async () => {
     const provider = fakeProvider(() => ({ exitCode: 7, stdout: '', stderr: '' }));
@@ -131,7 +164,8 @@ describe('verifyDetachedSession', () => {
   it('throws an actionable login hint when the pane shows an auth rejection', async () => {
     const provider = fakeProvider(() => ({
       exitCode: 0,
-      stdout: '❯ build a kanban board\n● Please run /login · API Error: 401 Invalid authentication credentials',
+      stdout:
+        '❯ build a kanban board\n● Please run /login · API Error: 401 Invalid authentication credentials',
       stderr: '',
     }));
     await expect(

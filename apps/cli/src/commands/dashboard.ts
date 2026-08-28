@@ -374,6 +374,7 @@ export const dashboardCommand = new Command('dashboard')
           container: box.container,
           claudeArgs: applyClaudeSkipPermissions([], claudeCfg.effective),
           boxName: box.name,
+          claudeTui: claudeCfg.effective.box.claudeTui,
         });
         const info = await claudeSessionInfo(box.container);
         // Attach only once the agent TUI has drawn — see waitForTmuxPaneContent.
@@ -521,6 +522,7 @@ export const dashboardCommand = new Command('dashboard')
           container: ctr,
           claudeArgs: applyClaudeSkipPermissions([], cfg.effective),
           boxName: result.record.name,
+          claudeTui: cfg.effective.box.claudeTui,
         });
         const info = await claudeSessionInfo(ctr);
         await waitForTmuxPaneContent(ctr, info.sessionName);

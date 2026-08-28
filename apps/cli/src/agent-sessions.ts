@@ -130,7 +130,12 @@ async function startFreshSession(
         : [];
   if (isDocker) {
     if (kind === 'claude') {
-      await startClaudeSession({ container: box.container, claudeArgs: args, sessionName });
+      await startClaudeSession({
+        container: box.container,
+        claudeArgs: args,
+        sessionName,
+        workspacePath: box.workspacePath,
+      });
     } else if (kind === 'codex') {
       await startCodexSession({ container: box.container, codexArgs: args, sessionName });
     } else {
@@ -180,7 +185,12 @@ export async function restoreAgentSessions(
     try {
       if (isDocker) {
         if (kind === 'claude') {
-          await startClaudeSession({ container: box.container, claudeArgs: args, sessionName });
+          await startClaudeSession({
+            container: box.container,
+            claudeArgs: args,
+            sessionName,
+            workspacePath: box.workspacePath,
+          });
         } else {
           await startCodexSession({ container: box.container, codexArgs: args, sessionName });
         }
