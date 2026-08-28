@@ -649,6 +649,54 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 401, { error: 'invalid admin token' });
         return;
       }
+      if (route === 'GET /admin/hostreach/events') {
+        // The preferred shape: the machine holds one connection instead of
+        // re-asking every 25s, and its presence becomes the connection itself.
+        // The poll route below stays as the fallback — a proxy that buffers
+        // event streams, or an older control box, must degrade rather than
+        // break, so neither side may assume this route exists.
+        const pollerId = url.searchParams.get('poller') ?? '';
+        if (pollerId.length === 0) {
+          send(res, 400, { error: 'missing poller query param' });
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        // Same reason as the prompt stream: stop a proxy buffering the chunked
+        // response into uselessness.
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') res.flushHeaders();
+        res.write(': connected\n\n');
+        const unsubscribe = hostReach.subscribe(pollerId, (actions) => {
+          try {
+            for (const action of actions) {
+              res.write(`event: action\ndata: ${JSON.stringify(action)}\n\n`);
+            }
+          } catch {
+            /* dead socket; the close handler unsubscribes */
+          }
+        });
+        const heartbeat = setInterval(() => {
+          try {
+            res.write(`event: ping\ndata: {"ts":"${new Date().toISOString()}"}\n\n`);
+            // A quiet stream is still a present machine — without this the
+            // sweep would decide the owner of an in-flight copy had vanished.
+            hostReach.touch(pollerId);
+          } catch {
+            /* dead socket; the close handler unsubscribes */
+          }
+        }, SSE_HEARTBEAT_MS);
+        if (typeof heartbeat.unref === 'function') heartbeat.unref();
+        res.on('close', () => {
+          clearInterval(heartbeat);
+          unsubscribe();
+          log(`host-reach: machine ${pollerId.slice(0, 8)} disconnected`);
+        });
+        log(`host-reach: machine ${pollerId.slice(0, 8)} streaming`);
+        return;
+      }
       if (route === 'GET /admin/hostreach/poll') {
         const requested = Number.parseInt(url.searchParams.get('wait') ?? '', 10);
         // Bounded server-side: a client asking to be held for an hour would tie
@@ -1055,7 +1103,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (
         hostReach &&
         reg.kind === 'cloud' &&
-        (body.method === 'cp.toHost' || body.method === 'cp.fromHost') &&
+        isHostReachMethod(body.method) &&
         !(await boxWorkspaceExistsHere(reg.boxId))
       ) {
         // A control box has neither the user's files nor a live checkout to
@@ -1065,6 +1113,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // here would judge a path that does not exist on this disk (it is the
         // create job's deleted temp clone), which is how a copy the user never
         // saw got auto-approved as safe.
+        //
+        // `tool.*` travels for the same reason and lands in the same place: a
+        // grant is a per-project file on the machine that made it, and the
+        // binary it names is installed THERE. Executing here read grants from
+        // that same deleted directory and would have run the control box's
+        // binaries under the user's tool name.
         const cachePrefix = cpCachePrefix({
           projectSlug: reg.originUrl
             ? (projectSlugFromOriginUrl(reg.originUrl) ?? undefined)
@@ -1078,7 +1132,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
         }
-        log(`cp ${body.method} for ${reg.boxId}: host unreachable (${outcome.reason})`);
+        log(`${body.method} for ${reg.boxId}: host unreachable (${outcome.reason})`);
+        // Tools have no fallback by design: a cached file is still that file,
+        // but "some binary of the same name on another machine" is a different
+        // program. Say the machine is offline and stop.
+        if (body.method.startsWith('tool.')) {
+          send(res, 500, {
+            exitCode: 69,
+            stdout: '',
+            stderr: toolUnreachableMessage(reg.name, outcome.reason),
+          });
+          return;
+        }
         // The machine is offline — but a copy it made earlier may be in custody.
         // Only reads can be served that way: an outbound copy has nowhere to go
         // until that machine is back (see the outbox in `cp.toHost` below).
@@ -1115,7 +1180,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 500, {
           exitCode: 69,
           stdout: '',
-          stderr: cpUnreachableMessage(body.method, reg.name, outcome.reason, {
+          stderr: cpUnreachableMessage(body.method as CpMethod, reg.name, outcome.reason, {
             cacheMiss: body.method === 'cp.fromHost',
           }),
         });
@@ -2440,6 +2505,38 @@ async function boxWorkspaceExistsHere(boxId: string): Promise<boolean> {
  * Exit 69 (EX_UNAVAILABLE) rather than a generic 1, so an agent can tell "your
  * side is offline, try later" apart from "that path is wrong".
  */
+/**
+ * Methods a control box brokers to the machine that owns the box, rather than
+ * running itself: the ones whose meaning is "do this where the user's project
+ * lives". `cp` needs the files; `tool.*` needs the grants (a per-project file on
+ * that machine) and the binaries they name.
+ */
+function isHostReachMethod(method: string): boolean {
+  return method === 'cp.toHost' || method === 'cp.fromHost' || method.startsWith('tool.');
+}
+
+/**
+ * What a box is told when a host tool could not reach the machine that granted
+ * it. Deliberately has no fallback to offer, unlike a cached copy: running a
+ * same-named binary from somewhere else is not a degraded answer, it is a
+ * different program.
+ */
+function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): string {
+  const lead =
+    reason === 'went-away'
+      ? 'the machine that granted these tools stopped responding'
+      : 'the machine that granted these tools is not connected to this hub';
+  return [
+    `host tools are unavailable: ${lead}.`,
+    '',
+    'Grants live with the machine that made them, and so do the binaries they name —',
+    'this hub only brokers the call.',
+    'Start AgentBox there (`agentbox relay start`) and retry.',
+    `Its grants are listed by \`agentbox tools list\` on that machine (box: ${boxName}).`,
+    '',
+  ].join('\n');
+}
+
 function cpUnreachableMessage(
   method: CpMethod,
   boxName: string,

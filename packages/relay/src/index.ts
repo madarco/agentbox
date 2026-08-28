@@ -48,6 +48,7 @@ export {
   type HostReachUnreachable,
 } from './host-reach.js';
 export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';
+export { SseFrameReader, type SseFrame } from './sse-read.js';
 export {
   cpCacheKey,
   cpCacheKeyInput,

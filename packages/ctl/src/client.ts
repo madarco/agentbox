@@ -191,10 +191,7 @@ export async function claudeState(
   });
 }
 
-export async function codexState(
-  opts: ConnectOptions,
-  state: ClaudeActivityState,
-): Promise<'ok'> {
+export async function codexState(opts: ConnectOptions, state: ClaudeActivityState): Promise<'ok'> {
   return sendOneShot<'ok'>(opts, { op: 'codex-state', state });
 }
 

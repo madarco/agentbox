@@ -26,10 +26,16 @@ const PATTERNS: ReadonlyArray<{ re: RegExp; state: AgentActivityState }> = [
   // Permission / approval prompts (highest priority — these mean codex is blocked).
   { re: /Hooks need review|Trust all and continue/i, state: 'waiting' },
   { re: /Do you trust the contents of this directory/i, state: 'waiting' },
-  { re: /Allow this command\?|Approve this (command|tool)\?|Press y\/n|\[Y\/n\]/m, state: 'waiting' },
+  {
+    re: /Allow this command\?|Approve this (command|tool)\?|Press y\/n|\[Y\/n\]/m,
+    state: 'waiting',
+  },
   { re: /Waiting for (your |user )?(response|input|approval|permission)/i, state: 'waiting' },
   // Compaction (codex's `/compact` command and auto-compaction).
-  { re: /Compacting (conversation|context)|Summariz(e|ing) (the )?conversation/i, state: 'compacting' },
+  {
+    re: /Compacting (conversation|context)|Summariz(e|ing) (the )?conversation/i,
+    state: 'compacting',
+  },
   // Failure / fatal-error frames.
   { re: /\bError:|\bFailed:|^Traceback /m, state: 'error' },
   // Active work signals — pinned to specific codex TUI fragments to avoid

@@ -10,9 +10,7 @@
  *   the host CloudBoxPoller (classic cloud).
  * - docker → forwarder to the host relay at `host.docker.internal` (default).
  */
-export type InBoxTransport =
-  | { kind: 'forwarder'; upstream: string }
-  | { kind: 'box' };
+export type InBoxTransport = { kind: 'forwarder'; upstream: string } | { kind: 'box' };
 
 export function selectInBoxTransport(env: Record<string, string | undefined>): InBoxTransport {
   const controlPlaneUrl = env.AGENTBOX_CONTROL_PLANE_URL;

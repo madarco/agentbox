@@ -3,10 +3,17 @@
  * control box (`/admin/hostreach/*`) and executes them against the real project
  * files on this machine.
  *
- * The counterpart to {@link CloudBoxPoller}, and deliberately shaped like it:
- * long-poll, execute, post the result back, back off on failure. The difference
- * is direction — that one reaches *into* a box, this one reaches *out* to the
- * control box, because a laptop behind NAT can't be dialled.
+ * The counterpart to {@link CloudBoxPoller}: execute, post the result back, back
+ * off on failure. The difference is direction — that one reaches *into* a box,
+ * this one reaches *out* to the control box, because a laptop behind NAT can't
+ * be dialled.
+ *
+ * Two transports, same work: an SSE stream when the network allows one, and the
+ * long poll when it doesn't. The stream is preferred because a machine then
+ * holds one connection and its presence IS that connection; the poll survives
+ * proxies that buffer event streams and control boxes too old to serve the
+ * route. Neither can be detected without trying, so the loop tries the stream,
+ * falls back on the first hard evidence against it, and retries it later.
  *
  * Running this is what makes `cp` between a hub box and your machine mean your
  * machine. Without it the control box has no way to touch the user's files
@@ -19,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
+import { SseFrameReader } from './sse-read.js';
 import type { HostAction, HostActionResult } from './types.js';
 
 export interface HostReachPollerDeps {
@@ -54,6 +62,10 @@ const BACKOFF_BASE_MS = 2_000;
 const BACKOFF_MAX_MS = 60_000;
 /** How often a long-lived poller re-checks the outbox after its first look. */
 const OUTBOX_RECHECK_MS = 5 * 60_000;
+/** After the stream proves unusable, how long to stay on the poll before retrying it. */
+const SSE_RETRY_MS = 5 * 60_000;
+/** A stream that sends nothing at all in this window is being buffered somewhere. */
+const SSE_HANDSHAKE_MS = 10_000;
 
 interface JsonResponse {
   status: number;
@@ -78,6 +90,18 @@ export class HostReachPoller {
   private lastDrainAtMs = 0;
   /** Serializes execution beside the poll loop (see {@link enqueue}). */
   private workQueue: Promise<void> = Promise.resolve();
+  /** Epoch ms before which the stream is not retried (0 = try it now). */
+  private sseBlockedUntilMs = 0;
+  /** Logged once per transition so the log answers "which mode am I in?". */
+  private mode: 'stream' | 'poll' | null = null;
+  /**
+   * The in-flight event stream, so {@link stop} can cut it.
+   *
+   * An open stream never ends on its own: without this, stopping the relay
+   * waits for the control box to drop the connection, which it has no reason to
+   * do — `agentbox relay stop` would hang.
+   */
+  private activeStream: { destroy: () => void } | null = null;
 
   constructor(private readonly deps: HostReachPollerDeps) {}
 
@@ -90,6 +114,7 @@ export class HostReachPoller {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.activeStream?.destroy();
     if (this.loopPromise) await this.loopPromise;
     // Let an in-flight copy finish rather than abandoning a box mid-transfer.
     await this.workQueue.catch(() => {});
@@ -97,8 +122,29 @@ export class HostReachPoller {
 
   private async run(): Promise<void> {
     const base = this.deps.controlPlaneUrl.replace(/\/+$/, '');
-    this.log(`host-reach: polling ${base} for host actions`);
+    this.log(`host-reach: connecting to ${base} for host actions`);
     while (!this.stopped) {
+      // Stream when we can, poll when we can't. The stream is preferred (one
+      // connection, presence is the connection); the poll is what keeps this
+      // working through a proxy that buffers event streams, or against a
+      // control box too old to serve the route — neither of which we can detect
+      // any way other than trying.
+      if (this.streamingAllowed()) {
+        const outcome = await this.stream(base);
+        if (this.stopped) break;
+        if (outcome === 'fatal') return;
+        if (outcome === 'unsupported' || outcome === 'unusable') {
+          this.sseBlockedUntilMs = Date.now() + SSE_RETRY_MS;
+          this.log(
+            outcome === 'unsupported'
+              ? 'host-reach: control box has no event stream; falling back to long polling'
+              : 'host-reach: event stream did not come through (a proxy may be buffering it); falling back to long polling',
+          );
+        }
+        // A stream that WAS established and then dropped is an ordinary
+        // reconnect: loop straight back and try to stream again.
+        continue;
+      }
       try {
         const res = await this.get(
           `${base}/admin/hostreach/poll?wait=${String(POLL_WAIT_MS)}&poller=${this.pollerId}`,
@@ -125,6 +171,10 @@ export class HostReachPoller {
           this.log('host-reach: control box reachable again');
           this.loggedFailure = false;
         }
+        if (this.mode !== 'poll') {
+          this.mode = 'poll';
+          this.log('host-reach: long polling for host actions');
+        }
         this.maybeDrainOutbox();
         const parsed = JSON.parse(res.text.length > 0 ? res.text : '{}') as {
           actions?: HostAction[];
@@ -146,6 +196,113 @@ export class HostReachPoller {
         await delay(this.backoffMs);
       }
     }
+  }
+
+  /** Whether to attempt the stream, or stay on the poll after it proved unusable. */
+  private streamingAllowed(): boolean {
+    return Date.now() >= this.sseBlockedUntilMs;
+  }
+
+  /**
+   * Hold one event stream until it drops.
+   *
+   * Returns why it ended, which is what decides the next move:
+   * - `unsupported` — the route 404s (an older control box). Poll.
+   * - `unusable` — connected but nothing arrived, not even the preamble, within
+   *   {@link SSE_HANDSHAKE_MS}. Something between here and there is buffering
+   *   the response; polling still works through it. Poll.
+   * - `dropped` — it worked and then ended (idle timeout, network blip, hub
+   *   restart). Reconnect; this is the normal case.
+   * - `fatal` — the token was rejected. Neither transport will help.
+   */
+  private stream(base: string): Promise<'unsupported' | 'unusable' | 'dropped' | 'fatal'> {
+    const url = new URL(`${base}/admin/hostreach/events?poller=${this.pollerId}`);
+    const isHttps = url.protocol === 'https:';
+    const transport = isHttps ? httpsRequest : httpRequest;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (outcome: 'unsupported' | 'unusable' | 'dropped' | 'fatal'): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshake);
+        this.activeStream = null;
+        req.destroy();
+        resolve(outcome);
+      };
+      // Nothing at all — not even the `: connected` preamble — means the
+      // response is being held somewhere. A stream that is merely quiet still
+      // gets its heartbeat well inside this window.
+      const handshake = setTimeout(() => finish('unusable'), SSE_HANDSHAKE_MS);
+      handshake.unref?.();
+
+      const req = transport(
+        {
+          host: url.hostname,
+          port: url.port.length > 0 ? Number.parseInt(url.port, 10) : isHttps ? 443 : 80,
+          method: 'GET',
+          path: `${url.pathname}${url.search}`,
+          headers: {
+            Authorization: `Bearer ${this.deps.adminToken}`,
+            Accept: 'text/event-stream',
+          },
+        },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          if (status === 404) {
+            res.resume();
+            finish('unsupported');
+            return;
+          }
+          if (status === 401 || status === 403) {
+            res.resume();
+            this.log(
+              'host-reach: control box rejected the admin token — stopping (re-run `agentbox hub setup`)',
+            );
+            finish('fatal');
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            res.resume();
+            finish('unusable');
+            return;
+          }
+          // A proxy that rewrote the response to something buffered is not a
+          // stream, whatever the status says.
+          if (!(res.headers['content-type'] ?? '').includes('text/event-stream')) {
+            res.resume();
+            finish('unusable');
+            return;
+          }
+          const reader = new SseFrameReader();
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            // Any byte proves the response is flowing, including the preamble
+            // and heartbeats.
+            clearTimeout(handshake);
+            if (this.mode !== 'stream') {
+              this.mode = 'stream';
+              this.log('host-reach: streaming host actions (event stream)');
+            }
+            this.backoffMs = 0;
+            this.loggedFailure = false;
+            this.maybeDrainOutbox();
+            for (const frame of reader.push(chunk)) {
+              if (frame.event !== 'action') continue;
+              try {
+                this.enqueue(base, JSON.parse(frame.data) as HostAction);
+              } catch {
+                /* a frame we can't parse is not worth dropping the stream for */
+              }
+            }
+          });
+          res.on('end', () => finish('dropped'));
+          res.on('error', () => finish('dropped'));
+        },
+      );
+      req.on('error', () => finish('unusable'));
+      this.activeStream = req;
+      req.end();
+    });
   }
 
   /**

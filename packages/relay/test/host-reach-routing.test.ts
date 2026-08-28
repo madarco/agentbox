@@ -187,6 +187,40 @@ describe('control box host-reach routing', () => {
     }
   });
 
+  it('parks tool.* for the machine that granted the tools', async () => {
+    // A grant is a per-project file on the machine that made it, and the binary
+    // it names is installed there. Running it here read grants from the create
+    // job's deleted temp clone and would have run the CONTROL BOX's binaries
+    // under the user's tool name.
+    const rpc = req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'tool.run', params: { name: 'jq', args: ['--version'] } },
+    });
+    const polled = await req(handle, 'GET', '/admin/hostreach/poll?wait=2000', { token: ADMIN });
+    expect(polled.body.actions).toHaveLength(1);
+    const action = polled.body.actions![0]!;
+    expect(action.method).toBe('tool.run');
+    await req(handle, 'POST', '/admin/hostreach/result', {
+      token: ADMIN,
+      body: { id: action.id, exitCode: 0, stdout: 'jq-1.7', stderr: '' },
+    });
+    expect((await rpc).body).toMatchObject({ exitCode: 0, stdout: 'jq-1.7' });
+  });
+
+  it('tells the box a tool is unavailable rather than offering a substitute', async () => {
+    // No cache, no fallback: a same-named binary from another machine is not a
+    // degraded answer, it is a different program.
+    const answer = await req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'tool.list', params: {} },
+    });
+    expect(answer.body.exitCode).toBe(69);
+    expect(answer.body.stderr).toMatch(/not connected to this hub/);
+    expect(answer.body.stderr).toMatch(/agentbox relay start/);
+    // ...and never the cp-shaped advice, which would be nonsense for a tool.
+    expect(answer.body.stderr ?? '').not.toMatch(/hub:/);
+  });
+
   it('refuses the host-reach surface without the admin bearer', async () => {
     const port = (handle.server.address() as AddressInfo).port;
     // A box token is not an admin token, and being on loopback proves nothing on

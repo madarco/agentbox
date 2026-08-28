@@ -212,11 +212,7 @@ function parseBackoff(raw: unknown, where: string): BackoffSpec {
  */
 let unknownKeyWarnings: string[] = [];
 
-function warnUnknownKeys(
-  obj: Record<string, unknown>,
-  allowed: Set<string>,
-  where: string,
-): void {
+function warnUnknownKeys(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) {
       unknownKeyWarnings.push(
@@ -301,9 +297,7 @@ function parseReadyWhen(raw: unknown, where: string): ReadyProbe | undefined {
   if (raw.log_match !== undefined) kinds.push('log_match');
   if (raw.http !== undefined) kinds.push('http');
   if (kinds.length === 0) {
-    throw new ConfigError(
-      `${where}.ready_when must declare exactly one of: port, log_match, http`,
-    );
+    throw new ConfigError(`${where}.ready_when must declare exactly one of: port, log_match, http`);
   }
   if (kinds.length > 1) {
     throw new ConfigError(
@@ -320,7 +314,12 @@ function parseReadyWhen(raw: unknown, where: string): ReadyProbe | undefined {
 
   const kind = kinds[0]!;
   if (kind === 'log_match') {
-    if (raw.host !== undefined || raw.expect_status !== undefined || raw.interval_ms !== undefined || raw.initial_delay_ms !== undefined) {
+    if (
+      raw.host !== undefined ||
+      raw.expect_status !== undefined ||
+      raw.interval_ms !== undefined ||
+      raw.initial_delay_ms !== undefined
+    ) {
       throw new ConfigError(
         `${where}.ready_when.log_match cannot be combined with host/expect_status/interval_ms/initial_delay_ms`,
       );
@@ -446,7 +445,8 @@ function parseArgs(raw: unknown, where: string): string | undefined {
   if (Array.isArray(raw)) {
     const parts: string[] = [];
     for (const [i, v] of raw.entries()) {
-      if (typeof v !== 'string') throw new ConfigError(`${where}.args[${String(i)}] must be a string`);
+      if (typeof v !== 'string')
+        throw new ConfigError(`${where}.args[${String(i)}] must be a string`);
       parts.push(v);
     }
     const joined = parts.join(' ').trim();
@@ -537,7 +537,8 @@ function parseExpose(raw: unknown, where: string): ExposeSpec | undefined {
     throw new ConfigError(`${where}.expose.port is required`);
   }
   const port = parsePortNumber(raw.port, `${where}.expose.port`);
-  const as = raw.as === undefined ? RESERVED_WEB_PORT : parsePortNumber(raw.as, `${where}.expose.as`);
+  const as =
+    raw.as === undefined ? RESERVED_WEB_PORT : parsePortNumber(raw.as, `${where}.expose.as`);
   if (as !== RESERVED_WEB_PORT) {
     throw new ConfigError(
       `${where}.expose.as must be ${String(RESERVED_WEB_PORT)} (the only container port AgentBox publishes)`,
@@ -687,13 +688,17 @@ function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();
   for (const t of tasks) {
     if (names.has(t.name)) {
-      throw new ConfigError(`unit name "${t.name}" declared more than once (task vs service collision)`);
+      throw new ConfigError(
+        `unit name "${t.name}" declared more than once (task vs service collision)`,
+      );
     }
     names.add(t.name);
   }
   for (const s of services) {
     if (names.has(s.name)) {
-      throw new ConfigError(`unit name "${s.name}" declared more than once (task vs service collision)`);
+      throw new ConfigError(
+        `unit name "${s.name}" declared more than once (task vs service collision)`,
+      );
     }
     names.add(s.name);
   }
@@ -714,7 +719,9 @@ function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   }
 
   // DFS with three-color marking; record the cycle path in the error.
-  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const WHITE = 0,
+    GRAY = 1,
+    BLACK = 2;
   const color = new Map<string, number>();
   for (const name of deps.keys()) color.set(name, WHITE);
   const stack: string[] = [];

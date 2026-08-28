@@ -82,7 +82,10 @@ export interface BootstrapResult {
  * Provider-agnostic orchestration. Returns a structured result; the caller maps
  * a failed ctl daemon to a non-zero process exit.
  */
-export async function runBootstrap(env: BootstrapEnv, deps: BootstrapDeps): Promise<BootstrapResult> {
+export async function runBootstrap(
+  env: BootstrapEnv,
+  deps: BootstrapDeps,
+): Promise<BootstrapResult> {
   await deps.ensureRuntimeDirs();
 
   // 1. Optional in-box clone. AGENTBOX_CLONE_URL is already token-bearing
@@ -93,7 +96,9 @@ export async function runBootstrap(env: BootstrapEnv, deps: BootstrapDeps): Prom
     if (await deps.isWorkspacePopulated()) {
       deps.log('workspace already populated; skipping in-box clone');
     } else {
-      deps.log(`cloning workspace from origin${env.AGENTBOX_CLONE_BRANCH ? ` @${env.AGENTBOX_CLONE_BRANCH}` : ''}`);
+      deps.log(
+        `cloning workspace from origin${env.AGENTBOX_CLONE_BRANCH ? ` @${env.AGENTBOX_CLONE_BRANCH}` : ''}`,
+      );
       await deps.cloneWorkspace({
         cloneUrl: env.AGENTBOX_CLONE_URL,
         originUrl: env.AGENTBOX_ORIGIN_URL,
@@ -242,8 +247,7 @@ function realDeps(log: Logger): BootstrapDeps {
   const vncLog = `${DEFAULT_LOG_DIR}/vnc-start.log`;
   return {
     isCtlDaemonLive: () => isUnixSocketLive(DEFAULT_SOCKET_PATH),
-    isDockerdLive: async () =>
-      (await run('docker', ['-H', `unix://${DOCKER_SOCK}`, 'info'])) === 0,
+    isDockerdLive: async () => (await run('docker', ['-H', `unix://${DOCKER_SOCK}`, 'info'])) === 0,
     isVncLive: () => isTcpPortLive('127.0.0.1', VNC_WEBSOCKIFY_PORT),
     isWorkspacePopulated: async () =>
       (await run('git', ['-C', WORKSPACE_DIR, 'rev-parse', '--is-inside-work-tree'])) === 0,

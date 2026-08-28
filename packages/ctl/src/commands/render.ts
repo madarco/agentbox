@@ -40,7 +40,11 @@ export const renderCommand = new Command('render')
   .option('--rule-regex <pat=>repl>', 'regex replacement (repeatable)', collect, [])
   .option('--rules <names>', 'comma-separated replacements: rule-set names to apply')
   .option('--config <path>', 'agentbox.yaml to read replacements: from', DEFAULT_CONFIG_PATH)
-  .option('--state-dir <path>', 'where named {{AGENTBOX_AUTO_SECRET:x}} secrets persist', DEFAULT_STATE_DIR)
+  .option(
+    '--state-dir <path>',
+    'where named {{AGENTBOX_AUTO_SECRET:x}} secrets persist',
+    DEFAULT_STATE_DIR,
+  )
   .action(async (src: string, opts: RenderOptions) => {
     const content = await readFile(src, 'utf8');
 

@@ -204,10 +204,7 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
     this.state = next;
     // Stamp readyAt when the service first becomes available — either reaching
     // 'running' for unprobed services, or 'ready' for probed ones.
-    if (
-      (next === 'running' && !this.spec.readyWhen) ||
-      next === 'ready'
-    ) {
+    if ((next === 'running' && !this.spec.readyWhen) || next === 'ready') {
       this.readyAt = new Date();
     }
     this.emit('state', next);
@@ -918,7 +915,9 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
    * tasks are reset to pending and rerun if they have dependents being
    * scheduled. Removed units are stopped (services) or deleted (tasks).
    */
-  async reload(next: CtlConfig): Promise<{ added: string[]; removed: string[]; changed: string[] }> {
+  async reload(
+    next: CtlConfig,
+  ): Promise<{ added: string[]; removed: string[]; changed: string[] }> {
     const nextServices = new Map(next.services.map((s) => [s.name, s]));
     const nextTasks = new Map(next.tasks.map((t) => [t.name, t]));
     const added: string[] = [];
@@ -1117,7 +1116,13 @@ function normalizeService(s: ServiceSpec): unknown {
 function serializeProbe(p: ServiceSpec['readyWhen']): unknown {
   if (!p) return null;
   if (p.kind === 'log_match') {
-    return { kind: 'log_match', source: p.pattern.source, flags: p.pattern.flags, timeoutMs: p.timeoutMs, onTimeout: p.onTimeout };
+    return {
+      kind: 'log_match',
+      source: p.pattern.source,
+      flags: p.pattern.flags,
+      timeoutMs: p.timeoutMs,
+      onTimeout: p.onTimeout,
+    };
   }
   return p;
 }

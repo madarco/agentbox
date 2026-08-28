@@ -79,9 +79,10 @@ export const daemonCommand = new Command('daemon')
       credentialsWatcher.start();
     }
 
-    // Keep the per-tool shim symlinks in step with the host's grant list, so
-    // an approved `agentbox-ctl tool request` makes the command usable in a
-    // running box. Cheap poll; see tool-links-watcher.ts for why not a push.
+    // Reconcile the per-tool shim symlinks with the host's grants ONCE at
+    // startup — the case a push cannot cover (this box was paused, or did not
+    // exist, when the grant changed). After that the host runs
+    // `agentbox-ctl tool relink` here on every `agentbox tools add/rm`.
     const toolLinks = new ToolLinksWatcher({
       onChange: (added, removed, conflicts) => {
         if (added.length) {

@@ -20,7 +20,10 @@ export const codexStateCommand = new Command('codex-state')
   .action(async (state: string, opts: CodexStateOptions) => {
     try {
       if (CLAUDE_ACTIVITY_STATES.includes(state as ClaudeActivityState)) {
-        await codexState({ socketPath: opts.socket, timeoutMs: 1500 }, state as ClaudeActivityState);
+        await codexState(
+          { socketPath: opts.socket, timeoutMs: 1500 },
+          state as ClaudeActivityState,
+        );
       }
     } catch {
       // Fire-and-forget: a missing/late daemon must never break a Codex hook.

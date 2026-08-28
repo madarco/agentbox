@@ -37,6 +37,20 @@ async function scopeFile(global: boolean): Promise<string> {
   return resolveProjectToolsFile(process.cwd());
 }
 
+/**
+ * Tell running boxes the grant list changed, and say what happened.
+ *
+ * Boxes no longer poll for this, so the push IS the delivery mechanism — which
+ * is also why its failures are reported by name rather than swallowed: an
+ * unreachable box is precisely the one where the tool will be missing.
+ */
+async function announceGrantChange(global: boolean): Promise<void> {
+  const { root } = await findProjectRoot(process.cwd());
+  const { pushToolGrantChange, describeToolGrantPush } = await import('../lib/tool-grant-push.js');
+  const summary = describeToolGrantPush(await pushToolGrantChange({ global, projectRoot: root }));
+  if (summary) log.info(summary);
+}
+
 toolsCommand
   .command('list')
   .description('Show the host tools granted to this project (global grants included).')
@@ -127,15 +141,14 @@ toolsCommand
       log.success(
         `granted ${name} (${opts.global ? 'all projects' : 'this project'}) -> host \`${grant.bin}\``,
       );
-      log.info(
-        'Running boxes pick it up within a minute; no restart needed. `agentbox doctor` shows whether the host binary resolves.',
-      );
+      await announceGrantChange(opts.global);
+      log.info('`agentbox doctor` shows whether the host binary resolves.');
     },
   );
 
 toolsCommand
   .command('rm')
-  .description('Revoke a grant. Running boxes drop the command within a minute.')
+  .description('Revoke a grant. Running boxes drop the command immediately.')
   .argument('<name>', 'granted tool name')
   .option('--global', 'remove the global grant instead of this project’s', false)
   .action(async (name: string, opts: { global: boolean }) => {
@@ -147,6 +160,7 @@ toolsCommand
       return;
     }
     log.success(`revoked ${name}`);
+    await announceGrantChange(opts.global);
   });
 
 function describeGrant(g: ToolGrant): string {

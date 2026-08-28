@@ -54,8 +54,7 @@ function runTool(cmd: string, args: string[]): Promise<ToolResult> {
  */
 export async function probeAgentSession(sessionName: string): Promise<ClaudeSessionStatus> {
   const has = await runTool('tmux', ['has-session', '-t', sessionName]);
-  if (has.exitCode !== 0)
-    return { running: false, sessionName, startedAt: null, title: null };
+  if (has.exitCode !== 0) return { running: false, sessionName, startedAt: null, title: null };
   const ts = await runTool('tmux', [
     'display-message',
     '-p',
@@ -68,13 +67,7 @@ export async function probeAgentSession(sessionName: string): Promise<ClaudeSess
     const secs = Number.parseInt(ts.stdout.trim(), 10);
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
-  const pt = await runTool('tmux', [
-    'display-message',
-    '-p',
-    '-t',
-    sessionName,
-    '#{pane_title}',
-  ]);
+  const pt = await runTool('tmux', ['display-message', '-p', '-t', sessionName, '#{pane_title}']);
   const title =
     pt.exitCode === 0 ? sanitizePaneTitle(pt.stdout, { hostname: hostname(), sessionName }) : null;
   return { running: true, sessionName, startedAt, title };

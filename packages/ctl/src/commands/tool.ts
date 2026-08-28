@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
 import { syncToolLinks } from '../tool-links.js';
-import { parseToolNames } from '../tool-links-watcher.js';
+import { parseToolNames, ToolLinksWatcher } from '../tool-links-watcher.js';
 
 /**
  * In-box surface for host tools — the CLIs the host has granted this box,
@@ -67,6 +67,26 @@ toolCommand
     if (args.length > 0) params['args'] = args;
     const code = await postRpcAndExit('tool.run', params, { errorPrefix: name });
     process.exit(code);
+  });
+
+/**
+ * `agentbox-ctl tool relink` — reconcile the shim links with the host's grants
+ * NOW. This is what the host runs in the box (over `Provider.exec`) after
+ * `agentbox tools add/rm`, which is why the box no longer polls for grants.
+ *
+ * Prunes as well as adds, unlike {@link refreshToolLinks}: the host pushing means
+ * the authoritative list just changed, so a revoked tool must lose its link here.
+ */
+toolCommand
+  .command('relink')
+  .description(
+    "Re-sync this box's host-tool shims with the host's grants (run by the host on a grant change)",
+  )
+  .option('--cwd <path>', 'container path identifying which registered worktree to use')
+  .action(async (opts: { cwd?: string }) => {
+    const watcher = new ToolLinksWatcher({ cwd: opts.cwd ?? process.cwd() });
+    await watcher.relink();
+    process.exit(0);
   });
 
 /** Best-effort: pull the current grant list and re-link. Never throws. */

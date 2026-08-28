@@ -28,7 +28,7 @@ function isKind(v: string): v is Kind {
  */
 export const downloadCommand = new Command('download')
   .description(
-    "Download box contents to the host (gated by user prompt). Kinds: workspace (default), env, config, claude",
+    'Download box contents to the host (gated by user prompt). Kinds: workspace (default), env, config, claude',
   )
   .argument('[kind]', `one of: ${KINDS.join(', ')}`, 'workspace')
   .action(async (kindArg: string) => {

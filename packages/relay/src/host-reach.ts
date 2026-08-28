@@ -84,9 +84,16 @@ interface Waiter {
   pollerId?: string;
 }
 
+/** A machine holding an open stream. Unlike a waiter, delivery does not consume it. */
+interface Subscriber {
+  pollerId: string;
+  deliver: (actions: HostAction[]) => void;
+}
+
 export class HostReachQueue {
   private readonly map = new Map<string, Pending>();
   private readonly waiters = new Set<Waiter>();
+  private readonly subscribers = new Set<Subscriber>();
   private readonly reachTimeoutMs: number;
   private readonly graceMs: number;
   private readonly now: () => number;
@@ -183,6 +190,43 @@ export class HostReachQueue {
   }
 
   /**
+   * Register a machine that stays connected (the SSE stream) instead of asking
+   * again after every batch.
+   *
+   * A subscriber is modelled as a **waiter that is never consumed**: the same
+   * eligibility, ownership, decline and orphan rules apply, because they are the
+   * same code path. That is deliberate — those rules took four review rounds to
+   * get right, and a second delivery mechanism with its own copy of them would
+   * be the obvious place for the fifth bug to live.
+   *
+   * Returns an unsubscribe. Call {@link touch} while the connection is alive so
+   * presence does not lapse on a quiet stream.
+   */
+  subscribe(pollerId: string, deliver: (actions: HostAction[]) => void): () => void {
+    this.touch(pollerId);
+    const subscriber: Subscriber = { pollerId, deliver };
+    this.subscribers.add(subscriber);
+    // Whatever is already queued and eligible goes out now: a machine that
+    // reconnects mid-copy should not wait for the next action to arrive.
+    const ready = this.takeUndelivered(pollerId);
+    if (ready.length > 0) deliver(ready);
+    return () => {
+      this.subscribers.delete(subscriber);
+    };
+  }
+
+  /**
+   * Mark a machine present without handing it anything — what an SSE heartbeat
+   * means. Presence is what decides whether a copy waits for that machine or
+   * falls back, so a live-but-quiet stream must keep it fresh.
+   */
+  touch(pollerId: string): void {
+    const now = this.now();
+    this.lastPollAtMs = now;
+    this.pollerSeen.set(pollerId, now);
+  }
+
+  /**
    * Settle a parked action with the machine's result. Returns whether it matched.
    *
    * `pollerId`, when given, must be the poller the action was handed to: after a
@@ -269,6 +313,7 @@ export class HostReachQueue {
       waiter.resolve([]);
     }
     this.waiters.clear();
+    this.subscribers.clear();
     for (const [id, pending] of this.map) {
       this.map.delete(id);
       if (pending.timer) clearTimeout(pending.timer);
@@ -278,6 +323,16 @@ export class HostReachQueue {
 
   /** Hand any undelivered actions to a waiting poller. */
   private handOff(): void {
+    // Streams first: a subscriber is already connected, so handing work there
+    // costs nothing and leaves the one-shot waiters for machines that are
+    // between polls.
+    for (const sub of [...this.subscribers]) {
+      const ready = this.takeUndelivered(sub.pollerId);
+      if (ready.length === 0) continue;
+      this.pollerSeen.set(sub.pollerId, this.now());
+      sub.deliver(ready);
+      return;
+    }
     // Every waiter gets a look: the first one may be the machine that just
     // declined this action, and stopping there would leave work parked while
     // another machine sits idle on an open poll.
@@ -297,6 +352,18 @@ export class HostReachQueue {
    * that has not refused it). Returns whether it found a taker.
    */
   private offerToWaiter(pending: Pending): boolean {
+    for (const sub of [...this.subscribers]) {
+      if (pending.declinedBy?.has(sub.pollerId)) continue;
+      pending.delivered = true;
+      pending.deliveredTo = sub.pollerId;
+      this.pollerSeen.set(sub.pollerId, this.now());
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = undefined;
+      }
+      sub.deliver([pending.action, ...this.takeUndelivered(sub.pollerId)]);
+      return true;
+    }
     for (const waiter of [...this.waiters]) {
       const pid = waiter.pollerId;
       if (pid !== undefined && pending.declinedBy?.has(pid)) continue;

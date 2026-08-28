@@ -225,7 +225,11 @@ async function pollParkedResult(raw202: string, prefix: string): Promise<RelayRp
     /* handled below */
   }
   if (!promptId) {
-    return { exitCode: 1, stdout: '', stderr: `${prefix}: relay parked the action but returned no promptId\n` };
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `${prefix}: relay parked the action but returned no promptId\n`,
+    };
   }
   process.stderr.write(`${prefix}: waiting for approval on the host…\n`);
   const deadline = Date.now() + POLL_MAX_MS;

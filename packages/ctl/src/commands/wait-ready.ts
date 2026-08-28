@@ -17,10 +17,7 @@ export const waitReadyCommand = new Command('wait-ready')
   .option('-j, --json', 'machine-readable JSON output')
   .action(async (opts: WaitReadyOptions) => {
     const timeoutMs = Number.parseInt(opts.timeout ?? '60000', 10);
-    const result = await waitReady(
-      { socketPath: opts.socket },
-      { timeoutMs, units: opts.units },
-    );
+    const result = await waitReady({ socketPath: opts.socket }, { timeoutMs, units: opts.units });
     if (opts.json) {
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     } else if (result.ready) {
