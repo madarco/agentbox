@@ -134,7 +134,6 @@ async function volumeHasClaudeJson(volume: string, image: string): Promise<boole
   return res.exitCode === 0;
 }
 
-
 /**
  * Ensure the named volume exists, then (when {@link EnsureClaudeVolumeOptions.syncFromHost}
  * is true and the host has a `~/.claude` directory) rsync host -> volume via a throwaway
@@ -1066,10 +1065,7 @@ export function buildClaudeAttachArgv(container: string, sessionName?: string): 
  * under the shared TERM guard ({@link buildTermSafeTmuxExec}) for the same
  * reason the direct attach builders do.
  */
-export function buildDashboardAttachArgv(
-  container: string,
-  sessionName?: string,
-): string[] {
+export function buildDashboardAttachArgv(container: string, sessionName?: string): string[] {
   const name = sessionName ?? DEFAULT_CLAUDE_SESSION;
   // The grouped sibling session name ("<name>-dash") is derived in-shell from
   // $1, so the session name stays a single positional that sh never re-parses.
@@ -1100,7 +1096,17 @@ export async function waitForTmuxPaneContent(
   while (Date.now() < deadline) {
     const res = await execa(
       'docker',
-      ['exec', '--user', CONTAINER_USER, container, 'tmux', 'capture-pane', '-p', '-t', sessionName],
+      [
+        'exec',
+        '--user',
+        CONTAINER_USER,
+        container,
+        'tmux',
+        'capture-pane',
+        '-p',
+        '-t',
+        sessionName,
+      ],
       { reject: false },
     );
     if (res.exitCode === 0 && (res.stdout ?? '').trim().length > 0) return;
@@ -1265,13 +1271,19 @@ export interface WarmUpClaudeResult {
  * Best-effort and time-boxed: if it never succeeds we return `warmed: false`
  * and the caller proceeds anyway — the box then behaves exactly as it did
  * before this warm-up existed.
+ *
+ * Because a successful run forces claude to refresh a lapsed access token, this
+ * doubles as the only true liveness check we have for a saved login — a
+ * credential's health is not readable off disk. `attempts` exists for that use:
+ * the default 6 is the patience the post-login 400 needs, whereas a liveness
+ * probe on the create path must not cost ~30s (see `renewClaudeCredential`).
  */
 export async function warmUpClaudeCredentials(
   volume: string,
   image: string,
-  opts: { onProgress?: (line: string) => void } = {},
+  opts: { onProgress?: (line: string) => void; attempts?: number } = {},
 ): Promise<WarmUpClaudeResult> {
-  const MAX_ATTEMPTS = 6;
+  const MAX_ATTEMPTS = Math.max(1, opts.attempts ?? 6);
   const SLEEP_MS = 5000;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     opts.onProgress?.(`checking credentials... ${attempt}/${MAX_ATTEMPTS}`);
@@ -1408,7 +1420,18 @@ export async function pullClaudeExtras(
   // container. `--user 0` so root can read files claude wrote as uid 1000.
   const inv = await execa(
     'docker',
-    ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/src:ro`, opts.image, 'sh', '-c', claudeInventoryScript('/src')],
+    [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${spec.volume}:/src:ro`,
+      opts.image,
+      'sh',
+      '-c',
+      claudeInventoryScript('/src'),
+    ],
     { reject: false },
   );
   if (inv.exitCode !== 0) {

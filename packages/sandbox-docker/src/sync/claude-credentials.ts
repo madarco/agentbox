@@ -4,15 +4,16 @@ import { execa } from 'execa';
 import type { ClaudeConfigSpec } from './agents/claude.js';
 import { STATE_DIR } from '../state.js';
 
-// The pure credential guards (`isRealAgentCredential`, `hostClaudeBackupExpired`,
-// `hostBackupHasCredentials`) + `CredentialAgentKind` moved to the provider-
+// The pure credential guards (`isRealAgentCredential`, `hostClaudeAccessTokenExpired`,
+// `hostClaudeLoginDead`, `hostBackupHasCredentials`) + `CredentialAgentKind` moved to the provider-
 // neutral credentials concern in @agentbox/sandbox-core (the per-agent
 // real-credential shape is now registry data, `credential.realShape`, shared
 // with cloud). Re-exported here so existing docker importers/tests — and the
 // `@agentbox/sandbox-docker` barrel — are untouched.
 export {
   isRealAgentCredential,
-  hostClaudeBackupExpired,
+  hostClaudeAccessTokenExpired,
+  hostClaudeLoginDead,
   hostBackupHasCredentials,
   type CredentialAgentKind,
 } from '@agentbox/sandbox-core';
@@ -100,12 +101,18 @@ export async function extractVolumeAuthToBackup(opts: {
 }
 
 /** Extract codex `auth.json` from its shared volume to `~/.agentbox/codex-credentials.json`. */
-export function extractCodexCredentials(volume: string, image: string): Promise<{ copied: boolean }> {
+export function extractCodexCredentials(
+  volume: string,
+  image: string,
+): Promise<{ copied: boolean }> {
   return extractVolumeAuthToBackup({ volume, image, backupFile: CODEX_CREDENTIALS_BACKUP_FILE });
 }
 
 /** Extract opencode `auth.json` from its shared volume to `~/.agentbox/opencode-credentials.json`. */
-export function extractOpencodeCredentials(volume: string, image: string): Promise<{ copied: boolean }> {
+export function extractOpencodeCredentials(
+  volume: string,
+  image: string,
+): Promise<{ copied: boolean }> {
   return extractVolumeAuthToBackup({ volume, image, backupFile: OPENCODE_CREDENTIALS_BACKUP_FILE });
 }
 
@@ -205,35 +212,51 @@ export function parseSyncResult(stdout: string): SyncClaudeCredentialsResult {
   return { direction: 'noop', volumeHasCredentials };
 }
 
-// Bidirectional, best-effort. `jq` ships in the box image. A credentials blob
-// only counts as "real" when `claudeAiOauth.refreshToken` is a non-empty
-// string — a setup-token blob has an accessToken but no refreshToken, and
-// seeding/extracting it would just reproduce the "Claude API" label. The
+// Bidirectional, best-effort, NEWEST-WINS. `jq` ships in the box image. A
+// credentials blob only counts as "real" when `claudeAiOauth.refreshToken` is a
+// non-empty string — a setup-token blob has an accessToken but no refreshToken,
+// and seeding/extracting it would just reproduce the "Claude API" label. The
 // final `echo` always runs so the caller can read the outcome; a failed `cp`
 // leaves the flag at `no` and the whole thing still exits 0.
-const SYNC_SCRIPT = `
+//
+// The direction is decided by `claudeAiOauth.expiresAt`, which strictly
+// increases on every OAuth refresh — the same ordering key the relay's
+// `shouldAcceptCredentialUpdate` fan-out gate uses. This used to extract
+// volume→host unconditionally whenever the volume held any refresh token, which
+// let a stale volume overwrite a fresher backup. Since a refresh ROTATES the
+// refresh token, the older blob isn't merely expired, it is dead — so a
+// downgrade here logs the whole fleet out. It also never seeded a volume that
+// already had *some* credential, so a volume left holding a rotated-dead blob
+// could never be repaired from a good backup.
+export const SYNC_SCRIPT = `
 EXTRACTED=no
 SEEDED=no
 VOL=/dst/.credentials.json
 HOST=/host-state/claude-credentials.json
+num() { case "$1" in ''|*[!0-9]*) echo 0;; *) echo "$1";; esac; }
 if [ -f "$VOL" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$VOL" >/dev/null 2>&1; then VOL_REAL=yes; else VOL_REAL=no; fi
 if [ -f "$HOST" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$HOST" >/dev/null 2>&1; then HOST_REAL=yes; else HOST_REAL=no; fi
-if [ "$VOL_REAL" = yes ] && [ "$ISOLATE" != yes ]; then
+VOL_EXP=$(num "$(jq -r '(.claudeAiOauth.expiresAt // 0) | floor' "$VOL" 2>/dev/null)")
+HOST_EXP=$(num "$(jq -r '(.claudeAiOauth.expiresAt // 0) | floor' "$HOST" 2>/dev/null)")
+if [ "$VOL_REAL" = yes ] && [ "$ISOLATE" != yes ] && { [ "$HOST_REAL" = no ] || [ "$VOL_EXP" -gt "$HOST_EXP" ]; }; then
   cp -a "$VOL" "$HOST" && chmod 600 "$HOST" && EXTRACTED=yes
-elif [ "$VOL_REAL" = no ] && [ "$HOST_REAL" = yes ]; then
+elif [ "$HOST_REAL" = yes ] && { [ "$VOL_REAL" = no ] || [ "$HOST_EXP" -gt "$VOL_EXP" ]; }; then
   cp -a "$HOST" "$VOL" && chown 1000:1000 "$VOL" && chmod 600 "$VOL" && SEEDED=yes && VOL_REAL=yes
 fi
 echo "EXTRACTED=$EXTRACTED SEEDED=$SEEDED VOLREAL=$VOL_REAL"
 `;
 
 /**
- * Bidirectionally sync the box's `.credentials.json` with the host backup:
+ * Bidirectionally sync the box's `.credentials.json` with the host backup,
+ * newest `claudeAiOauth.expiresAt` wins:
  *
- *  - volume has a real OAuth blob and the box is **not** isolate → copy it OUT
- *    to {@link CREDENTIALS_BACKUP_FILE} (the volume is authoritative — it is
- *    the live copy the in-box claude refreshes).
- *  - volume has no `.credentials.json` and the host backup is real → copy it
- *    IN (seeds a fresh isolate box, or a recreated shared volume).
+ *  - volume blob is real, newer than the backup (or the backup isn't real), and
+ *    the box is **not** isolate → copy it OUT to {@link CREDENTIALS_BACKUP_FILE}
+ *    (the usual case: the volume is the live copy the in-box claude refreshes).
+ *  - host backup is real and newer than the volume's (or the volume has no
+ *    credentials at all) → copy it IN. Seeds a fresh isolate box or a recreated
+ *    shared volume, and repairs a volume whose copy was rotated dead by another
+ *    box while this one sat idle.
  *  - otherwise → noop.
  *
  * Isolate boxes are read-seed only — never extract — so N isolate boxes can't

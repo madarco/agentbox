@@ -10,7 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // which `apps/cli/src/auth.ts` reads at load time).
 const sandboxDockerMock = vi.hoisted(() => ({
   hostBackupHasCredentials: vi.fn<() => Promise<boolean>>(),
-  hostClaudeBackupExpired: vi.fn<() => Promise<boolean>>(),
+  hostClaudeAccessTokenExpired: vi.fn<() => Promise<boolean>>(),
+  hostClaudeLoginDead: vi.fn<() => Promise<boolean>>(),
+  imageExists: vi.fn<(image: string) => Promise<boolean>>(),
+  renewClaudeCredential: vi.fn<() => Promise<'renewed' | 'unchanged' | 'failed'>>(),
   volumeHasCodexAuth: vi.fn<(volume: string, image: string) => Promise<boolean>>(),
   volumeHasOpencodeAuth: vi.fn<(volume: string, image: string) => Promise<boolean>>(),
 }));
@@ -20,7 +23,10 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
   return {
     ...actual,
     hostBackupHasCredentials: sandboxDockerMock.hostBackupHasCredentials,
-    hostClaudeBackupExpired: sandboxDockerMock.hostClaudeBackupExpired,
+    hostClaudeAccessTokenExpired: sandboxDockerMock.hostClaudeAccessTokenExpired,
+    hostClaudeLoginDead: sandboxDockerMock.hostClaudeLoginDead,
+    imageExists: sandboxDockerMock.imageExists,
+    renewClaudeCredential: sandboxDockerMock.renewClaudeCredential,
     volumeHasCodexAuth: sandboxDockerMock.volumeHasCodexAuth,
     volumeHasOpencodeAuth: sandboxDockerMock.volumeHasOpencodeAuth,
   };
@@ -76,39 +82,71 @@ describe('claudeAuthAvailable', () => {
 describe('claudeCredStatus', () => {
   beforeEach(() => {
     sandboxDockerMock.hostBackupHasCredentials.mockReset();
-    sandboxDockerMock.hostClaudeBackupExpired.mockReset();
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockReset();
+    sandboxDockerMock.hostClaudeLoginDead.mockReset();
+    sandboxDockerMock.imageExists.mockReset();
+    sandboxDockerMock.renewClaudeCredential.mockReset();
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(false);
+    sandboxDockerMock.imageExists.mockResolvedValue(true);
   });
 
   it('is "missing" when no env and no backup', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
-    expect(await claudeCredStatus({}, true)).toBe('missing');
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('missing');
   });
 
-  it('is "ok" when a host-env token is set (expiry not consulted)', async () => {
+  it('is "ok" when a host-env token is set (health not consulted)', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(true);
-    expect(await claudeCredStatus({ ANTHROPIC_API_KEY: 'sk-test' }, true)).toBe('ok');
-    expect(sandboxDockerMock.hostClaudeBackupExpired).not.toHaveBeenCalled();
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({ ANTHROPIC_API_KEY: 'sk-test' }, true, IMAGE)).toBe('ok');
+    expect(sandboxDockerMock.hostClaudeLoginDead).not.toHaveBeenCalled();
   });
 
-  it('is "expired" on cloud when the backup token is known-expired', async () => {
+  it('is "expired" on cloud only when the login can no longer be renewed', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(true);
-    expect(await claudeCredStatus({}, true)).toBe('expired');
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('expired');
   });
 
-  it('is "ok" on docker even when the backup token is known-expired (in-box refresh)', async () => {
+  // The false positive this whole change exists for: access tokens live ~8h, so
+  // gating on `expiresAt` failed perfectly good jobs every single day.
+  it('is "ok" on cloud when a lapsed access token renews', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(true);
-    expect(await claudeCredStatus({}, false)).toBe('ok');
-    // The expiry probe must not even run when the provider is docker.
-    expect(sandboxDockerMock.hostClaudeBackupExpired).not.toHaveBeenCalled();
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
+    sandboxDockerMock.renewClaudeCredential.mockResolvedValue('renewed');
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
+    expect(sandboxDockerMock.renewClaudeCredential).toHaveBeenCalled();
   });
 
-  it('is "ok" on cloud when the backup token is present and not expired', async () => {
+  it('is "expired" on cloud when the renewal itself fails (rotated away)', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(false);
-    expect(await claudeCredStatus({}, true)).toBe('ok');
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
+    sandboxDockerMock.renewClaudeCredential.mockResolvedValue('failed');
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('expired');
+  });
+
+  it('is "ok" on cloud without renewing when the access token is still valid', async () => {
+    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(false);
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
+    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
+  });
+
+  it('is "ok" on cloud when the image is not local — never pull just to answer', async () => {
+    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
+    sandboxDockerMock.imageExists.mockResolvedValue(false);
+    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
+    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
+  });
+
+  it('is "ok" on docker whatever the token looks like (the box boots from the volume)', async () => {
+    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({}, false, IMAGE)).toBe('ok');
+    // No health probe at all when the provider is docker.
+    expect(sandboxDockerMock.hostClaudeLoginDead).not.toHaveBeenCalled();
+    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
   });
 });
 
@@ -181,11 +219,7 @@ describe('opencodeAuthAvailable', () => {
   it('returns true when host auth.json exists', async () => {
     sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(false);
     await mkdir(join(homeDir, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(homeDir, '.local', 'share', 'opencode', 'auth.json'),
-      '{}',
-      'utf8',
-    );
+    await writeFile(join(homeDir, '.local', 'share', 'opencode', 'auth.json'), '{}', 'utf8');
     expect(await opencodeAuthAvailable(IMAGE, {})).toBe(true);
   });
 
@@ -210,7 +244,12 @@ describe('assertAgentCredsAvailable dispatcher', () => {
 
   beforeEach(async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockReset();
-    sandboxDockerMock.hostClaudeBackupExpired.mockReset();
+    sandboxDockerMock.hostClaudeAccessTokenExpired.mockReset();
+    sandboxDockerMock.hostClaudeLoginDead.mockReset();
+    sandboxDockerMock.imageExists.mockReset();
+    sandboxDockerMock.renewClaudeCredential.mockReset();
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(false);
+    sandboxDockerMock.imageExists.mockResolvedValue(true);
     sandboxDockerMock.volumeHasCodexAuth.mockReset();
     sandboxDockerMock.volumeHasOpencodeAuth.mockReset();
     homeDir = await mkdtemp(join(tmpdir(), 'agentbox-dispatch-creds-'));
@@ -236,9 +275,9 @@ describe('assertAgentCredsAvailable dispatcher', () => {
     ).rejects.toBeInstanceOf(MissingAgentCredsError);
   });
 
-  it('throws ExpiredAgentCredsError for claude on cloud when the backup is expired', async () => {
+  it('throws ExpiredAgentCredsError for claude on cloud when the login cannot be renewed', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(true);
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
     try {
       await assertAgentCredsAvailable({
         agent: 'claude-code',
@@ -252,14 +291,14 @@ describe('assertAgentCredsAvailable dispatcher', () => {
       // The expired subclass must still satisfy the existing catch at the call sites.
       expect(err).toBeInstanceOf(MissingAgentCredsError);
       const e = err as InstanceType<typeof ExpiredAgentCredsError>;
-      expect(e.message).toContain('expired');
+      expect(e.message).toContain('renewed');
       expect(e.message).toContain('agentbox claude login');
     }
   });
 
-  it('does NOT throw for claude on docker when the backup is expired', async () => {
+  it('does NOT throw for claude on docker when the login looks dead', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeBackupExpired.mockResolvedValue(true);
+    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
     await expect(
       assertAgentCredsAvailable({
         agent: 'claude-code',

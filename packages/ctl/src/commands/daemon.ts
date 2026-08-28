@@ -237,7 +237,12 @@ export const daemonCommand = new Command('daemon')
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
-      if (credentialsWatcher) credentialsWatcher.stop();
+      if (credentialsWatcher) {
+        credentialsWatcher.stop();
+        // A credential that rotated in this box's last seconds is worth one
+        // final awaited attempt — every other copy of that login is dead.
+        await credentialsWatcher.flush();
+      }
       toolLinks.stop();
       reporter.stop();
       reporter.flush();

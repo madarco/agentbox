@@ -48,7 +48,8 @@ export {
   CODEX_CREDENTIALS_BACKUP_FILE,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
   hostBackupHasCredentials,
-  hostClaudeBackupExpired,
+  hostClaudeAccessTokenExpired,
+  hostClaudeLoginDead,
   isRealAgentCredential,
   parseSyncResult,
   parseExtractResult,
@@ -224,7 +225,11 @@ export {
 // there now. This package only supplies the docker-side Portless hooks the CLI
 // installs into the hub seam.
 export { dockerHubPortlessHooks } from './hub-portless.js';
-export { dockerCredentialRefresh } from './credential-refresh.js';
+export {
+  dockerCredentialRefresh,
+  renewClaudeCredential,
+  type RenewClaudeResult,
+} from './credential-refresh.js';
 // The host-config stage producers now live in the provider-neutral sync layer
 // (`@agentbox/sandbox-core`); cloud consumers import them from there. The claude
 // per-project path helpers + Stage types stay re-exported here (from core) for

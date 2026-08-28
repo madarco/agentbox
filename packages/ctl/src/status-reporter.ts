@@ -187,7 +187,7 @@ export class StatusReporter {
     if (!this.relay.enabled) return;
     try {
       const snapshot = await this.snapshot();
-      this.relay.post(BOX_STATUS_EVENT, snapshot);
+      void this.relay.post(BOX_STATUS_EVENT, snapshot);
     } catch {
       // Best-effort, exactly like the relay client itself — a status push
       // failure must never disturb the supervisor.
