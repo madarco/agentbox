@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_SYNC_SPECS, isRealAgentCredential } from '@agentbox/sandbox-core';
-import type { RelayClient } from '../src/relay-client.js';
+import type { PostOutcome, RelayClient } from '../src/relay-client.js';
 import {
   CredentialsWatcher,
   isRealCredentialText,
+  isRetryablePostFailure,
   WATCHED_CREDENTIALS,
 } from '../src/credentials-watcher.js';
 import { CREDENTIALS_UPDATED_EVENT } from '../src/types.js';
@@ -15,8 +16,15 @@ const CLAUDE_BLOB = JSON.stringify({
   claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 123 },
 });
 
-function fakeRelay(): { relay: RelayClient; post: ReturnType<typeof vi.fn> } {
-  const post = vi.fn();
+const DELIVERED: PostOutcome = { ok: true, status: 202 };
+
+/** `outcomes` is consumed one per call; once exhausted every post is delivered. */
+function fakeRelay(outcomes: PostOutcome[] = []): {
+  relay: RelayClient;
+  post: ReturnType<typeof vi.fn>;
+} {
+  const queue = [...outcomes];
+  const post = vi.fn(() => Promise.resolve(queue.shift() ?? DELIVERED));
   return { relay: { enabled: true, post } as unknown as RelayClient, post };
 }
 
@@ -118,5 +126,80 @@ describe('CredentialsWatcher', () => {
     const relay = { enabled: false, post } as unknown as RelayClient;
     await watcher(relay).scan();
     expect(post).not.toHaveBeenCalled();
+  });
+
+  // The bug this guards: bookkeeping used to be committed before the
+  // fire-and-forget post was even attempted, so an update lost to a relay
+  // restart was lost forever — and since a Claude refresh rotates the token,
+  // that silently killed every other copy of the login.
+  it('retries on the next scan when the post never reached the relay', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay([{ ok: false, status: null }]);
+    const w = watcher(relay);
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(1);
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(2);
+    // Delivered on the retry — now it stops.
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a 5xx and stops once delivered', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay([{ ok: false, status: 503 }]);
+    const w = watcher(relay);
+    await w.scan();
+    await w.scan();
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  // A 202 with `accepted: false` (the relay judged the blob stale) is delivery,
+  // not failure — resending it every 15s forever would be pure noise.
+  it('treats any 2xx as delivered', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay([{ ok: true, status: 202 }]);
+    const w = watcher(relay);
+    await w.scan();
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a 4xx — that payload will never be accepted', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay([{ ok: false, status: 400 }]);
+    const w = watcher(relay);
+    await w.scan();
+    await w.scan();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('flush() makes one final attempt, for shutdown', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay();
+    await watcher(relay).flush();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes a longer timeout than the relay default', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    const { relay, post } = fakeRelay();
+    await watcher(relay).scan();
+    const [, , opts] = post.mock.calls[0] as [string, unknown, { timeoutMs?: number }];
+    expect(opts.timeoutMs).toBeGreaterThan(2000);
+  });
+});
+
+describe('isRetryablePostFailure', () => {
+  it('retries transport failures and 5xx, gives up on 4xx except 408/429', () => {
+    expect(isRetryablePostFailure({ ok: false, status: null })).toBe(true);
+    expect(isRetryablePostFailure({ ok: false, status: 500 })).toBe(true);
+    expect(isRetryablePostFailure({ ok: false, status: 503 })).toBe(true);
+    expect(isRetryablePostFailure({ ok: false, status: 408 })).toBe(true);
+    expect(isRetryablePostFailure({ ok: false, status: 429 })).toBe(true);
+    expect(isRetryablePostFailure({ ok: false, status: 400 })).toBe(false);
+    expect(isRetryablePostFailure({ ok: false, status: 401 })).toBe(false);
+    expect(isRetryablePostFailure({ ok: true, status: 202 })).toBe(false);
   });
 });

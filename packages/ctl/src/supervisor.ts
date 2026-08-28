@@ -1008,7 +1008,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.schedule();
     }
     if (this.relay.enabled && PUSHED_TASK_STATES.has(state)) {
-      this.relay.post('task-state', { task: name, state });
+      void this.relay.post('task-state', { task: name, state });
     }
     this.emitChange();
   }
@@ -1029,7 +1029,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.schedule();
     }
     if (this.relay.enabled && PUSHED_SERVICE_STATES.has(state)) {
-      this.relay.post('service-state', { service: name, state });
+      void this.relay.post('service-state', { service: name, state });
     }
     this.emitChange();
   }

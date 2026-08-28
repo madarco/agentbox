@@ -106,6 +106,20 @@ Claude's OAuth refresh **rotates** the refresh token: the moment any box refresh
 
 This is on by default; disable it per box with `agentbox create --no-credential-sync` or globally with `agentbox config set box.credentialSync false`. A long-_running_ agent session may hold the old token in memory and ask you to `/login` once even after the file was fixed — restart the session and it picks up the fresh login.
 
+### Expired vs. dead
+
+Two different things get called "expired", and only one of them needs you:
+
+- The **access token** lives about 8 hours and renews itself from the refresh token. A saved login whose access token lapsed overnight is perfectly healthy — AgentBox renews it for you before seeding a cloud box, without asking.
+- The **refresh token** lives about 30 days, and is also what rotation kills. When it has run out (or another copy of the login spent it), nothing can renew it, and only a fresh sign-in helps:
+
+```console
+$ agentbox vercel claude
+? Your saved Claude login can no longer be renewed. Sign in again? › Yes
+```
+
+Say yes to that prompt only when you see it — signing in when you did not need to spends the shared refresh token, which is exactly what logs your other boxes out.
+
 <Callout title="TIP">
   Sign in once on the host. Install a skill or sign in there, and the next box picks it up
   automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).

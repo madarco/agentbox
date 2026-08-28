@@ -20,7 +20,6 @@ import {
   ensureImage,
   formatDetachNotice,
   hostBackupHasCredentials,
-  hostClaudeBackupExpired,
   imageExists,
   inspectBox,
   rebuildPluginNativeDeps,
@@ -80,6 +79,7 @@ import {
 } from '../session-teleport/index.js';
 import { resolvePlanTeleport } from '../session-teleport/plan.js';
 import { clampSpinnerLine } from '../spinner-line.js';
+import { resolveClaudeCredHealth } from '../lib/claude-cred-health.js';
 import { imageProgress, makeProgressReporter } from '../lib/progress.js';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { maybeShowInstallHint } from '../lib/install-hint.js';
@@ -407,8 +407,12 @@ async function maybeRunClaudeLogin(args: {
  * a host credential the box boots unauthenticated. Capturing the login to
  * `~/.agentbox/claude-credentials.json` (via the same throwaway-container login
  * + `syncClaudeCredentials`) lets the cloud push seed it into this box and every
- * future one. Also re-offers when the saved token is *expired* — the in-box
- * refresh has proven unreliable on cloud. Skips on non-TTY / --yes / host env.
+ * future one. Skips on non-TTY / --yes / host env.
+ *
+ * The verdict comes from `resolveClaudeCredHealth`, which renews a merely-lapsed
+ * access token rather than reporting it as an expiry — see that module for why
+ * the old `expiresAt` gate nagged daily and why saying yes to it was actively
+ * destructive.
  */
 async function maybeRunCloudClaudeLogin(args: {
   image: string;
@@ -418,13 +422,26 @@ async function maybeRunCloudClaudeLogin(args: {
 }): Promise<void> {
   if (!process.stdin.isTTY || args.yes) return;
   if (args.authSource === 'host-env') return;
-  const hasCreds = await hostBackupHasCredentials();
-  const expired = hasCreds && (await hostClaudeBackupExpired());
-  if (hasCreds && !expired) return;
 
-  const message = expired
-    ? 'Your saved Claude login looks expired. Sign in again? (saved and reused by every box)'
-    : 'Sign in with your Claude subscription? (saved and reused by every box)';
+  const probe = spinner();
+  let started = false;
+  const health = await resolveClaudeCredHealth({
+    image: args.image,
+    onProgress: (line) => {
+      if (!started) {
+        started = true;
+        probe.start('checking your saved Claude login');
+      }
+      probe.message(clampSpinnerLine(line));
+    },
+  });
+  if (started) probe.stop('checked your saved Claude login');
+  if (health === 'ok') return;
+
+  const message =
+    health === 'dead'
+      ? 'Your saved Claude login can no longer be renewed. Sign in again? (saved and reused by every box)'
+      : 'Sign in with your Claude subscription? (saved and reused by every box)';
   const answer = await confirm({ message, initialValue: true });
   if (!answer) {
     log.info('Skipped sign-in — claude will prompt you to /login inside the box.');

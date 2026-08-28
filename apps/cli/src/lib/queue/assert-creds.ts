@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   hostBackupHasCredentials,
-  hostClaudeBackupExpired,
   OPENCODE_FORWARDED_ENV_KEYS,
   SHARED_CODEX_VOLUME,
   SHARED_OPENCODE_VOLUME,
@@ -12,6 +11,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import type { QueueAgentKind } from '@agentbox/relay';
 import { resolveClaudeAuth } from '../../auth.js';
+import { resolveClaudeCredHealth } from '../claude-cred-health.js';
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -38,24 +38,31 @@ export async function claudeAuthAvailable(env: NodeJS.ProcessEnv): Promise<boole
 
 /**
  * Richer Claude credential verdict for the non-interactive paths. `'missing'`
- * when nothing can seed a box; `'expired'` when the only credential is a host
- * backup whose OAuth token is known-expired AND we're on a cloud provider —
- * cloud's in-box refresh has proven unreliable, whereas docker boxes refresh the
- * access token themselves, so a stale `expiresAt` is a non-issue there (and
- * access tokens expire ~hourly, so flagging it on docker would false-fail
- * constantly). A host-env token (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`)
+ * when nothing can seed a box; `'expired'` when the saved login can no longer be
+ * renewed AND we're on a cloud provider — cloud has no shared volume to fall
+ * back to, whereas a docker box boots from the volume's live copy and refreshes
+ * it in-box. A host-env token (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`)
  * or legacy `auth.json` short-circuits to `'ok'`: it has no expiry concept here.
- * Mirrors the interactive `maybeRunCloudClaudeLogin` split.
+ * Mirrors the interactive `maybeRunCloudClaudeLogin` split, and shares its
+ * verdict helper — so a merely-lapsed access token is renewed here too rather
+ * than failing the job. This used to gate on `expiresAt` (the ~8h access token)
+ * and so refused to submit perfectly good jobs every day.
  */
 export async function claudeCredStatus(
   env: NodeJS.ProcessEnv,
   isCloud: boolean,
+  image?: string,
 ): Promise<'ok' | 'missing' | 'expired'> {
   const resolved = await resolveClaudeAuth(env);
   if (resolved.source !== 'none') return 'ok';
-  if (!(await hostBackupHasCredentials())) return 'missing';
-  if (isCloud && (await hostClaudeBackupExpired())) return 'expired';
-  return 'ok';
+  if (!isCloud) return (await hostBackupHasCredentials()) ? 'ok' : 'missing';
+  const health = await resolveClaudeCredHealth({
+    image: image ?? '',
+    // No image to probe with means no renewal; answer off the backup alone.
+    ...(image === undefined ? { offlineOnly: true } : {}),
+  });
+  if (health === 'missing') return 'missing';
+  return health === 'dead' ? 'expired' : 'ok';
 }
 
 /**
@@ -100,7 +107,7 @@ const MESSAGES: Record<QueueAgentKind, string> = {
 };
 
 const CLAUDE_EXPIRED_MESSAGE =
-  'Your saved Claude login looks expired. Refresh it with `agentbox claude login`, then retry.';
+  'Your saved Claude login can no longer be renewed. Sign in again with `agentbox claude login`, then retry.';
 
 export class MissingAgentCredsError extends Error {
   readonly agent: QueueAgentKind;
@@ -128,7 +135,7 @@ export interface AssertAgentCredsInput {
   agent: QueueAgentKind;
   image: string;
   env?: NodeJS.ProcessEnv;
-  /** Provider for this run; gates the Claude expiry check to cloud (see
+  /** Provider for this run; gates the Claude renewability check to cloud (see
    *  {@link claudeCredStatus}). Omitted/`'docker'` → presence check only. */
   providerName?: string;
 }
@@ -145,7 +152,7 @@ export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): P
   const env = input.env ?? process.env;
   if (input.agent === 'claude-code') {
     const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
-    const status = await claudeCredStatus(env, isCloud);
+    const status = await claudeCredStatus(env, isCloud, input.image);
     if (status === 'missing') throw new MissingAgentCredsError(input.agent, MESSAGES[input.agent]);
     if (status === 'expired') throw new ExpiredAgentCredsError(input.agent, CLAUDE_EXPIRED_MESSAGE);
     return;
