@@ -133,6 +133,18 @@ describe('fallback defaults preserve pre-descriptor behavior', () => {
     expect(caps.directBoxSsh).toBe(false);
   });
 
+  it('capitalises the label so a descriptor-less plugin is not shown lowercase', () => {
+    // The id stays untouched — only the display label is capitalised.
+    const d = deriveDescriptor('sprites', legacyModule());
+    expect(d.label).toBe('Sprites');
+    expect(d.name).toBe('sprites');
+  });
+
+  it('leaves an already-capitalised or non-alphabetic name alone', () => {
+    expect(deriveDescriptor('Acme', legacyModule()).label).toBe('Acme');
+    expect(deriveDescriptor('3dfx', legacyModule()).label).toBe('3dfx');
+  });
+
   it('offers a credential form only when the module can consume one', () => {
     expect(deriveDescriptor('acme', legacyModule()).credentials.fields).toEqual([]);
     const withCreds = legacyModule({

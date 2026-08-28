@@ -86,11 +86,26 @@ const FALLBACK_CAPABILITIES: ProviderCapabilities = {
   hubRoutable: true,
 };
 
+/**
+ * Display label for a provider that declared none. Capitalising the first letter
+ * is the whole transform, and it is a display concern only — every other
+ * placeholder field keeps the raw name, and nothing resolves a provider by label.
+ *
+ * It earns its place because the raw id reaches the UI: a plugin showed as
+ * `sprites` in the create picker while the tray's own progress line capitalises
+ * the same id, so one panel rendered two spellings of one provider. Anything
+ * cleverer — title-casing, expanding `remote-docker` — would be guessing at a
+ * name only the plugin author knows, which is what `descriptor.label` is for.
+ */
+function placeholderLabel(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 function placeholderDescriptor(name: string): ProviderDescriptor {
   return {
     name,
     kind: 'cloud',
-    label: name,
+    label: placeholderLabel(name),
     loginHint: '',
     credentials: { envKeys: [], fields: [] },
     // NOT `true`: the hub's create gate deliberately skips the configured check
