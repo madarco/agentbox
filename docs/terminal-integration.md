@@ -374,6 +374,58 @@ reporting feeds it) — that's the always-visible view of active boxes. Plugins
 sidebar only shows boxes with a live pane, so the full roster (incl. paused) is
 the keyboard-toggled overlay instead.
 
+## Claude Code's renderer inside a box (`box.claudeTui`)
+
+Claude Code has two renderers, switchable with `/tui`. The `fullscreen` one
+(alternate screen + virtualised scrollback) repaints **differentially**: it skips
+cells it believes are already blank. Over a network transport that assumption
+breaks down and stale characters are left behind — and because they only ever
+show up where the screen is otherwise blank, the symptom reads as garbled text in
+the *gaps*. The two-space indent of an agent reply is the widest gap, so it looks
+like "the first two columns are corrupted". Nothing repaints those cells
+afterwards, so the debris survives until a full redraw — which is why resizing
+the terminal clears it.
+
+Confirmed upstream, not an AgentBox bug: `agentbox shell` in the same box is
+clean, and so is Claude Code with `/tui default`.
+
+Boxes therefore pin the classic renderer. `box.claudeTui` (`default` |
+`fullscreen` | `auto`, default `default`) maps to Claude Code's own overrides via
+`claudeTuiEnv` in `@agentbox/core`:
+
+| mode | env |
+| --- | --- |
+| `default` | `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` |
+| `fullscreen` | `CLAUDE_CODE_NO_FLICKER=1` |
+| `auto` | *(nothing — Claude decides)* |
+
+Both names are Claude Code's, read off the shipped binary (v2.1.250); they take
+precedence over the `tui` key in `~/.claude/settings.json`, so this holds
+whatever a box's Claude config volume happens to carry.
+
+It rides the **agent's launch command**, on every provider — deliberately not
+`/etc/agentbox/box.env`. box.env is only sourced by login shells, and the two
+launch paths disagree about that: the cloud launcher runs `bash -lc` (login, so
+box.env applies) while the docker path runs `docker exec … tmux new-session -d
+-s claude 'claude …'` — `claude` is the tmux command directly, so box.env is
+never read. Carrying it one way on one path and another way on the other is what
+let the docker agent silently keep the old renderer while `agentbox shell` — a
+login shell — showed the variable set and looked correct.
+
+- **docker**: `claudeSessionEnvFlags` puts it on the `docker exec -e` flags in
+  `startClaudeSession`, the same way the model/auth keys are forwarded.
+- **cloud-shaped providers** (e2b / vercel / hetzner / daytona / DO, **and
+  remote-docker** — it is `createCloudProvider(remoteDockerBackend)`):
+  `buildCloudAttachInnerCommand` emits `export <VAR>=…;` before `exec claude`.
+
+Both resolve `box.claudeTui` from the effective config at launch, so flipping it
+takes effect on the agent session's next start — no box recreate, no re-bake.
+A `claude` you launch by hand from `agentbox shell` is not covered; use `/tui`
+there.
+
+Revert with `agentbox config set box.claudeTui auto` once Claude Code fixes the
+fullscreen repaint.
+
 ## Gotchas
 
 - **`set-status` is stored-but-hidden for box workspaces** — see above. Don't

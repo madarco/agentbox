@@ -10,6 +10,8 @@ export type {
 } from './types.js';
 export type { AgentLauncher } from './agent.js';
 export { resolveAgentLauncher } from './agent.js';
+export type { ClaudeTuiMode } from './claude-tui.js';
+export { claudeTuiEnv } from './claude-tui.js';
 export type {
   BoxRecord,
   CloudBoxFields,
@@ -54,11 +56,7 @@ export {
   PLACEHOLDER_KEYS,
   ReplaceError,
 } from './replace.js';
-export type {
-  ReplaceRule,
-  ApplyReplacementsOptions,
-  PlaceholderKey,
-} from './replace.js';
+export type { ReplaceRule, ApplyReplacementsOptions, PlaceholderKey } from './replace.js';
 export type {
   CloudBackend,
   CloudExecOptions,

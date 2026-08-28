@@ -21,6 +21,19 @@ export type { ProviderKind };
  * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
  */
 export type ClaudeInstallMethod = 'native' | 'npm';
+
+/**
+ * Which terminal renderer Claude Code uses inside a box.
+ *
+ * Claude Code's `fullscreen` renderer (alternate screen + virtualised
+ * scrollback) repaints differentially: it skips cells it believes are already
+ * blank. Over a network transport that assumption breaks down and stale
+ * characters are left in the blank regions, visible on scroll and cleared only
+ * by a full repaint (resizing the terminal). `default` is the classic renderer
+ * and does not have the problem, so boxes use it unless told otherwise.
+ * `auto` leaves the choice to Claude Code.
+ */
+export type ClaudeTuiMode = 'default' | 'fullscreen' | 'auto';
 /**
  * How a box's `git push` reaches GitHub:
  * - `relay` — the box asks the host relay to push with the HOST's credentials
@@ -134,6 +147,8 @@ export interface UserConfig {
      * cloud egress IPs the native installer's CDN 403s.
      */
     claudeInstall?: ClaudeInstallMethod;
+    /** Terminal renderer Claude Code uses inside the box. */
+    claudeTui?: ClaudeTuiMode;
     withEnv?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
@@ -349,6 +364,7 @@ export interface EffectiveConfig {
     sizeRemoteDocker: string;
     withPlaywright: boolean;
     claudeInstall: ClaudeInstallMethod;
+    claudeTui: ClaudeTuiMode;
     withEnv: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
@@ -536,6 +552,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeRemoteDocker: '',
     withPlaywright: false,
     claudeInstall: 'native',
+    claudeTui: 'default',
     withEnv: false,
     resyncOnStart: true,
     vnc: true,
@@ -788,6 +805,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['native', 'npm'] as const,
     description:
       "How `agentbox prepare` installs Claude Code into the base image/snapshot: `native` (Anthropic's installer, the default) or `npm` (@anthropic-ai/claude-code). A fallback for cloud egress IPs the native installer's CDN 403s. Bake-time only — change it, then re-run `agentbox prepare --provider <name>`.",
+  },
+  {
+    key: 'box.claudeTui',
+    type: 'enum',
+    enumValues: ['default', 'fullscreen', 'auto'] as const,
+    description:
+      "Terminal renderer Claude Code uses inside a box: `default` (the classic renderer, the AgentBox default), `fullscreen` (Claude's alternate-screen renderer), or `auto` (let Claude decide). Boxes default to `default` because the fullscreen renderer's differential repaint leaves stale characters behind over a network transport — visible while scrolling, and cleared only by resizing the terminal. Applied via /etc/agentbox/box.env, so it takes effect on the next box start.",
   },
   {
     key: 'box.withEnv',

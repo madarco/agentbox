@@ -4,6 +4,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
+import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
+import { loadEffectiveConfig } from '@agentbox/config';
 import {
   addProjectAlias,
   filterHostHooks,
@@ -899,10 +901,67 @@ export class ClaudeSessionError extends Error {
   }
 }
 
+/**
+ * `box.claudeTui`, from the caller or the effective config. Falls back to the
+ * schema default when the config can't be read — a renderer preference must
+ * never be able to stop a session starting.
+ */
+async function resolveClaudeTui(
+  explicit: ClaudeTuiMode | undefined,
+  workspacePath: string | undefined,
+): Promise<ClaudeTuiMode> {
+  if (explicit) return explicit;
+  try {
+    // The box's workspace, NOT `process.cwd()`: the queue worker runs from the
+    // state dir and takes the workspace from the job manifest, and `agentbox
+    // config set` writes `--project` by default — so a cwd-based load would
+    // read globals and miss the project's own setting.
+    return (await loadEffectiveConfig(workspacePath ?? process.cwd())).effective.box.claudeTui;
+  } catch {
+    return 'default';
+  }
+}
+
+/**
+ * The `docker exec -e` flags the agent's tmux session is started with.
+ *
+ * The renderer pin is forwarded HERE, not left to /etc/agentbox/box.env: tmux
+ * runs `claude` directly, not through a login shell, so it never sources that
+ * file. The container's own environment only carries what was baked in at
+ * `docker run` time, and that is immutable — so a box created before the
+ * setting existed, or one whose `box.claudeTui` has since changed, would keep
+ * the old renderer forever. Same reasoning as {@link CLAUDE_FORWARDED_ENV_KEYS}.
+ */
+export function claudeSessionEnvFlags(tui: ClaudeTuiMode, env: NodeJS.ProcessEnv): string[] {
+  const flags: string[] = ['-e', `TERM=${env['TERM'] ?? 'xterm-256color'}`];
+  for (const k of FORWARDED_ENV_KEYS) {
+    const v = env[k];
+    if (typeof v === 'string' && v.length > 0) flags.push('-e', `${k}=${v}`);
+  }
+  // `docker exec` inherits the container environment, so setting only the
+  // variable the current mode wants is not enough: a container that already
+  // carries the other one would run with two contradictory overrides, and
+  // `auto` could never get back to Claude's own choice. Blank the one we don't
+  // want — empty is falsy to Claude's check, and an explicit empty value
+  // overrides whatever the container has.
+  const wanted = claudeTuiEnv(tui);
+  for (const k of ['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', 'CLAUDE_CODE_NO_FLICKER'] as const) {
+    flags.push('-e', `${k}=${wanted[k] ?? ''}`);
+  }
+  return flags;
+}
+
 export interface StartClaudeSessionOptions {
   container: string;
   claudeArgs: string[];
   sessionName?: string;
+  /**
+   * Terminal renderer for this session (`box.claudeTui`). Omitted → resolved
+   * from the effective config here.
+   */
+  claudeTui?: ClaudeTuiMode;
+  /** Box workspace, for resolving `box.claudeTui` from the project's config. */
+  workspacePath?: string;
   /** Previously fed into the in-tmux status bar; now unused (the outer UI
    *  shows the name). Kept for back-compat — callers may still pass it. */
   boxName?: string;
@@ -936,12 +995,10 @@ function shQuote(arg: string): string {
 export async function startClaudeSession(opts: StartClaudeSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CLAUDE_SESSION;
   const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
-  const term = process.env['TERM'] ?? 'xterm-256color';
-  const envFlags: string[] = ['-e', `TERM=${term}`];
-  for (const k of FORWARDED_ENV_KEYS) {
-    const v = process.env[k];
-    if (typeof v === 'string' && v.length > 0) envFlags.push('-e', `${k}=${v}`);
-  }
+  const envFlags = claudeSessionEnvFlags(
+    await resolveClaudeTui(opts.claudeTui, opts.workspacePath),
+    process.env,
+  );
   const result = await execa(
     'docker',
     [

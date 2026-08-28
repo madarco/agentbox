@@ -1339,6 +1339,7 @@ export const claudeCommand = new Command('claude')
         claudeArgs: effectiveClaudeArgs,
         sessionName,
         boxName: result.record.name,
+        workspacePath: result.record.workspacePath,
       });
       // Remember this box was launched as claude so `agentbox recover` relaunches
       // the right agent. Best-effort — never block the launch.
@@ -1607,6 +1608,7 @@ async function startOrAttachClaude(
     claudeArgs: effectiveArgs,
     sessionName,
     boxName: box.name,
+    workspacePath: box.workspacePath,
   });
 
   s.stop(`box ${box.container} ready`);

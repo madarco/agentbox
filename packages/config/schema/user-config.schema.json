@@ -50,6 +50,7 @@
         "sizeRemoteDocker": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
         "claudeInstall": { "enum": ["native", "npm"] },
+        "claudeTui": { "enum": ["default", "fullscreen", "auto"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
