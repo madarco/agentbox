@@ -94,8 +94,16 @@ function withTimeout<T extends { exitCode: number; stdout: string; stderr: strin
   work: Promise<T>,
   ms: number,
 ): Promise<T | { exitCode: number; stdout: string; stderr: string }> {
+  // The exec cannot be cancelled (the Provider interface has no handle for it),
+  // so the loser of this race is swallowed rather than left to surface later as
+  // an unhandled rejection long after the command has printed its result.
+  const settled = work.catch((err: unknown) => ({
+    exitCode: 1,
+    stdout: '',
+    stderr: err instanceof Error ? err.message : String(err),
+  }));
   return Promise.race([
-    work,
+    settled,
     new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
       const timer = setTimeout(
         () => resolve({ exitCode: 124, stdout: '', stderr: `no answer within ${String(ms)}ms` }),

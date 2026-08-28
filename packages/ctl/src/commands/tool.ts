@@ -85,7 +85,14 @@ toolCommand
   .option('--cwd <path>', 'container path identifying which registered worktree to use')
   .action(async (opts: { cwd?: string }) => {
     const watcher = new ToolLinksWatcher({ cwd: opts.cwd ?? process.cwd() });
-    await watcher.relink();
+    // A relink that could not read the grants must NOT report success: the host
+    // is watching this exit code to tell the user which boxes took the change,
+    // and this process has no retry (the daemon's backoff belongs to the daemon).
+    const status = await watcher.relink();
+    if (status !== 'ok') {
+      process.stderr.write('agentbox-ctl tool relink: could not read the host grant list\n');
+      process.exit(1);
+    }
     process.exit(0);
   });
 

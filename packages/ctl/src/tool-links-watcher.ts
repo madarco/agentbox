@@ -43,7 +43,14 @@ export class ToolLinksWatcher {
   private active = false;
   private readonly cwd: string;
   private readonly onChange: ToolLinksWatcherOptions['onChange'];
-  private lastSignature = '';
+  /**
+   * Signature of the last list we synced, or null for "unknown".
+   *
+   * NOT `''` for unknown: that is the signature of an empty grant list, so a
+   * relink after revoking the last tool would compare equal and skip the sync,
+   * leaving the shim in place on a box that no longer polls.
+   */
+  private lastSignature: string | null = null;
 
   constructor(opts: ToolLinksWatcherOptions = {}) {
     this.retryCeilingMs = opts.retryCeilingMs ?? RETRY_CEILING_MS;
@@ -73,9 +80,9 @@ export class ToolLinksWatcher {
    * skip-if-identical shortcut would otherwise ignore a link a user deleted by
    * hand, or one this box failed to create last time.
    */
-  async relink(): Promise<void> {
-    this.lastSignature = '';
-    await this.tick();
+  async relink(): Promise<'ok' | 'unavailable'> {
+    this.lastSignature = null;
+    return this.tick();
   }
 
   /**
@@ -95,9 +102,15 @@ export class ToolLinksWatcher {
     this.retryTimer.unref?.();
   }
 
-  /** Exposed so `tool request` can refresh links the moment it is approved. */
-  async tick(): Promise<void> {
-    if (this.running) return;
+  /**
+   * Exposed so `tool request` can refresh links the moment it is approved, and
+   * so `tool relink` can report whether it actually managed to.
+   *
+   * `unavailable` means the grant list could not be read — the links are left
+   * exactly as they were, and the caller decides whether that is worth an error.
+   */
+  async tick(): Promise<'ok' | 'unavailable'> {
+    if (this.running) return 'ok';
     this.running = true;
     try {
       // Snapshot BEFORE asking, so a link created while the RPC is in flight
@@ -111,24 +124,26 @@ export class ToolLinksWatcher {
       );
       if (res.exitCode !== 0) {
         this.scheduleRetry();
-        return;
+        return 'unavailable';
       }
       const names = parseToolNames(res.stdout);
       if (names === null) {
         this.scheduleRetry();
-        return;
+        return 'unavailable';
       }
       this.failures = 0;
       const signature = names.join(',');
-      if (signature === this.lastSignature) return;
+      if (signature === this.lastSignature) return 'ok';
       const result = await syncToolLinks(names, { prunable });
       this.lastSignature = signature;
       if (result.added.length || result.removed.length || result.conflicts.length) {
         this.onChange?.(result.added, result.removed, result.conflicts);
       }
+      return 'ok';
     } catch {
       // Keep whatever links exist; retry shortly.
       this.scheduleRetry();
+      return 'unavailable';
     } finally {
       this.running = false;
     }
