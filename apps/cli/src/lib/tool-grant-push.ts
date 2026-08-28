@@ -106,16 +106,33 @@ function withTimeout<T extends { exitCode: number; stdout: string; stderr: strin
   ]);
 }
 
+/**
+ * A box built before `tool relink` existed. Its ctl still polls for grants, so
+ * it is not stale — it just takes up to a minute. Worth distinguishing: "could
+ * not reach it" reads like breakage, and the fix (nothing) is different.
+ */
+function predatesRelink(reason: string): boolean {
+  return /unknown command '?relink/i.test(reason);
+}
+
 /** One line for the CLI, or null when there was nothing running to tell. */
 export function describeToolGrantPush(result: ToolGrantPushResult): string | null {
   const parts: string[] = [];
   if (result.relinked.length > 0) {
     parts.push(`applied in ${result.relinked.join(', ')}`);
   }
-  if (result.failed.length > 0) {
+  const older = result.failed.filter((f) => predatesRelink(f.reason));
+  const unreachable = result.failed.filter((f) => !predatesRelink(f.reason));
+  if (older.length > 0) {
+    parts.push(
+      `${older.map((f) => f.name).join(', ')} predates this AgentBox and still polls — ` +
+        'it picks the change up within a minute',
+    );
+  }
+  if (unreachable.length > 0) {
     // Named, not swallowed: this is the box where the tool will be missing.
     parts.push(
-      `could not reach ${result.failed.map((f) => `${f.name} (${f.reason})`).join('; ')} — ` +
+      `could not reach ${unreachable.map((f) => `${f.name} (${f.reason})`).join('; ')} — ` +
         'it will pick the change up when its daemon next starts',
     );
   }

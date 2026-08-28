@@ -23,6 +23,11 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- Host tools now run on the machine that granted them. With a remote hub they
+  executed on the control box, against a project directory that no longer
+  existed — so a box saw neither your grants nor your binaries. `agentbox tools
+  add/rm` also tells running boxes immediately (and says which ones took it)
+  instead of each box asking once a minute.
 - `cp` between a box and your files now works with a remote hub. A control box
   holds no checkout of your project, so it brokers the copy back to your machine
   — which gates and runs it — instead of failing on a workspace that isn't

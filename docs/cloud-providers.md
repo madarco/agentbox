@@ -512,9 +512,14 @@ supported" error so the in-box RPC unblocks):
   `downloadFromCloudBox` from sandbox-cloud, gated by `askPrompt`. On a
   **control box** these are brokered instead of executed: the files are on the
   user's machine, so the action parks on a `HostReachQueue` for that machine's
-  relay to drain, gate and run (`/admin/hostreach/*`). With that machine
-  offline, `fromHost` falls back to the custody cache a previous copy wrote and
-  `toHost` parks in custody for it to land later.
+  relay to drain, gate and run (`/admin/hostreach/*` — an SSE stream when the
+  network allows one, else a long poll). With that machine offline, `fromHost`
+  falls back to the custody cache a previous copy wrote and `toHost` parks in
+  custody for it to land later.
+- `tool.*` — brokered the same way and for the same reason: a grant is a file on
+  the machine that made it and the binary it names is installed there. No
+  fallback — with that machine offline the box is told, because a same-named
+  binary elsewhere is a different program.
 - `download.workspace` — bulk pull via `pullCloudDirContents`.
 - `checkpoint.create` — shells to the host CLI's `agentbox checkpoint
   create`, which routes back through `provider.checkpoint.create`.

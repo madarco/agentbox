@@ -449,7 +449,7 @@ Every **box and fleet operation** goes through the hub's `/api/v1`: `create`, li
 
 What deliberately stays on your machine, and why:
 
-- **The direct IO plane.** `shell`, `attach`, `cp`, `download`, `code`, `open`, `url`, and `screen` talk to the box **from your laptop**, not through the hub. Moving them behind the hub (a uniform tunnel with hub-side SSH termination) is future work, explicitly out of scope for now. So these commands need your laptop up and reachable to the box. The exception is a copy a **box** starts (`agentbox-ctl cp`), which the hub brokers back to your machine — see [copying between a box and your files](#copying-between-a-box-and-your-files).
+- **The direct IO plane.** `shell`, `attach`, `cp`, `download`, `code`, `open`, `url`, and `screen` talk to the box **from your laptop**, not through the hub. Moving them behind the hub (a uniform tunnel with hub-side SSH termination) is future work, explicitly out of scope for now. So these commands need your laptop up and reachable to the box. The exceptions are the things a **box** starts and that only your machine can answer — `agentbox-ctl cp` and [host tools](/docs/host-tools) — which the hub brokers back to you; see [copying between a box and your files](#copying-between-a-box-and-your-files).
 - **Local adoption.** Because the IO plane is direct, the CLI still materializes a local box record (and pulls per-box SSH keys) so those commands can resolve a box. Adoption is re-sourced from `/api/v1` — it is a cache of the hub's truth, not a second source.
 - **`secrets.env` on both machines.** Your laptop needs the provider credentials to do direct SDK IO for **e2b / vercel / daytona** (`cp`, `attach`, `url`). So a provider login writes `~/.agentbox/secrets.env` **and** pushes the credential to the control box. This dual copy is intentional and temporary — it goes away when the IO plane moves behind the hub.
 - **The agent launchers' local foreground create.** `agentbox claude`/`codex`/`opencode` with **no** control box (or with a project checked out here) still build the box **inline** on your machine, then attach. `agentbox create` and the launchers' `--via-hub`/control-box path already go through `POST /api/v1/boxes`; only this one create-then-attach path stays inline, because converting it means moving the create + attach boundary behind the hub — the same out-of-scope IO plane. Everything else the launchers do (queued `-i` runs, cloud creates) is on `/api/v1`.
@@ -566,6 +566,13 @@ agentbox cp ./data/q3.csv hub:      # readable by this project's boxes, laptop o
 That writes the same cache entry a live copy would, keyed by the file's path, so a box asking for
 `./data/q3.csv` finds it whether you pre-loaded it or an earlier copy warmed it. Uploads are bounded
 by [`relay.custodyMaxBlobBytes`](/docs/configuration#relay) and appear in the hub's **Custody** page.
+
+[Host tools](/docs/host-tools) travel the same way and for the same reason: the grant is a file on
+your machine and the binary it names is installed there, so `agentbox-ctl tool run jq` executes on
+your machine, not on the VPS. There is no cached fallback for a tool — with your machine off the box
+is told so and nothing runs, because a same-named binary somewhere else is a different program.
+Granting is instant too: `agentbox tools add jq` tells every running box and reports which ones took
+it.
 
 How long the hub waits for your machine before falling back is
 [`relay.hostReachTimeoutMs`](/docs/configuration#relay) (60s by default). Your machine long-polls the

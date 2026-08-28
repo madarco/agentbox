@@ -29,7 +29,9 @@ tools:
   [warn] aws                aws not installed on the host  (install aws, or drop the grant with `agentbox tools rm aws`)
 ```
 
-Running boxes pick up a new grant within a minute. No restart, no image rebuild.
+Running boxes pick up a new grant **immediately** — `agentbox tools add` tells them, and says
+which ones took it. No restart, no image rebuild. (A box that was paused when you granted picks it
+up when it next starts.)
 
 `gh` is granted out of the box — Claude Code's PR badge depends on it — and has its own handling (see below). Turn it off with `agentbox config set tools.gh.enabled false`.
 
@@ -148,3 +150,15 @@ Everything else just runs: `gh issue`, `gh pr` (including `merge`), `gh search`,
 Host tools are for short, non-interactive commands. There's no TTY and no stdin, output is buffered until the command exits, and each call has a timeout (120s by default — raise it with `timeoutMs` for slow plans). Anything that wants to prompt you interactively won't work.
 
 A tool never shadows a binary you actually installed in the box: if the name is already taken by a real file, AgentBox leaves it alone and logs the conflict.
+
+## With a deployed hub
+
+The tool runs on **the machine that granted it** — your laptop — not on the control box. A grant is
+a file in your project on that machine, and the binary it names is installed there, so the hub only
+brokers the call: the box asks, your machine runs `jq`, the output comes back.
+
+That means host tools need your machine up and running AgentBox (`agentbox relay start` — any
+`agentbox` command here starts it). With it off, the box is told so plainly and nothing runs; unlike
+[`cp`](/docs/deployed-hub#copying-between-a-box-and-your-files), there is no cached fallback,
+because a same-named binary on another machine is a different program, not an older copy of the
+same one.
