@@ -65,7 +65,11 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import { ensureAgentVolumesForCloud, reconcileAgentCredentials } from './sync/agent-credentials.js';
+import {
+  ensureAgentsInstalledForCloud,
+  ensureAgentVolumesForCloud,
+  reconcileAgentCredentials,
+} from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -999,6 +1003,15 @@ export function createCloudProvider(
           boxWorkspace: CLOUD_WORKSPACE_DIR,
           onLog: log,
         });
+        // Before any credential seeding: a cloud base is agentless, and only
+        // agent sets with a baked derived snapshot arrive with their binary. A
+        // missing binary is otherwise silent — tmux launches it, the session
+        // dies, and attach reports "no server running".
+        await ensureAgentsInstalledForCloud(backend, handle, {
+          agents: agentVolumes.agents,
+          onLog: log,
+        });
+
         const sync = makeCloudSync(backend, handle, { agents: agentVolumes.agents });
         await sync.seedCredentials(syncCtx);
         await sync.seedAgentConfig(syncCtx);

@@ -173,7 +173,25 @@ async function findImageByDescription(c: HetznerClient, description: string): Pr
  */
 async function resolveImageId(c: HetznerClient, req: CloudProvisionRequest): Promise<number | string> {
   const ref = req.snapshot ?? req.image;
-  if (!ref || ref === HETZNER_DEFAULT_BOX_IMAGE_REF || ref === SCAFFOLDING_FALLBACK_IMAGE) {
+  // `box.imageHetzner` is pinned to the base's own description by every bake, so
+  // by the time we get here `ref` usually NAMES OUR OWN BASE rather than being
+  // the sentinel. Treat that as "no explicit choice": otherwise the pin silently
+  // defeats variant selection and every box boots the agentless base. A ref
+  // naming anything else (a checkpoint, a stock slug, an explicit --image) is a
+  // real choice and wins.
+  // Read before `ensureHetznerBaseSnapshot()` (which may bake and rewrite the
+  // file) purely to answer "does ref name our base?"; the branch below re-reads.
+  const pinned = preparedEntryFor(readPreparedState(), '');
+  const refIsOurBase =
+    !req.snapshot &&
+    pinned !== undefined &&
+    (ref === pinned.description || ref === String(pinned.imageId));
+  if (
+    !ref ||
+    ref === HETZNER_DEFAULT_BOX_IMAGE_REF ||
+    ref === SCAFFOLDING_FALLBACK_IMAGE ||
+    refIsOurBase
+  ) {
     await ensureHetznerBaseSnapshot();
     const state = readPreparedState();
     // Prefer the derived snapshot baked for exactly this agent set — it already

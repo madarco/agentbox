@@ -32,6 +32,7 @@ import {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  ensureAgentInstalled,
   extractCredentials,
   isRealAgentCredential,
   pushCredentialToBox,
@@ -520,6 +521,35 @@ export function agentSpecsForCloud(): Array<{
     credentialsMountPath: s.credentialsMountPath,
     credentialsSubpath: s.credentialsSubpath,
   }));
+}
+
+/**
+ * Put the box's agents on PATH, installing any the snapshot doesn't carry.
+ *
+ * Cloud bases are agentless and only SOME agent sets have a derived snapshot
+ * baked, so a box can legitimately boot without its agent — and the failure is
+ * silent and confusing: tmux launches `claude`, the binary isn't there, the
+ * session dies immediately, and attach reports `no server running on
+ * /tmp/tmux-1000/default`. Installing here turns that into either a working box
+ * or a loud, specific install error.
+ *
+ * Runs BEFORE credential seeding: each agent's `install.postInstall` creates
+ * `~/.agentbox-creds/<agent>/` and the symlinks the seeded credential lands on.
+ * A box booted from a matching derived snapshot pays one `command -v` probe.
+ */
+export async function ensureAgentsInstalledForCloud(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: { agents?: readonly string[]; onLog?: (line: string) => void } = {},
+): Promise<void> {
+  const agents = opts.agents ?? [];
+  if (agents.length === 0) return;
+  const transport = createCloudSyncTransport({ backend, handle });
+  for (const agent of agents) {
+    await ensureAgentInstalled(transport, agent, {
+      ...(opts.onLog ? { onProgress: opts.onLog } : {}),
+    });
+  }
 }
 
 /**

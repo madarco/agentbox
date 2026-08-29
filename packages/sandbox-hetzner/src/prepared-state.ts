@@ -38,12 +38,13 @@ import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets
  *       and `base.cliCommit?` added so we can warn when an old snapshot
  *       predates the running CLI.
  *   3 — `variants` added: one record per agent set, so baking a `--agents
- *       codex` snapshot no longer invalidates the claude one. The bump is
- *       deliberate rather than a bare optional field: `base` now holds the most
- *       RECENT bake, which may be a variant, and an older CLI reading it as
- *       "the base" would boot every box from (say) the claude snapshot. A
- *       schema bump makes that CLI treat the file as unreadable and re-bake
- *       instead, which is wrong-but-safe rather than silently wrong.
+ *       codex` snapshot no longer invalidates the claude one. `base` keeps its
+ *       schema-2 meaning (the agentless base) and is mirrored into
+ *       `variants['']`. The bump is deliberate rather than a bare optional
+ *       field: an older CLI would otherwise boot every box from the agentless
+ *       base while silently ignoring the variants the user baked. A schema bump
+ *       makes it treat the file as unreadable and re-bake — wrong-but-safe
+ *       rather than silently wrong.
  *
  * Read-time migration is lossy in one direction: a schema-1 file is lifted
  * to schema 2 by *renaming* `installScriptSha256` to `contextSha256`. The
@@ -82,11 +83,12 @@ export interface PreparedBaseSnapshot {
 export interface PreparedHetznerState {
   schema: typeof SCHEMA;
   /**
-   * The most recently prepared snapshot. Kept for `prepare --status` and the
-   * freshness surface. Do NOT read it to answer "is variant X current" — after
-   * a `--agents claude` bake this holds the CLAUDE snapshot, so comparing an
-   * agentless fingerprint against it reports a spurious stale. Use
-   * {@link preparedEntryFor}.
+   * The AGENTLESS base, and only ever that — a variant bake leaves it alone.
+   * Provider-generic readers outside this package (the freshness surface, bake
+   * sharing, control-box custody adoption) reach straight for
+   * `base.contextSha256`, and they all assume it describes the agentless build
+   * context. Use {@link preparedEntryFor} to ask about any specific variant,
+   * including the base itself.
    */
   base?: PreparedBaseSnapshot;
   /**

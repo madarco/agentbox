@@ -465,12 +465,23 @@ export async function prepareHetzner(
     }
 
     // 7. Snapshot.
-    const description = opts.name ?? `agentbox-base-${stamp}`;
+    // Variants name themselves after their agent set: they show up beside the
+    // base in the Hetzner console and in `agentbox prune`, and "which snapshot
+    // is which" should not require looking up an id in a local JSON file.
+    const description =
+      opts.name ?? `agentbox-${derived ? variantKey.replaceAll(',', '-') : 'base'}-${stamp}`;
     progress(`creating snapshot '${description}' from VPS ${String(serverId)}`);
     const snap = await client.createImage(serverId, {
       type: 'snapshot',
       description,
-      labels: { 'agentbox.role': 'base', 'agentbox.schema': '1' },
+      // `agentbox.agents` is what makes an orphan sweep able to tell a variant
+      // from the base without consulting the local prepared state. Empty label
+      // values are rejected by Hetzner, so the agentless base uses `none`.
+      labels: {
+        'agentbox.role': 'base',
+        'agentbox.schema': '1',
+        'agentbox.agents': derived ? variantKey.replaceAll(',', '-') : 'none',
+      },
     });
     progress(
       `snapshot create requested (image id ${String(snap.image.id)}); polling until available`,
@@ -507,10 +518,15 @@ export async function prepareHetzner(
       cliCommit: cliStamp.cliCommit,
     };
     // Merge, never replace: each variant keeps its own record, so baking a
-    // codex snapshot doesn't invalidate the claude one. `base` still tracks the
-    // most recent bake for `prepare --status`.
+    // codex snapshot doesn't invalidate the claude one.
     state.variants = { ...state.variants, [variantKey]: entry };
-    state.base = entry;
+    // `base` stays the AGENTLESS base, never the newest bake. Several readers
+    // outside this package are provider-generic and reach straight for
+    // `base.contextSha256` — the freshness/staleness surface, bake sharing, the
+    // control-box custody adoption. Point that at a codex snapshot and they all
+    // compare an agentless fingerprint against a codex-folded one and report a
+    // permanent false "stale".
+    if (!derived) state.base = entry;
     writePreparedState(state);
     log(`prepare-hetzner: wrote ${preparedStatePath()}`);
 

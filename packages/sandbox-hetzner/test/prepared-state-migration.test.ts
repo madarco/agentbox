@@ -81,11 +81,13 @@ describe('hetzner prepared-state schema migration', () => {
   it('round-trips schema-3 variants unchanged', async () => {
     const before = {
       schema: 3 as const,
+      // `base` is the AGENTLESS base even when a variant was baked more
+      // recently — provider-generic readers assume exactly that.
       base: {
-        imageId: 200,
-        description: 'agentbox-claude-v3',
-        createdAt: '2026-03-01T00:00:00.000Z',
-        contextSha256: 'cccc3333',
+        imageId: 100,
+        description: 'agentbox-base-v3',
+        createdAt: '2026-02-01T00:00:00.000Z',
+        contextSha256: 'aaaa1111',
       },
       variants: {
         '': {
@@ -105,8 +107,7 @@ describe('hetzner prepared-state schema migration', () => {
     writePreparedState(before);
     const got = readPreparedState();
     expect(got).toEqual(before);
-    // `base` holds the most RECENT bake (here the claude variant), which is
-    // exactly why callers must go through preparedEntryFor rather than read it.
+    expect(got.base?.imageId).toBe(100);
     expect(preparedEntryFor(got, '')?.imageId).toBe(100);
     expect(preparedEntryFor(got, 'claude')?.imageId).toBe(200);
   });
