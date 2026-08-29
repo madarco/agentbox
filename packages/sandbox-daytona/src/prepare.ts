@@ -27,9 +27,15 @@ import { Image } from '@daytona/sdk';
 import type { PrepareOptions, PrepareResult } from '@agentbox/core';
 import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
-  claudeInstallFingerprint,
   stageAllAgentStatic,
   type AgentStaticStage,
+  variantFingerprint,
+  normalizeAgentSet,
+  agentSetArg,
+  resolveAgentSpec,
+  resolveAgentInstall,
+  renderInstallRecipe,
+  renderAptInstall,
 } from '@agentbox/sandbox-core';
 import {
   DAYTONA_DEFAULT_RESOURCES,
@@ -41,15 +47,18 @@ import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './docker
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 import {
   bakeDaytonaVmBase,
+  nonce,
+  bakeDaytonaVmVariant,
   deleteSnapshotQuietly,
   VmBaseImageUnavailableError,
 } from './prepare-vm.js';
 import {
   computeDaytonaContextFingerprint,
   computeDockerBaseSha,
-  preparedMatches,
   readPreparedDaytonaState,
   writePreparedDaytonaState,
+  preparedEntryFor,
+  preparedVariantMatches,
 } from './prepared-state.js';
 
 /**
@@ -64,6 +73,7 @@ export function defaultSnapshotName(
   fingerprint: string | null,
   sizeKey?: string,
   sandboxClass?: DaytonaSandboxClass,
+  variantKey?: string,
 ): string {
   // The size suffix keeps re-sized bakes from colliding on one name, so a
   // `--size 2-4-8` snapshot doesn't overwrite the `4-8-20` one. Same for the
@@ -71,8 +81,13 @@ export function defaultSnapshotName(
   // artifacts and cannot substitute for each other. Container stays unsuffixed
   // so existing snapshot names keep resolving.
   const suffix = `${sizeKey ? `-${sizeKey}` : ''}${sandboxClass === 'linux-vm' ? '-vm' : ''}`;
-  if (fingerprint) return `agentbox-base-${fingerprint.slice(0, 12)}${suffix}`;
-  return `agentbox-base-${Math.floor(Date.now() / 1000).toString()}${suffix}`;
+  // The agent set goes in the NAME, not a label: daytona's snapshot.create
+  // accepts only name/image/resources/region, so unlike hetzner there is no
+  // label to carry it and the name is the only channel that tells a human (or
+  // an orphan sweep) which tier a snapshot belongs to.
+  const stem = variantKey ? `agentbox-${variantKey.replaceAll(',', '-')}` : 'agentbox-base';
+  if (fingerprint) return `${stem}-${fingerprint.slice(0, 12)}${suffix}`;
+  return `${stem}-${Math.floor(Date.now() / 1000).toString()}${suffix}`;
 }
 
 /**
@@ -132,6 +147,45 @@ export function buildDaytonaSeedCommands(
 }
 
 /**
+ * Dockerfile commands that install one agent set, appended after the seed
+ * layers on a container-class variant build.
+ *
+ * Daytona's container class has no `Image.fromSnapshot`, so a variant cannot
+ * boot the base and re-snapshot the way linux-vm does. Appending the recipe to
+ * the SAME Dockerfile build gets the derived-layer benefit a different way:
+ * every instruction up to this point is byte-identical across variants, so
+ * Daytona's builder layer-cache serves them and only the agent step is new.
+ *
+ * The recipes are the same `AGENT_SYNC_SPECS.install` data every other path
+ * uses, so a baked agent and one added by `ensureAgentInstalled` land the same.
+ */
+export function buildDaytonaAgentCommands(
+  agents: readonly string[],
+  claudeInstall?: 'native' | 'npm',
+): string[] {
+  const cmds: string[] = [];
+  for (const id of agents) {
+    const spec = resolveAgentSpec(id);
+    const install = resolveAgentInstall(spec.install, claudeInstall);
+    if (install.apt && install.apt.length > 0) {
+      cmds.push('USER root', `RUN ${renderAptInstall(install.apt)}`);
+    }
+    const recipe = renderInstallRecipe(install.recipe);
+    // `runAs: 'box-user'` is load-bearing: the native installers write into the
+    // INVOKING user's ~/.local/bin, so a root RUN puts the binary in /root and
+    // the box user never sees it.
+    cmds.push(install.runAs === 'box-user' ? 'USER vscode' : 'USER root', `RUN ${recipe}`);
+    if (install.postInstall) cmds.push('USER root', `RUN ${install.postInstall}`);
+    // Prove it landed on the BOX USER's PATH — an installer that exits 0
+    // without a usable binary is a real failure mode, and a build failure here
+    // beats a box that attaches to a session that died instantly.
+    cmds.push('USER vscode', `RUN command -v ${spec.binary} >/dev/null`);
+  }
+  cmds.push('USER vscode');
+  return cmds;
+}
+
+/**
  * Run `agentbox prepare --provider daytona`. Returns `{ snapshotName }` on
  * success so the CLI can pin it into the project config.
  */
@@ -169,27 +223,68 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // Fold the install mode into the sha so native↔npm are distinct cache
   // identities (`native` leaves the hash unchanged) — the snapshot name and the
   // prepared-state match both derive from it.
+  const agents = normalizeAgentSet(opts.agents);
+  const variantKey = agentSetArg(agents);
+  const derived = agents.length > 0;
   const fingerprint = rawFingerprint
     ? {
         ...rawFingerprint,
-        contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+        contextSha256: variantFingerprint(rawFingerprint.contextSha256, {
+          claudeInstall,
+          agents,
+        }),
       }
     : rawFingerprint;
   // Not const: a linux-vm bake that finds no published base image downgrades to
   // container below, and must then drop the `-vm` suffix from its name.
   let snapshotName =
-    opts.name ?? defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass);
+    opts.name ??
+    defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
 
   const prepared = readPreparedDaytonaState();
+
+  // A derived bake boots the agentless base, so that has to exist first — and
+  // it must be a linux-vm one, since that is the only class we can boot and
+  // re-snapshot.
+  const baseEntry = preparedEntryFor(prepared, '');
+  if (derived && !baseEntry) {
+    throw new Error(
+      'no daytona base snapshot to derive from — run `agentbox prepare --provider daytona` ' +
+        'first, then re-run with --agents.',
+    );
+  }
+  // A variant must be the SAME class as the base it derives from: a snapshot's
+  // class is immutable and one class cannot make a sandbox of the other. Take
+  // the class from the base rather than from config, so a `box.daytonaClass`
+  // that disagrees with what was actually baked can't produce an unbootable
+  // pairing. The two classes then derive by different mechanisms below.
+  const baseClass: DaytonaSandboxClass = baseEntry?.extras?.class ?? 'container';
+  if (derived) {
+    sandboxClass = baseClass;
+    snapshotName =
+      opts.name ??
+      defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
+    // Never reuse a snapshot name: Daytona's delete is async, so a name
+    // recreated soon after its predecessor was reaped can report `active` and
+    // still fail to boot. Container variants reap (below) and so need this;
+    // linux-vm ones must NOT get it here, because `bakeDaytonaVmVariant` treats
+    // `snapshotName` as a stem and appends its own nonce — doing both yields a
+    // double token. The name needn't be deterministic: prepared state records
+    // whatever we pinned, and that is what skip-fast reads.
+    if (!opts.name && baseClass !== 'linux-vm') snapshotName = `${snapshotName}-${nonce()}`;
+  }
+
   if (
     !opts.force &&
     fingerprint &&
-    preparedMatches(prepared, fingerprint.contextSha256, sizeKey, sandboxClass)
+    preparedVariantMatches(prepared, variantKey, fingerprint.contextSha256, sizeKey, sandboxClass)
   ) {
     // Confirm the snapshot still exists on Daytona before short-circuiting.
     // A "yes locally, no on the server" mismatch must rebuild.
     try {
-      const existing = await getClient().snapshot.get(prepared?.base?.imageRef ?? snapshotName);
+      const existing = await getClient().snapshot.get(
+        preparedEntryFor(prepared, variantKey)?.imageRef ?? snapshotName,
+      );
       if (existing?.name) {
         log(
           `daytona snapshot '${existing.name}' up to date ` +
@@ -242,7 +337,51 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     );
   }
 
-  if (sandboxClass === 'linux-vm') {
+  // Derived bake: boot the recorded agentless base, add one agent set,
+  // re-snapshot. Much shorter than the base bake — the expensive parts (the
+  // ~2 GB image pull, the setuid sudo repair, the image-ENV restore, the host
+  // static config) are already in the snapshot we boot.
+  if (derived && baseClass === 'linux-vm') {
+    const baked = await bakeDaytonaVmVariant({
+      client: getClient(opts.location ?? DAYTONA_VM_REGION),
+      backend: daytonaBackend,
+      baseSnapshot: baseEntry!.imageRef,
+      snapshotName,
+      agents,
+      claudeInstall,
+      onLog: log,
+    });
+    if (fingerprint) {
+      writePreparedDaytonaState({
+        variant: variantKey,
+        snapshotName: baked.snapshotName,
+        contextSha256: fingerprint.contextSha256,
+        size: sizeKey,
+        effectiveSize: baseEntry!.extras?.effectiveSize,
+        class: 'linux-vm',
+        // Inherit the base's recorded image env: `create` hands it to the
+        // sandbox, and a variant boots the same rootfs.
+        env: baseEntry!.extras?.env,
+      });
+      log(
+        `recorded daytona-prepared.json (${variantKey}, fingerprint ${fingerprint.contextSha256.slice(0, 12)})`,
+      );
+    }
+    // Reap only THIS variant's predecessor, and only after the replacement is
+    // recorded — a failed bake must never leave the user with no snapshot.
+    const superseded = preparedEntryFor(prepared, variantKey)?.imageRef;
+    if (superseded && superseded !== baked.snapshotName) {
+      log(`removing superseded ${variantKey} snapshot '${superseded}'`);
+      await deleteSnapshotQuietly(getClient(opts.location ?? DAYTONA_VM_REGION), superseded);
+    }
+    return { snapshotName: baked.snapshotName };
+  }
+
+  // A container-class variant falls through to the Dockerfile build below,
+  // which appends the agent recipe as extra layers (see
+  // `buildDaytonaAgentCommands`) — there is no `Image.fromSnapshot` to boot the
+  // base from, so the builder's layer cache is what makes it cheap instead.
+  if (!derived && sandboxClass === 'linux-vm') {
     const dockerBaseSha = await computeDockerBaseSha(claudeInstall);
     if (!dockerBaseSha) {
       throw new Error(
@@ -270,6 +409,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       });
       if (fingerprint) {
         writePreparedDaytonaState({
+          variant: '',
           snapshotName: baked.snapshotName,
           contextSha256: fingerprint.contextSha256,
           size: sizeKey,
@@ -287,7 +427,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       // — a failed bake must never leave the user with no base at all. Never the
       // one we just made, and never a container snapshot (a user who flips the
       // class back would want it).
-      const superseded = prepared?.base?.imageRef;
+      const superseded = preparedEntryFor(prepared, '')?.imageRef;
       if (
         superseded &&
         superseded !== baked.snapshotName &&
@@ -362,6 +502,9 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     }
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
+    if (derived) {
+      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, claudeInstall));
+    }
 
     // Region: a container snapshot registers wherever the client points (the
     // account default unless the user pinned `box.daytonaRegion`).
@@ -381,6 +524,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     log(`snapshot '${snapshot.name}' is ${snapshot.state ?? 'created'}`);
     if (fingerprint) {
       writePreparedDaytonaState({
+        variant: variantKey,
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
         size: sizeKey,
@@ -391,6 +535,19 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         class: 'container',
       });
       log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
+      // Reap the snapshot this bake replaces — only this exact variant, and
+      // only after the replacement is recorded, so a failed bake never leaves
+      // the user with no snapshot. Matches the linux-vm path. Variants only:
+      // the container BASE has always overwritten by name and a user who flips
+      // `box.daytonaClass` back would want the old one.
+      if (derived) {
+        const superseded = preparedEntryFor(prepared, variantKey)?.imageRef;
+        const created = snapshot.name ?? snapshotName;
+        if (superseded && superseded !== created) {
+          log(`removing superseded ${variantKey} snapshot '${superseded}'`);
+          await deleteSnapshotQuietly(getClient(opts.location ?? ''), superseded);
+        }
+      }
     }
     return { snapshotName: snapshot.name ?? snapshotName };
   } finally {

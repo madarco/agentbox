@@ -46,7 +46,7 @@ The easiest path is the interactive wizard — it takes your API key and bakes t
 agentbox install        # then select daytona
 ```
 
-Paste a **`DAYTONA_API_KEY`** when prompted; the wizard offers to open [the keys page](https://app.daytona.io/dashboard/keys) in your browser first so you can generate one. (There's no browser sign-in — the key is the whole auth. If you paste a **JWT** instead of an API key, you'll also be asked for a `DAYTONA_ORGANIZATION_ID`, which an API key doesn't need: the SDK derives the org from it.) Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
+Paste a **`DAYTONA_API_KEY`** when prompted; the wizard offers to open [the keys page](https://app.daytona.io/dashboard/keys) in your browser first so you can generate one. (There's no browser sign-in — the key is the whole auth. If you paste a **JWT** instead of an API key, you'll also be asked for a `DAYTONA_ORGANIZATION_ID`, which an API key doesn't need: the SDK derives the org from it.) Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider daytona` under the hood) with the AgentBox runtime — `agentbox-ctl`, tmux, the browser stack — so every new box boots in seconds instead of eating a ~7-minute cold Dockerfile build.
 
 For CI or scripted setup, run the explicit equivalents:
 
@@ -76,6 +76,23 @@ A `linux-vm` base is baked from the prebuilt box image AgentBox publishes, so it
 
 - **`box.claudeInstall: npm`** — only the default (native) image is published.
 - **A locally modified `Dockerfile.box`** — i.e. you're developing on the AgentBox repo itself. Point `box.daytonaVmBaseImage` at an image you've published to bake a VM anyway. It's also the knob for a private registry mirror.
+
+### Agents are a separate tier
+
+The base carries **no agent**. Add one as its own snapshot on top of it:
+
+```bash
+agentbox prepare --provider daytona --agents claude
+```
+
+How that derives depends on the class the base was baked as — a snapshot's class is immutable, so the variant always matches its base rather than `box.daytonaClass`:
+
+- **container** — the agent recipe is appended to the same Dockerfile build. Daytona's builder serves every layer below it from cache, so a variant takes about a minute against the base's several.
+- **linux-vm** — the base snapshot is booted, the agent installed, and the result cold-snapshotted.
+
+Each agent set gets its own record, so baking `--agents codex` later does not invalidate the claude one, and each rebake deletes only the snapshot it replaces.
+
+Skipping this is fine: a box whose agent isn't baked installs it on first use (~30–60s), and the result is identical — the bake and the on-demand install run the same recipe.
 
 When you upgrade AgentBox, `create --provider daytona` notices if the new install would bake a different snapshot (the comparison is checksum-based on the baked files — CLI version strings on their own don't count) and offers to rebake inline; with `-y` or non-TTY it instead warns loudly and boots on the existing snapshot. `agentbox daytona login` also nudges you toward `agentbox prepare --provider daytona` on the first successful login.
 

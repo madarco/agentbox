@@ -35,15 +35,22 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { Provider } from '@agentbox/core';
 import {
-  claudeInstallFingerprint,
   computeContextManifest,
   readCliStamp,
   stageAllAgentStatic,
   type AgentStaticStage,
+  variantFingerprint,
+  normalizeAgentSet,
+  agentSetArg,
+  resolveAgentSpec,
+  resolveAgentInstall,
+  renderInstallRecipe,
+  renderAptInstall,
 } from '@agentbox/sandbox-core';
 import { ensureE2bCredentials } from './credentials.js';
 import { resolveApiKey, Template } from './sdk.js';
 import {
+  preparedEntryFor,
   preparedStatePath,
   readPreparedState,
   writePreparedState,
@@ -76,6 +83,13 @@ export interface PrepareE2bOptions {
   /** How build-template.sh installs Claude Code (`native` default | `npm`). */
   claudeInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
+  /**
+   * Agents to build into a DERIVED template on top of the agentless base.
+   * Empty/absent bakes the base itself. Not just another env var into the build
+   * script: the set picks which template we build, which record we write, and
+   * which template a later create boots from.
+   */
+  agents?: string[];
 }
 
 export interface PrepareE2bResult {
@@ -85,6 +99,15 @@ export interface PrepareE2bResult {
 /** Template name agentbox bakes under. E2B treats `name:tag` as a single addressable build. */
 const TEMPLATE_NAME = 'agentbox-base:latest';
 const DEFAULT_TAG = 'latest';
+
+/**
+ * Template name for one agent set. E2B names allow `[a-zA-Z0-9-_]`, so a
+ * multi-agent set joins with `-` rather than the `,` the variant key uses.
+ */
+function templateNameFor(variantKey: string): string {
+  if (variantKey === '') return TEMPLATE_NAME;
+  return `agentbox-${variantKey.replaceAll(',', '-')}:${DEFAULT_TAG}`;
+}
 
 const DEFAULT_CPU = 2;
 const DEFAULT_MEMORY_MB = 4096;
@@ -106,9 +129,7 @@ export function parseE2bSize(
   if (trimmed === '') return undefined;
   const parts = trimmed.split('-');
   const bad = (): never => {
-    throw new Error(
-      `invalid --size '${trimmed}' for e2b: expected 'cpu-memory' GB, e.g. '4-8'.`,
-    );
+    throw new Error(`invalid --size '${trimmed}' for e2b: expected 'cpu-memory' GB, e.g. '4-8'.`);
   };
   if (parts.length < 2 || parts.length > 3) bad();
   const nums = parts.map((p) => Number(p));
@@ -128,9 +149,12 @@ function e2bSizeKey(parsed: { cpuCount: number; memoryMB: number }): string {
   return `${String(parsed.cpuCount)}-${String(parsed.memoryMB / 1024)}`;
 }
 
-export async function prepareE2b(
-  opts: PrepareE2bOptions = {},
-): Promise<PrepareE2bResult> {
+/** Wrap a shell snippet in single quotes for safe nesting inside `bash -lc`. */
+function shellSingleQuote(s: string): string {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE2bResult> {
   await ensureE2bCredentials();
   const apiKey = resolveApiKey();
   const log = opts.onLog ?? (() => {});
@@ -146,7 +170,11 @@ export async function prepareE2b(
   const contextManifest = await computeContextManifest(
     assets.map((a) => ({ rel: a.name, abs: a.localPath })),
   );
-  const contextSha = claudeInstallFingerprint(contextManifest.contextSha256, claudeInstall);
+  const agents = normalizeAgentSet(opts.agents);
+  const variantKey = agentSetArg(agents);
+  const derived = agents.length > 0;
+  const templateName = templateNameFor(variantKey);
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The
@@ -162,24 +190,36 @@ export async function prepareE2b(
   // 404s. `Template.exists` accepts both `name:tag` and `template-id:tag`
   // forms, so we pass the exact id we'd later hand to `provision`.
   const existing = readPreparedState();
-  if (!opts.force && existing.base) {
-    const bakedSize = existing.base.size;
-    if (existing.base.contextSha256 === contextSha && bakedSize === sizeKey) {
-      const stillThere = await templateExists(existing.base.templateId, apiKey);
+
+  // A derived build starts FROM the agentless base, so that has to exist first.
+  const baseEntry = preparedEntryFor(existing, '');
+  if (derived && !baseEntry) {
+    throw new Error(
+      'no E2B base template to derive from — run `agentbox prepare --provider e2b` first, ' +
+        'then re-run with --agents.',
+    );
+  }
+
+  const existingEntry = preparedEntryFor(existing, variantKey);
+  if (!opts.force && existingEntry) {
+    const bakedSize = existingEntry.size;
+    const label = derived ? `${variantKey} template` : 'template';
+    if (existingEntry.contextSha256 === contextSha && bakedSize === sizeKey) {
+      const stillThere = await templateExists(existingEntry.templateId, apiKey);
       if (stillThere) {
         progress(
-          `template ${existing.base.templateId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
+          `${label} ${existingEntry.templateId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
         );
-        return { snapshotName: existing.base.templateId };
+        return { snapshotName: existingEntry.templateId };
       }
-      progress(`recorded template ${existing.base.templateId} is gone on E2B; rebuilding`);
-    } else if (existing.base.contextSha256 === contextSha && bakedSize !== sizeKey) {
+      progress(`recorded ${label} ${existingEntry.templateId} is gone on E2B; rebuilding`);
+    } else if (existingEntry.contextSha256 === contextSha && bakedSize !== sizeKey) {
       progress(
         `size changed (was ${bakedSize ?? 'default'}, now ${sizeKey ?? 'default'}); rebuilding`,
       );
     } else {
       progress(
-        `build context changed (was ${existing.base.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding`,
+        `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${label}`,
       );
     }
   }
@@ -201,59 +241,125 @@ export async function prepareE2b(
     for (const s of agentStages) for (const w of s.staged.warnings) log(w);
     const usableStages = agentStages.filter((s) => s.staged.tarballPath !== null);
     for (const s of usableStages) {
-      await copyFile(s.staged.tarballPath as string, resolve(contextDir, e2bStagePaths(s.kind).contextRel));
+      await copyFile(
+        s.staged.tarballPath as string,
+        resolve(contextDir, e2bStagePaths(s.kind).contextRel),
+      );
     }
 
     // Build the Template via the SDK builder. fromBaseImage() starts from E2B's
     // own `e2bdev/base` (Debian 12 + node 20 + git + sudo), which halves the
     // install time vs starting from a vanilla Debian image.
-    progress('assembling template build (fromBaseImage + asset copy + runCmd)');
-    const template = Template({ fileContextPath: contextDir }).fromBaseImage();
-    for (const a of assets) {
-      progress(`  copy ${a.name} -> ${a.remotePath}`);
-      template.copy(a.name, a.remotePath, {
-        forceUpload: true,
-        mode: a.remoteMode,
-        user: 'root',
-      });
+    // A derived build starts FROM the recorded agentless base template and adds
+    // only the agent recipe — E2B is the one provider where deriving needs no
+    // boot at all, so a variant costs a build, not a VPS-minute.
+    //
+    // The base build stays as it was: fromBaseImage() starts from E2B's own
+    // `e2bdev/base` (Debian 12 + node 20 + git + sudo), which halves the install
+    // time vs a vanilla Debian image.
+    progress(
+      derived
+        ? `assembling derived template build (fromTemplate ${baseEntry!.templateId} + ${variantKey})`
+        : 'assembling template build (fromBaseImage + asset copy + runCmd)',
+    );
+    const template = derived
+      ? Template({ fileContextPath: contextDir }).fromTemplate(baseEntry!.templateId)
+      : Template({ fileContextPath: contextDir }).fromBaseImage();
+
+    if (derived) {
+      // Same AGENT_SYNC_SPECS recipes the docker derived layer, the hetzner
+      // derived snapshot and `ensureAgentInstalled` use, so however an agent
+      // reaches a box it is installed identically.
+      for (const id of agents) {
+        const spec = resolveAgentSpec(id);
+        const install = resolveAgentInstall(spec.install, claudeInstall);
+        progress(`  install ${spec.id}`);
+        if (install.apt && install.apt.length > 0) {
+          template.runCmd(renderAptInstall(install.apt), { user: 'root' });
+        }
+        const recipe = renderInstallRecipe(install.recipe);
+        // `runAs: 'box-user'` is load-bearing: the native installers write into
+        // the INVOKING user's ~/.local/bin, so as root the binary lands in
+        // /root and the box user never sees it. E2B's runCmd takes a `user`,
+        // but we go through `sudo -u vscode -H bash -lc` for the same reason
+        // hetzner does — a login shell, and one form across providers.
+        template.runCmd(
+          install.runAs === 'box-user'
+            ? `sudo -u vscode -H bash -lc ${shellSingleQuote(recipe)}`
+            : recipe,
+          { user: 'root' },
+        );
+        if (install.postInstall) template.runCmd(install.postInstall, { user: 'root' });
+      }
+    } else {
+      for (const a of assets) {
+        progress(`  copy ${a.name} -> ${a.remotePath}`);
+        template.copy(a.name, a.remotePath, {
+          forceUpload: true,
+          mode: a.remoteMode,
+          user: 'root',
+        });
+      }
+      template.runCmd('bash /tmp/agentbox-build-template.sh 2>&1', { user: 'root' });
     }
-    template.runCmd(`AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-build-template.sh 2>&1`, {
-      user: 'root',
-    });
 
     // Seed the host's static agent config ON TOP of the built box (the vscode
     // user + home dirs exist only after build-template.sh). Copy each staged
     // tarball into the build, then one root pass extracts + chowns them —
     // mirrors Vercel/Hetzner/Daytona's host-static bake.
-    for (const s of usableStages) {
+    // On a derived build, stage only THIS variant's agent config: putting
+    // codex/opencode settings into a claude-only template would ship config for
+    // agents that template will never run. `agents` (shared skills, not auth) is
+    // always staged. The agentless base still carries all three, so an agent
+    // installed at runtime still finds its plugins and settings.
+    const wantsStage = (kind: AgentStaticStage['kind']): boolean =>
+      !derived || kind === 'agents' || agents.includes(kind);
+    const stagesForBuild = usableStages.filter((s) => wantsStage(s.kind));
+    for (const s of stagesForBuild) {
       const { contextRel, remoteTar } = e2bStagePaths(s.kind);
       progress(`  seed ${s.kind} static -> ${s.extractDir}`);
       template.copy(contextRel, remoteTar, { forceUpload: true, mode: 0o644, user: 'root' });
     }
-    if (usableStages.length > 0) {
+    if (stagesForBuild.length > 0) {
       const extract =
-        usableStages
-          .map((s) => `mkdir -p ${s.extractDir} && tar -xzf ${e2bStagePaths(s.kind).remoteTar} -C ${s.extractDir} --no-same-permissions --no-same-owner -m`)
+        stagesForBuild
+          .map(
+            (s) =>
+              `mkdir -p ${s.extractDir} && tar -xzf ${e2bStagePaths(s.kind).remoteTar} -C ${s.extractDir} --no-same-permissions --no-same-owner -m`,
+          )
           .join(' && ') +
-        ' && chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local' +
-        ' && ([ -d /home/vscode/.agents ] && chown -R vscode:vscode /home/vscode/.agents || true)' +
-        ' && rm -f /tmp/agentbox-seed-*.tar.gz';
+        // Guard each chown: with an agentless base and per-variant staging,
+        // any of these dirs can legitimately be absent (the agent that owns it
+        // was never installed here), and an unguarded chown fails the build.
+        ' && for d in /home/vscode/.claude /home/vscode/.codex /home/vscode/.local /home/vscode/.agents;' +
+        ' do [ -e "$d" ] && chown -R vscode:vscode "$d"; done' +
+        ' ; rm -f /tmp/agentbox-seed-*.tar.gz';
       template.runCmd(extract, { user: 'root' });
     }
     // setReadyCmd flips the builder into TemplateFinal — required for build().
-    // The check passes once the script's last `install` step lands the ctl bundle.
-    const finalTemplate = template.setReadyCmd(
-      'test -x /usr/local/bin/agentbox-ctl',
-    );
+    // The base checks the ctl bundle the script's last `install` step lands; a
+    // variant additionally proves its agent is on the BOX USER's PATH, which is
+    // the thing that actually breaks (a native installer that writes to /root
+    // exits 0 and leaves the box unusable).
+    const readyCmd = derived
+      ? agents
+          .map(
+            (id) =>
+              `sudo -u vscode -H bash -lc 'command -v ${resolveAgentSpec(id).binary} >/dev/null'`,
+          )
+          .concat('test -x /usr/local/bin/agentbox-ctl')
+          .join(' && ')
+      : 'test -x /usr/local/bin/agentbox-ctl';
+    const finalTemplate = template.setReadyCmd(readyCmd);
 
     // Parsed `--size` wins over the explicit cpuCount/memoryMB options, which
     // win over the built-in defaults.
     const cpuCount = parsedSize?.cpuCount ?? opts.cpuCount ?? DEFAULT_CPU;
     const memoryMB = parsedSize?.memoryMB ?? opts.memoryMB ?? DEFAULT_MEMORY_MB;
     progress(
-      `running Template.build('${TEMPLATE_NAME}', { cpuCount: ${String(cpuCount)}, memoryMB: ${String(memoryMB)} })`,
+      `running Template.build('${templateName}', { cpuCount: ${String(cpuCount)}, memoryMB: ${String(memoryMB)} })`,
     );
-    const info = await Template.build(finalTemplate, TEMPLATE_NAME, {
+    const info = await Template.build(finalTemplate, templateName, {
       apiKey,
       cpuCount,
       memoryMB,
@@ -271,25 +377,39 @@ export async function prepareE2b(
     const tag = info.tags?.[0] ?? DEFAULT_TAG;
     const cliStamp = readCliStamp();
     const taggedId = `${info.templateId}:${tag}`;
+    const entry = {
+      templateId: taggedId,
+      // info.name is the full `name:tag` pair Template.build() was called
+      // with (e.g. `agentbox-base:latest`). Earlier code re-appended `:${tag}`
+      // and produced `agentbox-base:latest:latest` in the status display.
+      templateName: info.name,
+      contextSha256: contextSha,
+      files: contextManifest.files,
+      ...(sizeKey ? { size: sizeKey } : {}),
+      cliVersion: cliStamp.cliVersion,
+      cliCommit: cliStamp.cliCommit,
+      createdAt: new Date().toISOString(),
+    };
+    const prior = readPreparedState();
     writePreparedState({
-      schema: 1,
-      base: {
-        templateId: taggedId,
-        // info.name is the full `name:tag` pair Template.build() was called
-        // with (e.g. `agentbox-base:latest`). Earlier code re-appended `:${tag}`
-        // and produced `agentbox-base:latest:latest` in the status display.
-        templateName: info.name,
-        contextSha256: contextSha,
-        files: contextManifest.files,
-        ...(sizeKey ? { size: sizeKey } : {}),
-        cliVersion: cliStamp.cliVersion,
-        cliCommit: cliStamp.cliCommit,
-        createdAt: new Date().toISOString(),
-      },
+      schema: 2,
+      // Merge, never replace: each variant keeps its own record, so building
+      // the codex template doesn't invalidate the claude one.
+      variants: { ...prior.variants, [variantKey]: entry },
+      // `base` stays the AGENTLESS base, never the newest build — the
+      // provider-generic readers (freshness, bake sharing, custody adoption)
+      // reach straight for `base.contextSha256` and assume it describes the
+      // agentless build context.
+      ...(derived ? (prior.base ? { base: prior.base } : {}) : { base: entry }),
     });
     progress(`wrote ${preparedStatePath()}`);
 
-    progress(`prepare complete — base template ${taggedId}`);
+    // No GC here, unlike hetzner. E2B templates are NAMED resources: rebuilding
+    // `agentbox-claude:latest` moves the tag, so a rebuild replaces rather than
+    // orphans, and the SDK exposes no template delete to reap an id with.
+    progress(
+      `prepare complete — ${derived ? `${variantKey} template` : 'base template'} ${taggedId}`,
+    );
     return { snapshotName: taggedId };
   } finally {
     await Promise.all(agentStages.map((s) => s.staged.cleanup())).catch(() => {
@@ -306,10 +426,7 @@ export async function prepareE2b(
  * source mode on the copy (E2B's `template.copy` also accepts a `mode`
  * override, but the on-disk mode keeps the local stage representative).
  */
-async function stageAssetsInto(
-  contextDir: string,
-  assets: ResolvedAsset[],
-): Promise<void> {
+async function stageAssetsInto(contextDir: string, assets: ResolvedAsset[]): Promise<void> {
   for (const a of assets) {
     const dest = resolve(contextDir, a.name);
     await mkdir(dirname(dest), { recursive: true });
@@ -368,5 +485,6 @@ export const prepareE2bProvider: NonNullable<Provider['prepare']> = (req) =>
     force: req.force,
     size: req.size,
     claudeInstall: req.claudeInstall,
+    ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,
   });

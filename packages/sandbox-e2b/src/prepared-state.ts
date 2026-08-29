@@ -4,23 +4,34 @@
  * (`ensureE2bBaseTemplate()`) and `backend.provision` can resolve the base
  * template every box boots from.
  *
- * Single tier for now — the shared base template (Debian + agentbox-ctl +
- * agents). Templates on E2B are id+tag-addressed reusable resources, so unlike
- * Vercel snapshots we don't worry about per-box snapshot eviction; one template
- * is reused for every create.
+ * Two tiers, both E2B templates: the agentless `base` (Debian + agentbox-ctl +
+ * the box runtime) and one `variants` entry per agent set, built declaratively
+ * on top of it with `Template().fromTemplate(base)`. Templates on E2B are
+ * id+tag-addressed reusable resources, so unlike Vercel snapshots we don't worry
+ * about per-box eviction; each template is reused for every create.
  *
- * Schema versioned so future shape changes can migrate; only `schema: 1` is
- * accepted today.
+ * Schema history:
+ *   1 — single `base` template.
+ *   2 — `variants` added: one record per agent set, so building the codex
+ *       template doesn't invalidate the claude one. `base` keeps its schema-1
+ *       meaning (the agentless base) and is mirrored into `variants['']`;
+ *       provider-generic readers outside this package reach straight for
+ *       `base.contextSha256` and assume exactly that.
  */
 
-import { claudeInstallFingerprint, computeContextManifest,
-  computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor,
+import {
+  claudeInstallFingerprint,
+  computeContextManifest,
+  computeContextSha256,
+  readPreparedStateRaw,
+  writePreparedStateRaw,
+  preparedStatePathFor,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
-const SCHEMA = 1 as const;
+const SCHEMA = 2 as const;
 
 export interface PreparedE2bBase {
   /** Opaque E2B template id (e.g. `tmpl_xxxx` or `name:tag`). Sandbox.create({ template }) boots from this. */
@@ -47,8 +58,29 @@ export interface PreparedE2bBase {
 
 export interface PreparedE2bState {
   schema: typeof SCHEMA;
-  /** The shared base template. Absent until first `agentbox prepare`. */
+  /**
+   * The shared AGENTLESS base template, and only ever that — a variant build
+   * leaves it alone. Absent until first `agentbox prepare`.
+   */
   base?: PreparedE2bBase;
+  /**
+   * One record per agent set, keyed by `agentSetArg(agents)` (`''` = the
+   * agentless base). Without this the single `base` slot means building a codex
+   * template invalidates the claude one, and anyone alternating agents rebuilds
+   * every time.
+   */
+  variants?: Record<string, PreparedE2bBase>;
+}
+
+/**
+ * The record for one variant (`''` = agentless base), falling back to `base`
+ * for state written before variants existed.
+ */
+export function preparedEntryFor(
+  state: PreparedE2bState | null,
+  variant = '',
+): PreparedE2bBase | undefined {
+  return state?.variants?.[variant] ?? (variant === '' ? state?.base : undefined);
 }
 
 export function preparedStatePath(): string {
@@ -59,11 +91,20 @@ export function readPreparedState(): PreparedE2bState {
   const raw = readPreparedStateRaw('e2b');
   if (raw === null || typeof raw !== 'object') return { schema: SCHEMA };
   const parsed = raw as Partial<PreparedE2bState>;
+  if ((parsed as { schema?: unknown }).schema === 1) {
+    // Lossless: a v1 file has exactly one build and it is the base, so seed the
+    // variants map from it rather than forcing a rebuild.
+    const v1 = parsed;
+    return {
+      schema: SCHEMA,
+      ...(v1.base ? { base: v1.base, variants: { '': v1.base } } : {}),
+    };
+  }
   if (parsed.schema !== SCHEMA) {
     // Unknown/missing schema: refuse to read — the next prepare overwrites it.
     return { schema: SCHEMA };
   }
-  return { schema: SCHEMA, base: parsed.base };
+  return { schema: SCHEMA, base: parsed.base, variants: parsed.variants };
 }
 
 export function writePreparedState(state: PreparedE2bState): void {
@@ -134,9 +175,8 @@ export function ensureE2bBaseTemplate(): void {
 export async function currentE2bBaseFileHashes(): Promise<FileManifest | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return (
-      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
-    ).files;
+    return (await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath }))))
+      .files;
   } catch {
     return undefined;
   }

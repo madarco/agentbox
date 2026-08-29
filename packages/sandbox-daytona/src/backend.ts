@@ -20,7 +20,8 @@ import type {
 } from '@agentbox/core';
 import { resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
-import { readPreparedDaytonaState } from './prepared-state.js';
+import { preparedEntryFor, readPreparedDaytonaState } from './prepared-state.js';
+import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
 import { withDaytonaRetry } from './retry.js';
 
@@ -179,8 +180,8 @@ function resolveImage(ref: string): string | Image {
   const ctx = resolveDockerfileContext();
   if (!ctx) {
     throw new Error(
-      "could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. " +
-        "Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.",
+      'could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. ' +
+        'Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.',
     );
   }
   // Image.fromDockerfile bundles the directory the Dockerfile lives in and
@@ -240,8 +241,35 @@ export const daytonaBackend: CloudBackend = {
         const resources = sizeResources ?? req.resources;
         const prepared = readPreparedDaytonaState();
         const baseRef = req.snapshot ?? req.image;
+        // Resolve WHICH prepared snapshot this box boots before anything reads
+        // its properties. `box.imageDaytona` is pinned to the base's own NAME by
+        // every bake and adopt, so by the time we get here `req.image` normally
+        // IS our agentless base — treat that (and the default ref, and an unset
+        // one) as "no explicit choice", or the pin silently defeats variant
+        // selection. A ref naming anything else is a real choice and wins.
+        const refIsOurBase =
+          req.snapshot === undefined &&
+          (!req.image ||
+            req.image === DEFAULT_BOX_IMAGE_REF ||
+            req.image === prepared?.base?.imageRef);
+        // Falling back to the agentless base is not a failure:
+        // `ensureAgentsInstalledForCloud` puts the agent in at create.
+        const preparedEntry = refIsOurBase
+          ? (preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(req.agents))) ??
+            preparedEntryFor(prepared, ''))
+          : undefined;
+        // Class, region, size and image env must come from the entry we ACTUALLY
+        // boot, not from `req.image`. Deriving them from the request meant an
+        // unpinned create booted a prepared snapshot while taking its class and
+        // env from config — so a container snapshot could be looked up in the
+        // VM-only region, recorded as linux-vm, and come up with no DISPLAY.
         const bootingPreparedBase =
-          prepared?.base?.imageRef !== undefined && baseRef === prepared.base.imageRef;
+          preparedEntry !== undefined ||
+          (prepared?.base?.imageRef !== undefined && baseRef === prepared.base.imageRef);
+        // A variant carries its own extras (its class is fixed at bake time and
+        // it inherits the base's image env); fall back to the top-level extras,
+        // which describe the agentless base.
+        const bootedExtras = preparedEntry?.extras ?? prepared?.extras;
         // A linux-vm does NOT inherit the box image's `ENV` — the conversion keeps
         // the rootfs and drops the metadata — so the bake recorded it and we hand
         // it to the sandbox here. The bake also wrote it into the VM's /etc, but
@@ -251,7 +279,7 @@ export const daytonaBackend: CloudBackend = {
         // The box's own env (relay tokens, …) wins over the image's.
         const imageEnv: Record<string, string> = {};
         if (bootingPreparedBase) {
-          for (const kv of prepared.extras?.env ?? []) {
+          for (const kv of bootedExtras?.env ?? []) {
             const i = kv.indexOf('=');
             if (i > 0) imageEnv[kv.slice(0, i)] = kv.slice(i + 1);
           }
@@ -280,9 +308,7 @@ export const daytonaBackend: CloudBackend = {
         // successful `prepare`, with "no linux-vm base snapshot — run prepare".
         // Absent `class` on a recorded base = baked before classes existed, i.e.
         // a container.
-        const bakedClass = bootingPreparedBase
-          ? (prepared.extras?.class ?? 'container')
-          : undefined;
+        const bakedClass = bootingPreparedBase ? (bootedExtras?.class ?? 'container') : undefined;
         const sandboxClass = bakedClass ?? req.sandboxClass;
         if (bakedClass && req.sandboxClass && bakedClass !== req.sandboxClass) {
           req.onLog?.(
@@ -318,6 +344,7 @@ export const daytonaBackend: CloudBackend = {
         // resolveImage (Image.fromDockerfile). Explicit `req.snapshot` always
         // wins (cloud checkpoint path).
         let snapshotName = req.snapshot;
+        if (preparedEntry) snapshotName = preparedEntry.imageRef;
         if (!snapshotName && req.image && req.image !== DEFAULT_BOX_IMAGE_REF) {
           try {
             const snap = await client.snapshot.get(req.image);
@@ -336,7 +363,7 @@ export const daytonaBackend: CloudBackend = {
         // loudly — silently ignoring `--size` would leave them wondering why the
         // box came up the old size.
         if (snapshotName && sizeResources) {
-          const bakedSize = prepared?.extras?.size;
+          const bakedSize = bootedExtras?.size;
           const requestedKey = `${String(sizeResources.cpu)}-${String(sizeResources.memory)}-${String(sizeResources.disk)}`;
           if (bakedSize !== requestedKey) {
             req.onLog?.(
@@ -610,11 +637,7 @@ export const daytonaBackend: CloudBackend = {
     });
   },
 
-  async exec(
-    h: CloudHandle,
-    cmd: string,
-    opts?: CloudExecOptions,
-  ): Promise<CloudExecResult> {
+  async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
     return retry(
       'exec',
       async () => {
@@ -696,7 +719,8 @@ export const daytonaBackend: CloudBackend = {
         'ssh',
         // First-connect to a never-seen host fingerprint should be silent in a
         // PTY — the user already authenticated via Daytona's API.
-        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o',
+        'StrictHostKeyChecking=accept-new',
         // Daytona's SSH gateway terminates per-token; no key file, no port.
         `${ssh.token}@ssh.app.daytona.io`,
       ];

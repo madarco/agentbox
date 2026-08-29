@@ -6,6 +6,7 @@ import {
   readPreparedState,
   writePreparedState,
   ensureE2bBaseTemplate,
+  preparedEntryFor,
   preparedStatePath,
 } from '../src/prepared-state.js';
 
@@ -25,13 +26,13 @@ afterEach(() => {
 });
 
 describe('e2b prepared-state', () => {
-  it('returns an empty schema-1 state when the file is absent', () => {
-    expect(readPreparedState()).toEqual({ schema: 1 });
+  it('returns an empty schema-2 state when the file is absent', () => {
+    expect(readPreparedState()).toEqual({ schema: 2 });
   });
 
   it('round-trips a base template record', () => {
     writePreparedState({
-      schema: 1,
+      schema: 2,
       base: {
         templateId: 'tmpl_abc:latest',
         templateName: 'agentbox-base:latest',
@@ -50,7 +51,32 @@ describe('e2b prepared-state', () => {
       preparedStatePath(),
       JSON.stringify({ schema: 99, base: { templateId: 'tmpl_x:latest' } }),
     );
-    expect(readPreparedState()).toEqual({ schema: 1 });
+    expect(readPreparedState()).toEqual({ schema: 2 });
+  });
+
+  it('lifts a schema-1 file forward by seeding the variants map from base', () => {
+    // A v1 file has exactly one build and it is the agentless base, so the
+    // migration is lossless — nobody has to rebuild a template to get variants.
+    const base = { templateId: 'tmpl_v1:latest', createdAt: '2026-06-03T00:00:00Z' };
+    writeFileSync(preparedStatePath(), JSON.stringify({ schema: 1, base }));
+    const s = readPreparedState();
+    expect(s.schema).toBe(2);
+    expect(preparedEntryFor(s, '')).toEqual(base);
+    // ...and it is NOT offered as any agent's variant.
+    expect(preparedEntryFor(s, 'claude')).toBeUndefined();
+  });
+
+  it('keeps each agent set in its own slot', () => {
+    const base = { templateId: 'tmpl_base:latest', createdAt: '2026-06-03T00:00:00Z' };
+    const claude = { templateId: 'tmpl_claude:latest', createdAt: '2026-06-04T00:00:00Z' };
+    writePreparedState({ schema: 2, base, variants: { '': base, claude } });
+    const s = readPreparedState();
+    // `base` is the AGENTLESS base even when a variant was built later —
+    // provider-generic readers assume exactly that.
+    expect(s.base?.templateId).toBe('tmpl_base:latest');
+    expect(preparedEntryFor(s, '')?.templateId).toBe('tmpl_base:latest');
+    expect(preparedEntryFor(s, 'claude')?.templateId).toBe('tmpl_claude:latest');
+    expect(preparedEntryFor(s, 'codex')).toBeUndefined();
   });
 
   it('ensureE2bBaseTemplate throws with the prepare hint when no base exists', () => {
@@ -59,7 +85,7 @@ describe('e2b prepared-state', () => {
 
   it('ensureE2bBaseTemplate passes once a base is recorded', () => {
     writePreparedState({
-      schema: 1,
+      schema: 2,
       base: { templateId: 'tmpl_x:latest', createdAt: '2026-06-03T00:00:00Z' },
     });
     expect(() => ensureE2bBaseTemplate()).not.toThrow();

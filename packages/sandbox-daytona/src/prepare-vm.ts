@@ -36,7 +36,14 @@ import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import type { Daytona } from '@daytona/sdk';
 import { SandboxClass } from '@daytona/sdk';
 import { seedAgentStaticIntoCloudBox } from '@agentbox/sandbox-cloud';
-import { BOX_IMAGE_REGISTRY, registryRefForSha } from '@agentbox/sandbox-core';
+import {
+  BOX_IMAGE_REGISTRY,
+  registryRefForSha,
+  renderAptInstall,
+  renderInstallRecipe,
+  resolveAgentInstall,
+  resolveAgentSpec,
+} from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
 
 /**
@@ -237,6 +244,101 @@ export interface VmBaseBakeResult {
   env: string[];
 }
 
+/** What a derived VM bake needs on top of an existing agentless base snapshot. */
+export interface VmVariantBakeOptions {
+  client: Daytona;
+  backend: CloudBackend;
+  /** The AGENTLESS base snapshot to boot. Already provisioned, sudo-repaired, env-restored. */
+  baseSnapshot: string;
+  /** Final variant-snapshot name stem; a `nonce()` is appended. */
+  snapshotName: string;
+  /** Agents to install, normalized and sorted. */
+  agents: readonly string[];
+  /** `box.claudeInstall` — selects claude's recipe, not whether to install. */
+  claudeInstall?: 'native' | 'npm';
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Bake a per-agent linux-vm snapshot on top of the agentless base.
+ *
+ * Deliberately much shorter than `bakeDaytonaVmBase`: the base already did the
+ * expensive and fiddly parts (the ~2 GB image pull, the setuid `sudo` repair,
+ * the image-ENV restore, the host static config), and all of that is in the
+ * snapshot we boot. A variant adds one thing — the agent binary — from the same
+ * `AGENT_SYNC_SPECS` recipes the docker derived layer, the hetzner derived
+ * snapshot and `ensureAgentInstalled` use, so however an agent reaches a box it
+ * is installed identically.
+ *
+ * Static agent config is NOT re-seeded here: the base carries all three agents'
+ * config already (it is config, not credentials), so a variant inherits it and a
+ * runtime-installed agent still finds its plugins.
+ */
+export async function bakeDaytonaVmVariant(
+  opts: VmVariantBakeOptions,
+): Promise<{ snapshotName: string }> {
+  const log = opts.onLog ?? (() => {});
+  log(`booting the agentless base '${opts.baseSnapshot}' to add ${opts.agents.join(', ')}…`);
+  const sandbox = await opts.client.create({ snapshot: opts.baseSnapshot }, { timeout: 900 });
+  const handle: CloudHandle = { sandboxId: sandbox.id, sandboxClass: 'linux-vm' };
+  try {
+    for (const id of opts.agents) {
+      const spec = resolveAgentSpec(id);
+      const install = resolveAgentInstall(spec.install, opts.claudeInstall);
+      log(`installing ${spec.id} into the derived snapshot…`);
+      const steps: string[] = [];
+      if (install.apt && install.apt.length > 0) {
+        steps.push(`sudo sh -c ${shellSingleQuote(renderAptInstall(install.apt))}`);
+      }
+      const recipe = renderInstallRecipe(install.recipe);
+      // `runAs: 'box-user'` is load-bearing: the native installers write into
+      // the INVOKING user's ~/.local/bin, so as root the binary lands in /root
+      // and the box user never sees it. `exec` already runs as the box user, so
+      // a box-user recipe needs no pivot — only a root one does.
+      steps.push(install.runAs === 'root' ? `sudo sh -c ${shellSingleQuote(recipe)}` : recipe);
+      if (install.postInstall) {
+        steps.push(`sudo sh -c ${shellSingleQuote(install.postInstall)}`);
+      }
+      // Prove it landed on the BOX USER's PATH. An installer that exits 0
+      // without producing a usable binary is a real failure mode, and finding
+      // out here beats a box that attaches to a session that died instantly.
+      steps.push(`command -v ${spec.binary} >/dev/null`);
+      const res = await opts.backend.exec(handle, `set -e; ${steps.join('\n')}`);
+      if (res.exitCode !== 0) {
+        throw new Error(
+          `daytona: installing ${spec.id} into the derived snapshot failed ` +
+            `(exit ${String(res.exitCode)}): ${`${res.stdout}${res.stderr}`.trim().slice(-600)}`,
+        );
+      }
+    }
+
+    // Cold snapshot: filesystem only, and Daytona requires the sandbox STOPPED.
+    // It does not stop for you.
+    log('stopping the sandbox to capture a cold snapshot…');
+    await sandbox.stop();
+    // Never reuse a name — Daytona's delete is async and a recreated name can
+    // report `active` yet fail to boot. Same rule as the base bake.
+    const finalName = `${opts.snapshotName}-${nonce()}`;
+    log(`capturing variant snapshot '${finalName}'…`);
+    await sandbox._experimental_createSnapshot(finalName, 900);
+    await waitForSnapshotActive(opts.client, finalName);
+    log(`snapshot '${finalName}' is active`);
+    return { snapshotName: finalName };
+  } finally {
+    try {
+      await sandbox.delete(120);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`warning: could not delete the temporary bake sandbox ${sandbox.id}: ${msg}`);
+    }
+  }
+}
+
+/** Wrap a shell snippet in single quotes for safe nesting inside `sudo sh -c`. */
+function shellSingleQuote(s: string): string {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
 /**
  * Bake the linux-vm base snapshot.
  */
@@ -312,7 +414,9 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<VmBase
     // DISPLAY, and the in-box browser dies with "Missing X server or $DISPLAY".
     imageEnv = (await fetchImageEnv(imageRef)) ?? [];
     if (imageEnv.length > 0) {
-      log(`restoring the image's ${String(imageEnv.length)} env vars (the VM conversion drops them)…`);
+      log(
+        `restoring the image's ${String(imageEnv.length)} env vars (the VM conversion drops them)…`,
+      );
       const envFix = await opts.backend.exec(handle, buildEnvRestoreCommand(imageEnv));
       if (envFix.exitCode !== 0) {
         throw new Error(
@@ -364,7 +468,7 @@ function sha12(s: string): string {
 }
 
 /** Short, monotonic, never-reused token for a snapshot name. */
-function nonce(): string {
+export function nonce(): string {
   return Math.floor(Date.now() / 1000).toString(36);
 }
 

@@ -26,7 +26,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './dockerfile-context.js';
 
-const SCHEMA = 1 as const;
+const SCHEMA = 2 as const;
 
 /** Provider-specific extras baked into the daytona snapshot. `size` is the
  *  normalized `cpu-memory-disk` spec the snapshot was created with (absent =
@@ -61,7 +61,67 @@ export interface DaytonaPreparedExtras {
   env?: string[];
 }
 
-export type PreparedDaytonaState = PreparedBaseSnapshot<string, DaytonaPreparedExtras>;
+/**
+ * One baked snapshot for one agent set. Carries its own `extras` because a
+ * daytona snapshot's identity is (context, size, class) as well as the agent
+ * set — a claude snapshot baked as `linux-vm` cannot serve a `container` box.
+ */
+export interface DaytonaVariantRecord {
+  imageRef: string;
+  contextSha256?: string;
+  createdAt?: string;
+  extras?: DaytonaPreparedExtras;
+}
+
+export type PreparedDaytonaState = PreparedBaseSnapshot<string, DaytonaPreparedExtras> & {
+  /**
+   * One record per agent set, keyed by `agentSetArg(agents)` (`''` = the
+   * agentless base). Without this the single `base` slot means baking a codex
+   * snapshot invalidates the claude one.
+   *
+   * `base` stays the AGENTLESS base and is mirrored into `variants['']`:
+   * provider-generic readers outside this package (the freshness surface, bake
+   * sharing, and `prepared-custody.ts`, which pins `base.imageRef` into
+   * `box.imageDaytona`) all assume `base` describes the agentless context.
+   */
+  variants?: Record<string, DaytonaVariantRecord>;
+};
+
+/**
+ * The record for one variant (`''` = the agentless base), falling back to
+ * `base` + top-level `extras` for state written before variants existed.
+ */
+export function preparedEntryFor(
+  state: PreparedDaytonaState | null,
+  variant = '',
+): DaytonaVariantRecord | undefined {
+  const hit = state?.variants?.[variant];
+  if (hit) return hit;
+  if (variant !== '' || !state?.base) return undefined;
+  return {
+    imageRef: state.base.imageRef,
+    ...(state.base.contextSha256 !== undefined ? { contextSha256: state.base.contextSha256 } : {}),
+    ...(state.extras ? { extras: state.extras } : {}),
+  };
+}
+
+/**
+ * Variant-aware {@link preparedMatches}: same (context, size, class) rules, but
+ * against the record for THIS agent set rather than whatever was baked last.
+ */
+export function preparedVariantMatches(
+  state: PreparedDaytonaState | null,
+  variant: string,
+  current: string,
+  size?: string,
+  sandboxClass?: DaytonaSandboxClass,
+): boolean {
+  const entry = preparedEntryFor(state, variant);
+  if (!entry || entry.contextSha256 !== current) return false;
+  if ((entry.extras?.size ?? undefined) !== (size ?? undefined)) return false;
+  if (sandboxClass === undefined) return true;
+  return (entry.extras?.class ?? 'container') === sandboxClass;
+}
 
 /**
  * Resolve every file that influences the daytona base snapshot: the docker
@@ -182,11 +242,41 @@ export function readPreparedDaytonaState(): PreparedDaytonaState | null {
   const raw = readPreparedStateRaw('daytona');
   if (raw === null || typeof raw !== 'object') return null;
   const parsed = raw as Partial<PreparedDaytonaState>;
+  if ((parsed as { schema?: unknown }).schema === 1) {
+    // Lossless: a v1 file has exactly one bake and it is the agentless base
+    // (nothing ever baked agents into a daytona snapshot), so seed the variants
+    // map from it rather than forcing a re-bake.
+    if (!parsed.base) return { schema: SCHEMA };
+    return {
+      schema: SCHEMA,
+      base: parsed.base,
+      ...(parsed.extras ? { extras: parsed.extras } : {}),
+      variants: {
+        '': {
+          imageRef: parsed.base.imageRef,
+          ...(parsed.base.contextSha256 !== undefined
+            ? { contextSha256: parsed.base.contextSha256 }
+            : {}),
+          ...(parsed.extras ? { extras: parsed.extras } : {}),
+        },
+      },
+    };
+  }
   if (parsed.schema !== SCHEMA) return null;
-  return { schema: SCHEMA, base: parsed.base, extras: parsed.extras };
+  return {
+    schema: SCHEMA,
+    base: parsed.base,
+    extras: parsed.extras,
+    variants: parsed.variants,
+  };
 }
 
 export function writePreparedDaytonaState(opts: {
+  /**
+   * Agent set this bake is for (normalized key; `''` = the agentless base).
+   * A variant bake writes ONLY its `variants` entry and leaves `base` alone.
+   */
+  variant?: string;
   snapshotName: string;
   contextSha256: string;
   /** Normalized `cpu-memory-disk` size the snapshot was baked with (absent = default). */
@@ -205,16 +295,39 @@ export function writePreparedDaytonaState(opts: {
     ...(opts.class ? { class: opts.class } : {}),
     ...(opts.env && opts.env.length > 0 ? { env: opts.env } : {}),
   };
+  const createdAt = new Date().toISOString();
+  const variant = opts.variant ?? '';
+  const prior = readPreparedDaytonaState();
+  const entry: DaytonaVariantRecord = {
+    imageRef: opts.snapshotName,
+    contextSha256: opts.contextSha256,
+    createdAt,
+    ...(Object.keys(extras).length > 0 ? { extras } : {}),
+  };
   const state: PreparedDaytonaState = {
     schema: SCHEMA,
-    base: {
-      imageRef: opts.snapshotName,
-      contextSha256: opts.contextSha256,
-      cliVersion: stamp.cliVersion,
-      cliCommit: stamp.cliCommit,
-      createdAt: new Date().toISOString(),
-    },
-    ...(Object.keys(extras).length > 0 ? { extras } : {}),
+    // `base` (and the top-level `extras` that describe it) is the AGENTLESS
+    // base and is only rewritten by an agentless bake. A variant bake that
+    // touched it would repoint `box.imageDaytona` — which `prepared-custody.ts`
+    // pins from `base.imageRef` — at one agent's snapshot for every box.
+    ...(variant === ''
+      ? {
+          base: {
+            imageRef: opts.snapshotName,
+            contextSha256: opts.contextSha256,
+            cliVersion: stamp.cliVersion,
+            cliCommit: stamp.cliCommit,
+            createdAt,
+          },
+          ...(Object.keys(extras).length > 0 ? { extras } : {}),
+        }
+      : {
+          ...(prior?.base ? { base: prior.base } : {}),
+          ...(prior?.extras ? { extras: prior.extras } : {}),
+        }),
+    // Merge, never replace: each agent set keeps its own record, so baking a
+    // codex snapshot doesn't invalidate the claude one.
+    variants: { ...prior?.variants, [variant]: entry },
   };
   writePreparedStateRaw('daytona', state);
 }

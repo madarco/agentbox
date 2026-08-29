@@ -17,7 +17,7 @@ The easiest path is the interactive wizard — it signs you in and bakes the bas
 agentbox install        # then select e2b
 ```
 
-Paste an `E2B_API_KEY` (mint at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)) when prompted. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base template (a one-time `agentbox prepare --provider e2b` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in seconds.
+Paste an `E2B_API_KEY` (mint at [e2b.dev/dashboard](https://e2b.dev/dashboard?tab=keys)) when prompted. Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base template (a one-time `agentbox prepare --provider e2b` under the hood) with the AgentBox runtime — `agentbox-ctl`, tmux, the browser stack — so every new box boots ready in seconds. Agents are a separate, optional tier on top (see below).
 
 For CI or scripted setup, run the explicit equivalents:
 
@@ -45,7 +45,17 @@ agentbox e2b claude
   code-first build rather than a stateful provisioning run.
 </Callout>
 
-`agentbox prepare --provider e2b` drives a TypeScript-described `Template.build()` that includes everything the box needs (agentbox-ctl, the vscode user, Claude / Codex / OpenCode, tmux, VNC). The resulting `templateId:tag` is recorded under the per-provider key `box.imageE2b` and to `~/.agentbox/e2b-prepared.json`; every `create --provider e2b` boots from it.
+`agentbox prepare --provider e2b` drives a TypeScript-described `Template.build()` that includes everything the box needs (agentbox-ctl, the vscode user, tmux, VNC, the browser stack) — but **no agent**. The resulting `templateId:tag` is recorded under the per-provider key `box.imageE2b` and to `~/.agentbox/e2b-prepared.json`; every `create --provider e2b` boots from it.
+
+Add an agent as its own template, built on top of the base:
+
+```bash
+agentbox prepare --provider e2b --agents claude
+```
+
+E2B is the cheapest provider to do this on: `Template().fromTemplate(base)` derives declaratively with no sandbox boot at all, so a variant takes **well under a minute**. Each agent set gets its own record, so building `--agents codex` later does not invalidate the claude one.
+
+Skipping it is fine: a box whose agent isn't baked installs it on first use (~30–60s), and the result is identical — the bake and the on-demand install run the same recipe.
 
 ```bash
 agentbox prepare --provider e2b
@@ -82,14 +92,14 @@ agentbox e2b claude
 
 ## Limits
 
-| Limit             |                                                                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Region            | SDK-chosen (transparent)                                                                                                                    |
-| Disk / RAM / vCPU | Template-level — baked at `Template.build()` time via `prepare --provider e2b --size <cpu-memory>`; per-create `--size` warns if it differs |
-| Exposed ports     | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080                                                                                 |
+| Limit             |                                                                                                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Region            | SDK-chosen (transparent)                                                                                                                                                                           |
+| Disk / RAM / vCPU | Template-level — baked at `Template.build()` time via `prepare --provider e2b --size <cpu-memory>`; per-create `--size` warns if it differs                                                        |
+| Exposed ports     | Any port via `sandbox.getHost(port)`; WebProxy runs on 8080                                                                                                                                        |
 | Session length    | 1 hour (Hobby) / 24 hours (Pro) — auto-renewed while the agent is working; at the cap the box **pauses and auto-resumes**, it is not killed. The attach helper caps at **55 minutes** for headroom |
-| Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume                                        |
-| SSH               | none — attach is an SDK-streaming PTY bridge over `pty.create`                                                                              |
+| Nested containers | Yes — the docker engine is baked into the prepare template; `dockerd` auto-launches on create/resume                                                                                               |
+| SSH               | none — attach is an SDK-streaming PTY bridge over `pty.create`                                                                                                                                     |
 
 <Callout title="IN-BOX DOCKER">
   E2B supports [Docker-in-Docker](/docs/docker-in-docker) — the microVM grants the capabilities a
