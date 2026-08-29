@@ -312,7 +312,9 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<VmBase
     // DISPLAY, and the in-box browser dies with "Missing X server or $DISPLAY".
     imageEnv = (await fetchImageEnv(imageRef)) ?? [];
     if (imageEnv.length > 0) {
-      log(`restoring the image's ${String(imageEnv.length)} env vars (the VM conversion drops them)…`);
+      log(
+        `restoring the image's ${String(imageEnv.length)} env vars (the VM conversion drops them)…`,
+      );
       const envFix = await opts.backend.exec(handle, buildEnvRestoreCommand(imageEnv));
       if (envFix.exitCode !== 0) {
         throw new Error(
@@ -375,20 +377,73 @@ async function createVmBaseSnapshot(
   log: (line: string) => void,
 ): Promise<string> {
   log(`creating linux-vm base image snapshot '${name}' from ${imageRef}…`);
-  await opts.client.snapshot.create(
-    {
-      name,
-      image: imageRef,
-      sandboxClass: SandboxClass.LINUX_VM,
-      regionId: opts.regionId,
-      // Always explicit: a snapshot with no `resources` gets Daytona's 1 vCPU /
-      // 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB — the
-      // build dies mid-pull with a bare "internal error".
-      resources: opts.resources ?? { cpu: 2, memory: 4, disk: 8 },
-    },
-    { onLogs: (c: string) => log(String(c).split('\n').filter(Boolean).join(' ')) },
-  );
+  try {
+    await opts.client.snapshot.create(
+      {
+        name,
+        image: imageRef,
+        sandboxClass: SandboxClass.LINUX_VM,
+        regionId: opts.regionId,
+        // Always explicit: a snapshot with no `resources` gets Daytona's 1 vCPU /
+        // 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB — the
+        // build dies mid-pull with a bare "internal error".
+        resources: opts.resources ?? { cpu: 2, memory: 4, disk: 8 },
+      },
+      { onLogs: (c: string) => log(String(c).split('\n').filter(Boolean).join(' ')) },
+    );
+  } catch (err) {
+    if (isRegionNotFound(err)) {
+      throw new Error(vmRegionUnavailableMessage(opts.regionId));
+    }
+    throw err;
+  }
   return name;
+}
+
+/**
+ * Daytona's "region not found" for the region the linux-vm class requires.
+ *
+ * `us-east-1` is a *dedicated* region, so it exists only for organizations that
+ * have one provisioned — every other account sees just the shared `us`/`eu`.
+ * The raw SDK error is a bare `DaytonaNotFoundError` with a stack, which reads
+ * as "AgentBox is broken" rather than "this class needs a region your org does
+ * not have".
+ *
+ * Match on the two words, NOT on `Region <id> not found`: the API returns the id
+ * for some regions and a bare `Region not found` for others (both observed on
+ * 2026-08-29, same SDK, different keys), so pinning the id let the bare form
+ * fall through to the stack trace this exists to replace. `region` + `not found`
+ * together still can't collide with the neighbouring `Snapshot not found`.
+ */
+export function isRegionNotFound(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\bregion\b/i.test(msg) && /\bnot found\b/i.test(msg);
+}
+
+/**
+ * Name the real constraint, and do NOT dress the container class up as the fix.
+ *
+ * `box.daytonaClass=container` is the only other value, but container sandboxes
+ * support neither snapshots nor base images, so a user sent down that path gets
+ * a Daytona that cannot bake or checkpoint — a worse dead end than this error,
+ * reached one long bake later. The honest answer is that this provider needs an
+ * organization with a VM region.
+ *
+ * `curl -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/regions`
+ * is the check for what an account actually has; the SDK exposes no region API,
+ * so we point at the endpoint rather than guessing.
+ */
+export function vmRegionUnavailableMessage(regionId: string): string {
+  return (
+    `your Daytona organization has no '${regionId}' region, and linux-vm boxes run only there.\n` +
+    `  A VM region is *dedicated* — it is not enabled for every account — so a key from an\n` +
+    `  organization with only the shared 'us'/'eu' regions cannot bake a Daytona base at all.\n` +
+    `  Check what yours has:\n` +
+    `    curl -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/regions\n` +
+    `  Use an API key from an organization that has a VM region (or ask Daytona to enable one). If\n` +
+    `  Daytona has since added a VM region for your org, name it with\n` +
+    `  \`agentbox config set box.daytonaRegion <id>\`.`
+  );
 }
 
 async function snapshotIsActive(client: Daytona, name: string): Promise<boolean> {
