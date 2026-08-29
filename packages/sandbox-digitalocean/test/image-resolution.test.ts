@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { preparedImageIdFor, refNamesPreparedBase } from '../src/backend.js';
+import {
+  preparedImageIdFor,
+  refNamesPreparedBase,
+  resolvedVariantForImage,
+} from '../src/backend.js';
 import type { PreparedDigitalOceanState } from '../src/prepared-state.js';
 
 const base = {
@@ -80,5 +84,29 @@ describe('refNamesPreparedBase', () => {
 
   it('is false when nothing is prepared', () => {
     expect(refNamesPreparedBase({ schema: 3 }, { image: 'agentbox-base-abc' })).toBe(false);
+  });
+});
+
+describe('resolvedVariantForImage', () => {
+  it('reports the base when a claude create fell back to it', () => {
+    // The whole point. `agentbox claude` on a base-only account resolves the
+    // BASE, so a cross-region error must say "base snapshot" and suggest
+    // re-baking the base -- not name a claude snapshot nobody has baked and
+    // suggest `--agents claude`, which cannot place one in the target region.
+    const resolved = preparedImageIdFor(baseOnly, { agents: ['claude'] });
+    expect(resolved).toBe(100);
+    expect(resolvedVariantForImage(baseOnly, resolved!)).toBe('');
+  });
+
+  it('reports the variant when one was actually baked', () => {
+    const resolved = preparedImageIdFor(withVariants, { agents: ['claude'] });
+    expect(resolved).toBe(101);
+    expect(resolvedVariantForImage(withVariants, resolved!)).toBe('claude');
+  });
+
+  it('returns undefined for an id we never baked (a checkpoint, a stock slug)', () => {
+    // Absent, not '' -- an unknown id must not be described as the base.
+    expect(resolvedVariantForImage(withVariants, 999)).toBeUndefined();
+    expect(resolvedVariantForImage(withVariants, 'ubuntu-24-04-x64')).toBeUndefined();
   });
 });

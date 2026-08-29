@@ -214,6 +214,26 @@ export function refNamesPreparedBase(
   return ref === pinned.description || ref === String(pinned.imageId);
 }
 
+/**
+ * Which variant key a resolved image id actually came from (`''` = the
+ * agentless base), or undefined when it is not one of our prepared snapshots.
+ *
+ * Read the tier off the RESOLVED id rather than off `req.agents`: create falls
+ * back to the base when no variant was baked, so an `agentbox claude` box on a
+ * base-only account is running the base. Telling that user their "claude
+ * snapshot" is in the wrong region, and to re-bake with `--agents claude`,
+ * describes a snapshot that does not exist.
+ */
+export function resolvedVariantForImage(
+  prepared: PreparedDigitalOceanState | null,
+  imageId: number | string,
+): string | undefined {
+  for (const [key, entry] of Object.entries(prepared?.variants ?? {})) {
+    if (entry.imageId === imageId) return key;
+  }
+  return prepared?.base?.imageId === imageId ? '' : undefined;
+}
+
 export function preparedImageIdFor(
   prepared: PreparedDigitalOceanState | null,
   req: Pick<CloudProvisionRequest, 'agents'>,
@@ -375,10 +395,12 @@ export const digitaloceanBackend: CloudBackend = {
     const snapshotMeta =
       typeof imageRef === 'number' ? await c.getSnapshot(String(imageRef)) : null;
     const sizeCatalog = await c.listSizes();
-    // Pass the agent set so a cross-region failure names the tier it actually
-    // resolved (a variant, usually) and suggests re-baking THAT one.
+    // Name the tier from the RESOLVED image, not from `req.agents`: create falls
+    // back to the base when no variant was baked, and a hint that names a
+    // variant nobody has cannot be acted on.
+    const resolvedVariant = resolvedVariantForImage(readPreparedState(), imageRef);
     validateSizeChoice(choice, sizeCatalog, snapshotMeta, {
-      agents: normalizeAgentSet(req.agents),
+      agents: resolvedVariant ? resolvedVariant.split(',') : [],
     });
     const plan = sizeCatalog.find((s) => s.slug === size);
 
