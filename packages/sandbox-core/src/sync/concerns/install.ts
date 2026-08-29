@@ -19,6 +19,23 @@ import { resolveAgentInstall } from '../agents/types.js';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
 import type { AgentInstallRecipe } from '../agents/types.js';
 
+/**
+ * `box.claudeInstall`, or undefined when the config can't be read.
+ *
+ * Lazy import + swallow: an install must not fail because a config layer is
+ * unreadable, and `resolveAgentInstall` treats undefined as "default recipe".
+ * Mirrors `resolveClaudeInstallMode` in @agentbox/sandbox-docker.
+ */
+async function resolveConfiguredClaudeInstall(): Promise<string | undefined> {
+  try {
+    const { loadEffectiveConfig } = await import('@agentbox/config');
+    const cfg = await loadEffectiveConfig(process.cwd());
+    return cfg.effective.box.claudeInstall;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Install failed. Callers rewrap into their own agent-specific error type. */
 export class AgentInstallError extends Error {
   constructor(message: string) {
@@ -112,9 +129,16 @@ export async function ensureAgentInstalled(
   if (probe.exitCode === 0) return { installed: false };
 
   opts.onProgress?.(`installing ${spec.id} (absent from this box image)`);
-  // `box.claudeInstall: npm` picks claude's npm alternate; every other agent
-  // has none and falls through to its default recipe.
-  const install = resolveAgentInstall(spec.install, opts.installMode);
+  // `box.claudeInstall: npm` picks claude's npm alternate; every other agent has
+  // none and falls through to its default recipe.
+  //
+  // Default it from config rather than requiring every caller to pass it: the
+  // bake path threads a mode explicitly, but the runtime callers (claude start,
+  // the dashboard's agent switch, the cloud attach paths) do not — and a host
+  // that set npm BECAUSE the native CDN 403s would otherwise hit that same CDN
+  // when adding claude to an existing box.
+  const installMode = opts.installMode ?? (await resolveConfiguredClaudeInstall());
+  const install = resolveAgentInstall(spec.install, installMode);
 
   if (install.apt && install.apt.length > 0) {
     const apt = await installApt(transport, install.apt);

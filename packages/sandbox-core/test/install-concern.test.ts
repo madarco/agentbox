@@ -185,9 +185,9 @@ describe('install modes (box.claudeInstall)', () => {
     ).toBe(true);
   });
 
-  it('uses the native installer when no mode is given', async () => {
+  it('uses the native installer when the mode is explicitly native', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'claude');
+    await ensureAgentInstalled(t, 'claude', { installMode: 'native' });
     expect(
       execs(t)
         .map((c) => c.join(' '))
