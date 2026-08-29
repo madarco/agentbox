@@ -49,6 +49,7 @@ export function validateSizeChoice(
   choice: SizeChoice,
   catalog: DigitalOceanSize[],
   snapshot: DigitalOceanSnapshot | null,
+  opts: { agents?: readonly string[] } = {},
 ): void {
   const { size, region } = choice;
   const plan = catalog.find((s) => s.slug === size);
@@ -89,12 +90,19 @@ export function validateSizeChoice(
   // <size>", which sends people hunting for a bigger plan when the real fix is
   // a region (or a re-bake). Cost a live create to find.
   if (snapshot && snapshot.regions.length > 0 && !snapshot.regions.includes(region)) {
+    // Name the tier and re-bake THAT tier. Create prefers the per-agent variant
+    // over the base, so telling someone to re-bake without `--agents` refreshes
+    // the agentless base while the next create still picks the old variant in
+    // the original region -- advice that fails exactly the same way.
+    const agents = (opts.agents ?? []).filter((a) => a.length > 0);
+    const tier = agents.length > 0 ? `${agents.join(',')} snapshot` : 'base snapshot';
+    const agentsFlag = agents.length > 0 ? ` --agents ${agents.join(',')}` : '';
     throw new UserFacingError(
-      `the DigitalOcean base snapshot "${snapshot.name}" does not exist in region "${region}".\n` +
+      `the DigitalOcean ${tier} "${snapshot.name}" does not exist in region "${region}".\n` +
         `It is available in: ${snapshot.regions.join(', ')}.\n` +
         'Either create there (`--location <slug>` or `agentbox config set box.digitaloceanRegion <slug>`), ' +
-        'or re-bake in this region with `agentbox prepare --provider digitalocean --force --location ' +
-        `${region}\`.`,
+        'or re-bake it in this region with `agentbox prepare --provider digitalocean --force --location ' +
+        `${region}${agentsFlag}\`.`,
     );
   }
 

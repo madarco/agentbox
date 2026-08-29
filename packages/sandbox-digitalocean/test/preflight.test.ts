@@ -100,6 +100,32 @@ describe('validateSizeChoice', () => {
     ).toThrow(/does not exist in region "nyc3"[\s\S]*available in: fra1/);
   });
 
+  it('names the variant tier and re-bakes THAT one, not the base', () => {
+    // Create prefers the per-agent variant, so suggesting a bare
+    // `prepare --force --location <r>` refreshes only the agentless base while
+    // the next create still picks the old variant in the original region --
+    // advice that fails identically. The hint must carry --agents.
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'], name: 'agentbox-claude-x' }),
+        { agents: ['claude'] },
+      ),
+    ).toThrow(/claude snapshot "agentbox-claude-x"[\s\S]*--location nyc3 --agents claude/);
+  });
+
+  it('still says "base snapshot" for an agentless create', () => {
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'] }),
+        { agents: [] },
+      ),
+    ).toThrow(/base snapshot/);
+  });
+
   it('accepts a region the snapshot does live in', () => {
     expect(() =>
       validateSizeChoice({ size: 's-2vcpu-4gb', region: 'nyc3' }, CATALOG, snapshot()),

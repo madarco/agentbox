@@ -375,7 +375,11 @@ export const digitaloceanBackend: CloudBackend = {
     const snapshotMeta =
       typeof imageRef === 'number' ? await c.getSnapshot(String(imageRef)) : null;
     const sizeCatalog = await c.listSizes();
-    validateSizeChoice(choice, sizeCatalog, snapshotMeta);
+    // Pass the agent set so a cross-region failure names the tier it actually
+    // resolved (a variant, usually) and suggests re-baking THAT one.
+    validateSizeChoice(choice, sizeCatalog, snapshotMeta, {
+      agents: normalizeAgentSet(req.agents),
+    });
     const plan = sizeCatalog.find((s) => s.slug === size);
 
     // The DO Project the box should land in (`box.digitaloceanProject`),
