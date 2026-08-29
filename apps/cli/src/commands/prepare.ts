@@ -174,6 +174,8 @@ interface E2bStatusOk {
   createdAt?: string;
   cliVersion?: string;
   contextSha256?: string;
+  /** Per-agent-set derived templates, `''` (the base) excluded. */
+  variants?: Array<{ agents: string; templateName?: string; createdAt?: string }>;
 }
 type E2bStatusResult = E2bStatusUnknown | E2bStatusOk;
 
@@ -193,6 +195,13 @@ async function e2bStatus(): Promise<E2bStatusResult> {
       createdAt: prepared.base.createdAt,
       cliVersion: prepared.base.cliVersion,
       contextSha256: prepared.base.contextSha256,
+      variants: Object.entries(prepared.variants ?? {})
+        .filter(([agents]) => agents !== '')
+        .map(([agents, v]) => ({
+          agents,
+          templateName: v.templateName ?? v.templateId,
+          createdAt: v.createdAt,
+        })),
     };
   } catch (err) {
     return {
@@ -214,8 +223,79 @@ function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
   }
   const pinned = pinnedImage && pinnedImage === status.templateId ? '  (pinned in project)' : '';
   out.push(
-    `  tmpl   ${pad(status.templateName ?? status.templateId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+    `  base   ${pad(status.templateName ?? status.templateId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
   );
+  for (const v of status.variants ?? []) {
+    out.push(
+      `  ${pad(v.agents, 6)} ${pad(v.templateName ?? '—', 40)} ${pad('—', 10)}  ${humanAge(v.createdAt)}`,
+    );
+  }
+  return out;
+}
+
+interface DigitalOceanStatusUnknown {
+  configured: false;
+  reason?: string;
+}
+interface DigitalOceanStatusOk {
+  configured: true;
+  imageId?: number;
+  description?: string;
+  createdAt?: string;
+  cliVersion?: string;
+  /** Per-agent-set derived snapshots, `''` (the base) excluded. */
+  variants?: Array<{ agents: string; description?: string; createdAt?: string }>;
+}
+type DigitalOceanStatusResult = DigitalOceanStatusUnknown | DigitalOceanStatusOk;
+
+async function digitalOceanStatus(): Promise<DigitalOceanStatusResult> {
+  try {
+    const mod = await import('@agentbox/sandbox-digitalocean');
+    if (mod.readDigitalOceanCredStatus().source === 'none') {
+      return { configured: false, reason: 'not configured — run `agentbox digitalocean login`' };
+    }
+    const prepared = mod.readPreparedState();
+    if (!prepared.base) return { configured: true };
+    return {
+      configured: true,
+      imageId: prepared.base.imageId,
+      description: prepared.base.description,
+      createdAt: prepared.base.createdAt,
+      cliVersion: prepared.base.cliVersion,
+      variants: Object.entries(prepared.variants ?? {})
+        .filter(([agents]) => agents !== '')
+        .map(([agents, v]) => ({ agents, description: v.description, createdAt: v.createdAt })),
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      reason: err instanceof Error ? err.message.split('\n')[0] : String(err),
+    };
+  }
+}
+
+function renderDigitalOcean(status: DigitalOceanStatusResult, pinnedImage?: string): string[] {
+  const out: string[] = ['digitalocean:'];
+  if (!status.configured) {
+    out.push(`  ${status.reason ?? '(not configured)'}`);
+    return out;
+  }
+  if (status.imageId === undefined) {
+    out.push('  no base snapshot — run `agentbox prepare --provider digitalocean`');
+    return out;
+  }
+  const pinned =
+    pinnedImage && (pinnedImage === status.description || pinnedImage === String(status.imageId))
+      ? '  (pinned in project)'
+      : '';
+  out.push(
+    `  base   ${pad(status.description ?? String(status.imageId), 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+  );
+  for (const v of status.variants ?? []) {
+    out.push(
+      `  ${pad(v.agents, 6)} ${pad(v.description ?? '—', 40)} ${pad('—', 10)}  ${humanAge(v.createdAt)}`,
+    );
+  }
   return out;
 }
 
@@ -313,6 +393,7 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   const wantDocker = !opts.onlyProvider || opts.onlyProvider === 'docker';
   const wantDaytona = !opts.onlyProvider || opts.onlyProvider === 'daytona';
   const wantE2b = !opts.onlyProvider || opts.onlyProvider === 'e2b';
+  const wantDigitalOcean = !opts.onlyProvider || opts.onlyProvider === 'digitalocean';
 
   if (wantDocker) {
     const status = await dockerStatus();
@@ -332,6 +413,16 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
         ? cfg.effective.box.imageE2b
         : undefined;
     lines.push(...renderE2b(status, e2bPinned));
+  }
+  if (wantDigitalOcean) {
+    if (lines.length > 0) lines.push('');
+    const status = await digitalOceanStatus();
+    const doPinned =
+      typeof cfg?.effective.box.imageDigitalocean === 'string' &&
+      cfg.effective.box.imageDigitalocean.length > 0
+        ? cfg.effective.box.imageDigitalocean
+        : undefined;
+    lines.push(...renderDigitalOcean(status, doPinned));
   }
   if (pinned) {
     lines.push('');

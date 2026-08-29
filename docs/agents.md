@@ -194,15 +194,15 @@ collapse — see the seam analysis in
 
 ## Provider status
 
-| | docker | hetzner | e2b | daytona | vercel, DO |
-|---|---|---|---|---|---|
-| agentless base | yes | yes | yes | yes | no — the provision scripts still install all three |
-| agents as a derived layer/snapshot | yes | yes | yes | yes | not yet |
-| per-box agent selection | yes | yes | yes | yes | not yet |
-| install into a live box on demand | yes | yes | yes | yes | yes |
+| | docker | hetzner | e2b | daytona | DO | vercel |
+|---|---|---|---|---|---|---|
+| agentless base | yes | yes | yes | yes | yes | no — `provision.sh` still installs all three |
+| agents as a derived layer/snapshot | yes | yes | yes | yes | yes | not yet |
+| per-box agent selection | yes | yes | yes | yes | yes | not yet |
+| install into a live box on demand | yes | yes | yes | yes | yes | yes |
 
-Vercel and DigitalOcean still bake all three agents into their base, so their
-behaviour is unchanged and the create-time install probe is a no-op there.
+Vercel still bakes all three agents into its base, so its behaviour is unchanged
+and the create-time install probe is a no-op there.
 
 Every cloud box gets per-agent credential isolation at **create**: an
 `agentbox claude --provider <cloud>` box seeds only claude's credential, and the
@@ -232,6 +232,7 @@ bake VPS.
 | daytona (container) | recipe appended to the same Dockerfile build; the builder's layer cache serves everything below it | **77s** (base: 3m18s) |
 | daytona (linux-vm) | boot the base snapshot, install, stop, cold-snapshot | untested live |
 | hetzner | boot the base snapshot, install over ssh, re-snapshot | ~3.5 min |
+| digitalocean | boot the base snapshot, install over ssh, re-snapshot | see below |
 
 The recipes are the same `AGENT_SYNC_SPECS.install` entries in every row, so a
 baked agent and a runtime-added one are byte-identical in layout.
@@ -241,8 +242,8 @@ baked agent and a runtime-added one are byte-identical in layout.
 - **The base pin defeats variant selection.** Every bake pins
   `box.image<Provider>` to the base's own name, so by create time the image ref
   usually *is* our base rather than the sentinel. Hetzner and daytona both need
-  a `refIsOurBase` escape that treats it as "no explicit choice"; e2b doesn't,
-  because its backend ignores `req.image` entirely.
+  a `refIsOurBase` escape that treats it as "no explicit choice", and so does
+  DigitalOcean; e2b doesn't, because its backend ignores `req.image` entirely.
 - **A variant bake must not pin, share, or adopt.** `box.image<Provider>`, the
   custody record and base adoption are all single-slot: a variant written into
   any of them makes every box on that provider boot one agent's snapshot.
@@ -253,9 +254,18 @@ baked agent and a runtime-added one are byte-identical in layout.
   is immutable, so the variant takes its class from the base rather than from
   config — a `box.daytonaClass` that disagrees with what was baked would
   otherwise produce an unbootable pairing.
-- **Derived bakes log in as the box user, not root** (hetzner): the base already
-  carries `PermitRootLogin no`, so a root key is accepted by cloud-init and then
-  refused by sshd — which looks like an unexplained `waitForSsh` timeout.
+- **Derived bakes log in as the box user, not root** (hetzner, DO): the base
+  already carries `PermitRootLogin no`, so a root key is accepted by cloud-init
+  and then refused by sshd — which looks like an unexplained `waitForSsh`
+  timeout.
+- **DigitalOcean cloud-init must stay ASCII.** DO truncates user-data at the
+  first non-ASCII byte, so a single em-dash in a comment silently drops the
+  whole document: no key is injected and ssh fails with "Permission denied
+  (publickey)". Hetzner's derived generator has one; DO's copy must not.
+- **A DO snapshot only boots in the regions it lists.** The derived bake reads
+  `snapshot.regions` and moves the temp Droplet into one of them rather than
+  trusting `box.digitaloceanRegion`. Hetzner has no analogue — its snapshots are
+  account-wide.
 - **Verify the binary on the BOX USER's PATH**, not just that the build exited
   0. A native installer run as root writes into `/root` and does both.
 
@@ -263,16 +273,17 @@ baked agent and a runtime-added one are byte-identical in layout.
 
 Each provider keys one record per agent set under `variants` in its own
 `~/.agentbox/<provider>-prepared.json` (`''` = the agentless base), so baking
-codex never invalidates the claude artifact. Schema bumps: hetzner 3, e2b 2,
-daytona 2 — all with lossless migrations that seed `variants['']` from the
-existing `base`.
+codex never invalidates the claude artifact. Schema bumps: hetzner 3,
+digitalocean 3, e2b 2, daytona 2 — all with lossless migrations that seed
+`variants['']` from the existing `base`.
 
 GC differs by how each platform addresses artifacts:
 
-- **hetzner / daytona** — id- and name-addressed snapshots, so a rebuild orphans
-  its predecessor. Both reap it, but only for that exact variant and only after
-  the replacement is recorded, so a failed bake never leaves you with no base.
-  Hetzner had no base-snapshot GC at all before this.
+- **hetzner / daytona / digitalocean** — id- and name-addressed snapshots, so a
+  rebuild orphans its predecessor. All three reap it, but only for that exact
+  variant and only after the replacement is recorded, so a failed bake never
+  leaves you with no base. Hetzner and DigitalOcean had no base-snapshot GC at
+  all before this.
 - **e2b** — templates are *named*, so rebuilding `agentbox-claude:latest` moves
   the tag rather than orphaning an id. There is also no `Template.delete` in the
   SDK to reap one with.
@@ -280,4 +291,6 @@ GC differs by how each platform addresses artifacts:
 Identifying a snapshot's tier from the platform side varies too: hetzner carries
 an `agentbox.agents` label (`none` for the base), while daytona's
 `snapshot.create` accepts only name/image/resources/region — so there the **name**
-is the only channel, hence `agentbox-<set>-<fp12>`.
+is the only channel, hence `agentbox-<set>-<fp12>`. DigitalOcean is the same: a
+snapshot carries no tags, and its name is doubly load-bearing because it is also
+how the bake recovers the snapshot id after the async snapshot action completes.
