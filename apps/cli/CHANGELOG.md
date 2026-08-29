@@ -9,6 +9,28 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.29.1] - 2026-08-30
+
+### Fixed
+
+- **A clean install could dead-end on the hub token.** Deleting `~/.agentbox`
+  while the hub daemon kept running left it serving a token that no longer
+  existed on disk, so every `agentbox prepare` — and the install wizard's bake —
+  failed with `The local hub reports no API token`. The advice it printed was a
+  dead end: `agentbox hub` is a no-op against a live daemon and never rewrites
+  the file. The hub is now restarted to re-mint the token.
+- **Attach silently lost its footer and permission prompts** when the optional
+  native pty backend (`@homebridge/node-pty-prebuilt-multiarch`) wasn't
+  installed — npm swallows an optional dependency that fails to install, so
+  `npm i -g @madarco/agentbox` can succeed without it. The notice now names the
+  missing package, points at the usual cause (`agentbox` installed under a
+  different Node than the one on `PATH`), and is repeated after the session
+  exits instead of being painted over by the agent's full-screen TUI.
+- A provider plugin that declares no `descriptor` now gets a capitalised display
+  label, so the create picker and the tray no longer show two spellings of the
+  same provider. Plugins registered before this keep their old label until
+  `agentbox plugin add` re-registers them.
+
 ## [0.29.0] - 2026-08-28
 
 ### Added
