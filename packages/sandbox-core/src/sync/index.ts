@@ -72,8 +72,15 @@ export type {
   AgentPathMap,
   AgentCredential,
   AgentCapabilities,
+  AgentInstall,
+  AgentInstallRecipe,
 } from './agents/types.js';
 export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
+export {
+  ensureAgentInstalled,
+  AgentInstallError,
+  type EnsureAgentInstalledResult,
+} from './concerns/install.js';
 export {
   pushEnvFiles,
   scanHostEnvFiles,

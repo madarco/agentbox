@@ -83,12 +83,54 @@ export interface AgentCapabilities {
   activitySource: 'scraper' | 'plugin';
 }
 
+/**
+ * How to put this agent's binary into a box that doesn't have it.
+ *
+ * One recipe, two execution sites: the Dockerfile/provider install scripts read
+ * it at BAKE time (`AGENTBOX_AGENTS`), and `ensureAgentInstalled` runs it at
+ * RUN time against a live box. Keeping it as data is what lets a box carry only
+ * the agent it was launched for and still gain another on demand.
+ */
+export type AgentInstallRecipe =
+  /** `npm install -g <package>`. `allowScripts` for packages with lifecycle scripts (npm 12+ blocks them by default). */
+  | { kind: 'npm'; package: string; allowScripts?: boolean }
+  /** Fetch an installer to a file and run it. NOT `curl | bash` — a blocked download must fail the chain, not exit 0. */
+  | { kind: 'script'; url: string; retries?: number }
+  /** Anything else: a shell snippet run as-is. */
+  | { kind: 'exec'; script: string };
+
+export interface AgentInstall {
+  recipe: AgentInstallRecipe;
+  /**
+   * Who runs the recipe. Not a detail — Claude's native installer drops the
+   * binary in the INVOKING user's `~/.local/bin`, so running it as root puts
+   * `claude` in /root and the box user never sees it. `npm install -g` is the
+   * opposite and needs root. `apt` is always root regardless.
+   */
+  runAs: 'root' | 'box-user';
+  /** apt packages the agent needs alongside its own installer (codex: bubblewrap). */
+  apt?: string[];
+  /** Shell run after the recipe succeeds (dirs, symlinks, ownership). Runs as root. */
+  postInstall?: string;
+}
+
 export interface AgentSyncSpec {
   id: AgentId;
   /** Alternate spellings that resolve to this spec (reconciles the wire `'claude-code'`). */
   aliases: string[];
+  /**
+   * The FROZEN wire/queue spelling, when it differs from `id` (claude only).
+   * Carried here so a caller that needs the queue name doesn't re-derive it —
+   * `buildPromptArgs` / `assertAgentCredsAvailable` want `'claude-code'` while
+   * everything else wants `'claude'`.
+   */
+  wireId?: string;
   /** Default tmux session name. */
   sessionName: string;
+  /** Command name to probe with `command -v` — how we tell "already installed". */
+  binary: string;
+  /** How to install the binary into a box that lacks it. */
+  install: AgentInstall;
   /** Shared docker config volume for this tool's static config. */
   dockerVolume: string;
   /** Host→box static-config source map (1 entry for claude/codex, 3 for opencode). */
@@ -96,7 +138,13 @@ export interface AgentSyncSpec {
   credential: AgentCredential;
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
-  /** Extra box run-env (OpenCode: `OPENCODE_CONFIG_DIR`, `XDG_STATE_HOME`). */
-  boxRunEnv(): Record<string, string>;
+  /**
+   * Extra box run-env (OpenCode: `OPENCODE_CONFIG_DIR`, `XDG_STATE_HOME`).
+   *
+   * Plain data, not a function: the whole spec has to stay JSON-serializable so
+   * it can be shipped into a box whose `agentbox-ctl` was baked before the agent
+   * existed. A closure here would foreclose that.
+   */
+  boxRunEnv: Record<string, string>;
   caps: AgentCapabilities;
 }

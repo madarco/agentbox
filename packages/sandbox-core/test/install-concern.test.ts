@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest';
+import { makeRecordingTransport } from '../src/sync/recording-transport.js';
+import { AgentInstallError, ensureAgentInstalled } from '../src/sync/concerns/install.js';
+import type { SyncExecOptions, SyncExecResult } from '@agentbox/core';
+
+/** Every exec the concern issued, as the raw argv. */
+const execs = (t: {
+  ops: ReadonlyArray<{ op: string; args: Record<string, unknown> }>;
+}): string[][] => t.ops.filter((o) => o.op === 'exec').map((o) => o.args.cmd as string[]);
+
+const ok: SyncExecResult = { exitCode: 0, stdout: '', stderr: '' };
+const fail = (stderr = 'boom'): SyncExecResult => ({ exitCode: 1, stdout: '', stderr });
+
+/** Probe misses once, everything after succeeds — the "needs installing" path. */
+function missingThenOk(): (cmd: string[], opts?: SyncExecOptions) => SyncExecResult {
+  let firstProbe = true;
+  return (cmd) => {
+    const joined = cmd.join(' ');
+    if (joined.includes('command -v')) {
+      if (firstProbe) {
+        firstProbe = false;
+        return fail('not found');
+      }
+      return ok; // the post-install verify
+    }
+    return ok;
+  };
+}
+
+describe('ensureAgentInstalled', () => {
+  it('is a no-op when the binary is already on PATH', async () => {
+    const t = makeRecordingTransport({ execResult: () => ok });
+    const res = await ensureAgentInstalled(t, 'codex');
+    expect(res).toEqual({ installed: false });
+    // Exactly one call: the probe. Nothing is installed, nothing escalates.
+    expect(execs(t)).toEqual([['sh', '-c', 'command -v codex']]);
+  });
+
+  it('probes as the box user, not root — claude lives in ~/.local/bin', async () => {
+    const t = makeRecordingTransport({ execResult: () => ok });
+    await ensureAgentInstalled(t, 'claude');
+    const probe = t.ops.find((o) => o.op === 'exec');
+    expect(probe?.args.opts).toBeUndefined();
+  });
+
+  it('resolves the wire alias claude-code to the claude spec', async () => {
+    const t = makeRecordingTransport({ execResult: () => ok });
+    await ensureAgentInstalled(t, 'claude-code');
+    expect(execs(t)[0]).toEqual(['sh', '-c', 'command -v claude']);
+  });
+
+  it('installs codex via npm as root, after its apt prerequisite', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    const res = await ensureAgentInstalled(t, 'codex');
+    expect(res).toEqual({ installed: true });
+
+    const cmds = execs(t).map((c) => c.join(' '));
+    expect(cmds[0]).toBe('sh -c command -v codex');
+    // bubblewrap first — codex falls back to a bundled copy and warns without it.
+    expect(cmds[1]).toContain('apt-get install -y --no-install-recommends bubblewrap');
+    expect(cmds[2]).toContain('npm install -g @openai/codex');
+    // ...and the last call re-verifies the binary actually landed.
+    expect(cmds[cmds.length - 1]).toBe('sh -lc command -v codex');
+  });
+
+  it('escalates root work so it works on docker AND cloud', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'opencode');
+
+    const install = t.ops
+      .filter((o) => o.op === 'exec')
+      .find((o) => (o.args.cmd as string[]).join(' ').includes('npm install -g opencode-ai'));
+    const script = (install?.args.cmd as string[])[2]!;
+    // Docker honours `--user root` so `id -u` is 0 and it runs directly; cloud
+    // ignores the user option, so the same string re-enters through sudo.
+    expect(script).toMatch(/if \[ "\$\(id -u\)" = 0 \]; then/);
+    expect(script).toContain('sudo -n sh -c');
+    expect(install?.args.opts).toEqual({ user: 'root' });
+  });
+
+  it('does NOT escalate a box-user recipe — root would install claude into /root', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude');
+
+    const install = t.ops
+      .filter((o) => o.op === 'exec')
+      .find((o) => (o.args.cmd as string[]).join(' ').includes('claude.ai/install.sh'));
+    expect(install?.args.opts).toBeUndefined();
+    expect((install?.args.cmd as string[]).join(' ')).not.toContain('sudo');
+  });
+
+  it('fetches the claude installer to a file rather than piping it to a shell', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude');
+    const script = execs(t)
+      .map((c) => c.join(' '))
+      .find((c) => c.includes('claude.ai/install.sh'))!;
+    // `curl | bash` hides a blocked download behind bash's exit 0.
+    expect(script).not.toMatch(/curl[^|]*\|\s*(ba)?sh/);
+    expect(script).toContain('-o /tmp/agentbox-agent-install.sh');
+    expect(script).toContain('i=1; while :; do');
+  });
+
+  it('throws when the installer fails, quoting the output', async () => {
+    const t = makeRecordingTransport({
+      execResult: (cmd) =>
+        cmd.join(' ').includes('command -v') ? fail('nope') : fail('npm ERR! 403'),
+    });
+    await expect(ensureAgentInstalled(t, 'opencode')).rejects.toThrow(AgentInstallError);
+    await expect(ensureAgentInstalled(t, 'opencode')).rejects.toThrow(/npm ERR! 403/);
+  });
+
+  it('throws when the installer exits 0 but the binary is still missing', async () => {
+    // A real failure mode: a wrapper that swallows a 403, or a wrong prefix.
+    const t = makeRecordingTransport({
+      execResult: (cmd) => (cmd.join(' ').includes('command -v') ? fail('nope') : ok),
+    });
+    await expect(ensureAgentInstalled(t, 'opencode')).rejects.toThrow(/still not on PATH/);
+  });
+
+  it('fails loudly when the apt prerequisite cannot be installed', async () => {
+    const t = makeRecordingTransport({
+      execResult: (cmd) => {
+        const j = cmd.join(' ');
+        if (j.includes('command -v')) return fail('nope');
+        if (j.includes('apt-get')) return fail('E: Unable to locate package');
+        return ok;
+      },
+    });
+    await expect(ensureAgentInstalled(t, 'codex')).rejects.toThrow(
+      /apt prerequisites \(bubblewrap\)/,
+    );
+  });
+});

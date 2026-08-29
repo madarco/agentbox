@@ -22,7 +22,18 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
   {
     id: 'claude',
     aliases: ['claude-code'],
+    wireId: 'claude-code',
     sessionName: 'claude',
+    binary: 'claude',
+    // Anthropic's native installer is the canonical path (code.claude.com/docs/en/setup)
+    // and drops the binary at ~/.local/bin/claude, which is what the host's
+    // `.claude.json` (installMethod=native) expects. The CDN intermittently 403s
+    // cloud egress IPs under load, hence the retries. The npm package is a
+    // BAKE-TIME-only fallback selected by `box.claudeInstall`, not a second recipe.
+    install: {
+      recipe: { kind: 'script', url: 'https://claude.ai/install.sh', retries: 3 },
+      runAs: 'box-user',
+    },
     dockerVolume: 'agentbox-claude-config',
     staticPaths: [
       {
@@ -71,13 +82,17 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       'CLAUDE_EFFORT',
       'ANTHROPIC_MODEL',
     ],
-    boxRunEnv: () => ({}),
+    boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
   },
   {
     id: 'codex',
     aliases: [],
     sessionName: 'codex',
+    binary: 'codex',
+    // `bubblewrap` is Codex's command-sandbox backend; without it on PATH Codex
+    // falls back to a bundled copy and warns on every run.
+    install: { recipe: { kind: 'npm', package: '@openai/codex' }, runAs: 'root', apt: ['bubblewrap'] },
     dockerVolume: 'agentbox-codex-config',
     staticPaths: [
       {
@@ -138,13 +153,15 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       realShape: 'nonempty-json',
     },
     forwardedEnvKeys: ['OPENAI_API_KEY'],
-    boxRunEnv: () => ({}),
+    boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
   },
   {
     id: 'opencode',
     aliases: [],
     sessionName: 'opencode',
+    binary: 'opencode',
+    install: { recipe: { kind: 'npm', package: 'opencode-ai' }, runAs: 'root' },
     dockerVolume: 'agentbox-opencode-config',
     // The three-XDG-dir layout as DATA: the generic seed loop reproduces
     // `ensureOpencodeVolume`'s three-source rsync (data + config→config +
@@ -197,10 +214,10 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       'GOOGLE_API_KEY',
       'GROQ_API_KEY',
     ],
-    boxRunEnv: () => ({
+    boxRunEnv: {
       OPENCODE_CONFIG_DIR: `${OPENCODE_BOX_DIR}/config`,
       XDG_STATE_HOME: `${OPENCODE_BOX_DIR}/.state`,
-    }),
+    },
     caps: { resume: false, teleport: 'stub', activitySource: 'plugin' },
   },
 ];

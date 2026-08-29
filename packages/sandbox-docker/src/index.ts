@@ -18,6 +18,8 @@ export {
   buildShellArgv,
   CLAUDE_FORWARDED_ENV_KEYS,
   ClaudeSessionError,
+  ensureClaudeInstalled,
+  type EnsureClaudeInstalledResult,
   claudeSessionInfo,
   CONTAINER_USER,
   DEFAULT_CLAUDE_SESSION,
