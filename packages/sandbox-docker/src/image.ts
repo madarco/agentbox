@@ -239,6 +239,8 @@ export interface PullOrBuildOptions {
   registry?: string;
   /** `--build-arg K=V` pairs forwarded to the local `docker build` (ignored on a registry pull). */
   buildArgs?: Record<string, string>;
+  /** Agent-set key this build is for, so its prepared record is kept separately. */
+  variant?: string;
 }
 
 /**
@@ -267,6 +269,7 @@ export async function pullOrBuild(
         imageRef: ref,
         contextSha256: fingerprint.contextSha256,
         ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+        ...(opts.variant === undefined ? {} : { variant: opts.variant }),
       });
       opts.onProgress?.(`[image] pulled ${target} -> ${ref}`);
       return { source: 'pulled' };
@@ -314,6 +317,7 @@ export async function pullOrBuild(
       imageRef: ref,
       contextSha256: fingerprint.contextSha256,
       ...(fingerprint.manifest ? { files: fingerprint.manifest } : {}),
+      ...(opts.variant === undefined ? {} : { variant: opts.variant }),
     });
   }
   return { source: 'built' };
@@ -392,7 +396,7 @@ export async function ensureImage(
     return { ref, built: false, reason: 'image present (fingerprint skipped)' };
   } else if (!prepared) {
     reason = 'no docker-prepared.json on disk';
-  } else if (!preparedMatches(prepared, fingerprint.contextSha256)) {
+  } else if (!preparedMatches(prepared, fingerprint.contextSha256, agentSetArg(agents))) {
     reason =
       `build context changed (was ${prepared.base?.contextSha256?.slice(0, 12) ?? '<none>'}, ` +
       `now ${fingerprint.contextSha256.slice(0, 12)})`;
@@ -415,6 +419,7 @@ export async function ensureImage(
     // that genuinely isn't published still falls back to a local build.
     allowPull: opts.allowPull,
     registry: opts.registry,
+    variant: agentSetArg(agents),
     buildArgs: {
       ...(npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : {}),
       ...(agents.length > 0 ? { AGENTBOX_AGENTS: agentSetArg(agents) } : {}),
