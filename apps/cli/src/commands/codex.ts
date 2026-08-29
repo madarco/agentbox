@@ -307,17 +307,22 @@ async function maybeRunCodexLogin(args: { image: string; yes: boolean }): Promis
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS codex, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['codex'],
+    onProgress: imageProgress(s),
+  });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing codex config');
   await ensureCodexVolume(
     { volume: SHARED_CODEX_VOLUME },
-    { syncFromHost: true, image: args.image },
+    { syncFromHost: true, image: loginImage },
   );
   s.stop('image ready');
 
-  const res = await signInToCodex(args.image, []);
+  const res = await signInToCodex(loginImage, []);
   if (!res.ok) {
     log.warn('Codex login did not complete; continuing — run `agentbox codex login` to retry.');
     return;
@@ -362,15 +367,20 @@ async function maybeRunCloudCodexLogin(args: { image: string; yes: boolean }): P
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS codex, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['codex'],
+    onProgress: imageProgress(s),
+  });
   s.message('preparing codex config');
   await ensureCodexVolume(
     { volume: SHARED_CODEX_VOLUME },
-    { syncFromHost: true, image: args.image },
+    { syncFromHost: true, image: loginImage },
   );
   s.stop('image ready');
 
-  const res = await signInToCodex(args.image, []);
+  const res = await signInToCodex(loginImage, []);
   if (!res.ok) {
     log.warn('Codex login did not complete; continuing — run `agentbox codex login` to retry.');
     return;
@@ -1422,11 +1432,15 @@ const codexLoginCommand = new Command('login')
     }
     try {
       const cfg = await loadEffectiveConfig(process.cwd());
-      const image = cfg.effective.box.image;
+      const baseImage = cfg.effective.box.image;
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: imageProgress(s) });
+      // The login container RUNS codex; the base image is agentless.
+      const { ref: image } = await ensureImage(baseImage, {
+        agents: ['codex'],
+        onProgress: imageProgress(s),
+      });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing codex config');

@@ -141,6 +141,19 @@ export function writePreparedDockerState(opts: {
 }
 
 /**
+ * The fingerprint stamped for one variant (`''` = the agentless base).
+ *
+ * Reads the variant's own record, falling back to `base` for records written
+ * before variants existed. Callers must NOT read `base` directly: it is
+ * overwritten with whatever was prepared most recently, so after an
+ * `agentbox claude` bake it holds the claude-variant hash and comparing the
+ * agentless fingerprint against it reports a spurious `stale`.
+ */
+export function preparedShaFor(state: PreparedDockerState | null, variant = ''): string | null {
+  return state?.variants?.[variant]?.contextSha256 ?? state?.base?.contextSha256 ?? null;
+}
+
+/**
  * Convenience for `ensureImage` and `prepare` — true when the stamped
  * fingerprint matches.
  *
@@ -152,9 +165,7 @@ export function preparedMatches(
   current: string,
   variant?: string,
 ): boolean {
-  const own = state?.variants?.[variant ?? ''];
-  if (own) return own.contextSha256 === current;
-  return state?.base?.contextSha256 === current;
+  return preparedShaFor(state, variant ?? '') === current;
 }
 
 /** Re-export so callers don't reach into image.ts just for the Dockerfile path. */

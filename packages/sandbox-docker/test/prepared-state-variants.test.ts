@@ -69,3 +69,26 @@ describe('prepared docker state — per-variant records', () => {
     expect(readPreparedDockerState()?.base?.contextSha256).toBe('aaa');
   });
 });
+
+describe('freshness reads the base variant, not the last-prepared image', () => {
+  it('does not report the agentless base stale after an agent bake', async () => {
+    const { writePreparedDockerState, preparedShaFor, readPreparedDockerState } =
+      await import('../src/prepared-state.js');
+    // Order matters: the agent bake lands LAST, so `base` holds its hash.
+    writePreparedDockerState({
+      imageRef: 'agentbox/box:dev',
+      contextSha256: 'baseSha',
+      variant: '',
+    });
+    writePreparedDockerState({
+      imageRef: 'agentbox/box:dev-claude',
+      contextSha256: 'claudeSha',
+      variant: 'claude',
+    });
+    const state = readPreparedDockerState();
+    expect(state?.base?.contextSha256).toBe('claudeSha'); // last prepared, as before
+    // ...but the base's own slot is what the freshness check must consult.
+    expect(preparedShaFor(state, '')).toBe('baseSha');
+    expect(preparedShaFor(state, 'claude')).toBe('claudeSha');
+  });
+});

@@ -173,6 +173,8 @@ export {
   DOCKERFILE_PATH,
   registryRefForSha,
   ensureImage,
+  buildDerivedAgentImage,
+  variantImageRef,
   classifyDockerBaseFreshness,
   evaluateDockerBaseFreshness,
   type DockerBaseFreshness,

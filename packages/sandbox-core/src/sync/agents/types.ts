@@ -112,6 +112,24 @@ export interface AgentInstall {
   apt?: string[];
   /** Shell run after the recipe succeeds (dirs, symlinks, ownership). Runs as root. */
   postInstall?: string;
+  /**
+   * Alternate ways to install the same agent, keyed by mode.
+   *
+   * Only `npm` is used today: `box.claudeInstall: npm` is the documented escape
+   * hatch for hosts whose egress IP the Claude CDN 403s. Without this the mode
+   * would silently do nothing now that the install lives here rather than in a
+   * Dockerfile branch.
+   */
+  alternates?: Record<string, Omit<AgentInstall, 'alternates'>>;
+}
+
+/** Pick the install for `mode`, falling back to the default recipe. */
+export function resolveAgentInstall(
+  install: AgentInstall,
+  mode?: string,
+): Omit<AgentInstall, 'alternates'> {
+  const alt = mode ? install.alternates?.[mode] : undefined;
+  return alt ?? install;
 }
 
 export interface AgentSyncSpec {

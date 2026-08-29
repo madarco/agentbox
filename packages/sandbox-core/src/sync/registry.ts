@@ -54,6 +54,24 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
         `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
         `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
       ].join(' && '),
+      alternates: {
+        // `box.claudeInstall: npm`. npm-global drops `claude` at Node's prefix
+        // bin; symlink it into ~/.local/bin so the box is indistinguishable
+        // from a native install (the host's .claude.json says installMethod
+        // native, and the in-box integrity check compares against that).
+        npm: {
+          recipe: { kind: 'npm', package: '@anthropic-ai/claude-code' },
+          runAs: 'root',
+          postInstall: [
+            `install -d -o ${BOX_USER} -g ${BOX_USER} ${BOX_HOME}/.local/bin ${CLAUDE_BOX_DIR} ${CREDS_DIR}/claude`,
+            `ln -sf "$(command -v claude)" ${BOX_HOME}/.local/bin/claude`,
+            `ln -sfn ${CLAUDE_BOX_DIR}/_claude.json ${BOX_HOME}/.claude.json`,
+            `ln -sfn ${CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+            `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
+            `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.local/bin/claude ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+          ].join(' && '),
+        },
+      },
     },
     dockerVolume: 'agentbox-claude-config',
     staticPaths: [

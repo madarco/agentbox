@@ -75,6 +75,7 @@ export type {
   AgentInstall,
   AgentInstallRecipe,
 } from './agents/types.js';
+export { resolveAgentInstall } from './agents/types.js';
 export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
 export {
   ensureAgentInstalled,

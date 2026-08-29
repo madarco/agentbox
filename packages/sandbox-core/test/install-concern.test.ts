@@ -161,3 +161,37 @@ describe('ensureAgentInstalled — credential seeding', () => {
     await expect(ensureAgentInstalled(t, 'opencode')).resolves.toEqual({ installed: true });
   });
 });
+
+describe('install modes (box.claudeInstall)', () => {
+  it('uses the npm recipe for claude when the npm mode is selected', async () => {
+    // Without an alternate, `box.claudeInstall: npm` would silently install
+    // nothing different — the escape hatch for hosts the Claude CDN 403s.
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude', { installMode: 'npm' });
+    const cmds = execs(t).map((c) => c.join(' '));
+    expect(cmds.some((c) => c.includes('npm install -g @anthropic-ai/claude-code'))).toBe(true);
+    expect(cmds.some((c) => c.includes('claude.ai/install.sh'))).toBe(false);
+    // and it must still land on the box user's PATH, like the native install
+    expect(cmds.some((c) => c.includes('/home/vscode/.local/bin/claude'))).toBe(true);
+  });
+
+  it('falls back to the default recipe for an agent with no alternate', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'codex', { installMode: 'npm' });
+    expect(
+      execs(t)
+        .map((c) => c.join(' '))
+        .some((c) => c.includes('@openai/codex')),
+    ).toBe(true);
+  });
+
+  it('uses the native installer when no mode is given', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude');
+    expect(
+      execs(t)
+        .map((c) => c.join(' '))
+        .some((c) => c.includes('claude.ai/install.sh')),
+    ).toBe(true);
+  });
+});

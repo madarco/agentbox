@@ -15,6 +15,7 @@
 
 import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
+import { resolveAgentInstall } from '../agents/types.js';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
 import type { AgentInstall, AgentInstallRecipe } from '../agents/types.js';
 
@@ -104,14 +105,16 @@ async function installApt(
 export async function ensureAgentInstalled(
   transport: SyncTransport,
   agent: string,
-  opts: { onProgress?: (line: string) => void } = {},
+  opts: { onProgress?: (line: string) => void; installMode?: string } = {},
 ): Promise<EnsureAgentInstalledResult> {
   const spec = resolveAgentSpec(agent);
   const probe = await transport.exec(['sh', '-c', `command -v ${spec.binary}`]);
   if (probe.exitCode === 0) return { installed: false };
 
   opts.onProgress?.(`installing ${spec.id} (absent from this box image)`);
-  const install: AgentInstall = spec.install;
+  // `box.claudeInstall: npm` picks claude's npm alternate; every other agent
+  // has none and falls through to its default recipe.
+  const install = resolveAgentInstall(spec.install, opts.installMode);
 
   if (install.apt && install.apt.length > 0) {
     const apt = await installApt(transport, install.apt);

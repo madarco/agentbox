@@ -131,7 +131,12 @@ async function ensureClaudeLoginFresh(args: {
 
   log.write('claude login is expired or missing — starting browser re-login');
   await patchJobLogin(id, { required: true, phase: 'starting' });
-  await ensureImage(image, { onProgress: (line) => log.write(line) });
+  // `runClaudeLogin` RUNS claude in a throwaway container, so it needs the
+  // claude layer — the base image is agentless.
+  const { ref: loginImage } = await ensureImage(image, {
+    agents: ['claude'],
+    onProgress: (line) => log.write(line),
+  });
 
   // Serialize ALL of our manifest writes through one chain so read-modify-write
   // patches (phase/url/error AND the code-clear below) can't interleave and lose
@@ -171,7 +176,7 @@ async function ensureClaudeLoginFresh(args: {
 
   try {
     const result = await runClaudeLogin({
-      image,
+      image: loginImage,
       signal: abort.signal,
       writeRaw: (chunk) => log.raw(chunk),
       writeLog: (line) => log.write(line),

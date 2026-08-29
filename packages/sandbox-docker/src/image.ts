@@ -20,6 +20,7 @@ import {
   normalizeAgentSet,
   agentSetArg,
   resolveAgentSpec,
+  resolveAgentInstall,
   renderInstallRecipe,
   renderAptInstall,
 } from '@agentbox/sandbox-core';
@@ -384,12 +385,14 @@ export async function buildDerivedAgentImage(opts: {
   baseRef: string;
   derivedRef: string;
   agents: readonly string[];
+  /** `box.claudeInstall` — selects an agent's alternate recipe when it has one. */
+  installMode?: string;
   onProgress?: (line: string) => void;
 }): Promise<void> {
   const lines: string[] = [`FROM ${opts.baseRef}`];
   for (const id of opts.agents) {
     const spec = resolveAgentSpec(id);
-    const { install } = spec;
+    const install = resolveAgentInstall(spec.install, opts.installMode);
     lines.push(`# ---- ${spec.id} ----`, 'USER root');
     if (install.apt && install.apt.length > 0) {
       lines.push(`RUN ${renderAptInstall(install.apt)}`);
@@ -512,7 +515,13 @@ export async function ensureImage(
     return { ref: derivedRef, built: false, reason: 'image up to date' };
   }
 
-  await buildDerivedAgentImage({ baseRef, derivedRef, agents, onProgress: opts.onProgress });
+  await buildDerivedAgentImage({
+    baseRef,
+    derivedRef,
+    agents,
+    installMode: claudeInstall,
+    onProgress: opts.onProgress,
+  });
   if (derivedSha) {
     writePreparedDockerState({
       imageRef: derivedRef,
@@ -575,7 +584,7 @@ export async function evaluateDockerBaseFreshness(
   opts: { ref?: string; claudeInstall?: 'native' | 'npm'; contextDir?: string } = {},
 ): Promise<DockerBaseFreshness> {
   // Lazy import for the same circular-init reason as in ensureImage above.
-  const { computeDockerContextFingerprint, readPreparedDockerState } =
+  const { computeDockerContextFingerprint, readPreparedDockerState, preparedShaFor } =
     await import('./prepared-state.js');
   const ref = opts.ref ?? DEFAULT_BOX_IMAGE;
   const imagePresent = await imageExists(ref);
@@ -585,6 +594,9 @@ export async function evaluateDockerBaseFreshness(
   return classifyDockerBaseFreshness({
     imagePresent,
     fingerprint: raw ? claudeInstallFingerprint(raw.contextSha256, claudeInstall) : null,
-    stampedSha: readPreparedDockerState()?.base?.contextSha256 ?? null,
+    // The agentless base's OWN record. `base` is the most-recently-prepared
+    // image, which after any `agentbox <agent>` bake is a variant — comparing
+    // against it would nag `stale` for a base that is perfectly current.
+    stampedSha: preparedShaFor(readPreparedDockerState(), ''),
   });
 }

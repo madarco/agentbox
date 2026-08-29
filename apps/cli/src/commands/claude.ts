@@ -381,7 +381,12 @@ async function maybeRunClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS claude, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['claude'],
+    onProgress: imageProgress(s),
+  });
   // Seed the shared claude-config volume from the host's ~/.claude *before*
   // the login container runs, so `claude auth login` writes its oauthAccount
   // on top of the host config (trust, installMethod, project alias) rather
@@ -390,11 +395,11 @@ async function maybeRunClaudeLogin(args: {
   s.message('preparing claude config');
   await ensureClaudeVolume(
     { volume: SHARED_CLAUDE_VOLUME },
-    { syncFromHost: true, image: args.image, hostWorkspace: args.hostWorkspace },
+    { syncFromHost: true, image: loginImage, hostWorkspace: args.hostWorkspace },
   );
   s.stop('image ready');
 
-  const res = await signInToClaude(args.image, ['--claudeai']);
+  const res = await signInToClaude(loginImage, ['--claudeai']);
   if (!res.ok) {
     log.warn('Claude login did not complete; continuing — run `agentbox claude login` to retry.');
     return;
@@ -451,15 +456,20 @@ async function maybeRunCloudClaudeLogin(args: {
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS claude, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['claude'],
+    onProgress: imageProgress(s),
+  });
   s.message('preparing claude config');
   await ensureClaudeVolume(
     { volume: SHARED_CLAUDE_VOLUME },
-    { syncFromHost: true, image: args.image, hostWorkspace: args.hostWorkspace },
+    { syncFromHost: true, image: loginImage, hostWorkspace: args.hostWorkspace },
   );
   s.stop('image ready');
 
-  const res = await signInToClaude(args.image, ['--claudeai']);
+  const res = await signInToClaude(loginImage, ['--claudeai']);
   if (!res.ok) {
     log.warn('Claude login did not complete; continuing — run `agentbox claude login` to retry.');
     return;
@@ -1848,10 +1858,15 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
   }
 
   const cfg = await loadEffectiveConfig(process.cwd());
-  const image = cfg.effective.box.image;
+  const baseImage = cfg.effective.box.image;
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(image, { onProgress: imageProgress(s) });
+  // The detached login worker RUNS claude, so record the claude-layer ref in
+  // the request — the base image is agentless.
+  const { ref: image } = await ensureImage(baseImage, {
+    agents: ['claude'],
+    onProgress: imageProgress(s),
+  });
   s.stop('image ready');
 
   const id = randomUUID().slice(0, 8);
@@ -1990,11 +2005,15 @@ const claudeLoginCommand = new Command('login')
         }
         intro('Signing in to Claude...');
         const cfg = await loadEffectiveConfig(process.cwd());
-        const image = cfg.effective.box.image;
+        const baseImage = cfg.effective.box.image;
 
         const s = spinner();
         s.start('preparing sandbox image');
-        await ensureImage(image, { onProgress: imageProgress(s) });
+        // The throwaway login container RUNS claude; the base image is agentless.
+        const { ref: image } = await ensureImage(baseImage, {
+          agents: ['claude'],
+          onProgress: imageProgress(s),
+        });
         s.stop('image ready');
 
         // Throwaway `docker run` against the shared volume — the written
