@@ -137,6 +137,7 @@ async function runPrepareJob(
     allowPull,
     registry,
     claudeInstall,
+    ...(job.prepare?.agents ? { agents: job.prepare.agents } : {}),
     size,
     location,
     sandboxClass,

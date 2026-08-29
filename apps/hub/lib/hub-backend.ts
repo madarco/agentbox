@@ -144,6 +144,17 @@ import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
+
+/**
+ * Canonical form of an agent set for dedupe comparison: sorted, deduped,
+ * comma-joined. Absent and empty both collapse to `''` (the agentless base) so
+ * a request that omits the field matches one that sends `[]`.
+ */
+function normalizeAgents(agents: readonly string[] | undefined): string {
+  return [...new Set((agents ?? []).map((a) => a.trim()).filter((a) => a.length > 0))]
+    .sort()
+    .join(',');
+}
 import type {
   BakeDiff,
   Approval,
@@ -2337,11 +2348,16 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const prev = prepareEnqueueChain.get(id) ?? Promise.resolve();
       const run = prev.then(async (): Promise<CreateBoxResult> => {
         try {
-          // One bake per provider at a time — reuse the in-flight job if present.
+          // One bake per provider AND agent set at a time. Keying on the
+          // provider alone would hand a `--agents codex` request the jobId of an
+          // in-flight `--agents claude` bake, and the caller would wait on, and
+          // report success for, an artifact that never contains codex.
+          const wantAgents = normalizeAgents(opts?.agents);
           const existing = (await loadQueue()).find(
             (j) =>
               j.kind === 'prepare' &&
               j.providerName === id &&
+              normalizeAgents(j.prepare?.agents) === wantAgents &&
               (j.status === 'queued' || j.status === 'running'),
           );
           if (existing) return { ok: true, jobId: existing.id };
@@ -2351,6 +2367,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             providerName: id,
             force: opts?.force,
             claudeInstall: opts?.claudeInstall,
+            ...(opts?.agents ? { agents: opts.agents } : {}),
             build: opts?.build,
             size: opts?.size,
             location: opts?.location,

@@ -374,6 +374,17 @@ export interface PrepareOptions {
    */
   claudeInstall?: 'native' | 'npm';
   /**
+   * Agents to bake into the base image / snapshot. Empty or omitted = an
+   * agentless base; anything missing is added later, either as a derived layer
+   * or by `ensureAgentInstalled` against a live box.
+   *
+   * Bake-time, and it has to be here rather than only on `create`, because the
+   * prepare paths bake each agent's host static config into the snapshot
+   * (`stageAllAgentStatic`) — a claude-only snapshot is a genuinely different
+   * artifact from an all-agents one, and the fingerprint has to say so.
+   */
+  agents?: string[];
+  /**
    * Bake-time VM size for providers whose resources are fixed at snapshot/
    * template-build time (daytona: `cpu-memory-disk` GB, e.g. `4-8-20`; e2b:
    * `cpu-memory` GB, e.g. `4-8`). Resolved by the CLI from `--size` /

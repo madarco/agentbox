@@ -186,6 +186,8 @@ export interface QueueJobPrepare {
   force?: boolean;
   /** Bake-time Claude install method (falls back to the effective config). */
   claudeInstall?: 'native' | 'npm';
+  /** Agents to bake into the base. Omitted/empty = agentless. */
+  agents?: string[];
   /** Force a local docker build instead of pulling the registry base (`--build`). */
   build?: boolean;
   /** Bake-time VM size for the fixed-resource providers (daytona `cpu-mem-disk`, e2b `cpu-mem`). */
@@ -393,6 +395,8 @@ export interface EnqueuePrepareJobInput {
   force?: boolean;
   /** Bake-time Claude install method (else the effective config decides). */
   claudeInstall?: 'native' | 'npm';
+  /** Agents to bake into the base. */
+  agents?: string[];
   /** Force a local docker build instead of pulling the registry base (`--build`). */
   build?: boolean;
   /** Bake-time VM size (else the effective config's `box.size<Provider>` decides). */
@@ -418,6 +422,7 @@ export async function enqueuePrepareJob(input: EnqueuePrepareJobInput): Promise<
   const prepare: QueueJobPrepare = {
     ...(input.force ? { force: true } : {}),
     ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+    ...(input.agents ? { agents: input.agents } : {}),
     ...(input.build ? { build: true } : {}),
     ...(input.size ? { size: input.size } : {}),
     ...(input.location ? { location: input.location } : {}),
