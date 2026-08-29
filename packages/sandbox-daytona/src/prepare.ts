@@ -32,6 +32,10 @@ import {
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
+  resolveAgentSpec,
+  resolveAgentInstall,
+  renderInstallRecipe,
+  renderAptInstall,
 } from '@agentbox/sandbox-core';
 import {
   DAYTONA_DEFAULT_RESOURCES,
@@ -142,6 +146,45 @@ export function buildDaytonaSeedCommands(
 }
 
 /**
+ * Dockerfile commands that install one agent set, appended after the seed
+ * layers on a container-class variant build.
+ *
+ * Daytona's container class has no `Image.fromSnapshot`, so a variant cannot
+ * boot the base and re-snapshot the way linux-vm does. Appending the recipe to
+ * the SAME Dockerfile build gets the derived-layer benefit a different way:
+ * every instruction up to this point is byte-identical across variants, so
+ * Daytona's builder layer-cache serves them and only the agent step is new.
+ *
+ * The recipes are the same `AGENT_SYNC_SPECS.install` data every other path
+ * uses, so a baked agent and one added by `ensureAgentInstalled` land the same.
+ */
+export function buildDaytonaAgentCommands(
+  agents: readonly string[],
+  claudeInstall?: 'native' | 'npm',
+): string[] {
+  const cmds: string[] = [];
+  for (const id of agents) {
+    const spec = resolveAgentSpec(id);
+    const install = resolveAgentInstall(spec.install, claudeInstall);
+    if (install.apt && install.apt.length > 0) {
+      cmds.push('USER root', `RUN ${renderAptInstall(install.apt)}`);
+    }
+    const recipe = renderInstallRecipe(install.recipe);
+    // `runAs: 'box-user'` is load-bearing: the native installers write into the
+    // INVOKING user's ~/.local/bin, so a root RUN puts the binary in /root and
+    // the box user never sees it.
+    cmds.push(install.runAs === 'box-user' ? 'USER vscode' : 'USER root', `RUN ${recipe}`);
+    if (install.postInstall) cmds.push('USER root', `RUN ${install.postInstall}`);
+    // Prove it landed on the BOX USER's PATH — an installer that exits 0
+    // without a usable binary is a real failure mode, and a build failure here
+    // beats a box that attaches to a session that died instantly.
+    cmds.push('USER vscode', `RUN command -v ${spec.binary} >/dev/null`);
+  }
+  cmds.push('USER vscode');
+  return cmds;
+}
+
+/**
  * Run `agentbox prepare --provider daytona`. Returns `{ snapshotName }` on
  * success so the CLI can pin it into the project config.
  */
@@ -203,15 +246,23 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // it must be a linux-vm one, since that is the only class we can boot and
   // re-snapshot.
   const baseEntry = preparedEntryFor(prepared, '');
-  if (derived && (!baseEntry || (baseEntry.extras?.class ?? 'container') !== 'linux-vm')) {
+  if (derived && !baseEntry) {
     throw new Error(
-      derived && baseEntry
-        ? 'daytona --agents needs a linux-vm base to derive from (the container class has no ' +
-            'boot-and-resnapshot path yet). Run `agentbox config set box.daytonaClass linux-vm` ' +
-            'and `agentbox prepare --provider daytona` first.'
-        : 'no daytona base snapshot to derive from — run `agentbox prepare --provider daytona` ' +
-            'first, then re-run with --agents.',
+      'no daytona base snapshot to derive from — run `agentbox prepare --provider daytona` ' +
+        'first, then re-run with --agents.',
     );
+  }
+  // A variant must be the SAME class as the base it derives from: a snapshot's
+  // class is immutable and one class cannot make a sandbox of the other. Take
+  // the class from the base rather than from config, so a `box.daytonaClass`
+  // that disagrees with what was actually baked can't produce an unbootable
+  // pairing. The two classes then derive by different mechanisms below.
+  const baseClass: DaytonaSandboxClass = baseEntry?.extras?.class ?? 'container';
+  if (derived) {
+    sandboxClass = baseClass;
+    snapshotName =
+      opts.name ??
+      defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
   }
 
   if (
@@ -281,7 +332,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // re-snapshot. Much shorter than the base bake — the expensive parts (the
   // ~2 GB image pull, the setuid sudo repair, the image-ENV restore, the host
   // static config) are already in the snapshot we boot.
-  if (derived) {
+  if (derived && baseClass === 'linux-vm') {
     const baked = await bakeDaytonaVmVariant({
       client: getClient(opts.location ?? DAYTONA_VM_REGION),
       backend: daytonaBackend,
@@ -317,7 +368,11 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     return { snapshotName: baked.snapshotName };
   }
 
-  if (sandboxClass === 'linux-vm') {
+  // A container-class variant falls through to the Dockerfile build below,
+  // which appends the agent recipe as extra layers (see
+  // `buildDaytonaAgentCommands`) — there is no `Image.fromSnapshot` to boot the
+  // base from, so the builder's layer cache is what makes it cheap instead.
+  if (!derived && sandboxClass === 'linux-vm') {
     const dockerBaseSha = await computeDockerBaseSha(claudeInstall);
     if (!dockerBaseSha) {
       throw new Error(
@@ -438,6 +493,9 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     }
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
+    if (derived) {
+      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, claudeInstall));
+    }
 
     // Region: a container snapshot registers wherever the client points (the
     // account default unless the user pinned `box.daytonaRegion`).
@@ -457,6 +515,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     log(`snapshot '${snapshot.name}' is ${snapshot.state ?? 'created'}`);
     if (fingerprint) {
       writePreparedDaytonaState({
+        variant: variantKey,
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
         size: sizeKey,

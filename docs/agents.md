@@ -194,70 +194,90 @@ collapse — see the seam analysis in
 
 ## Provider status
 
-| | docker | hetzner | vercel, e2b, daytona, DO |
-|---|---|---|---|
-| agentless base | yes | yes | no — the provision scripts still install all three |
-| agents as a derived layer/snapshot | yes | yes | not yet |
-| per-box agent selection | yes | yes | not yet — cloud still mounts every agent's volume |
-| on-demand install into a live box | yes | yes | yes |
+| | docker | hetzner | e2b | daytona | vercel, DO |
+|---|---|---|---|---|---|
+| agentless base | yes | yes | yes | yes | no — the provision scripts still install all three |
+| agents as a derived layer/snapshot | yes | yes | yes | yes | not yet |
+| per-box agent selection | yes | yes | yes | yes | not yet |
+| install into a live box on demand | yes | yes | yes | yes | yes |
 
-Vercel, E2B and DigitalOcean bake from their own provision scripts, which still
-install all three agents — so their behaviour is unchanged and the create-time
-install probe is a no-op there.
-
-**Daytona is the exception.** It bakes from `Dockerfile.box` (container class,
-`sandbox-daytona/src/dockerfile-context.ts`) or from that image published to
-GHCR (linux-vm, `prepare-vm.ts`), and that Dockerfile is now agentless. A
-*fresh* `prepare --provider daytona` therefore produces a base with no agents
-and falls back to the per-box install (~30-90s on first use). Existing daytona
-bases keep their agents until re-prepared.
+Vercel and DigitalOcean still bake all three agents into their base, so their
+behaviour is unchanged and the create-time install probe is a no-op there.
 
 Every cloud box gets per-agent credential isolation at **create**: an
 `agentbox claude --provider <cloud>` box seeds only claude's credential, and the
-other agents' symlinks dangle.
+other agents' symlinks dangle. On a provider with an agentless base that now
+holds across pause/resume too — verified live on hetzner and daytona.
 
-**Known limitation on daytona:** a pause/resume re-materialises the other
-agents' credentials. This is not the host re-seeding them — verified with the
-relay stopped and with the daytona backend's `uploadFile` and `exec` both
-instrumented, neither of which is called. Daytona's archive/restore re-applies
-content from the baked base snapshot, which still contains every agent's
-credentials. The fix is an agentless daytona base, not more host-side filtering.
-Hetzner, which now has one, holds isolation across pause/resume.
+> **Resolved:** daytona used to re-materialise the other agents' credentials on
+> resume. It was never host re-seeding (proven with the relay stopped and the
+> backend's `uploadFile`/`exec` instrumented); the archive/restore re-applied
+> content from a baked base that contained every agent's credential paths. The
+> agentless base removes the source, and a resumed box now shows only its own
+> agent's credential.
 
-### Cloud: agentless base + derived snapshots (hetzner)
+### The three tiers, per provider
 
-The snapshot analogue of docker's `FROM base` layer, and the same three tiers:
+Everything below is the same idea as docker's `FROM base` layer: an agentless
+base, one artifact per agent set on top of it, and a runtime install as the
+fallback when no matching artifact exists. Only the *derive mechanism* differs —
+there is no shared `deriveAgentSnapshot` over `CloudBackend`, because
+hetzner/DO's `backend.exec` is gated on a per-box SSH key and cannot address a
+bake VPS.
 
-| tier | what it is | cost |
+| provider | how a variant is derived | measured cost |
 |---|---|---|
-| base | `prepare --provider hetzner` — Ubuntu, deps, ctl, browser, **no agents** | ~6 min, 1.87 GB |
-| variant | `prepare --provider hetzner --agents claude` — boots the base, runs one install recipe, re-snapshots | ~3.5 min |
-| runtime | no matching variant: the create-time probe installs the agent into the live box | ~30-60s per box |
+| docker | `FROM base` + recipe | seconds |
+| e2b | `Template().fromTemplate(base)` — declarative, no boot | **43s** |
+| daytona (container) | recipe appended to the same Dockerfile build; the builder's layer cache serves everything below it | **77s** (base: 3m18s) |
+| daytona (linux-vm) | boot the base snapshot, install, stop, cold-snapshot | untested live |
+| hetzner | boot the base snapshot, install over ssh, re-snapshot | ~3.5 min |
 
-The recipes are the same `AGENT_SYNC_SPECS.install` entries the docker layer and
-`ensureAgentInstalled` use, so a baked agent and a runtime-added one are byte-
-identical in layout. Only the *execution* differs per provider — there is no
-shared `deriveAgentSnapshot` over `CloudBackend`, because hetzner's
-`backend.exec` is gated on a per-box SSH key and cannot address a bake VPS.
+The recipes are the same `AGENT_SYNC_SPECS.install` entries in every row, so a
+baked agent and a runtime-added one are byte-identical in layout.
 
-Three details that are easy to get wrong:
+### Rules that cost us a live debugging cycle each
 
-- **The derived bake logs in as `vscode`, not `root`.** The base snapshot already
-  carries install-box.sh's `PermitRootLogin no`, so a root key is accepted by
-  cloud-init and then refused by sshd — the symptom is a `waitForSsh` timeout
-  with nothing in any log.
-- **`box.imageHetzner` is pinned to the base's description by every bake**, so by
-  create time the image ref usually names our own base rather than the sentinel.
-  `resolveImageId` treats that as "no explicit choice" and still consults the
-  variants map; otherwise the pin silently defeats variant selection.
-- **A variant bake must not pin, share, or adopt.** `box.image<Provider>`,
-  the custody record and base adoption are all single-slot: a variant written
-  into any of them makes every box on the provider boot one agent's snapshot.
+- **The base pin defeats variant selection.** Every bake pins
+  `box.image<Provider>` to the base's own name, so by create time the image ref
+  usually *is* our base rather than the sentinel. Hetzner and daytona both need
+  a `refIsOurBase` escape that treats it as "no explicit choice"; e2b doesn't,
+  because its backend ignores `req.image` entirely.
+- **A variant bake must not pin, share, or adopt.** `box.image<Provider>`, the
+  custody record and base adoption are all single-slot: a variant written into
+  any of them makes every box on that provider boot one agent's snapshot.
+- **`base` must stay the agentless base**, never "the most recent bake".
+  Provider-generic readers (freshness, bake sharing, `prepared-custody.ts`) read
+  `base.contextSha256` / `base.imageRef` and assume exactly that.
+- **A variant must match the base's class/shape.** On daytona a snapshot's class
+  is immutable, so the variant takes its class from the base rather than from
+  config — a `box.daytonaClass` that disagrees with what was baked would
+  otherwise produce an unbootable pairing.
+- **Derived bakes log in as the box user, not root** (hetzner): the base already
+  carries `PermitRootLogin no`, so a root key is accepted by cloud-init and then
+  refused by sshd — which looks like an unexplained `waitForSsh` timeout.
+- **Verify the binary on the BOX USER's PATH**, not just that the build exited
+  0. A native installer run as root writes into `/root` and does both.
 
-Prepared state (`~/.agentbox/hetzner-prepared.json`, schema 3) keys one record
-per agent set under `variants` (`''` = the agentless base) so baking codex does
-not invalidate the claude snapshot. Each bake deletes the snapshot it supersedes
-— only its own variant, and only after the replacement is recorded, so a failed
-bake never leaves you with no base. Snapshots carry an `agentbox.agents` label
-(`none` for the base) so an orphan sweep can tell the tiers apart without the
-local state file.
+### Per-variant records and GC
+
+Each provider keys one record per agent set under `variants` in its own
+`~/.agentbox/<provider>-prepared.json` (`''` = the agentless base), so baking
+codex never invalidates the claude artifact. Schema bumps: hetzner 3, e2b 2,
+daytona 2 — all with lossless migrations that seed `variants['']` from the
+existing `base`.
+
+GC differs by how each platform addresses artifacts:
+
+- **hetzner / daytona** — id- and name-addressed snapshots, so a rebuild orphans
+  its predecessor. Both reap it, but only for that exact variant and only after
+  the replacement is recorded, so a failed bake never leaves you with no base.
+  Hetzner had no base-snapshot GC at all before this.
+- **e2b** — templates are *named*, so rebuilding `agentbox-claude:latest` moves
+  the tag rather than orphaning an id. There is also no `Template.delete` in the
+  SDK to reap one with.
+
+Identifying a snapshot's tier from the platform side varies too: hetzner carries
+an `agentbox.agents` label (`none` for the base), while daytona's
+`snapshot.create` accepts only name/image/resources/region — so there the **name**
+is the only channel, hence `agentbox-<set>-<fp12>`.
