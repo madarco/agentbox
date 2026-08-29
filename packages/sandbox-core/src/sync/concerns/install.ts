@@ -17,7 +17,7 @@ import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
 import { resolveAgentInstall } from '../agents/types.js';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
-import type { AgentInstall, AgentInstallRecipe } from '../agents/types.js';
+import type { AgentInstallRecipe } from '../agents/types.js';
 
 /** Install failed. Callers rewrap into their own agent-specific error type. */
 export class AgentInstallError extends Error {
