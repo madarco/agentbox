@@ -154,6 +154,11 @@ RUN apt-get update \
     && printf '%s\n' '{ "iptables": true }' > /etc/docker/daemon.json \
     && usermod -aG docker vscode
 
+# Which agents this image carries, comma-separated (default: none). Declared
+# here because the per-agent home/credential dirs below are gated on it; the
+# installs themselves are further down. See the "Agents" block for the rationale.
+ARG AGENTBOX_AGENTS=
+
 # Prepare /home/vscode/.claude (the volume mount target) and the .claude.json
 # symlink. The mkdir+chown is load-bearing: when we mount the named
 # `agentbox-claude-config` volume at runtime, Docker seeds the empty volume's
@@ -166,10 +171,12 @@ RUN apt-get update \
 # from the host on every `agentbox claude` create. The target is initially
 # dangling — it materializes when `ensureClaudeVolume` copies the host's
 # ~/.claude.json into the volume.
-RUN mkdir -p /home/vscode/.claude \
-    && chown vscode:vscode /home/vscode/.claude \
-    && ln -s /home/vscode/.claude/_claude.json /home/vscode/.claude.json \
-    && chown -h vscode:vscode /home/vscode/.claude.json
+RUN case ",$AGENTBOX_AGENTS," in *,claude,*) \
+      mkdir -p /home/vscode/.claude \
+        && chown vscode:vscode /home/vscode/.claude \
+        && ln -s /home/vscode/.claude/_claude.json /home/vscode/.claude.json \
+        && chown -h vscode:vscode /home/vscode/.claude.json ;; \
+    esac
 
 # Cloud-provider credential pivot: ~/.agentbox-creds/<agent>/ is where the
 # per-org `agentbox-credentials` Daytona volume gets mounted at runtime (three
@@ -185,23 +192,32 @@ RUN mkdir -p /home/vscode/.claude \
 # The Docker provider is unaffected: its named `agentbox-{claude,codex,
 # opencode}-config` volumes mount *over* /home/vscode/.claude etc., obscuring
 # the symlinks; the volume content includes the credential files directly.
-RUN mkdir -p /home/vscode/.agentbox-creds/claude \
-             /home/vscode/.agentbox-creds/codex \
-             /home/vscode/.agentbox-creds/opencode \
-             /home/vscode/.codex \
-             /home/vscode/.local/share/opencode \
-    && ln -s /home/vscode/.agentbox-creds/claude/.credentials.json \
-             /home/vscode/.claude/.credentials.json \
-    && ln -s /home/vscode/.agentbox-creds/codex/auth.json \
-             /home/vscode/.codex/auth.json \
-    && ln -s /home/vscode/.agentbox-creds/opencode/auth.json \
-             /home/vscode/.local/share/opencode/auth.json \
-    && chown -R vscode:vscode /home/vscode/.agentbox-creds \
-                              /home/vscode/.codex \
-                              /home/vscode/.local \
-    && chown -h vscode:vscode /home/vscode/.claude/.credentials.json \
-                              /home/vscode/.codex/auth.json \
-                              /home/vscode/.local/share/opencode/auth.json
+#
+# Gated on AGENTBOX_AGENTS (see below) so a box built for one agent has no trace
+# of the others -- no ~/.codex, no ~/.local/share/opencode. An agent added later
+# by `ensureAgentInstalled` doesn't need these: `pushCredentialToBox` mkdir -p's
+# the directory it writes into.
+RUN case ",$AGENTBOX_AGENTS," in *,claude,*) \
+      mkdir -p /home/vscode/.agentbox-creds/claude \
+        && ln -s /home/vscode/.agentbox-creds/claude/.credentials.json \
+                 /home/vscode/.claude/.credentials.json \
+        && chown -R vscode:vscode /home/vscode/.agentbox-creds \
+        && chown -h vscode:vscode /home/vscode/.claude/.credentials.json ;; \
+    esac \
+ && case ",$AGENTBOX_AGENTS," in *,codex,*) \
+      mkdir -p /home/vscode/.agentbox-creds/codex /home/vscode/.codex \
+        && ln -s /home/vscode/.agentbox-creds/codex/auth.json \
+                 /home/vscode/.codex/auth.json \
+        && chown -R vscode:vscode /home/vscode/.agentbox-creds /home/vscode/.codex \
+        && chown -h vscode:vscode /home/vscode/.codex/auth.json ;; \
+    esac \
+ && case ",$AGENTBOX_AGENTS," in *,opencode,*) \
+      mkdir -p /home/vscode/.agentbox-creds/opencode /home/vscode/.local/share/opencode \
+        && ln -s /home/vscode/.agentbox-creds/opencode/auth.json \
+                 /home/vscode/.local/share/opencode/auth.json \
+        && chown -R vscode:vscode /home/vscode/.agentbox-creds /home/vscode/.local \
+        && chown -h vscode:vscode /home/vscode/.local/share/opencode/auth.json ;; \
+    esac
 
 # Prepare /home/vscode/.vscode-server and /home/vscode/.cursor-server (+ their
 # extensions subdirs) so the named volumes mounted at runtime — per-box
@@ -213,6 +229,21 @@ RUN mkdir -p /home/vscode/.agentbox-creds/claude \
 # mkdir <server>/bin/<commit>/ during server install ("Permission denied").
 RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/extensions \
     && chown -R vscode:vscode /home/vscode/.vscode-server /home/vscode/.cursor-server
+
+# ---------------------------------------------------------------------------
+# Agents. AGENTBOX_AGENTS is a comma-separated set (e.g. "claude,codex"); the
+# DEFAULT IS EMPTY, so the plain base image ships no agent at all.
+#
+# A box gets exactly the agent it was launched for. That keeps unused agents'
+# credentials out of the box, lets the image shrink to the workload, and makes
+# adding an agent a registry row rather than a new RUN here. Anything not baked
+# is installed on demand by `ensureAgentInstalled`
+# (packages/sandbox-core/src/sync/concerns/install.ts), which runs the SAME
+# recipes this file does — keep the two in step.
+#
+# `case ,$AGENTBOX_AGENTS,` with comma sentinels is the membership test; it is
+# POSIX sh, which is what RUN gives us.
+# ---------------------------------------------------------------------------
 
 # Claude Code. AGENTBOX_CLAUDE_INSTALL selects the method (default `native`,
 # Anthropic's installer — the recommended path per code.claude.com/docs/en/setup).
@@ -230,50 +261,53 @@ USER vscode
 # chain instead of being hidden behind bash's exit 0, and retry it (3 attempts,
 # 60s then 240s backoff) before giving up, then verify `claude` is on PATH.
 # (RUN's default shell is /bin/sh, so a plain loop — no pipefail/bash arrays.)
-RUN if [ "$AGENTBOX_CLAUDE_INSTALL" != "npm" ]; then \
-      i=1; while :; do \
-        curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
-          && bash /tmp/claude-install.sh stable \
-          && command -v claude >/dev/null && break; \
-        [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
-        w=60; [ "$i" -ge 2 ] && w=240; \
-        echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
-        i=$((i+1)); \
-      done; rm -f /tmp/claude-install.sh; \
-    fi
+RUN case ",$AGENTBOX_AGENTS," in *,claude,*) \
+      if [ "$AGENTBOX_CLAUDE_INSTALL" != "npm" ]; then \
+        i=1; while :; do \
+          curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+            && bash /tmp/claude-install.sh stable \
+            && command -v claude >/dev/null && break; \
+          [ "$i" -ge 3 ] && { echo "claude native install failed after 3 attempts" >&2; exit 71; }; \
+          w=60; [ "$i" -ge 2 ] && w=240; \
+          echo "claude install attempt $i failed — backing off ${w}s" >&2; sleep "$w"; \
+          i=$((i+1)); \
+        done; rm -f /tmp/claude-install.sh; \
+      fi ;; \
+    esac
 USER root
 # npm branch: npm-global drops `claude` at Node's prefix bin; symlink it into
 # /home/vscode/.local/bin/claude so the box stays indistinguishable from native.
-RUN if [ "$AGENTBOX_CLAUDE_INSTALL" = "npm" ]; then \
-      npm install -g @anthropic-ai/claude-code \
-        && install -d -o vscode -g vscode /home/vscode/.local/bin \
-        && ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude \
-        && chown -h vscode:vscode /home/vscode/.local/bin/claude \
-        && command -v claude >/dev/null; \
-    fi
+RUN case ",$AGENTBOX_AGENTS," in *,claude,*) \
+      if [ "$AGENTBOX_CLAUDE_INSTALL" = "npm" ]; then \
+        npm install -g @anthropic-ai/claude-code \
+          && install -d -o vscode -g vscode /home/vscode/.local/bin \
+          && ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude \
+          && chown -h vscode:vscode /home/vscode/.local/bin/claude \
+          && command -v claude >/dev/null; \
+      fi ;; \
+    esac
 
 # OpenAI Codex CLI. The @openai/codex npm package ships platform-native
 # prebuilds for linux arm64/amd64, so a plain global install is enough.
-# Parallel to the Claude Code install above: `agentbox codex` launches it in a
-# tmux session and the box mounts a synced `agentbox-codex-config` volume at
-# ~/.codex for auth/config (see packages/sandbox-docker/src/codex.ts).
 #
 # `bubblewrap` (bwrap) is Codex's command-sandbox backend; without it on PATH
 # Codex falls back to a bundled copy and prints a warning on every run. It
 # works nested because the agentbox container already runs with --cap-add
 # SYS_ADMIN + apparmor:unconfined.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends bubblewrap \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @openai/codex
+RUN case ",$AGENTBOX_AGENTS," in *,codex,*) \
+      apt-get update \
+        && apt-get install -y --no-install-recommends bubblewrap \
+        && rm -rf /var/lib/apt/lists/* \
+        && npm install -g @openai/codex ;; \
+    esac
 
 # OpenCode CLI (sst/opencode) — the multi-provider terminal coding agent.
-# Parallel to the Claude/Codex installs: `agentbox opencode` launches it in a
-# tmux session and the box mounts a synced `agentbox-opencode-config` volume
-# (see packages/sandbox-docker/src/opencode.ts). OpenCode splits its state
-# across ~/.config/opencode (config) and ~/.local/share/opencode (data + auth);
-# the volume holds both, with the config dir relocated via OPENCODE_CONFIG_DIR.
-RUN npm install -g opencode-ai
+# OpenCode splits its state across ~/.config/opencode (config) and
+# ~/.local/share/opencode (data + auth); the volume holds both, with the config
+# dir relocated via OPENCODE_CONFIG_DIR.
+RUN case ",$AGENTBOX_AGENTS," in *,opencode,*) \
+      npm install -g opencode-ai ;; \
+    esac
 
 # Browser support for in-box agents: Vercel's agent-browser drives Chrome via
 # CDP. Two things have to happen here:
