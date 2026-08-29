@@ -50,6 +50,7 @@ import {
   ensureE2bBaseTemplate,
   preparedEntryFor,
   readPreparedState,
+  type PreparedE2bState,
 } from './prepared-state.js';
 import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 
@@ -152,6 +153,27 @@ function safeMetadataName(name: string): string {
   return name.replace(/[\u0000-\u001f]/g, '').slice(0, 200);
 }
 
+/**
+ * Which E2B template a create boots: an explicit checkpoint snapshot, else the
+ * template built for exactly this agent set, else the agentless base.
+ *
+ * The base fallback is load-bearing, not belt-and-braces: after a base-only
+ * `prepare --provider e2b` — the documented install path — NO variant exists,
+ * and without it every create would throw. Booting the base is the correct
+ * degrade, because `ensureAgentsInstalledForCloud` puts the agent in at create;
+ * hetzner and daytona fall back the same way.
+ *
+ * Exported pure so the fallback chain is testable without the SDK.
+ */
+export function resolveE2bTemplate(
+  prepared: PreparedE2bState,
+  req: Pick<CloudProvisionRequest, 'snapshot' | 'agents'>,
+): string | undefined {
+  if (req.snapshot !== undefined) return req.snapshot;
+  const variant = preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(req.agents)));
+  return variant?.templateId ?? prepared.base?.templateId;
+}
+
 export const e2bBackend: CloudBackend = {
   name: 'e2b',
 
@@ -178,14 +200,7 @@ export const e2bBackend: CloudBackend = {
     if (req.snapshot === undefined) {
       ensureE2bBaseTemplate();
     }
-    // Prefer the template built for exactly this agent set — it already carries
-    // the agent, so the box skips the create-time install. Falling back to the
-    // agentless base is not a failure: `ensureAgentsInstalledForCloud` puts the
-    // agent in at create, which is also what an un-rebuilt older base does.
-    const template =
-      req.snapshot ??
-      preparedEntryFor(readPreparedState(), agentSetArg(normalizeAgentSet(req.agents)))
-        ?.templateId;
+    const template = resolveE2bTemplate(readPreparedState(), req);
     if (!template) {
       throw new Error(
         'e2b provision: no template available — `agentbox prepare --provider e2b` must run first',
