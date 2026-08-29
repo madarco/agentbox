@@ -729,6 +729,27 @@ export const claudeCommand = new Command('claude')
     // provider — the worker creates the box and pre-starts the seeded session
     // (docker bakes the prompt into `tmux new-session`; cloud pre-starts a
     // detached tmux session via `buildAttach({ detached: true })`).
+    const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
+    const checkpointRef =
+      opts.snapshot && opts.snapshot.length > 0
+        ? opts.snapshot
+        : providerDefault.length > 0
+          ? providerDefault
+          : undefined;
+    // Resolved and checked BEFORE the `-i` early return: a queued background
+    // create takes the same default and is the LEAST supervised path there is,
+    // so it is the last place that should skip the warning. codex/opencode warn
+    // above their own queue branch for the same reason.
+    // A `box.defaultCheckpoint<Provider>` captured from another agent's box
+    // applies here with no user signal at all — say so. Advisory: it still boots.
+    await warnCheckpointAgentMismatch(
+      providerName,
+      projectRoot,
+      checkpointRef,
+      ['claude'],
+      (m: string) => log.warn(m),
+    );
+
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
       // Captured as a const so the narrowing survives into the status-line
       // callback below (TS drops property narrowing inside a closure).
@@ -851,23 +872,6 @@ export const claudeCommand = new Command('claude')
       cmdLog.close();
       return;
     }
-    const providerDefault = resolveDefaultCheckpoint(cfg.effective, providerName);
-    const checkpointRef =
-      opts.snapshot && opts.snapshot.length > 0
-        ? opts.snapshot
-        : providerDefault.length > 0
-          ? providerDefault
-          : undefined;
-    // A `box.defaultCheckpoint<Provider>` captured from another agent's box
-    // applies here with no user signal at all — say so. Advisory: it still boots.
-    await warnCheckpointAgentMismatch(
-      providerName,
-      projectRoot,
-      checkpointRef,
-      ['claude'],
-      (m: string) => log.warn(m),
-    );
-
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).
     const resolved = await resolveClaudeAuth(process.env);
