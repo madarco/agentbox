@@ -10,7 +10,8 @@ import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { digitaloceanBackend, DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareDigitalOceanProvider } from './prepare.js';
-import { currentDigitalOceanBaseFingerprintLive,
+import {
+  currentDigitalOceanBaseFingerprintLive,
   currentDigitalOceanBaseFileHashes,
 } from './prepared-state.js';
 import { ensureDigitalOceanCredentials, setDigitalOceanCredentials } from './credentials.js';
@@ -34,7 +35,8 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureDigitalOceanCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setDigitalOceanCredentials,
-  currentBaseFingerprintLive: (claudeInstall) => currentDigitalOceanBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: (claudeInstall) =>
+    currentDigitalOceanBaseFingerprintLive(claudeInstall),
   currentBaseFileHashes: () => currentDigitalOceanBaseFileHashes(),
   doctorChecks,
 };
@@ -59,6 +61,7 @@ export {
 } from './prepare.js';
 export {
   generateBoxCloudInit,
+  generateDerivedPrepareCloudInit,
   generatePrepareCloudInit,
   controlPlaneCloudInit,
   type BoxCloudInitOptions,
@@ -95,6 +98,7 @@ export {
 export { pollUntil, type PollOptions } from './poll.js';
 export {
   currentDigitalOceanBaseFingerprintLive,
+  preparedEntryFor,
   preparedStatePath,
   readPreparedState,
   writePreparedState,

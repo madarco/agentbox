@@ -26,7 +26,11 @@ describe('makeDigitalOceanClient', () => {
   });
 
   it('sends a Bearer auth header and hits the v2 base URL', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { account: { uuid: 'u1', email: 'a@b.c', status: 'active', droplet_limit: 25 } }));
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        account: { uuid: 'u1', email: 'a@b.c', status: 'active', droplet_limit: 25 },
+      }),
+    );
     const client = makeClient(fetchMock as unknown as typeof fetch);
     const acct = await client.getAccount();
     expect(acct.email).toBe('a@b.c');
@@ -36,20 +40,35 @@ describe('makeDigitalOceanClient', () => {
   });
 
   it('throws when the token is empty', () => {
-    expect(() => makeDigitalOceanClient({ token: '   ', fetchImpl: fetchMock as unknown as typeof fetch })).toThrow(
-      /DIGITALOCEAN_TOKEN is empty/,
-    );
+    expect(() =>
+      makeDigitalOceanClient({ token: '   ', fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).toThrow(/DIGITALOCEAN_TOKEN is empty/);
   });
 
   it('parses createDroplet and extracts the create-action id', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(202, {
-        droplet: { id: 123, name: 'agentbox-x', status: 'new', created_at: 't', networks: { v4: [], v6: [] }, image: null, size_slug: 's-2vcpu-4gb', region: { slug: 'nyc3', name: 'NYC3' }, tags: ['agentbox'] },
+        droplet: {
+          id: 123,
+          name: 'agentbox-x',
+          status: 'new',
+          created_at: 't',
+          networks: { v4: [], v6: [] },
+          image: null,
+          size_slug: 's-2vcpu-4gb',
+          region: { slug: 'nyc3', name: 'NYC3' },
+          tags: ['agentbox'],
+        },
         links: { actions: [{ id: 999, rel: 'create', href: 'x' }] },
       }),
     );
     const client = makeClient(fetchMock as unknown as typeof fetch);
-    const { droplet, actionId } = await client.createDroplet({ name: 'agentbox-x', region: 'nyc3', size: 's-2vcpu-4gb', image: 'ubuntu-24-04-x64' });
+    const { droplet, actionId } = await client.createDroplet({
+      name: 'agentbox-x',
+      region: 'nyc3',
+      size: 's-2vcpu-4gb',
+      image: 'ubuntu-24-04-x64',
+    });
     expect(droplet.id).toBe(123);
     expect(actionId).toBe(999);
     const [, init] = fetchMock.mock.calls[0]!;
@@ -63,7 +82,9 @@ describe('makeDigitalOceanClient', () => {
   });
 
   it('maps a 4xx error body { id, message } into DigitalOceanApiError', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(401, { id: 'unauthorized', message: 'bad token', request_id: 'req-1' }));
+    fetchMock.mockResolvedValue(
+      jsonResponse(401, { id: 'unauthorized', message: 'bad token', request_id: 'req-1' }),
+    );
     const client = makeClient(fetchMock as unknown as typeof fetch);
     await expect(client.getAccount()).rejects.toMatchObject({
       name: 'DigitalOceanApiError',
@@ -78,14 +99,42 @@ describe('makeDigitalOceanClient', () => {
     fetchMock
       .mockResolvedValueOnce(
         jsonResponse(200, {
-          droplets: [{ id: 1, name: 'a', status: 'active', created_at: 't', networks: { v4: [], v6: [] }, image: null, size_slug: 's', region: null, tags: [] }],
-          links: { pages: { next: 'https://api.digitalocean.com/v2/droplets?tag_name=agentbox&per_page=200&page=2' } },
+          droplets: [
+            {
+              id: 1,
+              name: 'a',
+              status: 'active',
+              created_at: 't',
+              networks: { v4: [], v6: [] },
+              image: null,
+              size_slug: 's',
+              region: null,
+              tags: [],
+            },
+          ],
+          links: {
+            pages: {
+              next: 'https://api.digitalocean.com/v2/droplets?tag_name=agentbox&per_page=200&page=2',
+            },
+          },
           meta: { total: 2 },
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse(200, {
-          droplets: [{ id: 2, name: 'b', status: 'off', created_at: 't', networks: { v4: [], v6: [] }, image: null, size_slug: 's', region: null, tags: [] }],
+          droplets: [
+            {
+              id: 2,
+              name: 'b',
+              status: 'off',
+              created_at: 't',
+              networks: { v4: [], v6: [] },
+              image: null,
+              size_slug: 's',
+              region: null,
+              tags: [],
+            },
+          ],
           links: {},
           meta: { total: 2 },
         }),
@@ -97,13 +146,26 @@ describe('makeDigitalOceanClient', () => {
   });
 
   it('reads the droplet action id from snapshotDroplet', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(201, { action: { id: 555, status: 'in-progress', type: 'snapshot', resource_id: 123, resource_type: 'droplet' } }));
+    fetchMock.mockResolvedValue(
+      jsonResponse(201, {
+        action: {
+          id: 555,
+          status: 'in-progress',
+          type: 'snapshot',
+          resource_id: 123,
+          resource_type: 'droplet',
+        },
+      }),
+    );
     const client = makeClient(fetchMock as unknown as typeof fetch);
     const action = await client.snapshotDroplet(123, 'agentbox-base-x');
     expect(action.id).toBe(555);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('https://api.digitalocean.com/v2/droplets/123/actions');
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ type: 'snapshot', name: 'agentbox-base-x' });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      type: 'snapshot',
+      name: 'agentbox-base-x',
+    });
   });
 
   it('treats a 204 as a successful empty delete', async () => {

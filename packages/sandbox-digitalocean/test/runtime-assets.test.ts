@@ -45,9 +45,9 @@ describe('resolveRuntimeAssets', () => {
   });
 
   it('lists every missing path when assets are not found', () => {
-    expect(() => resolveRuntimeAssets({ repoRoot: '/nonexistent/path/that/does/not/exist' })).toThrow(
-      /could not resolve runtime assets/,
-    );
+    expect(() =>
+      resolveRuntimeAssets({ repoRoot: '/nonexistent/path/that/does/not/exist' }),
+    ).toThrow(/could not resolve runtime assets/);
   });
 
   it('prefers cliRuntimeRoot when provided', () => {

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { UserFacingError } from '@agentbox/core';
-import { DigitalOceanApiError, type DigitalOceanSize, type DigitalOceanSnapshot } from '../src/client.js';
-import { mapDigitalOceanProvisionError, validateSizeChoice, resolveProjectChoice } from '../src/preflight.js';
+import {
+  DigitalOceanApiError,
+  type DigitalOceanSize,
+  type DigitalOceanSnapshot,
+} from '../src/client.js';
+import {
+  mapDigitalOceanProvisionError,
+  validateSizeChoice,
+  resolveProjectChoice,
+} from '../src/preflight.js';
 
 function size(over: Partial<DigitalOceanSize> & { slug: string }): DigitalOceanSize {
   return {
@@ -45,9 +53,9 @@ describe('validateSizeChoice', () => {
   });
 
   it('rejects an unknown size with suggestions', () => {
-    expect(() =>
-      validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null),
-    ).toThrow(UserFacingError);
+    expect(() => validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null)).toThrow(
+      UserFacingError,
+    );
     try {
       validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null);
     } catch (e) {
@@ -64,7 +72,11 @@ describe('validateSizeChoice', () => {
 
   it('rejects a size whose disk is smaller than the snapshot needs', () => {
     expect(() =>
-      validateSizeChoice({ size: 's-1vcpu-1gb', region: 'nyc3' }, CATALOG, snapshot({ min_disk_size: 80 })),
+      validateSizeChoice(
+        { size: 's-1vcpu-1gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ min_disk_size: 80 }),
+      ),
     ).toThrow(/needs at least 80 GB/);
   });
 
@@ -90,14 +102,22 @@ describe('mapDigitalOceanProvisionError', () => {
   });
 
   it('maps a droplet-limit error to actionable guidance', () => {
-    const err = new DigitalOceanApiError(422, 'unprocessable_entity', 'exceeded your droplet limit');
+    const err = new DigitalOceanApiError(
+      422,
+      'unprocessable_entity',
+      'exceeded your droplet limit',
+    );
     const mapped = mapDigitalOceanProvisionError(err, choice);
     expect(mapped).toBeInstanceOf(UserFacingError);
     expect((mapped as Error).message).toContain('Droplet limit');
   });
 
   it('maps a capacity error to a region hint', () => {
-    const err = new DigitalOceanApiError(503, 'service_unavailable', 'not available in this region');
+    const err = new DigitalOceanApiError(
+      503,
+      'service_unavailable',
+      'not available in this region',
+    );
     const mapped = mapDigitalOceanProvisionError(err, choice);
     expect(mapped).toBeInstanceOf(UserFacingError);
     expect((mapped as Error).message).toContain('no capacity');

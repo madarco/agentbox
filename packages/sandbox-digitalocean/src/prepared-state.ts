@@ -3,9 +3,10 @@
  * Lives at `~/.agentbox/digitalocean-prepared.json` so the auto-prepare gate
  * (`ensureDigitalOceanBaseSnapshot()`) and runtime image resolution can see it.
  *
- * Only the shared `base` snapshot is recorded here — built once per DigitalOcean
- * project / API token: Ubuntu + deps + agentbox-ctl + agents + agent-browser,
- * baked from `install-box.sh`.
+ * Two tiers are recorded here, both provider-side snapshots: the agentless
+ * `base` (Ubuntu + deps + agentbox-ctl + agent-browser, baked from
+ * `install-box.sh`), and one `variants` entry per agent set, derived by booting
+ * the base and running just that agent's install recipe.
  *
  * The per-project snapshot tier is NOT a separate registry: it's the existing
  * `agentbox checkpoint create --set-default` + `box.defaultCheckpointDigitalOcean`
@@ -17,8 +18,13 @@
  * Schema versioned so future shape changes can migrate.
  */
 
-import { claudeInstallFingerprint, computeContextManifest,
-  computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw,
+import {
+  claudeInstallFingerprint,
+  computeContextManifest,
+  computeContextSha256,
+  preparedStatePathFor,
+  readPreparedStateRaw,
+  writePreparedStateRaw,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
@@ -31,6 +37,14 @@ import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets
  *       asset we scp'd in, not just the install script); `base.cliVersion`
  *       and `base.cliCommit?` added so we can warn when an old snapshot
  *       predates the running CLI.
+ *   3 — `variants` added: one record per agent set, so baking a `--agents
+ *       codex` snapshot no longer invalidates the claude one. `base` keeps its
+ *       schema-2 meaning (the agentless base) and is mirrored into
+ *       `variants['']`. The bump is deliberate rather than a bare optional
+ *       field: an older CLI would otherwise boot every box from the agentless
+ *       base while silently ignoring the variants the user baked. A schema bump
+ *       makes it treat the file as unreadable and re-bake — wrong-but-safe
+ *       rather than silently wrong.
  *
  * Read-time migration is lossy in one direction: a schema-1 file is lifted
  * to schema 2 by *renaming* `installScriptSha256` to `contextSha256`. The
@@ -40,7 +54,7 @@ import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets
  * per-project tier) is simply ignored — removing the field doesn't break
  * reads, so no schema bump is needed.
  */
-const SCHEMA = 2 as const;
+const SCHEMA = 3 as const;
 
 export interface PreparedBaseSnapshot {
   /** DigitalOcean image id (numeric — opaque, but stable across `getImage` calls). */
@@ -68,8 +82,33 @@ export interface PreparedBaseSnapshot {
 
 export interface PreparedDigitalOceanState {
   schema: typeof SCHEMA;
-  /** The shared base snapshot. Absent until first `agentbox prepare`. */
+  /**
+   * The AGENTLESS base, and only ever that — a variant bake leaves it alone.
+   * Provider-generic readers outside this package (the freshness surface, bake
+   * sharing, control-box custody adoption) reach straight for
+   * `base.contextSha256`, and they all assume it describes the agentless build
+   * context. Use {@link preparedEntryFor} to ask about any specific variant,
+   * including the base itself.
+   */
   base?: PreparedBaseSnapshot;
+  /**
+   * One record per agent set, keyed by `agentSetArg(agents)` (`''` = the
+   * agentless base). Without this the single `base` slot means baking a codex
+   * snapshot invalidates the claude one, and anyone alternating agents re-bakes
+   * a Droplet every time.
+   */
+  variants?: Record<string, PreparedBaseSnapshot>;
+}
+
+/**
+ * The record for one variant (`''` = agentless base), falling back to `base`
+ * for state written before variants existed.
+ */
+export function preparedEntryFor(
+  state: PreparedDigitalOceanState | null,
+  variant = '',
+): PreparedBaseSnapshot | undefined {
+  return state?.variants?.[variant] ?? (variant === '' ? state?.base : undefined);
 }
 
 interface LegacyV1Base {
@@ -96,6 +135,16 @@ export function readPreparedState(): PreparedDigitalOceanState {
     const v1 = parsed as LegacyV1State;
     return migrateFromV1(v1);
   }
+  if ((parsed as { schema?: unknown }).schema === 2) {
+    // Lossless: a v2 file has exactly one bake and it is the base, so seed the
+    // variants map from it rather than forcing a re-bake. That base predates
+    // the agentless install-box.sh and therefore still carries all three
+    // agents, but its `contextSha256` no longer matches, so the freshness
+    // surface reports it stale and the next prepare replaces it. Until then the
+    // user's boxes keep booting a working snapshot instead of hard-failing.
+    const v2 = parsed as Partial<PreparedDigitalOceanState>;
+    return { schema: SCHEMA, ...(v2.base ? { base: v2.base, variants: { '': v2.base } } : {}) };
+  }
   if (parsed.schema !== SCHEMA) {
     // Unknown schema: don't crash, just refuse to read — the file will be
     // overwritten on the next successful prepare.
@@ -104,6 +153,7 @@ export function readPreparedState(): PreparedDigitalOceanState {
   return {
     schema: SCHEMA,
     base: parsed.base,
+    ...(parsed.variants ? { variants: parsed.variants } : {}),
   };
 }
 
@@ -124,6 +174,7 @@ function migrateFromV1(v1: LegacyV1State): PreparedDigitalOceanState {
   return {
     schema: SCHEMA,
     base,
+    ...(base ? { variants: { '': base } } : {}),
   };
 }
 
@@ -181,9 +232,8 @@ export async function currentDigitalOceanBaseFingerprintLive(
 export async function currentDigitalOceanBaseFileHashes(): Promise<FileManifest | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return (
-      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
-    ).files;
+    return (await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath }))))
+      .files;
   } catch {
     return undefined;
   }

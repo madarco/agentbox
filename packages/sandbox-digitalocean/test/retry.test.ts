@@ -21,9 +21,13 @@ describe('isRetriable', () => {
   });
 
   it('never retries permanent 4xx (auth, validation, not_found)', () => {
-    expect(isRetriable(new DigitalOceanApiError(401, 'unauthorized', 'token bad'), true)).toBe(false);
+    expect(isRetriable(new DigitalOceanApiError(401, 'unauthorized', 'token bad'), true)).toBe(
+      false,
+    );
     expect(isRetriable(new DigitalOceanApiError(404, 'not_found', 'no such'), true)).toBe(false);
-    expect(isRetriable(new DigitalOceanApiError(422, 'invalid_input', 'bad cidr'), true)).toBe(false);
+    expect(isRetriable(new DigitalOceanApiError(422, 'invalid_input', 'bad cidr'), true)).toBe(
+      false,
+    );
   });
 
   it('classifies raw network errors (ECONNRESET / undici causes) as ambiguous', () => {

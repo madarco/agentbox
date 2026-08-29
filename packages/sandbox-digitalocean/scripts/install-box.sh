@@ -255,36 +255,18 @@ set -g escape-time 0
 TMUX
 done_ "baked config files (claude / codex / setup guide / tmux.conf)"
 
-step "credential pivot symlinks (vscode home)"
-sudo -u vscode -H mkdir -p \
-  /home/vscode/.claude \
-  /home/vscode/.claude/skills/agentbox-setup \
-  /home/vscode/.codex \
-  /home/vscode/.local/share/opencode \
-  /home/vscode/.agentbox-creds/claude \
-  /home/vscode/.agentbox-creds/codex \
-  /home/vscode/.agentbox-creds/opencode
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/claude/.credentials.json \
-  /home/vscode/.claude/.credentials.json
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/codex/auth.json \
-  /home/vscode/.codex/auth.json
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/opencode/auth.json \
-  /home/vscode/.local/share/opencode/auth.json
-sudo -u vscode -H ln -sf /home/vscode/.claude/_claude.json /home/vscode/.claude.json
-
-# `/agentbox-setup` skill — the in-box-only first-run wizard the setup
-# prompt references. Docker's seedSetupSkillIntoVolume() (sandbox-docker/
-# src/claude.ts) does this at create time via a helper container with the
-# claude-config volume mounted. DigitalOcean doesn't have a shared volume — we
-# bake it directly into the snapshot here so every box has it. The same
-# content is also reachable as a static file at /usr/local/share/agentbox/
-# setup-guide.md (referenced as fallback in the wizard initial prompt).
-# `tar -xzf` of the host's ~/.claude in prepareDigitalOcean extracts WITHOUT
-# removing pre-existing files in the dest, so this skill survives the
-# subsequent static-config bake.
-sudo -u vscode -H cp /usr/local/share/agentbox/setup-guide.md \
-  /home/vscode/.claude/skills/agentbox-setup/SKILL.md
-done_ "credential pivot symlinks (vscode home)"
+# NOTE: the per-agent home dirs (~/.claude, ~/.codex, ~/.local/share/opencode),
+# the ~/.agentbox-creds/<agent>/ credential pivots and their symlinks are NOT
+# created here. They belong to the agent, so they live on that agent's
+# `install.postInstall` in AGENT_SYNC_SPECS and are applied by whichever path
+# adds the agent -- the derived snapshot bake, or `ensureAgentInstalled` against
+# a live box. Creating them here as well would put every agent's credential path
+# in every box and would be a second copy to keep in step.
+#
+# The `/agentbox-setup` skill moved with them, onto claude's postInstall: it is
+# claude-specific, and the file it copies from
+# (/usr/local/share/agentbox/setup-guide.md) is baked above, so it is available
+# whenever the agent lands.
 
 step "login-shell shim (/etc/profile.d/agentbox.sh)"
 cat > /etc/profile.d/agentbox.sh <<'PROFILE'
@@ -379,47 +361,21 @@ step "agent-browser + playwright + portless (global npm)"
 npm install -g agent-browser playwright portless
 done_ "agent-browser + playwright + portless (global npm)"
 
-step "Codex CLI prereqs (bubblewrap) + agent installs"
-apt-get install -y --no-install-recommends bubblewrap
-npm install -g @openai/codex opencode-ai
-done_ "Codex CLI prereqs (bubblewrap) + agent installs"
-
-# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
-# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
-# installer's CDN 403s — see `box.claudeInstall`.
-if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
-  step "Claude Code (npm: @anthropic-ai/claude-code)"
-  # npm-global drops `claude` at Node's prefix bin, not the
-  # /home/vscode/.local/bin/claude the rest of AgentBox hardcodes (the attach
-  # command, the login-shell PATH shim, the host-side installMethod=native
-  # coercion). Symlink it into that path so the box stays indistinguishable from
-  # a native install downstream.
-  npm install -g @anthropic-ai/claude-code
-  install -d -o vscode -g vscode /home/vscode/.local/bin
-  ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude
-  chown -h vscode:vscode /home/vscode/.local/bin/claude
-  command -v claude >/dev/null || { echo "install-box.sh: npm claude install produced no claude on PATH" >&2; exit 71; }
-  done_ "Claude Code (npm: @anthropic-ai/claude-code)"
-else
-  step "Claude Code (native installer, run as vscode)"
-  # Anthropic's native installer drops `claude` at /home/vscode/.local/bin/.
-  # Run as vscode so the binary lands in the right home and is owned by the
-  # user that'll execute it. DISABLE_AUTOUPDATER is set globally via
-  # /etc/profile.d/agentbox.sh below.
-  #
-  # Its CDN (claude.ai / downloads.claude.ai) sits behind Cloudflare, which
-  # intermittently 403s cloud-datacenter egress IPs under load. Retry with
-  # backoff rather than falling back to npm. A bare `curl | bash` would hide a
-  # 403 (curl -f exits non-zero but the pipe's status is bash's 0), so keep
-  # pipefail and fold the PATH check in so a "succeeded but absent" result also
-  # retries. A failed prepare is better than a claude-less snapshot.
-  if ! retry_backoff 3 sudo -u vscode -H bash -lc \
-       'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
-    echo "install-box.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting bake" >&2
-    exit 71
-  fi
-  done_ "Claude Code (native installer, run as vscode)"
-fi
+# Agents: NONE. This snapshot is deliberately agentless.
+#
+# An agent is added either as a derived snapshot booted from this base and
+# re-snapshotted, or into an already-running box by `ensureAgentInstalled` --
+# both driven by the same `install` recipes on AGENT_SYNC_SPECS, so a baked
+# agent and a runtime-added one are identical. Baking them here instead would
+# put every agent in every box: a `agentbox claude` box would carry codex and
+# opencode plus their credential paths, and the snapshot could never shrink to
+# the workload.
+#
+# The per-agent home + credential dirs are NOT created here either; they belong
+# to the agent and live on its `install.postInstall`, so whichever path adds the
+# agent produces the same layout. AGENTBOX_CLAUDE_INSTALL is still honoured --
+# it selects the RECIPE, not whether to install -- and reaches the recipe via
+# the derived bake.
 
 step "Chromium download via Playwright (as vscode)"
 # Run the download as vscode so the cache lands under

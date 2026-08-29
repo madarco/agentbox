@@ -64,6 +64,43 @@ export function generatePrepareCloudInit(opts: PrepareCloudInitOptions): string 
   ].join('\n');
 }
 
+/**
+ * Cloud-init for the temp Droplet of a DERIVED bake - one booted from the base
+ * snapshot to add an agent, rather than from DigitalOcean's stock Ubuntu.
+ *
+ * It logs in as `vscode`, not `root`, because the base snapshot already carries
+ * install-box.sh's sshd hardening drop-in (`PermitRootLogin no` + `AllowUsers
+ * vscode`). A root key injected here would be accepted by cloud-init and then
+ * refused by sshd, and `waitForSsh` would simply time out with no explanation.
+ * `vscode` has passwordless sudo, which the derived install steps use - same
+ * privilege, an actually reachable door.
+ *
+ * The `users:` block form is required here and works: DO's root-key special-case
+ * (see generatePrepareCloudInit) applies only to root. generateBoxCloudInit
+ * already injects vscode's key this way on every box.
+ */
+export function generateDerivedPrepareCloudInit(opts: PrepareCloudInitOptions): string {
+  const pubkey = opts.sshPubkey.trim();
+  return [
+    '#cloud-config',
+    // ASCII-only, same as generatePrepareCloudInit: DO truncates the
+    // cloud-config at the first non-ASCII byte.
+    '# AgentBox temporary derived-bake Droplet - boots the agentless base snapshot',
+    '# and adds one agent set. SSH key is single-use and discarded on destroy.',
+    'disable_root: true',
+    'ssh_pwauth: false',
+    'chpasswd:',
+    '  expire: false',
+    'users:',
+    '  - name: vscode',
+    '    lock_passwd: false',
+    '    sudo: ALL=(ALL) NOPASSWD:ALL',
+    '    ssh_authorized_keys:',
+    `      - ${yamlScalar(pubkey)}`,
+    '',
+  ].join('\n');
+}
+
 export interface ControlPlaneCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format) for `root`. */
   sshPubkey: string;
@@ -179,9 +216,10 @@ export function generateBoxCloudInit(opts: BoxCloudInitOptions): string {
   }
 
   if (opts.boxEnv && Object.keys(opts.boxEnv).length > 0) {
-    const envContent = Object.entries(opts.boxEnv)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('\\n') + '\\n';
+    const envContent =
+      Object.entries(opts.boxEnv)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\\n') + '\\n';
     lines.push('  - path: /etc/agentbox/box.env');
     lines.push('    permissions: "0644"');
     lines.push(`    content: "${envContent}"`);
