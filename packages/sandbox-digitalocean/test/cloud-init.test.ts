@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   controlPlaneCloudInit,
   generateBoxCloudInit,
+  generateDerivedPrepareCloudInit,
   generatePrepareCloudInit,
 } from '../src/cloud-init.js';
 import { cloudInitBoxEnv } from '../src/backend.js';
@@ -132,5 +133,38 @@ describe('controlPlaneCloudInit', () => {
     expect(yaml).toContain('/opt/agentbox');
     expect(yaml).toContain("'feat/remote-hub-improvements'");
     expect(yaml).toContain("'https://github.com/madarco/agentbox'");
+  });
+});
+
+describe('generateDerivedPrepareCloudInit', () => {
+  it('injects the key for vscode, not root -- the base snapshot refuses root ssh', () => {
+    // install-box.sh bakes `PermitRootLogin no` + `AllowUsers vscode` into the
+    // base. A root key here is accepted by cloud-init and then refused by sshd,
+    // which surfaces only as an unexplained waitForSsh timeout.
+    const yaml = generateDerivedPrepareCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml).toContain('disable_root: true');
+    expect(yaml).toContain('  - name: vscode');
+    expect(yaml).toContain(FAKE_PUBKEY);
+    // No top-level root key block (the shape generatePrepareCloudInit uses).
+    expect(yaml).not.toMatch(/^ssh_authorized_keys:/m);
+  });
+
+  it('grants vscode passwordless sudo -- the install steps escalate', () => {
+    const yaml = generateDerivedPrepareCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml).toContain('sudo: ALL=(ALL) NOPASSWD:ALL');
+  });
+
+  it('emits ASCII only', () => {
+    // DigitalOcean truncates user-data at the first non-ASCII byte: one em-dash
+    // silently drops the whole document, no key is injected, and ssh fails with
+    // "Permission denied (publickey)".
+    const yaml = generateDerivedPrepareCloudInit({ sshPubkey: FAKE_PUBKEY });
+    // eslint-disable-next-line no-control-regex
+    expect(yaml).toMatch(/^[\x00-\x7F]*$/);
+  });
+
+  it('trims a pubkey with surrounding whitespace', () => {
+    const yaml = generateDerivedPrepareCloudInit({ sshPubkey: `   ${FAKE_PUBKEY}\n` });
+    expect(yaml).toContain(`      - "${FAKE_PUBKEY}"`);
   });
 });

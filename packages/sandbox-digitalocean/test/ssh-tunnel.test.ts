@@ -29,7 +29,7 @@ vi.mock('execa', () => {
         const op = argv[1];
         if (op === 'check') {
           const sIdx = argv.indexOf('-S');
-          const sockPath = sIdx >= 0 ? argv[sIdx + 1] ?? '' : '';
+          const sockPath = sIdx >= 0 ? (argv[sIdx + 1] ?? '') : '';
           // Alive iff the file exists AND mockBehavior says so.
           if (sockPath && aliveSockets.has(sockPath)) {
             return { exitCode: 0, stderr: '', stdout: '' };
@@ -44,7 +44,7 @@ vi.mock('execa', () => {
         }
         if (op === 'exit') {
           const sIdx = argv.indexOf('-S');
-          const sockPath = sIdx >= 0 ? argv[sIdx + 1] ?? '' : '';
+          const sockPath = sIdx >= 0 ? (argv[sIdx + 1] ?? '') : '';
           if (sockPath) aliveSockets.delete(sockPath);
           return { exitCode: 0, stderr: '', stdout: '' };
         }

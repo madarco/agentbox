@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { UserFacingError } from '@agentbox/core';
-import { DigitalOceanApiError, type DigitalOceanSize, type DigitalOceanSnapshot } from '../src/client.js';
-import { mapDigitalOceanProvisionError, validateSizeChoice, resolveProjectChoice } from '../src/preflight.js';
+import {
+  DigitalOceanApiError,
+  type DigitalOceanSize,
+  type DigitalOceanSnapshot,
+} from '../src/client.js';
+import {
+  mapDigitalOceanProvisionError,
+  validateSizeChoice,
+  resolveProjectChoice,
+} from '../src/preflight.js';
 
 function size(over: Partial<DigitalOceanSize> & { slug: string }): DigitalOceanSize {
   return {
@@ -45,9 +53,9 @@ describe('validateSizeChoice', () => {
   });
 
   it('rejects an unknown size with suggestions', () => {
-    expect(() =>
-      validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null),
-    ).toThrow(UserFacingError);
+    expect(() => validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null)).toThrow(
+      UserFacingError,
+    );
     try {
       validateSizeChoice({ size: 's-99vcpu', region: 'nyc3' }, CATALOG, null);
     } catch (e) {
@@ -64,13 +72,63 @@ describe('validateSizeChoice', () => {
 
   it('rejects a size whose disk is smaller than the snapshot needs', () => {
     expect(() =>
-      validateSizeChoice({ size: 's-1vcpu-1gb', region: 'nyc3' }, CATALOG, snapshot({ min_disk_size: 80 })),
+      validateSizeChoice(
+        { size: 's-1vcpu-1gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ min_disk_size: 80 }),
+      ),
     ).toThrow(/needs at least 80 GB/);
   });
 
   it('skips the disk check for stock string images (snapshot null)', () => {
     expect(() =>
       validateSizeChoice({ size: 's-1vcpu-1gb', region: 'nyc3' }, CATALOG, null),
+    ).not.toThrow();
+  });
+
+  it('rejects a region the base snapshot was never replicated to', () => {
+    // DigitalOcean answers a cross-region boot with a generic 422 that the
+    // create path renders as "no capacity for <size>" -- which sends people
+    // hunting for a bigger plan when the real fix is a region or a re-bake.
+    // Caught live: a base baked in fra1 with creates defaulting to nyc3.
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'], name: 'agentbox-claude-x' }),
+      ),
+    ).toThrow(/does not exist in region "nyc3"[\s\S]*available in: fra1/);
+  });
+
+  it('names the variant tier and re-bakes THAT one, not the base', () => {
+    // Create prefers the per-agent variant, so suggesting a bare
+    // `prepare --force --location <r>` refreshes only the agentless base while
+    // the next create still picks the old variant in the original region --
+    // advice that fails identically. The hint must carry --agents.
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'], name: 'agentbox-claude-x' }),
+        { agents: ['claude'] },
+      ),
+    ).toThrow(/claude snapshot "agentbox-claude-x"[\s\S]*--location nyc3 --agents claude/);
+  });
+
+  it('still says "base snapshot" for an agentless create', () => {
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'] }),
+        { agents: [] },
+      ),
+    ).toThrow(/base snapshot/);
+  });
+
+  it('accepts a region the snapshot does live in', () => {
+    expect(() =>
+      validateSizeChoice({ size: 's-2vcpu-4gb', region: 'nyc3' }, CATALOG, snapshot()),
     ).not.toThrow();
   });
 
@@ -90,14 +148,22 @@ describe('mapDigitalOceanProvisionError', () => {
   });
 
   it('maps a droplet-limit error to actionable guidance', () => {
-    const err = new DigitalOceanApiError(422, 'unprocessable_entity', 'exceeded your droplet limit');
+    const err = new DigitalOceanApiError(
+      422,
+      'unprocessable_entity',
+      'exceeded your droplet limit',
+    );
     const mapped = mapDigitalOceanProvisionError(err, choice);
     expect(mapped).toBeInstanceOf(UserFacingError);
     expect((mapped as Error).message).toContain('Droplet limit');
   });
 
   it('maps a capacity error to a region hint', () => {
-    const err = new DigitalOceanApiError(503, 'service_unavailable', 'not available in this region');
+    const err = new DigitalOceanApiError(
+      503,
+      'service_unavailable',
+      'not available in this region',
+    );
     const mapped = mapDigitalOceanProvisionError(err, choice);
     expect(mapped).toBeInstanceOf(UserFacingError);
     expect((mapped as Error).message).toContain('no capacity');

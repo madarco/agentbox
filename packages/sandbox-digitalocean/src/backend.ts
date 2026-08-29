@@ -51,10 +51,20 @@ import {
   resolveProjectChoice,
   validateSizeChoice,
 } from './preflight.js';
-import { readPreparedState } from './prepared-state.js';
+import {
+  preparedEntryFor,
+  readPreparedState,
+  type PreparedDigitalOceanState,
+} from './prepared-state.js';
 import { ensureDigitalOceanBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
-import { describeInbound, parseInboundSpec, resolveInboundSources } from '@agentbox/sandbox-core';
+import {
+  agentSetArg,
+  describeInbound,
+  normalizeAgentSet,
+  parseInboundSpec,
+  resolveInboundSources,
+} from '@agentbox/sandbox-core';
 import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
@@ -187,17 +197,78 @@ async function waitAction(
  *   - any other string → treated as a snapshot name (checkpoint) and looked
  *     up via the API; falls through to a DigitalOcean stock image slug.
  */
-async function resolveImageRef(c: DigitalOceanClient, req: CloudProvisionRequest): Promise<number | string> {
+export function refNamesPreparedBase(
+  prepared: PreparedDigitalOceanState | null,
+  req: Pick<CloudProvisionRequest, 'snapshot' | 'image'>,
+): boolean {
+  // `box.imageDigitalocean` is pinned to the base's own name by every bake, so
+  // by create time the ref usually NAMES OUR OWN BASE rather than being the
+  // sentinel. Treat that as "no explicit choice": otherwise the pin silently
+  // defeats variant selection and every box boots the agentless base. A ref
+  // naming anything else (a checkpoint, a stock slug, an explicit --image) is a
+  // real choice and wins.
+  if (req.snapshot) return false;
+  const pinned = preparedEntryFor(prepared, '');
+  if (pinned === undefined) return false;
+  const ref = req.image;
+  return ref === pinned.description || ref === String(pinned.imageId);
+}
+
+/**
+ * Which variant key a resolved image id actually came from (`''` = the
+ * agentless base), or undefined when it is not one of our prepared snapshots.
+ *
+ * Read the tier off the RESOLVED id rather than off `req.agents`: create falls
+ * back to the base when no variant was baked, so an `agentbox claude` box on a
+ * base-only account is running the base. Telling that user their "claude
+ * snapshot" is in the wrong region, and to re-bake with `--agents claude`,
+ * describes a snapshot that does not exist.
+ */
+export function resolvedVariantForImage(
+  prepared: PreparedDigitalOceanState | null,
+  imageId: number | string,
+): string | undefined {
+  for (const [key, entry] of Object.entries(prepared?.variants ?? {})) {
+    if (entry.imageId === imageId) return key;
+  }
+  return prepared?.base?.imageId === imageId ? '' : undefined;
+}
+
+export function preparedImageIdFor(
+  prepared: PreparedDigitalOceanState | null,
+  req: Pick<CloudProvisionRequest, 'agents'>,
+): number | undefined {
+  // Prefer the derived snapshot baked for exactly this agent set — it already
+  // carries the agent, so the box skips the per-box install. Falling back to
+  // the agentless base is not a failure: `ensureAgentInstalled` puts the agent
+  // in at first use, which is also what an un-re-prepared older base does.
+  const variant = preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(req.agents)));
+  return variant?.imageId ?? prepared?.base?.imageId;
+}
+
+async function resolveImageRef(
+  c: DigitalOceanClient,
+  req: CloudProvisionRequest,
+): Promise<number | string> {
   const ref = req.snapshot ?? req.image;
-  if (!ref || ref === DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF || ref === SCAFFOLDING_FALLBACK_IMAGE) {
+  // Read before `ensureDigitalOceanBaseSnapshot()` (which may bake and rewrite
+  // the file) purely to answer "does ref name our base?"; the branch below
+  // re-reads.
+  const refIsOurBase = refNamesPreparedBase(readPreparedState(), req);
+  if (
+    !ref ||
+    ref === DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF ||
+    ref === SCAFFOLDING_FALLBACK_IMAGE ||
+    refIsOurBase
+  ) {
     await ensureDigitalOceanBaseSnapshot();
-    const state = readPreparedState();
-    if (!state.base) {
+    const imageId = preparedImageIdFor(readPreparedState(), req);
+    if (imageId === undefined) {
       throw new Error(
         'no DigitalOcean base snapshot found — run `agentbox prepare --provider digitalocean` to bake one.',
       );
     }
-    return state.base.imageId;
+    return imageId;
   }
   if (/^\d+$/.test(ref)) {
     return Number.parseInt(ref, 10);
@@ -324,7 +395,13 @@ export const digitaloceanBackend: CloudBackend = {
     const snapshotMeta =
       typeof imageRef === 'number' ? await c.getSnapshot(String(imageRef)) : null;
     const sizeCatalog = await c.listSizes();
-    validateSizeChoice(choice, sizeCatalog, snapshotMeta);
+    // Name the tier from the RESOLVED image, not from `req.agents`: create falls
+    // back to the base when no variant was baked, and a hint that names a
+    // variant nobody has cannot be acted on.
+    const resolvedVariant = resolvedVariantForImage(readPreparedState(), imageRef);
+    validateSizeChoice(choice, sizeCatalog, snapshotMeta, {
+      agents: resolvedVariant ? resolvedVariant.split(',') : [],
+    });
     const plan = sizeCatalog.find((s) => s.slug === size);
 
     // The DO Project the box should land in (`box.digitaloceanProject`),
@@ -343,7 +420,8 @@ export const digitaloceanBackend: CloudBackend = {
     // (env override wins, else detect); `open` (0.0.0.0/0) skips detection.
     const inboundPolicy = parseInboundSpec(req.inbound);
     const egressOverride =
-      req.env?.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE ?? process.env.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE;
+      req.env?.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE ??
+      process.env.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE;
     const hostEgress =
       inboundPolicy.mode === 'open'
         ? null
@@ -392,7 +470,9 @@ export const digitaloceanBackend: CloudBackend = {
       // 6. Create the droplet (tagged so the firewall applies). Map late DO
       // provision errors (droplet limit, out-of-capacity) to actionable
       // guidance while preserving the original.
-      progress(`creating droplet '${req.name}' from image ${String(imageRef)} (${size} / ${region})`);
+      progress(
+        `creating droplet '${req.name}' from image ${String(imageRef)} (${size} / ${region})`,
+      );
       let created;
       try {
         created = await withDigitalOceanRetry(
@@ -661,7 +741,12 @@ export const digitaloceanBackend: CloudBackend = {
     try {
       await c.deleteDroplet(id);
     } catch (err) {
-      if (!(err instanceof DigitalOceanApiError && (err.statusCode === 404 || err.code === 'not_found'))) {
+      if (
+        !(
+          err instanceof DigitalOceanApiError &&
+          (err.statusCode === 404 || err.code === 'not_found')
+        )
+      ) {
         throw err;
       }
     }
@@ -706,7 +791,9 @@ export const digitaloceanBackend: CloudBackend = {
     const argv = [...sshOptArgs(target), localPath, `${target.user}@${target.host}:${remotePath}`];
     const res = await execa('scp', argv, { reject: false, timeout: 300_000 });
     if (res.exitCode !== 0) {
-      throw new Error(`digitalocean: scp upload failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`);
+      throw new Error(
+        `digitalocean: scp upload failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`,
+      );
     }
   },
 
@@ -715,7 +802,9 @@ export const digitaloceanBackend: CloudBackend = {
     const argv = [...sshOptArgs(target), `${target.user}@${target.host}:${remotePath}`, localPath];
     const res = await execa('scp', argv, { reject: false, timeout: 300_000 });
     if (res.exitCode !== 0) {
-      throw new Error(`digitalocean: scp download failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`);
+      throw new Error(
+        `digitalocean: scp download failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`,
+      );
     }
   },
 
@@ -767,7 +856,10 @@ export const digitaloceanBackend: CloudBackend = {
     // `portless` CLI is baked into the base snapshot by install-box.sh.
     // Idempotent + best-effort. Mirrors the Hetzner backend.
     const tlsFlag = opts.tls ? '' : '--no-tls';
-    const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
+    const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(
+      /\s+/g,
+      ' ',
+    );
     const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
     const cmds = [startCmd, aliasCmd];
     if (opts.tls) {
@@ -803,7 +895,11 @@ export const digitaloceanBackend: CloudBackend = {
     try {
       await c.deleteSnapshot(snap.id);
     } catch (err) {
-      if (err instanceof DigitalOceanApiError && (err.statusCode === 404 || err.code === 'not_found')) return;
+      if (
+        err instanceof DigitalOceanApiError &&
+        (err.statusCode === 404 || err.code === 'not_found')
+      )
+        return;
       throw err;
     }
   },

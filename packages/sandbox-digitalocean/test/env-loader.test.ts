@@ -7,13 +7,16 @@ describe('parseEnvFile', () => {
   });
 
   it('handles `export KEY=value`', () => {
-    expect(parseEnvFile('export DIGITALOCEAN_TOKEN=secret\n')).toEqual({ DIGITALOCEAN_TOKEN: 'secret' });
+    expect(parseEnvFile('export DIGITALOCEAN_TOKEN=secret\n')).toEqual({
+      DIGITALOCEAN_TOKEN: 'secret',
+    });
   });
 
   it('strips surrounding double and single quotes', () => {
-    expect(
-      parseEnvFile(`A="with spaces"\nB='with $special'`),
-    ).toEqual({ A: 'with spaces', B: 'with $special' });
+    expect(parseEnvFile(`A="with spaces"\nB='with $special'`)).toEqual({
+      A: 'with spaces',
+      B: 'with $special',
+    });
   });
 
   it('skips blank lines and # comments', () => {

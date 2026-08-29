@@ -39,7 +39,7 @@ function suggestSizes(catalog: DigitalOceanSize[], limit = 6): string[] {
  * Validate a size + region choice against the live catalog and the base
  * snapshot, throwing a `UserFacingError` with a fix on the first problem.
  * Checks, in order: size exists → is available → disk fits the snapshot →
- * region offers the size.
+ * the snapshot exists in the region → region offers the size.
  *
  * `snapshot` is null when the box boots from a DigitalOcean stock image slug
  * (a plain string like `ubuntu-24-04-x64`, not a numeric snapshot id) — the
@@ -49,6 +49,7 @@ export function validateSizeChoice(
   choice: SizeChoice,
   catalog: DigitalOceanSize[],
   snapshot: DigitalOceanSnapshot | null,
+  opts: { agents?: readonly string[] } = {},
 ): void {
   const { size, region } = choice;
   const plan = catalog.find((s) => s.slug === size);
@@ -71,11 +72,37 @@ export function validateSizeChoice(
 
   // Snapshot disk must fit the plan's disk. Skip for stock string refs
   // (snapshot null) — DO sizes those itself.
-  if (snapshot && typeof snapshot.min_disk_size === 'number' && plan.disk < snapshot.min_disk_size) {
+  if (
+    snapshot &&
+    typeof snapshot.min_disk_size === 'number' &&
+    plan.disk < snapshot.min_disk_size
+  ) {
     throw new UserFacingError(
       `DigitalOcean size "${size}" has a ${String(plan.disk)} GB disk, but the base ` +
         `snapshot needs at least ${String(snapshot.min_disk_size)} GB.\n` +
         'Choose a larger size (bigger plans have bigger disks).',
+    );
+  }
+
+  // A DigitalOcean snapshot only boots in the regions it was replicated to.
+  // Check this BEFORE the size/region pairing: DO answers a cross-region boot
+  // with a generic 422 that the create path reports as "no capacity for
+  // <size>", which sends people hunting for a bigger plan when the real fix is
+  // a region (or a re-bake). Cost a live create to find.
+  if (snapshot && snapshot.regions.length > 0 && !snapshot.regions.includes(region)) {
+    // Name the tier and re-bake THAT tier. Create prefers the per-agent variant
+    // over the base, so telling someone to re-bake without `--agents` refreshes
+    // the agentless base while the next create still picks the old variant in
+    // the original region -- advice that fails exactly the same way.
+    const agents = (opts.agents ?? []).filter((a) => a.length > 0);
+    const tier = agents.length > 0 ? `${agents.join(',')} snapshot` : 'base snapshot';
+    const agentsFlag = agents.length > 0 ? ` --agents ${agents.join(',')}` : '';
+    throw new UserFacingError(
+      `the DigitalOcean ${tier} "${snapshot.name}" does not exist in region "${region}".\n` +
+        `It is available in: ${snapshot.regions.join(', ')}.\n` +
+        'Either create there (`--location <slug>` or `agentbox config set box.digitaloceanRegion <slug>`), ' +
+        'or re-bake it in this region with `agentbox prepare --provider digitalocean --force --location ' +
+        `${region}${agentsFlag}\`.`,
     );
   }
 
@@ -121,9 +148,7 @@ export function resolveProjectChoice(project: string, projects: DigitalOceanProj
     );
   }
 
-  const known = projects
-    .map((p) => (p.is_default ? `${p.name} (default)` : p.name))
-    .join(', ');
+  const known = projects.map((p) => (p.is_default ? `${p.name} (default)` : p.name)).join(', ');
   throw new UserFacingError(
     `DigitalOcean project "${wanted}" not found on this account.\n` +
       (known.length > 0 ? `Your projects: ${known}.\n` : 'This account has no projects.\n') +
