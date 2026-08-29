@@ -1,5 +1,9 @@
 # Agent catalog — on-demand agents and base variants
 
+> **Looking for how agents work today?** See [`agents.md`](./agents.md) — this
+> file is the work plan and its early sections predate the implementation (it
+> argues against derived layers, which is what we ended up building for docker).
+
 Status: **in progress.** Rescoped to *one agent per box*; agent plugins are parked
 (the seam analysis at the end stays as the north star). Prerequisite for
 [`openclaw-hosting-plan.md`](./openclaw-hosting-plan.md).
