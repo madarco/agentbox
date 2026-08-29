@@ -38,9 +38,10 @@ describe('staged item mappers', () => {
 
   it('opencode: auth/global config are files, extension dirs are dirs', () => {
     expect(
-      opencodeStagedItems(['auth.json', 'config/opencode.json', 'config/skills']).map(
-        (i) => [i.rel, i.kind],
-      ),
+      opencodeStagedItems(['auth.json', 'config/opencode.json', 'config/skills']).map((i) => [
+        i.rel,
+        i.kind,
+      ]),
     ).toEqual([
       ['auth.json', 'file'],
       ['config/opencode.json', 'file'],
@@ -226,5 +227,40 @@ describe('transportSettingsTarget', () => {
     } finally {
       await rm(staging, { recursive: true, force: true });
     }
+  });
+});
+
+describe('planPropagateTargets — per-agent box selection', () => {
+  it('skips a cloud box that was not created for this agent', () => {
+    // The fan-out pushes STRAIGHT INTO a cloud box, so without this gate a
+    // resume re-seeds every agent's token and undoes the create-time isolation.
+    // Found by a live daytona box: codex/opencode auth.json reappeared on
+    // resume even though the box was created with agents:['claude'].
+    const boxes = [
+      { id: 'a', name: 'claudebox', provider: 'daytona', agents: ['claude'] },
+      { id: 'b', name: 'codexbox', provider: 'daytona', agents: ['codex'] },
+      { id: 'c', name: 'legacy', provider: 'daytona' },
+    ];
+    const plan = planPropagateTargets(boxes, {
+      agent: 'codex',
+      sourceBoxId: 'zzz',
+      scope: 'all',
+    });
+    const names = plan.cloudBoxes.map((b) => b.name).sort();
+    // the codex box, plus the pre-selection box (absent = all, historical)
+    expect(names).toEqual(['codexbox', 'legacy']);
+  });
+
+  it('still reaches every cloud box when none declare a selection', () => {
+    const boxes = [
+      { id: 'a', name: 'one', provider: 'daytona' },
+      { id: 'b', name: 'two', provider: 'hetzner' },
+    ];
+    const plan = planPropagateTargets(boxes, {
+      agent: 'claude',
+      sourceBoxId: 'zzz',
+      scope: 'all',
+    });
+    expect(plan.cloudBoxes.map((b) => b.name).sort()).toEqual(['one', 'two']);
   });
 });

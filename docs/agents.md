@@ -212,5 +212,16 @@ GHCR (linux-vm, `prepare-vm.ts`), and that Dockerfile is now agentless. A
 and falls back to the per-box install (~30-90s on first use). Existing daytona
 bases keep their agents until re-prepared.
 
-Derived snapshots (boot base → install → re-snapshot) and cloud-side selection
-are the outstanding half.
+Cloud boxes do get per-agent credential isolation at **create**: a
+`agentbox claude --provider <cloud>` box seeds only claude's credential, and the
+other agents' symlinks dangle.
+
+**Known limitation on daytona:** a pause/resume re-materialises the other
+agents' credentials. This is not the host re-seeding them — verified with the
+relay stopped and with the daytona backend's `uploadFile` and `exec` both
+instrumented, neither of which is called. Daytona's archive/restore re-applies
+content from the baked base snapshot, which still contains every agent's
+credentials. The fix is the agentless base below, not more host-side filtering.
+
+Derived snapshots (boot base → install → re-snapshot) and the agentless cloud
+bases are the outstanding half.
