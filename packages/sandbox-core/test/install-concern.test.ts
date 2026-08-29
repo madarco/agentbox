@@ -99,6 +99,10 @@ describe('ensureAgentInstalled', () => {
     expect(script).not.toMatch(/curl[^|]*\|\s*(ba)?sh/);
     expect(script).toContain('-o /tmp/agentbox-agent-install.sh');
     expect(script).toContain('i=1; while :; do');
+    // Run it with bash, not sh: /bin/sh is dash on Debian/Ubuntu and the
+    // installer is a bash script — running it under dash dies on the first
+    // `[[`. Caught only by a real install, so pin it here.
+    expect(script).toContain('bash /tmp/agentbox-agent-install.sh stable');
   });
 
   it('throws when the installer fails, quoting the output', async () => {

@@ -61,10 +61,15 @@ function renderRecipe(recipe: AgentInstallRecipe): string {
       // Fetch to a file rather than `curl | bash`: piping hides a blocked
       // download behind bash's exit 0. Retry because the Claude CDN
       // intermittently 403s cloud egress IPs under load.
+      //
+      // Run the fetched installer with `bash`, not `sh`: /bin/sh is dash on
+      // Debian/Ubuntu and these installers are bash scripts (the Dockerfile
+      // does the same). Running one under dash dies on the first `[[` or
+      // process substitution.
       return [
         'i=1; while :; do',
         `  curl -fsSL ${recipe.url} -o /tmp/agentbox-agent-install.sh`,
-        '    && sh /tmp/agentbox-agent-install.sh stable && break;',
+        '    && bash /tmp/agentbox-agent-install.sh stable && break;',
         `  [ "$i" -ge ${String(recipe.retries ?? 1)} ] && { rm -f /tmp/agentbox-agent-install.sh; exit 71; };`,
         '  i=$((i+1)); sleep 5;',
         'done; rm -f /tmp/agentbox-agent-install.sh',
