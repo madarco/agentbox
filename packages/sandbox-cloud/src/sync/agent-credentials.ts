@@ -218,11 +218,17 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
   // For agents authenticated via env-var (ANTHROPIC_API_KEY etc.) rather
   // than a stored auth file, this is the only way the in-box agent finds
   // its credentials. Mirrors the Docker provider's per-agent forwarding.
-  const forwardedKeys = new Set<string>([
-    ...CLAUDE_FORWARDED_ENV_KEYS,
-    ...CODEX_FORWARDED_ENV_KEYS,
-    ...OPENCODE_FORWARDED_ENV_KEYS,
-  ]);
+  //
+  // PER AGENT, not the union: an env-var login is a credential like any other,
+  // so a claude-only box must not inherit the host's OPENAI_API_KEY. Unioning
+  // all three here would quietly undo the file-and-mount isolation for exactly
+  // the agents that authenticate this way.
+  const keysByAgent: Record<CloudAgentKind, readonly string[]> = {
+    claude: CLAUDE_FORWARDED_ENV_KEYS,
+    codex: CODEX_FORWARDED_ENV_KEYS,
+    opencode: OPENCODE_FORWARDED_ENV_KEYS,
+  };
+  const forwardedKeys = new Set<string>(agents.flatMap((a) => keysByAgent[a]));
   for (const k of forwardedKeys) {
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;

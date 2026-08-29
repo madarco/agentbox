@@ -1,5 +1,5 @@
 import type { CloudBackend, CloudExecResult, CloudHandle, CloudState } from '@agentbox/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ensureAgentVolumesForCloud } from '../src/sync/agent-credentials.js';
 
 /** Minimal backend WITH a volume primitive, so mounts are actually built. */
@@ -122,5 +122,53 @@ describe('cloud agent selection — the resume path', () => {
     await reconcileAgentCredentialsViaTransport(transport, {});
     expect(seen.some((p) => p.includes('.claude'))).toBe(true);
     expect(seen.some((p) => p.includes('.codex'))).toBe(true);
+  });
+});
+
+describe('forwarded env keys respect the agent selection', () => {
+  // An env-var login (ANTHROPIC_API_KEY / OPENAI_API_KEY / …) is a credential
+  // like any other. Forwarding the union of all three agents' keys would
+  // quietly undo the file-and-mount isolation for exactly the agents that
+  // authenticate this way — a claude-only box inheriting OPENAI_API_KEY.
+  const saved: Record<string, string | undefined> = {};
+  const KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
+
+  beforeEach(() => {
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      process.env[k] = `test-${k}`;
+    }
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  /** A backend with no volume primitive — the path hetzner/vercel/e2b take. */
+  const backend = { name: 'test' } as never;
+
+  it('a claude-only box does not inherit the host OPENAI_API_KEY', async () => {
+    const { ensureAgentVolumesForCloud } = await import('../src/sync/agent-credentials.js');
+    const res = await ensureAgentVolumesForCloud(backend, { agents: ['claude'] });
+    expect(res.env['ANTHROPIC_API_KEY']).toBe('test-ANTHROPIC_API_KEY');
+    expect(res.env['OPENAI_API_KEY']).toBeUndefined();
+    // ...and opencode's config dir is not wired into a box that has no opencode.
+    expect(res.env['OPENCODE_CONFIG_DIR']).toBeUndefined();
+  });
+
+  it('a codex-only box does not inherit the host ANTHROPIC_API_KEY', async () => {
+    const { ensureAgentVolumesForCloud } = await import('../src/sync/agent-credentials.js');
+    const res = await ensureAgentVolumesForCloud(backend, { agents: ['codex'] });
+    expect(res.env['OPENAI_API_KEY']).toBe('test-OPENAI_API_KEY');
+    expect(res.env['ANTHROPIC_API_KEY']).toBeUndefined();
+  });
+
+  it('an un-narrowed caller still gets every agent key', async () => {
+    const { ensureAgentVolumesForCloud } = await import('../src/sync/agent-credentials.js');
+    const res = await ensureAgentVolumesForCloud(backend, {});
+    expect(res.env['ANTHROPIC_API_KEY']).toBe('test-ANTHROPIC_API_KEY');
+    expect(res.env['OPENAI_API_KEY']).toBe('test-OPENAI_API_KEY');
   });
 });
