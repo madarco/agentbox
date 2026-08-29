@@ -1,4 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 // Mock the SDK loader so the backend never touches the real @vercel/sandbox.
 const mocks = vi.hoisted(() => {
@@ -29,6 +32,7 @@ import {
   VERCEL_MAX_PORTS,
   parseNetworkPolicy,
   parseVercelVcpus,
+  deleteVercelSnapshot,
 } from '../src/backend.js';
 
 function fakeSandbox(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -112,7 +116,10 @@ describe('vercelBackend.exec', () => {
     );
     mocks.get.mockResolvedValue(fakeSandbox({ runCommand }));
 
-    await vercelBackend.exec({ sandboxId: 'box-1' }, 'env', { user: 'root', env: { FOO: "a'b; rm -rf /" } });
+    await vercelBackend.exec({ sandboxId: 'box-1' }, 'env', {
+      user: 'root',
+      env: { FOO: "a'b; rm -rf /" },
+    });
     const arg = firstRunArg(runCommand);
     // Key bare, value quoted — the injection lives in the value and is neutralised.
     expect(arg.args.join(' ')).toContain("export FOO='a'\\''b; rm -rf /'");
@@ -134,7 +141,7 @@ describe('vercelBackend.destroy', () => {
     mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
 
     await vercelBackend.destroy({ sandboxId: 'box-1' });
-    expect((sb.delete as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect(sb.delete as ReturnType<typeof vi.fn>).toHaveBeenCalled();
     expect(snapDelete).toHaveBeenCalled();
   });
 
@@ -147,7 +154,7 @@ describe('vercelBackend.destroy', () => {
     mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
 
     await vercelBackend.destroy({ sandboxId: 'box-1' });
-    expect((sb.delete as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect(sb.delete as ReturnType<typeof vi.fn>).toHaveBeenCalled();
     expect(snapDelete).not.toHaveBeenCalled();
   });
 
@@ -165,7 +172,11 @@ describe('vercelBackend.provision', () => {
     mocks.get.mockResolvedValue(
       fakeSandbox({
         writeFiles: vi.fn(async () => undefined),
-        runCommand: vi.fn(async () => ({ exitCode: 0, stdout: async () => '', stderr: async () => '' })),
+        runCommand: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: async () => '',
+          stderr: async () => '',
+        })),
       }),
     );
 
@@ -278,5 +289,117 @@ describe('parseVercelVcpus', () => {
     expect(() => parseVercelVcpus('cx33')).toThrow(/"cx33"/);
     expect(() => parseVercelVcpus('cx33')).toThrow(/box\.sizeVercel/);
     expect(() => parseVercelVcpus('cx33')).toThrow(/box\.size/);
+  });
+});
+
+describe('vercelBackend.destroy — shared-snapshot protection', () => {
+  // These run against an isolated HOME so the guard reads a prepared-state file
+  // we control, not the developer's real one.
+  const home = mkdtempSync(join(tmpdir(), 'agentbox-vercel-destroy-'));
+  let savedHome: string | undefined;
+
+  beforeEach(() => {
+    savedHome = process.env.HOME;
+    process.env.HOME = home;
+    mkdirSync(join(home, '.agentbox'), { recursive: true });
+    writeFileSync(
+      join(home, '.agentbox', 'vercel-prepared.json'),
+      JSON.stringify({
+        schema: 2,
+        base: { snapshotId: 'snap_base', createdAt: 'x' },
+        variants: {
+          '': { snapshotId: 'snap_base', createdAt: 'x' },
+          claude: { snapshotId: 'snap_claude', createdAt: 'y' },
+        },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  });
+
+  it('does NOT delete a per-agent VARIANT the box booted from', async () => {
+    // The failure this guard exists for. `sourceSnapshotId` is session-scoped
+    // and can be absent on a resumed or re-fetched session, while
+    // currentSnapshotId is sandbox-scoped and sticky — so the `!== source`
+    // check alone lets the shared variant through, and every other claude box
+    // then 410s "Snapshot expired or deleted" on its next create.
+    const snapDelete = vi.fn(async () => undefined);
+    const sb = fakeSandbox({ currentSnapshotId: 'snap_claude', sourceSnapshotId: undefined });
+    mocks.get.mockResolvedValue(sb);
+    mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
+
+    await vercelBackend.destroy({ sandboxId: 'box-1' });
+    expect(sb.delete as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+    expect(snapDelete).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete the base even when the source is missing', async () => {
+    const snapDelete = vi.fn(async () => undefined);
+    const sb = fakeSandbox({ currentSnapshotId: 'snap_base', sourceSnapshotId: undefined });
+    mocks.get.mockResolvedValue(sb);
+    mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
+
+    await vercelBackend.destroy({ sandboxId: 'box-1' });
+    expect(snapDelete).not.toHaveBeenCalled();
+  });
+
+  it('still purges the box its OWN snapshot', async () => {
+    // The guard must not become "never delete anything" — a box's stop-time
+    // auto-snapshot is exactly what destroy is meant to reap.
+    const snapDelete = vi.fn(async () => undefined);
+    const sb = fakeSandbox({ currentSnapshotId: 'snap_box_own', sourceSnapshotId: 'snap_claude' });
+    mocks.get.mockResolvedValue(sb);
+    mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
+
+    await vercelBackend.destroy({ sandboxId: 'box-1' });
+    expect(snapDelete).toHaveBeenCalled();
+  });
+});
+
+describe('deleteVercelSnapshot — shared-snapshot protection', () => {
+  const home = mkdtempSync(join(tmpdir(), 'agentbox-vercel-delsnap-'));
+  let savedHome: string | undefined;
+
+  beforeEach(() => {
+    savedHome = process.env.HOME;
+    process.env.HOME = home;
+    mkdirSync(join(home, '.agentbox'), { recursive: true });
+    writeFileSync(
+      join(home, '.agentbox', 'vercel-prepared.json'),
+      JSON.stringify({
+        schema: 2,
+        base: { snapshotId: 'snap_base', createdAt: 'x' },
+        variants: {
+          '': { snapshotId: 'snap_base', createdAt: 'x' },
+          claude: { snapshotId: 'snap_claude', createdAt: 'y' },
+        },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  });
+
+  it('refuses to delete a baked variant (the `checkpoint rm` path)', async () => {
+    // deleteVercelSnapshot had no guard at all: it deleted whatever id it was
+    // handed. A manifest naming a shared snapshot would take the base or a
+    // variant out from under every other box.
+    await expect(deleteVercelSnapshot('snap_claude')).rejects.toThrow(/refusing to delete/);
+  });
+
+  it('refuses to delete the base', async () => {
+    await expect(deleteVercelSnapshot('snap_base')).rejects.toThrow(/refusing to delete/);
+  });
+
+  it("allows deleting a checkpoint's own snapshot", async () => {
+    const snapDelete = vi.fn(async () => undefined);
+    mocks.snapshotGet.mockResolvedValue({ delete: snapDelete });
+    await expect(deleteVercelSnapshot('snap_ckpt')).resolves.toBeUndefined();
+    expect(snapDelete).toHaveBeenCalled();
   });
 });

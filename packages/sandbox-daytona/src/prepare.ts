@@ -35,7 +35,7 @@ import {
   resolveAgentSpec,
   resolveAgentInstall,
   renderInstallRecipe,
-  renderAptInstall,
+  renderPackageInstall,
 } from '@agentbox/sandbox-core';
 import {
   DAYTONA_DEFAULT_RESOURCES,
@@ -167,8 +167,8 @@ export function buildDaytonaAgentCommands(
   for (const id of agents) {
     const spec = resolveAgentSpec(id);
     const install = resolveAgentInstall(spec.install, claudeInstall);
-    if (install.apt && install.apt.length > 0) {
-      cmds.push('USER root', `RUN ${renderAptInstall(install.apt)}`);
+    if (install.packages && install.packages.length > 0) {
+      cmds.push('USER root', `RUN ${renderPackageInstall(install.packages)}`);
     }
     const recipe = renderInstallRecipe(install.recipe);
     // `runAs: 'box-user'` is load-bearing: the native installers write into the

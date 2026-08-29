@@ -85,10 +85,7 @@ export function isRetriable(err: unknown, allowAmbiguous: boolean): boolean {
   return false;
 }
 
-export async function withVercelRetry<T>(
-  opts: WithRetryOptions,
-  fn: () => Promise<T>,
-): Promise<T> {
+export async function withVercelRetry<T>(opts: WithRetryOptions, fn: () => Promise<T>): Promise<T> {
   const backoff = opts.backoffMs ?? DEFAULT_BACKOFF;
   const maxAttempts = backoff.length + 1;
   const timeoutMs = opts.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;

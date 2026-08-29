@@ -26,8 +26,20 @@
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import type { Provider } from '@agentbox/core';
-import { claudeInstallFingerprint, computeContextManifest, readCliStamp } from '@agentbox/sandbox-core';
+import { UserFacingError } from '@agentbox/core';
 import {
+  agentSetArg,
+  computeContextManifest,
+  normalizeAgentSet,
+  readCliStamp,
+  renderInstallRecipe,
+  renderPackageInstall,
+  resolveAgentInstall,
+  resolveAgentSpec,
+  variantFingerprint,
+} from '@agentbox/sandbox-core';
+import {
+  stageAgentsStaticForUpload,
   stageClaudeStaticForUpload,
   stageCodexStaticForUpload,
   stageOpencodeStaticForUpload,
@@ -42,6 +54,7 @@ import {
   type SandboxType,
 } from './sdk.js';
 import {
+  preparedEntryFor,
   preparedStatePath,
   readPreparedState,
   writePreparedState,
@@ -65,6 +78,15 @@ export interface PrepareVercelOptions {
   repoRoot?: string;
   /** How provision.sh installs Claude Code (`native` default | `npm`). */
   claudeInstall?: 'native' | 'npm';
+  /**
+   * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
+   *
+   * A non-empty set bakes a DERIVED snapshot: boot the existing base, run only
+   * those agents' install recipes, re-snapshot. The base already carries the
+   * expensive layers (dnf packages, Chromium, the VNC stack), so re-running
+   * provision.sh would rebuild all of it for one npm install.
+   */
+  agents?: string[];
   onLog?: (line: string) => void;
 }
 
@@ -73,11 +95,32 @@ export interface PrepareVercelResult {
 }
 
 const BUILDER_TIMEOUT_MS = 25 * 60_000;
+const BOX_USER = 'vscode';
 const SHELL = '/bin/bash';
 
-export async function prepareVercel(
-  opts: PrepareVercelOptions = {},
-): Promise<PrepareVercelResult> {
+/**
+ * The `Sandbox.create` fields that select what the builder boots from.
+ *
+ * A base bake starts from the stock runtime; a derived bake boots the base
+ * snapshot. The SDK's create params are a union (`sandbox.d.ts` CreateSandboxParams)
+ * whose snapshot branch OMITS `runtime`, so passing both is a type error and
+ * passing `runtime` alongside a snapshot source would be silently wrong. Kept as
+ * a pure function so a unit test can assert the shape without the SDK.
+ */
+/** Single-quote a string for safe embedding inside a `bash -lc '<...>'`. */
+function shellSingleQuote(str: string): string {
+  return `'${str.replaceAll("'", `'\\''`)}'`;
+}
+
+export function buildBuilderSource(
+  snapshotId: string | undefined,
+): { runtime: 'node24' } | { source: { type: 'snapshot'; snapshotId: string } } {
+  return snapshotId === undefined
+    ? { runtime: 'node24' }
+    : { source: { type: 'snapshot', snapshotId } };
+}
+
+export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<PrepareVercelResult> {
   await ensureVercelCredentials();
   await ensureFreshCredentials();
   const creds = resolveCredentials();
@@ -94,86 +137,197 @@ export async function prepareVercel(
   const contextManifest = await computeContextManifest(
     assets.map((a) => ({ rel: a.name, abs: a.localPath })),
   );
-  const contextSha = claudeInstallFingerprint(contextManifest.contextSha256, claudeInstall);
+  const agents = normalizeAgentSet(opts.agents);
+  const variantKey = agentSetArg(agents);
+  const derived = agents.length > 0;
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
 
-  // Skip-fast: existing base snapshot still on Vercel + matching fingerprint.
   const existing = readPreparedState();
-  if (!opts.force && existing.base) {
-    const stillThere = await snapshotExists(existing.base.snapshotId, creds);
-    if (stillThere && existing.base.contextSha256 === contextSha) {
+  // A derived bake boots the agentless base, so that has to exist first.
+  const baseEntry = preparedEntryFor(existing, '');
+  if (derived && !baseEntry) {
+    throw new UserFacingError(
+      'no Vercel base snapshot to derive from - run `agentbox prepare --provider vercel` first, ' +
+        'then re-run with --agents.',
+    );
+  }
+
+  // Skip-fast: this variant's snapshot still on Vercel + matching fingerprint.
+  const existingEntry = preparedEntryFor(existing, variantKey);
+  if (!opts.force && existingEntry) {
+    const stillThere = await snapshotExists(existingEntry.snapshotId, creds);
+    if (stillThere && existingEntry.contextSha256 === contextSha) {
       progress(
-        `base snapshot ${existing.base.snapshotId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
+        `${derived ? `${variantKey} snapshot` : 'base snapshot'} ${existingEntry.snapshotId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
       );
-      return { snapshotName: existing.base.snapshotId };
+      return { snapshotName: existingEntry.snapshotId };
     }
     if (!stillThere) {
-      progress(`recorded base snapshot ${existing.base.snapshotId} is gone on Vercel; rebuilding`);
+      progress(
+        `recorded ${variantKey || 'base'} snapshot ${existingEntry.snapshotId} is gone on Vercel; rebuilding`,
+      );
     } else {
       progress(
-        `build context changed (was ${existing.base.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding`,
+        `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${variantKey || 'base'} snapshot`,
       );
     }
   }
 
-  progress(`creating builder sandbox (node24, ${String(opts.vcpus ?? 4)} vcpus)`);
+  progress(
+    derived
+      ? `creating builder sandbox from the base snapshot (${String(opts.vcpus ?? 4)} vcpus)`
+      : `creating builder sandbox (node24, ${String(opts.vcpus ?? 4)} vcpus)`,
+  );
   const sb = await Sandbox.create({
-    runtime: 'node24',
+    ...buildBuilderSource(derived ? baseEntry!.snapshotId : undefined),
     resources: { vcpus: opts.vcpus ?? 4 },
     timeout: BUILDER_TIMEOUT_MS,
     tags: { agentbox: 'true', 'agentbox.role': 'prepare' },
+    // NO `keepLastSnapshots`, and persistent:false. A derived builder boots FROM
+    // the shared base, which Vercel then reports as its currentSnapshotId -- so a
+    // retention window of 1 with the default `deleteEvicted: true` would evict
+    // and DELETE the base the moment we snapshot, breaking every other box.
+    // Setting no policy at all means no window exists. Asserted in a unit test.
     persistent: false,
     ...creds,
   });
   progress(`builder sandbox ${sb.name} up`);
 
-  // 3. Upload assets.
-  progress(`uploading ${String(assets.length)} runtime asset(s)`);
-  await sb.writeFiles(
-    await Promise.all(
-      assets.map(async (a: ResolvedAsset) => ({
-        path: a.remotePath,
-        content: await readFile(a.localPath),
-        mode: a.remoteMode,
-      })),
-    ),
-  );
-
-  // 4. Run provision.sh as root, streaming output.
-  progress('running provision.sh (this takes a few minutes)');
-  const install = await sb.runCommand({
-    cmd: SHELL,
-    args: ['-lc', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-provision.sh 2>&1`],
-    sudo: true,
-    stdout: lineSink((l) => log(`[provision] ${l}`)),
-    stderr: lineSink((l) => log(`[provision] ${l}`)),
-  });
-  if (install.exitCode !== 0) {
-    throw new Error(`provision.sh failed on the builder sandbox (exit ${String(install.exitCode)})`);
+  // 3. Upload assets. A derived bake needs none of them: the base snapshot
+  // already carries every baked asset, and it runs only the agent recipes.
+  if (!derived) {
+    progress(`uploading ${String(assets.length)} runtime asset(s)`);
+    await sb.writeFiles(
+      await Promise.all(
+        assets.map(async (a: ResolvedAsset) => ({
+          path: a.remotePath,
+          content: await readFile(a.localPath),
+          mode: a.remoteMode,
+        })),
+      ),
+    );
   }
-  progress('provision.sh complete');
+
+  // 4. Install. A base bake runs provision.sh; a derived bake runs ONLY the
+  // agent recipes -- the base already has the expensive layers (dnf packages,
+  // Chromium, the VNC stack), and provision.sh trims its own inputs from /tmp
+  // before the snapshot so it cannot be re-run anyway.
+  if (derived) {
+    // Same AGENT_SYNC_SPECS data the docker derived layer and
+    // `ensureAgentInstalled` use, so a vercel-baked agent and a runtime-added
+    // one are installed identically.
+    for (const id of agents) {
+      const spec = resolveAgentSpec(id);
+      const agentInstall = resolveAgentInstall(spec.install, claudeInstall);
+      progress(`installing ${spec.id} into the derived snapshot`);
+      const steps: string[] = [];
+      if (agentInstall.packages && agentInstall.packages.length > 0) {
+        // Vercel is Amazon Linux 2023, so this renders dnf, not apt-get. An
+        // optional prerequisite (codex's bubblewrap) must not fail the bake --
+        // the agent works without it, just degraded.
+        const pkgLine = renderPackageInstall(agentInstall.packages);
+        steps.push(
+          agentInstall.packagesOptional
+            ? `{ ${pkgLine} } || echo "prepare-vercel: optional prerequisites for ${spec.id} unavailable; continuing"`
+            : pkgLine,
+        );
+      }
+      const recipe = renderInstallRecipe(agentInstall.recipe);
+      // `runAs: 'box-user'` is load-bearing: the native installers write into
+      // the INVOKING user's ~/.local/bin, so running them as root would put the
+      // binary in /root and the box user would never see it.
+      steps.push(
+        agentInstall.runAs === 'box-user'
+          ? `sudo -u ${BOX_USER} -H bash -lc ${shellSingleQuote(recipe)}`
+          : recipe,
+      );
+      if (agentInstall.postInstall) steps.push(agentInstall.postInstall);
+      steps.push(
+        `sudo -u ${BOX_USER} -H bash -lc 'command -v ${spec.binary} >/dev/null' || ` +
+          `{ echo "prepare-vercel: ${spec.id} not on PATH after install" >&2; exit 71; }`,
+      );
+      const res = await sb.runCommand({
+        cmd: SHELL,
+        args: ['-lc', steps.join(' && ')],
+        sudo: true,
+        stdout: lineSink((l) => log(`[${spec.id}] ${l}`)),
+        stderr: lineSink((l) => log(`[${spec.id}] ${l}`)),
+      });
+      if (res.exitCode !== 0) {
+        throw new Error(
+          `vercel: installing ${spec.id} into the derived snapshot failed (exit ${String(res.exitCode)}).`,
+        );
+      }
+    }
+  } else {
+    // No AGENTBOX_CLAUDE_INSTALL any more: the base installs no agents, so the
+    // mode has nothing to select. It still folds into the fingerprint (above)
+    // because the derived bake reads it, and the two tiers share one chain.
+    progress('running provision.sh (this takes a few minutes)');
+    const install = await sb.runCommand({
+      cmd: SHELL,
+      args: ['-lc', 'bash /tmp/agentbox-provision.sh 2>&1'],
+      sudo: true,
+      stdout: lineSink((l) => log(`[provision] ${l}`)),
+      stderr: lineSink((l) => log(`[provision] ${l}`)),
+    });
+    if (install.exitCode !== 0) {
+      throw new Error(
+        `provision.sh failed on the builder sandbox (exit ${String(install.exitCode)})`,
+      );
+    }
+    progress('provision.sh complete');
+  }
 
   // 5. Stage host agent static config into the snapshot (best-effort).
-  await stageAgentConfig(sb, opts.hostWorkspace, log);
+  await stageAgentConfig(sb, opts.hostWorkspace, log, agents);
 
-  // 6. Snapshot (never expires). NOTE: this stops the builder sandbox.
-  progress('creating base snapshot (expiration: never)');
+  // 6. Snapshot (never expires). NOTE: this STOPS the builder sandbox before
+  // imaging (documented in the SDK; `snapshotting` is its own status), so the
+  // guest is powered down and its page cache written back. That is why vercel
+  // needs no pre-snapshot `sync` the way hetzner/digitalocean do -- those image
+  // a running VM and silently lost freshly-written files without one.
+  progress(`creating ${derived ? variantKey : 'base'} snapshot (expiration: never)`);
   const snap = await sb.snapshot({ expiration: 0 });
   progress(`snapshot created: ${snap.snapshotId}`);
 
   // 7. Persist.
   const cliStamp = readCliStamp();
-  writePreparedState({
-    schema: 1,
-    base: {
-      snapshotId: snap.snapshotId,
-      contextSha256: contextSha,
-      files: contextManifest.files,
-      cliVersion: cliStamp.cliVersion,
-      cliCommit: cliStamp.cliCommit,
-      createdAt: new Date().toISOString(),
-    },
-  });
+  const state = readPreparedState();
+  const superseded = preparedEntryFor(state, variantKey)?.snapshotId;
+  const entry = {
+    snapshotId: snap.snapshotId,
+    contextSha256: contextSha,
+    files: contextManifest.files,
+    cliVersion: cliStamp.cliVersion,
+    cliCommit: cliStamp.cliCommit,
+    createdAt: new Date().toISOString(),
+  };
+  // Merge, never replace: each variant keeps its own record, so baking a codex
+  // snapshot doesn't invalidate the claude one.
+  state.variants = { ...state.variants, [variantKey]: entry };
+  // `base` stays the AGENTLESS base, never the newest bake. Provider-generic
+  // readers (freshness, bake sharing, prepared-custody) reach straight for
+  // `base.contextSha256` and assume it describes the agentless context; point
+  // that at a codex snapshot and they report a permanent false "stale".
+  if (!derived) state.base = entry;
+  writePreparedState(state);
   progress(`wrote ${preparedStatePath()}`);
+
+  // Reap the snapshot this bake replaces -- ONLY after the new one is recorded,
+  // so a failed bake never leaves the user with no base, and only for this exact
+  // variant, so a codex re-bake can't delete the claude snapshot.
+  if (superseded !== undefined && superseded !== snap.snapshotId) {
+    progress(`removing superseded snapshot ${superseded}`);
+    try {
+      const old = await Snapshot.get({ snapshotId: superseded, ...creds });
+      await old.delete();
+    } catch (err) {
+      progress(
+        `could not delete superseded snapshot ${superseded} (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // 8. Delete the builder. The snapshot is an independent resource that
   // survives this (verified live), and its id is already persisted above, so
@@ -188,7 +342,7 @@ export async function prepareVercel(
     );
   }
 
-  progress(`prepare complete — base snapshot ${snap.snapshotId}`);
+  progress(`prepare complete — ${derived ? variantKey : 'base'} snapshot ${snap.snapshotId}`);
   return { snapshotName: snap.snapshotId };
 }
 
@@ -211,32 +365,58 @@ async function stageAgentConfig(
   sb: SandboxType,
   hostWorkspace: string | undefined,
   log: (line: string) => void,
+  agents: readonly string[] = [],
 ): Promise<void> {
   const progress = (s: string) => log(`prepare-vercel: ${s}`);
   progress('staging host agent static config');
-  const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+  // Only the agents this snapshot is for: staging every agent's host config into
+  // a claude-only snapshot would put codex's and opencode's settings in a box
+  // that has neither binary. `~/.agents` is always staged -- shared skills, not
+  // an agent's auth.
+  const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
+  const stagings: Array<{
+    kind: 'claude' | 'codex' | 'opencode' | 'agents';
+    tar: StageResult;
+    dest: string;
+  }> = [];
   try {
     const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace });
     for (const w of claudeTar.warnings) progress(w);
-    if (claudeTar.tarballPath) stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
+    if (claudeTar.tarballPath && wantsAgent('claude'))
+      stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
     else await claudeTar.cleanup();
 
     const codexTar = await stageCodexStaticForUpload();
     for (const w of codexTar.warnings) progress(w);
-    if (codexTar.tarballPath) stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
+    if (codexTar.tarballPath && wantsAgent('codex'))
+      stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
     else await codexTar.cleanup();
 
     const opencodeTar = await stageOpencodeStaticForUpload();
     for (const w of opencodeTar.warnings) progress(w);
-    if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
+    if (opencodeTar.tarballPath && wantsAgent('opencode'))
+      stagings.push({
+        kind: 'opencode',
+        tar: opencodeTar,
+        dest: '/home/vscode/.local/share/opencode',
+      });
     else await opencodeTar.cleanup();
+
+    // ~/.agents (cross-agent Agent Skills) — codex reads ~/.agents/skills.
+    const agentsTar = await stageAgentsStaticForUpload();
+    for (const w of agentsTar.warnings) progress(w);
+    if (agentsTar.tarballPath)
+      stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
+    else await agentsTar.cleanup();
 
     for (const s of stagings) {
       const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;
       progress(`uploading ${s.kind} static config`);
       await sb.writeFiles([{ path: remote, content: await readFile(s.tar.tarballPath as string) }]);
-      // Extract as vscode so files land owned by the box user. The dest dir
-      // already exists (provision.sh's credential-pivot step) — extract into it.
+      // Extract as vscode so files land owned by the box user. `mkdir -p` is
+      // load-bearing now: the agentless base no longer pre-creates these dirs
+      // (that moved onto each agent's postInstall), so on a base bake they may
+      // not exist yet.
       const extract =
         `sudo -u vscode mkdir -p ${s.dest} && ` +
         `sudo -u vscode tar -xzf ${remote} -C ${s.dest} --no-same-permissions --no-same-owner -m && ` +
@@ -283,5 +463,7 @@ export const prepareVercelProvider: NonNullable<Provider['prepare']> = (req) =>
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
     claudeInstall: req.claudeInstall,
+    // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
+    ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,
   });

@@ -43,15 +43,35 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'agentbox-ctl', remotePath: '/tmp/agentbox-ctl', remoteMode: 0o755 },
   { name: 'agentbox-vnc-start', remotePath: '/tmp/agentbox-vnc-start', remoteMode: 0o755 },
   { name: 'agentbox-dockerd-start', remotePath: '/tmp/agentbox-dockerd-start', remoteMode: 0o755 },
-  { name: 'agentbox-checkpoint-cleanup', remotePath: '/tmp/agentbox-checkpoint-cleanup', remoteMode: 0o755 },
+  {
+    name: 'agentbox-checkpoint-cleanup',
+    remotePath: '/tmp/agentbox-checkpoint-cleanup',
+    remoteMode: 0o755,
+  },
   { name: 'agentbox-open', remotePath: '/tmp/agentbox-open', remoteMode: 0o755 },
   { name: 'gh-shim', remotePath: '/tmp/agentbox-gh-shim', remoteMode: 0o755 },
   { name: 'git-shim', remotePath: '/tmp/agentbox-git-shim', remoteMode: 0o755 },
   { name: 'agentbox-tool-shim', remotePath: '/tmp/agentbox-tool-shim', remoteMode: 0o755 },
-  { name: 'custom-system-CLAUDE.md', remotePath: '/tmp/agentbox-custom-CLAUDE.md', remoteMode: 0o644 },
-  { name: 'claude-managed-settings.json', remotePath: '/tmp/agentbox-managed-settings.json', remoteMode: 0o644 },
-  { name: 'agentbox-codex-hooks.json', remotePath: '/tmp/agentbox-codex-hooks.json', remoteMode: 0o644 },
-  { name: 'agentbox-setup-skill.md', remotePath: '/tmp/agentbox-setup-skill.md', remoteMode: 0o644 },
+  {
+    name: 'custom-system-CLAUDE.md',
+    remotePath: '/tmp/agentbox-custom-CLAUDE.md',
+    remoteMode: 0o644,
+  },
+  {
+    name: 'claude-managed-settings.json',
+    remotePath: '/tmp/agentbox-managed-settings.json',
+    remoteMode: 0o644,
+  },
+  {
+    name: 'agentbox-codex-hooks.json',
+    remotePath: '/tmp/agentbox-codex-hooks.json',
+    remoteMode: 0o644,
+  },
+  {
+    name: 'agentbox-setup-skill.md',
+    remotePath: '/tmp/agentbox-setup-skill.md',
+    remoteMode: 0o644,
+  },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {
@@ -76,7 +96,9 @@ export function candidatesFor(
     'git-shim': ['packages/sandbox-docker/scripts/git-shim'],
     'agentbox-tool-shim': ['packages/sandbox-docker/scripts/agentbox-tool-shim'],
     'custom-system-CLAUDE.md': ['packages/sandbox-vercel/scripts/custom-system-CLAUDE.md'],
-    'claude-managed-settings.json': ['packages/sandbox-docker/scripts/claude-managed-settings.json'],
+    'claude-managed-settings.json': [
+      'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    ],
     'agentbox-codex-hooks.json': ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['apps/cli/share/agentbox-setup/SKILL.md'],
   };
@@ -84,17 +106,41 @@ export function candidatesFor(
   const cliRelative: Record<string, string[]> = {
     'provision.sh': ['vercel/scripts/provision.sh'],
     'agentbox-ctl': ['vercel/ctl.cjs'],
-    'agentbox-vnc-start': ['vercel/agentbox-vnc-start', 'docker/packages/sandbox-docker/scripts/agentbox-vnc-start'],
-    'agentbox-dockerd-start': ['vercel/agentbox-dockerd-start', 'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start'],
-    'agentbox-checkpoint-cleanup': ['vercel/agentbox-checkpoint-cleanup', 'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
-    'agentbox-open': ['vercel/agentbox-open', 'docker/packages/sandbox-docker/scripts/agentbox-open'],
+    'agentbox-vnc-start': [
+      'vercel/agentbox-vnc-start',
+      'docker/packages/sandbox-docker/scripts/agentbox-vnc-start',
+    ],
+    'agentbox-dockerd-start': [
+      'vercel/agentbox-dockerd-start',
+      'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start',
+    ],
+    'agentbox-checkpoint-cleanup': [
+      'vercel/agentbox-checkpoint-cleanup',
+      'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    ],
+    'agentbox-open': [
+      'vercel/agentbox-open',
+      'docker/packages/sandbox-docker/scripts/agentbox-open',
+    ],
     'gh-shim': ['vercel/gh-shim', 'docker/packages/sandbox-docker/scripts/gh-shim'],
     'git-shim': ['vercel/git-shim', 'docker/packages/sandbox-docker/scripts/git-shim'],
-    'agentbox-tool-shim': ['vercel/agentbox-tool-shim', 'docker/packages/sandbox-docker/scripts/agentbox-tool-shim'],
+    'agentbox-tool-shim': [
+      'vercel/agentbox-tool-shim',
+      'docker/packages/sandbox-docker/scripts/agentbox-tool-shim',
+    ],
     'custom-system-CLAUDE.md': ['vercel/custom-system-CLAUDE.md'],
-    'claude-managed-settings.json': ['vercel/claude-managed-settings.json', 'docker/packages/sandbox-docker/scripts/claude-managed-settings.json'],
-    'agentbox-codex-hooks.json': ['vercel/agentbox-codex-hooks.json', 'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
-    'agentbox-setup-skill.md': ['vercel/agentbox-setup-skill.md', 'docker/apps/cli/share/agentbox-setup/SKILL.md'],
+    'claude-managed-settings.json': [
+      'vercel/claude-managed-settings.json',
+      'docker/packages/sandbox-docker/scripts/claude-managed-settings.json',
+    ],
+    'agentbox-codex-hooks.json': [
+      'vercel/agentbox-codex-hooks.json',
+      'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
+    ],
+    'agentbox-setup-skill.md': [
+      'vercel/agentbox-setup-skill.md',
+      'docker/apps/cli/share/agentbox-setup/SKILL.md',
+    ],
   };
 
   const out: string[] = [];
@@ -120,7 +166,10 @@ export function resolveRuntimeAssets(
     out.push({ ...asset, localPath: hit });
   }
   if (missing.length > 0) {
-    const lines = missing.flatMap((m) => [`  - ${m.name}: tried`, ...m.tried.map((p) => `      ${p}`)]);
+    const lines = missing.flatMap((m) => [
+      `  - ${m.name}: tried`,
+      ...m.tried.map((p) => `      ${p}`),
+    ]);
     throw new Error(
       `vercel: could not resolve runtime assets needed to bake the base snapshot:\n` +
         lines.join('\n') +

@@ -39,7 +39,7 @@ import { seedAgentStaticIntoCloudBox } from '@agentbox/sandbox-cloud';
 import {
   BOX_IMAGE_REGISTRY,
   registryRefForSha,
-  renderAptInstall,
+  renderPackageInstall,
   renderInstallRecipe,
   resolveAgentInstall,
   resolveAgentSpec,
@@ -287,8 +287,8 @@ export async function bakeDaytonaVmVariant(
       const install = resolveAgentInstall(spec.install, opts.claudeInstall);
       log(`installing ${spec.id} into the derived snapshot…`);
       const steps: string[] = [];
-      if (install.apt && install.apt.length > 0) {
-        steps.push(`sudo sh -c ${shellSingleQuote(renderAptInstall(install.apt))}`);
+      if (install.packages && install.packages.length > 0) {
+        steps.push(`sudo sh -c ${shellSingleQuote(renderPackageInstall(install.packages))}`);
       }
       const recipe = renderInstallRecipe(install.recipe);
       // `runAs: 'box-user'` is load-bearing: the native installers write into

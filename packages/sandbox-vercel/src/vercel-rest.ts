@@ -45,9 +45,7 @@ async function api(
   }
   if (!res.ok) {
     const detail =
-      (json as { error?: { message?: string } } | null)?.error?.message ??
-      text ??
-      res.statusText;
+      (json as { error?: { message?: string } } | null)?.error?.message ?? text ?? res.statusText;
     throw new VercelApiError(res.status, `Vercel API ${res.status}: ${detail}`);
   }
   return json;
@@ -136,7 +134,10 @@ export async function getProject(
   idOrName: string,
 ): Promise<VercelProjectFull | null> {
   try {
-    return (await api(token, withTeam(`/v9/projects/${encodeURIComponent(idOrName)}`, teamId))) as VercelProjectFull;
+    return (await api(
+      token,
+      withTeam(`/v9/projects/${encodeURIComponent(idOrName)}`, teamId),
+    )) as VercelProjectFull;
   } catch (err) {
     if (err instanceof VercelApiError && err.status === 404) return null;
     throw err;
@@ -182,7 +183,9 @@ export async function deleteProject(
   teamId: string | undefined,
   idOrName: string,
 ): Promise<void> {
-  await api(token, withTeam(`/v9/projects/${encodeURIComponent(idOrName)}`, teamId), { method: 'DELETE' });
+  await api(token, withTeam(`/v9/projects/${encodeURIComponent(idOrName)}`, teamId), {
+    method: 'DELETE',
+  });
 }
 
 /** PATCH the settings that ARE updatable (not `gitRepository`). */
@@ -190,7 +193,11 @@ export async function patchProjectSettings(
   token: string,
   teamId: string | undefined,
   idOrName: string,
-  settings: { framework?: string; rootDirectory?: string; sourceFilesOutsideRootDirectory?: boolean },
+  settings: {
+    framework?: string;
+    rootDirectory?: string;
+    sourceFilesOutsideRootDirectory?: boolean;
+  },
 ): Promise<void> {
   await api(token, withTeam(`/v9/projects/${encodeURIComponent(idOrName)}`, teamId), {
     method: 'PATCH',
@@ -212,15 +219,19 @@ export async function upsertProjectEnv(
   idOrName: string,
   vars: VercelEnvVar[],
 ): Promise<void> {
-  await api(token, withTeam(`/v10/projects/${encodeURIComponent(idOrName)}/env?upsert=true`, teamId), {
-    method: 'POST',
-    body: vars.map((v) => ({
-      key: v.key,
-      value: v.value,
-      type: v.type ?? 'encrypted',
-      target: v.target ?? ['production'],
-    })),
-  });
+  await api(
+    token,
+    withTeam(`/v10/projects/${encodeURIComponent(idOrName)}/env?upsert=true`, teamId),
+    {
+      method: 'POST',
+      body: vars.map((v) => ({
+        key: v.key,
+        value: v.value,
+        type: v.type ?? 'encrypted',
+        target: v.target ?? ['production'],
+      })),
+    },
+  );
 }
 
 /** Whether the project already has an env var named `key` (any target). */
@@ -230,7 +241,10 @@ export async function projectHasEnv(
   idOrName: string,
   key: string,
 ): Promise<boolean> {
-  const r = (await api(token, withTeam(`/v9/projects/${encodeURIComponent(idOrName)}/env`, teamId))) as {
+  const r = (await api(
+    token,
+    withTeam(`/v9/projects/${encodeURIComponent(idOrName)}/env`, teamId),
+  )) as {
     envs?: Array<{ key?: string }>;
   };
   return (r.envs ?? []).some((e) => e.key === key);
@@ -250,15 +264,19 @@ export async function createGitDeployment(
   teamId: string | undefined,
   input: CreateGitDeploymentInput,
 ): Promise<{ id: string; url?: string }> {
-  const res = (await api(token, withTeam('/v13/deployments?skipAutoDetectionConfirmation=1', teamId), {
-    method: 'POST',
-    body: {
-      name: input.name,
-      project: input.projectId,
-      target: 'production',
-      gitSource: { type: 'github', org: input.owner, repo: input.repo, ref: input.ref },
+  const res = (await api(
+    token,
+    withTeam('/v13/deployments?skipAutoDetectionConfirmation=1', teamId),
+    {
+      method: 'POST',
+      body: {
+        name: input.name,
+        project: input.projectId,
+        target: 'production',
+        gitSource: { type: 'github', org: input.owner, repo: input.repo, ref: input.ref },
+      },
     },
-  })) as { id?: string; url?: string };
+  )) as { id?: string; url?: string };
   if (!res.id) throw new Error('Vercel deployment create returned no id');
   return { id: res.id, url: res.url };
 }

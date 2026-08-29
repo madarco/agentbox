@@ -22,7 +22,7 @@ import {
   resolveAgentSpec,
   resolveAgentInstall,
   renderInstallRecipe,
-  renderAptInstall,
+  renderPackageInstall,
 } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
@@ -394,8 +394,8 @@ export async function buildDerivedAgentImage(opts: {
     const spec = resolveAgentSpec(id);
     const install = resolveAgentInstall(spec.install, opts.installMode);
     lines.push(`# ---- ${spec.id} ----`, 'USER root');
-    if (install.apt && install.apt.length > 0) {
-      lines.push(`RUN ${renderAptInstall(install.apt)}`);
+    if (install.packages && install.packages.length > 0) {
+      lines.push(`RUN ${renderPackageInstall(install.packages)}`);
     }
     const recipe = renderInstallRecipe(install.recipe);
     if (install.runAs === 'box-user') {

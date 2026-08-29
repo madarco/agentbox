@@ -57,7 +57,10 @@ describe('ensureAgentInstalled', () => {
     const cmds = execs(t).map((c) => c.join(' '));
     expect(cmds[0]).toBe('sh -c command -v codex');
     // bubblewrap first — codex falls back to a bundled copy and warns without it.
+    // The line dispatches on the box's package manager: Debian everywhere except
+    // Vercel, whose sandboxes are Amazon Linux 2023.
     expect(cmds[1]).toContain('apt-get install -y --no-install-recommends bubblewrap');
+    expect(cmds[1]).toContain('dnf install -y bubblewrap');
     expect(cmds[2]).toContain('npm install -g @openai/codex');
     // ...and a post-install probe re-verifies the binary actually landed.
     expect(cmds).toContain('sh -lc command -v codex');
@@ -122,18 +125,36 @@ describe('ensureAgentInstalled', () => {
     await expect(ensureAgentInstalled(t, 'opencode')).rejects.toThrow(/still not on PATH/);
   });
 
-  it('fails loudly when the apt prerequisite cannot be installed', async () => {
+  it('continues when an OPTIONAL prerequisite cannot be installed', async () => {
+    // Codex ships a bundled bwrap and only warns without the system one, so
+    // aborting a box create over it trades a warning for a total failure — and
+    // on Amazon Linux the package may not exist at all. Before this, an
+    // agentless vercel base made `agentbox codex --provider vercel` fail create
+    // outright: the prerequisite line ran apt-get, which exits 127 on AL2023.
+    const lines: string[] = [];
+    let firstProbe = true;
     const t = makeRecordingTransport({
       execResult: (cmd) => {
         const j = cmd.join(' ');
-        if (j.includes('command -v')) return fail('nope');
-        if (j.includes('apt-get')) return fail('E: Unable to locate package');
+        // Match the AGENT probe specifically: the portable prerequisite line now
+        // contains `command -v apt-get` / `command -v dnf` of its own, so a bare
+        // `includes('command -v')` would swallow it and never exercise the
+        // failure branch.
+        if (j.includes('command -v codex')) {
+          if (firstProbe) {
+            firstProbe = false;
+            return fail('not found');
+          }
+          return ok;
+        }
+        if (j.includes('bubblewrap')) return fail('E: Unable to locate package');
         return ok;
       },
     });
-    await expect(ensureAgentInstalled(t, 'codex')).rejects.toThrow(
-      /apt prerequisites \(bubblewrap\)/,
-    );
+    await expect(
+      ensureAgentInstalled(t, 'codex', { onProgress: (l) => lines.push(l) }),
+    ).resolves.toEqual({ installed: true });
+    expect(lines.join('\n')).toMatch(/optional prerequisites \(bubblewrap\)/);
   });
 });
 

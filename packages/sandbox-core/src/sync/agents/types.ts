@@ -108,8 +108,19 @@ export interface AgentInstall {
    * opposite and needs root. `apt` is always root regardless.
    */
   runAs: 'root' | 'box-user';
-  /** apt packages the agent needs alongside its own installer (codex: bubblewrap). */
-  apt?: string[];
+  /**
+   * OS packages the agent needs alongside its own installer (codex: bubblewrap).
+   * Installed with whichever package manager the box has -- see
+   * `renderPackageInstall`; boxes are Debian/Ubuntu except Vercel (AL2023/dnf).
+   */
+  packages?: string[];
+  /**
+   * True when the agent still works without those packages, just degraded.
+   * An optional prerequisite that fails logs and continues; a required one
+   * aborts the install. Default (undefined) is REQUIRED, so a new prerequisite
+   * has to opt into being skippable rather than silently becoming so.
+   */
+  packagesOptional?: boolean;
   /** Shell run after the recipe succeeds (dirs, symlinks, ownership). Runs as root. */
   postInstall?: string;
   /**

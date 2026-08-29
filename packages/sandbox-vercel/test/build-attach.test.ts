@@ -77,7 +77,10 @@ describe('buildVercelAttach', () => {
   });
 
   it('omits -i for the detached pre-start path', async () => {
-    const spec = await buildVercelAttach(boxWith('box-1'), 'agent', { command: 'x', detached: true });
+    const spec = await buildVercelAttach(boxWith('box-1'), 'agent', {
+      command: 'x',
+      detached: true,
+    });
     expect(spec.argv).not.toContain('-i');
     expect(spec.argv).toContain('--sudo');
     expect(spec.argv[spec.argv.length - 1]).toBe(`${PRELUDE}INNER(agent)`);

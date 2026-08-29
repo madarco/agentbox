@@ -38,11 +38,12 @@ Now each agent is one entry in **`AGENT_SYNC_SPECS`**
 |---|---|---|
 | derived image layer | `buildDerivedAgentImage` (`sandbox-docker/src/image.ts`) | `agentbox <agent>` on docker |
 | live box | `ensureAgentInstalled` (`sandbox-core/src/sync/concerns/install.ts`) | adding an agent to a running box |
-| cloud provision script | `install-box.sh` / `provision.sh` / `build-template.sh` | **not yet** — these still hardcode `npm install -g @openai/codex opencode-ai` |
+| cloud derived snapshot | each provider's `prepare` (`--agents <set>`) | baking an agent onto a cloud base |
 
 Keep the sites in step by keeping the *data* in one place — never by copying an
-install into a second file. The cloud scripts are the one remaining copy, and
-closing that is part of the cloud work.
+install into a second file. Every site above renders the same
+`AGENT_SYNC_SPECS.install` entry, so a baked agent and a runtime-added one are
+byte-identical in layout; no provision script installs an agent any more.
 
 ### Recipe fields that matter
 
@@ -196,13 +197,12 @@ collapse — see the seam analysis in
 
 | | docker | hetzner | e2b | daytona | DO | vercel |
 |---|---|---|---|---|---|---|
-| agentless base | yes | yes | yes | yes | yes | no — `provision.sh` still installs all three |
-| agents as a derived layer/snapshot | yes | yes | yes | yes | yes | not yet |
-| per-box agent selection | yes | yes | yes | yes | yes | not yet |
+| agentless base | yes | yes | yes | yes | yes | yes |
+| agents as a derived layer/snapshot | yes | yes | yes | yes | yes | yes |
+| per-box agent selection | yes | yes | yes | yes | yes | yes |
 | install into a live box on demand | yes | yes | yes | yes | yes | yes |
 
-Vercel still bakes all three agents into its base, so its behaviour is unchanged
-and the create-time install probe is a no-op there.
+Every provider now carries the same three tiers.
 
 Every cloud box gets per-agent credential isolation at **create**: an
 `agentbox claude --provider <cloud>` box seeds only claude's credential, and the
@@ -233,6 +233,7 @@ bake VPS.
 | daytona (linux-vm) | boot the base snapshot, install, stop, cold-snapshot | untested live |
 | hetzner | boot the base snapshot, install over ssh, re-snapshot | ~3.5 min |
 | digitalocean | boot the base snapshot, install over ssh, re-snapshot | see below |
+| vercel | boot the base snapshot over the SDK, install, re-snapshot | see below |
 
 The recipes are the same `AGENT_SYNC_SPECS.install` entries in every row, so a
 baked agent and a runtime-added one are byte-identical in layout.
@@ -268,6 +269,25 @@ baked agent and a runtime-added one are byte-identical in layout.
   account-wide.
 - **Verify the binary on the BOX USER's PATH**, not just that the build exited
   0. A native installer run as root writes into `/root` and does both.
+- **Prerequisites are not all Debian.** Vercel sandboxes are Amazon Linux 2023,
+  so `renderPackageInstall` dispatches on the package manager the box actually
+  has (`apt-get` | `dnf` | `microdnf`) instead of hardcoding `apt-get`, which
+  exits 127 there. Codex's `bubblewrap` is additionally marked
+  `packagesOptional` — it ships a bundled sandbox and only warns without the
+  system one, so a missing package must never cost a whole box create. New
+  prerequisites default to REQUIRED and have to opt into being skippable.
+- **A vercel snapshot carries no name, label or tag.** `createSnapshot` accepts
+  only `{sessionId, expiration}`, so `vercel-prepared.json` is the *only* record
+  of which snapshot is which — there is no server-side orphan sweep, and the
+  destroy / `checkpoint rm` guards derive their protected set from that file.
+- **Guard every shared tier, not just the base.** Vercel's `destroy` protected
+  one id, relying otherwise on `currentSnapshotId === sourceSnapshotId`. That
+  source is *session*-scoped and can be absent on a resumed session, so any
+  shared snapshot that was not the base — a variant, or a checkpoint — could be
+  deleted out from under every box that boots it.
+- **Vercel needs no pre-snapshot `sync`.** `sb.snapshot()` stops the sandbox
+  before imaging, so the page-cache race that silently emptied hetzner/DO
+  snapshots does not apply. Adding one would just cost a resume cycle.
 
 ### Per-variant records and GC
 
@@ -279,11 +299,11 @@ digitalocean 3, e2b 2, daytona 2 — all with lossless migrations that seed
 
 GC differs by how each platform addresses artifacts:
 
-- **hetzner / daytona / digitalocean** — id- and name-addressed snapshots, so a
-  rebuild orphans its predecessor. All three reap it, but only for that exact
-  variant and only after the replacement is recorded, so a failed bake never
-  leaves you with no base. Hetzner and DigitalOcean had no base-snapshot GC at
-  all before this.
+- **hetzner / daytona / digitalocean / vercel** — id- and name-addressed
+  snapshots, so a rebuild orphans its predecessor. All four reap it, but only for
+  that exact variant and only after the replacement is recorded, so a failed bake
+  never leaves you with no base. Hetzner, DigitalOcean and Vercel had no
+  base-snapshot GC at all before this.
 - **e2b** — templates are *named*, so rebuilding `agentbox-claude:latest` moves
   the tag rather than orphaning an id. There is also no `Template.delete` in the
   SDK to reap one with.

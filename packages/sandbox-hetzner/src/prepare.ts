@@ -41,7 +41,7 @@ import {
   resolveAgentSpec,
   resolveAgentInstall,
   renderInstallRecipe,
-  renderAptInstall,
+  renderPackageInstall,
 } from '@agentbox/sandbox-core';
 import {
   stageClaudeStaticForUpload,
@@ -317,7 +317,8 @@ export async function prepareHetzner(
         const install = resolveAgentInstall(spec.install, claudeInstall);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
-        if (install.apt && install.apt.length > 0) steps.push(renderAptInstall(install.apt));
+        if (install.packages && install.packages.length > 0)
+          steps.push(renderPackageInstall(install.packages));
         const recipe = renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
         // the INVOKING user's ~/.local/bin, so running them as root would put

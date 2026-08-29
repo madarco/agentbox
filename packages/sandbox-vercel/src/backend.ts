@@ -41,8 +41,15 @@ import {
   Snapshot,
   type SandboxType,
 } from './sdk.js';
+import { listAllCloudCheckpoints } from '@agentbox/sandbox-cloud';
+import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 import { withVercelRetry } from './retry.js';
-import { readPreparedState } from './prepared-state.js';
+import {
+  preparedEntryFor,
+  readPreparedState,
+  sharedSnapshotIds,
+  type PreparedVercelState,
+} from './prepared-state.js';
 
 /** Sentinel image ref the cloud-provider hands us when no --image was passed. */
 export const DEFAULT_BOX_IMAGE_REF = 'agentbox/box:dev';
@@ -158,6 +165,50 @@ const DEFAULT_TIMEOUT_MS = 45 * 60_000;
  */
 const KEEP_LAST_SNAPSHOTS = { count: 1, expiration: 0, deleteEvicted: false } as const;
 
+/**
+ * Which snapshot a box should boot from: an explicit cloud-checkpoint snapshot
+ * wins, else the per-agent variant baked for exactly this agent set, else the
+ * agentless base.
+ *
+ * The base fallback is NOT a failure path. After a base-only `prepare` -- the
+ * documented first-run flow -- no variant exists yet, and the box must still
+ * boot: `ensureAgentInstalled` puts the agent in at create. Throwing here
+ * instead breaks every create for a new user, and a live test never sees it once
+ * a variant exists.
+ */
+export function resolveVercelSnapshot(
+  prepared: PreparedVercelState,
+  req: Pick<CloudProvisionRequest, 'snapshot' | 'agents'>,
+): string | undefined {
+  if (req.snapshot !== undefined) return req.snapshot;
+  const variant = preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(req.agents)));
+  return variant?.snapshotId ?? prepared.base?.snapshotId;
+}
+
+/**
+ * Snapshot ids claimed by a cloud checkpoint manifest.
+ *
+ * A Vercel snapshot carries no name, label or tag (the SDK's `createSnapshot`
+ * takes only `{sessionId, expiration}`), so there is no server-side way to ask
+ * "is this shared?" -- local state is the only source of truth.
+ *
+ * Best-effort by design: an unreadable checkpoint store must not block a
+ * destroy, and the prepared-state ids still apply.
+ */
+export async function checkpointSnapshotIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    for (const group of await listAllCloudCheckpoints('vercel')) {
+      for (const item of group.items) {
+        if (item.manifest.snapshotName) ids.add(item.manifest.snapshotName);
+      }
+    }
+  } catch {
+    // Unreadable checkpoint store: the prepared-state ids still apply.
+  }
+  return ids;
+}
+
 function creds(): Partial<{ token: string; teamId: string; projectId: string }> {
   return resolveCredentials();
 }
@@ -254,7 +305,7 @@ export const vercelBackend: CloudBackend = {
     // Resolve the snapshot to boot from: an explicit cloud-checkpoint snapshot
     // (req.snapshot) wins, else the prepared base. Vercel can't build from a
     // Dockerfile, so there is no image fallback — fail loud with the fix.
-    const snapshotId = req.snapshot ?? readPreparedState().base?.snapshotId;
+    const snapshotId = resolveVercelSnapshot(readPreparedState(), req);
     if (!snapshotId) {
       throw new Error(
         'no Vercel base snapshot found.\n' +
@@ -369,17 +420,33 @@ export const vercelBackend: CloudBackend = {
         const sb = await maybeGetSandbox(h.sandboxId);
         if (!sb) return; // already gone — destroy is idempotent
         // Purge only a snapshot THIS box created (its own stop-time auto-
-        // snapshot), never the shared base/source it booted from. A fresh box
-        // has currentSnapshotId === sourceSnapshotId === the prepared base, and
-        // deleting that would nuke the base snapshot every other box depends on.
+        // snapshot), never a SHARED one it booted from. A fresh box has
+        // currentSnapshotId === sourceSnapshotId, but that equality is the weaker
+        // half of the guard: `sourceSnapshotId` is session-scoped
+        // (`currentSession().sourceSnapshotId`) while `currentSnapshotId` is
+        // sandbox-scoped and sticky, so on a resumed or re-fetched session the
+        // source can be absent while current still points at the shared snapshot.
+        // The explicit id set is what actually protects it -- and it must cover
+        // every shared tier, not just the base: per-agent variants and cloud
+        // checkpoints are equally shared, and deleting one 410s every box that
+        // boots from it.
         const snapId = sb.currentSnapshotId;
         const source = sb.sourceSnapshotId;
-        const base = readPreparedState().base?.snapshotId;
-        const ownSnapshot = snapId !== undefined && snapId !== source && snapId !== base;
+        // Checked cheapest-first, and the expensive check runs ONLY when we
+        // would otherwise delete. Walking every project's checkpoint manifests
+        // on every destroy put a filesystem sweep (and a cold package load) on a
+        // hot user-facing path; here it runs only in the rare case that matters.
+        let ownSnapshot = snapId !== undefined && snapId !== source;
+        if (ownSnapshot && sharedSnapshotIds(readPreparedState()).has(snapId!)) {
+          ownSnapshot = false;
+        }
+        if (ownSnapshot && (await checkpointSnapshotIds()).has(snapId!)) {
+          ownSnapshot = false;
+        }
         await sb.delete();
         if (ownSnapshot) {
           try {
-            const snap = await Snapshot.get({ snapshotId: snapId, ...creds() });
+            const snap = await Snapshot.get({ snapshotId: snapId!, ...creds() });
             await snap.delete();
           } catch {
             // best-effort: a snapshot already gone is fine; the user can clean
@@ -540,8 +607,24 @@ export async function snapshotVercelSandbox(sandboxId: string): Promise<string> 
   );
 }
 
-/** Delete a Vercel snapshot by id. Idempotent — a missing snapshot is success. */
+/**
+ * Delete a Vercel snapshot by id. Idempotent — a missing snapshot is success.
+ *
+ * Refuses to delete the prepared base or a per-agent variant. This is the
+ * `checkpoint rm` path, and a manifest that names a shared snapshot (a
+ * hand-edited one, or a checkpoint captured straight off a freshly-booted box
+ * whose `currentSnapshotId` is still its source) would otherwise take the base
+ * out from under every other box. Deleting a checkpoint's own snapshot stays
+ * allowed — that is the whole point of the command.
+ */
 export async function deleteVercelSnapshot(snapshotId: string): Promise<void> {
+  if (sharedSnapshotIds(readPreparedState()).has(snapshotId)) {
+    throw new Error(
+      `refusing to delete Vercel snapshot ${snapshotId}: it is the prepared base or a baked ` +
+        'per-agent snapshot that other boxes boot from. Re-bake with `agentbox prepare ' +
+        '--provider vercel` instead.',
+    );
+  }
   await ensureFreshCredentials();
   await withVercelRetry({ method: 'deleteSnapshot', retryOnAmbiguous: true }, async () => {
     try {

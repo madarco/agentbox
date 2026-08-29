@@ -32,7 +32,7 @@ import {
   computeContextManifest,
   normalizeAgentSet,
   readCliStamp,
-  renderAptInstall,
+  renderPackageInstall,
   renderInstallRecipe,
   resolveAgentInstall,
   resolveAgentSpec,
@@ -367,7 +367,8 @@ export async function prepareDigitalOcean(
         const install = resolveAgentInstall(spec.install, claudeInstall);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
-        if (install.apt && install.apt.length > 0) steps.push(renderAptInstall(install.apt));
+        if (install.packages && install.packages.length > 0)
+          steps.push(renderPackageInstall(install.packages));
         const recipe = renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
         // the INVOKING user's ~/.local/bin, so running them as root would put

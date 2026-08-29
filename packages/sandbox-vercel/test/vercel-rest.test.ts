@@ -53,7 +53,12 @@ describe('getUser', () => {
 describe('listProjects', () => {
   it('maps projects to id+name and scopes by team', async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse(200, { projects: [{ id: 'prj_1', name: 'a' }, { id: 'prj_2', name: 'b' }] }),
+      jsonResponse(200, {
+        projects: [
+          { id: 'prj_1', name: 'a' },
+          { id: 'prj_2', name: 'b' },
+        ],
+      }),
     );
     await expect(listProjects('vca_x', 'team_1')).resolves.toEqual([
       { id: 'prj_1', name: 'a' },
@@ -106,7 +111,9 @@ describe('git-backed deploy helpers', () => {
   });
 
   it('createGitProject connects the repo with rootDirectory + nextjs (v11)', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { id: 'prj_cp', name: 'agentbox-control-plane' }));
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { id: 'prj_cp', name: 'agentbox-control-plane' }),
+    );
     await createGitProject('vca_x', 'team_1', {
       name: 'agentbox-control-plane',
       repo: 'madarco/agentbox',
@@ -133,7 +140,11 @@ describe('git-backed deploy helpers', () => {
     expect(String(url)).toContain('/v10/projects/prj_cp/env');
     expect(String(url)).toContain('upsert=true');
     const body = JSON.parse((init as RequestInit).body as string) as Array<Record<string, unknown>>;
-    expect(body[0]).toMatchObject({ key: 'GITHUB_APP_ID', type: 'encrypted', target: ['production'] });
+    expect(body[0]).toMatchObject({
+      key: 'GITHUB_APP_ID',
+      type: 'encrypted',
+      target: ['production'],
+    });
   });
 
   it('createGitDeployment sends a production gitSource (org+repo+ref, no upload)', async () => {
@@ -159,7 +170,9 @@ describe('git-backed deploy helpers', () => {
   });
 
   it('getDeployment normalizes readyState/status + error fields', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { readyState: 'ERROR', errorMessage: 'nope', errorStep: 'build' }));
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { readyState: 'ERROR', errorMessage: 'nope', errorStep: 'build' }),
+    );
     await expect(getDeployment('vca_x', 'team_1', 'dpl_1')).resolves.toMatchObject({
       readyState: 'ERROR',
       errorMessage: 'nope',
@@ -169,7 +182,11 @@ describe('git-backed deploy helpers', () => {
 
   it('getProductionAlias reads the project production alias', async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse(200, { id: 'prj_cp', name: 'x', targets: { production: { alias: ['cp.example.app', 'other'] } } }),
+      jsonResponse(200, {
+        id: 'prj_cp',
+        name: 'x',
+        targets: { production: { alias: ['cp.example.app', 'other'] } },
+      }),
     );
     await expect(getProductionAlias('vca_x', 'team_1', 'prj_cp')).resolves.toBe('cp.example.app');
   });
