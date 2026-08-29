@@ -468,7 +468,7 @@ function sha12(s: string): string {
 }
 
 /** Short, monotonic, never-reused token for a snapshot name. */
-function nonce(): string {
+export function nonce(): string {
   return Math.floor(Date.now() / 1000).toString(36);
 }
 

@@ -47,6 +47,7 @@ import { resolveDaytonaCustomClaudeMd, resolveDockerfileContext } from './docker
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 import {
   bakeDaytonaVmBase,
+  nonce,
   bakeDaytonaVmVariant,
   deleteSnapshotQuietly,
   VmBaseImageUnavailableError,
@@ -263,6 +264,13 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     snapshotName =
       opts.name ??
       defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
+    // Never reuse a snapshot name, on EITHER class. Daytona's delete is async,
+    // so a name recreated soon after its predecessor was reaped can report
+    // `active` and still fail to boot. The linux-vm bake has always nonced for
+    // this reason; a container variant now reaps too (below), so it needs the
+    // same protection. The name doesn't have to be deterministic — prepared
+    // state records whatever we pinned, and that is what skip-fast reads.
+    if (!opts.name) snapshotName = `${snapshotName}-${nonce()}`;
   }
 
   if (
@@ -526,6 +534,19 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         class: 'container',
       });
       log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
+      // Reap the snapshot this bake replaces — only this exact variant, and
+      // only after the replacement is recorded, so a failed bake never leaves
+      // the user with no snapshot. Matches the linux-vm path. Variants only:
+      // the container BASE has always overwritten by name and a user who flips
+      // `box.daytonaClass` back would want the old one.
+      if (derived) {
+        const superseded = preparedEntryFor(prepared, variantKey)?.imageRef;
+        const created = snapshot.name ?? snapshotName;
+        if (superseded && superseded !== created) {
+          log(`removing superseded ${variantKey} snapshot '${superseded}'`);
+          await deleteSnapshotQuietly(getClient(opts.location ?? ''), superseded);
+        }
+      }
     }
     return { snapshotName: snapshot.name ?? snapshotName };
   } finally {
