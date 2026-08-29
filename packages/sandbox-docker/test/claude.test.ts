@@ -121,14 +121,7 @@ describe('buildClaudeLoginRunArgv', () => {
       image: 'img',
       extraArgs: ['--console', '--email', 'a@b.c'],
     });
-    expect(argv.slice(-6)).toEqual([
-      'claude',
-      'auth',
-      'login',
-      '--console',
-      '--email',
-      'a@b.c',
-    ]);
+    expect(argv.slice(-6)).toEqual(['claude', 'auth', 'login', '--console', '--email', 'a@b.c']);
   });
 });
 
@@ -281,9 +274,7 @@ describe('scanPluginCacheForRebuild', () => {
   const writeInstalledPlugins = async (keys: string[]) => {
     const plugins: Record<string, Array<{ installPath: string }>> = {};
     keys.forEach((key, i) => {
-      plugins[`p${String(i)}@mkt`] = [
-        { installPath: `/home/vscode/.claude/plugins/cache/${key}` },
-      ];
+      plugins[`p${String(i)}@mkt`] = [{ installPath: `/home/vscode/.claude/plugins/cache/${key}` }];
     });
     await writeFile(
       join(pluginsDir, 'installed_plugins.json'),

@@ -33,9 +33,10 @@ describe('attachedContainerUri', () => {
   });
 
   it('keeps exactly one leading slash on the container name', () => {
-    expect(
-      decodePayload(attachedContainerUri('/agentbox-smoke', { dockerContext: 'x' })),
-    ).toEqual({ containerName: '/agentbox-smoke', settings: { context: 'x' } });
+    expect(decodePayload(attachedContainerUri('/agentbox-smoke', { dockerContext: 'x' }))).toEqual({
+      containerName: '/agentbox-smoke',
+      settings: { context: 'x' },
+    });
   });
 
   it('honors a custom workspace path', () => {

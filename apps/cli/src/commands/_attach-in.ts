@@ -19,9 +19,7 @@ export const NO_ATTACH_HELP =
 export function parseAttachInOption(raw: string | undefined): AttachOpenIn | undefined {
   if (raw === undefined) return undefined;
   if (!(VALUES as readonly string[]).includes(raw)) {
-    throw new Error(
-      `--attach-in: expected one of ${VALUES.join(', ')}, got "${raw}"`,
-    );
+    throw new Error(`--attach-in: expected one of ${VALUES.join(', ')}, got "${raw}"`);
   }
   return raw as AttachOpenIn;
 }

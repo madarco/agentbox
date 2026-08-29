@@ -46,14 +46,16 @@ function renderTable(rows: string[][]): string {
   const all = [COLS, ...rows];
   const widths = COLS.map((_, c) => Math.max(...all.map((r) => r[c]!.length)));
   return all
-    .map((r) => r.map((cell, c) => cell.padEnd(widths[c]!)).join('  ').trimEnd())
+    .map((r) =>
+      r
+        .map((cell, c) => cell.padEnd(widths[c]!))
+        .join('  ')
+        .trimEnd(),
+    )
     .join('\n');
 }
 
-async function selectBoxes(
-  idOrName: string | undefined,
-  opts: TopOptions,
-): Promise<ListedBox[]> {
+async function selectBoxes(idOrName: string | undefined, opts: TopOptions): Promise<ListedBox[]> {
   const boxes = await listBoxes();
   if (idOrName === undefined) {
     // Default: every box on the host. --project narrows to the cwd's project.
@@ -119,10 +121,7 @@ async function renderProjectFooters(): Promise<string> {
   // keeps on the host — box run dirs, exports, host clones — is under
   // ~/.agentbox and summed there.
   const parts: string[] = [];
-  const [ckpt, home] = await Promise.all([
-    allCheckpointImagesBytes(),
-    agentboxHomeBytes(),
-  ]);
+  const [ckpt, home] = await Promise.all([allCheckpointImagesBytes(), agentboxHomeBytes()]);
   if (home !== null) parts.push(`~/.agentbox: ${fmtBytes(home)}`);
   if (ckpt !== null) parts.push(`checkpoints: ${fmtBytes(ckpt)}`);
   return parts.length > 0 ? `\n\nSYSTEM: ${parts.join(' - ')}` : '';
@@ -138,7 +137,10 @@ export const topCommand = new Command('top')
   .option('--once', 'print a single snapshot instead of watching')
   .option('-j, --json', 'machine-readable JSON (implies --once)')
   .option('--interval <seconds>', 'refresh interval', '2')
-  .option('--live', 'probe live cloud state via the provider SDK (slower; default: last host-known)')
+  .option(
+    '--live',
+    'probe live cloud state via the provider SDK (slower; default: last host-known)',
+  )
   .action(async (idOrName: string | undefined, opts: TopOptions) => {
     try {
       if (opts.json) {

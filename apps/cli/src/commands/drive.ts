@@ -21,12 +21,14 @@ const PROMPT_ENTER_DELAY_MS = 200;
 
 const POLL_INTERVAL_MS = 250;
 
-export const driveCommand = new Command('drive')
-  .description(
-    'Drive a running tmux session inside a box: snapshot the screen, send keystrokes, type text, or wait for output. Targets the agent session by default (claude → codex → opencode).',
-  );
+export const driveCommand = new Command('drive').description(
+  'Drive a running tmux session inside a box: snapshot the screen, send keystrokes, type text, or wait for output. Targets the agent session by default (claude → codex → opencode).',
+);
 
-const sessionOption = ['--session <name>', 'tmux session to target (default: first running agent session)'] as const;
+const sessionOption = [
+  '--session <name>',
+  'tmux session to target (default: first running agent session)',
+] as const;
 
 interface SnapshotOpts {
   session?: string;
@@ -37,7 +39,7 @@ interface SnapshotOpts {
 }
 
 const driveSnapshotCommand = new Command('snapshot')
-  .description('Print the rendered terminal contents of the box\'s active tmux session.')
+  .description("Print the rendered terminal contents of the box's active tmux session.")
   .argument(
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
@@ -88,11 +90,10 @@ interface SessionOpts {
 }
 
 const driveKeypressCommand = new Command('keypress')
-  .description('Send keystrokes parsed via the DSL (e.g. "<C-a>q", "ls<Enter>"). Each arg is concatenated with no spaces.')
-  .argument(
-    '<box>',
-    'box ref: project index, id, id prefix, name, or container',
+  .description(
+    'Send keystrokes parsed via the DSL (e.g. "<C-a>q", "ls<Enter>"). Each arg is concatenated with no spaces.',
   )
+  .argument('<box>', 'box ref: project index, id, id prefix, name, or container')
   .argument('<keys...>', 'one or more DSL tokens / literal text; `<<` escapes a literal `<`')
   .option(sessionOption[0], sessionOption[1])
   .action(async (boxRef: string, keys: string[], opts: SessionOpts) => {
@@ -128,17 +129,23 @@ interface PromptOpts extends SessionOpts {
 }
 
 const drivePromptCommand = new Command('prompt')
-  .description('Type text into the agent session and press Enter — convenience for "send a message to the running agent".')
+  .description(
+    'Type text into the agent session and press Enter — convenience for "send a message to the running agent".',
+  )
   .argument('<box>', 'box ref')
   .argument('<text>', 'prompt text to send (literal; no DSL parsing)')
   .option(sessionOption[0], sessionOption[1])
-  .option('--delay <ms>', `milliseconds to wait between text and Enter (default: ${String(PROMPT_ENTER_DELAY_MS)})`)
+  .option(
+    '--delay <ms>',
+    `milliseconds to wait between text and Enter (default: ${String(PROMPT_ENTER_DELAY_MS)})`,
+  )
   .action(async (boxRef: string, text: string, opts: PromptOpts) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
       const provider = await providerForBox(box);
       const session = await resolveDriveSession(provider, box, opts.session);
-      const delay = opts.delay !== undefined ? parsePositiveInt(opts.delay, '--delay') : PROMPT_ENTER_DELAY_MS;
+      const delay =
+        opts.delay !== undefined ? parsePositiveInt(opts.delay, '--delay') : PROMPT_ENTER_DELAY_MS;
       await sendLiteral(provider, box, session.name, text);
       if (delay > 0) await sleep(delay);
       await sendKey(provider, box, session.name, 'Enter');
@@ -154,7 +161,9 @@ interface WaitOpts extends SessionOpts {
 }
 
 const driveWaitCommand = new Command('wait')
-  .description('Block until --text appears in the session\'s rendered screen, or exit non-zero on timeout.')
+  .description(
+    "Block until --text appears in the session's rendered screen, or exit non-zero on timeout.",
+  )
   .argument('<box>', 'box ref')
   .requiredOption('--text <str>', 'substring to wait for')
   .option('--timeout <ms>', 'wall-clock cap in milliseconds (default: 5000)')
@@ -165,7 +174,8 @@ const driveWaitCommand = new Command('wait')
       const box = await resolveBoxOrExit(boxRef);
       const provider = await providerForBox(box);
       const session = await resolveDriveSession(provider, box, opts.session);
-      const timeoutMs = opts.timeout !== undefined ? parsePositiveInt(opts.timeout, '--timeout') : 5000;
+      const timeoutMs =
+        opts.timeout !== undefined ? parsePositiveInt(opts.timeout, '--timeout') : 5000;
       const start = Date.now();
       const deadline = start + timeoutMs;
       let lastScreen = '';
@@ -230,7 +240,7 @@ driveCommand.addCommand(driveResizeCommand);
 function handleDriveError(err: unknown): never {
   if (err instanceof SessionNotFoundError) {
     log.error(err.message);
-    log.info("start an agent first (e.g. `agentbox claude <box>`) or pass --session.");
+    log.info('start an agent first (e.g. `agentbox claude <box>`) or pass --session.');
     process.exit(2);
   }
   handleLifecycleError(err);

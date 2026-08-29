@@ -36,10 +36,7 @@ describe('buildCodexMounts', () => {
   });
 
   it('skips empty/missing env values rather than injecting blanks', () => {
-    const result = buildCodexMounts(
-      { volume: 'v' },
-      { OPENAI_API_KEY: '', OTHER_KEY: 'x' },
-    );
+    const result = buildCodexMounts({ volume: 'v' }, { OPENAI_API_KEY: '', OTHER_KEY: 'x' });
     expect(result.env).toEqual({});
   });
 });

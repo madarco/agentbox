@@ -40,7 +40,8 @@ function hostManifest(
       workflows: {
         dst: BOX_WORKFLOWS_DIR,
         files: workflows,
-        hostDir: opts.workflowsHostDir === undefined ? '/host/.claude/workflows' : opts.workflowsHostDir,
+        hostDir:
+          opts.workflowsHostDir === undefined ? '/host/.claude/workflows' : opts.workflowsHostDir,
       },
       memory: {
         dst: BOX_MEMORY_DIR,
@@ -66,7 +67,9 @@ describe('computeSyncDelta', () => {
     expect(dsts['workflows/sub/b.ts']).toBe(`${BOX_WORKFLOWS_DIR}/sub/b.ts`);
     expect(dsts['memory/MEMORY.md']).toBe(`${BOX_MEMORY_DIR}/MEMORY.md`);
     // absolute source paths derive from hostDir
-    expect(delta.uploads.find((u) => u.rel === 'a.ts')?.absSrc).toBe('/host/.claude/workflows/a.ts');
+    expect(delta.uploads.find((u) => u.rel === 'a.ts')?.absSrc).toBe(
+      '/host/.claude/workflows/a.ts',
+    );
   });
 
   it('is a no-op when hashes match', () => {

@@ -62,9 +62,7 @@ export const downloadEnvCommand = new Command('env')
         throw new Error(`box ${box.name} has no container; was it destroyed?`);
       }
 
-      log.info(
-        `env/config files bypass gitignore and copy directly into ${box.workspacePath}`,
-      );
+      log.info(`env/config files bypass gitignore and copy directly into ${box.workspacePath}`);
 
       const patterns = [...DEFAULT_ENV_PATTERNS, ...opts.pattern];
 

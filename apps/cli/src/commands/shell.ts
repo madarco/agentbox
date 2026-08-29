@@ -36,7 +36,6 @@ import { codexAddUrl } from './_open-in.js';
 import { requireDockerProvider } from './_provider-guard.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 
-
 interface ShellOptions {
   user?: string;
   login?: boolean;
@@ -150,7 +149,13 @@ async function resolveTargetSession(
  */
 async function resolveCloudShellSessionName(
   box: BoxRecord,
-  provider: { exec: (b: BoxRecord, argv: string[], opts?: { user?: string }) => Promise<{ exitCode: number; stdout: string }> },
+  provider: {
+    exec: (
+      b: BoxRecord,
+      argv: string[],
+      opts?: { user?: string },
+    ) => Promise<{ exitCode: number; stdout: string }>;
+  },
   user: string,
   opts: ShellOptions,
 ): Promise<string> {
@@ -161,12 +166,7 @@ async function resolveCloudShellSessionName(
   const r = await provider
     .exec(
       box,
-      [
-        'tmux',
-        'list-sessions',
-        '-F',
-        '#{session_name}\t#{session_created}\t#{session_attached}',
-      ],
+      ['tmux', 'list-sessions', '-F', '#{session_name}\t#{session_created}\t#{session_attached}'],
       { user },
     )
     .catch(() => ({ exitCode: 1, stdout: '' }));
@@ -522,11 +522,12 @@ const shellAttachCommand = new Command('attach')
 function renderShellTable(sessions: ShellSessionSummary[]): void {
   const header = ['SHELL', 'ATTACHED', 'CREATED'];
   const rows = sessions.map((s) => [s.label, s.attached ? 'attached' : '-', fmtAgo(s.createdAt)]);
-  const widths = header.map((h, i) =>
-    Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)),
-  );
+  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)));
   const fmt = (cells: string[]): string =>
-    cells.map((c, i) => c.padEnd(widths[i] ?? 0)).join('  ').trimEnd();
+    cells
+      .map((c, i) => c.padEnd(widths[i] ?? 0))
+      .join('  ')
+      .trimEnd();
   process.stdout.write(`${fmt(header)}\n`);
   for (const r of rows) process.stdout.write(`${fmt(r)}\n`);
 }
@@ -592,7 +593,9 @@ const shellKillCommand = new Command('kill')
         for (const s of insp.shellSessions) {
           if (await killShellSession(box.container, s.sessionName)) killed++;
         }
-        log.success(`killed ${String(killed)} shell session${killed === 1 ? '' : 's'} in ${box.name}`);
+        log.success(
+          `killed ${String(killed)} shell session${killed === 1 ? '' : 's'} in ${box.name}`,
+        );
         return;
       }
       const target = shellSessionName(opts.name);

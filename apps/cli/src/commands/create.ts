@@ -30,7 +30,7 @@ import {
   WIZARD_ENV_FILES_ENV,
   WIZARD_RECREATE_ENV,
 } from '../wizard.js';
-import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
+import { evaluateBaseFreshness, warnCheckpointAgentMismatch } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { claudeCommand } from './claude.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
@@ -474,6 +474,15 @@ export const createCommand = new Command('create')
     const checkpointRef = resolveCheckpointRef(
       opts,
       resolveDefaultCheckpoint(cfg.effective, providerName),
+    );
+    // A bare `create` has no agent set, so this is silent unless the caller
+    // asked for one — "unknown" is never a mismatch.
+    await warnCheckpointAgentMismatch(
+      providerName,
+      projectRoot,
+      checkpointRef,
+      undefined,
+      (m: string) => log.warn(m),
     );
     if (opts.location && providerName !== 'hetzner' && providerName !== 'digitalocean') {
       log.warn(

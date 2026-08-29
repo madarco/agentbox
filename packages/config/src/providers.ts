@@ -301,7 +301,7 @@ export const PROVIDERS = [
     sizeDesc:
       'Per-provider override of `box.size` for vercel. vCPU count — one of `1`, `2`, `4`, `8` (Vercel couples RAM at 2048 MB/vCPU). Default 2.',
     imageDesc:
-      'Per-provider override of `box.image` for vercel (snapshot id, e.g. `snap_…`). Written by `agentbox prepare --provider vercel`.',
+      'Written by `agentbox prepare --provider vercel` but NOT read: the vercel backend resolves its snapshot from `~/.agentbox/vercel-prepared.json` (base or per-agent variant) and ignores `box.image`. Setting this has no effect.',
   },
   {
     name: 'e2b',
@@ -335,7 +335,7 @@ export const PROVIDERS = [
     sizeDesc:
       'Per-provider override of `box.size` for e2b. `cpu-memory` GB spec (e.g. `4-8`). Template-level: baked by `agentbox prepare --provider e2b --size <spec>`; E2B rejects per-create resources.',
     imageDesc:
-      'Per-provider override of `box.image` for e2b (template id or `name:tag`, e.g. `agentbox-base:latest`). Written by `agentbox prepare --provider e2b`.',
+      'Written by `agentbox prepare --provider e2b` but NOT read: the e2b backend resolves its template from `~/.agentbox/e2b-prepared.json` (base or per-agent variant) and ignores `box.image`. Setting this has no effect.',
   },
   {
     name: 'digitalocean',

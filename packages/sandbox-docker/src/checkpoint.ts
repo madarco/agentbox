@@ -11,10 +11,7 @@ import {
 import { readCliStamp } from '@agentbox/sandbox-core';
 import { execInBox, removeImage } from './docker.js';
 import { DEFAULT_BOX_IMAGE } from './image.js';
-import {
-  computeDockerContextFingerprint,
-  readPreparedDockerState,
-} from './prepared-state.js';
+import { computeDockerContextFingerprint, readPreparedDockerState } from './prepared-state.js';
 import type { BoxRecord, GitWorktreeRecord } from './state.js';
 
 export const CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'checkpoints');
@@ -94,6 +91,21 @@ export interface CheckpointManifest {
   baseFingerprint?: string;
   /** CLI version that captured the checkpoint. Schema-3+ only. */
   cliVersion?: string;
+  /**
+   * The agent set the source box was created for (`BoxRecord.agents`), so a
+   * restore into a box built for a DIFFERENT agent can say so.
+   *
+   * Deliberately NOT behind a schema bump: `readManifest` hard-gates on the
+   * schema number, so bumping would make every new checkpoint vanish from an
+   * older CLI's `agentbox checkpoints`, while an older CLI that ignores this
+   * field behaves exactly as it does today. Advisory data — losing a warning is
+   * far cheaper than losing sight of a checkpoint.
+   *
+   * Absent means UNKNOWN, never "no agents": every checkpoint captured before
+   * this field existed lacks it, as does any box predating per-agent selection.
+   * Callers must stay silent on absent, or every old checkpoint warns.
+   */
+  agents?: string[];
   createdAt: string;
 }
 
@@ -318,7 +330,11 @@ async function inspectImageConfig(imageRef: string): Promise<DockerImageConfig> 
   }
   const parsed = JSON.parse(r.stdout) as Array<{ Config: DockerImageConfig }>;
   if (!Array.isArray(parsed) || parsed.length === 0 || !parsed[0]?.Config) {
-    throw new CheckpointError(`unexpected docker image inspect shape for ${imageRef}`, r.stdout, '');
+    throw new CheckpointError(
+      `unexpected docker image inspect shape for ${imageRef}`,
+      r.stdout,
+      '',
+    );
   }
   return parsed[0].Config;
 }
@@ -379,7 +395,8 @@ function renderConfigDirectives(cfg: DockerImageConfig): string[] {
   }
   if (cfg.WorkingDir) lines.push(`WORKDIR ${cfg.WorkingDir}`);
   if (cfg.User) lines.push(`USER ${cfg.User}`);
-  for (const p of Object.keys(cfg.ExposedPorts ?? {})) lines.push(`EXPOSE ${p.replace('/tcp', '')}`);
+  for (const p of Object.keys(cfg.ExposedPorts ?? {}))
+    lines.push(`EXPOSE ${p.replace('/tcp', '')}`);
   if (cfg.Entrypoint && cfg.Entrypoint.length > 0) {
     lines.push(`ENTRYPOINT ${JSON.stringify(cfg.Entrypoint)}`);
   }
@@ -456,7 +473,11 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
       reject: false,
     });
     if (commit.exitCode !== 0) {
-      throw new CheckpointError(`docker commit (intermediate) failed`, commit.stdout, commit.stderr);
+      throw new CheckpointError(
+        `docker commit (intermediate) failed`,
+        commit.stdout,
+        commit.stderr,
+      );
     }
     try {
       await flattenImage(intermediate, tag, log);
@@ -496,6 +517,9 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
     sourceBoxName: box.name,
     worktrees: box.gitWorktrees,
     baseProvider: 'docker',
+    // Advisory: lets a restore into a box built for a different agent say so.
+    // Absent on boxes created before per-agent selection.
+    ...(box.agents && box.agents.length > 0 ? { agents: box.agents } : {}),
     baseFingerprint,
     cliVersion: stamp.cliVersion,
     createdAt: new Date().toISOString(),
@@ -524,11 +548,9 @@ async function flattenImage(
 ): Promise<void> {
   // `docker export` needs a *container*, so create one without running it.
   const tmpName = `agentbox-flatten-${Date.now().toString(36)}`;
-  const create = await execa(
-    'docker',
-    ['create', '--name', tmpName, sourceTag, 'sleep', '0'],
-    { reject: false },
-  );
+  const create = await execa('docker', ['create', '--name', tmpName, sourceTag, 'sleep', '0'], {
+    reject: false,
+  });
   if (create.exitCode !== 0) {
     throw new CheckpointError(`docker create for flatten failed`, create.stdout, create.stderr);
   }

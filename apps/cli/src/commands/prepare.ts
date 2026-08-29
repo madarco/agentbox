@@ -211,7 +211,7 @@ async function e2bStatus(): Promise<E2bStatusResult> {
   }
 }
 
-function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
+function renderE2b(status: E2bStatusResult): string[] {
   const out: string[] = ['e2b:'];
   if (!status.configured) {
     out.push(`  ${status.reason ?? '(not configured)'}`);
@@ -221,9 +221,11 @@ function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
     out.push('  no agentbox template — run `agentbox prepare --provider e2b`');
     return out;
   }
-  const pinned = pinnedImage && pinnedImage === status.templateId ? '  (pinned in project)' : '';
+  // No pin marker: like vercel, the e2b backend never reads `req.image`, so
+  // `box.imageE2b` is written by every bake and never consulted. Printing
+  // "(pinned in project)" for it claimed a control the user does not have.
   out.push(
-    `  base   ${pad(status.templateName ?? status.templateId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+    `  base   ${pad(status.templateName ?? status.templateId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}`,
   );
   for (const v of status.variants ?? []) {
     out.push(
@@ -528,12 +530,7 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   if (wantE2b) {
     if (lines.length > 0) lines.push('');
     const status = await e2bStatus();
-    // Use the per-provider pin (box.imageE2b) so the marker tracks the right key.
-    const e2bPinned =
-      typeof cfg?.effective.box.imageE2b === 'string' && cfg.effective.box.imageE2b.length > 0
-        ? cfg.effective.box.imageE2b
-        : undefined;
-    lines.push(...renderE2b(status, e2bPinned));
+    lines.push(...renderE2b(status));
   }
   if (wantDigitalOcean) {
     if (lines.length > 0) lines.push('');

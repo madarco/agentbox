@@ -24,11 +24,7 @@ async function writeManifest(
   const segment = projectDirSegment(projectRoot);
   const dir = join(TEST_HOME, '.agentbox', 'checkpoints', segment, name);
   await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, 'manifest.json'),
-    JSON.stringify(manifest, null, 2) + '\n',
-    'utf8',
-  );
+  await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 }
 
 describe('checkpoint manifest schema', () => {
@@ -98,5 +94,73 @@ describe('checkpoint manifest schema', () => {
     });
     const got = await resolveCheckpoint(projectRoot, 'future');
     expect(got).toBeNull();
+  });
+
+  it('carries the agent set the box was captured from', async () => {
+    const { resolveCheckpoint } = await import('../src/checkpoint.js');
+    const projectRoot = '/tmp/projAgents-' + Date.now().toString(36);
+    await writeManifest(projectRoot, 'cp-agents', {
+      schema: 3,
+      name: 'cp-agents',
+      type: 'layered',
+      image: 'agentbox-ckpt-bbbb:cp-agents',
+      parents: [],
+      base: 'workspace',
+      sourceBoxId: 'box1',
+      sourceBoxName: 'demo',
+      baseProvider: 'docker',
+      baseFingerprint: 'abc123def456',
+      cliVersion: '0.29.0',
+      agents: ['claude'],
+      createdAt: '2026-08-29T00:00:00.000Z',
+    });
+    const got = await resolveCheckpoint(projectRoot, 'cp-agents');
+    expect(got!.manifest.agents).toEqual(['claude']);
+  });
+
+  it('still reads a schema-3 manifest with NO agents field', async () => {
+    // The reason the schema was NOT bumped for `agents`: every existing
+    // checkpoint lacks the field and must keep loading unchanged. A bump would
+    // have made them all vanish from `agentbox checkpoints` instead.
+    const { resolveCheckpoint } = await import('../src/checkpoint.js');
+    const projectRoot = '/tmp/projNoAgents-' + Date.now().toString(36);
+    await writeManifest(projectRoot, 'cp-legacy', {
+      schema: 3,
+      name: 'cp-legacy',
+      type: 'layered',
+      image: 'agentbox-ckpt-cccc:cp-legacy',
+      parents: [],
+      base: 'workspace',
+      sourceBoxId: 'box1',
+      sourceBoxName: 'demo',
+      baseProvider: 'docker',
+      baseFingerprint: 'abc123def456',
+      createdAt: '2026-05-26T00:00:00.000Z',
+    });
+    const got = await resolveCheckpoint(projectRoot, 'cp-legacy');
+    expect(got).not.toBeNull();
+    expect(got!.manifest.agents).toBeUndefined();
+  });
+
+  it('an unknown future field does not make a manifest unreadable', async () => {
+    // Guards the forward-compat assumption the no-bump decision rests on.
+    const { resolveCheckpoint } = await import('../src/checkpoint.js');
+    const projectRoot = '/tmp/projFuture-' + Date.now().toString(36);
+    await writeManifest(projectRoot, 'cp-future', {
+      schema: 3,
+      name: 'cp-future',
+      type: 'layered',
+      image: 'agentbox-ckpt-dddd:cp-future',
+      parents: [],
+      base: 'workspace',
+      sourceBoxId: 'box1',
+      sourceBoxName: 'demo',
+      baseProvider: 'docker',
+      baseFingerprint: 'abc123def456',
+      somethingFromTheFuture: { nested: true },
+      createdAt: '2026-05-26T00:00:00.000Z',
+    } as never);
+    const got = await resolveCheckpoint(projectRoot, 'cp-future');
+    expect(got).not.toBeNull();
   });
 });

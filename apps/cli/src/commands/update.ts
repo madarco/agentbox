@@ -166,7 +166,8 @@ function describeResolution(
   decision: SelfUpdateDecision,
 ): string {
   const on = channel === 'nightly' ? ' [nightly channel]' : '';
-  if (newest === undefined) return `could not reach the registry — updating from \`${channel}\`${on}`;
+  if (newest === undefined)
+    return `could not reach the registry — updating from \`${channel}\`${on}`;
   if (decision.reason === 'switching') {
     // A deliberate move off the installed build's channel: `newest` sorts LOWER
     // than what's installed, so "already the newest" would read as a contradiction

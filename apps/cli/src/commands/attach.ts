@@ -42,10 +42,7 @@ interface AttachOpts {
  * codex / opencode (the agent-default tmux names; any shell or app sessions
  * are ignored).
  */
-export function parseTmuxAgentSessions(
-  stdout: string,
-  filterName?: string,
-): LiveAgentSession[] {
+export function parseTmuxAgentSessions(stdout: string, filterName?: string): LiveAgentSession[] {
   const out: LiveAgentSession[] = [];
   for (const raw of stdout.split('\n')) {
     const line = raw.trim();
@@ -64,9 +61,7 @@ export function parseTmuxAgentSessions(
     // the agent binary from the name alone — default to claude (the
     // per-agent commands work the same way: the binary is fixed by the
     // command they're under). Default-name rows map kind=name directly.
-    const kind: AgentKind = AGENT_KIND_SET.has(name)
-      ? (name as AgentKind)
-      : 'claude';
+    const kind: AgentKind = AGENT_KIND_SET.has(name) ? (name as AgentKind) : 'claude';
     out.push({ kind, sessionName: name, startedAt });
   }
   return out;
@@ -147,9 +142,7 @@ async function pickSession(
     });
     return sorted[0]!;
   }
-  const ordered = [...sessions].sort(
-    (a, b) => AGENT_PRIORITY[a.kind] - AGENT_PRIORITY[b.kind],
-  );
+  const ordered = [...sessions].sort((a, b) => AGENT_PRIORITY[a.kind] - AGENT_PRIORITY[b.kind]);
   const picked = await select<LiveAgentSession>({
     message: `Multiple agent sessions in ${boxName}. Attach to:`,
     options: ordered.map((s) => ({

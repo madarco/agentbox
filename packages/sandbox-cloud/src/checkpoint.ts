@@ -64,6 +64,22 @@ export interface CloudCheckpointManifest {
   baseFingerprint?: string;
   /** CLI version that captured the checkpoint. Schema-2+ only. */
   cliVersion?: string;
+  /**
+   * The agent set the source box was created for (`BoxRecord.agents`), so a
+   * restore into a box built for a DIFFERENT agent can say so.
+   *
+   * Deliberately NOT behind a schema bump. The readers hard-gate on the schema
+   * number, so bumping would make every new checkpoint vanish from an older
+   * CLI's `agentbox checkpoints` — whereas an older CLI that simply ignores
+   * this field behaves exactly as it does today. The field is advisory: losing
+   * a warning is much cheaper than losing sight of a checkpoint.
+   *
+   * Absent means UNKNOWN, never "no agents": every checkpoint captured before
+   * this field existed lacks it, and so does any box created before per-agent
+   * selection. Callers must stay silent on absent rather than report a
+   * mismatch, or every pre-existing checkpoint warns on every restore.
+   */
+  agents?: string[];
   createdAt: string;
 }
 
@@ -201,6 +217,8 @@ export interface WriteCloudManifestFields {
   baseProvider?: string;
   baseFingerprint?: string;
   cliVersion?: string;
+  /** The source box's agent set (`BoxRecord.agents`); omit when unknown. */
+  agents?: string[];
 }
 
 export async function writeCloudCheckpointManifest(
@@ -221,6 +239,9 @@ export async function writeCloudCheckpointManifest(
     baseProvider: fields.baseProvider,
     baseFingerprint: fields.baseFingerprint,
     cliVersion: fields.cliVersion,
+    // Omit rather than write `[]` — an empty array is a real value ("no
+    // agents"), and readers must be able to tell that from "unknown".
+    ...(fields.agents && fields.agents.length > 0 ? { agents: fields.agents } : {}),
     createdAt: new Date().toISOString(),
   };
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');

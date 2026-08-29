@@ -88,7 +88,7 @@ import { openCommandLog } from '../lib/log-file.js';
 import { resolveLimits } from '../limits.js';
 import { maybePromptPortless } from '../portless-prompt.js';
 import { maybeRunSetupWizard } from '../wizard.js';
-import { evaluateBaseFreshness } from '../checkpoint-lookup.js';
+import { evaluateBaseFreshness, warnCheckpointAgentMismatch } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
@@ -858,6 +858,15 @@ export const claudeCommand = new Command('claude')
         : providerDefault.length > 0
           ? providerDefault
           : undefined;
+    // A `box.defaultCheckpoint<Provider>` captured from another agent's box
+    // applies here with no user signal at all — say so. Advisory: it still boots.
+    await warnCheckpointAgentMismatch(
+      providerName,
+      projectRoot,
+      checkpointRef,
+      ['claude'],
+      (m: string) => log.warn(m),
+    );
 
     // Resolve auth from host env or the legacy ~/.agentbox/auth.json
     // setup-token (the dormant CI fallback).

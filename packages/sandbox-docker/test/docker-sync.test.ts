@@ -23,7 +23,9 @@ vi.mock('../src/sync/agents/claude.js', () => ({
   ensureClaudeVolume: m.ensureClaudeVolume,
   seedSetupSkillIntoVolume: m.seedSetupSkillIntoVolume,
 }));
-vi.mock('../src/sync/claude-credentials.js', () => ({ syncClaudeCredentials: m.syncClaudeCredentials }));
+vi.mock('../src/sync/claude-credentials.js', () => ({
+  syncClaudeCredentials: m.syncClaudeCredentials,
+}));
 vi.mock('../src/sync/agents/codex.js', () => ({
   ensureCodexVolume: m.ensureCodexVolume,
   seedCodexHooks: m.seedCodexHooks,
@@ -38,7 +40,9 @@ vi.mock('../src/sync/host-export.js', () => ({
   copyHostEnvFilesToBox: m.copyHostEnvFilesToBox,
   copyCarryPathsToBox: m.copyCarryPathsToBox,
 }));
-vi.mock('../src/sync/in-box-git.js', () => ({ resyncWorkspaceFromHost: m.resyncWorkspaceFromHost }));
+vi.mock('../src/sync/in-box-git.js', () => ({
+  resyncWorkspaceFromHost: m.resyncWorkspaceFromHost,
+}));
 vi.mock('@agentbox/sandbox-core', () => ({ renderCarryEntries: m.renderCarryEntries }));
 
 import { makeDockerSync } from '../src/sync/docker-sync.js';
@@ -126,12 +130,22 @@ describe('makeDockerSync — simple ops', () => {
 
   it('applyCarry renders then copies, threading the ctx identity', async () => {
     const entries = [{ rawSrc: '~/x', absSrc: '/host/x' }];
-    m.copyCarryPathsToBox.mockResolvedValue({ copied: 1, errors: [], applied: [{ src: 'a', dest: 'b', bytes: 1 }] });
+    m.copyCarryPathsToBox.mockResolvedValue({
+      copied: 1,
+      errors: [],
+      applied: [{ src: 'a', dest: 'b', bytes: 1 }],
+    });
     const sync = makeDockerSync({ container: 'box1' });
     const res = await sync.applyCarry(ctx(), entries as never);
     expect(m.renderCarryEntries).toHaveBeenCalledWith(
       entries,
-      { name: 'demo', id: 'id123', kind: 'docker', hostWorkspace: '/host/ws', projectRoot: '/host/ws' },
+      {
+        name: 'demo',
+        id: 'id123',
+        kind: 'docker',
+        hostWorkspace: '/host/ws',
+        projectRoot: '/host/ws',
+      },
       expect.any(Function),
     );
     expect(m.copyCarryPathsToBox).toHaveBeenCalledWith({
@@ -167,7 +181,10 @@ describe('makeDockerSync.seedCredentials', () => {
   });
 
   it('logs the extracted direction', async () => {
-    m.syncClaudeCredentials.mockResolvedValue({ direction: 'extracted', volumeHasCredentials: true });
+    m.syncClaudeCredentials.mockResolvedValue({
+      direction: 'extracted',
+      volumeHasCredentials: true,
+    });
     const sync = makeDockerSync(createHandle);
     await sync.seedCredentials(ctx());
     expect(logs).toContain('extracted box claude credentials to host backup');
@@ -187,7 +204,10 @@ describe('makeDockerSync.seedAgentConfig', () => {
       { volume: 'agentbox-claude-config' },
       { syncFromHost: true, image: 'agentbox/box:dev', hostWorkspace: '/host/ws' },
     );
-    expect(m.seedSetupSkillIntoVolume).toHaveBeenCalledWith('agentbox-claude-config', 'agentbox/box:dev');
+    expect(m.seedSetupSkillIntoVolume).toHaveBeenCalledWith(
+      'agentbox-claude-config',
+      'agentbox/box:dev',
+    );
     // No codex/agents/opencode spec ⇒ those tools skipped.
     expect(m.ensureCodexVolume).not.toHaveBeenCalled();
     expect(m.ensureAgentsVolume).not.toHaveBeenCalled();
@@ -196,10 +216,22 @@ describe('makeDockerSync.seedAgentConfig', () => {
 
   it('seeds codex/agents/opencode when their specs are present, in order', async () => {
     const order: string[] = [];
-    m.ensureClaudeVolume.mockImplementation(() => { order.push('claude'); return Promise.resolve({ created: false, synced: false }); });
-    m.ensureCodexVolume.mockImplementation(() => { order.push('codex'); return Promise.resolve({ created: false, synced: false }); });
-    m.ensureAgentsVolume.mockImplementation(() => { order.push('agents'); return Promise.resolve({ created: false, synced: false }); });
-    m.ensureOpencodeVolume.mockImplementation(() => { order.push('opencode'); return Promise.resolve({ created: false, synced: false }); });
+    m.ensureClaudeVolume.mockImplementation(() => {
+      order.push('claude');
+      return Promise.resolve({ created: false, synced: false });
+    });
+    m.ensureCodexVolume.mockImplementation(() => {
+      order.push('codex');
+      return Promise.resolve({ created: false, synced: false });
+    });
+    m.ensureAgentsVolume.mockImplementation(() => {
+      order.push('agents');
+      return Promise.resolve({ created: false, synced: false });
+    });
+    m.ensureOpencodeVolume.mockImplementation(() => {
+      order.push('opencode');
+      return Promise.resolve({ created: false, synced: false });
+    });
     const sync = makeDockerSync({
       ...createHandle,
       codexSpec: { volume: 'agentbox-codex' } as never,

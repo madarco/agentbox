@@ -11,12 +11,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import {
-  effectiveExcludes,
-  fmtBytes,
-  measureCopy,
-  toTarExcludes,
-} from '../lib/dir-breakdown.js';
+import { effectiveExcludes, fmtBytes, measureCopy, toTarExcludes } from '../lib/dir-breakdown.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface CpOptions {
@@ -165,9 +160,7 @@ export function parseArgs(paths: string[]): Parsed {
   if (allSrcBox) {
     const boxRefs = new Set(srcBoxes.map((s) => s.box!.boxRef));
     if (boxRefs.size > 1) {
-      throw new Error(
-        `all box sources must name the same box; got ${[...boxRefs].join(', ')}.`,
-      );
+      throw new Error(`all box sources must name the same box; got ${[...boxRefs].join(', ')}.`);
     }
     return {
       direction: 'download',
@@ -188,7 +181,9 @@ export function parseArgs(paths: string[]): Parsed {
 }
 
 export const cpCommand = new Command('cp')
-  .description('Copy files between host and box (like `docker cp`; direction picked by `name:` prefix)')
+  .description(
+    'Copy files between host and box (like `docker cp`; direction picked by `name:` prefix)',
+  )
   .argument(
     '<paths...>',
     'source path(s) then destination; `box:/path` marks the box side. With one arg, downloads into cwd. With >=2 sources the destination must be a directory.',
@@ -217,7 +212,7 @@ export const cpCommand = new Command('cp')
       '  agentbox cp ./*.log mybox:/workspace/logs/  # shell-expanded wildcard',
       '  agentbox cp ./dir mybox:/workspace/ --exclude=.git --exclude="*/cache"',
       '  agentbox cp ./data.csv hub:                 # upload to the control box, readable by',
-      '                                              # this project\'s boxes with this machine off',
+      "                                              # this project's boxes with this machine off",
     ].join('\n'),
   )
   .action(async (paths: string[], opts: CpOptions) => {
@@ -249,7 +244,12 @@ export const cpCommand = new Command('cp')
           throw new Error(`provider '${provider.name}' does not support cp`);
         }
         if (parsed.direction === 'upload') {
-          const result = await provider.uploadPath(box, parsed.hostSrcs!, parsed.boxDst!, tarPatterns);
+          const result = await provider.uploadPath(
+            box,
+            parsed.hostSrcs!,
+            parsed.boxDst!,
+            tarPatterns,
+          );
           process.stdout.write(`copied to ${box.name}:${result.finalPath}\n`);
         } else {
           const result = await provider.downloadPath(

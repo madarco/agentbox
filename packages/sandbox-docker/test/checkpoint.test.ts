@@ -48,7 +48,9 @@ describe('checkpoint helpers', () => {
 
     it('escapes regex metacharacters in the box name', () => {
       // A box named like `dot.demo` must not accidentally match `dotXdemo-1`.
-      expect(computeNextCheckpointName(['dot.demo-7', 'dotXdemo-9'], 'dot.demo')).toBe('dot.demo-8');
+      expect(computeNextCheckpointName(['dot.demo-7', 'dotXdemo-9'], 'dot.demo')).toBe(
+        'dot.demo-8',
+      );
     });
   });
 });

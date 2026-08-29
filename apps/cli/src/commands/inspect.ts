@@ -202,7 +202,7 @@ function webPreviewLine(box: BoxRecord): string {
 
 function renderClaudeActivityCloud(persisted: Awaited<ReturnType<typeof readBoxStatus>>): string {
   const c = persisted?.claude;
-  if (!c) return '(none — host poller hasn\'t mirrored status yet)';
+  if (!c) return "(none — host poller hasn't mirrored status yet)";
   return `${c.state}${c.updatedAt ? ` (updated ${c.updatedAt})` : ''}`;
 }
 

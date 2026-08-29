@@ -83,6 +83,15 @@ checkpoint alpha-1 (layered) -> /Users/you/.agentbox/checkpoints/<hash>/alpha-1 
   cross-provider fallback. See [Configuration](/docs/configuration).
 </Callout>
 
+<Callout title="Checkpoints remember which agent they came from">
+  A checkpoint records the agent set of the box it was captured from. Because a default applies to
+  *every* box on that provider, a default captured from an `agentbox claude` box would otherwise
+  boot silently under `agentbox codex`. It still boots — the missing agent is installed at create —
+  but AgentBox warns so you know the box carries the other agent baked in too. Capture a separate
+  checkpoint per agent, or pass `--snapshot` explicitly, to silence it. Checkpoints captured before
+  this shipped carry no agent set and never warn.
+</Callout>
+
 ## Warm starts
 
 The payoff of a checkpoint is booting a new box _from_ it instead of building from scratch — workspace seeding is skipped entirely since the image already has `/workspace` populated. Two ways to start warm:

@@ -57,7 +57,8 @@ export const downloadOpencodeCommand = new Command('opencode')
         // Docker: we read the opencode-config *volume*, not the container, so
         // the box can be stopped — no unpause/start dance.
         volume =
-          box.opencodeConfigVolume ?? resolveOpencodeVolume({ isolate: false, boxId: box.id }).volume;
+          box.opencodeConfigVolume ??
+          resolveOpencodeVolume({ isolate: false, boxId: box.id }).volume;
         if (volume === SHARED_OPENCODE_VOLUME) {
           log.warn(
             `Reading the shared ${SHARED_OPENCODE_VOLUME} volume — it aggregates OpenCode config from ANY box, not just ${box.name}.`,
