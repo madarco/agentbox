@@ -1,6 +1,20 @@
 # Agent catalog — on-demand agents and base variants
 
-Status: **design, not started.** Prerequisite for [`openclaw-hosting-plan.md`](./openclaw-hosting-plan.md).
+Status: **in progress.** Rescoped to *one agent per box*; agent plugins are parked
+(the seam analysis at the end stays as the north star). Prerequisite for
+[`openclaw-hosting-plan.md`](./openclaw-hosting-plan.md).
+
+| | |
+|---|---|
+| Dockerfile layer reorder | **done** — a ctl/core edit now rebuilds 16 cheap layers, not ~1.8 GB |
+| Catalog + `ensureAgentInstalled` | **done** — one implementation over `SyncTransport`, so cloud boxes gain it too |
+| `AGENTBOX_AGENTS` build arg | **done** — agentless base 3.07 GB (was 4.80 GB); claude-only 3.51 GB |
+| Per-box agent selection | **done** (docker) — only the selected agent's volume, credentials and home dir |
+| `variantFingerprint` + per-variant image tag | **done** (docker) |
+| `--agents` on `prepare`, hub API, cloud install scripts, CI matrix | todo |
+| Live agent switch (seed config/creds for an on-demand agent) | todo |
+| Cloud selection (`stageAllAgentStatic`, cloud credential volumes) | todo |
+| Checkpoints recording their agent set | todo |
 
 ---
 

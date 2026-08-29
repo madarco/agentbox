@@ -923,6 +923,9 @@ export const opencodeCommand = new Command('opencode')
         useBranch,
         resyncOnStart: opts.resync,
         image: resolveBoxImage(cfg.effective, providerName),
+        // This box is FOR opencode: only its config volume, credentials and
+        // home dir are wired in. Another agent can still be added on demand.
+        agents: ['opencode'],
         opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,

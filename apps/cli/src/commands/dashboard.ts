@@ -35,6 +35,7 @@ import {
   unpauseBox,
   waitForTmuxPaneContent,
   type ListedBox,
+  ensureClaudeInstalled,
 } from '@agentbox/sandbox-docker';
 import { getHubStatus, hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
@@ -357,6 +358,9 @@ export const dashboardCommand = new Command('dashboard')
         if (isCloudBox(box)) {
           return buildCloudAttachTarget(await loadBoxRecord(boxId), 'claude');
         }
+        // A box created for another agent has no `claude` binary — install it
+        // before trying to start a session, same as codex/opencode below.
+        await ensureClaudeInstalled(box.container);
         // Idempotent + marker-gated: needed the first time a box that never ran
         // Claude starts one; a no-op afterwards. (No host ~/.claude re-sync —
         // already synced at `agentbox create`; == `claude start --no-sync-config`.)
@@ -463,6 +467,9 @@ export const dashboardCommand = new Command('dashboard')
           useSnapshot: cfg.effective.box.hostSnapshot ?? true,
           checkpointRef,
           image: resolveBoxImage(cfg.effective, 'docker'),
+          // The box is built for the agent the pane was opened for; a later
+          // switch installs the other agent on demand rather than pre-baking it.
+          agents: agent ? [agent] : [],
           claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
           claudeEnv: auth.env,
           // Pass the agent's config so createBox mounts + syncs its volume
@@ -517,6 +524,7 @@ export const dashboardCommand = new Command('dashboard')
             },
           };
         }
+        await ensureClaudeInstalled(ctr);
         await rebuildPluginNativeDeps(ctr, { volume: result.record.claudeConfigVolume });
         await startClaudeSession({
           container: ctr,

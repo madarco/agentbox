@@ -354,6 +354,10 @@ async function runDockerJob(
     allowPull: opts.build ? false : undefined,
     imageRegistry: opts.imageRegistry ?? cfg.effective.box.imageRegistry,
     credentialSync: opts.credentialSync ?? cfg.effective.box.credentialSync,
+    // The job names exactly one agent, so the box is built for that one only —
+    // no other agent's volume, credentials or home dir. `noAgent` (a plain
+    // `create`) selects none; an agent can still be added on demand later.
+    agents: job.noAgent ? [] : [toSyncKind(job.agent)],
     claudeConfig:
       !job.noAgent && job.agent === 'claude-code'
         ? { isolate: cfg.effective.box.isolateClaudeConfig }

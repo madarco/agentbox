@@ -72,6 +72,14 @@ Auto-approve is on by default because the box is isolated from your host; pass `
 
 You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude and Codex resume sessions; OpenCode does not yet (resume starts a fresh box).
 
+A box carries **only the agent you launched it for** — its binary, its config volume and its credentials. `agentbox claude` gives you a box with no Codex or OpenCode credentials in it at all. If you later point another agent at that same box (from `agentbox dashboard`, or by running `agentbox codex <box>`), AgentBox installs it on first use, which adds a few seconds to that one launch.
+
+<Callout title="WHY">
+  An agent you aren't using has no reason to have its login sitting in the box. Shipping only the
+  selected agent also keeps the image smaller — the base image carries no agents at all, and each
+  agent is added to the variant you actually ask for.
+</Callout>
+
 <Callout title="WHY">
   Auto-approve is safe to default on because the box can't touch your machine — it's isolated from
   the host. The agent works without stopping to ask, and you keep your laptop clean.

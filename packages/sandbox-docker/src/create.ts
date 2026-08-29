@@ -155,6 +155,17 @@ export interface CreateBoxOptions {
   imageRegistry?: string;
   onLog?: (line: string) => void;
   /**
+   * Which agents this box is FOR. When set, it is authoritative: only these
+   * agents get a config volume, a mount, a credential seed, or a home dir, so a
+   * `agentbox claude` box carries no codex/opencode credentials at all.
+   *
+   * When absent, we fall back to the historical behaviour (mount whatever the
+   * host happens to have) so any caller not yet passing a selection keeps
+   * working. An agent left out is not lost — `ensureAgentInstalled` adds it to
+   * a live box on demand.
+   */
+  agents?: string[];
+  /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
    * /home/vscode/.claude so auth / skills / plugins persist across boxes.
@@ -436,17 +447,29 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     }
   }
 
-  const imageRef = checkpointImage ?? opts.image ?? DEFAULT_BOX_IMAGE;
+  // `opts.agents`, when given, is the authoritative selection: exactly those
+  // agents are baked into the image and wired into the box. Without it we keep
+  // the historical "mount whatever the host has" behaviour so un-migrated
+  // callers still work.
+  const selected = opts.agents ? new Set(opts.agents) : undefined;
+  const wants = async (agent: string, hostHints: () => Promise<boolean>): Promise<boolean> =>
+    selected ? selected.has(agent) : await hostHints();
+
+  const baseRef = checkpointImage
+    ? (opts.image ?? DEFAULT_BOX_IMAGE)
+    : (opts.image ?? DEFAULT_BOX_IMAGE);
   // ensureImage only acts on the base image; checkpoint images are local-only
-  // and must already exist (they were created by `agentbox checkpoint`).
-  const ensureRef = checkpointImage ? (opts.image ?? DEFAULT_BOX_IMAGE) : imageRef;
-  const { built } = await ensureImage(ensureRef, {
+  // and must already exist (they were created by `agentbox checkpoint`). It
+  // returns the VARIANT ref (`…:dev-claude`), which is what the box must run.
+  const { ref: ensureRef, built } = await ensureImage(baseRef, {
     // `ensureImage`'s own decision lines already carry the `[image]` tag; only
     // docker's raw per-layer output needs it added, or they read `[image] [image] …`.
     onProgress: (line) => log(line.startsWith('[image]') ? line : `[image] ${line}`),
     allowPull: opts.allowPull,
     registry: opts.imageRegistry,
+    ...(opts.agents ? { agents: opts.agents } : {}),
   });
+  const imageRef = checkpointImage ?? ensureRef;
   log(built ? `built image ${ensureRef}` : `using cached image ${imageRef}`);
 
   // Bring up the host relay before the box so the box can post events
@@ -632,14 +655,20 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // volume. Resolve the specs + want-conditionals here (one source of truth —
   // they also drive the mounts below), then walk the docker ProviderSync facade
   // to run the actual volume seeds + credential sync.
-  const claudeSpec = resolveClaudeVolume({
-    isolate: opts.claudeConfig?.isolate ?? false,
-    boxId: id,
-  });
+  const wantClaude = await wants('claude', async () => true);
+  const claudeSpec = wantClaude
+    ? resolveClaudeVolume({
+        isolate: opts.claudeConfig?.isolate ?? false,
+        boxId: id,
+      })
+    : undefined;
   // Codex: wanted when the caller passes `codexConfig` (`agentbox codex`) OR the
   // host already uses codex (`~/.codex` exists) — so a plain create for a Codex
   // user still gets a working box.
-  const wantCodex = opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex')));
+  const wantCodex = await wants(
+    'codex',
+    async () => opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex'))),
+  );
   const codexSpec = wantCodex
     ? resolveCodexVolume({ isolate: opts.codexConfig?.isolate ?? false, boxId: id })
     : undefined;
@@ -650,10 +679,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     : undefined;
   // OpenCode: wanted when the caller passes `opencodeConfig` OR the host already
   // uses OpenCode (`~/.config/opencode` or `~/.local/share/opencode`).
-  const wantOpencode =
-    opts.opencodeConfig !== undefined ||
-    (await pathExists(join(homedir(), '.config', 'opencode'))) ||
-    (await pathExists(join(homedir(), '.local', 'share', 'opencode')));
+  const wantOpencode = await wants(
+    'opencode',
+    async () =>
+      opts.opencodeConfig !== undefined ||
+      (await pathExists(join(homedir(), '.config', 'opencode'))) ||
+      (await pathExists(join(homedir(), '.local', 'share', 'opencode'))),
+  );
   const opencodeSpec = wantOpencode
     ? resolveOpencodeVolume({ isolate: opts.opencodeConfig?.isolate ?? false, boxId: id })
     : undefined;
@@ -686,7 +718,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await sync.seedCredentials(syncCtx);
 
   // Container mounts, built from the same specs (pure).
-  const claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+  let claudeMounts: ReturnType<typeof buildClaudeMounts> | undefined;
+  let claudeConfigVolume: string | undefined;
+  if (claudeSpec) {
+    claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+    claudeConfigVolume = claudeSpec.volume;
+  }
   let codexMounts: CodexMountResult | undefined;
   let codexConfigVolume: string | undefined;
   if (codexSpec) {
@@ -717,7 +754,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await mkdir(mergedExportDir, { recursive: true });
 
   const extraVolumes = await buildIdentityMounts();
-  extraVolumes.push(...claudeMounts.extraVolumes);
+  if (claudeMounts) extraVolumes.push(...claudeMounts.extraVolumes);
   if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
   if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
   if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
@@ -891,7 +928,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     workspacePath: workspace,
     snapshotDir,
     socketPath,
-    claudeConfigVolume: claudeSpec.volume,
+    claudeConfigVolume,
     codexConfigVolume,
     agentsConfigVolume,
     opencodeConfigVolume,
@@ -930,7 +967,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     env: {
       AGENTBOX_BOX_ID: id,
       ...agentboxEnv,
-      ...claudeMounts.env,
+      ...(claudeMounts?.env ?? {}),
       ...(codexMounts?.env ?? {}),
       ...(opencodeMounts?.env ?? {}),
       ...relayEnv,

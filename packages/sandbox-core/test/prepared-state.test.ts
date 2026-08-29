@@ -14,6 +14,8 @@ import {
   resolveContextFilesFrom,
   sha256OfFile,
   writePreparedStateRaw,
+  variantFingerprint,
+  agentSetArg,
 } from '../src/prepared-state.js';
 
 /**
@@ -321,5 +323,49 @@ describe('diffFileManifests', () => {
     const d = diffFileManifests({}, { a: '1', b: '2' });
     expect(d.added).toEqual(['a', 'b']);
     expect(d.changed).toEqual([]);
+  });
+});
+
+describe('variantFingerprint', () => {
+  const BASE = 'a'.repeat(64);
+
+  it('is the identity fold for the empty variant', () => {
+    // Load-bearing: a provider that never passes a variant, and the plain
+    // agentless base, must keep the raw context hash.
+    expect(variantFingerprint(BASE)).toBe(BASE);
+    expect(variantFingerprint(BASE, {})).toBe(BASE);
+    expect(variantFingerprint(BASE, { claudeInstall: 'native', agents: [] })).toBe(BASE);
+  });
+
+  it('agrees with claudeInstallFingerprint on the install-mode axis', () => {
+    expect(variantFingerprint(BASE, { claudeInstall: 'npm' })).toBe(
+      claudeInstallFingerprint(BASE, 'npm'),
+    );
+  });
+
+  it('gives each agent set its own stable identity', () => {
+    const claude = variantFingerprint(BASE, { agents: ['claude'] });
+    const codex = variantFingerprint(BASE, { agents: ['codex'] });
+    expect(claude).not.toBe(BASE);
+    expect(claude).not.toBe(codex);
+    expect(variantFingerprint(BASE, { agents: ['claude'] })).toBe(claude);
+  });
+
+  it('ignores agent ordering and duplicates', () => {
+    const a = variantFingerprint(BASE, { agents: ['codex', 'claude'] });
+    const b = variantFingerprint(BASE, { agents: ['claude', 'codex', 'claude'] });
+    expect(a).toBe(b);
+  });
+
+  it('composes the two axes', () => {
+    const both = variantFingerprint(BASE, { claudeInstall: 'npm', agents: ['claude'] });
+    expect(both).not.toBe(variantFingerprint(BASE, { agents: ['claude'] }));
+    expect(both).not.toBe(claudeInstallFingerprint(BASE, 'npm'));
+  });
+
+  it('agentSetArg renders the build-arg value', () => {
+    expect(agentSetArg(undefined)).toBe('');
+    expect(agentSetArg([])).toBe('');
+    expect(agentSetArg(['codex', 'claude'])).toBe('claude,codex');
   });
 });

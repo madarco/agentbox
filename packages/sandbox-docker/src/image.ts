@@ -14,6 +14,9 @@ import {
   claudeInstallFingerprint,
   registryRefForSha,
   type FileManifest,
+  variantFingerprint,
+  normalizeAgentSet,
+  agentSetArg,
 } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
@@ -332,6 +335,24 @@ export interface EnsureImageOptions {
    * a native rebuild). Defaults to the resolved `box.claudeInstall`.
    */
   claudeInstall?: 'native' | 'npm';
+  /**
+   * Agents to bake into the image. Folded into the fingerprint AND passed as
+   * the `AGENTBOX_AGENTS` build arg, so `agentbox claude` and `agentbox codex`
+   * resolve different images rather than fighting over one local tag. Empty /
+   * omitted means the agentless base.
+   */
+  agents?: readonly string[];
+}
+
+/**
+ * The local tag for a variant. The empty variant keeps the historical
+ * `agentbox/box:dev` so nothing that hardcodes it moves; each agent set gets a
+ * suffixed tag of its own (`agentbox/box:dev-claude`), because two boxes built
+ * for different agents must not overwrite each other's image.
+ */
+export function variantImageRef(ref: string, agents: readonly string[] | undefined): string {
+  const set = normalizeAgentSet(agents);
+  return set.length === 0 ? ref : `${ref}-${set.join('-')}`;
 }
 
 export async function ensureImage(
@@ -345,15 +366,17 @@ export async function ensureImage(
     await import('./prepared-state.js');
 
   const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const agents = normalizeAgentSet(opts.agents);
+  ref = variantImageRef(ref, agents);
   const rawFingerprint = await computeDockerContextFingerprint({
     contextDir: opts.contextDir,
   });
-  // Fold the install mode into the sha so native↔npm are distinct cache
-  // identities (`native` leaves the hash unchanged).
+  // Fold the build variant (install mode + agent set) into the sha so each is a
+  // distinct cache identity. The empty variant leaves the hash unchanged.
   const fingerprint = rawFingerprint
     ? {
         ...rawFingerprint,
-        contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+        contextSha256: variantFingerprint(rawFingerprint.contextSha256, { claudeInstall, agents }),
       }
     : null;
   const prepared = readPreparedDockerState();
@@ -392,7 +415,10 @@ export async function ensureImage(
     // that genuinely isn't published still falls back to a local build.
     allowPull: opts.allowPull,
     registry: opts.registry,
-    buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
+    buildArgs: {
+      ...(npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : {}),
+      ...(agents.length > 0 ? { AGENTBOX_AGENTS: agentSetArg(agents) } : {}),
+    },
   });
   return { ref, built: source === 'built', reason };
 }

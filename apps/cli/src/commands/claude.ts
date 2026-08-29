@@ -34,6 +34,7 @@ import {
   volumeClaudeCredentials,
   warmUpClaudeCredentials,
   type BoxRecord,
+  ensureClaudeInstalled,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { resolveClaudeAuth, type ResolvedClaudeAuth } from '../auth.js';
@@ -1222,6 +1223,9 @@ export const claudeCommand = new Command('claude')
         useBranch,
         resyncOnStart: opts.resync,
         image: resolveBoxImage(cfg.effective, providerName),
+        // This box is FOR claude: only its config volume, credentials and
+        // home dir are wired in. Another agent can still be added on demand.
+        agents: ['claude'],
         claudeConfig: { isolate: cfg.effective.box.isolateClaudeConfig },
         claudeEnv: resolved.env,
         withPlaywright,
@@ -1518,6 +1522,13 @@ async function startOrAttachClaude(
   // made on the host (new MCP servers, refreshed OAuth state in _claude.json,
   // …) reach the in-box claude. This runs for `claude start` (default; opt out
   // with --no-sync-config) — NOT for `claude attach`, which always passes
+  // Install claude if this box's image lacks it — a box created for another
+  // agent, or from a checkpoint predating the agent selection. No-op otherwise.
+  s.message('checking claude');
+  await ensureClaudeInstalled(box.container, {
+    onProgress: (line) => s.message(clampSpinnerLine(line)),
+  });
+
   // syncConfig: false: a plain reattach must never clobber the in-box claude's
   // accumulated _claude.json (prompt history) with the host copy.
   const syncConfig = opts.syncConfig !== false;

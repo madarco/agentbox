@@ -945,6 +945,9 @@ export const codexCommand = new Command('codex')
         useBranch,
         resyncOnStart: opts.resync,
         image: resolveBoxImage(cfg.effective, providerName),
+        // This box is FOR codex: only its config volume, credentials and
+        // home dir are wired in. Another agent can still be added on demand.
+        agents: ['codex'],
         codexConfig: { isolate: cfg.effective.box.isolateCodexConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
