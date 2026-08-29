@@ -4,22 +4,40 @@
  * (`ensureVercelBaseSnapshot()`) and `backend.provision` can resolve the base
  * snapshot to boot every box from.
  *
- * Single tier for now — the shared base snapshot (AL2023 + deps + agentbox-ctl
- * + agents). A per-project snapshot tier (matching the hetzner/daytona shape)
- * is a future optimization, not built yet.
+ * Two tiers are recorded here, both Vercel snapshots: the agentless `base`
+ * (AL2023 + deps + agentbox-ctl + agent-browser, baked from `provision.sh`), and
+ * one `variants` entry per agent set, derived by booting the base and running
+ * just that agent's install recipe.
  *
- * Schema versioned so future shape changes can migrate; only `schema: 1` is
- * accepted today.
+ * Unlike hetzner, a Vercel snapshot carries NO name, label or tag — the SDK's
+ * `createSnapshot` takes only `{sessionId, expiration}`. This file is therefore
+ * the ONLY record of which snapshot is which, which is why the destroy and
+ * checkpoint-remove guards derive their protected set from it.
+ *
+ * Schema history:
+ *   1 — `base` only.
+ *   2 — `variants` added: one record per agent set, so baking a `--agents codex`
+ *       snapshot no longer invalidates the claude one. `base` keeps its schema-1
+ *       meaning (the agentless base) and is mirrored into `variants['']`. The
+ *       bump is deliberate rather than a bare optional field: an older CLI would
+ *       otherwise boot every box from the base while silently ignoring the
+ *       variants the user baked. A schema bump makes it treat the file as
+ *       unreadable and re-bake — wrong-but-safe rather than silently wrong.
  */
 
-import { claudeInstallFingerprint, computeContextManifest,
-  computeContextSha256, readPreparedStateRaw, writePreparedStateRaw, preparedStatePathFor,
+import {
+  claudeInstallFingerprint,
+  computeContextManifest,
+  computeContextSha256,
+  readPreparedStateRaw,
+  writePreparedStateRaw,
+  preparedStatePathFor,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { UserFacingError } from '@agentbox/core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
 
-const SCHEMA = 1 as const;
+const SCHEMA = 2 as const;
 
 export interface PreparedVercelBase {
   /** Vercel snapshot id (opaque). The thing `Sandbox.create({ source }) ` boots from. */
@@ -42,8 +60,46 @@ export interface PreparedVercelBase {
 
 export interface PreparedVercelState {
   schema: typeof SCHEMA;
-  /** The shared base snapshot. Absent until first `agentbox prepare`. */
+  /**
+   * The AGENTLESS base, and only ever that — a variant bake leaves it alone.
+   * Provider-generic readers outside this package (the freshness surface, bake
+   * sharing, control-box custody adoption) reach straight for
+   * `base.contextSha256`, and they all assume it describes the agentless build
+   * context. Use {@link preparedEntryFor} to ask about any specific variant,
+   * including the base itself.
+   */
   base?: PreparedVercelBase;
+  /**
+   * One record per agent set, keyed by `agentSetArg(agents)` (`''` = the
+   * agentless base). Without this the single `base` slot means baking a codex
+   * snapshot invalidates the claude one.
+   */
+  variants?: Record<string, PreparedVercelBase>;
+}
+
+/**
+ * The record for one variant (`''` = agentless base), falling back to `base`
+ * for state written before variants existed.
+ */
+export function preparedEntryFor(
+  state: PreparedVercelState | null,
+  variant = '',
+): PreparedVercelBase | undefined {
+  return state?.variants?.[variant] ?? (variant === '' ? state?.base : undefined);
+}
+
+/**
+ * Every snapshot id this machine knows to be SHARED — the base and each baked
+ * variant. Boxes boot from these, so nothing that deletes a box's own snapshot
+ * may ever delete one of them.
+ */
+export function sharedSnapshotIds(state: PreparedVercelState | null): Set<string> {
+  const ids = new Set<string>();
+  if (state?.base?.snapshotId) ids.add(state.base.snapshotId);
+  for (const v of Object.values(state?.variants ?? {})) {
+    if (v.snapshotId) ids.add(v.snapshotId);
+  }
+  return ids;
 }
 
 export function preparedStatePath(): string {
@@ -54,11 +110,25 @@ export function readPreparedState(): PreparedVercelState {
   const raw = readPreparedStateRaw('vercel');
   if (raw === null || typeof raw !== 'object') return { schema: SCHEMA };
   const parsed = raw as Partial<PreparedVercelState>;
+  if ((parsed as { schema?: unknown }).schema === 1) {
+    // Lossless: a v1 file has exactly one bake and it is the base, so seed the
+    // variants map from it rather than forcing a re-bake. That base predates the
+    // agentless provision.sh and still carries all three agents, but its
+    // contextSha256 no longer matches, so the freshness surface reports it stale
+    // and the next prepare replaces it. Until then the user's boxes keep booting
+    // a working snapshot instead of hard-failing on "no base found".
+    const v1 = parsed as Partial<PreparedVercelState>;
+    return { schema: SCHEMA, ...(v1.base ? { base: v1.base, variants: { '': v1.base } } : {}) };
+  }
   if (parsed.schema !== SCHEMA) {
     // Unknown/missing schema: refuse to read — the next prepare overwrites it.
     return { schema: SCHEMA };
   }
-  return { schema: SCHEMA, base: parsed.base };
+  return {
+    schema: SCHEMA,
+    base: parsed.base,
+    ...(parsed.variants ? { variants: parsed.variants } : {}),
+  };
 }
 
 export function writePreparedState(state: PreparedVercelState): void {
@@ -127,9 +197,8 @@ export function ensureVercelBaseSnapshot(): void {
 export async function currentVercelBaseFileHashes(): Promise<FileManifest | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return (
-      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
-    ).files;
+    return (await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath }))))
+      .files;
   } catch {
     return undefined;
   }

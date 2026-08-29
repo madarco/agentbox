@@ -11,9 +11,8 @@ vi.mock('../src/sbx-cli.js', () => ({
   refreshSbxToken: (...a: unknown[]) => refreshSbxToken(...a),
 }));
 
-const { resolveCredentials, hasUsableCredentials, ensureFreshCredentials } = await import(
-  '../src/sdk.js'
-);
+const { resolveCredentials, hasUsableCredentials, ensureFreshCredentials } =
+  await import('../src/sdk.js');
 const { reloadVercelEnv } = await import('../src/env-loader.js');
 
 const ENV_KEYS = [
@@ -30,7 +29,10 @@ let saved: Record<string, string | undefined>;
 let dir: string;
 
 function writeAuth(token: string, expiresAt: number): void {
-  writeFileSync(join(dir, 'auth.json'), JSON.stringify({ token, expiresAt, refreshToken: 'vcr_x' }));
+  writeFileSync(
+    join(dir, 'auth.json'),
+    JSON.stringify({ token, expiresAt, refreshToken: 'vcr_x' }),
+  );
 }
 
 const FUTURE = () => Math.floor(Date.now() / 1000) + 3600;
@@ -66,7 +68,11 @@ describe('resolveCredentials — CLI mode', () => {
     process.env.VERCEL_TEAM_ID = 'team_1';
     process.env.VERCEL_PROJECT_ID = 'prj_1';
     expect(hasUsableCredentials()).toBe(true);
-    expect(resolveCredentials()).toEqual({ token: 'vca_live', teamId: 'team_1', projectId: 'prj_1' });
+    expect(resolveCredentials()).toEqual({
+      token: 'vca_live',
+      teamId: 'team_1',
+      projectId: 'prj_1',
+    });
   });
 
   it('throws when the CLI session is logged out (no auth.json)', () => {

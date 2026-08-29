@@ -79,7 +79,11 @@ describe('resolveCredentials / hasUsableCredentials', () => {
   });
 
   it('throws a clear error when the OIDC token has expired', () => {
-    process.env.VERCEL_OIDC_TOKEN = makeOidcToken({ owner_id: 'team_1', project_id: 'prj_1', exp: PAST });
+    process.env.VERCEL_OIDC_TOKEN = makeOidcToken({
+      owner_id: 'team_1',
+      project_id: 'prj_1',
+      exp: PAST,
+    });
     expect(() => resolveCredentials()).toThrow(/expired/i);
   });
 

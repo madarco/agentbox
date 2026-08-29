@@ -233,6 +233,125 @@ function renderE2b(status: E2bStatusResult, pinnedImage?: string): string[] {
   return out;
 }
 
+interface VercelStatusUnknown {
+  configured: false;
+  reason?: string;
+}
+interface VercelStatusOk {
+  configured: true;
+  snapshotId?: string;
+  createdAt?: string;
+  cliVersion?: string;
+  /** Per-agent-set derived snapshots, `''` (the base) excluded. */
+  variants?: Array<{ agents: string; snapshotId?: string; createdAt?: string }>;
+}
+type VercelStatusResult = VercelStatusUnknown | VercelStatusOk;
+
+async function vercelStatus(): Promise<VercelStatusResult> {
+  try {
+    const mod = await import('@agentbox/sandbox-vercel');
+    const prepared = mod.readPreparedState();
+    if (!prepared.base) return { configured: true };
+    return {
+      configured: true,
+      snapshotId: prepared.base.snapshotId,
+      createdAt: prepared.base.createdAt,
+      cliVersion: prepared.base.cliVersion,
+      variants: Object.entries(prepared.variants ?? {})
+        .filter(([agents]) => agents !== '')
+        .map(([agents, v]) => ({ agents, snapshotId: v.snapshotId, createdAt: v.createdAt })),
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      reason: err instanceof Error ? err.message.split('\n')[0] : String(err),
+    };
+  }
+}
+
+function renderVercel(status: VercelStatusResult): string[] {
+  const out: string[] = ['vercel:'];
+  if (!status.configured) {
+    out.push(`  ${status.reason ?? '(not configured)'}`);
+    return out;
+  }
+  if (!status.snapshotId) {
+    out.push('  no base snapshot — run `agentbox prepare --provider vercel`');
+    return out;
+  }
+  out.push(
+    `  base   ${pad(status.snapshotId, 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}`,
+  );
+  for (const v of status.variants ?? []) {
+    out.push(
+      `  ${pad(v.agents, 6)} ${pad(v.snapshotId ?? '—', 40)} ${pad('—', 10)}  ${humanAge(v.createdAt)}`,
+    );
+  }
+  return out;
+}
+
+interface HetznerStatusUnknown {
+  configured: false;
+  reason?: string;
+}
+interface HetznerStatusOk {
+  configured: true;
+  imageId?: number;
+  description?: string;
+  createdAt?: string;
+  cliVersion?: string;
+  variants?: Array<{ agents: string; description?: string; createdAt?: string }>;
+}
+type HetznerStatusResult = HetznerStatusUnknown | HetznerStatusOk;
+
+async function hetznerStatus(): Promise<HetznerStatusResult> {
+  try {
+    const mod = await import('@agentbox/sandbox-hetzner');
+    const prepared = mod.readPreparedState();
+    if (!prepared.base) return { configured: true };
+    return {
+      configured: true,
+      imageId: prepared.base.imageId,
+      description: prepared.base.description,
+      createdAt: prepared.base.createdAt,
+      cliVersion: prepared.base.cliVersion,
+      variants: Object.entries(prepared.variants ?? {})
+        .filter(([agents]) => agents !== '')
+        .map(([agents, v]) => ({ agents, description: v.description, createdAt: v.createdAt })),
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      reason: err instanceof Error ? err.message.split('\n')[0] : String(err),
+    };
+  }
+}
+
+function renderHetzner(status: HetznerStatusResult, pinnedImage?: string): string[] {
+  const out: string[] = ['hetzner:'];
+  if (!status.configured) {
+    out.push(`  ${status.reason ?? '(not configured)'}`);
+    return out;
+  }
+  if (status.imageId === undefined) {
+    out.push('  no base snapshot — run `agentbox prepare --provider hetzner`');
+    return out;
+  }
+  const pinned =
+    pinnedImage && (pinnedImage === status.description || pinnedImage === String(status.imageId))
+      ? '  (pinned in project)'
+      : '';
+  out.push(
+    `  base   ${pad(status.description ?? String(status.imageId), 40)} ${pad(status.cliVersion ?? '—', 10)}  ${humanAge(status.createdAt)}${pinned}`,
+  );
+  for (const v of status.variants ?? []) {
+    out.push(
+      `  ${pad(v.agents, 6)} ${pad(v.description ?? '—', 40)} ${pad('—', 10)}  ${humanAge(v.createdAt)}`,
+    );
+  }
+  return out;
+}
+
 interface DigitalOceanStatusUnknown {
   configured: false;
   reason?: string;
@@ -394,6 +513,8 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
   const wantDaytona = !opts.onlyProvider || opts.onlyProvider === 'daytona';
   const wantE2b = !opts.onlyProvider || opts.onlyProvider === 'e2b';
   const wantDigitalOcean = !opts.onlyProvider || opts.onlyProvider === 'digitalocean';
+  const wantHetzner = !opts.onlyProvider || opts.onlyProvider === 'hetzner';
+  const wantVercel = !opts.onlyProvider || opts.onlyProvider === 'vercel';
 
   if (wantDocker) {
     const status = await dockerStatus();
@@ -423,6 +544,21 @@ async function showStatus(opts: { onlyProvider?: string }): Promise<void> {
         ? cfg.effective.box.imageDigitalocean
         : undefined;
     lines.push(...renderDigitalOcean(status, doPinned));
+  }
+  if (wantHetzner) {
+    if (lines.length > 0) lines.push('');
+    const hetznerPinned =
+      typeof cfg?.effective.box.imageHetzner === 'string' &&
+      cfg.effective.box.imageHetzner.length > 0
+        ? cfg.effective.box.imageHetzner
+        : undefined;
+    lines.push(...renderHetzner(await hetznerStatus(), hetznerPinned));
+  }
+  if (wantVercel) {
+    if (lines.length > 0) lines.push('');
+    // No pin marker: the vercel backend never reads `req.image`, so
+    // `box.imageVercel` is written by the bake but never consulted.
+    lines.push(...renderVercel(await vercelStatus()));
   }
   if (pinned) {
     lines.push('');

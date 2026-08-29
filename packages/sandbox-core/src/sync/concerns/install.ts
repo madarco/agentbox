@@ -98,17 +98,39 @@ export function renderInstallRecipe(recipe: AgentInstallRecipe): string {
   }
 }
 
-/** The apt line for an agent's prerequisites. Shared with the derived-layer builder. */
-export function renderAptInstall(pkgs: readonly string[]): string {
-  return `apt-get update && apt-get install -y --no-install-recommends ${pkgs.join(' ')} && rm -rf /var/lib/apt/lists/*`;
+/**
+ * Install an agent's OS prerequisites, whichever package manager the box has.
+ *
+ * Dispatches at RUN time rather than bake time because the same recipe is
+ * rendered for every provider and there is nothing in an `AgentSyncSpec` that
+ * knows the target distro: Debian/Ubuntu everywhere except Vercel, whose
+ * sandboxes are Amazon Linux 2023 (dnf). Emitting `apt-get` unconditionally
+ * exits 127 there, which used to abort a whole box create.
+ *
+ * Exit 66 (`EX_NOINPUT`) distinguishes "no package manager I recognise" from a
+ * real install failure, so the caller can treat the two differently.
+ */
+export function renderPackageInstall(pkgs: readonly string[]): string {
+  const list = pkgs.join(' ');
+  return [
+    'if command -v apt-get >/dev/null 2>&1; then',
+    `  apt-get update && apt-get install -y --no-install-recommends ${list} && rm -rf /var/lib/apt/lists/*;`,
+    'elif command -v dnf >/dev/null 2>&1; then',
+    `  dnf install -y ${list};`,
+    'elif command -v microdnf >/dev/null 2>&1; then',
+    `  microdnf install -y ${list};`,
+    'else',
+    `  echo "no supported package manager (apt-get/dnf) for: ${list}" >&2; exit 66;`,
+    'fi',
+  ].join(' ');
 }
 
-/** apt prerequisites, if any. Always root. */
-async function installApt(
+/** OS prerequisites, if any. Always root. */
+async function installPackages(
   transport: SyncTransport,
   pkgs: readonly string[],
 ): Promise<{ ok: boolean; detail: string }> {
-  const r = await transport.exec(asRootScript(renderAptInstall(pkgs)), { user: 'root' });
+  const r = await transport.exec(asRootScript(renderPackageInstall(pkgs)), { user: 'root' });
   return { ok: r.exitCode === 0, detail: `${r.stdout}\n${r.stderr}`.trim() };
 }
 
@@ -140,12 +162,23 @@ export async function ensureAgentInstalled(
   const installMode = opts.installMode ?? (await resolveConfiguredClaudeInstall());
   const install = resolveAgentInstall(spec.install, installMode);
 
-  if (install.apt && install.apt.length > 0) {
-    const apt = await installApt(transport, install.apt);
-    if (!apt.ok) {
-      throw new AgentInstallError(
-        `${spec.id}: installing its apt prerequisites (${install.apt.join(', ')}) failed.\n${apt.detail.slice(-600)}`,
-      );
+  if (install.packages && install.packages.length > 0) {
+    const pkgs = await installPackages(transport, install.packages);
+    if (!pkgs.ok) {
+      const names = install.packages.join(', ');
+      if (install.packagesOptional) {
+        // A soft dependency must never cost the user a box. Codex's bubblewrap
+        // is the case that matters: without it Codex falls back to a bundled
+        // sandbox and warns, so aborting create over it trades a warning for a
+        // total failure -- and on Amazon Linux the package may not exist at all.
+        opts.onProgress?.(
+          `${spec.id}: optional prerequisites (${names}) could not be installed; continuing without them`,
+        );
+      } else {
+        throw new AgentInstallError(
+          `${spec.id}: installing its prerequisites (${names}) failed.\n${pkgs.detail.slice(-600)}`,
+        );
+      }
     }
   }
 

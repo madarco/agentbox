@@ -163,7 +163,11 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
     install: {
       recipe: { kind: 'npm', package: '@openai/codex' },
       runAs: 'root',
-      apt: ['bubblewrap'],
+      // Optional: Codex ships a bundled bwrap and only warns without the system
+      // one, so a missing or unavailable package must not fail a box create.
+      // Amazon Linux 2023 (Vercel) may not carry it at all.
+      packages: ['bubblewrap'],
+      packagesOptional: true,
       postInstall: [
         `install -d -o ${BOX_USER} -g ${BOX_USER} ${CODEX_BOX_DIR} ${CREDS_DIR}/codex`,
         `ln -sfn ${CREDS_DIR}/codex/auth.json ${CODEX_BOX_DIR}/auth.json`,

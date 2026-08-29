@@ -15,13 +15,13 @@ The easiest path is the interactive wizard — it signs you in and bakes the bas
 agentbox install        # then select vercel
 ```
 
-Approve the browser CLI login when prompted (or paste an access-token trio / OIDC for CI — the access-token trio is best for long bakes since OIDC dev tokens expire on a ~12h cycle). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider vercel` under the hood) with the AgentBox runtime — `agentbox-ctl`, the agents, tmux — so every new box boots ready in seconds.
+Approve the browser CLI login when prompted (or paste an access-token trio / OIDC for CI — the access-token trio is best for long bakes since OIDC dev tokens expire on a ~12h cycle). Credentials persist to `~/.agentbox/secrets.env`; project `.env` files are never harvested. `install` also bakes the base snapshot (a one-time `agentbox prepare --provider vercel` under the hood) with the AgentBox runtime — `agentbox-ctl`, tmux, the VNC stack — so every new box boots ready in seconds. The base carries no agent; see [Prepare snapshot](#prepare-snapshot).
 
 For CI or scripted setup, run the explicit equivalents:
 
 ```bash
 agentbox vercel login                 # credentials only
-agentbox prepare --provider vercel    # bake the base snapshot
+agentbox prepare --provider vercel    # bake the agentless base snapshot
 ```
 
 <Callout title="WHICH AUTH">
@@ -42,7 +42,17 @@ agentbox vercel claude
 
 ## Prepare the base snapshot
 
-Vercel can't build a Dockerfile image, so the base environment is a one-time Vercel snapshot (like Hetzner's prepare). `agentbox prepare --provider vercel` boots a fresh sandbox, provisions it (agents, relay shims, VNC, Chromium), then snapshots it. The snapshot id is recorded under the per-provider key `box.imageVercel`, and every `create --provider vercel` boots from it.
+Vercel can't build a Dockerfile image, so the base environment is a one-time Vercel snapshot (like Hetzner's prepare). `agentbox prepare --provider vercel` boots a fresh sandbox, provisions it (relay shims, VNC, Chromium), then snapshots it. The snapshot id is recorded in `~/.agentbox/vercel-prepared.json`, and every `create --provider vercel` boots from it.
+
+The base carries **no agent**. Add one as its own snapshot, on top of the base:
+
+```bash
+agentbox prepare --provider vercel --agents claude
+```
+
+That boots the base, runs just Claude Code's install recipe and re-snapshots. `agentbox claude --provider vercel` then boots that snapshot with the agent already in place. Each agent set gets its own record, so baking `--agents codex` later does not invalidate the claude one, and each rebake deletes only the snapshot it replaces.
+
+Skipping this is fine: a box whose agent isn't baked installs it on first use (~30–60s), and the result is identical — the bake and the on-demand install run the same recipe. It just moves that minute from bake time to every box's create.
 
 ```bash
 agentbox prepare --provider vercel

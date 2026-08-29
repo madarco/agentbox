@@ -81,7 +81,7 @@ export {
   ensureAgentInstalled,
   AgentInstallError,
   renderInstallRecipe,
-  renderAptInstall,
+  renderPackageInstall,
   type EnsureAgentInstalledResult,
 } from './concerns/install.js';
 export {

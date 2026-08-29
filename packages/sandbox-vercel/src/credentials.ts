@@ -89,8 +89,14 @@ export async function ensureVercelCredentials(
       message: 'How do you want to authenticate?',
       options: [
         { value: 'cli', label: 'Sign in with Vercel (browser) — recommended for interactive use' },
-        { value: 'token', label: 'Access token (VERCEL_TOKEN + team + project) — best for CI / headless' },
-        { value: 'oidc', label: 'OIDC token (VERCEL_OIDC_TOKEN in env / secrets.env) — short interactive work' },
+        {
+          value: 'token',
+          label: 'Access token (VERCEL_TOKEN + team + project) — best for CI / headless',
+        },
+        {
+          value: 'oidc',
+          label: 'OIDC token (VERCEL_OIDC_TOKEN in env / secrets.env) — short interactive work',
+        },
       ],
       initialValue: 'cli',
     }),
@@ -116,7 +122,9 @@ export async function ensureVercelCredentials(
       await ensureSbxInstalled();
       outro('Setup complete.');
     } else {
-      log.warn('No VERCEL_OIDC_TOKEN found yet — set it as above, then re-run `agentbox vercel login`.');
+      log.warn(
+        'No VERCEL_OIDC_TOKEN found yet — set it as above, then re-run `agentbox vercel login`.',
+      );
     }
     return;
   }
@@ -215,9 +223,7 @@ function writeManaged(record: Record<string, string>): void {
  * persists to `~/.agentbox/secrets.env`. Writing `VERCEL_TOKEN` clears any prior
  * CLI-login marker (`VERCEL_AUTH_SOURCE`).
  */
-export async function setVercelCredentials(
-  fields: Record<string, string>,
-): Promise<CredSetResult> {
+export async function setVercelCredentials(fields: Record<string, string>): Promise<CredSetResult> {
   ensureVercelEnvLoaded();
   const token = (fields.token ?? '').trim();
   const projectId = (fields.projectId ?? '').trim() || undefined;
@@ -296,7 +302,9 @@ async function ensureSbxInstalled(): Promise<{ bin: string } | null> {
 async function runCliLogin(): Promise<void> {
   const det = await ensureSbxInstalled();
   if (!det) {
-    log.warn('The Vercel sandbox CLI is required to sign in this way — install it, then re-run `agentbox vercel login`.');
+    log.warn(
+      'The Vercel sandbox CLI is required to sign in this way — install it, then re-run `agentbox vercel login`.',
+    );
     return;
   }
 
@@ -345,7 +353,9 @@ async function runCliLogin(): Promise<void> {
 
   persistCliCredentials({ teamId, projectId });
   reloadVercelEnv();
-  log.success(`Signed in with Vercel — credentials managed by the sandbox CLI (saved scope to ${secretsPath()}).`);
+  log.success(
+    `Signed in with Vercel — credentials managed by the sandbox CLI (saved scope to ${secretsPath()}).`,
+  );
   outro('Setup complete.');
 }
 
@@ -369,7 +379,10 @@ function resolveCliTeamId(defaultTeamId?: string): string | null {
  * teamId from `VERCEL_TEAM_ID` / the CLI's selected team / the account default.
  * Returns null when no token is available (caller tells the user to log in).
  */
-export async function resolveVercelApiAuth(): Promise<{ token: string; teamId: string | undefined } | null> {
+export async function resolveVercelApiAuth(): Promise<{
+  token: string;
+  teamId: string | undefined;
+} | null> {
   ensureVercelEnvLoaded();
   const token = process.env.VERCEL_TOKEN ?? readCliAuth()?.token;
   if (!token) return null;
@@ -489,7 +502,13 @@ export function readVercelCredStatus(): VercelCredStatus {
   const projectId = process.env.VERCEL_PROJECT_ID;
 
   if (oidc) {
-    return { auth: 'oidc', oidc: true, teamId, projectId, source: shellHad ? 'env' : 'secrets.env' };
+    return {
+      auth: 'oidc',
+      oidc: true,
+      teamId,
+      projectId,
+      source: shellHad ? 'env' : 'secrets.env',
+    };
   }
 
   if (process.env.VERCEL_AUTH_SOURCE === 'cli') {

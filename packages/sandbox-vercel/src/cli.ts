@@ -53,7 +53,9 @@ async function printStatus(): Promise<void> {
   if (s.auth === 'cli') {
     const det = await detectSbx();
     lines.push('  auth:   Vercel CLI (sandbox) login');
-    lines.push(`  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}` : `not installed — run \`${installSbxHint()}\``}`);
+    lines.push(
+      `  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}` : `not installed — run \`${installSbxHint()}\``}`,
+    );
     if (s.cli) {
       if (!s.cli.loggedIn) {
         lines.push('  session: logged out — run `agentbox vercel login`');

@@ -120,7 +120,9 @@ describe('readCliAuth / readCliCurrentTeam', () => {
 
 describe('isNearExpiry', () => {
   it('is false for a token well in the future', () => {
-    expect(isNearExpiry({ token: 't', expiresAt: Math.floor(Date.now() / 1000) + 3600 })).toBe(false);
+    expect(isNearExpiry({ token: 't', expiresAt: Math.floor(Date.now() / 1000) + 3600 })).toBe(
+      false,
+    );
   });
 
   it('is true for an expired token', () => {
@@ -128,7 +130,9 @@ describe('isNearExpiry', () => {
   });
 
   it('is true within the skew window', () => {
-    expect(isNearExpiry({ token: 't', expiresAt: Math.floor(Date.now() / 1000) + 60 }, 120)).toBe(true);
+    expect(isNearExpiry({ token: 't', expiresAt: Math.floor(Date.now() / 1000) + 60 }, 120)).toBe(
+      true,
+    );
   });
 
   it('treats a missing expiresAt as near-expiry', () => {

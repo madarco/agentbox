@@ -45,7 +45,7 @@ import {
   resolveAgentSpec,
   resolveAgentInstall,
   renderInstallRecipe,
-  renderAptInstall,
+  renderPackageInstall,
 } from '@agentbox/sandbox-core';
 import { ensureE2bCredentials } from './credentials.js';
 import { resolveApiKey, Template } from './sdk.js';
@@ -274,8 +274,8 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
         const spec = resolveAgentSpec(id);
         const install = resolveAgentInstall(spec.install, claudeInstall);
         progress(`  install ${spec.id}`);
-        if (install.apt && install.apt.length > 0) {
-          template.runCmd(renderAptInstall(install.apt), { user: 'root' });
+        if (install.packages && install.packages.length > 0) {
+          template.runCmd(renderPackageInstall(install.packages), { user: 'root' });
         }
         const recipe = renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
