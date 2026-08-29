@@ -86,6 +86,26 @@ describe('validateSizeChoice', () => {
     ).not.toThrow();
   });
 
+  it('rejects a region the base snapshot was never replicated to', () => {
+    // DigitalOcean answers a cross-region boot with a generic 422 that the
+    // create path renders as "no capacity for <size>" -- which sends people
+    // hunting for a bigger plan when the real fix is a region or a re-bake.
+    // Caught live: a base baked in fra1 with creates defaulting to nyc3.
+    expect(() =>
+      validateSizeChoice(
+        { size: 's-2vcpu-4gb', region: 'nyc3' },
+        CATALOG,
+        snapshot({ regions: ['fra1'], name: 'agentbox-claude-x' }),
+      ),
+    ).toThrow(/does not exist in region "nyc3"[\s\S]*available in: fra1/);
+  });
+
+  it('accepts a region the snapshot does live in', () => {
+    expect(() =>
+      validateSizeChoice({ size: 's-2vcpu-4gb', region: 'nyc3' }, CATALOG, snapshot()),
+    ).not.toThrow();
+  });
+
   it('rejects a region the size is not offered in', () => {
     expect(() =>
       validateSizeChoice({ size: 's-2vcpu-4gb', region: 'fra1' }, CATALOG, null),
