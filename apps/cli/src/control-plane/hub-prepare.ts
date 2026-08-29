@@ -57,6 +57,7 @@ export async function bakeViaHub(args: {
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
+  agents?: string[];
   /**
    * Bake INPUTS threaded from the CLI's flags (`--build` / `--size` / `--location`
    * / `--name`). They ride the same route body; the hub worker fills any that are
@@ -88,6 +89,7 @@ export async function bakeViaHub(args: {
       : await args.client.prepareProvider(args.providerName, {
           force: args.force,
           claudeInstall: args.claudeInstall,
+          ...(args.agents ? { agents: args.agents } : {}),
           build: args.build,
           size: args.size,
           location: args.location,

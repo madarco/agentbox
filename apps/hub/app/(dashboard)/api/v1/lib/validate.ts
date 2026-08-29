@@ -7,6 +7,12 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; d
 
 // 'none' = create the box without starting an agent (like `agentbox create`).
 const AGENTS = ['claude', 'codex', 'opencode', 'none'] as const;
+/**
+ * Agents that can be baked into a base. `AGENTS` includes the sentinel `none`,
+ * which is a create-time "no agent" marker, not something installable — an
+ * agentless base is an empty `agents` list, not `['none']`.
+ */
+const BAKEABLE_AGENTS = ['claude', 'codex', 'opencode'] as const;
 // Sandbox providers (mirrors @agentbox/config PROVIDER_NAMES; hardcoded to keep
 // that package out of the Next bundle, like AGENTS above). The backend enforces
 // that the chosen provider is actually configured on the host.
@@ -265,6 +271,7 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
 export function parseProviderPrepare(body: unknown): Parsed<{
   force?: boolean;
   claudeInstall?: 'native' | 'npm';
+  agents?: string[];
   build?: boolean;
   size?: string;
   location?: string;
@@ -273,11 +280,20 @@ export function parseProviderPrepare(body: unknown): Parsed<{
   // An empty/absent body is valid (bake with defaults).
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { force, claudeInstall, build, size, location, name } = body;
+  const { force, claudeInstall, agents, build, size, location, name } = body;
   const fb = optionalBool(force, 'force');
   if (!fb.ok) return fb;
   if (claudeInstall !== undefined && claudeInstall !== 'native' && claudeInstall !== 'npm') {
     return { ok: false, message: "claudeInstall must be 'native' or 'npm'" };
+  }
+  const ag = optionalStringArray(agents, 'agents');
+  if (!ag.ok) return ag;
+  // Reject an unknown agent rather than baking a base that silently lacks it.
+  const badAgent = (ag.value ?? []).find(
+    (a) => !BAKEABLE_AGENTS.includes(a as (typeof BAKEABLE_AGENTS)[number]),
+  );
+  if (badAgent !== undefined) {
+    return { ok: false, message: `agents must each be one of ${BAKEABLE_AGENTS.join(', ')}` };
   }
   // Bake inputs (not routing): `--build` forces a local docker build; size /
   // location / name are the fixed-at-bake-time knobs threaded from the CLI. Each
@@ -295,6 +311,7 @@ export function parseProviderPrepare(body: unknown): Parsed<{
     value: {
       force: fb.value,
       claudeInstall: claudeInstall as 'native' | 'npm' | undefined,
+      agents: ag.value,
       build: bb.value,
       size: sz.value,
       location: loc.value,

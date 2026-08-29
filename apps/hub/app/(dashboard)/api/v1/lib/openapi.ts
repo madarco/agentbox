@@ -812,6 +812,16 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     force: { type: 'boolean' },
                     claudeInstall: { type: 'string', enum: ['native', 'npm'] },
+                    agents: {
+                      type: 'array',
+                      items: { type: 'string', enum: ['claude', 'codex', 'opencode'] },
+                      description:
+                        'Agents to bake into the base. Omitted/empty bakes an agentless base.',
+                    },
+                    build: { type: 'boolean' },
+                    size: { type: 'string' },
+                    location: { type: 'string' },
+                    name: { type: 'string' },
                   },
                 },
               },

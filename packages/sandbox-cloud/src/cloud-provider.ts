@@ -65,7 +65,11 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import { ensureAgentVolumesForCloud, reconcileAgentCredentials } from './sync/agent-credentials.js';
+import {
+  ensureAgentsInstalledForCloud,
+  ensureAgentVolumesForCloud,
+  reconcileAgentCredentials,
+} from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -672,7 +676,11 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
-        await reconcileAgentCredentials(backend, h, { onLog: () => {} });
+        await reconcileAgentCredentials(backend, h, {
+          onLog: () => {},
+          // Absent on pre-selection boxes, which correctly means "all".
+          ...(box.agents ? { agents: box.agents } : {}),
+        });
       }
     } catch {
       // best-effort
@@ -816,6 +824,10 @@ export function createCloudProvider(
       // "user logs in inside the box" the way cloud worked before.
       const agentVolumes = await ensureAgentVolumesForCloud(backend, {
         onLog: log,
+        // Authoritative when the caller named its agents: this is the single
+        // narrowing point, and its result feeds seedAgentVolumesIfFresh and
+        // makeCloudSync below.
+        ...(req.agents ? { agents: req.agents } : {}),
         // Daytona's linux-vm class accepts volume mounts and never honors them
         // (see ensureAgentVolumesForCloud) — take the per-create upload path.
         volumesUsable: sandboxClass !== 'linux-vm',
@@ -857,6 +869,10 @@ export function createCloudProvider(
           name,
           image,
           snapshot,
+          // Lets a backend that bakes per-agent snapshots pick the matching
+          // variant. Only meaningful when no explicit `snapshot` is requested —
+          // a checkpoint already carries whatever agents it was captured with.
+          ...(req.agents ? { agents: req.agents } : {}),
           resources,
           size,
           location,
@@ -987,6 +1003,15 @@ export function createCloudProvider(
           boxWorkspace: CLOUD_WORKSPACE_DIR,
           onLog: log,
         });
+        // Before any credential seeding: a cloud base is agentless, and only
+        // agent sets with a baked derived snapshot arrive with their binary. A
+        // missing binary is otherwise silent — tmux launches it, the session
+        // dies, and attach reports "no server running".
+        await ensureAgentsInstalledForCloud(backend, handle, {
+          agents: agentVolumes.agents,
+          onLog: log,
+        });
+
         const sync = makeCloudSync(backend, handle, { agents: agentVolumes.agents });
         await sync.seedCredentials(syncCtx);
         await sync.seedAgentConfig(syncCtx);
@@ -1338,6 +1363,10 @@ export function createCloudProvider(
           workspacePath: req.workspacePath,
           projectRoot: req.projectRoot,
           projectIndex,
+          // Persist the selection: resume re-reconciles credentials on every
+          // start and needs to know which agents this box is for, or it would
+          // re-acquire the others and undo the isolation.
+          ...(req.agents ? { agents: req.agents } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,

@@ -255,6 +255,8 @@ export interface PropagateBoxLike {
   claudeConfigVolume?: string;
   codexConfigVolume?: string;
   opencodeConfigVolume?: string;
+  /** Agents the box was created for. Absent = created before per-agent selection. */
+  agents?: string[];
 }
 
 export interface PropagatePlan<B extends PropagateBoxLike> {
@@ -305,6 +307,12 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   const volumes = new Map<string, { boxNames: string[]; shared: boolean }>();
   const cloudBoxes: B[] = [];
   for (const box of inScope) {
+    // A box created for a specific agent set must not be handed another agent's
+    // credential. This is the fan-out's own gate: it pushes STRAIGHT INTO a
+    // cloud box, so without it a resume re-seeds every agent's token and
+    // silently undoes the create-time isolation. Docker is unaffected — its
+    // push targets a volume the box doesn't mount.
+    if (box.agents && !box.agents.includes(opts.agent)) continue;
     if ((box.provider ?? 'docker') !== 'docker') {
       cloudBoxes.push(box);
       continue;

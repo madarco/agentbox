@@ -22,9 +22,28 @@ const BOX_USER = 'vscode';
 const BOX_HOME = '/home/vscode';
 /** Where a cloud credential volume mounts, pivoted into each agent's real path. */
 const CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
+/** Baked into every provider's base image; the source for the wizard skill. */
+const SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';
 const CLAUDE_BOX_DIR = '/home/vscode/.claude';
 const CODEX_BOX_DIR = '/home/vscode/.codex';
 const OPENCODE_BOX_DIR = '/home/vscode/.local/share/opencode';
+
+/**
+ * Copy the in-box-only `/agentbox-setup` skill the first-run wizard prompt
+ * references into claude's config dir.
+ *
+ * Shared by BOTH of claude's recipes. It used to live only on the native one,
+ * which silently cost `box.claudeInstall: npm` — the CDN-403 fallback — its
+ * first-run wizard, because the providers' base scripts no longer copy it
+ * either (it moved onto the agent, where it belongs).
+ *
+ * Guarded: the source is baked into every provider's base image, but a box
+ * built from an older base may not have it, and a missing wizard skill must
+ * never fail an agent install. On docker the config volume mounts over this dir
+ * and `seedSetupSkillIntoVolume` seeds the same content — harmless, identical
+ * bytes.
+ */
+const SEED_SETUP_SKILL = `if [ -f ${SETUP_GUIDE_PATH} ]; then install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR}/skills/agentbox-setup && install -o ${BOX_USER} -g ${BOX_USER} -m 0644 ${SETUP_GUIDE_PATH} ${CLAUDE_BOX_DIR}/skills/agentbox-setup/SKILL.md; fi`;
 
 export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
   {
@@ -53,6 +72,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
         `ln -sfn ${CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
         `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
         `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+        SEED_SETUP_SKILL,
       ].join(' && '),
       alternates: {
         // `box.claudeInstall: npm`. npm-global drops `claude` at Node's prefix
@@ -69,6 +89,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
             `ln -sfn ${CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
             `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
             `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.local/bin/claude ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+            SEED_SETUP_SKILL,
           ].join(' && '),
         },
       },

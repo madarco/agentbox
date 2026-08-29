@@ -55,10 +55,16 @@ import {
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
-import { readPreparedState } from './prepared-state.js';
+import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
-import { describeInbound, parseInboundSpec, resolveInboundSources } from '@agentbox/sandbox-core';
+import {
+  agentSetArg,
+  describeInbound,
+  normalizeAgentSet,
+  parseInboundSpec,
+  resolveInboundSources,
+} from '@agentbox/sandbox-core';
 import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
@@ -167,9 +173,33 @@ async function findImageByDescription(c: HetznerClient, description: string): Pr
  */
 async function resolveImageId(c: HetznerClient, req: CloudProvisionRequest): Promise<number | string> {
   const ref = req.snapshot ?? req.image;
-  if (!ref || ref === HETZNER_DEFAULT_BOX_IMAGE_REF || ref === SCAFFOLDING_FALLBACK_IMAGE) {
+  // `box.imageHetzner` is pinned to the base's own description by every bake, so
+  // by the time we get here `ref` usually NAMES OUR OWN BASE rather than being
+  // the sentinel. Treat that as "no explicit choice": otherwise the pin silently
+  // defeats variant selection and every box boots the agentless base. A ref
+  // naming anything else (a checkpoint, a stock slug, an explicit --image) is a
+  // real choice and wins.
+  // Read before `ensureHetznerBaseSnapshot()` (which may bake and rewrite the
+  // file) purely to answer "does ref name our base?"; the branch below re-reads.
+  const pinned = preparedEntryFor(readPreparedState(), '');
+  const refIsOurBase =
+    !req.snapshot &&
+    pinned !== undefined &&
+    (ref === pinned.description || ref === String(pinned.imageId));
+  if (
+    !ref ||
+    ref === HETZNER_DEFAULT_BOX_IMAGE_REF ||
+    ref === SCAFFOLDING_FALLBACK_IMAGE ||
+    refIsOurBase
+  ) {
     await ensureHetznerBaseSnapshot();
     const state = readPreparedState();
+    // Prefer the derived snapshot baked for exactly this agent set — it already
+    // carries the agent, so the box skips the per-box install. Falling back to
+    // the agentless base is not a failure: `ensureAgentInstalled` puts the agent
+    // in at first use, which is also what an un-re-prepared older base does.
+    const variant = preparedEntryFor(state, agentSetArg(normalizeAgentSet(req.agents)));
+    if (variant) return variant.imageId;
     if (!state.base) {
       throw new Error(
         'no Hetzner base snapshot found — run `agentbox prepare --provider hetzner` to bake one.',

@@ -448,6 +448,15 @@ export interface BoxRecord {
    * session.
    */
   lastAgent?: 'claude' | 'codex' | 'opencode';
+  /**
+   * The agents this box was created FOR, as passed to `create`.
+   *
+   * Durable because the selection has to outlive the create: the resume path
+   * re-reconciles agent credentials on every start, and without knowing the set
+   * it would re-acquire every agent's tokens and undo the isolation. Absent on
+   * boxes created before per-agent selection, which correctly means "all".
+   */
+  agents?: string[];
   createdAt: string; // ISO-8601
 }
 

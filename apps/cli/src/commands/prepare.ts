@@ -56,6 +56,7 @@ interface PrepareOptions {
   yes?: boolean;
   status?: boolean;
   claudeInstall?: string;
+  agents?: string;
   build?: boolean;
   name?: string;
   location?: string;
@@ -358,6 +359,8 @@ export interface RunPrepareOptions {
    * `box.claudeInstall` config key; falls back to the effective config.
    */
   claudeInstall?: 'native' | 'npm';
+  /** Agents to bake into the base. Omitted = agentless. */
+  agents?: string[];
   /**
    * Bake INPUTS (not routing) threaded to the hub bake. Each is a per-invocation
    * override; when absent the hub worker fills it from its effective config.
@@ -480,6 +483,7 @@ async function runPrepareViaHub(args: {
   provider: Provider;
   force?: boolean;
   claudeInstall: 'native' | 'npm';
+  agents?: string[];
   build?: boolean;
   size?: string;
   location?: string;
@@ -512,6 +516,7 @@ async function runPrepareViaHub(args: {
     provider: args.provider,
     force: args.force,
     claudeInstall: args.claudeInstall,
+    ...(args.agents ? { agents: args.agents } : {}),
     build: args.build,
     size: args.size,
     location: args.location,
@@ -634,6 +639,7 @@ export async function runPrepare(
     provider,
     force: opts.force,
     claudeInstall,
+    ...(opts.agents ? { agents: opts.agents } : {}),
     build: opts.build,
     size: opts.size,
     location: opts.location,
@@ -642,6 +648,13 @@ export async function runPrepare(
     suppressStatus: opts.suppressStatus,
   });
 }
+
+/**
+ * Agents `--agents` accepts. Kept as a literal rather than derived from
+ * AGENT_SYNC_SPECS so the CLI's arg parsing doesn't pull the sync registry into
+ * its startup path; the drift is guarded by a test.
+ */
+const PREPARE_AGENTS = ['claude', 'codex', 'opencode'];
 
 export const prepareCommand = new Command('prepare')
   .description(
@@ -664,6 +677,10 @@ export const prepareCommand = new Command('prepare')
   .option(
     '--claude-install <mode>',
     'install Claude Code into the base image via the native installer (default) or npm (native | npm)',
+  )
+  .option(
+    '--agents <list>',
+    'comma-separated agents to bake into the base (claude,codex,opencode). Default: none — agents are added as a derived layer or on demand.',
   )
   .option(
     '--location <name>',
@@ -689,6 +706,22 @@ export const prepareCommand = new Command('prepare')
       claudeInstall = opts.claudeInstall;
     }
 
+    let agents: string[] | undefined;
+    if (opts.agents !== undefined) {
+      const parsed = opts.agents
+        .split(',')
+        .map((a) => a.trim())
+        .filter((a) => a.length > 0);
+      const unknown = parsed.filter((a) => !PREPARE_AGENTS.includes(a));
+      if (unknown.length > 0) {
+        process.stderr.write(
+          `error: --agents got unknown agent(s): ${unknown.join(', ')} (known: ${PREPARE_AGENTS.join(', ')})\n`,
+        );
+        process.exit(1);
+      }
+      agents = parsed;
+    }
+
     const providerName = opts.provider.trim();
     intro(`preparing ${providerName} base image`);
     // Errors propagate to `program.parseAsync().catch` so they reach the user
@@ -699,6 +732,7 @@ export const prepareCommand = new Command('prepare')
       force: opts.force,
       yes: opts.yes,
       claudeInstall,
+      agents,
       build: opts.build,
       size: opts.size,
       location: opts.location,

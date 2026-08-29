@@ -32,6 +32,7 @@ import {
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
+  ensureAgentInstalled,
   extractCredentials,
   isRealAgentCredential,
   pushCredentialToBox,
@@ -143,10 +144,26 @@ export interface EnsureAgentVolumesResult {
  */
 export async function ensureAgentVolumesForCloud(
   backend: CloudBackend,
-  opts: { onLog?: (line: string) => void; volumesUsable?: boolean } = {},
+  opts: {
+    onLog?: (line: string) => void;
+    volumesUsable?: boolean;
+    /**
+     * Which agents this box is FOR. When set, only these get a credential
+     * mount, a forwarded env key, or a seed — so a `agentbox claude` cloud box
+     * carries no codex/opencode tokens. Absent = every agent, the historical
+     * behaviour, so an un-migrated caller keeps working.
+     *
+     * This is the single narrowing point: the returned `agents` feeds
+     * `seedAgentVolumesIfFresh` and `makeCloudSync({ agents })`, both of which
+     * already filter on it.
+     */
+    agents?: readonly string[];
+  } = {},
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
-  const allAgents = AGENT_SPECS.map((s) => s.kind);
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  const allAgents = specs.map((s) => s.kind);
   // `volumesUsable: false` means the backend has a volume API but this
   // particular sandbox shape can't use it. Daytona's linux-vm class *accepts* a
   // volume mount and even echoes it back in the sandbox DTO — the path just
@@ -181,7 +198,7 @@ export async function ensureAgentVolumesForCloud(
     return { mounts: [], env: buildForwardedEnv([]), agents: [] };
   }
 
-  const mounts: CloudVolumeMount[] = AGENT_SPECS.map((spec) => ({
+  const mounts: CloudVolumeMount[] = specs.map((spec) => ({
     volumeId,
     mountPath: spec.credentialsMountPath,
     subpath: spec.credentialsSubpath,
@@ -201,11 +218,17 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
   // For agents authenticated via env-var (ANTHROPIC_API_KEY etc.) rather
   // than a stored auth file, this is the only way the in-box agent finds
   // its credentials. Mirrors the Docker provider's per-agent forwarding.
-  const forwardedKeys = new Set<string>([
-    ...CLAUDE_FORWARDED_ENV_KEYS,
-    ...CODEX_FORWARDED_ENV_KEYS,
-    ...OPENCODE_FORWARDED_ENV_KEYS,
-  ]);
+  //
+  // PER AGENT, not the union: an env-var login is a credential like any other,
+  // so a claude-only box must not inherit the host's OPENAI_API_KEY. Unioning
+  // all three here would quietly undo the file-and-mount isolation for exactly
+  // the agents that authenticate this way.
+  const keysByAgent: Record<CloudAgentKind, readonly string[]> = {
+    claude: CLAUDE_FORWARDED_ENV_KEYS,
+    codex: CODEX_FORWARDED_ENV_KEYS,
+    opencode: OPENCODE_FORWARDED_ENV_KEYS,
+  };
+  const forwardedKeys = new Set<string>(agents.flatMap((a) => keysByAgent[a]));
   for (const k of forwardedKeys) {
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;
@@ -287,10 +310,13 @@ export async function seedAgentVolumesIfFresh(
 export async function ensureAgentHomeDirsOwned(
   backend: CloudBackend,
   handle: CloudHandle,
-  opts: { onLog?: (line: string) => void } = {},
+  opts: { onLog?: (line: string) => void; agents?: readonly string[] } = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const paths = AGENT_SPECS.map((s) => s.staticMountPath).join(' ');
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  if (specs.length === 0) return;
+  const paths = specs.map((s) => s.staticMountPath).join(' ');
   try {
     await backend.exec(handle, `sudo -n chown -R vscode:vscode ${paths} 2>/dev/null || true`);
   } catch (err) {
@@ -504,6 +530,35 @@ export function agentSpecsForCloud(): Array<{
 }
 
 /**
+ * Put the box's agents on PATH, installing any the snapshot doesn't carry.
+ *
+ * Cloud bases are agentless and only SOME agent sets have a derived snapshot
+ * baked, so a box can legitimately boot without its agent — and the failure is
+ * silent and confusing: tmux launches `claude`, the binary isn't there, the
+ * session dies immediately, and attach reports `no server running on
+ * /tmp/tmux-1000/default`. Installing here turns that into either a working box
+ * or a loud, specific install error.
+ *
+ * Runs BEFORE credential seeding: each agent's `install.postInstall` creates
+ * `~/.agentbox-creds/<agent>/` and the symlinks the seeded credential lands on.
+ * A box booted from a matching derived snapshot pays one `command -v` probe.
+ */
+export async function ensureAgentsInstalledForCloud(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: { agents?: readonly string[]; onLog?: (line: string) => void } = {},
+): Promise<void> {
+  const agents = opts.agents ?? [];
+  if (agents.length === 0) return;
+  const transport = createCloudSyncTransport({ backend, handle });
+  for (const agent of agents) {
+    await ensureAgentInstalled(transport, agent, {
+      ...(opts.onLog ? { onProgress: opts.onLog } : {}),
+    });
+  }
+}
+
+/**
  * Extract the agent login credentials from a running cloud box back to the
  * host backups under `~/.agentbox/`, so the next box (seeded by the cloud
  * push) inherits the login. The cloud analogue of docker's
@@ -561,6 +616,14 @@ export interface ReconcileAgentCredentialsOptions {
   onLog?: (line: string) => void;
   /** Override host backup paths per agent (tests). Defaults to the registry `hostBackup`. */
   backups?: Partial<Record<CloudAgentKind, string>>;
+  /**
+   * Which agents this box is FOR. Absent = all, the historical behaviour.
+   *
+   * Load-bearing on the RESUME path: this runs on every start, so without the
+   * filter a claude-only box re-acquires codex and opencode credentials the
+   * first time it resumes, silently undoing the create-time isolation.
+   */
+  agents?: readonly string[];
 }
 
 /** Transport-seam core of {@link reconcileAgentCredentials} (unit-testable). */
@@ -569,7 +632,9 @@ export async function reconcileAgentCredentialsViaTransport(
   opts: ReconcileAgentCredentialsOptions = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
   for (const spec of AGENT_SYNC_SPECS) {
+    if (wanted && !wanted.has(spec.id)) continue;
     const backupPath = opts.backups?.[spec.id];
     try {
       const hostText = await readCredentialBackup(spec.id, { backupPath });

@@ -66,6 +66,7 @@ export {
 export {
   agentSpecsForCloud,
   ensureAgentHomeDirsOwned,
+  ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
   reconcileAgentCredentials,

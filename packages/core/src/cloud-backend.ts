@@ -48,6 +48,17 @@ export interface CloudProvisionRequest {
    * Backends without snapshot support ignore the field and fall back to `image`.
    */
   snapshot?: string;
+  /**
+   * Agents this box is being created for, normalized and sorted.
+   *
+   * A backend that bakes per-agent derived snapshots (hetzner, and later
+   * vercel/e2b/daytona/digitalocean) uses it to pick the matching variant from
+   * its own prepared state before falling back to the agentless base. It is NOT
+   * a new config key on purpose: `box.image<Provider>` is one slot and cannot
+   * hold N snapshot ids, and per-variant keys would compound the known
+   * cross-provider `box.image` collision. Backends with no variants ignore it.
+   */
+  agents?: string[];
   resources?: { cpu?: number; memory?: number; disk?: number };
   /**
    * Backend-interpreted size string. Hetzner reads it as a server type

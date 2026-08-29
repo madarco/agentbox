@@ -50,3 +50,27 @@ describe('ensureAgentInstalled — install mode defaults from config', () => {
     expect(cmds.some((c) => c.includes('claude.ai/install.sh'))).toBe(true);
   });
 });
+
+describe('both claude recipes seed the first-run wizard skill', () => {
+  // The `/agentbox-setup` skill moved off the providers' base scripts and onto
+  // claude's install recipe. It first landed only on the NATIVE one, which
+  // silently cost `box.claudeInstall: npm` — the CDN-403 fallback, i.e. exactly
+  // the hosts that already had a bad day — its first-run wizard.
+  const SKILL = 'skills/agentbox-setup/SKILL.md';
+
+  it('the native recipe copies it', async () => {
+    const { resolveAgentSpec } = await import('../src/sync/registry.js');
+    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
+    expect(install.postInstall).toContain(SKILL);
+  });
+
+  it('the npm alternate copies it too', async () => {
+    const { resolveAgentSpec } = await import('../src/sync/registry.js');
+    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
+    // ...and it really is the npm recipe, not a silent fall-through to native.
+    expect(JSON.stringify(install.recipe)).toContain('@anthropic-ai/claude-code');
+    expect(install.postInstall).toContain(SKILL);
+  });
+});

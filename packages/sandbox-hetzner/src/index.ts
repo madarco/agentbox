@@ -62,7 +62,7 @@ export {
   type PrepareHetznerOptions,
   type PrepareHetznerResult,
 } from './prepare.js';
-export { generateBoxCloudInit, generatePrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
+export { generateBoxCloudInit, generatePrepareCloudInit, generateDerivedPrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
 export {
   applyControlPlaneConfig,
   deployControlPlaneToHetzner,

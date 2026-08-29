@@ -91,6 +91,17 @@ export interface CreateBoxRequest {
    * `agentbox create` leaves it unset.
    */
   agent?: 'claude' | 'codex' | 'opencode';
+  /**
+   * Which agents this box is FOR. When set, it is authoritative: only these
+   * agents get a credential mount, a config seed, or a home dir — so an
+   * `agentbox claude` box carries no codex/opencode tokens.
+   *
+   * Distinct from `agent` above, which is a control-plane label naming who
+   * initiated the create. Absent = the historical "wire up everything"
+   * behaviour, so a caller that hasn't been migrated keeps working. An agent
+   * left out is not lost: `ensureAgentInstalled` adds it to a live box.
+   */
+  agents?: string[];
   /** Override the base image / snapshot. */
   image?: string;
   /**
@@ -362,6 +373,17 @@ export interface PrepareOptions {
    * installer 403s. Bake-time only — resolved from `box.claudeInstall`.
    */
   claudeInstall?: 'native' | 'npm';
+  /**
+   * Agents to bake into the base image / snapshot. Empty or omitted = an
+   * agentless base; anything missing is added later, either as a derived layer
+   * or by `ensureAgentInstalled` against a live box.
+   *
+   * Bake-time, and it has to be here rather than only on `create`, because the
+   * prepare paths bake each agent's host static config into the snapshot
+   * (`stageAllAgentStatic`) — a claude-only snapshot is a genuinely different
+   * artifact from an all-agents one, and the fingerprint has to say so.
+   */
+  agents?: string[];
   /**
    * Bake-time VM size for providers whose resources are fixed at snapshot/
    * template-build time (daytona: `cpu-memory-disk` GB, e.g. `4-8-20`; e2b:

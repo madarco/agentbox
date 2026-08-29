@@ -59,6 +59,36 @@ export function generatePrepareCloudInit(opts: PrepareCloudInitOptions): string 
   ].join('\n');
 }
 
+/**
+ * Cloud-init for the temp VPS of a DERIVED bake — one booted from the base
+ * snapshot to add an agent, rather than from Ubuntu.
+ *
+ * It logs in as `vscode`, not `root`, because the base snapshot already carries
+ * install-box.sh's sshd hardening drop-in (`PermitRootLogin no`). A root key
+ * injected here would be accepted by cloud-init and then refused by sshd, and
+ * `waitForSsh` would simply time out. `vscode` has passwordless sudo, which the
+ * derived install steps use — same privilege, an actually reachable door.
+ */
+export function generateDerivedPrepareCloudInit(opts: PrepareCloudInitOptions): string {
+  const pubkey = opts.sshPubkey.trim();
+  return [
+    '#cloud-config',
+    '# AgentBox temporary derived-bake VPS — boots the agentless base snapshot',
+    '# and adds one agent set. SSH key is single-use and discarded on VPS destroy.',
+    'disable_root: true',
+    'ssh_pwauth: false',
+    'chpasswd:',
+    '  expire: false',
+    'users:',
+    '  - name: vscode',
+    '    lock_passwd: false',
+    '    sudo: ALL=(ALL) NOPASSWD:ALL',
+    '    ssh_authorized_keys:',
+    `      - ${yamlScalar(pubkey)}`,
+    '',
+  ].join('\n');
+}
+
 export interface ControlPlaneCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format) for `root`. */
   sshPubkey: string;
