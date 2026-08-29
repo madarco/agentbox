@@ -46,7 +46,12 @@ import type { SandboxInfo, SandboxState } from './sdk.js';
 import { Sandbox, Template, resolveApiKey } from './sdk.js';
 import { withE2bRetry } from './retry.js';
 import { parseE2bSize } from './prepare.js';
-import { ensureE2bBaseTemplate, readPreparedState } from './prepared-state.js';
+import {
+  ensureE2bBaseTemplate,
+  preparedEntryFor,
+  readPreparedState,
+} from './prepared-state.js';
+import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 
 /**
  * Sentinel image ref the cloud-provider hands us when no --image was passed.
@@ -173,7 +178,14 @@ export const e2bBackend: CloudBackend = {
     if (req.snapshot === undefined) {
       ensureE2bBaseTemplate();
     }
-    const template = req.snapshot ?? readPreparedState().base?.templateId;
+    // Prefer the template built for exactly this agent set — it already carries
+    // the agent, so the box skips the create-time install. Falling back to the
+    // agentless base is not a failure: `ensureAgentsInstalledForCloud` puts the
+    // agent in at create, which is also what an un-rebuilt older base does.
+    const template =
+      req.snapshot ??
+      preparedEntryFor(readPreparedState(), agentSetArg(normalizeAgentSet(req.agents)))
+        ?.templateId;
     if (!template) {
       throw new Error(
         'e2b provision: no template available — `agentbox prepare --provider e2b` must run first',

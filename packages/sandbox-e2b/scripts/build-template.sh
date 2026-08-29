@@ -217,25 +217,18 @@ set -g escape-time 0
 TMUX
 done_ "baked config files (claude / codex / setup guide / tmux.conf)"
 
-step "credential pivot symlinks (vscode home)"
-sudo -u vscode -H mkdir -p \
-  /home/vscode/.claude \
-  /home/vscode/.claude/skills/agentbox-setup \
-  /home/vscode/.codex \
-  /home/vscode/.local/share/opencode \
-  /home/vscode/.agentbox-creds/claude \
-  /home/vscode/.agentbox-creds/codex \
-  /home/vscode/.agentbox-creds/opencode
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/claude/.credentials.json \
-  /home/vscode/.claude/.credentials.json
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/codex/auth.json \
-  /home/vscode/.codex/auth.json
-sudo -u vscode -H ln -sf /home/vscode/.agentbox-creds/opencode/auth.json \
-  /home/vscode/.local/share/opencode/auth.json
-sudo -u vscode -H ln -sf /home/vscode/.claude/_claude.json /home/vscode/.claude.json
-sudo -u vscode -H cp /usr/local/share/agentbox/setup-guide.md \
-  /home/vscode/.claude/skills/agentbox-setup/SKILL.md
-done_ "credential pivot symlinks (vscode home)"
+# NOTE: the per-agent home dirs (~/.claude, ~/.codex, ~/.local/share/opencode),
+# the ~/.agentbox-creds/<agent>/ credential pivots and their symlinks are NOT
+# created here. They belong to the agent, so they live on that agent's
+# `install.postInstall` in AGENT_SYNC_SPECS and are applied by whichever path
+# adds the agent -- a derived template, or `ensureAgentInstalled` against a live
+# box. Creating them here as well would put every agent's credential path in
+# every box and would be a second copy to keep in step.
+#
+# The `/agentbox-setup` skill moved with them, onto claude's postInstall: it is
+# claude-specific, and the file it copies from
+# (/usr/local/share/agentbox/setup-guide.md) is baked above, so it is available
+# whenever the agent lands.
 
 step "login-shell shim (/etc/profile.d/agentbox.sh)"
 cat > /etc/profile.d/agentbox.sh <<'PROFILE'
@@ -297,43 +290,26 @@ fi
 sudo -u vscode -H mkdir -p /home/vscode/.vnc
 done_ "VNC stack (TigerVNC + websockify + noVNC)"
 
-step "agent CLIs (codex + opencode + agent-browser, global npm)"
-npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
-  echo "build-template.sh: one or more agent npm installs failed (continuing)"
-done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
+step "agent-browser (global npm)"
+# agent-browser is box runtime, not an agent -- it stays in the base.
+npm install -g agent-browser 2>&1 | tail -3 || \
+  echo "build-template.sh: agent-browser npm install failed (continuing)"
+done_ "agent-browser (global npm)"
 
-# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
-# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
-# installer's CDN 403s — see `box.claudeInstall`.
-if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
-  step "Claude Code (npm: @anthropic-ai/claude-code)"
-  # npm-global drops `claude` at Node's prefix bin, not the
-  # /home/vscode/.local/bin/claude the rest of AgentBox hardcodes. Symlink it
-  # into that path so the box stays indistinguishable from a native install.
-  npm install -g @anthropic-ai/claude-code
-  install -d -o vscode -g vscode /home/vscode/.local/bin
-  ln -sf "$(command -v claude)" /home/vscode/.local/bin/claude
-  chown -h vscode:vscode /home/vscode/.local/bin/claude
-  command -v claude >/dev/null || { echo "build-template.sh: npm claude install produced no claude on PATH" >&2; exit 71; }
-  done_ "Claude Code (npm: @anthropic-ai/claude-code)"
-else
-  step "Claude Code (native installer, run as vscode)"
-  # Anthropic's native installer drops `claude` at /home/vscode/.local/bin/claude
-  # with installMethod=native (matching the host-seeded .claude.json, so the
-  # startup integrity check stays quiet) and ships native-only features the npm
-  # package lacks. Its CDN (claude.ai / downloads.claude.ai) sits behind
-  # Cloudflare, which intermittently 403s cloud-datacenter egress IPs under load —
-  # so retry with backoff rather than falling back to npm. A bare `curl | bash`
-  # would hide a 403 (curl -f exits non-zero but the pipe's status is bash's 0),
-  # so keep pipefail and fold the PATH check in so a "succeeded but absent" result
-  # also retries. A failed build is better than a claude-less template.
-  if ! retry_backoff 3 sudo -u vscode -H bash -lc \
-       'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash -s stable && command -v claude >/dev/null'; then
-    echo "build-template.sh: Claude native installer failed after 3 attempts (Cloudflare 403?) — aborting build" >&2
-    exit 71
-  fi
-  done_ "Claude Code (native installer, run as vscode)"
-fi
+# Agents: NONE. This template is deliberately agentless.
+#
+# An agent is added either as a derived template (`Template().fromTemplate()` on
+# this base plus one install recipe) or into an already-running box by
+# `ensureAgentInstalled` -- both driven by the same `install` recipes on
+# AGENT_SYNC_SPECS, so a baked agent and a runtime-added one are identical.
+# Baking them here instead would put every agent in every box: an
+# `agentbox claude` box would carry codex and opencode plus their credential
+# paths, and the template could never shrink to the workload.
+#
+# The per-agent home + credential dirs are NOT created here either; they belong
+# to the agent and live on its `install.postInstall`. AGENTBOX_CLAUDE_INSTALL is
+# still honoured -- it selects the RECIPE, not whether to install -- and reaches
+# the recipe via the derived build.
 
 step "Chrome runtime libs (apt)"
 # agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH
