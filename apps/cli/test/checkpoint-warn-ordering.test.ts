@@ -17,7 +17,10 @@ const COMMANDS = ['claude', 'codex', 'opencode'] as const;
 describe('checkpoint agent-mismatch warning ordering', () => {
   for (const cmd of COMMANDS) {
     it(`${cmd} warns before its -i background early-return`, () => {
-      const src = readFileSync(join('src', 'commands', `${cmd}.ts`), 'utf8');
+      // __dirname-relative, not cwd-relative: vitest's cwd depends on where the
+      // run was invoked from, and a cwd-relative read silently passes (or
+      // ENOENTs) depending on that. Mirrors agent-create-image.test.ts.
+      const src = readFileSync(join(__dirname, '..', 'src', 'commands', `${cmd}.ts`), 'utf8');
       const warnAt = src.indexOf('warnCheckpointAgentMismatch(');
       const queueAt = src.indexOf('if (opts.initialPrompt && opts.initialPrompt.length > 0) {');
       expect(warnAt, `${cmd}.ts must call warnCheckpointAgentMismatch`).toBeGreaterThan(-1);
