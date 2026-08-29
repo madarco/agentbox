@@ -41,6 +41,7 @@ import {
   Snapshot,
   type SandboxType,
 } from './sdk.js';
+import { listAllCloudCheckpoints } from '@agentbox/sandbox-cloud';
 import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 import { withVercelRetry } from './retry.js';
 import {
@@ -165,17 +166,6 @@ const DEFAULT_TIMEOUT_MS = 45 * 60_000;
 const KEEP_LAST_SNAPSHOTS = { count: 1, expiration: 0, deleteEvicted: false } as const;
 
 /**
- * Every snapshot id this machine knows to be shared: the prepared base, each
- * baked per-agent variant, and every cloud checkpoint's manifest id.
- *
- * A Vercel snapshot carries no name, label or tag (the SDK's `createSnapshot`
- * takes only `{sessionId, expiration}`), so there is no server-side way to ask
- * "is this a shared snapshot?" -- local state is the only source of truth.
- *
- * Best-effort by design: a checkpoint root that cannot be read must not block a
- * destroy, and the `snapId !== source` check still covers the common case.
- */
-/**
  * Which snapshot a box should boot from: an explicit cloud-checkpoint snapshot
  * wins, else the per-agent variant baked for exactly this agent set, else the
  * agentless base.
@@ -195,17 +185,26 @@ export function resolveVercelSnapshot(
   return variant?.snapshotId ?? prepared.base?.snapshotId;
 }
 
-export async function sharedSnapshotIdsIncludingCheckpoints(): Promise<Set<string>> {
-  const ids = sharedSnapshotIds(readPreparedState());
+/**
+ * Snapshot ids claimed by a cloud checkpoint manifest.
+ *
+ * A Vercel snapshot carries no name, label or tag (the SDK's `createSnapshot`
+ * takes only `{sessionId, expiration}`), so there is no server-side way to ask
+ * "is this shared?" -- local state is the only source of truth.
+ *
+ * Best-effort by design: an unreadable checkpoint store must not block a
+ * destroy, and the prepared-state ids still apply.
+ */
+export async function checkpointSnapshotIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
   try {
-    const { listAllCloudCheckpoints } = await import('@agentbox/sandbox-cloud');
     for (const group of await listAllCloudCheckpoints('vercel')) {
       for (const item of group.items) {
         if (item.manifest.snapshotName) ids.add(item.manifest.snapshotName);
       }
     }
   } catch {
-    // Unreadable checkpoint store: fall back to the prepared-state ids.
+    // Unreadable checkpoint store: the prepared-state ids still apply.
   }
   return ids;
 }
@@ -433,12 +432,21 @@ export const vercelBackend: CloudBackend = {
         // boots from it.
         const snapId = sb.currentSnapshotId;
         const source = sb.sourceSnapshotId;
-        const shared = await sharedSnapshotIdsIncludingCheckpoints();
-        const ownSnapshot = snapId !== undefined && snapId !== source && !shared.has(snapId);
+        // Checked cheapest-first, and the expensive check runs ONLY when we
+        // would otherwise delete. Walking every project's checkpoint manifests
+        // on every destroy put a filesystem sweep (and a cold package load) on a
+        // hot user-facing path; here it runs only in the rare case that matters.
+        let ownSnapshot = snapId !== undefined && snapId !== source;
+        if (ownSnapshot && sharedSnapshotIds(readPreparedState()).has(snapId!)) {
+          ownSnapshot = false;
+        }
+        if (ownSnapshot && (await checkpointSnapshotIds()).has(snapId!)) {
+          ownSnapshot = false;
+        }
         await sb.delete();
         if (ownSnapshot) {
           try {
-            const snap = await Snapshot.get({ snapshotId: snapId, ...creds() });
+            const snap = await Snapshot.get({ snapshotId: snapId!, ...creds() });
             await snap.delete();
           } catch {
             // best-effort: a snapshot already gone is fine; the user can clean
