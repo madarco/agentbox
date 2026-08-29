@@ -936,6 +936,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     cursorServerVolume: cursorServerVolumeName(id),
     relayToken: relayUp ? relayToken : undefined,
     gitWorktrees: gitWorktreeRecords.length > 0 ? gitWorktreeRecords : undefined,
+    // The agent set this box was created FOR. Already used above to pick the
+    // derived image variant; persisting it is what lets a later `checkpoint
+    // create` record which agent the checkpoint carries. Distinct from
+    // `lastAgent`, which tracks whichever agent most recently ran.
+    ...(opts.agents && opts.agents.length > 0 ? { agents: [...opts.agents] } : {}),
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
