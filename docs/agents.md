@@ -201,7 +201,16 @@ collapse — see the seam analysis in
 | per-box agent selection | yes | not yet — cloud still mounts every agent's volume |
 | on-demand install into a live box | yes | yes |
 
-Cloud behaviour is therefore unchanged from before this work, and
-`ensureAgentInstalled` is a no-op there because the snapshot already has the
-agent. Derived snapshots (boot base → install → re-snapshot) and cloud-side
-selection are the outstanding half.
+Hetzner, DigitalOcean, Vercel and E2B bake from their own provision scripts,
+which still install all three agents — so their behaviour is unchanged and
+`ensureAgentInstalled` is a no-op there.
+
+**Daytona is the exception.** It bakes from `Dockerfile.box` (container class,
+`sandbox-daytona/src/dockerfile-context.ts`) or from that image published to
+GHCR (linux-vm, `prepare-vm.ts`), and that Dockerfile is now agentless. A
+*fresh* `prepare --provider daytona` therefore produces a base with no agents
+and falls back to the per-box install (~30-90s on first use). Existing daytona
+bases keep their agents until re-prepared.
+
+Derived snapshots (boot base → install → re-snapshot) and cloud-side selection
+are the outstanding half.
