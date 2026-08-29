@@ -1180,6 +1180,29 @@ async function autostartLocalHub(): Promise<boolean> {
 }
 
 /**
+ * Stop then start the local hub so it re-mints `~/.agentbox/hub/token`, returning
+ * true on success. The recovery behind {@link resolveHubApiTarget} for a live hub
+ * whose token file was deleted underneath it.
+ */
+async function restartLocalHubForToken(): Promise<boolean> {
+  const { ensureHub, stopHub } = await import('@agentbox/sandbox-core');
+  const { rehydrateFromState } = await import('./relay.js');
+  const s = spinner();
+  s.start('hub token missing — restarting local hub');
+  try {
+    await stopHub();
+    const ep = await ensureHub({ onLog: (line) => s.message(line) });
+    await rehydrateFromState();
+    s.stop(`local hub restarted on ${ep.hostUrl}`);
+    return true;
+  } catch (err) {
+    s.stop('local hub failed to restart');
+    log.error(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
+/**
  * Resolve the hub's public REST API target — its URL + the Bearer that authorizes
  * `/api/v1` — for BOTH modes. Delegates the local⇄remote decision to
  * {@link resolveHubTarget} (the same seam `agentbox hub target` and the tray
@@ -1213,10 +1236,19 @@ export async function resolveHubApiTarget(
   // autostart is safe to trigger in both cases. Skipped under `quiet` (a probe
   // must not spawn a daemon); `getHubStatus` is local-only, so irrelevant remote.
   if (target.mode === 'local' && !opts.quiet) {
-    const { getHubStatus } = await import('@agentbox/sandbox-core');
+    const { getHubStatus, readHubToken } = await import('@agentbox/sandbox-core');
     const st = await getHubStatus();
     if (!(st.running && st.ui)) {
       if (!(await autostartLocalHub())) return null;
+      target = await resolveHubTarget(urlFlag, { preferLocal: opts.preferLocal });
+    } else if (!(await readHubToken())) {
+      // Live hub, but `~/.agentbox/hub/token` is gone — the usual cause is
+      // wiping ~/.agentbox while the daemon kept running. The hub only ever
+      // reads that file at boot and then serves from the in-memory value, so
+      // the secret is unrecoverable and no amount of `agentbox hub` (a no-op
+      // against a live daemon) rewrites it. Restarting is the only recovery:
+      // `ensureHubToken` mints a fresh one on the next boot.
+      if (!(await restartLocalHubForToken())) return null;
       target = await resolveHubTarget(urlFlag, { preferLocal: opts.preferLocal });
     }
   }
