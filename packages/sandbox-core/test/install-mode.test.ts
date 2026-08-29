@@ -74,3 +74,29 @@ describe('both claude recipes seed the first-run wizard skill', () => {
     expect(install.postInstall).toContain(SKILL);
   });
 });
+
+describe('the wizard skill seeds a box-user-owned skills/ directory', () => {
+  // GNU `install -d -o u -g g a/b/c` chowns the FINAL component only, so
+  // folding `skills` into the nested `skills/agentbox-setup` call leaves
+  // `skills` owned by root (postInstall runs as root). The static-config stage
+  // then runs `sudo -u <box user> tar -C ~/.claude`, cannot create
+  // `skills/<name>`, and aborts the whole bake with "Permission denied".
+  // Cost a live DigitalOcean derive to find; both recipes must own `skills`
+  // explicitly.
+  const ownsSkillsDir = (postInstall: string): boolean =>
+    /install -d -o \S+ -g \S+ \S*\/\.claude\/skills(?![/\w])/.test(postInstall);
+
+  it('the native recipe creates skills/ with its own install -d', async () => {
+    const { resolveAgentSpec } = await import('../src/sync/registry.js');
+    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
+    expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
+  });
+
+  it('the npm alternate does too', async () => {
+    const { resolveAgentSpec } = await import('../src/sync/registry.js');
+    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
+    expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
+  });
+});

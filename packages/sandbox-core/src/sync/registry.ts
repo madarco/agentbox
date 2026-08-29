@@ -42,8 +42,16 @@ const OPENCODE_BOX_DIR = '/home/vscode/.local/share/opencode';
  * never fail an agent install. On docker the config volume mounts over this dir
  * and `seedSetupSkillIntoVolume` seeds the same content — harmless, identical
  * bytes.
+ *
+ * `skills` is created by its OWN `install -d`, not left to the nested path.
+ * GNU `install -d -o u -g g a/b/c` applies the ownership to the FINAL component
+ * only — intermediates are created root-owned. Since this runs as root, folding
+ * `skills` into the nested call leaves it owned by root, and the later static
+ * config stage (`sudo -u <box user> tar -C ~/.claude`) then cannot create
+ * `skills/<name>` and dies with "Permission denied" — which aborts the whole
+ * bake. Cost a live DigitalOcean derive to find.
  */
-const SEED_SETUP_SKILL = `if [ -f ${SETUP_GUIDE_PATH} ]; then install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR}/skills/agentbox-setup && install -o ${BOX_USER} -g ${BOX_USER} -m 0644 ${SETUP_GUIDE_PATH} ${CLAUDE_BOX_DIR}/skills/agentbox-setup/SKILL.md; fi`;
+const SEED_SETUP_SKILL = `if [ -f ${SETUP_GUIDE_PATH} ]; then install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR}/skills && install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR}/skills/agentbox-setup && install -o ${BOX_USER} -g ${BOX_USER} -m 0644 ${SETUP_GUIDE_PATH} ${CLAUDE_BOX_DIR}/skills/agentbox-setup/SKILL.md; fi`;
 
 export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
   {
