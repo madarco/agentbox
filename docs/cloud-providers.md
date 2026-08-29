@@ -133,7 +133,16 @@ identifier into a per-provider config key — `box.imageDocker` /
 `box.imageDaytona` / `box.imageHetzner` / `box.imageVercel` /
 `box.imageE2b` — never the generic `box.image`. Reads resolve
 per-provider first, then fall back to `box.image`, then to the built-in
-`agentbox/box:dev` sentinel. This prevents the cross-provider footgun
+`agentbox/box:dev` sentinel.
+
+> **Vercel and E2B write the key but never read it.** Both resolve what to boot
+> from their own `~/.agentbox/<provider>-prepared.json` — the agentless base or
+> the per-agent variant — and ignore `req.image` entirely. Their snapshots and
+> templates are opaque ids with no other addressing, so prepared state is the
+> only source of truth. Setting `box.imageVercel` / `box.imageE2b` by hand has
+> no effect; `prepare --status` deliberately shows no "pinned" marker for them.
+
+This prevents the cross-provider footgun
 where running `prepare --provider vercel` would pin a `snap_…` id into
 the generic key and then break subsequent `create --provider hetzner`
 calls (Hetzner doesn't know that id). `--image <ref>` on `create` is

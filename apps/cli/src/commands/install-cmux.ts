@@ -79,9 +79,7 @@ export function upsertAgentboxControl(doc: DockDoc, opts: AgentboxControlOptions
   };
   const idx = controls.findIndex((c) => c && c.id === CONTROL_ID);
   const merged =
-    idx >= 0
-      ? controls.map((c, i) => (i === idx ? { ...c, ...next } : c))
-      : [...controls, next];
+    idx >= 0 ? controls.map((c, i) => (i === idx ? { ...c, ...next } : c)) : [...controls, next];
   return { ...doc, controls: merged };
 }
 

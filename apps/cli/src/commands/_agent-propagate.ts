@@ -77,7 +77,9 @@ export async function runPropagateStep(opts: {
   let scope: PropagateScope | undefined = opts.scopeFlag;
   if (scope === undefined) {
     if (opts.yes) {
-      log.info('skipping propagation (-y without --propagate); re-run with --propagate project|all');
+      log.info(
+        'skipping propagation (-y without --propagate); re-run with --propagate project|all',
+      );
       return;
     }
     const picked = await select({
@@ -140,21 +142,31 @@ export async function runPropagateStep(opts: {
       try {
         const provider = await providerForBox(target);
         if (!provider.syncTransport) {
-          log.warn(`  -> ${target.name}: provider '${target.provider ?? ''}' has no transport; skipped`);
+          log.warn(
+            `  -> ${target.name}: provider '${target.provider ?? ''}' has no transport; skipped`,
+          );
           continue;
         }
         const insp = await provider.inspect(target);
         if (insp.state !== 'running') {
-          log.info(`  -> ${target.name}: ${insp.state}; skipped (resume it and re-run to include it)`);
+          log.info(
+            `  -> ${target.name}: ${insp.state}; skipped (resume it and re-run to include it)`,
+          );
           continue;
         }
         const result = await propagateStagedSettings(
-          transportSettingsTarget(provider.syncTransport(target), agentBoxConfigDir(agent), target.name),
+          transportSettingsTarget(
+            provider.syncTransport(target),
+            agentBoxConfigDir(agent),
+            target.name,
+          ),
           staged,
         );
         process.stdout.write(`  -> ${target.name}: ${summarize(result)}\n`);
       } catch (err) {
-        log.warn(`  -> ${target.name}: failed — ${err instanceof Error ? err.message : String(err)}`);
+        log.warn(
+          `  -> ${target.name}: failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   } finally {

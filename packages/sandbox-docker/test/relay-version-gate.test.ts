@@ -26,7 +26,9 @@ describe('shouldReclaimForVersion', () => {
   });
 
   it('never churns the relay across dev rebuilds (both 0.0.0-dev)', () => {
-    expect(shouldReclaimForVersion({ cliEntry: true, version: '0.0.0-dev' }, '0.0.0-dev')).toBe(false);
+    expect(shouldReclaimForVersion({ cliEntry: true, version: '0.0.0-dev' }, '0.0.0-dev')).toBe(
+      false,
+    );
   });
 
   it('reclaims a dev relay when a released CLI takes over', () => {

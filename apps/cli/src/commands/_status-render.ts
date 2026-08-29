@@ -62,9 +62,7 @@ export function renderPersistedSections(s: BoxStatus): string[] {
       .map((p) => p.port)
       .sort((a, b) => a - b);
     out.push(
-      ...s.ports
-        .filter((p) => p.service)
-        .map((p) => `  :${String(p.port)}  (${p.service})`),
+      ...s.ports.filter((p) => p.service).map((p) => `  :${String(p.port)}  (${p.service})`),
     );
     if (other.length > 0) out.push(`  other (${other.length}): ${other.join(', ')}`);
   }

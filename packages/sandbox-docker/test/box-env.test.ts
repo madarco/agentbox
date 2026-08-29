@@ -17,7 +17,7 @@ describe('formatBoxEnvBody', () => {
     expect(body).toBe("AGENTBOX_HOST_WORKSPACE='/Users/it'\\''s/a path'\n");
   });
 
-  it("does not expand $ or backticks (would break under double-quote form)", () => {
+  it('does not expand $ or backticks (would break under double-quote form)', () => {
     const body = formatBoxEnvBody({
       AGENTBOX_FOO: '$HOME `whoami`',
     });

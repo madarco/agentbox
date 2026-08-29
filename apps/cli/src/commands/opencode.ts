@@ -37,6 +37,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { warnCheckpointAgentMismatch } from '../checkpoint-lookup.js';
 import {
   assertAgentCredsAvailable,
   MissingAgentCredsError,
@@ -611,6 +612,15 @@ export const opencodeCommand = new Command('opencode')
         : providerDefault.length > 0
           ? providerDefault
           : undefined;
+    // A `box.defaultCheckpoint<Provider>` captured from another agent's box
+    // applies here with no user signal at all — say so. Advisory: it still boots.
+    await warnCheckpointAgentMismatch(
+      providerName,
+      projectRoot,
+      checkpointRef,
+      ['opencode'],
+      (m: string) => log.warn(m),
+    );
 
     if (opts.initialPrompt && opts.initialPrompt.length > 0) {
       // Captured as a const so the narrowing survives into the status-line

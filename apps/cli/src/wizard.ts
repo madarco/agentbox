@@ -118,6 +118,12 @@ interface WizardArgs {
    */
   provider?: ProviderName;
   /**
+   * The agent set this box is being created for. Used only to tell the user
+   * when `checkpointRef` was captured from a box built for a DIFFERENT agent —
+   * the checkpoint still boots either way.
+   */
+  agents?: readonly string[];
+  /**
    * True when the caller already opted in to importing the full
    * DEFAULT_ENV_PATTERNS set (`--with-env` / `box.withEnv: true`). The
    * env-file multiselect is suppressed in that case — the user pre-decided.
@@ -380,7 +386,10 @@ function rebuildMinutesFor(provider: ProviderName): string {
 async function checkpointStatus(args: WizardArgs, projectRoot: string): Promise<CheckpointStatus> {
   if (!args.checkpointRef) return { state: 'missing' };
   const provider = args.provider ?? 'docker';
-  return evaluateCheckpoint(provider, projectRoot, args.checkpointRef);
+  // The mismatch WARNING is emitted by `warnCheckpointAgentMismatch` at ref
+  // resolution in each command, not here: codex/opencode never run this wizard.
+  // The status still carries `agentMismatch` so callers can render it.
+  return evaluateCheckpoint(provider, projectRoot, args.checkpointRef, args.agents);
 }
 
 /** Drop a *default* checkpoint ref when its artifact is gone (orphaned image / dead snapshot). */

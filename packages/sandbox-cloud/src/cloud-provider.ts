@@ -1939,6 +1939,9 @@ function makeCloudCheckpoint(backend: CloudBackend): ProviderCheckpoint {
         baseProvider: backend.name,
         baseFingerprint: currentCloudBaseFingerprint(backend.name),
         cliVersion: readCliStamp().cliVersion,
+        // Advisory: lets a restore into a box built for a different agent say
+        // so. Absent on boxes created before per-agent selection.
+        ...(box.agents ? { agents: box.agents } : {}),
       });
       return { ref: info.name };
     },

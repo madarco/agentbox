@@ -354,8 +354,7 @@ export async function installCodexPlugin(
   // flip): a re-add would re-enable a plugin the user deliberately disabled. The
   // enable step below still runs and respects their current choice. In dev we always
   // re-stage so working-tree edits land.
-  const alreadyInstalled =
-    !opts.force && !devRoot && !sourceConflict && codexPluginInstalled(bin);
+  const alreadyInstalled = !opts.force && !devRoot && !sourceConflict && codexPluginInstalled(bin);
   if (alreadyInstalled) {
     result.marketplaceAdded = true;
     result.pluginInstalled = true;

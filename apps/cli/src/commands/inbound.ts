@@ -24,7 +24,7 @@ export const inboundCommand = new Command('inbound')
     '[spec...]',
     'open | lock | whitelist <cidr...> | a bare CIDR list (e.g. 203.0.113.5/32). Omit with --show.',
   )
-  .option('--show', 'print the box\'s current inbound policy and exit')
+  .option('--show', "print the box's current inbound policy and exit")
   .option('-y, --yes', 'skip the confirmation prompt when opening the firewall to the world')
   .action(async (idOrName: string | undefined, spec: string[], opts: InboundOptions) => {
     try {
@@ -59,7 +59,10 @@ export const inboundCommand = new Command('inbound')
           `This opens SSH (port 22) on box '${box.name}' to the entire internet (0.0.0.0/0). ` +
             'Access stays key-only (password auth is disabled), but the port becomes publicly reachable.',
         );
-        const ok = await confirm({ message: 'Open the firewall to the world?', initialValue: false });
+        const ok = await confirm({
+          message: 'Open the firewall to the world?',
+          initialValue: false,
+        });
         if (isCancel(ok) || !ok) {
           log.info('cancelled');
           return;

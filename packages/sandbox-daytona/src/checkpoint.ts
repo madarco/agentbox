@@ -64,6 +64,9 @@ export function makeDaytonaCheckpoint(cloudProvider: Provider): ProviderCheckpoi
         baseProvider: BACKEND_NAME,
         baseFingerprint: currentCloudBaseFingerprint(BACKEND_NAME),
         cliVersion: readCliStamp().cliVersion,
+        // Advisory: lets a restore into a box built for a different agent say
+        // so. Absent on boxes created before per-agent selection.
+        ...(box.agents ? { agents: box.agents } : {}),
       });
       return { ref: info.name };
     },

@@ -70,9 +70,16 @@ export const downloadCommand = new Command('download')
         // `agentbox-ctl git push` inside the box for tracked files; this is
         // for grabbing untracked or env artifacts.
         if (opts.dryRun) {
-          throw new Error('cloud download does not yet support --dry-run; omit to bulk-pull /workspace.');
+          throw new Error(
+            'cloud download does not yet support --dry-run; omit to bulk-pull /workspace.',
+          );
         }
-        if (!opts.respectGitignore || opts.includeNodeModules || opts.withEnv || opts.pattern.length > 0) {
+        if (
+          !opts.respectGitignore ||
+          opts.includeNodeModules ||
+          opts.withEnv ||
+          opts.pattern.length > 0
+        ) {
           log.warn(
             'cloud download ignores gitignore/--with-env/--pattern filters in v1 — pulling the whole /workspace tree (Phase 6 polish).',
           );
@@ -93,11 +100,7 @@ export const downloadCommand = new Command('download')
         }
         // Pull the *contents* of /workspace into box.workspacePath — files
         // land directly, not under a `workspace/` subdir.
-        const result = await provider.downloadDirContents(
-          box,
-          '/workspace',
-          box.workspacePath,
-        );
+        const result = await provider.downloadDirContents(box, '/workspace', box.workspacePath);
         process.stdout.write(`downloaded /workspace contents to ${result.finalPath}\n`);
         return;
       }
@@ -123,9 +126,7 @@ export const downloadCommand = new Command('download')
         );
       }
 
-      const envPatterns = opts.withEnv
-        ? [...DEFAULT_ENV_PATTERNS, ...opts.pattern]
-        : undefined;
+      const envPatterns = opts.withEnv ? [...DEFAULT_ENV_PATTERNS, ...opts.pattern] : undefined;
 
       const preview = await pullToHost(box, {
         dryRun: true,

@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   cloudSnapshotName,
+  CLOUD_CHECKPOINTS_ROOT,
   CLOUD_SNAPSHOT_NAME_PREFIX,
   listCloudCheckpoints,
   probeCloudCheckpoint,
@@ -117,6 +118,17 @@ describe('manifest lifecycle', () => {
 describe('probeCloudCheckpoint', () => {
   const projectRoot = '/projects/test-probe';
 
+  // Same caveat as 'manifest agent set' below: CLOUD_CHECKPOINTS_ROOT is fixed
+  // at module load, so these manifests are written under the REAL home however
+  // HOME is overridden afterwards. Clean up so a test run leaves nothing behind.
+  afterAll(async () => {
+    const backendRoot = join(CLOUD_CHECKPOINTS_ROOT, 'vercel');
+    const segments = await readdir(backendRoot).catch(() => [] as string[]);
+    for (const seg of segments.filter((d) => d.includes('test_probe'))) {
+      await rm(join(backendRoot, seg), { recursive: true, force: true });
+    }
+  });
+
   async function seed(name: string): Promise<void> {
     await writeCloudCheckpointManifest(projectRoot, 'vercel', name, {
       snapshotName: `snap_${name}`,
@@ -169,9 +181,9 @@ describe('probeCloudCheckpoint', () => {
 
 describe('isSnapshotGoneError', () => {
   it('matches a Vercel 410 APIError by status code', () => {
-    expect(isSnapshotGoneError({ response: { status: 410 }, message: 'Status code 410 is not ok' })).toBe(
-      true,
-    );
+    expect(
+      isSnapshotGoneError({ response: { status: 410 }, message: 'Status code 410 is not ok' }),
+    ).toBe(true);
     expect(isSnapshotGoneError({ status: 410 })).toBe(true);
   });
 
@@ -190,5 +202,72 @@ describe('isSnapshotGoneError', () => {
     expect(isSnapshotGoneError({ status: 500 })).toBe(false);
     expect(isSnapshotGoneError(null)).toBe(false);
     expect(isSnapshotGoneError('boom')).toBe(false);
+  });
+});
+
+describe('manifest agent set', () => {
+  const root = '/tmp/agentbox-agents-proj';
+
+  // `CLOUD_CHECKPOINTS_ROOT` is computed from `homedir()` at MODULE LOAD, so
+  // the `beforeAll` HOME override above does not move it — these manifests land
+  // wherever the module resolved at import time. Ask the module rather than
+  // reconstructing the path, so the test is correct either way, and clean up
+  // after ourselves so a test run never leaves residue behind.
+  const segmentDir = async (): Promise<string> => {
+    const backendRoot = join(CLOUD_CHECKPOINTS_ROOT, 'vercel');
+    const segment = (await readdir(backendRoot)).find((d) => d.includes('agentbox_agents_proj'));
+    return join(backendRoot, segment as string);
+  };
+
+  afterAll(async () => {
+    await rm(await segmentDir().catch(() => ''), { recursive: true, force: true });
+  });
+
+  it('round-trips the agent set the box was created for', async () => {
+    const info = await writeCloudCheckpointManifest(root, 'vercel', 'warm', {
+      snapshotName: 'snap_a',
+      sourceBoxId: 'b1',
+      sourceBoxName: 'box1',
+      agents: ['claude'],
+    });
+    expect(info.manifest.agents).toEqual(['claude']);
+    const found = await resolveCloudCheckpoint(root, 'vercel', 'warm');
+    expect(found?.manifest.agents).toEqual(['claude']);
+  });
+
+  it('omits the field entirely when the box has no agent set', async () => {
+    // Absent must mean UNKNOWN, so it has to be distinguishable from `[]`.
+    // Writing `[]` would read as "captured with no agents" and could be
+    // mistaken for a real value by a future consumer.
+    const info = await writeCloudCheckpointManifest(root, 'vercel', 'noagents', {
+      snapshotName: 'snap_b',
+      sourceBoxId: 'b2',
+      sourceBoxName: 'box2',
+    });
+    expect(info.manifest.agents).toBeUndefined();
+    expect(Object.keys(info.manifest)).not.toContain('agents');
+  });
+
+  it('a legacy manifest with no agents field still loads', async () => {
+    // The whole reason the schema was NOT bumped: an older manifest — and an
+    // older CLI reading a newer one — must keep working, just without the
+    // warning. A schema bump would have made these checkpoints disappear.
+    const file = join(await segmentDir(), 'noagents', 'manifest.json');
+    const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    expect(raw.schema).toBe(2);
+    expect(raw.agents).toBeUndefined();
+    const found = await resolveCloudCheckpoint(root, 'vercel', 'noagents');
+    expect(found).not.toBeNull();
+    expect(found?.manifest.snapshotName).toBe('snap_b');
+  });
+
+  it('an unknown extra field does not make the manifest unreadable', async () => {
+    // Guards the forward-compat assumption the no-bump decision rests on.
+    const file = join(await segmentDir(), 'warm', 'manifest.json');
+    const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    raw.somethingFromTheFuture = { nested: true };
+    await writeFile(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+    const found = await resolveCloudCheckpoint(root, 'vercel', 'warm');
+    expect(found?.manifest.agents).toEqual(['claude']);
   });
 });

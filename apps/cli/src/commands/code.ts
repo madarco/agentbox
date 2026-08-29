@@ -4,7 +4,11 @@ import { Command, InvalidArgumentError } from 'commander';
 import { hostOpenCommand, ensureCloudSshAlias } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
 import type { StatusReply, WaitReadyReply } from '@agentbox/ctl';
-import { loadEffectiveConfig, type IdeFlavor as ConfigIdeFlavor, type UserConfig } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  type IdeFlavor as ConfigIdeFlavor,
+  type UserConfig,
+} from '@agentbox/config';
 import {
   attachedContainerUri,
   ensureAgentboxTasksFile,
@@ -56,7 +60,10 @@ export const codeCommand = new Command('code')
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
   .option('--no-wait', "don't block on agentbox-ctl wait-ready before opening")
-  .option('--timeout <ms>', 'wait-ready timeout in milliseconds (default from config; built-in: 120000)')
+  .option(
+    '--timeout <ms>',
+    'wait-ready timeout in milliseconds (default from config; built-in: 120000)',
+  )
   .option('--no-auto-terminals', "don't generate /workspace/.vscode/tasks.json")
   .option('--regen-tasks', 'overwrite a user-owned tasks.json (skips sentinel check)', false)
   .option(
@@ -64,10 +71,7 @@ export const codeCommand = new Command('code')
     'force a specific IDE: vscode | cursor (default from config; built-in: auto)',
     parseIdeFlavor,
   )
-  .option(
-    '--print',
-    'print the folder URI instead of launching the IDE (still refreshes/waits)',
-  )
+  .option('--print', 'print the folder URI instead of launching the IDE (still refreshes/waits)')
   .action(async (idOrName: string | undefined, opts: CodeOptions) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -97,7 +101,12 @@ export async function runCodeOpen(box: BoxRecord, opts: CodeOptions): Promise<vo
   const provider = box.provider ?? 'docker';
   const folderUri =
     provider === 'docker'
-      ? await prepareDockerAttach(box, { wait, autoTerminals, timeoutMs, regenTasks: opts.regenTasks })
+      ? await prepareDockerAttach(box, {
+          wait,
+          autoTerminals,
+          timeoutMs,
+          regenTasks: opts.regenTasks,
+        })
       : await prepareCloudAttach(box, { wait, timeoutMs });
 
   if (opts.print) {
@@ -106,13 +115,13 @@ export async function runCodeOpen(box: BoxRecord, opts: CodeOptions): Promise<vo
   }
   const exit = await launchIde(folderUri, forcedIde);
   if (exit.code !== 0) {
-    log.error(`failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`);
+    log.error(
+      `failed to launch ${exit.flavor ? ideProfile(exit.flavor).displayName : 'IDE'} via ${exit.via} (exit ${String(exit.code)})`,
+    );
     process.stdout.write(folderUri + '\n');
     process.exit(1);
   }
-  log.success(
-    `opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`,
-  );
+  log.success(`opening ${box.name} in ${ideProfile(exit.flavor).displayName} (${exit.via})`);
 }
 
 interface PrepareDockerOptions {
@@ -164,9 +173,7 @@ async function prepareDockerAttach(box: BoxRecord, opts: PrepareDockerOptions): 
         );
       }
     } catch (err) {
-      log.warn(
-        `auto-terminals failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      log.warn(`auto-terminals failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -198,7 +205,13 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
 
   if (opts.wait) {
     try {
-      const r = await p.exec(box, ['agentbox-ctl', 'wait-ready', '--json', '--timeout', opts.timeoutMs]);
+      const r = await p.exec(box, [
+        'agentbox-ctl',
+        'wait-ready',
+        '--json',
+        '--timeout',
+        opts.timeoutMs,
+      ]);
       const reply = JSON.parse(r.stdout) as WaitReadyReply;
       if (!reply.ready) {
         const lines: string[] = [];
@@ -209,7 +222,9 @@ async function prepareCloudAttach(box: BoxRecord, opts: PrepareCloudOptions): Pr
         log.success('all units ready');
       }
     } catch (err) {
-      log.warn(`wait-ready failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(
+        `wait-ready failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -270,7 +285,9 @@ async function launchIde(folderUri: string, forced?: IdeFlavor): Promise<LaunchR
   if (cursor !== null) return cursor;
   // Neither CLI present. Last resort: protocol handler via `open`. We pick
   // vscode:// since that's the documented historical fallback.
-  log.warn('neither `code` nor `cursor` found on PATH or in /Applications; falling back to `open vscode://...`');
+  log.warn(
+    'neither `code` nor `cursor` found on PATH or in /Applications; falling back to `open vscode://...`',
+  );
   return launchOne('vscode', folderUri);
 }
 

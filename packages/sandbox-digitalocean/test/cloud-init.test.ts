@@ -159,7 +159,6 @@ describe('generateDerivedPrepareCloudInit', () => {
     // silently drops the whole document, no key is injected, and ssh fails with
     // "Permission denied (publickey)".
     const yaml = generateDerivedPrepareCloudInit({ sshPubkey: FAKE_PUBKEY });
-    // eslint-disable-next-line no-control-regex
     expect(yaml).toMatch(/^[\x00-\x7F]*$/);
   });
 

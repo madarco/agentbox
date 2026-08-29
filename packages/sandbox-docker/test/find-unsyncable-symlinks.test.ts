@@ -60,10 +60,7 @@ describe('findUnsyncableSymlinks', () => {
   it('flags a nested unsyncable link reached through a reachable symlinked dir', async () => {
     await mkdir(join(agentsRoot, 'skills', 'agentbox'), { recursive: true });
     await writeFile(join(dir, 'repo-skill.md'), 'x');
-    await symlink(
-      join(dir, 'repo-skill.md'),
-      join(agentsRoot, 'skills', 'agentbox', 'SKILL.md'),
-    );
+    await symlink(join(dir, 'repo-skill.md'), join(agentsRoot, 'skills', 'agentbox', 'SKILL.md'));
     await mkdir(join(claudeRoot, 'skills'), { recursive: true });
     await symlink(join(agentsRoot, 'skills', 'agentbox'), join(claudeRoot, 'skills', 'agentbox'));
 
