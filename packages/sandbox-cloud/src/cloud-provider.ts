@@ -865,6 +865,10 @@ export function createCloudProvider(
           name,
           image,
           snapshot,
+          // Lets a backend that bakes per-agent snapshots pick the matching
+          // variant. Only meaningful when no explicit `snapshot` is requested —
+          // a checkpoint already carries whatever agents it was captured with.
+          ...(req.agents ? { agents: req.agents } : {}),
           resources,
           size,
           location,

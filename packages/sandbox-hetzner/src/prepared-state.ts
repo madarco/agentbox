@@ -3,9 +3,10 @@
  * Lives at `~/.agentbox/hetzner-prepared.json` so the auto-prepare gate
  * (`ensureHetznerBaseSnapshot()`) and runtime image resolution can see it.
  *
- * Only the shared `base` snapshot is recorded here — built once per Hetzner
- * project / API token: Ubuntu + deps + agentbox-ctl + agents + agent-browser,
- * baked from `install-box.sh`.
+ * Two tiers are recorded here, both provider-side snapshots: the agentless
+ * `base` (Ubuntu + deps + agentbox-ctl + agent-browser, baked from
+ * `install-box.sh`), and one `variants` entry per agent set, derived by booting
+ * the base and running just that agent's install recipe.
  *
  * The per-project snapshot tier is NOT a separate registry: it's the existing
  * `agentbox checkpoint create --set-default` + `box.defaultCheckpointHetzner`
@@ -17,8 +18,13 @@
  * Schema versioned so future shape changes can migrate.
  */
 
-import { claudeInstallFingerprint, computeContextManifest,
-  computeContextSha256, preparedStatePathFor, readPreparedStateRaw, writePreparedStateRaw,
+import {
+  claudeInstallFingerprint,
+  computeContextManifest,
+  computeContextSha256,
+  preparedStatePathFor,
+  readPreparedStateRaw,
+  writePreparedStateRaw,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets.js';
@@ -31,6 +37,13 @@ import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets
  *       asset we scp'd in, not just the install script); `base.cliVersion`
  *       and `base.cliCommit?` added so we can warn when an old snapshot
  *       predates the running CLI.
+ *   3 — `variants` added: one record per agent set, so baking a `--agents
+ *       codex` snapshot no longer invalidates the claude one. The bump is
+ *       deliberate rather than a bare optional field: `base` now holds the most
+ *       RECENT bake, which may be a variant, and an older CLI reading it as
+ *       "the base" would boot every box from (say) the claude snapshot. A
+ *       schema bump makes that CLI treat the file as unreadable and re-bake
+ *       instead, which is wrong-but-safe rather than silently wrong.
  *
  * Read-time migration is lossy in one direction: a schema-1 file is lifted
  * to schema 2 by *renaming* `installScriptSha256` to `contextSha256`. The
@@ -40,7 +53,7 @@ import { findStagedCliRuntimeRoot, resolveRuntimeAssets } from './runtime-assets
  * per-project tier) is simply ignored — removing the field doesn't break
  * reads, so no schema bump is needed.
  */
-const SCHEMA = 2 as const;
+const SCHEMA = 3 as const;
 
 export interface PreparedBaseSnapshot {
   /** Hetzner image id (numeric — opaque, but stable across `getImage` calls). */
@@ -68,8 +81,32 @@ export interface PreparedBaseSnapshot {
 
 export interface PreparedHetznerState {
   schema: typeof SCHEMA;
-  /** The shared base snapshot. Absent until first `agentbox prepare`. */
+  /**
+   * The most recently prepared snapshot. Kept for `prepare --status` and the
+   * freshness surface. Do NOT read it to answer "is variant X current" — after
+   * a `--agents claude` bake this holds the CLAUDE snapshot, so comparing an
+   * agentless fingerprint against it reports a spurious stale. Use
+   * {@link preparedEntryFor}.
+   */
   base?: PreparedBaseSnapshot;
+  /**
+   * One record per agent set, keyed by `agentSetArg(agents)` (`''` = the
+   * agentless base). Without this the single `base` slot means baking a codex
+   * snapshot invalidates the claude one, and anyone alternating agents re-bakes
+   * a VPS every time.
+   */
+  variants?: Record<string, PreparedBaseSnapshot>;
+}
+
+/**
+ * The record for one variant (`''` = agentless base), falling back to `base`
+ * for state written before variants existed.
+ */
+export function preparedEntryFor(
+  state: PreparedHetznerState | null,
+  variant = '',
+): PreparedBaseSnapshot | undefined {
+  return state?.variants?.[variant] ?? (variant === '' ? state?.base : undefined);
 }
 
 interface LegacyV1Base {
@@ -96,6 +133,15 @@ export function readPreparedState(): PreparedHetznerState {
     const v1 = parsed as LegacyV1State;
     return migrateFromV1(v1);
   }
+  if ((parsed as { schema?: unknown }).schema === 2) {
+    // Lossless: a v2 file has exactly one bake and it is the agentless base,
+    // so seed the variants map from it rather than forcing a re-bake.
+    const v2 = parsed as Partial<PreparedHetznerState>;
+    return {
+      schema: SCHEMA,
+      ...(v2.base ? { base: v2.base, variants: { '': v2.base } } : {}),
+    };
+  }
   if (parsed.schema !== SCHEMA) {
     // Unknown schema: don't crash, just refuse to read — the file will be
     // overwritten on the next successful prepare.
@@ -104,6 +150,7 @@ export function readPreparedState(): PreparedHetznerState {
   return {
     schema: SCHEMA,
     base: parsed.base,
+    variants: parsed.variants,
   };
 }
 
@@ -123,7 +170,7 @@ function migrateFromV1(v1: LegacyV1State): PreparedHetznerState {
     : undefined;
   return {
     schema: SCHEMA,
-    base,
+    ...(base ? { base, variants: { '': base } } : {}),
   };
 }
 
@@ -181,9 +228,8 @@ export async function currentHetznerBaseFingerprintLive(
 export async function currentHetznerBaseFileHashes(): Promise<FileManifest | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    return (
-      await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath })))
-    ).files;
+    return (await computeContextManifest(assets.map((a) => ({ rel: a.name, abs: a.localPath }))))
+      .files;
   } catch {
     return undefined;
   }

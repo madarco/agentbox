@@ -77,10 +77,7 @@ export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
     }
   });
 
-async function runPrepareJob(
-  job: QueueJob,
-  log: ReturnType<typeof openCommandLog>,
-): Promise<void> {
+async function runPrepareJob(job: QueueJob, log: ReturnType<typeof openCommandLog>): Promise<void> {
   const providerName = job.providerName;
   if (!isKnownProvider(providerName)) {
     throw new Error(`unknown provider '${providerName}'`);
@@ -117,14 +114,21 @@ async function runPrepareJob(
   // A base is a provider-side snapshot any machine with the API key can boot,
   // so if the control box's custody already holds one baked from this exact
   // build context, adopt it instead of spending minutes re-baking it here.
-  if (!job.prepare?.force) {
+  // A variant bake (`--agents claude`) is deliberately excluded: adoption
+  // compares the agentless BASE fingerprint and knows nothing about agent
+  // sets, so it would report "adopted" and skip the derived bake the user
+  // actually asked for.
+  const wantsVariant = (job.prepare?.agents ?? []).length > 0;
+  if (!job.prepare?.force && !wantsVariant) {
     const adopted = await tryAdoptPreparedBase({
       provider,
       providerName,
       log: (l) => log.write(l),
     });
     if (adopted) {
-      log.write(`prepared ${providerName}: adopted a shared base (identical build context, no bake)`);
+      log.write(
+        `prepared ${providerName}: adopted a shared base (identical build context, no bake)`,
+      );
       return;
     }
   }
@@ -157,7 +161,12 @@ async function runPrepareJob(
   // leave create using the default Dockerfile path. Mirrors `runPrepare`'s pin,
   // but at GLOBAL scope: a hub bake is host-wide, not tied to a project dir (the
   // per-provider key is safe host-wide; the generic `box.image` is never touched).
-  if (result.snapshotName !== undefined && isProviderKind(providerName)) {
+  //
+  // Never pin a VARIANT: `box.image<Provider>` is a single slot, so pinning the
+  // claude snapshot there would make every box on this provider boot it,
+  // including `agentbox codex`. Variants are addressed by the provider's own
+  // per-variant prepared record instead, keyed off the box's agent set.
+  if (result.snapshotName !== undefined && isProviderKind(providerName) && !wantsVariant) {
     const key = boxImageConfigKey(providerName);
     try {
       await setConfigValue('global', key, result.snapshotName, cwd);
@@ -170,6 +179,8 @@ async function runPrepareJob(
   }
 
   // Share the fresh bake so the other side (PC ⇄ control box) boots this same
-  // base rather than building its own.
-  await sharePreparedBase(providerName, (l) => log.write(l));
+  // base rather than building its own. Variants are not shared: the custody
+  // record carries one base per provider, so pushing a derived snapshot would
+  // overwrite the agentless base the other side depends on.
+  if (!wantsVariant) await sharePreparedBase(providerName, (l) => log.write(l));
 }

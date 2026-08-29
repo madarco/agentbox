@@ -55,10 +55,16 @@ import {
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
-import { readPreparedState } from './prepared-state.js';
+import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
-import { describeInbound, parseInboundSpec, resolveInboundSources } from '@agentbox/sandbox-core';
+import {
+  agentSetArg,
+  describeInbound,
+  normalizeAgentSet,
+  parseInboundSpec,
+  resolveInboundSources,
+} from '@agentbox/sandbox-core';
 import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
 import { SshTunnelManager, defaultBoxSshDir } from './ssh-tunnel.js';
@@ -170,6 +176,12 @@ async function resolveImageId(c: HetznerClient, req: CloudProvisionRequest): Pro
   if (!ref || ref === HETZNER_DEFAULT_BOX_IMAGE_REF || ref === SCAFFOLDING_FALLBACK_IMAGE) {
     await ensureHetznerBaseSnapshot();
     const state = readPreparedState();
+    // Prefer the derived snapshot baked for exactly this agent set — it already
+    // carries the agent, so the box skips the per-box install. Falling back to
+    // the agentless base is not a failure: `ensureAgentInstalled` puts the agent
+    // in at first use, which is also what an un-re-prepared older base does.
+    const variant = preparedEntryFor(state, agentSetArg(normalizeAgentSet(req.agents)));
+    if (variant) return variant.imageId;
     if (!state.base) {
       throw new Error(
         'no Hetzner base snapshot found — run `agentbox prepare --provider hetzner` to bake one.',
