@@ -20,7 +20,8 @@ import type {
 } from '@agentbox/core';
 import { resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
-import { readPreparedDaytonaState } from './prepared-state.js';
+import { preparedEntryFor, readPreparedDaytonaState } from './prepared-state.js';
+import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
 import { withDaytonaRetry } from './retry.js';
 
@@ -179,8 +180,8 @@ function resolveImage(ref: string): string | Image {
   const ctx = resolveDockerfileContext();
   if (!ctx) {
     throw new Error(
-      "could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. " +
-        "Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.",
+      'could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. ' +
+        'Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.',
     );
   }
   // Image.fromDockerfile bundles the directory the Dockerfile lives in and
@@ -318,6 +319,23 @@ export const daytonaBackend: CloudBackend = {
         // resolveImage (Image.fromDockerfile). Explicit `req.snapshot` always
         // wins (cloud checkpoint path).
         let snapshotName = req.snapshot;
+        // Prefer the snapshot baked for exactly this agent set. `box.imageDaytona`
+        // is pinned to the base's own NAME by every bake and adopt, so by the
+        // time we get here `req.image` normally IS our agentless base — treat
+        // that (and the default ref) as "no explicit choice", or the pin
+        // silently defeats variant selection and every box boots the agentless
+        // base. A ref naming anything else is a real choice and wins.
+        const refIsOurBase =
+          req.snapshot === undefined &&
+          (!req.image ||
+            req.image === DEFAULT_BOX_IMAGE_REF ||
+            req.image === prepared?.base?.imageRef);
+        if (refIsOurBase) {
+          const variant = preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(req.agents)));
+          // Falling back to the agentless base is not a failure:
+          // `ensureAgentsInstalledForCloud` puts the agent in at create.
+          if (variant) snapshotName = variant.imageRef;
+        }
         if (!snapshotName && req.image && req.image !== DEFAULT_BOX_IMAGE_REF) {
           try {
             const snap = await client.snapshot.get(req.image);
@@ -610,11 +628,7 @@ export const daytonaBackend: CloudBackend = {
     });
   },
 
-  async exec(
-    h: CloudHandle,
-    cmd: string,
-    opts?: CloudExecOptions,
-  ): Promise<CloudExecResult> {
+  async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
     return retry(
       'exec',
       async () => {
@@ -696,7 +710,8 @@ export const daytonaBackend: CloudBackend = {
         'ssh',
         // First-connect to a never-seen host fingerprint should be silent in a
         // PTY — the user already authenticated via Daytona's API.
-        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o',
+        'StrictHostKeyChecking=accept-new',
         // Daytona's SSH gateway terminates per-token; no key file, no port.
         `${ssh.token}@ssh.app.daytona.io`,
       ];
