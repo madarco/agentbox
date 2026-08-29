@@ -487,6 +487,23 @@ export async function prepareDigitalOcean(
       for (const s of stagings) await s.tar.cleanup();
     }
 
+    // Flush the page cache before snapshotting. Both providers image a LIVE
+    // machine, so anything still buffered is simply absent from the resulting
+    // snapshot -- silently, because the writes themselves succeeded. The static
+    // config stage right above writes tens of MB and then we snapshot within
+    // milliseconds, which lost every staged skill on a live derived bake while
+    // `tar` reported exit 0 and the bake reported success.
+    progress('flushing the page cache before snapshot');
+    const doSync = await sshExec(sshTarget, 'sudo sync && sudo sync', {
+      timeoutMs: 120_000,
+    });
+    if (doSync.exitCode !== 0) {
+      throw new Error(
+        `digitalocean: sync before snapshot failed (exit ${String(doSync.exitCode)}); ` +
+          'refusing to snapshot a Droplet whose writes may not be on disk.',
+      );
+    }
+
     // 7. Snapshot the droplet (async action), then resolve the snapshot id by
     // name. DigitalOcean supports live snapshots, so we don't power off.
     // The name is the ONLY metadata a DO snapshot carries -- it is how the id is

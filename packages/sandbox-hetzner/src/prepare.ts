@@ -468,6 +468,21 @@ export async function prepareHetzner(
     // Variants name themselves after their agent set: they show up beside the
     // base in the Hetzner console and in `agentbox prune`, and "which snapshot
     // is which" should not require looking up an id in a local JSON file.
+    // Flush the page cache before snapshotting. Both providers image a LIVE
+    // machine, so anything still buffered is simply absent from the resulting
+    // snapshot -- silently, because the writes themselves succeeded. The static
+    // config stage right above writes tens of MB and then we snapshot within
+    // milliseconds, which lost every staged skill on a live derived bake while
+    // `tar` reported exit 0 and the bake reported success.
+    progress('flushing the page cache before snapshot');
+    const hzSync = await sshExec(sshTarget, 'sudo sync && sudo sync', { timeoutMs: 120_000 });
+    if (hzSync.exitCode !== 0) {
+      throw new Error(
+        `hetzner: sync before snapshot failed (exit ${String(hzSync.exitCode)}); ` +
+          'refusing to snapshot a VPS whose writes may not be on disk.',
+      );
+    }
+
     const description =
       opts.name ?? `agentbox-${derived ? variantKey.replaceAll(',', '-') : 'base'}-${stamp}`;
     progress(`creating snapshot '${description}' from VPS ${String(serverId)}`);
