@@ -264,13 +264,14 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     snapshotName =
       opts.name ??
       defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
-    // Never reuse a snapshot name, on EITHER class. Daytona's delete is async,
-    // so a name recreated soon after its predecessor was reaped can report
-    // `active` and still fail to boot. The linux-vm bake has always nonced for
-    // this reason; a container variant now reaps too (below), so it needs the
-    // same protection. The name doesn't have to be deterministic — prepared
-    // state records whatever we pinned, and that is what skip-fast reads.
-    if (!opts.name) snapshotName = `${snapshotName}-${nonce()}`;
+    // Never reuse a snapshot name: Daytona's delete is async, so a name
+    // recreated soon after its predecessor was reaped can report `active` and
+    // still fail to boot. Container variants reap (below) and so need this;
+    // linux-vm ones must NOT get it here, because `bakeDaytonaVmVariant` treats
+    // `snapshotName` as a stem and appends its own nonce — doing both yields a
+    // double token. The name needn't be deterministic: prepared state records
+    // whatever we pinned, and that is what skip-fast reads.
+    if (!opts.name && baseClass !== 'linux-vm') snapshotName = `${snapshotName}-${nonce()}`;
   }
 
   if (
