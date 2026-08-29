@@ -79,6 +79,8 @@ export { makeSyncContext, type SyncContext, type SyncContextInit } from './conte
 export {
   ensureAgentInstalled,
   AgentInstallError,
+  renderInstallRecipe,
+  renderAptInstall,
   type EnsureAgentInstalledResult,
 } from './concerns/install.js';
 export {

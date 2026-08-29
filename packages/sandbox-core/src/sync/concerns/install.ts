@@ -48,8 +48,8 @@ function asRootScript(script: string): string[] {
   return ['sh', '-c', `if [ "$(id -u)" = 0 ]; then ${script}; else sudo -n sh -c "${quoted}"; fi`];
 }
 
-/** Render one recipe to a shell snippet. */
-function renderRecipe(recipe: AgentInstallRecipe): string {
+/** Render one recipe to a shell snippet. Shared with the docker derived-layer builder. */
+export function renderInstallRecipe(recipe: AgentInstallRecipe): string {
   switch (recipe.kind) {
     case 'npm': {
       // `--allow-scripts` is only meaningful on npm >= 11.16 and is required
@@ -80,13 +80,17 @@ function renderRecipe(recipe: AgentInstallRecipe): string {
   }
 }
 
+/** The apt line for an agent's prerequisites. Shared with the derived-layer builder. */
+export function renderAptInstall(pkgs: readonly string[]): string {
+  return `apt-get update && apt-get install -y --no-install-recommends ${pkgs.join(' ')} && rm -rf /var/lib/apt/lists/*`;
+}
+
 /** apt prerequisites, if any. Always root. */
 async function installApt(
   transport: SyncTransport,
   pkgs: readonly string[],
 ): Promise<{ ok: boolean; detail: string }> {
-  const script = `apt-get update && apt-get install -y --no-install-recommends ${pkgs.join(' ')} && rm -rf /var/lib/apt/lists/*`;
-  const r = await transport.exec(asRootScript(script), { user: 'root' });
+  const r = await transport.exec(asRootScript(renderAptInstall(pkgs)), { user: 'root' });
   return { ok: r.exitCode === 0, detail: `${r.stdout}\n${r.stderr}`.trim() };
 }
 
@@ -118,7 +122,7 @@ export async function ensureAgentInstalled(
     }
   }
 
-  const script = renderRecipe(install.recipe);
+  const script = renderInstallRecipe(install.recipe);
   // `box-user` recipes must NOT be escalated: Claude's native installer writes
   // to the invoking user's ~/.local/bin, so running it as root would install
   // into /root and leave the box user with no `claude` on PATH.

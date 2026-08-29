@@ -8,7 +8,9 @@ import {
 } from './registry-auth.js';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import {
   BOX_IMAGE_REGISTRY,
   claudeInstallFingerprint,
@@ -17,9 +19,14 @@ import {
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
+  resolveAgentSpec,
+  renderInstallRecipe,
+  renderAptInstall,
 } from '@agentbox/sandbox-core';
 
 export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
+/** Box user NAME (the uid varies per provider; the name does not). */
+const BOX_USER = 'vscode';
 
 /**
  * Resolve the effective `box.claudeInstall` for the current project. Docker
@@ -359,6 +366,70 @@ export function variantImageRef(ref: string, agents: readonly string[] | undefin
   return set.length === 0 ? ref : `${ref}-${set.join('-')}`;
 }
 
+/**
+ * Build `derivedRef` as a thin layer on top of `baseRef` that adds `agents`.
+ *
+ * Deriving rather than rebuilding the whole Dockerfile with a different
+ * `AGENTBOX_AGENTS` matters for size: the ARG has to be declared before the
+ * per-agent home dirs, so in a full variant build EVERY later layer diverges --
+ * Playwright, Chromium and the VNC stack each get their own copy per agent,
+ * ~1.3 GB of duplication for a ~200 MB agent. Derived, a variant's unique bytes
+ * are just the agent, and CI publishes one base image instead of one per set.
+ *
+ * The recipes come from the same `AGENT_SYNC_SPECS.install` data that
+ * `ensureAgentInstalled` runs against a live box, so a baked agent and a
+ * runtime-added one are installed identically.
+ */
+export async function buildDerivedAgentImage(opts: {
+  baseRef: string;
+  derivedRef: string;
+  agents: readonly string[];
+  onProgress?: (line: string) => void;
+}): Promise<void> {
+  const lines: string[] = [`FROM ${opts.baseRef}`];
+  for (const id of opts.agents) {
+    const spec = resolveAgentSpec(id);
+    const { install } = spec;
+    lines.push(`# ---- ${spec.id} ----`, 'USER root');
+    if (install.apt && install.apt.length > 0) {
+      lines.push(`RUN ${renderAptInstall(install.apt)}`);
+    }
+    const recipe = renderInstallRecipe(install.recipe);
+    if (install.runAs === 'box-user') {
+      // Native installers write into the INVOKING user's ~/.local/bin, so
+      // running them as root would put the binary in /root.
+      lines.push(`USER ${BOX_USER}`, `RUN ${recipe}`, 'USER root');
+    } else {
+      lines.push(`RUN ${recipe}`);
+    }
+    if (install.postInstall) lines.push(`RUN ${install.postInstall}`);
+    lines.push(
+      `RUN command -v ${spec.binary} >/dev/null || (echo "${spec.id} not on PATH after install" >&2; exit 71)`,
+    );
+  }
+  // Restore the base's final USER/WORKDIR: we switched to root above.
+  lines.push(`USER ${BOX_USER}`, 'WORKDIR /workspace');
+
+  // No context files are needed -- everything is FROM + RUN -- so build from an
+  // empty dir rather than re-sending the multi-hundred-MB runtime tree.
+  const ctx = await mkdtemp(join(tmpdir(), 'agentbox-derive-'));
+  try {
+    const dockerfile = join(ctx, 'Dockerfile');
+    await writeFile(dockerfile, lines.join('\n') + '\n', 'utf8');
+    opts.onProgress?.(
+      `[image] deriving ${opts.derivedRef} from ${opts.baseRef} (+${opts.agents.join(', ')})`,
+    );
+    await buildImage({
+      ref: opts.derivedRef,
+      dockerfile,
+      contextDir: ctx,
+      onProgress: opts.onProgress,
+    });
+  } finally {
+    await rm(ctx, { recursive: true, force: true });
+  }
+}
+
 export async function ensureImage(
   ref: string = DEFAULT_BOX_IMAGE,
   opts: EnsureImageOptions = {},
@@ -368,64 +439,93 @@ export async function ensureImage(
   // would create a circular ESM init order.
   const { computeDockerContextFingerprint, readPreparedDockerState, preparedMatches } =
     await import('./prepared-state.js');
+  const { writePreparedDockerState } = await import('./prepared-state.js');
 
   const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
   const agents = normalizeAgentSet(opts.agents);
-  ref = variantImageRef(ref, agents);
-  const rawFingerprint = await computeDockerContextFingerprint({
-    contextDir: opts.contextDir,
-  });
-  // Fold the build variant (install mode + agent set) into the sha so each is a
-  // distinct cache identity. The empty variant leaves the hash unchanged.
-  const fingerprint = rawFingerprint
-    ? {
-        ...rawFingerprint,
-        contextSha256: variantFingerprint(rawFingerprint.contextSha256, { claudeInstall, agents }),
-      }
+  const baseRef = ref;
+  const rawFingerprint = await computeDockerContextFingerprint({ contextDir: opts.contextDir });
+
+  /** Is `candidateRef` present AND stamped with `sha` for `variant`? */
+  const upToDate = async (candidateRef: string, sha: string, variant: string): Promise<boolean> => {
+    if (!(await imageExists(candidateRef))) return false;
+    const prepared = readPreparedDockerState();
+    return prepared !== null && preparedMatches(prepared, sha, variant);
+  };
+
+  // ---- 1. the agentless base -------------------------------------------
+  // Always the SAME image whatever agents were asked for, so every variant
+  // shares its layers and CI publishes exactly one of them.
+  const baseSha = rawFingerprint
+    ? variantFingerprint(rawFingerprint.contextSha256, { claudeInstall })
     : null;
-  const prepared = readPreparedDockerState();
-  const exists = await imageExists(ref);
+  const baseFingerprint =
+    rawFingerprint && baseSha ? { ...rawFingerprint, contextSha256: baseSha } : null;
 
+  let baseBuilt = false;
   let reason: string | undefined;
-  if (!exists) {
-    reason = `image ${ref} not present`;
-  } else if (!fingerprint) {
+  if (!baseFingerprint) {
     // Couldn't enumerate the context (partial dev rebuild?). Don't rebuild
-    // unconditionally — that would surprise users mid-iteration. Trust the
-    // image-exists check and leave the prepared file untouched.
-    return { ref, built: false, reason: 'image present (fingerprint skipped)' };
-  } else if (!prepared) {
-    reason = 'no docker-prepared.json on disk';
-  } else if (!preparedMatches(prepared, fingerprint.contextSha256, agentSetArg(agents))) {
-    reason =
-      `build context changed (was ${prepared.base?.contextSha256?.slice(0, 12) ?? '<none>'}, ` +
-      `now ${fingerprint.contextSha256.slice(0, 12)})`;
+    // unconditionally — that would surprise users mid-iteration.
+    if (!(await imageExists(baseRef))) {
+      return {
+        ref: baseRef,
+        built: false,
+        reason: 'base image missing and context unfingerprintable',
+      };
+    }
+    reason = 'image present (fingerprint skipped)';
+  } else if (!(await upToDate(baseRef, baseSha!, ''))) {
+    opts.onProgress?.(`[image] ${baseRef}: base image out of date or missing`);
+    const npm = claudeInstall === 'npm';
+    const { source } = await pullOrBuild(baseRef, baseFingerprint, {
+      onProgress: opts.onProgress,
+      dockerfile: opts.dockerfile,
+      contextDir: opts.contextDir,
+      // npm mode pulls too: CI publishes both install variants and the
+      // fingerprint is folded with the mode, so the pull asks for the npm
+      // image's own tag and hits.
+      allowPull: opts.allowPull,
+      registry: opts.registry,
+      variant: '',
+      buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : {},
+    });
+    baseBuilt = source === 'built';
+    reason = 'base image rebuilt';
   }
 
-  if (!reason) {
-    return { ref, built: false, reason: 'image up to date' };
+  if (agents.length === 0) {
+    return { ref: baseRef, built: baseBuilt, reason: reason ?? 'image up to date' };
   }
 
-  opts.onProgress?.(`[image] ${ref}: ${reason}`);
-  const npm = claudeInstall === 'npm';
-  const { source } = await pullOrBuild(ref, fingerprint, {
-    onProgress: opts.onProgress,
-    dockerfile: opts.dockerfile,
-    contextDir: opts.contextDir,
-    // npm mode pulls too. CI publishes both install variants, and `fingerprint`
-    // is already folded with the mode above — so the pull asks for the npm
-    // image's own tag and hits. (It used to be native-only, which meant npm
-    // users rebuilt the image locally on every first create, forever.) A tag
-    // that genuinely isn't published still falls back to a local build.
-    allowPull: opts.allowPull,
-    registry: opts.registry,
-    variant: agentSetArg(agents),
-    buildArgs: {
-      ...(npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : {}),
-      ...(agents.length > 0 ? { AGENTBOX_AGENTS: agentSetArg(agents) } : {}),
-    },
-  });
-  return { ref, built: source === 'built', reason };
+  // ---- 2. the agent layer ----------------------------------------------
+  // A thin `FROM <base>` + install, NOT a second full build: a full variant
+  // build diverges at the AGENTBOX_AGENTS ARG and duplicates every later layer
+  // (Playwright, Chromium, VNC) per agent.
+  const variantKey = agentSetArg(agents);
+  const derivedRef = variantImageRef(baseRef, agents);
+  const derivedSha = baseFingerprint
+    ? variantFingerprint(rawFingerprint!.contextSha256, { claudeInstall, agents })
+    : null;
+
+  if (derivedSha && (await upToDate(derivedRef, derivedSha, variantKey)) && !baseBuilt) {
+    return { ref: derivedRef, built: false, reason: 'image up to date' };
+  }
+
+  await buildDerivedAgentImage({ baseRef, derivedRef, agents, onProgress: opts.onProgress });
+  if (derivedSha) {
+    writePreparedDockerState({
+      imageRef: derivedRef,
+      contextSha256: derivedSha,
+      ...(rawFingerprint?.manifest ? { files: rawFingerprint.manifest } : {}),
+      variant: variantKey,
+    });
+  }
+  return {
+    ref: derivedRef,
+    built: true,
+    reason: reason ?? `added ${agents.join(', ')} to ${baseRef}`,
+  };
 }
 
 /**
