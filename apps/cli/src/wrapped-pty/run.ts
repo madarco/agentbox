@@ -206,6 +206,17 @@ function buildAgentboxAttachArgv(
 }
 
 /**
+ * Shown when the optional native pty backend can't be loaded — the one gate that
+ * silently costs the user the footer and the permission prompts.
+ */
+const PTY_UNAVAILABLE_NOTICE =
+  'agentbox: footer + permission prompts disabled — the optional native backend\n' +
+  "  '@homebridge/node-pty-prebuilt-multiarch' could not be loaded.\n" +
+  '  Most often `agentbox` is installed under a different Node than the one on\n' +
+  '  PATH. Compare `node -v` with the Node that owns `command -v agentbox`, then\n' +
+  '  reinstall with that Node: npm i -g @madarco/agentbox\n';
+
+/**
  * Replace `spawnSync('docker', argv, { stdio: 'inherit' })` with a
  * node-pty wrapper that reserves the bottom row for a permission-prompt
  * footer. Falls back transparently to today's spawnSync behavior when
@@ -255,9 +266,16 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   }
   const backend = await loadPtyBackend();
   if (!backend) {
-    // One-line stderr notice; preserves current behavior bit-for-bit.
-    process.stderr.write('agentbox: permission prompts disabled (node-pty backend unavailable)\n');
-    return runFallback(command, opts.dockerArgv, opts.env);
+    // The agent's full-screen TUI paints over anything written here, so the
+    // pre-attach notice alone reads as "the footer just isn't there". Repeat it
+    // after the session ends, where it survives in the scrollback, and name the
+    // optional dep so the cause is actionable — the usual one is `agentbox`
+    // installed under a different Node than the one on PATH, leaving the
+    // prebuilt native binding unloadable.
+    process.stderr.write(PTY_UNAVAILABLE_NOTICE);
+    const code = runFallback(command, opts.dockerArgv, opts.env);
+    process.stderr.write(PTY_UNAVAILABLE_NOTICE);
+    return code;
   }
 
   const cols = process.stdout.columns ?? 80;
