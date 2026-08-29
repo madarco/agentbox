@@ -14,6 +14,14 @@ import { join } from 'node:path';
 import { STATE_DIR } from '../state.js';
 import type { AgentId, AgentSyncSpec } from './agents/types.js';
 
+/**
+ * The box user's NAME, not uid: the vscode uid differs per provider
+ * (docker/hetzner 1000, vercel 1001, e2b 1002) but the name is stable.
+ */
+const BOX_USER = 'vscode';
+const BOX_HOME = '/home/vscode';
+/** Where a cloud credential volume mounts, pivoted into each agent's real path. */
+const CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
 const CLAUDE_BOX_DIR = '/home/vscode/.claude';
 const CODEX_BOX_DIR = '/home/vscode/.codex';
 const OPENCODE_BOX_DIR = '/home/vscode/.local/share/opencode';
@@ -22,7 +30,49 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
   {
     id: 'claude',
     aliases: ['claude-code'],
+    wireId: 'claude-code',
     sessionName: 'claude',
+    binary: 'claude',
+    // Anthropic's native installer is the canonical path (code.claude.com/docs/en/setup)
+    // and drops the binary at ~/.local/bin/claude, which is what the host's
+    // `.claude.json` (installMethod=native) expects. The CDN intermittently 403s
+    // cloud egress IPs under load, hence the retries. The npm package is a
+    // BAKE-TIME-only fallback selected by `box.claudeInstall`, not a second recipe.
+    install: {
+      recipe: { kind: 'script', url: 'https://claude.ai/install.sh', retries: 3 },
+      runAs: 'box-user',
+      // ~/.claude must exist and be box-user-owned BEFORE the named config
+      // volume mounts over it: docker seeds an empty volume's permissions from
+      // the mount point, so without this the volume comes up root-owned and
+      // Claude Code can't write. The two symlinks are deliberately dangling at
+      // build time — `_claude.json` materialises when the volume is seeded, and
+      // `.credentials.json` resolves once the cloud credential volume mounts.
+      postInstall: [
+        `install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR} ${CREDS_DIR}/claude`,
+        `ln -sfn ${CLAUDE_BOX_DIR}/_claude.json ${BOX_HOME}/.claude.json`,
+        `ln -sfn ${CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+        `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
+        `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+      ].join(' && '),
+      alternates: {
+        // `box.claudeInstall: npm`. npm-global drops `claude` at Node's prefix
+        // bin; symlink it into ~/.local/bin so the box is indistinguishable
+        // from a native install (the host's .claude.json says installMethod
+        // native, and the in-box integrity check compares against that).
+        npm: {
+          recipe: { kind: 'npm', package: '@anthropic-ai/claude-code' },
+          runAs: 'root',
+          postInstall: [
+            `install -d -o ${BOX_USER} -g ${BOX_USER} ${BOX_HOME}/.local/bin ${CLAUDE_BOX_DIR} ${CREDS_DIR}/claude`,
+            `ln -sf "$(command -v claude)" ${BOX_HOME}/.local/bin/claude`,
+            `ln -sfn ${CLAUDE_BOX_DIR}/_claude.json ${BOX_HOME}/.claude.json`,
+            `ln -sfn ${CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+            `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
+            `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.local/bin/claude ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
+          ].join(' && '),
+        },
+      },
+    },
     dockerVolume: 'agentbox-claude-config',
     staticPaths: [
       {
@@ -71,13 +121,27 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       'CLAUDE_EFFORT',
       'ANTHROPIC_MODEL',
     ],
-    boxRunEnv: () => ({}),
+    boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
   },
   {
     id: 'codex',
     aliases: [],
     sessionName: 'codex',
+    binary: 'codex',
+    // `bubblewrap` is Codex's command-sandbox backend; without it on PATH Codex
+    // falls back to a bundled copy and warns on every run.
+    install: {
+      recipe: { kind: 'npm', package: '@openai/codex' },
+      runAs: 'root',
+      apt: ['bubblewrap'],
+      postInstall: [
+        `install -d -o ${BOX_USER} -g ${BOX_USER} ${CODEX_BOX_DIR} ${CREDS_DIR}/codex`,
+        `ln -sfn ${CREDS_DIR}/codex/auth.json ${CODEX_BOX_DIR}/auth.json`,
+        `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR}`,
+        `chown -h ${BOX_USER}:${BOX_USER} ${CODEX_BOX_DIR}/auth.json`,
+      ].join(' && '),
+    },
     dockerVolume: 'agentbox-codex-config',
     staticPaths: [
       {
@@ -138,13 +202,24 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       realShape: 'nonempty-json',
     },
     forwardedEnvKeys: ['OPENAI_API_KEY'],
-    boxRunEnv: () => ({}),
+    boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
   },
   {
     id: 'opencode',
     aliases: [],
     sessionName: 'opencode',
+    binary: 'opencode',
+    install: {
+      recipe: { kind: 'npm', package: 'opencode-ai' },
+      runAs: 'root',
+      postInstall: [
+        `install -d -o ${BOX_USER} -g ${BOX_USER} ${OPENCODE_BOX_DIR} ${CREDS_DIR}/opencode`,
+        `ln -sfn ${CREDS_DIR}/opencode/auth.json ${OPENCODE_BOX_DIR}/auth.json`,
+        `chown -R ${BOX_USER}:${BOX_USER} ${CREDS_DIR} ${BOX_HOME}/.local`,
+        `chown -h ${BOX_USER}:${BOX_USER} ${OPENCODE_BOX_DIR}/auth.json`,
+      ].join(' && '),
+    },
     dockerVolume: 'agentbox-opencode-config',
     // The three-XDG-dir layout as DATA: the generic seed loop reproduces
     // `ensureOpencodeVolume`'s three-source rsync (data + config→config +
@@ -197,10 +272,10 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       'GOOGLE_API_KEY',
       'GROQ_API_KEY',
     ],
-    boxRunEnv: () => ({
+    boxRunEnv: {
       OPENCODE_CONFIG_DIR: `${OPENCODE_BOX_DIR}/config`,
       XDG_STATE_HOME: `${OPENCODE_BOX_DIR}/.state`,
-    }),
+    },
     caps: { resume: false, teleport: 'stub', activitySource: 'plugin' },
   },
 ];

@@ -60,26 +60,26 @@ export interface DockerSyncHandle {
   opencodeSpec?: OpencodeConfigSpec;
 }
 
-/** Guard: the create-path seeds need the box image + resolved claude spec in the handle. */
-function requireCreateHandle(
-  handle: DockerSyncHandle,
-  op: string,
-): { image: string; claudeSpec: ClaudeConfigSpec } {
-  if (!handle.image || !handle.claudeSpec) {
+/**
+ * Guard: the create-path seeds need the box image in the handle.
+ *
+ * `claudeSpec` is deliberately NOT required — a box selected for codex or
+ * opencode alone has no claude volume, and demanding one here would make
+ * one-agent-per-box impossible. Each agent's block guards its own spec.
+ */
+function requireCreateHandle(handle: DockerSyncHandle, op: string): { image: string } {
+  if (!handle.image) {
     throw new Error(
-      `dockerSync.${op} requires a create-time handle (image + claudeSpec); it is not available post-create`,
+      `dockerSync.${op} requires a create-time handle (image); it is not available post-create`,
     );
   }
-  return { image: handle.image, claudeSpec: handle.claudeSpec };
+  return { image: handle.image };
 }
 
 export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
   if (process.env[SYNC_DRYRUN_ENV]) return dryRunProviderSync('docker');
   return {
-    async resyncWorkspace(
-      ctx: SyncContext,
-      worktrees: GitWorktreeRecord[],
-    ): Promise<ResyncResult> {
+    async resyncWorkspace(ctx: SyncContext, worktrees: GitWorktreeRecord[]): Promise<ResyncResult> {
       // Reproduces `resyncBox`'s empty-worktrees short-circuit, then drives the
       // provider-neutral resync concern through the docker resync ports.
       if (worktrees.length === 0) return { repos: [], hadConflicts: false };
@@ -105,41 +105,49 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       //   - agents:   ensureAgentsVolume (~/.agents skills).
       //   - opencode: ensureOpencodeVolume + the state-reporting plugin.
       // Volume *mounts* are built by create.ts from the same specs.
-      const { image, claudeSpec } = requireCreateHandle(handle, 'seedAgentConfig');
+      const { image } = requireCreateHandle(handle, 'seedAgentConfig');
       const log = ctx.onLog;
 
-      const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
-        syncFromHost: true,
-        image,
-        hostWorkspace: ctx.hostWorkspace,
-      });
-      if (claudeEnsured.synced) {
-        log(`synced ${claudeSpec.volume} from ~/.claude`);
-        if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
-          log(`filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`);
+      if (handle.claudeSpec) {
+        const claudeSpec = handle.claudeSpec;
+        const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
+          syncFromHost: true,
+          image,
+          hostWorkspace: ctx.hostWorkspace,
+        });
+        if (claudeEnsured.synced) {
+          log(`synced ${claudeSpec.volume} from ~/.claude`);
+          if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
+            log(
+              `filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`,
+            );
+          }
+          if (claudeEnsured.installMethodFixed) {
+            log('set installMethod=native in synced .claude.json (matches box native install)');
+          }
+          if (claudeEnsured.aliasedProjectKey) {
+            log(
+              `aliased project state for ${ctx.hostWorkspace} -> /workspace in synced .claude.json`,
+            );
+          }
+          if (claudeEnsured.workspaceTrusted) {
+            log('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
+          }
+        } else if (claudeEnsured.created) {
+          log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
+        } else {
+          log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
         }
-        if (claudeEnsured.installMethodFixed) {
-          log('set installMethod=native in synced .claude.json (matches box native install)');
-        }
-        if (claudeEnsured.aliasedProjectKey) {
-          log(`aliased project state for ${ctx.hostWorkspace} -> /workspace in synced .claude.json`);
-        }
-        if (claudeEnsured.workspaceTrusted) {
-          log('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
-        }
-      } else if (claudeEnsured.created) {
-        log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-      } else {
-        log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
+        const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, image);
+        if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
       }
-      const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, image);
-      if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
 
       if (handle.codexSpec) {
         const codexSpec = handle.codexSpec;
         const codexEnsured = await ensureCodexVolume(codexSpec, { syncFromHost: true, image });
         if (codexEnsured.synced) log(`synced ${codexSpec.volume} from ~/.codex`);
-        else if (codexEnsured.created) log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
+        else if (codexEnsured.created)
+          log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
         else log(`reusing volume ${codexSpec.volume}`);
         const codexHooks = await seedCodexHooks(codexSpec.volume, image);
         if (codexHooks.seeded) log(`seeded Codex activity hooks into ${codexSpec.volume}`);
@@ -157,9 +165,14 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
 
       if (handle.opencodeSpec) {
         const opencodeSpec = handle.opencodeSpec;
-        const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, { syncFromHost: true, image });
-        if (opencodeEnsured.synced) log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
-        else if (opencodeEnsured.created) log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
+        const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, {
+          syncFromHost: true,
+          image,
+        });
+        if (opencodeEnsured.synced)
+          log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
+        else if (opencodeEnsured.created)
+          log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
         else log(`reusing volume ${opencodeSpec.volume}`);
         const opencodePlugin = await seedOpencodePlugin(opencodeSpec.volume, image);
         if (opencodePlugin.seeded) log(`seeded agentbox-state plugin into ${opencodeSpec.volume}`);
@@ -171,7 +184,10 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       // box-written `.credentials.json` out, or seed a fresh volume from a
       // previous login. syncClaudeCredentials decides the direction; isolate
       // boxes are read-seed only. Best-effort (never throws).
-      const { image, claudeSpec } = requireCreateHandle(handle, 'seedCredentials');
+      const { image } = requireCreateHandle(handle, 'seedCredentials');
+      // Nothing to mirror when this box wasn't created for claude.
+      if (!handle.claudeSpec) return;
+      const claudeSpec = handle.claudeSpec;
       const credSync = await syncClaudeCredentials(claudeSpec, {
         image,
         isolate: handle.claudeIsolate ?? false,
@@ -221,7 +237,11 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         },
         ctx.onLog,
       );
-      return copyCarryPathsToBox({ container: handle.container, entries: rendered, onLog: ctx.onLog });
+      return copyCarryPathsToBox({
+        container: handle.container,
+        entries: rendered,
+        onLog: ctx.onLog,
+      });
     },
   };
 }

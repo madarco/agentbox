@@ -72,8 +72,18 @@ export type {
   AgentPathMap,
   AgentCredential,
   AgentCapabilities,
+  AgentInstall,
+  AgentInstallRecipe,
 } from './agents/types.js';
+export { resolveAgentInstall } from './agents/types.js';
 export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
+export {
+  ensureAgentInstalled,
+  AgentInstallError,
+  renderInstallRecipe,
+  renderAptInstall,
+  type EnsureAgentInstalledResult,
+} from './concerns/install.js';
 export {
   pushEnvFiles,
   scanHostEnvFiles,
@@ -113,6 +123,7 @@ export {
   writeCredentialBackup,
   readCredentialBackup,
   pushCredentialToBox,
+  resolveHostCredential,
   SEED_MARKER,
   type CredentialAgentKind,
   type CredentialsUpdate,

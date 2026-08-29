@@ -185,6 +185,9 @@ export {
 export * from './sync/index.js';
 export {
   claudeInstallFingerprint,
+  variantFingerprint,
+  normalizeAgentSet,
+  agentSetArg,
   matchClaudeInstallFingerprint,
   computeContextManifest,
   computeContextSha256,

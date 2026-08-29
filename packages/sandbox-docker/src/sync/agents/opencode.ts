@@ -7,8 +7,11 @@ import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './c
 import {
   OPENCODE_PULL_CONFIG_ITEMS,
   OPENCODE_PULL_DATA_ITEMS,
+  ensureAgentInstalled,
+  AgentInstallError,
 } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
+import { createDockerSyncTransport } from '../sync-transport.js';
 
 /**
  * OpenCode support mirrors the Codex support in `codex.ts`. The one structural
@@ -298,28 +301,12 @@ export async function ensureOpencodeInstalled(
   container: string,
   opts: { onProgress?: (line: string) => void } = {},
 ): Promise<EnsureOpencodeInstalledResult> {
-  const probe = await execa(
-    'docker',
-    ['exec', '--user', CONTAINER_USER, container, 'sh', '-c', 'command -v opencode'],
-    { reject: false },
-  );
-  if (probe.exitCode === 0) return { installed: false };
-
-  opts.onProgress?.('installing opencode (absent from this box image)');
-  const install = await execa(
-    'docker',
-    ['exec', '--user', 'root', container, 'bash', '-lc', 'npm install -g opencode-ai 2>&1'],
-    { reject: false },
-  );
-  if (install.exitCode !== 0) {
-    throw new OpencodeSessionError(
-      `opencode is not in this box's image and \`npm install -g opencode-ai\` failed ` +
-        `(exit ${String(install.exitCode)}). This box was likely created from a ` +
-        `checkpoint captured before OpenCode support — recapture the project checkpoint ` +
-        `from a fresh box. Install output:\n${(install.stdout ?? '').toString().slice(-600)}`,
-    );
+  try {
+    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'opencode', opts);
+  } catch (err) {
+    if (err instanceof AgentInstallError) throw new OpencodeSessionError(err.message);
+    throw err;
   }
-  return { installed: true };
 }
 
 export interface StartOpencodeSessionOptions {

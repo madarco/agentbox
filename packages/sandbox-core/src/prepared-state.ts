@@ -219,6 +219,39 @@ export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'
   return createHash('sha256').update(`${baseSha}\0claude-install=npm`).digest('hex');
 }
 
+/** Normalize an agent set so ordering and duplicates can't change the hash. */
+export function normalizeAgentSet(agents: readonly string[] | undefined): string[] {
+  return [...new Set((agents ?? []).map((a) => a.trim()).filter((a) => a.length > 0))].sort();
+}
+
+/** The `AGENTBOX_AGENTS` build-arg / env value for a set (empty string = no agents). */
+export function agentSetArg(agents: readonly string[] | undefined): string {
+  return normalizeAgentSet(agents).join(',');
+}
+
+/**
+ * Fold a base image's build variant into its context fingerprint, so two images
+ * built from the same context but carrying different agents (or a different
+ * Claude install method) are distinct cache identities.
+ *
+ * Generalises {@link claudeInstallFingerprint}, which stays as-is because it is
+ * exported from the published provider SDK. The empty variant — native install,
+ * no agents — is the identity fold, so the plain base keeps the raw context
+ * hash and a provider that never passes a variant is unaffected.
+ */
+export function variantFingerprint(
+  baseSha: string,
+  variant: { claudeInstall?: 'native' | 'npm'; agents?: readonly string[] } = {},
+): string {
+  const agents = agentSetArg(variant.agents);
+  const npm = variant.claudeInstall === 'npm';
+  if (!npm && agents === '') return baseSha;
+  const parts: string[] = [];
+  if (npm) parts.push('claude-install=npm');
+  if (agents !== '') parts.push(`agents=${agents}`);
+  return createHash('sha256').update(`${baseSha}\0${parts.join('\0')}`).digest('hex');
+}
+
 /**
  * Which install mode `stored` was baked with, given the raw (native) fingerprint
  * this machine computes for the same build context — or null when it matches

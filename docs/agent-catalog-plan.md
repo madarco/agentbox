@@ -1,6 +1,32 @@
 # Agent catalog — on-demand agents and base variants
 
-Status: **design, not started.** Prerequisite for [`openclaw-hosting-plan.md`](./openclaw-hosting-plan.md).
+> **Looking for how agents work today?** See [`agents.md`](./agents.md) — this
+> file is the work plan and its early sections predate the implementation (it
+> argues against derived layers, which is what we ended up building for docker).
+
+Status: **in progress.** Rescoped to *one agent per box*; agent plugins are parked
+(the seam analysis at the end stays as the north star). Prerequisite for
+[`openclaw-hosting-plan.md`](./openclaw-hosting-plan.md).
+
+| | |
+|---|---|
+| Dockerfile layer reorder | **done** — a ctl/core edit rebuilds 16 cheap layers, not ~1.8 GB |
+| Catalog (`install` recipes on `AGENT_SYNC_SPECS`) | **done** — one source for the derived layer, the cloud scripts and the runtime installer |
+| `ensureAgentInstalled` over `SyncTransport` | **done** — cloud boxes gain on-demand install for the first time |
+| Agentless base image | **done** — 3.07 GB, was 4.80 GB with all three agents |
+| Agents as a **derived layer** (`FROM base`) | **done** (docker) — unique size per agent 1.279 GB → 434 MB (claude), 1.518 GB → 702 MB (codex) |
+| Per-box agent selection | **done** (docker) — only the selected agent's volume, credentials and home dir |
+| `variantFingerprint` + per-variant image tag + per-variant prepared record | **done** (docker) — alternating agents no longer rebuilds |
+| Seed the login when an agent is added to a live box | **done** — pushed as a file; a mount can't be added to a running container |
+| Publish the agentless base + CI matrix | todo — until then the first build on a cold machine is local |
+| Cloud **derived snapshots** (hetzner, vercel, e2b) | todo — boot base snapshot → install → re-snapshot |
+| `--agents` through `PrepareOptions` → hub API → queue → worker | todo |
+| Cloud selection (`stageAllAgentStatic`, cloud credential volumes) | todo — cloud still bakes and mounts all three |
+| Checkpoints recording their agent set | todo |
+
+**No cloud regression in the meantime:** the cloud provision scripts still install
+all three agents, so cloud boxes behave exactly as before and
+`ensureAgentInstalled` is a no-op there.
 
 ---
 

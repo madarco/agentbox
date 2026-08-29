@@ -9,8 +9,11 @@ import {
   sanitizeCodexConfigForBox,
   mergeCodexConfigForBox,
   MINIMAL_TRUSTED_CODEX_CONFIG,
+  ensureAgentInstalled,
+  AgentInstallError,
 } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
+import { createDockerSyncTransport } from '../sync-transport.js';
 
 /**
  * Codex support mirrors the Claude support in `claude.ts`, trimmed for what
@@ -41,8 +44,7 @@ const IN_BOX_CODEX_HOOKS_PATH = '/usr/local/share/agentbox/codex-hooks.json';
  */
 export const BOX_SYSTEM_PROMPT_PATH = '/etc/claude-code/CLAUDE.md';
 /** Marks our generated override so we never fold our own output back in. */
-const CODEX_OVERRIDE_SENTINEL =
-  '<!-- agentbox:box-facts (generated; edit AGENTS.md instead) -->';
+const CODEX_OVERRIDE_SENTINEL = '<!-- agentbox:box-facts (generated; edit AGENTS.md instead) -->';
 /**
  * Stdout marker the generator prints ONLY after it actually writes the override.
  * Callers key their "seeded" log off this (not just exit 0), since the script
@@ -90,11 +92,11 @@ export function buildCodexAgentsOverrideScript(codexHome: string): string {
     'mkdir -p "$DIR"',
     'TMP="$OVR.agentbox.tmp"',
     '{',
-    "  printf '%s\\n' \"$SENTINEL\"",
+    '  printf \'%s\\n\' "$SENTINEL"',
     '  cat "$BOX"',
     '  if [ -n "$UC" ]; then',
     "    printf '\\n\\n'",
-    "    printf '%s\\n' \"$UC\"",
+    '    printf \'%s\\n\' "$UC"',
     '  fi',
     '} > "$TMP"',
     'mv "$TMP" "$OVR"',
@@ -323,10 +325,7 @@ export async function ensureCodexVolume(
  * `packages/ctl/src/codex-scraper.ts`. These hooks remain a defense-in-depth
  * seed so any future codex build that fixes the firing also lights up state.
  */
-export async function seedCodexHooks(
-  volume: string,
-  image: string,
-): Promise<{ seeded: boolean }> {
+export async function seedCodexHooks(volume: string, image: string): Promise<{ seeded: boolean }> {
   try {
     const { stdout } = await execa('docker', [
       'run',
@@ -371,8 +370,7 @@ export async function seedCodexAgentsOverride(
       image,
       'sh',
       '-c',
-      buildCodexAgentsOverrideScript('/dst') +
-        '\nchown 1000:1000 "$OVR" 2>/dev/null || true',
+      buildCodexAgentsOverrideScript('/dst') + '\nchown 1000:1000 "$OVR" 2>/dev/null || true',
     ]);
     return { seeded: stdout.includes(CODEX_OVERRIDE_WROTE_MARKER) };
   } catch {
@@ -473,7 +471,8 @@ async function writeVolumeCodexConfig(
   text: string,
   keptMarketplaces: string[] | null,
 ): Promise<void> {
-  const purge = keptMarketplaces === null ? '' : ` && ${buildCodexOrphanPurgeScript(keptMarketplaces)}`;
+  const purge =
+    keptMarketplaces === null ? '' : ` && ${buildCodexOrphanPurgeScript(keptMarketplaces)}`;
   await execa(
     'docker',
     [
@@ -558,28 +557,14 @@ export async function ensureCodexInstalled(
   container: string,
   opts: { onProgress?: (line: string) => void } = {},
 ): Promise<EnsureCodexInstalledResult> {
-  const probe = await execa(
-    'docker',
-    ['exec', '--user', CONTAINER_USER, container, 'sh', '-c', 'command -v codex'],
-    { reject: false },
-  );
-  if (probe.exitCode === 0) return { installed: false };
-
-  opts.onProgress?.('installing codex (absent from this box image)');
-  const install = await execa(
-    'docker',
-    ['exec', '--user', 'root', container, 'bash', '-lc', 'npm install -g @openai/codex 2>&1'],
-    { reject: false },
-  );
-  if (install.exitCode !== 0) {
-    throw new CodexSessionError(
-      `codex is not in this box's image and \`npm install -g @openai/codex\` failed ` +
-        `(exit ${String(install.exitCode)}). This box was likely created from a ` +
-        `checkpoint captured before Codex support — recapture the project checkpoint ` +
-        `from a fresh box. Install output:\n${(install.stdout ?? '').toString().slice(-600)}`,
-    );
+  try {
+    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'codex', opts);
+  } catch (err) {
+    // Rewrap so the CLI's existing `instanceof CodexSessionError` catch sites
+    // keep working — this function's contract is unchanged.
+    if (err instanceof AgentInstallError) throw new CodexSessionError(err.message);
+    throw err;
   }
-  return { installed: true };
 }
 
 export interface StartCodexSessionOptions {

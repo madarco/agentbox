@@ -131,7 +131,12 @@ async function ensureClaudeLoginFresh(args: {
 
   log.write('claude login is expired or missing — starting browser re-login');
   await patchJobLogin(id, { required: true, phase: 'starting' });
-  await ensureImage(image, { onProgress: (line) => log.write(line) });
+  // `runClaudeLogin` RUNS claude in a throwaway container, so it needs the
+  // claude layer — the base image is agentless.
+  const { ref: loginImage } = await ensureImage(image, {
+    agents: ['claude'],
+    onProgress: (line) => log.write(line),
+  });
 
   // Serialize ALL of our manifest writes through one chain so read-modify-write
   // patches (phase/url/error AND the code-clear below) can't interleave and lose
@@ -171,7 +176,7 @@ async function ensureClaudeLoginFresh(args: {
 
   try {
     const result = await runClaudeLogin({
-      image,
+      image: loginImage,
       signal: abort.signal,
       writeRaw: (chunk) => log.raw(chunk),
       writeLog: (line) => log.write(line),
@@ -354,6 +359,10 @@ async function runDockerJob(
     allowPull: opts.build ? false : undefined,
     imageRegistry: opts.imageRegistry ?? cfg.effective.box.imageRegistry,
     credentialSync: opts.credentialSync ?? cfg.effective.box.credentialSync,
+    // The job names exactly one agent, so the box is built for that one only —
+    // no other agent's volume, credentials or home dir. `noAgent` (a plain
+    // `create`) selects none; an agent can still be added on demand later.
+    agents: job.noAgent ? [] : [toSyncKind(job.agent)],
     claudeConfig:
       !job.noAgent && job.agent === 'claude-code'
         ? { isolate: cfg.effective.box.isolateClaudeConfig }

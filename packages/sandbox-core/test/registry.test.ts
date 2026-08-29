@@ -44,7 +44,7 @@ describe('agent sync registry', () => {
     expect(config.relocToSubpath).toBe('config');
     expect(state.relocToSubpath).toBe('.state/opencode');
     expect(state.update).toBe(true);
-    expect(oc.boxRunEnv()).toEqual({
+    expect(oc.boxRunEnv).toEqual({
       OPENCODE_CONFIG_DIR: '/home/vscode/.local/share/opencode/config',
       XDG_STATE_HOME: '/home/vscode/.local/share/opencode/.state',
     });

@@ -26,7 +26,21 @@ import { BUILD_CONTEXT_DIR, DEFAULT_BOX_IMAGE, DOCKERFILE_PATH } from './image.j
 
 const SCHEMA = 1 as const;
 
-export type PreparedDockerState = PreparedBaseSnapshot<string, never>;
+/**
+ * One prepared record per image VARIANT, keyed by its agent-set arg (`''` for
+ * the agentless base, `'claude'`, `'claude,codex'`, …).
+ *
+ * Without this there is a single `base` slot, so building the codex image
+ * overwrites the note that the claude image was prepared — and the next
+ * `agentbox claude` rebuilds an image that is already sitting on disk. Anyone
+ * alternating agents rebuilds every time.
+ *
+ * `base` is kept as "the most recently prepared image" so existing readers
+ * (prepare --status, the freshness nag, custody adoption) are unaffected.
+ */
+export type PreparedDockerState = PreparedBaseSnapshot<string, never> & {
+  variants?: Record<string, NonNullable<PreparedBaseSnapshot<string, never>['base']>>;
+};
 
 /**
  * Resolve every fingerprint input to an absolute path. The canonical file
@@ -91,7 +105,11 @@ export function readPreparedDockerState(): PreparedDockerState | null {
   if (raw === null || typeof raw !== 'object') return null;
   const parsed = raw as Partial<PreparedDockerState>;
   if (parsed.schema !== SCHEMA) return null;
-  return { schema: SCHEMA, base: parsed.base };
+  return {
+    schema: SCHEMA,
+    base: parsed.base,
+    ...(parsed.variants ? { variants: parsed.variants } : {}),
+  };
 }
 
 export function writePreparedDockerState(opts: {
@@ -99,25 +117,55 @@ export function writePreparedDockerState(opts: {
   contextSha256: string;
   /** Per-file digests of the context this image was built from, when known. */
   files?: FileManifest;
+  /** Agent-set key this record is for (`''` = the agentless base). */
+  variant?: string;
 }): void {
   const stamp = readCliStamp();
+  const entry = {
+    imageRef: opts.imageRef ?? DEFAULT_BOX_IMAGE,
+    contextSha256: opts.contextSha256,
+    cliVersion: stamp.cliVersion,
+    cliCommit: stamp.cliCommit,
+    createdAt: new Date().toISOString(),
+    ...(opts.files ? { files: opts.files } : {}),
+  };
+  // Merge, never replace: each variant keeps its own record so switching
+  // agents doesn't invalidate the one you built last time.
+  const existing = readPreparedDockerState();
   const state: PreparedDockerState = {
     schema: SCHEMA,
-    base: {
-      imageRef: opts.imageRef ?? DEFAULT_BOX_IMAGE,
-      contextSha256: opts.contextSha256,
-      cliVersion: stamp.cliVersion,
-      cliCommit: stamp.cliCommit,
-      createdAt: new Date().toISOString(),
-      ...(opts.files ? { files: opts.files } : {}),
-    },
+    base: entry,
+    variants: { ...existing?.variants, [opts.variant ?? '']: entry },
   };
   writePreparedStateRaw('docker', state);
 }
 
-/** Convenience for `ensureImage` and `prepare` — true when the stamped fingerprint matches. */
-export function preparedMatches(state: PreparedDockerState | null, current: string): boolean {
-  return state?.base?.contextSha256 === current;
+/**
+ * The fingerprint stamped for one variant (`''` = the agentless base).
+ *
+ * Reads the variant's own record, falling back to `base` for records written
+ * before variants existed. Callers must NOT read `base` directly: it is
+ * overwritten with whatever was prepared most recently, so after an
+ * `agentbox claude` bake it holds the claude-variant hash and comparing the
+ * agentless fingerprint against it reports a spurious `stale`.
+ */
+export function preparedShaFor(state: PreparedDockerState | null, variant = ''): string | null {
+  return state?.variants?.[variant]?.contextSha256 ?? state?.base?.contextSha256 ?? null;
+}
+
+/**
+ * Convenience for `ensureImage` and `prepare` — true when the stamped
+ * fingerprint matches.
+ *
+ * Checks this variant's own record first, then falls back to `base` so a
+ * record written before variants existed still counts as a hit.
+ */
+export function preparedMatches(
+  state: PreparedDockerState | null,
+  current: string,
+  variant?: string,
+): boolean {
+  return preparedShaFor(state, variant ?? '') === current;
 }
 
 /** Re-export so callers don't reach into image.ts just for the Dockerfile path. */

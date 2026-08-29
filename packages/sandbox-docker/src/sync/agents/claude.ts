@@ -11,6 +11,8 @@ import {
   filterHostHooks,
   setInstallMethodNative,
   trustWorkspace,
+  ensureAgentInstalled,
+  AgentInstallError,
 } from '@agentbox/sandbox-core';
 import {
   claudeInventoryScript,
@@ -28,6 +30,7 @@ import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // (also used by the ~/.agents skills seed); re-exported for existing importers
 // (the find-unsyncable-symlinks test) and used internally by the claude stage.
 import { findUnsyncableSymlinks } from '@agentbox/sandbox-core';
+import { createDockerSyncTransport } from '../sync-transport.js';
 export { findUnsyncableSymlinks };
 
 export const SHARED_CLAUDE_VOLUME = 'agentbox-claude-config';
@@ -898,6 +901,31 @@ export class ClaudeSessionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ClaudeSessionError';
+  }
+}
+
+export interface EnsureClaudeInstalledResult {
+  /** True when claude was absent and we installed it just now. */
+  installed: boolean;
+}
+
+/**
+ * Ensure `claude` is on PATH in the box, installing it if absent.
+ *
+ * Claude used to be bake-only, so this had no counterpart to codex/opencode's
+ * `ensure*Installed`. Once the base image stopped carrying agents, every agent
+ * needs the on-demand path — including for a box launched for a different agent
+ * that later switches to Claude.
+ */
+export async function ensureClaudeInstalled(
+  container: string,
+  opts: { onProgress?: (line: string) => void } = {},
+): Promise<EnsureClaudeInstalledResult> {
+  try {
+    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'claude', opts);
+  } catch (err) {
+    if (err instanceof AgentInstallError) throw new ClaudeSessionError(err.message);
+    throw err;
   }
 }
 

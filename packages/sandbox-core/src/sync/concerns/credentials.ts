@@ -26,7 +26,7 @@
  */
 
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
@@ -321,6 +321,31 @@ export async function readCredentialBackup(
  * passwordless sudo). Never hardcode uid 1000 — the vscode uid varies per
  * provider.
  */
+/**
+ * The host's current credential for `agent`, or null when there isn't a usable
+ * one. Prefers the `~/.agentbox/<agent>-credentials.json` backup (the
+ * newest-wins copy the relay's fan-out maintains) over the tool's real path,
+ * which may hold an older token.
+ *
+ * Shape-validated, so a placeholder or a half-written file is treated as
+ * absent rather than pushed into a box where it would fail confusingly.
+ */
+export async function resolveHostCredential(agent: CredentialAgentKind): Promise<string | null> {
+  const spec = resolveAgentSpec(agent);
+  const backup = await readCredentialBackup(agent);
+  if (backup !== null && isRealAgentCredential(agent, backup)) return backup;
+
+  const source = spec.staticPaths[0];
+  if (!source) return null;
+  const real = join(homedir(), ...source.hostHomeRel, spec.credential.boxRelPath);
+  try {
+    const text = await readFile(real, 'utf8');
+    return isRealAgentCredential(agent, text) ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function pushCredentialToBox(
   transport: SyncTransport,
   agent: CredentialAgentKind,

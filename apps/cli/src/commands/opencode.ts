@@ -323,17 +323,22 @@ async function maybeRunOpencodeLogin(args: { image: string; yes: boolean }): Pro
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS opencode, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['opencode'],
+    onProgress: imageProgress(s),
+  });
   // Ensure the shared volume exists (and is vscode-writable) before the login
   // container writes auth.json into it.
   s.message('preparing opencode config');
   await ensureOpencodeVolume(
     { volume: SHARED_OPENCODE_VOLUME },
-    { syncFromHost: true, image: args.image },
+    { syncFromHost: true, image: loginImage },
   );
   s.stop('image ready');
 
-  const res = await signInToOpencode(args.image, []);
+  const res = await signInToOpencode(loginImage, []);
   if (!res.ok) {
     log.warn(
       'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
@@ -385,15 +390,20 @@ async function maybeRunCloudOpencodeLogin(args: { image: string; yes: boolean })
 
   const s = spinner();
   s.start('preparing sandbox image');
-  await ensureImage(args.image, { onProgress: imageProgress(s) });
+  // The login container RUNS opencode, so it needs that agent's layer — the
+  // base image is agentless. `ensureImage` returns the variant ref.
+  const { ref: loginImage } = await ensureImage(args.image, {
+    agents: ['opencode'],
+    onProgress: imageProgress(s),
+  });
   s.message('preparing opencode config');
   await ensureOpencodeVolume(
     { volume: SHARED_OPENCODE_VOLUME },
-    { syncFromHost: true, image: args.image },
+    { syncFromHost: true, image: loginImage },
   );
   s.stop('image ready');
 
-  const res = await signInToOpencode(args.image, []);
+  const res = await signInToOpencode(loginImage, []);
   if (!res.ok) {
     log.warn(
       'OpenCode login did not complete; continuing — run `agentbox opencode login` to retry.',
@@ -923,6 +933,9 @@ export const opencodeCommand = new Command('opencode')
         useBranch,
         resyncOnStart: opts.resync,
         image: resolveBoxImage(cfg.effective, providerName),
+        // This box is FOR opencode: only its config volume, credentials and
+        // home dir are wired in. Another agent can still be added on demand.
+        agents: ['opencode'],
         opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig },
         withPlaywright,
         withEnv: cfg.effective.box.withEnv,
@@ -1269,11 +1282,15 @@ const opencodeLoginCommand = new Command('login')
     }
     try {
       const cfg = await loadEffectiveConfig(process.cwd());
-      const image = cfg.effective.box.image;
+      const baseImage = cfg.effective.box.image;
 
       const s = spinner();
       s.start('preparing sandbox image');
-      await ensureImage(image, { onProgress: imageProgress(s) });
+      // The login container RUNS opencode; the base image is agentless.
+      const { ref: image } = await ensureImage(baseImage, {
+        agents: ['opencode'],
+        onProgress: imageProgress(s),
+      });
       // Ensure the shared volume exists + is vscode-writable before the login
       // container writes auth.json into it.
       s.message('preparing opencode config');
