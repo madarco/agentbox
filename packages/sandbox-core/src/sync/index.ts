@@ -120,6 +120,7 @@ export {
   writeCredentialBackup,
   readCredentialBackup,
   pushCredentialToBox,
+  resolveHostCredential,
   SEED_MARKER,
   type CredentialAgentKind,
   type CredentialsUpdate,

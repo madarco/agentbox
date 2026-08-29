@@ -15,6 +15,7 @@
 
 import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
+import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
 import type { AgentInstall, AgentInstallRecipe } from '../agents/types.js';
 
 /** Install failed. Callers rewrap into their own agent-specific error type. */
@@ -151,5 +152,31 @@ export async function ensureAgentInstalled(
       `${spec.id}: the installer reported success but \`${spec.binary}\` is still not on PATH in the box.`,
     );
   }
+
+  // Seed the login, as FILES rather than a mount.
+  //
+  // Reaching here means the box was not built for this agent, so its config
+  // volume is not mounted — and docker fixes mounts at `docker run`, so we
+  // cannot add one to a running container. Syncing the host-side volume would
+  // write somewhere this box can't see and leave the agent unauthenticated
+  // with no visible error. Pushing the credential file is what the cloud
+  // providers already do on every create (`TransportCaps.ephemeralFs`), so
+  // this is the established path, not a workaround. The credential watcher and
+  // `extractAgentCredentials` still carry any resulting login back to the host.
+  //
+  // Best-effort: a box whose agent simply isn't logged in on the host is a
+  // normal state, and the agent's own login flow handles it.
+  try {
+    const credential = await resolveHostCredential(spec.id);
+    if (credential !== null) {
+      await pushCredentialToBox(transport, spec.id, credential);
+      opts.onProgress?.(`seeded ${spec.id} credentials into the box`);
+    }
+  } catch (err) {
+    opts.onProgress?.(
+      `could not seed ${spec.id} credentials (${err instanceof Error ? err.message : String(err)}); sign in inside the box`,
+    );
+  }
+
   return { installed: true };
 }

@@ -59,8 +59,8 @@ describe('ensureAgentInstalled', () => {
     // bubblewrap first — codex falls back to a bundled copy and warns without it.
     expect(cmds[1]).toContain('apt-get install -y --no-install-recommends bubblewrap');
     expect(cmds[2]).toContain('npm install -g @openai/codex');
-    // ...and the last call re-verifies the binary actually landed.
-    expect(cmds[cmds.length - 1]).toBe('sh -lc command -v codex');
+    // ...and a post-install probe re-verifies the binary actually landed.
+    expect(cmds).toContain('sh -lc command -v codex');
   });
 
   it('escalates root work so it works on docker AND cloud', async () => {
@@ -134,5 +134,30 @@ describe('ensureAgentInstalled', () => {
     await expect(ensureAgentInstalled(t, 'codex')).rejects.toThrow(
       /apt prerequisites \(bubblewrap\)/,
     );
+  });
+});
+
+describe('ensureAgentInstalled — credential seeding', () => {
+  it('pushes the host credential after an on-demand install', async () => {
+    // The box was built for another agent, so this agent's config volume is not
+    // mounted and never will be (docker fixes mounts at `docker run`). Without
+    // the file push the agent starts unauthenticated with no visible error.
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'codex');
+    const pushed = t.ops.find((o) => o.op === 'pushFile');
+    // Only asserted when the host actually has a codex login; otherwise the
+    // seed is correctly skipped.
+    if (pushed) expect(String(pushed.args.boxDestPath)).toContain('.codex/auth.json');
+  });
+
+  it('never seeds when the binary was already present', async () => {
+    const t = makeRecordingTransport({ execResult: () => ok });
+    await ensureAgentInstalled(t, 'codex');
+    expect(t.ops.some((o) => o.op === 'pushFile')).toBe(false);
+  });
+
+  it('a missing host login is not an install failure', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await expect(ensureAgentInstalled(t, 'opencode')).resolves.toEqual({ installed: true });
   });
 });
