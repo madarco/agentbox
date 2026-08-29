@@ -143,10 +143,26 @@ export interface EnsureAgentVolumesResult {
  */
 export async function ensureAgentVolumesForCloud(
   backend: CloudBackend,
-  opts: { onLog?: (line: string) => void; volumesUsable?: boolean } = {},
+  opts: {
+    onLog?: (line: string) => void;
+    volumesUsable?: boolean;
+    /**
+     * Which agents this box is FOR. When set, only these get a credential
+     * mount, a forwarded env key, or a seed — so a `agentbox claude` cloud box
+     * carries no codex/opencode tokens. Absent = every agent, the historical
+     * behaviour, so an un-migrated caller keeps working.
+     *
+     * This is the single narrowing point: the returned `agents` feeds
+     * `seedAgentVolumesIfFresh` and `makeCloudSync({ agents })`, both of which
+     * already filter on it.
+     */
+    agents?: readonly string[];
+  } = {},
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
-  const allAgents = AGENT_SPECS.map((s) => s.kind);
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  const allAgents = specs.map((s) => s.kind);
   // `volumesUsable: false` means the backend has a volume API but this
   // particular sandbox shape can't use it. Daytona's linux-vm class *accepts* a
   // volume mount and even echoes it back in the sandbox DTO — the path just
@@ -181,7 +197,7 @@ export async function ensureAgentVolumesForCloud(
     return { mounts: [], env: buildForwardedEnv([]), agents: [] };
   }
 
-  const mounts: CloudVolumeMount[] = AGENT_SPECS.map((spec) => ({
+  const mounts: CloudVolumeMount[] = specs.map((spec) => ({
     volumeId,
     mountPath: spec.credentialsMountPath,
     subpath: spec.credentialsSubpath,
@@ -287,10 +303,13 @@ export async function seedAgentVolumesIfFresh(
 export async function ensureAgentHomeDirsOwned(
   backend: CloudBackend,
   handle: CloudHandle,
-  opts: { onLog?: (line: string) => void } = {},
+  opts: { onLog?: (line: string) => void; agents?: readonly string[] } = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const paths = AGENT_SPECS.map((s) => s.staticMountPath).join(' ');
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  if (specs.length === 0) return;
+  const paths = specs.map((s) => s.staticMountPath).join(' ');
   try {
     await backend.exec(handle, `sudo -n chown -R vscode:vscode ${paths} 2>/dev/null || true`);
   } catch (err) {
@@ -561,6 +580,14 @@ export interface ReconcileAgentCredentialsOptions {
   onLog?: (line: string) => void;
   /** Override host backup paths per agent (tests). Defaults to the registry `hostBackup`. */
   backups?: Partial<Record<CloudAgentKind, string>>;
+  /**
+   * Which agents this box is FOR. Absent = all, the historical behaviour.
+   *
+   * Load-bearing on the RESUME path: this runs on every start, so without the
+   * filter a claude-only box re-acquires codex and opencode credentials the
+   * first time it resumes, silently undoing the create-time isolation.
+   */
+  agents?: readonly string[];
 }
 
 /** Transport-seam core of {@link reconcileAgentCredentials} (unit-testable). */
@@ -569,7 +596,9 @@ export async function reconcileAgentCredentialsViaTransport(
   opts: ReconcileAgentCredentialsOptions = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
   for (const spec of AGENT_SYNC_SPECS) {
+    if (wanted && !wanted.has(spec.id)) continue;
     const backupPath = opts.backups?.[spec.id];
     try {
       const hostText = await readCredentialBackup(spec.id, { backupPath });

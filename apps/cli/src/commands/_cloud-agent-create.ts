@@ -81,6 +81,10 @@ export async function cloudAgentCreate(args: CloudAgentCreateArgs): Promise<void
       // the control-plane registration, so a PC adopting a hub-created box
       // knows which agent to relaunch.
       agent: args.mode,
+      // ...and the authoritative selection: this box is FOR that agent, so only
+      // its credentials are mounted and seeded. Every cloud `agentbox <agent>`
+      // funnels through here, so this one line covers all of them.
+      agents: [args.mode],
       onLog: (line) => s.message(line),
     });
     const nSuffix =

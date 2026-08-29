@@ -72,6 +72,10 @@ export const dockerProvider: Provider = {
       allowPull: req.allowPull,
       imageRegistry: req.imageRegistry,
       onLog: req.onLog,
+      // The CLI's docker paths call `createBox` directly with a literal, but a
+      // hub / control-plane create only ever arrives as a CreateBoxRequest —
+      // so without this those boxes silently keep the all-agents behaviour.
+      ...(req.agents ? { agents: req.agents } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

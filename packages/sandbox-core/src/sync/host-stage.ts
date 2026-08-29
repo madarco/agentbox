@@ -413,7 +413,7 @@ const CODEX_STATIC_INCLUDES = resolveAgentSpec('codex').staticPaths[0]?.include 
 
 const CODEX_KEYCHAIN_WARNING =
   'codex: ~/.codex/auth.json missing. On macOS the codex CLI defaults to ' +
-  'storing the OAuth token in the system Keychain, which isn\'t reachable ' +
+  "storing the OAuth token in the system Keychain, which isn't reachable " +
   'from a remote sandbox. To share creds with cloud boxes either:\n' +
   '  - add `cli_auth_credentials_store = "file"` to ~/.codex/config.toml ' +
   'then re-run `codex login`, or\n' +
@@ -738,18 +738,35 @@ export interface AgentStaticStage {
  * result after the build has picked the tarball up.
  */
 export async function stageAllAgentStatic(
-  opts: { hostWorkspace?: string } = {},
+  opts: {
+    hostWorkspace?: string;
+    /**
+     * Which agents to stage. Absent = all, the historical behaviour.
+     *
+     * `~/.agents` is never filtered: it is the shared skills tree, not an
+     * agent's auth or config, and every agent reads it.
+     *
+     * Staging is a PREPARE-time concern — this bakes host config into the
+     * snapshot — which is why the selection has to reach `PrepareOptions` and
+     * not only `create`.
+     */
+    agents?: readonly string[];
+  } = {},
 ): Promise<AgentStaticStage[]> {
+  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const want = (kind: string): boolean => !wanted || wanted.has(kind);
   const [claude, codex, opencode, agents] = await Promise.all([
-    stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }),
-    stageCodexStaticForUpload(),
-    stageOpencodeStaticForUpload(),
+    want('claude') ? stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }) : null,
+    want('codex') ? stageCodexStaticForUpload() : null,
+    want('opencode') ? stageOpencodeStaticForUpload() : null,
     stageAgentsStaticForUpload(),
   ]);
-  return [
-    { kind: 'claude', extractDir: CLAUDE_STATIC_BOX_DIR, staged: claude },
-    { kind: 'codex', extractDir: CODEX_STATIC_BOX_DIR, staged: codex },
-    { kind: 'opencode', extractDir: OPENCODE_STATIC_BOX_DIR, staged: opencode },
-    { kind: 'agents', extractDir: AGENTS_STATIC_BOX_DIR, staged: agents },
-  ];
+  const out: AgentStaticStage[] = [];
+  if (claude) out.push({ kind: 'claude', extractDir: CLAUDE_STATIC_BOX_DIR, staged: claude });
+  if (codex) out.push({ kind: 'codex', extractDir: CODEX_STATIC_BOX_DIR, staged: codex });
+  if (opencode) {
+    out.push({ kind: 'opencode', extractDir: OPENCODE_STATIC_BOX_DIR, staged: opencode });
+  }
+  out.push({ kind: 'agents', extractDir: AGENTS_STATIC_BOX_DIR, staged: agents });
+  return out;
 }

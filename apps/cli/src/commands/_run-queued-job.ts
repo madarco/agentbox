@@ -574,6 +574,9 @@ async function runCloudJob(
     useBranch: opts.useBranch,
     checkpointRef,
     image: resolveBoxImage(cfg.effective, providerName),
+    // Same authoritative selection the docker branch above applies: the job
+    // names exactly one agent, so the box carries only that one's credentials.
+    agents: job.noAgent ? [] : [toSyncKind(job.agent)],
     // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
     // the push mode: the foreground `create` conversion routes cloud creates
     // through this worker, so each must ride the job to match the old inline path.

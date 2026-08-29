@@ -91,6 +91,17 @@ export interface CreateBoxRequest {
    * `agentbox create` leaves it unset.
    */
   agent?: 'claude' | 'codex' | 'opencode';
+  /**
+   * Which agents this box is FOR. When set, it is authoritative: only these
+   * agents get a credential mount, a config seed, or a home dir — so an
+   * `agentbox claude` box carries no codex/opencode tokens.
+   *
+   * Distinct from `agent` above, which is a control-plane label naming who
+   * initiated the create. Absent = the historical "wire up everything"
+   * behaviour, so a caller that hasn't been migrated keeps working. An agent
+   * left out is not lost: `ensureAgentInstalled` adds it to a live box.
+   */
+  agents?: string[];
   /** Override the base image / snapshot. */
   image?: string;
   /**

@@ -672,7 +672,11 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
-        await reconcileAgentCredentials(backend, h, { onLog: () => {} });
+        await reconcileAgentCredentials(backend, h, {
+          onLog: () => {},
+          // Absent on pre-selection boxes, which correctly means "all".
+          ...(box.agents ? { agents: box.agents } : {}),
+        });
       }
     } catch {
       // best-effort
@@ -816,6 +820,10 @@ export function createCloudProvider(
       // "user logs in inside the box" the way cloud worked before.
       const agentVolumes = await ensureAgentVolumesForCloud(backend, {
         onLog: log,
+        // Authoritative when the caller named its agents: this is the single
+        // narrowing point, and its result feeds seedAgentVolumesIfFresh and
+        // makeCloudSync below.
+        ...(req.agents ? { agents: req.agents } : {}),
         // Daytona's linux-vm class accepts volume mounts and never honors them
         // (see ensureAgentVolumesForCloud) — take the per-create upload path.
         volumesUsable: sandboxClass !== 'linux-vm',
@@ -1338,6 +1346,10 @@ export function createCloudProvider(
           workspacePath: req.workspacePath,
           projectRoot: req.projectRoot,
           projectIndex,
+          // Persist the selection: resume re-reconciles credentials on every
+          // start and needs to know which agents this box is for, or it would
+          // re-acquire the others and undo the isolation.
+          ...(req.agents ? { agents: req.agents } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
