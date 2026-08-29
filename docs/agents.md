@@ -38,11 +38,12 @@ Now each agent is one entry in **`AGENT_SYNC_SPECS`**
 |---|---|---|
 | derived image layer | `buildDerivedAgentImage` (`sandbox-docker/src/image.ts`) | `agentbox <agent>` on docker |
 | live box | `ensureAgentInstalled` (`sandbox-core/src/sync/concerns/install.ts`) | adding an agent to a running box |
-| cloud provision script | `install-box.sh` / `provision.sh` / `build-template.sh` | **not yet** — these still hardcode `npm install -g @openai/codex opencode-ai` |
+| cloud derived snapshot | each provider's `prepare` (`--agents <set>`) | baking an agent onto a cloud base |
 
 Keep the sites in step by keeping the *data* in one place — never by copying an
-install into a second file. The cloud scripts are the one remaining copy, and
-closing that is part of the cloud work.
+install into a second file. Every site above renders the same
+`AGENT_SYNC_SPECS.install` entry, so a baked agent and a runtime-added one are
+byte-identical in layout; no provision script installs an agent any more.
 
 ### Recipe fields that matter
 

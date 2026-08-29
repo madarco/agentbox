@@ -18,10 +18,10 @@ Status: **in progress.** Rescoped to *one agent per box*; agent plugins are park
 | Per-box agent selection | **done** (docker) — only the selected agent's volume, credentials and home dir |
 | `variantFingerprint` + per-variant image tag + per-variant prepared record | **done** (docker) — alternating agents no longer rebuilds |
 | Seed the login when an agent is added to a live box | **done** — pushed as a file; a mount can't be added to a running container |
-| Publish the agentless base + CI matrix | todo — until then the first build on a cold machine is local |
-| Cloud **derived snapshots** (hetzner, vercel, e2b) | todo — boot base snapshot → install → re-snapshot |
-| `--agents` through `PrepareOptions` → hub API → queue → worker | todo |
-| Cloud selection (`stageAllAgentStatic`, cloud credential volumes) | todo — cloud still bakes and mounts all three |
+| Publish the agentless base + CI matrix | todo — `box-image.yml` only publishes on `main`/`nightly`, so the agentless fingerprint tag lands when this branch merges. Until then a cold machine builds locally, and daytona's linux-vm derive stays untestable (its base image 404s on GHCR) |
+| Cloud **derived snapshots** (every provider) | **done** — hetzner/DO/vercel boot the base and re-snapshot; e2b derives declaratively; daytona appends recipe layers |
+| `--agents` through `PrepareOptions` → hub API → queue → worker | **done** |
+| Cloud selection (`stageAllAgentStatic`, cloud credential volumes) | **done** — staging is gated per agent set and credentials are isolated at create |
 | Checkpoints recording their agent set | todo |
 
 **No cloud regression in the meantime:** the cloud provision scripts still install
