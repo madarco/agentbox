@@ -154,45 +154,6 @@ RUN apt-get update \
     && printf '%s\n' '{ "iptables": true }' > /etc/docker/daemon.json \
     && usermod -aG docker vscode
 
-# agentbox-ctl: the in-container supervisor + CLI. Build context is the
-# monorepo root, so packages/ctl/dist is the prebuilt bundle from
-# `pnpm --filter @agentbox/ctl build`. The CLI is bundled with all deps
-# inlined (see tsup config), so a single COPY is enough.
-COPY packages/ctl/dist/bin.cjs /usr/local/bin/agentbox-ctl
-RUN chmod +x /usr/local/bin/agentbox-ctl
-
-# `gh` + `git` shims: route a strict subset of upstream subcommands through
-# the host relay (via agentbox-ctl) so the host's authenticated `gh` / git
-# creds stay on the host — the in-box agent never sees a token. The shims
-# also light up Claude Code's branch-linked-to-PR badge (Claude Code calls
-# `gh pr view --json …` on refresh). See packages/sandbox-docker/scripts/
-# {gh,git}-shim. PATH ordering
-# (line 50 above) puts /usr/local/bin ahead of /usr/bin, so the shim wins;
-# the git shim execs /usr/bin/git directly for everything outside its tiny
-# network-op whitelist (push/pull/fetch/clone).
-COPY packages/sandbox-docker/scripts/gh-shim /usr/local/bin/gh
-COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
-RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
-
-# Generic host-tool shim. One file for every host CLI a box is granted:
-# `agentbox-ctl` symlinks ~/.local/bin/<tool> to it at box start from the
-# host-side grant list, so adding a tool never needs an image rebake. The
-# shim resolves its own name from argv[0] and forwards to the relay, which
-# owns the gating. See packages/sandbox-docker/scripts/agentbox-tool-shim
-# and docs/host-tools.md.
-COPY packages/sandbox-docker/scripts/agentbox-tool-shim /usr/local/bin/agentbox-tool-shim
-RUN chmod +x /usr/local/bin/agentbox-tool-shim
-
-# Setup guide for the first-run wizard. This baked copy is the single source
-# of the /agentbox-setup skill: seedSetupSkillIntoVolume()
-# (packages/sandbox-docker/src/claude.ts) copies it into the box's
-# claude-config volume at skills/agentbox-setup/SKILL.md on create /
-# `claude start`. It is intentionally box-only — the CLI never writes the
-# skill to the host's ~/.claude. The stable path also lets the wizard's
-# initial prompt reference the guide directly.
-COPY apps/cli/share/agentbox-setup/SKILL.md /usr/local/share/agentbox/setup-guide.md
-RUN chmod 0644 /usr/local/share/agentbox/setup-guide.md
-
 # Prepare /home/vscode/.claude (the volume mount target) and the .claude.json
 # symlink. The mkdir+chown is load-bearing: when we mount the named
 # `agentbox-claude-config` volume at runtime, Docker seeds the empty volume's
@@ -360,12 +321,6 @@ RUN npm install -g agent-browser playwright
 # Requires Node 24+ — hence the setup_24.x bump above.
 RUN npm install -g portless
 
-# /usr/local/bin/chromium is a resolver (not a baked binary): on first launch it
-# reuses the project's Playwright Chromium or installs one on demand, then execs
-# it. See the script header and the rationale in the browser-support note above.
-COPY packages/sandbox-docker/scripts/chromium-resolver /usr/local/bin/chromium
-RUN chmod +x /usr/local/bin/chromium
-
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium
 
 # VNC: Xvnc (TigerVNC, X server + RFB in one binary), noVNC (HTML5 client),
@@ -406,12 +361,6 @@ EXPOSE 80
 # (derived from AGENTBOX_VNC_PASSWORD).
 RUN mkdir -p /home/vscode/.vnc \
     && chown -R vscode:vscode /home/vscode/.vnc
-COPY packages/sandbox-docker/scripts/agentbox-vnc-start /usr/local/bin/agentbox-vnc-start
-RUN chmod +x /usr/local/bin/agentbox-vnc-start
-
-# DinD launcher script. Same exec-d-as-root pattern as agentbox-vnc-start.
-COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
-RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
 # In-box OpenSSH daemon: bound to :22, published by the host only on
 # 127.0.0.1:<ephemeral>. Powers `agentbox open` (sshfs mount of /workspace) and
@@ -541,6 +490,75 @@ RUN printf '%s\n' \
         'esac' \
         > /etc/profile.d/agentbox.sh \
     && chmod 0644 /etc/profile.d/agentbox.sh
+
+# ---------------------------------------------------------------------------
+# Relocated tail: small, frequently-changing COPYs.
+#
+# These sit LAST on purpose. `packages/ctl/dist/bin.cjs` is built with tsup
+# `noExternal: [/.*/]`, so it inlines @agentbox/core, sandbox-core, relay and
+# integrations -- meaning an edit to any of those rewrites this file. When
+# these COPYs sat mid-Dockerfile they invalidated every layer after them
+# (~1.8 GB: the agent installs, Playwright, Chromium, the VNC stack, sshd),
+# so a one-line change in a TS package forced a multi-GB rebuild and re-pull.
+# Keeping them below the expensive layers means only these cheap layers redo.
+#
+# They must stay ABOVE the final `USER vscode`: COPY writes root:root either
+# way, but the chmod/ln that follows each one needs root.
+# ---------------------------------------------------------------------------
+
+# agentbox-ctl: the in-container supervisor + CLI. Build context is the
+# monorepo root, so packages/ctl/dist is the prebuilt bundle from
+# `pnpm --filter @agentbox/ctl build`. The CLI is bundled with all deps
+# inlined (see tsup config), so a single COPY is enough.
+COPY packages/ctl/dist/bin.cjs /usr/local/bin/agentbox-ctl
+RUN chmod +x /usr/local/bin/agentbox-ctl
+
+# `gh` + `git` shims: route a strict subset of upstream subcommands through
+# the host relay (via agentbox-ctl) so the host's authenticated `gh` / git
+# creds stay on the host — the in-box agent never sees a token. The shims
+# also light up Claude Code's branch-linked-to-PR badge (Claude Code calls
+# `gh pr view --json …` on refresh). See packages/sandbox-docker/scripts/
+# {gh,git}-shim. PATH ordering
+# (line 50 above) puts /usr/local/bin ahead of /usr/bin, so the shim wins;
+# the git shim execs /usr/bin/git directly for everything outside its tiny
+# network-op whitelist (push/pull/fetch/clone).
+COPY packages/sandbox-docker/scripts/gh-shim /usr/local/bin/gh
+COPY packages/sandbox-docker/scripts/git-shim /usr/local/bin/git
+RUN chmod +x /usr/local/bin/gh /usr/local/bin/git
+
+# Generic host-tool shim. One file for every host CLI a box is granted:
+# `agentbox-ctl` symlinks ~/.local/bin/<tool> to it at box start from the
+# host-side grant list, so adding a tool never needs an image rebake. The
+# shim resolves its own name from argv[0] and forwards to the relay, which
+# owns the gating. See packages/sandbox-docker/scripts/agentbox-tool-shim
+# and docs/host-tools.md.
+COPY packages/sandbox-docker/scripts/agentbox-tool-shim /usr/local/bin/agentbox-tool-shim
+RUN chmod +x /usr/local/bin/agentbox-tool-shim
+
+# Setup guide for the first-run wizard. This baked copy is the single source
+# of the /agentbox-setup skill: seedSetupSkillIntoVolume()
+# (packages/sandbox-docker/src/claude.ts) copies it into the box's
+# claude-config volume at skills/agentbox-setup/SKILL.md on create /
+# `claude start`. It is intentionally box-only — the CLI never writes the
+# skill to the host's ~/.claude. The stable path also lets the wizard's
+# initial prompt reference the guide directly.
+COPY apps/cli/share/agentbox-setup/SKILL.md /usr/local/share/agentbox/setup-guide.md
+RUN chmod 0644 /usr/local/share/agentbox/setup-guide.md
+
+# /usr/local/bin/chromium is a resolver (not a baked binary): on first launch it
+# reuses the project's Playwright Chromium or installs one on demand, then execs
+# it. See the script header and the rationale in the browser-support note above.
+COPY packages/sandbox-docker/scripts/chromium-resolver /usr/local/bin/chromium
+RUN chmod +x /usr/local/bin/chromium
+
+# noVNC/tigervnc launcher, exec-d as root at container start. The ~/.vnc dir it
+# writes into is pre-created (and chowned) with the VNC stack above.
+COPY packages/sandbox-docker/scripts/agentbox-vnc-start /usr/local/bin/agentbox-vnc-start
+RUN chmod +x /usr/local/bin/agentbox-vnc-start
+
+# DinD launcher script. Same exec-d-as-root pattern as agentbox-vnc-start.
+COPY packages/sandbox-docker/scripts/agentbox-dockerd-start /usr/local/bin/agentbox-dockerd-start
+RUN chmod +x /usr/local/bin/agentbox-dockerd-start
 
 # Default to the vscode user (UID 1000) provided by base:ubuntu. /workspace is
 # pre-chowned to vscode above so `agentbox create`'s in-container
