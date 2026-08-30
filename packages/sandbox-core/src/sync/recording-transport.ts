@@ -87,7 +87,11 @@ export function makeRecordingTransport(
     async pushFile(hostSrcPath: string, boxDestPath: string, o?: PushOptions): Promise<void> {
       push('pushFile', { hostSrcPath, boxDestPath, opts: o });
     },
-    async pullTree(boxSrcDir: string, hostDestDir: string, o?: { exclude?: string[] }): Promise<void> {
+    async pullTree(
+      boxSrcDir: string,
+      hostDestDir: string,
+      o?: { exclude?: string[] },
+    ): Promise<void> {
       push('pullTree', { boxSrcDir, hostDestDir, opts: o });
     },
     async pullFile(boxSrcPath: string, hostDestPath: string): Promise<void> {
@@ -104,7 +108,10 @@ export function makeRecordingTransport(
       push('ensureVolume', { name });
       return { volumeId: `vol-${name}` };
     };
-    base.seedVolumeFromHost = async (volume: string, sources: VolumeHostSource[]): Promise<void> => {
+    base.seedVolumeFromHost = async (
+      volume: string,
+      sources: VolumeHostSource[],
+    ): Promise<void> => {
       push('seedVolumeFromHost', { volume, sources });
     };
   }

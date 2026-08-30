@@ -22,7 +22,7 @@ describe('parseAgentDescriptors', () => {
   });
 
   it('parses a well-formed payload', () => {
-    expect(parseAgentDescriptors(good)).toEqual([
+    expect(parseAgentDescriptors(good)?.files).toEqual([
       { agent: 'claude', path: '/home/vscode/.claude/.credentials.json', shape: 'claude-oauth' },
     ]);
   });
@@ -46,7 +46,7 @@ describe('parseAgentDescriptors', () => {
         },
       ],
     });
-    expect(parseAgentDescriptors(withExtras)).toHaveLength(1);
+    expect(parseAgentDescriptors(withExtras)?.files).toHaveLength(1);
   });
 
   it('refuses malformed JSON, non-objects and a missing agents array', () => {
@@ -94,8 +94,8 @@ describe('parseAgentDescriptors', () => {
       ],
     });
     const got = parseAgentDescriptors(mixed);
-    expect(got).toHaveLength(1);
-    expect(got?.[0]?.path).toBe('/home/vscode/.claude/.credentials.json');
+    expect(got?.files).toHaveLength(1);
+    expect(got?.files[0]?.path).toBe('/home/vscode/.claude/.credentials.json');
   });
 
   it('skips entries with no id or no path instead of failing the whole payload', () => {
@@ -107,7 +107,7 @@ describe('parseAgentDescriptors', () => {
         { id: 'codex', watch: [{ path: '/tmp/ok', sync: 'fanout', shape: 'nonempty-json' }] },
       ],
     });
-    expect(parseAgentDescriptors(partial)).toEqual([
+    expect(parseAgentDescriptors(partial)?.files).toEqual([
       { agent: 'codex', path: '/tmp/ok', shape: 'nonempty-json' },
     ]);
   });

@@ -13,7 +13,6 @@ import { CredentialsWatcher } from '../credentials-watcher.js';
 import { ToolLinksWatcher } from '../tool-links-watcher.js';
 import { startBoxRelayForwarder, type BoxRelayForwarderHandle } from '../box-relay-forwarder.js';
 import {
-  DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CONFIG_PATH,
   DEFAULT_LOG_DIR,
   DEFAULT_STATE_DIR,
@@ -67,7 +66,6 @@ export const daemonCommand = new Command('daemon')
       supervisor: sup,
       relay: sup.relayClient,
       boxId: process.env.AGENTBOX_BOX_ID ?? '',
-      sessionName: DEFAULT_CLAUDE_SESSION_NAME,
     });
     reporter.start();
 
@@ -255,6 +253,11 @@ export const daemonCommand = new Command('daemon')
       void fetchWatchList().then((watch) => {
         if (watch.source === 'host') {
           watcher.setFiles(watch.files);
+          // Same answer, second consumer: which agents to probe for activity.
+          // The reporter is already running on its baked list, so this only ever
+          // upgrades it — an agent added after this image was baked starts being
+          // probed without a re-bake.
+          reporter.setSessions(watch.sessions);
           return;
         }
         process.stderr.write(

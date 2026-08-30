@@ -25,7 +25,13 @@ They land in `~/.claude/skills/agentbox/` and `~/.claude/skills/agentbox-info/`,
 
 ## `/agentbox` — fork a session
 
-`/agentbox [provider]` is the user-invokable slash command. Run it from Claude Code, Codex, or OpenCode and it teleports your _current_ session — the full conversation, plus the active plan if you're in plan mode — into a fresh box and resumes it there. The provider argument is optional and defaults to local Docker.
+`/agentbox [provider]` is the user-invokable slash command. Run it from Claude Code or Codex and it teleports your _current_ session — the full conversation, plus the active plan if you're in plan mode — into a fresh box and resumes it there. The provider argument is optional and defaults to local Docker.
+
+<Callout type="warn" title="OpenCode">
+  OpenCode sessions can't be teleported yet — its sessions live in a multi-tenant SQLite database,
+  and per-project extraction is tracked as a follow-up. The command is installed for OpenCode but
+  refuses with that explanation; run `agentbox opencode` to start a fresh session in a box instead.
+</Callout>
 
 ```text
 /agentbox            # fork this session into a local Docker box

@@ -55,7 +55,9 @@ export interface SeedAgentsVolumeResult {
  * detection; this owns the host→volume sync decision so both providers (only
  * docker today) share it.
  */
-export async function seedAgentsVolume(args: SeedAgentsVolumeArgs): Promise<SeedAgentsVolumeResult> {
+export async function seedAgentsVolume(
+  args: SeedAgentsVolumeArgs,
+): Promise<SeedAgentsVolumeResult> {
   const seed = args.transport.seedVolumeFromHost;
   if (!seed) throw new Error('seedAgentsVolume requires a transport with seedVolumeFromHost');
 
@@ -86,7 +88,9 @@ export async function seedAgentsVolume(args: SeedAgentsVolumeArgs): Promise<Seed
     { hostDir: args.hostAgents, destSubpath: '', exclude: excludes, copyUnsafeLinks: true },
   ]);
   if (excludes.length > 0) {
-    args.onLog?.(`skills: excluded ${String(excludes.length)} unsyncable symlink(s) from ~/.agents`);
+    args.onLog?.(
+      `skills: excluded ${String(excludes.length)} unsyncable symlink(s) from ~/.agents`,
+    );
   }
   return { synced: true };
 }

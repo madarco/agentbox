@@ -219,7 +219,12 @@ export {
   type GhTarget,
   type RunHostGhOptions,
 } from './gh.js';
-export { BoxStatusStore, isValidBoxStatus, type BoxStatusSnapshot } from './status-store.js';
+export {
+  BoxStatusStore,
+  isValidBoxStatus,
+  normalizeBoxStatus,
+  type BoxStatusSnapshot,
+} from './status-store.js';
 export {
   createRelayServer,
   startRelayServer,

@@ -1,10 +1,8 @@
 import { Command } from 'commander';
 import { bootstrapCommand } from './commands/bootstrap.js';
 import { claudeSessionCommand } from './commands/claude-session.js';
-import { claudeStateCommand } from './commands/claude-state.js';
-import { codexStateCommand } from './commands/codex-state.js';
+import { buildAgentStateCommand, LEGACY_AGENT_STATE_COMMANDS } from './commands/agent-state.js';
 import { cpCommand } from './commands/cp.js';
-import { opencodeStateCommand } from './commands/opencode-state.js';
 import { daemonCommand } from './commands/daemon.js';
 import { downloadCommand } from './commands/download.js';
 import { checkpointCommand } from './commands/checkpoint.js';
@@ -43,9 +41,16 @@ program.addCommand(stopServiceCommand);
 program.addCommand(startServiceCommand);
 program.addCommand(reloadCommand);
 program.addCommand(claudeSessionCommand);
-program.addCommand(claudeStateCommand);
-program.addCommand(codexStateCommand);
-program.addCommand(opencodeStateCommand);
+program.addCommand(buildAgentStateCommand({ kind: 'generic' }));
+// The frozen per-agent command names. Generated, not hand-written — and kept
+// rather than folded into `agent-state` because the seeded hook/plugin files
+// that invoke them live in agent config volumes SHARED BETWEEN BOXES: a
+// `hooks.json` written by a newer image can be read by a box running an older
+// baked ctl, so the spelling those files use must not move. A new agent needs
+// no entry here; it uses `agent-state <id>`.
+for (const legacy of LEGACY_AGENT_STATE_COMMANDS) {
+  program.addCommand(buildAgentStateCommand({ kind: 'agent', ...legacy }));
+}
 program.addCommand(waitReadyCommand);
 program.addCommand(runTaskCommand);
 program.addCommand(gitCommand);

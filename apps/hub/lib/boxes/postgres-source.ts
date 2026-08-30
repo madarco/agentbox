@@ -1,6 +1,8 @@
 import 'server-only';
 
 import type { PostgresStore } from '@agentbox/relay/control-plane';
+import { LEGACY_AGENT_STATUS_KEYS, normalizeAgentStatus } from '@agentbox/core';
+import type { AgentStatusEntry, AgentStatusMap } from '@agentbox/core';
 import { repoNameFromRegistration } from './project-name';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
@@ -33,11 +35,7 @@ interface Registration {
   agent?: string;
 }
 type Snapshot = Record<string, unknown>;
-interface AgentState {
-  state?: string;
-  sessionRunning?: boolean;
-  sessionTitle?: string;
-}
+type AgentState = AgentStatusEntry;
 interface PromptRow {
   ev: { id: string; message: string; detail?: string; defaultAnswer?: 'y' | 'n'; context?: { command?: string; cwd?: string; argv?: string[] } };
   createdAt: string;
@@ -65,32 +63,57 @@ function projectKey(r: Registration): string {
   return b64url(r.originUrl ?? r.name);
 }
 
-function agents(s: Snapshot | undefined): { claude?: AgentState; codex?: AgentState; opencode?: AgentState } {
-  return {
-    claude: s?.claude as AgentState | undefined,
-    codex: s?.codex as AgentState | undefined,
-    opencode: s?.opencode as AgentState | undefined,
+/**
+ * The snapshot's agents, keyed by id — through the normalizer, so a box whose
+ * baked ctl still posts the old named blocks reads like a current one and an
+ * agent outside the built-in three is not silently dropped.
+ */
+function agents(s: Snapshot | undefined): AgentStatusMap {
+  return normalizeAgentStatus(s);
+}
+
+/** Agents in display order: built-ins first, in their historical precedence. */
+function orderedAgents(s: Snapshot | undefined): Array<[string, AgentState]> {
+  const rank = (id: string): number => {
+    const i = LEGACY_AGENT_STATUS_KEYS.indexOf(id);
+    return i === -1 ? LEGACY_AGENT_STATUS_KEYS.length : i;
   };
+  return Object.entries(agents(s)).sort(([x], [y]) => rank(x) - rank(y) || x.localeCompare(y));
 }
 
 function deriveStatus(s: Snapshot | undefined): BoxStatus {
   if (!s) return 'stopped';
-  const { claude, codex, opencode } = agents(s);
-  if ([claude?.state, codex?.state, opencode?.state].includes('error')) return 'error';
-  const running = Boolean(claude?.sessionRunning || codex?.sessionRunning || opencode?.sessionRunning);
-  return running ? 'running' : 'stopped';
+  const all = Object.values(agents(s));
+  if (all.some((a) => a.state === 'error')) return 'error';
+  return all.some((a) => a.sessionRunning) ? 'running' : 'stopped';
 }
 
 function mapBox(r: Registration, s: Snapshot | undefined): Box {
-  const { claude, codex, opencode } = agents(s);
+  const ordered = orderedAgents(s);
+  const map = agents(s);
   const createdAt = Date.parse(r.createdAt ?? r.registeredAt) || Date.now();
   return {
     id: r.boxId,
     projectId: projectKey(r),
     repo: repoName(r),
     branch: r.worktrees?.[0]?.branch ?? '',
-    task: claude?.sessionTitle ?? codex?.sessionTitle ?? opencode?.sessionTitle ?? r.name,
-    agent: codex?.sessionRunning ? 'codex' : opencode?.sessionRunning ? 'opencode' : 'claude',
+    task: ordered.find(([, a]) => a.sessionTitle)?.[1].sessionTitle ?? r.name,
+    agent: ordered.find(([, a]) => a.sessionRunning)?.[0] ?? 'claude',
+    // This source used to emit NONE of the per-agent fields, unlike the
+    // in-process one, so `agentbox list`'s AGENT column silently degraded to `-`
+    // against a hosted plane. Same projection as `hub-backend.mapBox`.
+    agentStatus: Object.fromEntries(
+      ordered.map(([id, a]) => [
+        id,
+        { state: a.state, ...(a.sessionTitle ? { sessionTitle: a.sessionTitle } : {}) },
+      ]),
+    ),
+    claudeActivity: map.claude?.state,
+    codexActivity: map.codex?.state,
+    opencodeActivity: map.opencode?.state,
+    claudeSessionTitle: map.claude?.sessionTitle,
+    codexSessionTitle: map.codex?.sessionTitle,
+    opencodeSessionTitle: map.opencode?.sessionTitle,
     status: deriveStatus(s),
     createdAt,
     lastActivity: createdAt,
@@ -99,7 +122,11 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     provider: r.kind ?? 'docker',
     commits: null,
     filesTouched: null,
-    error: deriveStatus(s) === 'error' ? (claude?.sessionTitle ?? 'Agent reported an error') : null,
+    error:
+      deriveStatus(s) === 'error'
+        ? (ordered.find(([, a]) => a.sessionTitle)?.[1].sessionTitle ??
+          'Agent reported an error')
+        : null,
     // Hosted source has no endpoint data yet — cloud preview URLs are a follow-up.
     webUrl: null,
     vncUrl: null,

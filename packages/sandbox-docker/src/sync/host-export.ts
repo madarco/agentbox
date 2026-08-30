@@ -12,6 +12,7 @@ import {
   BOX_HOME,
   ENV_PRUNE_DIRS,
 } from '@agentbox/sandbox-core';
+import { normalizeAgentStatus } from '@agentbox/core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
 import { streamTarPipe } from '../box-cp.js';
@@ -134,13 +135,19 @@ export function boxStatusPathFor(box: BoxDirRef): string {
  * Read the persisted box status, or null when there is none (box predates the
  * feature, relay never received a push, corrupt JSON, or a future-incompatible
  * schema). Never throws — callers fall back to live/“unknown”.
+ *
+ * The agent map is reconstructed on read. The relay normalizes at ingestion, so
+ * a freshly-written file already has one — but a file written by an older relay
+ * is still sitting on disk for every box that existed before this build, and it
+ * carries only the named `claude`/`codex`/`opencode` blocks.
  */
 export async function readBoxStatus(box: BoxDirRef): Promise<BoxStatus | null> {
   try {
     const raw = await readFile(boxStatusPathFor(box), 'utf8');
     const parsed = JSON.parse(raw) as BoxStatus;
     if (parsed.schema !== 1) return null;
-    return parsed;
+    const agents = normalizeAgentStatus(parsed);
+    return Object.keys(agents).length > 0 ? { ...parsed, agents } : parsed;
   } catch {
     return null;
   }

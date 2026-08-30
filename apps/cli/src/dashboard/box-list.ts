@@ -19,8 +19,9 @@
  */
 import { listBoxes, type ListedBox } from '@agentbox/sandbox-docker';
 import type { BoxRuntimeState, BoxState } from '@agentbox/core';
-import type { ClaudeActivityState } from '@agentbox/ctl';
+
 import { fetchBoxListing } from '../control-plane/hub-list.js';
+import { hubBoxAgentStatus } from '../control-plane/hub-api-client.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
 
 /** Where a row's truth comes from, for the sidebar. */
@@ -109,6 +110,38 @@ export function mergeApiBoxes(
  * deliberately sparse. Adoption (automatic on first by-name use) turns it into a
  * real local record.
  */
+/**
+ * The per-agent fields a `DashboardBox` carries, from a hub row.
+ *
+ * `agentStatus` is the source; the named fields are its derived projection, kept
+ * for the hub payload's own older clients. Built here rather than copied field
+ * by field so a hub that sends the map (and a fourth agent with it) is not
+ * flattened down to the three names on the way in.
+ */
+function hubAgentFields(
+  hb: HubApiBox,
+): Pick<
+  DashboardBox,
+  | 'agentStatus'
+  | 'claudeActivity'
+  | 'claudeSessionTitle'
+  | 'codexActivity'
+  | 'codexSessionTitle'
+  | 'opencodeActivity'
+  | 'opencodeSessionTitle'
+> {
+  const agentStatus = hubBoxAgentStatus(hb);
+  return {
+    agentStatus,
+    claudeActivity: agentStatus.claude?.state,
+    claudeSessionTitle: agentStatus.claude?.sessionTitle,
+    codexActivity: agentStatus.codex?.state,
+    codexSessionTitle: agentStatus.codex?.sessionTitle,
+    opencodeActivity: agentStatus.opencode?.state,
+    opencodeSessionTitle: agentStatus.opencode?.sessionTitle,
+  };
+}
+
 function synthesizeRow(hb: HubApiBox): DashboardBox {
   const sandboxId = hb.sandboxId ?? hb.id;
   const state: BoxState = hb.state ?? 'running';
@@ -140,11 +173,7 @@ function synthesizeRow(hb: HubApiBox): DashboardBox {
     state,
     // Agent activity / titles the hub row does carry, so the sidebar paints the
     // right agent + activity for an un-adopted box too.
-    claudeActivity: hb.claudeActivity as ClaudeActivityState | undefined,
-    claudeSessionTitle: hb.claudeSessionTitle,
-    codexActivity: hb.codexActivity as ClaudeActivityState | undefined,
-    codexSessionTitle: hb.codexSessionTitle,
-    opencodeSessionTitle: hb.opencodeSessionTitle,
+    ...hubAgentFields(hb),
     endpoints: { domain: '', domainIsOrb: false, endpoints: [] },
     shellSessions: [],
     codexSession: null,

@@ -24,6 +24,8 @@ import {
   type ProviderKind,
 } from '@agentbox/config';
 import {
+  LEGACY_AGENT_STATUS_KEYS,
+  normalizeAgentStatus,
   normalizeLastAgent,
   type BoxRecord,
   type CloudSandboxSummary,
@@ -250,8 +252,49 @@ function projectRootOf(b: ListedBox): string {
   return b.projectRoot ?? b.workspacePath ?? b.id;
 }
 
+/**
+ * Trim the internal status map down to what the API promises: state + session
+ * title per agent.
+ *
+ * `updatedAt` / `sessionRunning` are deliberately not published — no client has
+ * ever had them, and `plan` / `question` carry agent output that belongs to
+ * `GET /boxes/{id}/agent`, not to a list row every UI polls.
+ */
+/**
+ * The session title to label a box by: the first agent that set one, built-ins
+ * in their historical claude > codex > opencode order and anything else after.
+ *
+ * Iterating rather than naming the three is what lets a fourth agent's title
+ * become the box's label — the old chain would have fallen through to the raw
+ * box name for it.
+ */
+function firstSessionTitle(b: ListedBox): string | undefined {
+  const rank = (id: string): number => {
+    const i = LEGACY_AGENT_STATUS_KEYS.indexOf(id);
+    return i === -1 ? LEGACY_AGENT_STATUS_KEYS.length : i;
+  };
+  return Object.entries(b.agentStatus)
+    .sort(([x], [y]) => rank(x) - rank(y) || x.localeCompare(y))
+    .find(([, e]) => e.sessionTitle)?.[1].sessionTitle;
+}
+
+function wireAgentStatus(
+  agents: ListedBox['agentStatus'],
+): Record<string, { state: string; sessionTitle?: string }> {
+  const out: Record<string, { state: string; sessionTitle?: string }> = {};
+  for (const [id, entry] of Object.entries(agents)) {
+    out[id] = {
+      state: entry.state,
+      ...(entry.sessionTitle ? { sessionTitle: entry.sessionTitle } : {}),
+    };
+  }
+  return out;
+}
+
 function mapStatus(b: ListedBox): BoxStatus {
-  const errored = b.claudeActivity === 'error' || b.codexActivity === 'error';
+  // ANY reporting agent's error raises the box's status. Naming claude and codex
+  // one at a time meant an OpenCode box that errored still read as `running`.
+  const errored = Object.values(b.agentStatus).some((a) => a.state === 'error');
   switch (b.state) {
     case 'running':
       return errored ? 'error' : 'running';
@@ -294,9 +337,7 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     // title as the box's primary label; else fall back to the session title, then name.
     task:
       b.displayName?.trim() ||
-      b.claudeSessionTitle ||
-      b.codexSessionTitle ||
-      b.opencodeSessionTitle ||
+      firstSessionTitle(b) ||
       b.name,
     displayName: b.displayName?.trim() || null,
     // Normalize the frozen wire spelling ('claude-code') to the UI label ('claude').
@@ -308,7 +349,7 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     provider: b.provider ?? 'docker',
     commits: null,
     filesTouched: null,
-    error: status === 'error' ? (b.claudeSessionTitle ?? 'Agent reported an error') : null,
+    error: status === 'error' ? (firstSessionTitle(b) ?? 'Agent reported an error') : null,
     webUrl: eps.find((e) => e.kind === 'web')?.url ?? null,
     vncUrl: eps.find((e) => e.kind === 'vnc')?.url ?? null,
     // Raw host-side fields for native clients (tray) — see Box for semantics.
@@ -318,11 +359,18 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     projectIndex: b.projectIndex,
     vncEnabled: b.vncEnabled ?? false,
     gitWorktrees: b.gitWorktrees?.map((w) => ({ kind: w.kind, branch: w.branch })),
+    // The keyed map is the source; the five named fields below are its derived
+    // projection, kept because the macOS tray decodes the three title keys BY
+    // NAME (as optional strings, so dropping one would silently blank its box
+    // labels rather than fail) and because a client older than this build reads
+    // nothing else. A fourth agent is reachable only through `agentStatus`.
+    agentStatus: wireAgentStatus(b.agentStatus),
     claudeSessionTitle: b.claudeSessionTitle,
     codexSessionTitle: b.codexSessionTitle,
     opencodeSessionTitle: b.opencodeSessionTitle,
     claudeActivity: b.claudeActivity,
     codexActivity: b.codexActivity,
+    opencodeActivity: b.opencodeActivity,
     shellCount: b.shellSessions.length,
     // Adoption / reconstruction fields (see Box) — cloud fields are cloud only
     // (a docker box has no cloud block, so they stay undefined). `originUrl` is
@@ -2834,7 +2882,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const disk = await readBoxStatus(box).catch(() => null);
       const mem = handle.statusStore.get(id);
       const snap = disk ?? (mem && isValidBoxStatus(mem) ? (mem as unknown as CtlBoxStatus) : null);
-      return { claude: snap?.claude ?? null };
+      const agents = normalizeAgentStatus(snap);
+      return { agents, claude: agents.claude ?? null };
     },
 
     // ── box service logs ──

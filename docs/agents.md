@@ -192,9 +192,9 @@ message instead of blocking on a password read nothing will answer.
    `apps/cli/src/agents/commands.ts`. `index.ts`, `attach.ts`,
    `agent-sessions.ts`, `fork.ts` and `argv-prefix.ts` all read the tables, so
    there is nothing to register in any of them.
-   *Not yet collapsed:* `list.ts` still branches per agent, because it reads the
-   five named `BoxStatus` fields — a wire contract the hub `/api/v1` payload and
-   the macOS tray consume. That is the ctl status-map item, not this one.
+   *Nothing per-agent left in `list.ts`:* it iterates the box's agent status map,
+   so a new agent shows up in the AGENT column and the cmux dock with no edit
+   there.
 4. **Seeded files**, if the agent loads an agentbox-owned hook/plugin/skill:
    declare `seeds: [{ bakedPath, destRel, sharedAsset, label }]` on the row, and
    `launchFlags` for any argv the agent needs to load them. Then add the file to
@@ -209,19 +209,32 @@ message instead of blocking on a password read nothing will answer.
    leaf (`sandbox-core` depends on *it*), so it cannot read `AGENT_SYNC_SPECS` to
    generate per-agent keys. The command descriptor reaches them through typed
    accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
-6. **ctl**, if the agent should report activity: a `BoxStatus` field, an
-   `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry. The last one is
-   enforced, not merely documented: a drift test in `packages/ctl` compares it
-   against `AGENT_SYNC_SPECS` and fails until you add the row.
+6. **Activity reporting**, if the agent should report one: declare
+   `caps.activitySource` — a list of `hooks` / `plugin` / `scraper`, empty if it
+   reports nothing (ctl then skips probing it rather than adding a permanently
+   `unknown` entry to every snapshot). *There is no ctl code to write:* status is
+   a keyed map, one `agent-state <agent> <state>` op serves every agent, and the
+   tmux session to probe ships from the host over the `agents.list` descriptor —
+   so an agent added after an image was baked reports activity with no re-bake.
+   Two things are enforced rather than documented: declaring `plugin` requires
+   the `seeds` that put the plugin in the box, and a `WATCHED_CREDENTIALS` entry
+   must match the registry (drift tests in `packages/sandbox-core` and
+   `packages/ctl`).
+   *Do not repoint the seeded hook files at `agent-state`.* ctl still ships the
+   frozen `<agent>-state` names for the built-in three, because agent config
+   volumes are SHARED BETWEEN BOXES: a `hooks.json` seeded by a newer image can
+   be read by a box running older baked ctl, and that box would silently stop
+   reporting.
 7. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
    (`apps/cli/src/commands/download-<agent>.ts`) plus the pull functions and
    box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
 
-Step 3 is no longer a 1,300-line clone (see the backlog below); steps 5–7 are
-the tail a generic ctl status map and a generalized config namespace would
-collapse — see the seam
+Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change
+(see the backlog below). **Step 5 is the only per-agent tax left** — a
+generalized config namespace collapses it; step 7 is the other open one. See the
+seam
 analysis in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
 
@@ -573,15 +586,12 @@ Fixed:
   `prepareTeleport` and no per-agent module (`session-teleport/opencode.ts` is
   gone).
 
-**Still open:**
+**Still open** (and one now closed):
 
-- **`caps.activitySource`** has no consumer. Its two values also under-describe
-  reality — claude is hooks-primary with a scraper backstop, codex is
-  scraper-primary, opencode is plugin-only — so it wants widening alongside the
-  ctl status-map item rather than wiring as-is. It is not entirely inert now:
-  `agent-seed.test.ts` asserts that an agent declaring `activitySource: 'plugin'`
-  also declares the `seeds` that put the plugin in the box, which is the
-  invariant the OpenCode bug below violated.
+- **`caps.activitySource`** is now a LIST (`hooks` / `plugin` / `scraper`) and
+  wired — see section 7. Its old single value under-described reality: claude is
+  hooks-primary with a scraper backstop, codex is scraper-primary, opencode is
+  plugin-only.
 - **`watch` / `roots`** reach the box (see item 2) but nothing consumes the
   `backup` route yet. Wiring it means routing through `cp.toHost` behind a
   `box.agentFileSync` config, with the trust rule `download.claude` already uses:
@@ -637,3 +647,62 @@ seed, then launch") was re-derived at each call site. It is now stated once, on
 `seedDeclaredFilesForLaunch`, and the seed for the detached path lives *inside*
 `startDetachedCloudAgent` after its own `provider.start` — so the control box's
 create worker gets it too, not just the CLI.
+
+
+### 7. Activity status was five named fields, and OpenCode's was dropped — **done**
+
+`BoxStatus` carried a required `claude` plus optional `codex`/`opencode`, three
+`<agent>-state` ops, three reporter setters and three snapshot branches; the hub
+`/api/v1` Box carried five named fields; `list`, the dashboard, the attach footer
+and the relay's queue gate each re-spelled the same three names. A fourth agent
+could not report activity — not "was not wired up", but had nowhere to put the
+value.
+
+Status is now a **keyed map** (`AgentStatusMap` in `@agentbox/core` — the leaf
+both ctl and the relay can reach, since ctl depends on the relay and not the
+reverse), with one `agent-state <agent> <state>` op behind it. ctl learns which
+tmux sessions to probe from the `agents.list` descriptor it already fetches, so
+an agent added after an image was baked is probed **without a re-bake** — the
+same reconcile shape `CredentialsWatcher` uses (start on the baked list, upgrade
+detached, never on the daemon's critical path).
+
+**Three live bugs came out of it, all of them "the field simply wasn't there":**
+
+1. **OpenCode's activity was produced, transported, persisted, and then dropped.**
+   `opencodeActivity` existed nowhere in the repo. Its plugin has always reported
+   a real state, and `lifecycle.ts` projected only the session title — so `list`
+   could print a bare `opencode` and nothing more, and an OpenCode box that
+   errored could not even raise the box's status to `error`. PR #344 had just
+   finished making that plugin reach cloud boxes, and the result was invisible.
+2. **`agentbox agent state` / `wait-for` / `get-plan-question` were claude-only.**
+   Not by a missing flag: `getAgentState` returned `{ claude }` and every wait
+   predicate took `BoxStatusClaude`, so on a codex or opencode box they read
+   claude's permanent `unknown` forever. They now read the box's most active
+   agent, or `--agent <id>`.
+3. **The hosted (Postgres) plane emitted none of the five fields**, unlike the
+   in-process one, so `agentbox list`'s AGENT column silently degraded to `-`
+   against a control box.
+
+**Two things deliberately did NOT change, and both are load-bearing:**
+
+- **`BoxStatus.schema` stays `1`.** `readBoxStatus` and the relay's
+  `isValidBoxStatus` both reject anything else outright, so a bump would blank
+  every field on every existing reader rather than degrade. `agents` is an
+  additive field — the same discipline `probed`, `expose` and `sessionTitle`
+  already follow on this type — and back-compat is read-time normalization, the
+  rule `normalizeLastAgent` states for persisted agent names.
+- **The named fields are still written and still published.** The snapshot writes
+  them as a *derived* mirror of the map (asserted derived by a test, so it cannot
+  quietly go stale), and the hub payload still carries all five plus the new
+  `opencodeActivity`. Skew runs both ways — a baked ctl outlives the host that
+  reads it, and a laptop CLI is routinely a different build from the control box
+  it points at — and those fields drive the queue's working gate, autopause and
+  keepalive, not just display. The macOS tray decodes the three `*SessionTitle`
+  keys **by name, as optional strings**, so removing one would blank its box
+  labels silently rather than fail loudly.
+
+The seeded hook/plugin files still invoke `<agent>-state`, and ctl still ships
+those command names (generated from the built-in list). Agent config volumes are
+**shared between boxes**, so a `hooks.json` seeded by a newer image can be read by
+a box running older baked ctl; repointing those files at `agent-state` would
+break activity reporting on exactly that box, silently.

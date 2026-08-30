@@ -45,9 +45,9 @@ describe('matchWaiting (claude pane safety net)', () => {
   });
 
   it('does NOT match ordinary streamed prose', () => {
-    expect(matchWaiting('● Here is how the function works, step by step:\n1. parse\n2. render\n')).toBe(
-      false,
-    );
+    expect(
+      matchWaiting('● Here is how the function works, step by step:\n1. parse\n2. render\n'),
+    ).toBe(false);
   });
 
   it('only looks at the bottom region (an answered prompt scrolled up is ignored)', () => {

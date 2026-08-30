@@ -5,6 +5,7 @@ vi.mock('../src/relay-rpc.js', () => ({ postRpcAwait }));
 
 const { fetchWatchList } = await import('../src/agent-registry.js');
 const { WATCHED_CREDENTIALS } = await import('../src/credentials-watcher.js');
+const { BAKED_AGENT_SESSIONS } = await import('../src/status-reporter.js');
 
 /**
  * The failure this guards, found by review on PR #340:
@@ -36,6 +37,7 @@ describe('fetchWatchList', () => {
 
     await expect(pending).resolves.toEqual({
       files: WATCHED_CREDENTIALS,
+      sessions: BAKED_AGENT_SESSIONS,
       source: 'timeout',
     });
   });
@@ -46,15 +48,67 @@ describe('fetchWatchList', () => {
       stdout: JSON.stringify({
         schema: 1,
         agents: [
-          { id: 'codex', watch: [{ path: '/tmp/c', sync: 'fanout', shape: 'nonempty-json' }] },
+          {
+            id: 'codex',
+            sessionName: 'codex',
+            activitySource: ['scraper'],
+            watch: [{ path: '/tmp/c', sync: 'fanout', shape: 'nonempty-json' }],
+          },
         ],
       }),
       stderr: '',
     });
     await expect(fetchWatchList()).resolves.toEqual({
       files: [{ agent: 'codex', path: '/tmp/c', shape: 'nonempty-json' }],
+      sessions: [{ agent: 'codex', sessionName: 'codex' }],
       source: 'host',
     });
+  });
+
+  it('probes a session name this binary was never baked with', async () => {
+    // The whole point of pulling the list: ctl is baked into the image, so an
+    // agent added after the bake has no entry in BAKED_AGENT_SESSIONS and would
+    // otherwise never be probed for activity at all.
+    postRpcAwait.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        schema: 1,
+        agents: [
+          {
+            id: 'openclaw',
+            sessionName: 'openclaw',
+            activitySource: ['hooks'],
+            watch: [{ path: '/tmp/o', sync: 'fanout', shape: 'nonempty-json' }],
+          },
+        ],
+      }),
+      stderr: '',
+    });
+    const got = await fetchWatchList();
+    expect(got.sessions).toEqual([{ agent: 'openclaw', sessionName: 'openclaw' }]);
+  });
+
+  it('does not probe an agent that reports no activity at all', async () => {
+    // An agent with no hooks, no plugin and no scraper would only ever add a
+    // permanently-`unknown` entry to every snapshot.
+    postRpcAwait.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        schema: 1,
+        agents: [
+          {
+            id: 'quiet',
+            sessionName: 'quiet',
+            activitySource: [],
+            watch: [{ path: '/tmp/q', sync: 'fanout', shape: 'nonempty-json' }],
+          },
+        ],
+      }),
+      stderr: '',
+    });
+    // No usable session rows at all -> keep the baked probes rather than going
+    // silent, which is what a host predating `sessionName` also looks like.
+    expect((await fetchWatchList()).sessions).toEqual(BAKED_AGENT_SESSIONS);
   });
 
   it('keeps the baked list when the rpc fails or the payload is junk', async () => {

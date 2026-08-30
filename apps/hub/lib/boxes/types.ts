@@ -44,11 +44,18 @@ export interface Box {
   projectIndex?: number;
   vncEnabled?: boolean;
   gitWorktrees?: Array<{ kind?: string; branch?: string }>;
+  // Every reporting agent's activity + session title, keyed by agent id. THE
+  // source; the five named fields below are its derived projection, kept because
+  // the macOS tray decodes the three title keys BY NAME and a client older than
+  // this build reads nothing else. An agent outside the built-in three appears
+  // only here.
+  agentStatus?: Record<string, { state: string; sessionTitle?: string }>;
   claudeSessionTitle?: string;
   codexSessionTitle?: string;
   opencodeSessionTitle?: string;
   claudeActivity?: string;
   codexActivity?: string;
+  opencodeActivity?: string;
   // Live shell-session count (docker only; the persisted status has none for
   // cloud/registered boxes). Drives `agentbox list`'s SHELLS column. Absent →
   // the CLI renders `-`.

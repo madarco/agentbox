@@ -1,3 +1,4 @@
+import type { AgentId } from '@agentbox/core';
 // Tmux-pane scraper for Codex activity state. Codex 0.134.0's JSON-hook firing
 // is still unreliable in TUI mode (the `~/.codex/hooks.json` discovery path
 // often silently skips even with `--enable hooks --dangerously-bypass-hook-trust`
@@ -55,6 +56,8 @@ const PATTERNS: ReadonlyArray<{ re: RegExp; state: AgentActivityState }> = [
 
 export interface CodexScraperOptions {
   reporter: StatusReporter;
+  /** Which agent this pane belongs to; see {@link ClaudeScraperOptions.agent}. */
+  agent?: AgentId;
   sessionName?: string;
   intervalMs?: number;
   /** Override the tmux runner — used by unit tests to feed fake pane output. */
@@ -72,6 +75,7 @@ export interface CodexScraperHandle {
  * doesn't need to track its own last-pushed state.
  */
 export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle {
+  const agent = opts.agent ?? 'codex';
   const sessionName = opts.sessionName ?? DEFAULT_SESSION;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const capture = opts.capturePane ?? defaultCapturePane;
@@ -93,13 +97,13 @@ export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle
       if (!lastSessionPresent) {
         // Session just came up: emit `idle` as a baseline. The pattern below
         // will overwrite it within a tick if codex is mid-work.
-        opts.reporter.setCodexState('idle');
+        opts.reporter.setAgentState(agent, 'idle');
         lastState = 'idle';
         lastSessionPresent = true;
       }
       const matched = matchState(pane);
       if (matched !== null && matched !== lastState) {
-        opts.reporter.setCodexState(matched);
+        opts.reporter.setAgentState(agent, matched);
         lastState = matched;
       }
     } catch {

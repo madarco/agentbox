@@ -188,7 +188,10 @@ export function addProjectAlias<T = unknown>(
   }
   const existing = projectsMap[toPath];
   if (existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
-    projectsMap[toPath] = { ...(existing as Record<string, unknown>), ...(src as Record<string, unknown>) };
+    projectsMap[toPath] = {
+      ...(existing as Record<string, unknown>),
+      ...(src as Record<string, unknown>),
+    };
   } else {
     projectsMap[toPath] = structuredClone(src);
   }

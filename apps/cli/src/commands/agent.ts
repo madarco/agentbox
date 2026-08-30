@@ -1,6 +1,7 @@
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
 import { type BoxStatusClaude } from '@agentbox/ctl';
+import { normalizeAgentStatus, pickPrimaryAgent } from '@agentbox/core';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import {
@@ -37,19 +38,22 @@ export const agentCommand = new Command('agent').description(
 
 interface BoxRefOpts {
   json?: boolean;
+  /** Which agent to read; default is the box's most active. */
+  agent?: string;
 }
 
 const agentStateCommand = new Command('state')
-  .description('Print the current claude activity state for a box (or full status with --json).')
+  .description("Print an agent's current activity state for a box (or full status with --json).")
   .argument('[box]', 'box ref (default: only box in this project)')
-  .option('--json', 'emit the full BoxStatusClaude payload as JSON')
+  .option('--json', 'emit the full agent status payload as JSON')
+  .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
       // The status snapshot lives on whichever hub owns the box (its relay writes
       // status.json), so read it through the owning hub — a box on a control box
       // has no snapshot on this laptop's disk.
-      const claude = await fetchAgentClaude(box);
+      const claude = await fetchAgentClaude(box, opts.agent);
       if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
       if (claude === HUB_NOT_FOUND) {
         reportAgentBoxNotFound(box, opts.json === true);
@@ -72,6 +76,8 @@ const agentStateCommand = new Command('state')
 interface WaitForOpts {
   timeout?: string;
   json?: boolean;
+  /** Which agent to wait on; default is the box's most active. */
+  agent?: string;
 }
 
 const agentWaitForCommand = new Command('wait-for')
@@ -79,7 +85,8 @@ const agentWaitForCommand = new Command('wait-for')
   .argument('<state>', `target state: ${AGENT_WAIT_STATES.join(' | ')}`)
   .argument('[box]', 'box ref (default: only box in this project)')
   .option('--timeout <ms>', `wall-clock cap (default: ${String(DEFAULT_WAIT_TIMEOUT_MS)})`)
-  .option('--json', 'emit the matched claude payload as JSON')
+  .option('--json', 'emit the matched agent payload as JSON')
+  .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
   .action(async (state: string, boxRef: string | undefined, opts: WaitForOpts) => {
     try {
       if (!isAgentWaitState(state)) {
@@ -111,7 +118,7 @@ const agentWaitForCommand = new Command('wait-for')
       let elapsedMs = 0;
       const start = Date.now();
       for (;;) {
-        const claude = await agentClaudeFrom(source, box.id).catch((err: unknown) => {
+        const claude = await agentClaudeFrom(source, box.id, opts.agent).catch((err: unknown) => {
           if (err instanceof HubApiError && err.code === 'not_found') {
             log.error(`box ${box.name} was not found on ${describeHub(source)}.`);
             process.exit(2);
@@ -147,10 +154,11 @@ const agentGetPlanQuestionCommand = new Command('get-plan-question')
   )
   .argument('[box]', 'box ref (default: only box in this project)')
   .option('--json', 'emit the structured payload as JSON instead of a human render')
+  .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
     try {
       const box = await resolveBoxOrExit(boxRef);
-      const claude = await fetchAgentClaude(box);
+      const claude = await fetchAgentClaude(box, opts.agent);
       if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
       if (claude === HUB_NOT_FOUND) {
         reportAgentBoxNotFound(box, opts.json === true);
@@ -522,12 +530,24 @@ export interface GatheredApprovals {
  * The box's agent snapshot as the OWNING hub holds it. `getAgentState` reads the
  * hub's own `status.json` for the box (falling back to its in-memory status
  * store), so for a local box this is exactly what reading the file here returned.
+ *
+ * `agent` names which agent to read. Without it, the box's most-active agent is
+ * used — these commands used to read `claude` unconditionally, so on a codex or
+ * opencode box they reported claude's permanent `unknown` no matter what the box
+ * was actually doing.
+ *
+ * Falls back to the legacy `claude` body when the hub predates `agents`; a laptop
+ * CLI is routinely a different build from the control box it points at.
  */
 async function agentClaudeFrom(
   source: BoxPromptSource,
   boxId: string,
+  agent?: string,
 ): Promise<BoxStatusClaude | null> {
-  return ((await source.client.getAgentState(boxId)).claude ?? null) as BoxStatusClaude | null;
+  const res = await source.client.getAgentState(boxId);
+  const map = normalizeAgentStatus(res.agents ? { agents: res.agents } : { claude: res.claude });
+  if (agent) return (map[agent] ?? null) as BoxStatusClaude | null;
+  return (pickPrimaryAgent(map)?.entry ?? null) as BoxStatusClaude | null;
 }
 
 /**
@@ -672,6 +692,7 @@ const HUB_NOT_FOUND = Symbol('hub-not-found');
  */
 async function fetchAgentClaude(
   box: BoxRecord,
+  agent?: string,
 ): Promise<BoxStatusClaude | null | typeof HUB_ERROR | typeof HUB_NOT_FOUND> {
   const source = await resolveBoxPromptSource(box);
   if (!source) {
@@ -681,7 +702,7 @@ async function fetchAgentClaude(
   }
   if (reportedUnauthenticatedPlane(source)) return HUB_ERROR;
   try {
-    return await agentClaudeFrom(source, box.id);
+    return await agentClaudeFrom(source, box.id, agent);
   } catch (err) {
     if (err instanceof HubApiError && err.code === 'not_found') return HUB_NOT_FOUND;
     log.error(

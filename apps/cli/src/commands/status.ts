@@ -2,6 +2,7 @@ import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import type { BoxStatus } from '@agentbox/ctl';
 import { boxResourceStats, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
+import { normalizeAgentStatus } from '@agentbox/core';
 import type { BoxResourceStats } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { reportBoxNotOnAnyHub, withOwningHub } from '../control-plane/with-hub.js';
@@ -209,10 +210,10 @@ function renderClaude(i: InspectedBox, persisted: BoxStatus | null): string {
     session = `running ("${s.sessionName}")${ago ? `, started ${ago}` : ''}`;
   }
   const lines = [`  session   ${session}`];
-  if (persisted) {
-    const c = persisted.claude;
-    const ago = fmtAgo(c.updatedAt);
-    lines.push(`  activity  ${c.state}${ago ? ` (${ago})` : ''}`);
+  const claude = normalizeAgentStatus(persisted).claude;
+  if (claude) {
+    const ago = fmtAgo(claude.updatedAt);
+    lines.push(`  activity  ${claude.state}${ago ? ` (${ago})` : ''}`);
   }
   return lines.join('\n');
 }

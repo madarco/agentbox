@@ -137,7 +137,7 @@ agentbox drive resize 1 200 60
 
 ### `agentbox agent` — monitor the agent's live state
 
-Where `drive` reads raw pixels, `agentbox agent` reports _what the agent is doing_, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error | input-needed` — so you can watch a box flip from **working** to **idle**, or block until it needs you.
+Where `drive` reads raw pixels, `agentbox agent` reports _what the agent is doing_, hook-driven and race-free. The state is one of `working | idle | waiting | end-plan | question | prompt | compacting | error | input-needed` — so you can watch a box flip from **working** to **idle**, or block until it needs you. It reads the box's most active agent by default; pass `--agent <id>` to name one explicitly.
 
 ```bash
 agentbox agent state 1                              # → working | idle | waiting | end-plan | ...
@@ -147,6 +147,7 @@ agentbox agent wait-for prompt 1                    # block until it's ready for
 agentbox agent wait-for end-plan 1                  # Claude just called ExitPlanMode; awaits approval
 agentbox agent wait-for question 1                  # an AskUserQuestion picker is up
 agentbox agent get-plan-question 1                  # read the pending plan body or question + options
+agentbox agent state 1 --agent codex                # read a specific agent, not the box's most active one
 ```
 
 **`input-needed` is the most important orchestration event** — the single signal that _you_ (or the orchestrating agent) need to take action. It fires whenever the agent stops working and wants a human, whether because the **task finished and the prompt is ready** for the next message, or because the **subagent is blocked** on a question, a plan to approve, a permission prompt, or an error. It's the robust replacement for chaining separate `wait-for end-plan` / `wait-for question` / `wait-for prompt` calls — each of those hangs until _its_ timeout if the agent happens to reach a _different_ state. `wait-for input-needed` also prints the concrete state it matched (`prompt` / `end-plan` / `question` / `waiting` / `error`), so a script can branch on _why_ it woke.

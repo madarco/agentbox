@@ -1,3 +1,4 @@
+import type { AgentId } from '@agentbox/core';
 // Promote-only tmux-pane safety net for Claude's activity state. Claude's
 // hooks (claude-managed-settings.json) are the PRIMARY signal; this only
 // backstops the one failure that strands an orchestrator: a prompt the hooks
@@ -43,6 +44,10 @@ const WAITING_PATTERNS: readonly RegExp[] = [
 
 export interface ClaudeScraperOptions {
   reporter: StatusReporter;
+  /** Which agent this pane belongs to. The scraper's patterns are Claude's, but
+   *  the id it reports under comes from the daemon's resolved agent list, so a
+   *  renamed session still lands on the right status entry. */
+  agent?: AgentId;
   sessionName?: string;
   intervalMs?: number;
   /** Override the tmux runner — used by unit tests to feed fake pane output. */
@@ -58,6 +63,7 @@ export interface ClaudeScraperHandle {
  * stop it on shutdown. No-ops when no claude session is present.
  */
 export function startClaudeScraper(opts: ClaudeScraperOptions): ClaudeScraperHandle {
+  const agent = opts.agent ?? 'claude';
   const sessionName = opts.sessionName ?? DEFAULT_SESSION;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const capture = opts.capturePane ?? defaultCapturePane;
@@ -68,7 +74,7 @@ export function startClaudeScraper(opts: ClaudeScraperOptions): ClaudeScraperHan
     try {
       const pane = await capture(sessionName);
       if (pane === null) return; // no claude session — nothing to backstop
-      if (matchWaiting(pane)) opts.reporter.markScreenWaiting();
+      if (matchWaiting(pane)) opts.reporter.markScreenWaiting(agent);
     } catch {
       // Pane capture failures (tmux not ready, transient errors) are non-fatal.
     }

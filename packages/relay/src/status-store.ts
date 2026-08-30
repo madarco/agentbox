@@ -1,6 +1,7 @@
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { normalizeAgentStatus } from '@agentbox/core';
 
 /**
  * A box status snapshot as received from the in-box daemon. The relay treats
@@ -55,6 +56,29 @@ export function isValidBoxStatus(payload: unknown): payload is BoxStatusSnapshot
   if (typeof payload !== 'object' || payload === null) return false;
   const o = payload as Record<string, unknown>;
   return o.schema === 1 && typeof o.boxId === 'string' && o.boxId.length > 0;
+}
+
+/**
+ * Fold an incoming snapshot's agent status into the keyed map, in place.
+ *
+ * Run at INGESTION, so the memory store, the `status.json` file and the
+ * `box-status` SSE broadcast all carry the current shape and no downstream
+ * reader has to know two. The producer is baked into the box image, so a box
+ * created from an older snapshot posts the old named blocks for as long as it
+ * lives, and no host release can change that.
+ *
+ * The named blocks are LEFT IN PLACE, not stripped: a hub or CLI older than this
+ * build is still reading them, and the current producer writes them itself as a
+ * derived mirror. Normalizing only ever adds `agents`.
+ *
+ * `schema` deliberately does not move — see `AgentStatusMap`'s note. Both this
+ * guard and the host's `readBoxStatus` reject anything but 1, so bumping it
+ * would blank every field on every existing reader rather than degrade.
+ */
+export function normalizeBoxStatus(payload: BoxStatusSnapshot): BoxStatusSnapshot {
+  const agents = normalizeAgentStatus(payload);
+  if (Object.keys(agents).length === 0) return payload;
+  return { ...payload, agents };
 }
 
 /**

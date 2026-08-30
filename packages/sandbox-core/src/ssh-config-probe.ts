@@ -40,9 +40,7 @@ async function fileExists(path: string): Promise<boolean> {
  * `port` is omitted when it is the default 22 so the expansion stays as close to
  * what the user wrote as possible.
  */
-export async function resolveSshConfigTarget(
-  destination: string,
-): Promise<SshConfigTarget | null> {
+export async function resolveSshConfigTarget(destination: string): Promise<SshConfigTarget | null> {
   let stdout: string;
   try {
     const res = await execa('ssh', ['-G', destination], { reject: false, timeout: 10_000 });

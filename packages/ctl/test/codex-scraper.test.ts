@@ -36,9 +36,11 @@ describe('matchState (codex pane patterns)', () => {
   it('does NOT match generic english that contains the word "working"', () => {
     // The directory-trust prompt's warning text has "Working with untrusted
     // contents" but that does not mean codex is in a working state.
-    expect(matchState('Do you trust the contents of this directory? Working with untrusted contents comes with risk.')).toBe(
-      'waiting',
-    );
+    expect(
+      matchState(
+        'Do you trust the contents of this directory? Working with untrusted contents comes with risk.',
+      ),
+    ).toBe('waiting');
     // Random unrelated paragraph mentioning "working" — should fall through
     // to idle if the codex footer is present, else null.
     expect(matchState('Some doc text about working with codex.')).toBe(null);
@@ -66,10 +68,10 @@ describe('matchState (codex pane patterns)', () => {
 });
 
 describe('startCodexScraper', () => {
-  const calls: { state: AgentActivityState; payload?: unknown }[] = [];
+  const calls: { agent: string; state: AgentActivityState; payload?: unknown }[] = [];
   const reporter = {
-    setCodexState: (state: AgentActivityState, payload?: unknown): void => {
-      calls.push({ state, payload });
+    setAgentState: (agent: string, state: AgentActivityState, payload?: unknown): void => {
+      calls.push({ agent, state, payload });
     },
   } as unknown as Parameters<typeof startCodexScraper>[0]['reporter'];
 
@@ -82,9 +84,9 @@ describe('startCodexScraper', () => {
   it('pushes the baseline idle when a session appears, then pushes only on transitions', async () => {
     let i = 0;
     const panes: (string | null)[] = [
-      '',                              // tick 0: empty pane → no pattern, baseline idle
-      'Thinking...',                   // tick 1: working
-      'Streaming response',            // tick 2: same state (working) — no push
+      '', // tick 0: empty pane → no pattern, baseline idle
+      'Thinking...', // tick 1: working
+      'Streaming response', // tick 2: same state (working) — no push
       'Allow this command? Press y/n', // tick 3: waiting (transition)
     ];
     const handle = startCodexScraper({
@@ -102,6 +104,9 @@ describe('startCodexScraper', () => {
 
     handle.stop();
     expect(calls.map((c) => c.state)).toEqual(['idle', 'working', 'waiting']);
+    // Every push must land on codex's entry in the status map — a wrong id
+    // would silently report codex's activity as some other agent's.
+    expect(new Set(calls.map((c) => c.agent))).toEqual(new Set(['codex']));
   });
 
   it('does not push when no codex session is present (capture returns null)', async () => {
@@ -120,10 +125,10 @@ describe('startCodexScraper', () => {
   it('re-emits idle baseline when a session disappears and reappears', async () => {
     let i = 0;
     const panes: (string | null)[] = [
-      'Thinking...',         // session up: baseline → idle, then working in same tick
-      null,                  // session disappears
+      'Thinking...', // session up: baseline → idle, then working in same tick
+      null, // session disappears
       null,
-      '',                    // session back: baseline idle again
+      '', // session back: baseline idle again
     ];
     const handle = startCodexScraper({
       reporter,

@@ -1,5 +1,9 @@
 export type {
   AgentActivityState,
+  AgentPlanPayload,
+  AgentQuestionPayload,
+  AgentStatusEntry,
+  AgentStatusMap,
   BoxStatus,
   BoxStatusClaude,
   BoxStatusCodex,
@@ -35,9 +39,7 @@ export {
 } from './types.js';
 export {
   claudeSession,
-  claudeState,
-  codexState,
-  opencodeState,
+  agentState,
   ping,
   status,
   taskStatus,

@@ -19,11 +19,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import type {
-  RepoResyncResult,
-  ResyncWorktree,
-  WorkspaceResyncPorts,
-} from '@agentbox/core';
+import type { RepoResyncResult, ResyncWorktree, WorkspaceResyncPorts } from '@agentbox/core';
 
 /**
  * Sentinel token the box-side probe emits for a path that exists but is NOT a
@@ -111,7 +107,11 @@ export async function resyncWorkspace(
         boxStashed = push.exitCode === 0;
       }
 
-      const newCommits = await ports.boxGit(ct, ['rev-list', '--count', `${boxBranch}..${hostRef}`]);
+      const newCommits = await ports.boxGit(ct, [
+        'rev-list',
+        '--count',
+        `${boxBranch}..${hostRef}`,
+      ]);
       const n = newCommits.exitCode === 0 ? newCommits.stdout.trim() : '?';
       const merge = await ports.boxGit(ct, ['merge', '--no-commit', hostRef]);
       const mergeInProgress =
@@ -133,7 +133,9 @@ export async function resyncWorkspace(
         ]);
         log(
           `resync: ${ct}: merged ${n} new host commit(s) from ${hostRef}` +
-            (conflicts.length > 0 ? ` (${String(conflicts.length)} conflict(s) kept box version)` : ''),
+            (conflicts.length > 0
+              ? ` (${String(conflicts.length)} conflict(s) kept box version)`
+              : ''),
         );
       } else if (merge.exitCode === 0) {
         log(`resync: ${ct}: ${n === '0' ? 'already up to date' : `fast-forwarded to ${hostRef}`}`);
@@ -141,7 +143,9 @@ export async function resyncWorkspace(
         // Hard failure (e.g. an untracked box file would be overwritten). Leave
         // the box untouched.
         await ports.boxGit(ct, ['merge', '--abort']);
-        log(`resync: ${ct}: merge skipped (${(merge.stderr || merge.stdout).trim().split('\n')[0]})`);
+        log(
+          `resync: ${ct}: merge skipped (${(merge.stderr || merge.stdout).trim().split('\n')[0]})`,
+        );
       }
 
       if (boxStashed) {
@@ -202,7 +206,9 @@ export async function resyncWorkspace(
         else identical++;
       }
       if (identical > 0) {
-        log(`resync: ${ct}: ${String(identical)} untracked host file(s) already identical in box (no-op)`);
+        log(
+          `resync: ${ct}: ${String(identical)} untracked host file(s) already identical in box (no-op)`,
+        );
       }
       if (toCopy.length > 0) {
         const tar = await ports.packHostFiles(hostMain, toCopy);
@@ -247,7 +253,9 @@ export function makeHostGitPorts(): Pick<
       const hostRef =
         hostBranchProbe.exitCode === 0 && hostBranchProbe.stdout.trim()
           ? hostBranchProbe.stdout.trim()
-          : (await execa('git', ['-C', hostMain, 'rev-parse', 'HEAD'], { reject: false })).stdout.trim();
+          : (
+              await execa('git', ['-C', hostMain, 'rev-parse', 'HEAD'], { reject: false })
+            ).stdout.trim();
       return hostRef || null;
     },
     async createHostStash(hostMain) {
@@ -263,7 +271,9 @@ export function makeHostGitPorts(): Pick<
       return untracked.exitCode === 0 ? splitNul(untracked.stdout) : [];
     },
     async hashHostFile(hostMain, relPath) {
-      return createHash('sha256').update(await readFile(join(hostMain, relPath))).digest('hex');
+      return createHash('sha256')
+        .update(await readFile(join(hostMain, relPath)))
+        .digest('hex');
     },
     async packHostFiles(hostMain, relPaths) {
       const tarOut = await execa('tar', ['-C', hostMain, '--null', '-T', '-', '-cf', '-'], {

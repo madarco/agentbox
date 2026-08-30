@@ -52,6 +52,20 @@ export interface AgentDescriptor {
   id: string;
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
+  /**
+   * The tmux session name ctl probes for this agent's liveness and pane title.
+   *
+   * Shipped rather than assumed because ctl is baked: its compiled-in list ends
+   * at the agents that existed when the image was built, so an agent added later
+   * would never be probed and could never report activity at all.
+   */
+  sessionName: string;
+  /**
+   * How this agent reports activity — see `AgentCapabilities.activitySource`.
+   * An empty list means it reports none, and ctl skips probing it entirely
+   * rather than adding a permanently-`unknown` entry to every snapshot.
+   */
+  activitySource: readonly string[];
 }
 
 /** The wire payload of `agents.list`. Versioned host-side; ctl tolerates extras. */
@@ -73,6 +87,8 @@ export function buildAgentDescriptors(): AgentDescriptorPayload {
     schema: 1,
     agents: AGENT_SYNC_SPECS.map((spec) => ({
       id: spec.id,
+      sessionName: spec.sessionName,
+      activitySource: spec.caps.activitySource,
       watch: [
         {
           path: spec.credential.boxAbsPath,

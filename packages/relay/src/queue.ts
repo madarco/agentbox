@@ -12,7 +12,13 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
-import type { BoxRecord, QueueAgentKind, ResolvedCarryEntry } from '@agentbox/core';
+import { normalizeAgentStatus, pickPrimaryAgent } from '@agentbox/core';
+import type {
+  AgentActivityState,
+  BoxRecord,
+  QueueAgentKind,
+  ResolvedCarryEntry,
+} from '@agentbox/core';
 import type { BoxRegistry } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
 
@@ -574,31 +580,13 @@ export function selectNextRunnablePrepare(
 // longer occupies a slot, so the next queued job starts — without pausing the
 // finished box.
 
-/** Activity union the working gate reasons about (mirrors @agentbox/ctl's `ClaudeActivityState`). */
-export type WorkingAgentState =
-  | 'working'
-  | 'idle'
-  | 'waiting'
-  | 'end-plan'
-  | 'question'
-  | 'compacting'
-  | 'error'
-  | 'unknown';
-
-const WORKING_AGENT_STATES: readonly WorkingAgentState[] = [
-  'working',
-  'idle',
-  'waiting',
-  'end-plan',
-  'question',
-  'compacting',
-  'error',
-  'unknown',
-];
-
-function isWorkingAgentState(v: unknown): v is WorkingAgentState {
-  return typeof v === 'string' && (WORKING_AGENT_STATES as readonly string[]).includes(v);
-}
+/**
+ * Activity union the working gate reasons about. Was a hand-kept copy of the
+ * ctl union — the relay cannot import `@agentbox/ctl` (ctl depends on the relay,
+ * not the reverse), which is exactly why the shared contract now lives in
+ * `@agentbox/core` instead of being transcribed here.
+ */
+export type WorkingAgentState = AgentActivityState;
 
 /**
  * Boot window during which a freshly-created box (agent not yet reporting a
@@ -687,29 +675,13 @@ export function readActiveAgent(snap: Record<string, unknown> | undefined): {
   state: WorkingAgentState | null;
   updatedAt: string | null;
 } {
-  if (!snap || typeof snap !== 'object') return { state: null, updatedAt: null };
-  const candidates: Array<{ state: WorkingAgentState; updatedAt: string | null }> = [];
-  for (const key of ['claude', 'codex', 'opencode']) {
-    const sub = (snap as Record<string, unknown>)[key];
-    if (!sub || typeof sub !== 'object') continue;
-    const o = sub as Record<string, unknown>;
-    if (!isWorkingAgentState(o.state)) continue;
-    candidates.push({
-      state: o.state,
-      updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : null,
-    });
-  }
-  if (candidates.length === 0) return { state: null, updatedAt: null };
-  const active = candidates.find((c) => c.state === 'working' || c.state === 'compacting');
-  if (active) return active;
-  candidates.sort((a, b) => parseTime(b.updatedAt) - parseTime(a.updatedAt));
-  return candidates[0]!;
-}
-
-function parseTime(iso: string | null): number {
-  if (!iso) return 0;
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? 0 : t;
+  // Through the normalizer: a box whose baked ctl still posts the old named
+  // blocks must gate the queue exactly like a current one, and an agent added
+  // after that box was baked must not read as "this box is idle" and let a
+  // second job start on top of it.
+  const picked = pickPrimaryAgent(normalizeAgentStatus(snap));
+  if (!picked) return { state: null, updatedAt: null };
+  return { state: picked.entry.state, updatedAt: picked.entry.updatedAt };
 }
 
 function msSince(iso: string | null | undefined): number | null {

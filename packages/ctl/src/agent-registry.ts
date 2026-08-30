@@ -1,5 +1,6 @@
 import { postRpcAwait } from './relay-rpc.js';
 import { WATCHED_CREDENTIALS, type WatchedCredential } from './credentials-watcher.js';
+import { BAKED_AGENT_SESSIONS, type WatchedAgentSession } from './status-reporter.js';
 
 /**
  * The agent watch list, pulled from the host over `agents.list`.
@@ -47,6 +48,14 @@ interface WireWatch {
 interface WireAgent {
   id?: unknown;
   watch?: unknown;
+  sessionName?: unknown;
+  activitySource?: unknown;
+}
+
+/** What one `agents.list` answer yields: the two lists ctl drives from it. */
+export interface AgentDescriptors {
+  files: readonly WatchedCredential[];
+  sessions: readonly WatchedAgentSession[];
 }
 
 /**
@@ -56,7 +65,7 @@ interface WireAgent {
  * older box. Same posture as the in-box `agentbox.yaml` parser, which warns on
  * unknown keys instead of failing.
  */
-export function parseAgentDescriptors(stdout: string): WatchedCredential[] | null {
+export function parseAgentDescriptors(stdout: string): AgentDescriptors | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -67,10 +76,25 @@ export function parseAgentDescriptors(stdout: string): WatchedCredential[] | nul
   const agents = (parsed as { agents?: unknown }).agents;
   if (!Array.isArray(agents)) return null;
 
-  const out: WatchedCredential[] = [];
+  const files: WatchedCredential[] = [];
+  const sessions: WatchedAgentSession[] = [];
   for (const raw of agents as WireAgent[]) {
     const id = typeof raw?.id === 'string' ? raw.id : null;
     if (!id) continue;
+
+    // An agent is probed for activity only if it says it reports any. A row with
+    // no `activitySource` has no hooks, no plugin and no scraper, so probing its
+    // tmux session would only add a permanently-`unknown` entry to every
+    // snapshot. Absent `activitySource` (an older host) is treated as "reports"
+    // so the three built-ins keep being probed against a host that predates it.
+    const reports =
+      raw.activitySource === undefined ||
+      (Array.isArray(raw.activitySource) && raw.activitySource.length > 0);
+    if (reports) {
+      const sessionName = typeof raw.sessionName === 'string' ? raw.sessionName : '';
+      if (sessionName.length > 0) sessions.push({ agent: id, sessionName });
+    }
+
     const watches = Array.isArray(raw.watch) ? (raw.watch as WireWatch[]) : [];
     for (const w of watches) {
       if (typeof w?.path !== 'string' || w.path.length === 0) continue;
@@ -79,12 +103,15 @@ export function parseAgentDescriptors(stdout: string): WatchedCredential[] | nul
       // validatable — anything else is dropped rather than posted unvalidated.
       if (sync !== 'fanout') continue;
       if (w.shape !== 'claude-oauth' && w.shape !== 'nonempty-json') continue;
-      out.push({ agent: id, path: w.path, shape: w.shape });
+      files.push({ agent: id, path: w.path, shape: w.shape });
     }
   }
-  // An empty list is a malformed answer, not a valid "watch nothing" — refuse it
-  // so the caller keeps the baked list.
-  return out.length > 0 ? out : null;
+  // An empty credential list is a malformed answer, not a valid "watch nothing" —
+  // refuse it so the caller keeps the baked lists. Sessions are allowed to be
+  // empty on their own (a host whose agents all opt out of activity), but not
+  // when the credentials were unusable too.
+  if (files.length === 0) return null;
+  return { files, sessions };
 }
 
 /**
@@ -104,28 +131,38 @@ export function parseAgentDescriptors(stdout: string): WatchedCredential[] | nul
 const AGENTS_LIST_TIMEOUT_MS = 30_000;
 
 /**
- * Fetch the watch list, falling back to the baked one on any failure or if the
+ * Fetch both watch lists, falling back to the baked ones on any failure or if the
  * host does not answer within {@link AGENTS_LIST_TIMEOUT_MS}. Never throws.
  *
  * MUST NOT be awaited on the daemon's critical path — see the call site in
  * `commands/daemon.ts`.
  */
-export async function fetchWatchList(): Promise<{
-  files: readonly WatchedCredential[];
-  source: 'host' | 'baked' | 'timeout';
-}> {
+export async function fetchWatchList(): Promise<
+  AgentDescriptors & { source: 'host' | 'baked' | 'timeout' }
+> {
+  const baked = {
+    files: WATCHED_CREDENTIALS,
+    sessions: BAKED_AGENT_SESSIONS,
+  } satisfies AgentDescriptors;
   try {
     const timeout = new Promise<'timeout'>((resolve) => {
       // unref: a pending timer must never be the reason the daemon stays alive.
       setTimeout(() => resolve('timeout'), AGENTS_LIST_TIMEOUT_MS).unref();
     });
     const res = await Promise.race([postRpcAwait('agents.list', {}), timeout]);
-    if (res === 'timeout') return { files: WATCHED_CREDENTIALS, source: 'timeout' };
-    if (res.exitCode !== 0) return { files: WATCHED_CREDENTIALS, source: 'baked' };
+    if (res === 'timeout') return { ...baked, source: 'timeout' };
+    if (res.exitCode !== 0) return { ...baked, source: 'baked' };
     const parsed = parseAgentDescriptors(res.stdout);
-    if (!parsed) return { files: WATCHED_CREDENTIALS, source: 'baked' };
-    return { files: parsed, source: 'host' };
+    if (!parsed) return { ...baked, source: 'baked' };
+    // A host that answered with no session rows at all is more likely to be one
+    // that predates them than a fleet with activity reporting switched off —
+    // keep the baked probes rather than going silent.
+    return {
+      files: parsed.files,
+      sessions: parsed.sessions.length > 0 ? parsed.sessions : baked.sessions,
+      source: 'host',
+    };
   } catch {
-    return { files: WATCHED_CREDENTIALS, source: 'baked' };
+    return { ...baked, source: 'baked' };
   }
 }

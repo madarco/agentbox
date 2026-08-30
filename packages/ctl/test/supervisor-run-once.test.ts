@@ -26,7 +26,9 @@ async function waitForTaskDone(sup: Supervisor, name: string, timeoutMs = 3000):
 
 function lineCount(path: string): number {
   if (!existsSync(path)) return 0;
-  return readFileSync(path, 'utf8').split('\n').filter((l) => l.length > 0).length;
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((l) => l.length > 0).length;
 }
 
 describe('run_once tasks', () => {
@@ -46,7 +48,12 @@ describe('run_once tasks', () => {
 
   it('marker form: skips on a warm boot, leaving the command unrun', async () => {
     const ran = join(dir, 'ran');
-    const task = { name: 't', command: `: > '${ran}'`, needs: [], runOnce: { kind: 'marker' } as const };
+    const task = {
+      name: 't',
+      command: `: > '${ran}'`,
+      needs: [],
+      runOnce: { kind: 'marker' } as const,
+    };
 
     const sup1 = mk();
     await sup1.init(taskCfg(task));
@@ -115,7 +122,12 @@ describe('run_once tasks', () => {
     const blocker = join(dir, 'blocker');
     await writeFile(blocker, '');
     const badStateDir = join(blocker, 'agentbox');
-    const task = { name: 't', command: `: > '${ran}'`, needs: [], runOnce: { kind: 'marker' } as const };
+    const task = {
+      name: 't',
+      command: `: > '${ran}'`,
+      needs: [],
+      runOnce: { kind: 'marker' } as const,
+    };
 
     const sup1 = new Supervisor({ workspace: dir, logDir: dir, stateDir: badStateDir });
     await sup1.init(taskCfg(task));

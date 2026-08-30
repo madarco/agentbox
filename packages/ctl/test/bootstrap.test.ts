@@ -3,7 +3,12 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { cloneWorkspace, runBootstrap, type BootstrapDeps, type BootstrapEnv } from '../src/commands/bootstrap.js';
+import {
+  cloneWorkspace,
+  runBootstrap,
+  type BootstrapDeps,
+  type BootstrapEnv,
+} from '../src/commands/bootstrap.js';
 
 /** A spy-able deps object; everything live by default, records launch calls. */
 function makeDeps(over: Partial<BootstrapDeps> = {}): BootstrapDeps & {
@@ -92,7 +97,11 @@ describe('runBootstrap idempotency', () => {
   it('clones when AGENTBOX_CLONE_URL is set and workspace is empty', async () => {
     const deps = makeDeps({ isWorkspacePopulated: async () => false });
     const r = await runBootstrap(
-      { ...VNC_ENV, AGENTBOX_CLONE_URL: 'https://x@github.com/a/b.git', AGENTBOX_ORIGIN_URL: 'https://github.com/a/b.git' },
+      {
+        ...VNC_ENV,
+        AGENTBOX_CLONE_URL: 'https://x@github.com/a/b.git',
+        AGENTBOX_ORIGIN_URL: 'https://github.com/a/b.git',
+      },
       deps,
     );
     expect(deps.calls.clone).toBe(1);
@@ -102,7 +111,11 @@ describe('runBootstrap idempotency', () => {
   it('skips the clone when workspace is already populated (host-seed)', async () => {
     const deps = makeDeps({ isWorkspacePopulated: async () => true });
     const r = await runBootstrap(
-      { ...VNC_ENV, AGENTBOX_CLONE_URL: 'https://x@github.com/a/b.git', AGENTBOX_ORIGIN_URL: 'https://github.com/a/b.git' },
+      {
+        ...VNC_ENV,
+        AGENTBOX_CLONE_URL: 'https://x@github.com/a/b.git',
+        AGENTBOX_ORIGIN_URL: 'https://github.com/a/b.git',
+      },
       deps,
     );
     expect(deps.calls.clone).toBe(0);
