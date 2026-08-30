@@ -44,14 +44,17 @@ export type AttachExtras = Pick<WrappedAttachOptions, 'onPasteImage' | 'onPasteI
  * Absent for an agent whose registry row says `caps.resume: false`.
  */
 export interface AgentResumeSupport {
-  /** Args that resume the box's recorded session, or null if there is none. */
-  resumeArgs(exec: (script: string) => Promise<string>): Promise<string[] | null>;
   /**
-   * Where the resume args go relative to the user's args. Codex's `resume` is a
-   * SUBCOMMAND, so it has to follow the global flags; claude's `--resume <id>`
-   * is a flag and goes first.
+   * Args that resume the box's recorded session, or null if there is none.
+   * `exec` runs a read-only shell snippet in the box and returns its trimmed
+   * stdout ('' on any failure) — the probe is a pointer file the in-box activity
+   * hooks maintain.
+   *
+   * The result is always APPENDED to the user's args, never prepended: codex's
+   * `resume` is a subcommand that must follow the global flags, and claude's
+   * `--resume <id>` is order-insensitive, so one rule covers both.
    */
-  placement: 'prefix' | 'suffix';
+  resumeArgs(exec: (script: string) => Promise<string>): Promise<string[] | null>;
 }
 
 /** The docker-side bindings + login code for one agent. */
@@ -142,6 +145,13 @@ export interface AgentRuntime {
    * passthrough does.
    */
   loginNeedsTty: 'always' | 'interactive-only';
+  /**
+   * Whether a non-TTY run must already have usable credentials. True for claude:
+   * without a terminal there is no way to complete an in-box login, so booting a
+   * box whose agent then sits on its login screen wastes the user's time. Absent
+   * means "don't check".
+   */
+  requireCredsWhenNonTty?(): Promise<boolean>;
   /** An agent whose login is a protocol of its own replaces the default
    *  subcommand body here — see `command/login.ts`. */
   loginCommand?: {
@@ -223,6 +233,8 @@ export interface AgentCreateContext {
 export interface PreparedSeed {
   /** Progress label, e.g. `uploading claude session into box`. */
   label: string;
+  /** Free-form marker so a later hook can find the seed it produced. */
+  tag?: string;
   resolved: ResolvedTeleport;
   /** Args prefixed onto the agent's argv once the upload succeeds. */
   forwardArgs: string[];
@@ -260,14 +272,21 @@ export interface AgentCreateAdjust {
   done?: boolean;
 }
 
+/** What `beforeCreate` additionally knows: the body has resolved both by then. */
+export interface AgentBeforeCreateContext extends AgentCreateContext {
+  /** The checkpoint the box would boot from, before any hook adjusts it. */
+  checkpointRef: string | undefined;
+  preflight: AgentPreflight;
+}
+
 export interface AgentCommandHooks {
   /**
    * Resolve host state before any box work: session teleport, claude's `--plan`,
    * and the mutual-exclusion checks between them and `-i`.
    */
   preflight?(ctx: AgentCreateContext): Promise<AgentPreflight>;
-  /** Runs after the config is resolved and before the box is created. */
-  beforeCreate?(ctx: AgentCreateContext): Promise<AgentCreateAdjust>;
+  /** Runs after the gates and before the box is created. */
+  beforeCreate?(ctx: AgentBeforeCreateContext): Promise<AgentCreateAdjust>;
   /**
    * Runs on a freshly created docker box, before the agent session starts.
    * Returns lines to log AFTER the spinner stops (claude's plugin-cache prune),
@@ -276,7 +295,7 @@ export interface AgentCommandHooks {
   afterCreate?(
     box: BoxRecord,
     ctx: AgentCreateContext & { message: (line: string) => void },
-  ): Promise<{ deferredLogs?: { level: 'info' | 'warn'; text: string }[] } | void>;
+  ): Promise<HookOutput | void>;
   /**
    * Runs on `<agent> start` / `<agent> attach` after the config volume is
    * synced, before the agent is launched — hook/plugin seeding.
@@ -284,11 +303,21 @@ export interface AgentCommandHooks {
   afterVolumeSync?(
     box: BoxRecord,
     o: { volume: string; message: (line: string) => void },
-  ): Promise<{ deferredLogs?: { level: 'info' | 'warn'; text: string }[] } | void>;
+  ): Promise<HookOutput | void>;
   /** Extra wrapped-attach wiring (claude's clipboard paste handlers). */
   attachExtras?(box: BoxRecord): Promise<AttachExtras>;
   /** Last word on the built command — extra options, extra subcommands. */
   extendCommand?(cmd: Command, subcommands: AgentSubcommands): void;
+}
+
+/**
+ * What a hook that runs UNDER the spinner hands back. Anything it wants the user
+ * to read has to wait for `spinner.stop()` — a `log.warn` while the spinner is
+ * live fights it for the line — so the hook returns callbacks instead of
+ * printing.
+ */
+export interface HookOutput {
+  deferred?: (() => void)[];
 }
 
 /** The subcommands the factory built, handed to `extendCommand`. */
@@ -315,6 +344,18 @@ export interface AgentCliSpec {
    * warning is always surfaced on stderr rather than injected.
    */
   acceptsSeedPrompt: boolean;
+  /**
+   * When the first-run sign-in offer and the Portless opt-in are asked.
+   *
+   * `before-gates` (claude) puts them ahead of the carry gate and the setup
+   * wizard, so the user has signed in before the wizard can spend minutes
+   * re-baking a stale base. `before-create` (codex, opencode) puts them right
+   * before the box is built, which on the cloud path is AFTER the hub-routing
+   * decision — so a box the control box is going to build never prompts for a
+   * local login it will not use. Both orders are deliberate; unifying them would
+   * lose one of the two properties.
+   */
+  signInOfferTiming: 'before-gates' | 'before-create';
   /** Attach to this agent's tmux session through the wrapped-pty footer. Built
    *  by the factory from the runtime bindings; set here so the create body can
    *  finish by attaching. */

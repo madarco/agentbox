@@ -16,7 +16,7 @@
       {
         "flags": "-w, --workspace <path>",
         "description": "host workspace to mount",
-        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "defaultValue": "<cwd>",
         "mandatory": false,
         "negate": false
       },
@@ -470,7 +470,7 @@
       {
         "flags": "-w, --workspace <path>",
         "description": "host workspace to mount",
-        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "defaultValue": "<cwd>",
         "mandatory": false,
         "negate": false
       },
@@ -903,7 +903,7 @@
       {
         "flags": "-w, --workspace <path>",
         "description": "host workspace to mount",
-        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "defaultValue": "<cwd>",
         "mandatory": false,
         "negate": false
       },

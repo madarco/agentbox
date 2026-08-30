@@ -162,12 +162,9 @@ async function startOrAttach(
     const provider = await providerForBox(box);
     const resume = await agentResumeArgs(provider, box, a.id);
     if (resume) {
-      // Placement is the agent's call: codex's `resume` is a SUBCOMMAND and has
-      // to follow the global flags, claude's `--resume <id>` is a flag.
-      effectiveArgs =
-        a.runtime.resume?.placement === 'prefix'
-          ? [...resume, ...effectiveArgs]
-          : [...effectiveArgs, ...resume];
+      // Appended, not prepended: codex's `resume` is a SUBCOMMAND and has to
+      // follow the global flags in `effectiveArgs`.
+      effectiveArgs = [...effectiveArgs, ...resume];
       attachResumed = true;
     }
   }
@@ -212,10 +209,7 @@ async function startOrAttach(
 
   s.stop(`box ${box.container} ready`);
   if (resyncWarning && ownsFirstTurn) log.warn(resyncWarning);
-  for (const line of seeded?.deferredLogs ?? []) {
-    if (line.level === 'warn') log.warn(line.text);
-    else log.info(line.text);
-  }
+  for (const emit of seeded?.deferred ?? []) emit();
 
   if (!wantAttach) {
     outro(

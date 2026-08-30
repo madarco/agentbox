@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { attachCommand } from '../src/commands/attach.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
-import { claudeCommand } from '../src/commands/claude.js';
+import { agentCommandEntry } from '../src/agents/commands.js';
 import { createCommand } from '../src/commands/create.js';
 import { forkCommand } from '../src/commands/fork.js';
 import { installCommand } from '../src/commands/install.js';
@@ -153,6 +153,7 @@ describe('lifecycle CLI surface', () => {
   });
 
   it('claude is registered with create-style options + isolation flag + variadic claude-args', () => {
+    const claudeCommand = agentCommandEntry('claude')!.command;
     expect(claudeCommand.name()).toBe('claude');
     const longs = claudeCommand.options.map((o) => o.long);
     expect(longs).toEqual(

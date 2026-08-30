@@ -216,8 +216,6 @@ export const codexRuntime: AgentRuntime = {
       const ran = await exec('test -f "$HOME/.local/state/agentbox/codex-active" && echo y');
       return ran === 'y' ? ['resume', '--last'] : null;
     },
-    // `resume` is a codex SUBCOMMAND: it must follow the global flags.
-    placement: 'suffix',
   },
 };
 

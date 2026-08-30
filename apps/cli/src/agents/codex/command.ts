@@ -19,6 +19,7 @@ const { command, attachWrapped } = buildAgentCommand({
   shortName: 'Codex',
   runtime: codexRuntime,
   acceptsSeedPrompt: true,
+  signInOfferTiming: 'before-create',
   text: {
     description: 'Create a sandboxed box and launch OpenAI Codex in a detachable tmux session',
     isolateVolumeLabel: '~/.codex',

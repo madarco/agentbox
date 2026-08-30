@@ -322,6 +322,68 @@ export async function runAgentCreate(
     return;
   }
 
+  /**
+   * The first-run sign-in offer and the Portless opt-in, which two agents place
+   * differently and both for a reason.
+   *
+   * claude asks BEFORE the gates, so the user has signed in before its setup
+   * wizard can spend minutes re-baking a stale base. codex and opencode ask just
+   * before the box is built, which on the cloud path is AFTER the hub-routing
+   * decision — so a box the control box is going to build never prompts for a
+   * local login it will not use. Unifying either way would lose one of those.
+   */
+  let portlessEnabled: boolean | undefined;
+  const offerSignIn = async (): Promise<void> => {
+    // The cloud login runs in a throwaway DOCKER container to capture the token
+    // to ~/.agentbox, so it needs a docker image — `box.image` on the cloud path
+    // can be a snapshot ref that `docker build` rejects.
+    if (isCloud) {
+      await a.runtime.offerCloudLogin({
+        image: DEFAULT_BOX_IMAGE,
+        yes: !!opts.yes,
+        hostWorkspace: opts.workspace,
+      });
+    } else {
+      await a.runtime.offerDockerLogin({
+        image: cfg.box.image,
+        yes: !!opts.yes,
+        hostWorkspace: opts.workspace,
+      });
+    }
+  };
+  // Portless is Docker Desktop-only — skip on cloud.
+  const offerPortless = async (): Promise<void> => {
+    if (isCloud) return;
+    portlessEnabled = await maybePromptPortless({
+      engine: await detectEngine(),
+      enabled: cfg.portless.enabled,
+      yes: !!opts.yes,
+      cwd: opts.workspace,
+    });
+  };
+
+  if (a.signInOfferTiming === 'before-gates') {
+    // Non-interactive (orchestrator pipe, CI): no TTY to attach or complete an
+    // in-box /login, so fail fast with the same actionable message the prompt
+    // would give instead of booting a box whose agent then silently sits on its
+    // login screen. `-y` in a real TTY is exempt — that's the documented "boot
+    // and log in inside the box" escape hatch (the user is present).
+    if (!process.stdin.isTTY && (await a.runtime.requireCredsWhenNonTty?.())) {
+      try {
+        await assertAgentCredsAvailable({
+          agent: a.spec.wireId ?? a.id,
+          image: cfg.box.image,
+          providerName,
+        });
+      } catch (err) {
+        if (err instanceof MissingAgentCredsError) fail(err.message);
+        throw err;
+      }
+    }
+    await offerSignIn();
+    await offerPortless();
+  }
+
   // Carry gate (agentbox.yaml's `carry:` block): resolve + ask before any
   // box work. Cancel aborts; skip proceeds with no carry payload.
   let carryEntries: ResolvedCarryEntry[] = [];
@@ -362,7 +424,7 @@ export async function runAgentCreate(
   // Whatever the agent wants to do between "config resolved" and "box built" —
   // claude's setup wizard, which can re-bake a stale base, discard a dead
   // checkpoint, and seed the first turn.
-  const adjust = (await a.hooks?.beforeCreate?.(ctx)) ?? {};
+  const adjust = (await a.hooks?.beforeCreate?.({ ...ctx, checkpointRef, preflight })) ?? {};
   if (adjust.done) {
     cmdLog.close();
     return;
@@ -445,14 +507,9 @@ export async function runAgentCreate(
     }
 
     // Cloud sign-in offer: capture a host login to ~/.agentbox so the per-box
-    // push seeds it (docker's offer below only seeds via the shared volume).
-    // Uses the default docker image — the login runs in a docker container,
-    // and `box.image` on the cloud path can be a snapshot ref docker rejects.
-    await a.runtime.offerCloudLogin({
-      image: DEFAULT_BOX_IMAGE,
-      yes: !!opts.yes,
-      hostWorkspace: opts.workspace,
-    });
+    // push seeds it (the docker offer only seeds via the shared volume). Placed
+    // after the hub route on purpose — see `offerSignIn`.
+    if (a.signInOfferTiming === 'before-create') await offerSignIn();
     // browser.default = 'playwright' | 'both' implies installing playwright even
     // if box.withPlaywright wasn't explicitly set.
     const withPlaywright = cfg.box.withPlaywright || cfg.browser.default !== 'agent-browser';
@@ -515,21 +572,12 @@ export async function runAgentCreate(
     return;
   }
 
-  // First-run sign-in offer — before any box work, so the user signs in up
-  // front. Uses a throwaway container; the result seeds every future box.
-  await a.runtime.offerDockerLogin({
-    image: cfg.box.image,
-    yes: !!opts.yes,
-    hostWorkspace: opts.workspace,
-  });
-
-  // First-run Portless opt-in (Docker Desktop only).
-  const portlessEnabled = await maybePromptPortless({
-    engine: await detectEngine(),
-    enabled: cfg.portless.enabled,
-    yes: !!opts.yes,
-    cwd: opts.workspace,
-  });
+  if (a.signInOfferTiming === 'before-create') {
+    // First-run sign-in offer, then the Portless opt-in — both before any box
+    // work, so the user answers everything up front.
+    await offerSignIn();
+    await offerPortless();
+  }
 
   // host-snapshot default off: explicit flag/config wins.
   const useSnapshot =
@@ -651,10 +699,9 @@ export async function runAgentCreate(
         : '';
     s.stop(`box ready${nSuffix}`);
     if (createResyncWarning && seedOwnsFirstTurn) log.warn(createResyncWarning);
-    for (const line of afterCreate?.deferredLogs ?? []) {
-      if (line.level === 'warn') log.warn(line.text);
-      else log.info(line.text);
-    }
+    // Anything a hook wanted to print: deferred until now, because a `log.*`
+    // while the spinner is live fights it for the same line.
+    for (const emit of afterCreate?.deferred ?? []) emit();
 
     await printLaunchRecap({
       record: result.record,

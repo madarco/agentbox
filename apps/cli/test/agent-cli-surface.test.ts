@@ -61,6 +61,15 @@ interface CommandSurface {
  * and would make the fixture flap for reasons that have nothing to do with the
  * surface.
  */
+/**
+ * `-w, --workspace` defaults to `process.cwd()`, which differs between a run
+ * from the repo root and one from `apps/cli`. Normalise it so the fixture
+ * records the SHAPE of the default rather than one machine's path.
+ */
+function normalizeDefault(value: unknown): unknown {
+  return value === process.cwd() ? '<cwd>' : (value ?? null);
+}
+
 function surfaceOf(cmd: Command): CommandSurface {
   return {
     name: cmd.name(),
@@ -71,12 +80,12 @@ function surfaceOf(cmd: Command): CommandSurface {
       description: a.description,
       required: a.required,
       variadic: a.variadic,
-      defaultValue: a.defaultValue ?? null,
+      defaultValue: normalizeDefault(a.defaultValue),
     })),
     options: cmd.options.map((o) => ({
       flags: o.flags,
       description: o.description,
-      defaultValue: o.defaultValue ?? null,
+      defaultValue: normalizeDefault(o.defaultValue),
       mandatory: o.mandatory,
       negate: o.negate,
     })),

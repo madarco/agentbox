@@ -23,6 +23,7 @@ const { command, attachWrapped } = buildAgentCommand({
   // OpenCode's interactive launch takes no seed prompt at all, so a resync
   // conflict warning is always surfaced on stderr rather than injected.
   acceptsSeedPrompt: false,
+  signInOfferTiming: 'before-create',
   text: {
     description: 'Create a sandboxed box and launch OpenCode in a detachable tmux session',
     isolateVolumeLabel: 'OpenCode',
