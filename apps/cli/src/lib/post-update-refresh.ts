@@ -35,6 +35,7 @@ import { STABLE_TRAY_TAG, resolveChannel } from './channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { ensurePortlessProxyQuietly, resolvePortlessEnabled } from '../portless-prompt.js';
 import { log } from './prompt.js';
+import type { UpdateState } from './update-state.js';
 import { readUpdateState, remoteCheckFresh, writeUpdateState } from './update-state.js';
 
 export interface PostUpdateRefreshOptions {
@@ -55,33 +56,54 @@ export interface TrayUpdateOutcome {
   note: string | null;
 }
 
+/**
+ * Last-known published tray sha/version from the daily check, used ONLY as a
+ * fallback when the live release lookup fails. Still gated on freshness so a
+ * long-stale snapshot can't answer for a release it never saw.
+ */
+function cachedTraySha(state: UpdateState): string | undefined {
+  return remoteCheckFresh(state) ? state.remoteCheck?.trayLatestSha : undefined;
+}
+
+function cachedTrayVersion(state: UpdateState): string | undefined {
+  return remoteCheckFresh(state) ? state.remoteCheck?.trayLatestVersion : undefined;
+}
+
 /** Update the tray app iff the published zip sha differs from the installed one. */
 export async function maybeUpdateTray(): Promise<TrayUpdateOutcome> {
   const idle: TrayUpdateOutcome = { installAttempted: false, reinstalled: false, note: null };
   if (!trayInstalled()) return idle;
   const state = readUpdateState();
-  // Reuse today's cached sidecar sha when we have one; otherwise fetch the
-  // ~80-byte sidecar now (5s cap) — still never the 450KB zip unless it changed.
+  // Always re-resolve the winning release; NEVER answer from `remoteCheck`.
   //
-  // The sha MUST come from the release the channel actually resolves to. Reading
-  // it untagged always meant `tray-latest`, so a nightly user with an empty cache
-  // (a fresh install — exactly when this branch runs) compared their installed
-  // nightly tray against the STABLE sha, saw a difference, and re-downloaded on
-  // every refresh. The cached value is already channel-correct: the daily check
-  // resolves the winning tag before storing it.
-  const cachedSha =
-    remoteCheckFresh(state) && state.remoteCheck?.trayLatestSha !== undefined
-      ? state.remoteCheck.trayLatestSha
-      : undefined;
-  const winner = cachedSha === undefined ? await bestTrayRelease(await resolveChannel()) : null;
-  const latestSha = cachedSha ?? (await fetchTraySidecarSha(winner?.tag ?? STABLE_TRAY_TAG));
+  // This runs only inside `runPostUpdateRefresh`, and both of its callers are a
+  // user asking to be brought current (`self-update`, and the post-upgrade
+  // "refresh ...?" prompt). Reusing the ≤24h `remoteCheck` cache here meant an
+  // explicit update could be answered from a snapshot taken before the release
+  // existed: `winner` stayed null, so `latestVersion` ALSO fell back to the
+  // cached version, and `decideTrayUpdate` — which prefers the version pair over
+  // the sha — compared the installed version against itself and reported
+  // "already current". A tray release published within a day of the user's last
+  // daily check was therefore unreachable via `self-update` until the cache aged
+  // out. The sidecar is ~80 bytes behind a 5s cap; the 450KB zip is still only
+  // fetched when the build actually differs.
+  //
+  // The tag must come from the channel the user is on: reading it untagged always
+  // meant `tray-latest`, so a nightly user compared their installed nightly tray
+  // against the STABLE sha and re-downloaded on every refresh.
+  const winner = await bestTrayRelease(await resolveChannel());
+  const latestSha = await fetchTraySidecarSha(winner?.tag ?? STABLE_TRAY_TAG);
   const decision = decideTrayUpdate({
     installed: true,
     stampedSha: state.traySha,
-    latestSha,
+    // Fall back to the cache only when the live lookup came back empty (offline,
+    // GitHub hiccup) — a stale value is better than none, and an undefined sha
+    // already degrades to a clean "skipped" rather than a spurious download.
+    latestSha: latestSha ?? cachedTraySha(state),
     installedVersion: await readInstalledTrayVersion(),
     // Same release as the sha above, so the two can't describe different builds.
-    latestVersion: winner?.version ?? state.remoteCheck?.trayLatestVersion,
+    latestVersion:
+      winner?.version ?? (latestSha === undefined ? cachedTrayVersion(state) : undefined),
   });
   if (!decision.update) {
     return {

@@ -112,6 +112,12 @@ export async function bakeViaHub(args: {
 
   const deadline = Date.now() + BAKE_TIMEOUT_MS;
   let status = 'queued';
+  // The failed job's own reason. Without it the caller only ever learned that a
+  // job "ended failed" and had to go read the hub's log to find out why — so
+  // every bake failure, however precisely diagnosed on the hub side, reached the
+  // user as an opaque line plus a stack trace. `create` already surfaces this
+  // field; `prepare` was throwing it away.
+  let jobError: string | undefined;
   try {
     for (;;) {
       await delay(JOB_POLL_MS);
@@ -122,6 +128,7 @@ export async function bakeViaHub(args: {
         break;
       }
       status = job.status;
+      jobError = job.error;
       if (status === 'done' || status === 'failed' || status === 'cancelled') break;
       if (Date.now() > deadline) {
         return {
@@ -136,7 +143,13 @@ export async function bakeViaHub(args: {
   }
 
   if (status !== 'done') {
-    return { status: 'failed', detail: `the control box's bake job ${jobId} ended ${status}` };
+    const reason = jobError?.trim();
+    return {
+      status: 'failed',
+      detail: reason
+        ? `${reason}\n  (control box bake job ${jobId} ended ${status})`
+        : `the control box's bake job ${jobId} ended ${status}`,
+    };
   }
 
   // A remote-docker bake put the image on the REMOTE HOST, which this machine

@@ -144,6 +144,20 @@ export interface EnsureAgentVolumesResult {
  * Idempotent: every call is a fast lookup for the already-created volume.
  * Safe to call on every `create`.
  */
+/**
+ * Whether a box of this sandbox class can actually USE a mounted volume.
+ *
+ * Daytona's `linux-vm` accepts a volume mount and even echoes it back in the
+ * sandbox DTO — the path simply never appears in the guest. So the provision-time
+ * reservation and the credential seed must answer this the same way; when they
+ * disagreed, a VM box reserved no volume and then seeded as though it had one.
+ *
+ * One definition, used by both, so they cannot drift apart again.
+ */
+export function cloudVolumesUsable(sandboxClass: string | undefined): boolean {
+  return sandboxClass !== 'linux-vm';
+}
+
 export async function ensureAgentVolumesForCloud(
   backend: CloudBackend,
   opts: {
@@ -373,7 +387,14 @@ async function seedCredentialsOne(
   // tokens are renewable, so we just push fresh every create. Volume backends
   // (daytona) keep the marker-based idempotency so they don't re-upload into
   // a volume already carrying credentials from a previous box.
-  const hasVolume = typeof backend.ensureVolume === 'function';
+  //
+  // "Has a volume API" is NOT the same question as "this box has a volume":
+  // Daytona's linux-vm has the API and no mount, and answering the capability
+  // question sent VM boxes down the volume branch — which extracts as root with
+  // no `--no-same-owner` and then `cp -r`, landing root:root 0600 credentials
+  // the box user cannot read.
+  const hasVolume =
+    typeof backend.ensureVolume === 'function' && cloudVolumesUsable(handle.sandboxClass);
 
   if (hasVolume && !opts.force) {
     const probe = await backend.exec(handle, `test -f ${spec.credentialsMountPath}/${SEED_MARKER}`);

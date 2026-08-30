@@ -51,8 +51,14 @@ export async function seedClaudeJsonAtCreate(
     await backend.uploadFile(handle, staged.tarballPath, REMOTE_TAR);
     const extract = await backend.exec(
       handle,
+      // `--no-same-owner --no-same-permissions -m`: the host tarball records the
+      // HOST's uid/gid and mode, and GNU tar restores both when it runs as root.
+      // That is how `/home/vscode/.claude` ended up owned by uid 501 (a macOS
+      // uid that means nothing in the box) mode 0700 — unreadable by the agent.
+      // Harmless when the extract already runs unprivileged; load-bearing when
+      // it doesn't.
       `set -e; mkdir -p ${BOX_CLAUDE_DIR}; ` +
-        `tar -xzf ${REMOTE_TAR} -C ${BOX_CLAUDE_DIR}; ` +
+        `tar -xzf ${REMOTE_TAR} -C ${BOX_CLAUDE_DIR} --no-same-permissions --no-same-owner -m; ` +
         `rm -f ${REMOTE_TAR}`,
     );
     if (extract.exitCode !== 0) {
