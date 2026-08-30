@@ -383,7 +383,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "Get the box's in-box coding-agent status snapshot",
           description:
-            "The agent's live activity (working / idle / waiting / question / end-plan / …), plan/question payload and session title, from the persisted status store. Backs `agentbox agent state/wait-for/get-plan-question`.",
+            "Every reporting agent's live activity (working / idle / waiting / question / end-plan / …), plan/question payload and session title, from the persisted status store. Backs `agentbox agent state/wait-for/get-plan-question`.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': {
@@ -1682,6 +1682,18 @@ export function buildOpenApi(): Record<string, unknown> {
                 properties: { kind: { type: 'string' }, branch: { type: 'string' } },
               },
             },
+            agentStatus: {
+              type: 'object',
+              description:
+                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'.",
+              additionalProperties: {
+                type: 'object',
+                properties: {
+                  state: { type: 'string' },
+                  sessionTitle: { type: 'string' },
+                },
+              },
+            },
             claudeSessionTitle: { type: 'string' },
             codexSessionTitle: { type: 'string' },
             opencodeSessionTitle: { type: 'string' },
@@ -1691,6 +1703,7 @@ export function buildOpenApi(): Record<string, unknown> {
                 'working | idle | waiting | end-plan | question | compacting | error | unknown',
             },
             codexActivity: { type: 'string' },
+            opencodeActivity: { type: 'string' },
             shellCount: {
               type: 'number',
               description: 'Live shell-session count (docker only); absent → the CLI renders "-".',
@@ -1881,9 +1894,14 @@ export function buildOpenApi(): Record<string, unknown> {
         AgentState: {
           type: 'object',
           description:
-            "The box's in-box coding-agent status snapshot. `claude` is the raw ctl status payload (activity, plan/question, session title); null when no snapshot exists yet.",
+            "The box's in-box agent status snapshot. `agents` holds every reporting agent keyed by id (each the raw ctl status payload: activity, plan/question, session title) and is the source of truth. `claude` repeats that agent's body for clients older than `agents`; null when claude has no snapshot, which includes a box running a different agent.",
           properties: {
-            claude: { description: 'Raw BoxStatusClaude payload (opaque here).' },
+            agents: {
+              type: 'object',
+              description: 'Raw per-agent status payloads, keyed by agent id (opaque here).',
+              additionalProperties: true,
+            },
+            claude: { description: "Claude's body, repeated from `agents` (opaque here)." },
           },
           required: ['claude'],
         },
