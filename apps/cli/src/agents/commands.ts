@@ -20,7 +20,7 @@ import type { Command } from 'commander';
 import type { AttachOpenIn } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { claudeCommand, attachClaudeWrapped } from '../commands/claude.js';
-import { codexCommand, attachCodexWrapped } from '../commands/codex.js';
+import { codexCommand, attachCodexWrapped } from './codex/command.js';
 import { opencodeCommand, attachOpencodeWrapped } from '../commands/opencode.js';
 
 /**
