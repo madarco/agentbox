@@ -40,6 +40,7 @@ import {
 } from './claude-hooks-filter.js';
 import { resolveAgentSpec } from './registry.js';
 import { sanitizeCodexConfigForBox } from './codex-config.js';
+import type { AgentId } from '@agentbox/core';
 
 /**
  * Portable host backup of the claude OAuth creds — the single source of truth is
@@ -723,7 +724,7 @@ const OPENCODE_STATIC_BOX_DIR = '/home/vscode/.local/share/opencode';
 const AGENTS_STATIC_BOX_DIR = '/home/vscode/.agents';
 
 export interface AgentStaticStage {
-  kind: 'claude' | 'codex' | 'opencode' | 'agents';
+  kind: AgentId | 'agents';
   /** Absolute box path the static tarball extracts into. */
   extractDir: string;
   staged: StageResult;

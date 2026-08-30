@@ -12,15 +12,24 @@ import { ATTACH_IN_HELP, INLINE_HELP, resolveAttachInOption } from './_attach-in
 import { hostAwareOpenIn } from '../terminal/host.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
+import type { AgentId } from '@agentbox/core';
+import { agentIds } from '@agentbox/sandbox-core';
 
-type AgentKind = 'claude' | 'codex' | 'opencode';
-
-const AGENT_KINDS: readonly AgentKind[] = ['claude', 'codex', 'opencode'];
+const AGENT_KINDS: readonly AgentId[] = agentIds();
 const AGENT_KIND_SET = new Set<string>(AGENT_KINDS);
-const AGENT_PRIORITY: Record<AgentKind, number> = { claude: 0, codex: 1, opencode: 2 };
+
+/**
+ * Tie-break order when a box has several live agent sessions: registry order,
+ * which puts claude first. Derived rather than a literal map so an agent added
+ * to the registry is ranked instead of silently landing at rank `undefined`.
+ */
+function agentPriority(kind: AgentId): number {
+  const i = AGENT_KINDS.indexOf(kind);
+  return i === -1 ? AGENT_KINDS.length : i;
+}
 
 interface LiveAgentSession {
-  kind: AgentKind;
+  kind: AgentId;
   sessionName: string;
   /** Unix seconds from tmux `#{session_created}`, or null if unparseable. */
   startedAt: number | null;
@@ -61,7 +70,7 @@ export function parseTmuxAgentSessions(stdout: string, filterName?: string): Liv
     // the agent binary from the name alone — default to claude (the
     // per-agent commands work the same way: the binary is fixed by the
     // command they're under). Default-name rows map kind=name directly.
-    const kind: AgentKind = AGENT_KIND_SET.has(name) ? (name as AgentKind) : 'claude';
+    const kind: AgentId = AGENT_KIND_SET.has(name) ? name : 'claude';
     out.push({ kind, sessionName: name, startedAt });
   }
   return out;
@@ -138,11 +147,11 @@ async function pickSession(
       const sa = a.startedAt ?? -1;
       const sb = b.startedAt ?? -1;
       if (sb !== sa) return sb - sa;
-      return AGENT_PRIORITY[a.kind] - AGENT_PRIORITY[b.kind];
+      return agentPriority(a.kind) - agentPriority(b.kind);
     });
     return sorted[0]!;
   }
-  const ordered = [...sessions].sort((a, b) => AGENT_PRIORITY[a.kind] - AGENT_PRIORITY[b.kind]);
+  const ordered = [...sessions].sort((a, b) => agentPriority(a.kind) - agentPriority(b.kind));
   const picked = await select<LiveAgentSession>({
     message: `Multiple agent sessions in ${boxName}. Attach to:`,
     options: ordered.map((s) => ({

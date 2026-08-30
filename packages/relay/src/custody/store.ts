@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
+import { agentIds } from '@agentbox/sandbox-core';
 
 /**
  * Top-level custody scopes. Anything else is rejected by {@link normalizeCustodyPath}.
@@ -22,9 +23,6 @@ import type { Readable } from 'node:stream';
  */
 export const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared'] as const;
 export type CustodyScope = (typeof CUSTODY_SCOPES)[number];
-
-/** Agent ids valid under `agents/` — mirrors `AgentId` in @agentbox/sandbox-core. */
-const AGENT_IDS = ['claude', 'codex', 'opencode'] as const;
 
 /** Metadata for one stored entry. `sha256` is the ONLY change signal (never `updatedAt`). */
 export interface CustodyEntry {
@@ -137,9 +135,11 @@ export function normalizeCustodyPath(raw: string): string {
       `unknown custody scope '${scope}' (expected ${CUSTODY_SCOPES.join(' | ')})`,
     );
   }
-  if (scope === 'agents' && !(AGENT_IDS as readonly string[]).includes(segments[1]!)) {
+  // Registry, not a hand-copied list: a local one silently rejected every agent
+  // added after it was written.
+  if (scope === 'agents' && !agentIds().includes(segments[1]!)) {
     throw new CustodyPathError(
-      `unknown agent '${segments[1]!}' (expected ${AGENT_IDS.join(' | ')})`,
+      `unknown agent '${segments[1]!}' (expected ${agentIds().join(' | ')})`,
     );
   }
   return segments.join('/');

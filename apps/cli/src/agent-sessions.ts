@@ -19,7 +19,7 @@
  * skipped — it has no session-resume support yet.
  */
 import { loadEffectiveConfig } from '@agentbox/config';
-import type { BoxRecord, Provider } from '@agentbox/core';
+import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
 import {
   startClaudeSession,
   startCodexSession,
@@ -99,7 +99,7 @@ export interface RestoreOptions {
    * semantics. OpenCode has no session resume, so it only ever comes back via
    * the fresh path here.
    */
-  restoreOnly?: 'claude' | 'codex' | 'opencode';
+  restoreOnly?: AgentId;
   /**
    * With `restoreOnly`: if that agent's session is already alive, KILL it first
    * and relaunch (resuming), instead of leaving the running one untouched. Used
@@ -113,7 +113,7 @@ export interface RestoreOptions {
 /** Start a fresh (no-resume) detached agent session. */
 async function startFreshSession(
   box: BoxRecord,
-  kind: 'claude' | 'codex' | 'opencode',
+  kind: AgentId,
   sessionName: string,
   cfg: Awaited<ReturnType<typeof loadEffectiveConfig>> | null,
   isDocker: boolean,
@@ -162,7 +162,7 @@ export async function restoreAgentSessions(
 ): Promise<void> {
   const cfg = await loadEffectiveConfig(box.workspacePath).catch(() => null);
   const isDocker = (box.provider ?? 'docker') === 'docker';
-  const sessionNameFor = (kind: 'claude' | 'codex' | 'opencode'): string =>
+  const sessionNameFor = (kind: AgentId): string =>
     kind === 'claude'
       ? (cfg?.effective.claude.sessionName ?? 'claude')
       : kind === 'codex'

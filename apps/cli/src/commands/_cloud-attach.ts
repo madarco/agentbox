@@ -8,7 +8,7 @@ import {
   startDetachedSession,
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
-import type { BoxRecord } from '@agentbox/core';
+import type { AgentId, BoxRecord } from '@agentbox/core';
 import { claudeTuiEnv } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadEffectiveConfig } from '@agentbox/config';
@@ -74,7 +74,7 @@ export interface CloudAgentAttachArgs {
   /** Tmux session name (e.g. `claude`). */
   sessionName: string;
   /** Mode label for the wrapper's footer. */
-  mode: 'claude' | 'codex' | 'opencode';
+  mode: AgentId;
   /**
    * Extra args the user typed after `--`, plus any seed prompt slotted ahead of
    * them. Passed through to the in-box agent verbatim via a base64-encoded

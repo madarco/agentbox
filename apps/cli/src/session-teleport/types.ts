@@ -3,8 +3,9 @@
  * per-agent files (`claude.ts` / `codex.ts` / `opencode.ts`) don't form an
  * import cycle through `index.ts`.
  */
+import type { AgentId } from '@agentbox/core';
 
-export type TeleportAgent = 'claude' | 'codex' | 'opencode';
+export type TeleportAgent = AgentId;
 
 export type TeleportLogger = (line: string) => void;
 

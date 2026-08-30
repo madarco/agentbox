@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveClaudeTeleport } from '../src/session-teleport/claude.js';
+import { resolveClaudeTeleport } from '../src/agents/claude/teleport.js';
 import { encodeClaudeProjectsDir } from '../src/session-teleport/cwd-encoding.js';
 import { TeleportError } from '../src/session-teleport/types.js';
 

@@ -1,6 +1,6 @@
 // Box view model — normalized shape the UI renders, produced by
 // lib/boxes/source.ts from the host's ~/.agentbox state (state.json + statuses).
-import type { AgentId } from '@/components/icons';
+import type { AgentId, AgentMode } from '@agentbox/core';
 import type { AuthMode } from '@/lib/auth-config';
 
 export type BoxStatus = 'running' | 'paused' | 'stopped' | 'creating' | 'error';
@@ -14,7 +14,7 @@ export interface Box {
   // Cosmetic user-set label (via rename), null when unset. `task` already folds
   // this in as the primary label; kept separate so the rename UI can seed its input.
   displayName?: string | null;
-  agent: AgentId | string;
+  agent: AgentMode;
   status: BoxStatus;
   createdAt: number;
   lastActivity: number;
@@ -75,7 +75,7 @@ export interface Box {
   // Token-authed preview URLs keyed by in-box port (mirrors CloudBoxFields).
   previewUrls?: Record<number, string>;
   // The agent the box was created for → BoxRecord.lastAgent.
-  lastAgent?: 'claude' | 'codex' | 'opencode';
+  lastAgent?: AgentId;
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
   // 'control-plane'. Absent for docker.
   topology?: string;

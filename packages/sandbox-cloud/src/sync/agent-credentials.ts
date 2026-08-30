@@ -44,11 +44,11 @@ import {
   SEED_MARKER,
   type StageResult,
 } from '@agentbox/sandbox-core';
-import type { CloudBackend, CloudHandle, CloudVolumeMount, SyncTransport } from '@agentbox/core';
+import type { AgentId, CloudBackend, CloudHandle, CloudVolumeMount, SyncTransport } from '@agentbox/core';
 import { createCloudSyncTransport } from './sync-transport.js';
 
 /** Identifier for one of the three agents we sync into cloud sandboxes. */
-export type CloudAgentKind = 'claude' | 'codex' | 'opencode';
+export type CloudAgentKind = AgentId;
 
 /**
  * The unprivileged user every cloud box runs its agent as. All the box images /
@@ -109,12 +109,6 @@ const AGENT_SPECS: AgentSpec[] = [
     stageCredentials: () => stageOpencodeCredentialsForUpload(),
   },
 ];
-
-import {
-  CLAUDE_FORWARDED_ENV_KEYS,
-  CODEX_FORWARDED_ENV_KEYS,
-  OPENCODE_FORWARDED_ENV_KEYS,
-} from '@agentbox/sandbox-docker';
 
 /** Result of `ensureAgentVolumesForCloud` — pass `.mounts` straight into `provision({ volumes })`. */
 export interface EnsureAgentVolumesResult {
@@ -236,12 +230,9 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
   // so a claude-only box must not inherit the host's OPENAI_API_KEY. Unioning
   // all three here would quietly undo the file-and-mount isolation for exactly
   // the agents that authenticate this way.
-  const keysByAgent: Record<CloudAgentKind, readonly string[]> = {
-    claude: CLAUDE_FORWARDED_ENV_KEYS,
-    codex: CODEX_FORWARDED_ENV_KEYS,
-    opencode: OPENCODE_FORWARDED_ENV_KEYS,
-  };
-  const forwardedKeys = new Set<string>(agents.flatMap((a) => keysByAgent[a]));
+  const forwardedKeys = new Set<string>(
+    agents.flatMap((a) => resolveAgentSpec(a).forwardedEnvKeys),
+  );
   for (const k of forwardedKeys) {
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;

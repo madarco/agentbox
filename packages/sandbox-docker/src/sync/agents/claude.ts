@@ -31,6 +31,7 @@ import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // (the find-unsyncable-symlinks test) and used internally by the claude stage.
 import { findUnsyncableSymlinks } from '@agentbox/sandbox-core';
 import { createDockerSyncTransport } from '../sync-transport.js';
+import type { AgentMode } from '@agentbox/core';
 export { findUnsyncableSymlinks };
 
 export const SHARED_CLAUDE_VOLUME = 'agentbox-claude-config';
@@ -1403,7 +1404,7 @@ export async function warmUpClaudeCredentials(
 
 export function formatDetachNotice(
   ref: string,
-  command: 'claude' | 'shell' | 'codex' | 'opencode' = 'claude',
+  command: AgentMode = 'claude',
   suffix = '',
 ): string {
   return `Session detached. Reattach with: agentbox ${command} attach ${ref}${suffix}`;

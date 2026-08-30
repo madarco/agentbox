@@ -1,4 +1,5 @@
 import type { ReactElement, SVGProps } from 'react';
+import type { AgentMode } from '@agentbox/core';
 
 // lucide-style stroke icons (24 box) ported from the shadcn prototype
 // (../agentbox-design/control-shadcn/icons.jsx). Three brand glyphs
@@ -121,9 +122,7 @@ export function LangDot({ lang }: { lang: string }) {
   );
 }
 
-export type AgentId = 'claude' | 'codex' | 'opencode' | 'shell';
-
-export const AGENTS: { id: AgentId; label: string; icon: Icon }[] = [
+export const AGENTS: { id: AgentMode; label: string; icon: Icon }[] = [
   { id: 'claude', label: 'Claude Code', icon: Icons.claude },
   { id: 'codex', label: 'Codex', icon: Icons.codex },
   { id: 'opencode', label: 'OpenCode', icon: Icons.opencode },

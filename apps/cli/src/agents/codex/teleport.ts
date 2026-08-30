@@ -14,8 +14,8 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BOX_WORKSPACE } from './cwd-encoding.js';
-import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from './types.js';
+import { BOX_WORKSPACE } from '../../session-teleport/cwd-encoding.js';
+import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from '../../session-teleport/types.js';
 
 interface CodexResolveOptions {
   hostCwd: string;

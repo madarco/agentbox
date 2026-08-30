@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import type { PostOutcome, RelayClient } from './relay-client.js';
 import { CREDENTIALS_UPDATED_EVENT } from './types.js';
+import type { AgentId } from '@agentbox/core';
 
 /**
  * Watches the in-box agent credential files and reports refreshed blobs to the
@@ -27,7 +28,7 @@ import { CREDENTIALS_UPDATED_EVENT } from './types.js';
  */
 
 export interface WatchedCredential {
-  agent: 'claude' | 'codex' | 'opencode';
+  agent: AgentId;
   /** In-box absolute path — mirrors `AGENT_SYNC_SPECS[..].credential.boxAbsPath`
    * (`@agentbox/sandbox-core`); a drift test keeps them in lockstep. */
   path: string;

@@ -2,6 +2,7 @@ import { loadEffectiveConfig } from '@agentbox/config';
 import type { AgentActivityState } from '@agentbox/ctl';
 import type { PromptAskEvent } from '@agentbox/relay';
 import { herdrSend } from './herdr-socket.js';
+import type { AgentMode } from '@agentbox/core';
 
 /**
  * Surface a box's live agent activity to Herdr (https://herdr.dev) so the box
@@ -21,7 +22,7 @@ import { herdrSend } from './herdr-socket.js';
  * box's status.json, reports on each activity transition and resets the pane to
  * idle on detach.
  */
-export type HerdrAgentMode = 'claude' | 'codex' | 'opencode' | 'shell';
+export type HerdrAgentMode = AgentMode;
 
 /** Herdr's semantic agent states (https://herdr.dev/docs/socket-api). */
 type HerdrSemanticState = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';

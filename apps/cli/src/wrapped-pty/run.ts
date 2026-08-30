@@ -39,6 +39,7 @@ import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client
 import { isValidBoxStatus } from '@agentbox/relay';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
 import type { AgentActivityState, BoxStatus, ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentMode } from '@agentbox/core';
 
 export interface WrappedAttachOptions {
   /** Docker container name (only used for log lines). */
@@ -75,7 +76,7 @@ export interface WrappedAttachOptions {
    *  title. Pre-feature boxes lack it; absent is fine. */
   projectIndex?: number;
   /** Mode label affects the idle footer state label only. */
-  mode: 'claude' | 'shell' | 'codex' | 'opencode';
+  mode: AgentMode;
   /** Whether the inner session can be detached (tmux-backed). Drives the
    *  `Ctrl+a d` detach chord + footer hint. Defaults to `mode === 'claude'`
    *  (claude is always tmux-backed); a tmux-backed `agentbox shell` passes

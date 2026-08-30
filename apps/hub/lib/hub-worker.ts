@@ -46,10 +46,11 @@ import {
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
-import { resolveAgentLauncher, type AgentKind, type ResolvedCarryEntry } from '@agentbox/core';
+import { resolveAgentLauncher, type ResolvedCarryEntry } from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
+import type { AgentId, QueueAgentKind } from '@agentbox/core';
 
 const execFileAsync = promisify(execFile);
 
@@ -204,7 +205,7 @@ async function applySeedFromCustody(
  */
 function normalizeCreateAgent(
   agent: string | undefined,
-): 'claude' | 'codex' | 'opencode' | undefined {
+): AgentId | undefined {
   return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
 }
 
@@ -382,7 +383,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       const boxAgent = normalizeCreateAgent(agent);
       const seedPrompt = prompt && prompt.length > 0 ? prompt : undefined;
       if (boxAgent && (seedPrompt || startAgent)) {
-        const kind: AgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
+        const kind: QueueAgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
         const extraArgs = resolveAgentLauncher(kind).buildArgs(seedPrompt ?? '', agentArgs ?? []);
         log(
           `starting ${boxAgent} in ${created.record.name}${seedPrompt ? ' with the seed prompt' : ''}`,

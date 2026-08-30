@@ -16,10 +16,10 @@ export type {
   SyncExecOptions,
   SyncExecResult,
 } from './transport.js';
-export type { SyncAgentKind, QueueAgentKind } from './agent-kind.js';
+export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export {
-  SYNC_AGENT_KINDS,
-  isSyncAgentKind,
+  BUILTIN_AGENT_KINDS,
+  isAgentKind,
   toSyncKind,
   toQueueKind,
   normalizeLastAgent,

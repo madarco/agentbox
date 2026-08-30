@@ -12,7 +12,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import { readState, STATE_DIR, STATE_FILE } from '@agentbox/sandbox-core';
-import type { BoxRecord, ResolvedCarryEntry } from '@agentbox/core';
+import type { BoxRecord, QueueAgentKind, ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxRegistry } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
 
@@ -28,10 +28,11 @@ export const QUEUE_DIR = join(STATE_DIR, 'queue');
  * The lane key is `job.providerName` verbatim, so a remote-docker `docker:<alias>`
  * bake gets its own lane per host — those run on different machines entirely.
  */
+
 export const PREPARE_MAX_CONCURRENT_PER_PROVIDER = 1;
 
 export type QueueJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type QueueAgentKind = 'claude-code' | 'codex' | 'opencode';
+export type { QueueAgentKind };
 
 /**
  * Host-terminal targeting captured on the submitting host when `queue.openIn`

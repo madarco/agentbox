@@ -17,12 +17,10 @@ import {
   volumeHasOpencodeAuth,
   warmUpClaudeCredentials,
 } from '@agentbox/sandbox-docker';
-import {
-  CLAUDE_LOGIN_SPEC,
-  CODEX_LOGIN_SPEC,
-  OPENCODE_LOGIN_SPEC,
-  type AgentLoginSpec,
-} from './agent-login-specs.js';
+import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
+import { CODEX_LOGIN_SPEC } from '../agents/codex/login.js';
+import { OPENCODE_LOGIN_SPEC } from '../agents/opencode/login.js';
+import type { AgentLoginSpec } from './agent-login-specs.js';
 
 export interface AgentLoginBinding {
   spec: AgentLoginSpec;

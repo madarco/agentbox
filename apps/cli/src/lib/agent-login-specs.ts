@@ -10,8 +10,7 @@
  * the interaction with our own host-side clack prompts — which means we have to
  * recognize each prompt from its rendered output.
  */
-
-export type AgentName = 'claude' | 'codex' | 'opencode';
+import type { AgentId } from '@agentbox/core';
 
 /** What the login container is currently waiting for. */
 export type LoginNeed =
@@ -25,7 +24,7 @@ export type LoginNeed =
   | { kind: 'unsupported'; reason: string };
 
 export interface AgentLoginSpec {
-  agent: AgentName;
+  agent: AgentId;
   /** Login args used when the caller forwards none. */
   defaultArgs: string[];
   /** What the container is waiting for, or null while it's still working. */
@@ -48,120 +47,13 @@ export function stripAnsi(text: string): string {
 }
 
 /** Trim the punctuation/brackets a URL regex greedily swallows from prose. */
-function trimUrl(url: string): string {
+export function trimUrl(url: string): string {
   return url.replace(/["'`)\]>]+$/, '').replace(/[.,;]+$/, '');
 }
 
 // The char class excludes whitespace, quotes/brackets, and control bytes (so an
 // OSC-8 hyperlink's trailing BEL terminates the match cleanly).
-const URL_BODY = "[^\\s'\"`<>)\\]\\u0000-\\u001f]";
+export const URL_BODY = "[^\\s'\"`<>)\\]\\u0000-\\u001f]";
 
-// ---------------------------------------------------------------- claude
-
-// Match an OAuth approval URL on any current Claude/Anthropic auth host
-// (claude.com/cai/oauth/…, claude.ai, console.anthropic.com) and REQUIRE the
-// literal `oauth` in the path/query so an unrelated claude.com link can't match.
-const CLAUDE_OAUTH_URL = new RegExp(
-  `https?://(?:claude\\.com|claude\\.ai|console\\.anthropic\\.com)/${URL_BODY}*oauth${URL_BODY}*`,
-  'i',
-);
-
-/**
- * Pull the OAuth approval URL out of accumulated (possibly ANSI-styled) login
- * output. Claude's paste-code flow prints a `https://claude.com/cai/oauth/…`
- * (or claude.ai / console.anthropic.com) link.
- */
-export function extractOAuthUrl(text: string): string | null {
-  const m = stripAnsi(text).match(CLAUDE_OAUTH_URL);
-  return m ? trimUrl(m[0]) : null;
-}
-
-const INVALID_CODE = /invalid|incorrect|not a valid|try again|expired|rejected/i;
-
-export const CLAUDE_LOGIN_SPEC: AgentLoginSpec = {
-  agent: 'claude',
-  // No method flags → the subscription paste-code flow (prints a URL, reads a code).
-  defaultArgs: ['--claudeai'],
-  detect(buf) {
-    const url = extractOAuthUrl(buf);
-    return url ? { kind: 'paste-code', url } : null;
-  },
-  invalidInputPattern: INVALID_CODE,
-};
-
-// ---------------------------------------------------------------- codex
-
-// `codex login --device-auth` prints a verification link and a one-time code,
-// then polls until the browser completes — nothing is ever typed.
-const CODEX_DEVICE_URL = new RegExp(`https?://${URL_BODY}*openai\\.com/${URL_BODY}*device${URL_BODY}*`, 'i');
-// e.g. `YQ16-PPHIE` — two uppercase alphanumeric groups, alone on its line.
-const CODEX_USER_CODE = /^\s*([A-Z0-9]{4}-[A-Z0-9]{4,6})\s*$/m;
-
-export function extractCodexUserCode(text: string): string | null {
-  const m = stripAnsi(text).match(CODEX_USER_CODE);
-  return m?.[1] ?? null;
-}
-
-export const CODEX_LOGIN_SPEC: AgentLoginSpec = {
-  agent: 'codex',
-  defaultArgs: ['--device-auth'],
-  detect(buf) {
-    const clean = stripAnsi(buf);
-    const m = clean.match(CODEX_DEVICE_URL);
-    if (!m) return null;
-    const url = trimUrl(m[0]);
-    const userCode = extractCodexUserCode(clean);
-    // The code prints right under the URL; wait for it rather than showing a
-    // link the user can't complete. The core's URL timeout bounds the wait.
-    if (!userCode) return null;
-    return { kind: 'browser-only', url, userCode };
-  },
-};
-
-// ---------------------------------------------------------------- opencode
-
-// `opencode auth login` is a per-provider prompt TREE (clack), not one prompt:
-// most providers ask for an API key, `opencode` prefixes a "create a key at
-// <url>" note, and github-copilot opens a nested select. We drive the shapes we
-// can recognize and hand the rest back to the passthrough.
-const OPENCODE_API_KEY = /Enter your API key/i;
-const OPENCODE_KEY_HINT = new RegExp(`Create an api key at\\s+(https?://${URL_BODY}*)`, 'i');
-// The clack prompt symbol keeps this off prose that merely says "select".
-const OPENCODE_SELECT = /[◆◇]\s+Select\s+([^\n]+)/i;
-const OPENCODE_UNKNOWN_PROVIDER = /Unknown provider\s+"([^"]*)"/i;
-const OPENCODE_OAUTH_URL = new RegExp(`https?://${URL_BODY}*(?:oauth|device|authorize)${URL_BODY}*`, 'i');
-
-export const OPENCODE_LOGIN_SPEC: AgentLoginSpec = {
-  agent: 'opencode',
-  defaultArgs: [],
-  detect(buf) {
-    const clean = stripAnsi(buf);
-
-    const unknown = clean.match(OPENCODE_UNKNOWN_PROVIDER);
-    if (unknown) return { kind: 'unsupported', reason: `unknown provider "${unknown[1] ?? ''}"` };
-
-    if (OPENCODE_API_KEY.test(clean)) {
-      const hint = clean.match(OPENCODE_KEY_HINT)?.[1];
-      return hint
-        ? { kind: 'secret', label: 'API key', hint: trimUrl(hint) }
-        : { kind: 'secret', label: 'API key' };
-    }
-
-    const oauth = clean.match(OPENCODE_OAUTH_URL);
-    if (oauth) return { kind: 'paste-code', url: trimUrl(oauth[0]) };
-
-    // A select we didn't skip with `--provider` / `--method` (e.g.
-    // github-copilot's deployment-type picker). Can't be driven from the host.
-    const select = clean.match(OPENCODE_SELECT)?.[1];
-    if (select) return { kind: 'unsupported', reason: `it asks to Select ${select.trim()}` };
-
-    return null;
-  },
-  invalidInputPattern: INVALID_CODE,
-};
-
-export const LOGIN_SPECS: Record<AgentName, AgentLoginSpec> = {
-  claude: CLAUDE_LOGIN_SPEC,
-  codex: CODEX_LOGIN_SPEC,
-  opencode: OPENCODE_LOGIN_SPEC,
-};
+/** Output meaning "that input was wrong, try again" — claude and opencode both re-prompt. */
+export const INVALID_CODE = /invalid|incorrect|not a valid|try again|expired|rejected/i;

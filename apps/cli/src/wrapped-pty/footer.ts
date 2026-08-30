@@ -1,6 +1,7 @@
 import { BAR_BG, statusLine, type SidebarBox } from '../dashboard/sidebar.js';
 import type { PromptAskEvent } from '@agentbox/relay';
 import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentMode } from '@agentbox/core';
 
 /**
  * Footer rendering state. `idle` reuses the dashboard's `statusLine` shape
@@ -27,7 +28,7 @@ export type FooterState =
       boxServiceStatus?: string;
       /** Mode drives the state label: claude shows claude activity, the
        *  others show `(shell)` / `(codex)` / `(opencode)`. */
-      mode: 'claude' | 'shell' | 'codex' | 'opencode';
+      mode: AgentMode;
       /** Whether the session can be detached (tmux-backed). Drives the
        *  expanded leader menu + the pinned `Control+a d: detach` hint. */
       detachable?: boolean;

@@ -14,8 +14,8 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BOX_WORKSPACE, BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from './cwd-encoding.js';
-import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from './types.js';
+import { BOX_WORKSPACE, BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from '../../session-teleport/cwd-encoding.js';
+import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from '../../session-teleport/types.js';
 
 /** In-box `~/.claude/projects/-workspace/` directory. */
 export const BOX_CLAUDE_PROJECTS_DIR = `/home/vscode/.claude/projects/${BOX_WORKSPACE_ENCODED}`;

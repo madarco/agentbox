@@ -30,7 +30,7 @@
  */
 
 import { join } from 'node:path';
-import type { Provider } from '@agentbox/core';
+import type { AgentId, Provider } from '@agentbox/core';
 import { UserFacingError } from '@agentbox/core';
 import {
   computeContextManifest,
@@ -398,7 +398,7 @@ export async function prepareHetzner(
     // credential paths) into a box that will never run them.
     // `~/.agents` is always staged — shared skills, not an agent's auth.
     const stagings: Array<{
-      kind: 'claude' | 'codex' | 'opencode' | 'agents';
+      kind: AgentId | 'agents';
       tar: StageResult;
       dest: string;
     }> = [];

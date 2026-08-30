@@ -43,7 +43,7 @@ import { resolveHubApiTarget } from './control-plane.js';
 import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';
 import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
 import { withOwningHub } from '../control-plane/with-hub.js';
-import type { BoxRecord } from '@agentbox/core';
+import type { AgentId, AgentMode, BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
@@ -302,7 +302,7 @@ export const dashboardCommand = new Command('dashboard')
       // `agentbox shell` sees from the CLI — matching the docker UX.
       const buildCloudAttachTarget = async (
         record: BoxRecord,
-        which: 'claude' | 'codex' | 'opencode' | 'shell',
+        which: AgentMode,
       ): Promise<RightTarget> => {
         const provider = await providerForBox(record);
         if (!provider.buildAttach) {
@@ -453,7 +453,7 @@ export const dashboardCommand = new Command('dashboard')
       // defaults only (no CLI overrides, no wizard, no setup-token prompt —
       // the TUI can't prompt). Mirrors the `agentbox <agent>` create block.
       const createNewBox = async (
-        agent: 'claude' | 'codex' | 'opencode' | undefined,
+        agent: AgentId | undefined,
         onProgress: (line: string) => void,
       ): Promise<{ boxId: string; attach?: RightTarget }> => {
         const cfg = await loadEffectiveConfig(project.root);

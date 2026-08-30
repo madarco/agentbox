@@ -16,6 +16,7 @@ import {
 } from '../control-plane/remote-hub.js';
 import { normalizeOriginUrl } from '../control-plane/hub-adopt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
+import type { AgentId } from '@agentbox/core';
 
 interface ListOptions extends WatchableOptions {
   json?: boolean;
@@ -170,7 +171,7 @@ function agentSummary(b: HubApiBox): string {
 // `mapActivityToWorkspace` in terminal/cmux-status.ts (blue=working,
 // amber=needs-input, red=error, dim=idle).
 
-type CmuxAgent = 'claude' | 'codex' | 'opencode';
+type CmuxAgent = AgentId;
 
 /** 256-colour SGR codes, keyed by the activity colour bucket. */
 const CMUX_COLOR: Record<'blue' | 'amber' | 'red' | 'dim', string> = {

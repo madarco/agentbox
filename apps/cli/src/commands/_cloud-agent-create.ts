@@ -25,6 +25,7 @@ import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';
 import { recordLastAgent } from '@agentbox/sandbox-docker';
 import { cloudAgentAttach, cloudAgentStartDetached } from './_cloud-attach.js';
+import type { AgentId } from '@agentbox/core';
 
 export interface CloudAgentCreateArgs {
   /** Pre-resolved provider (from `providerForCreate`). */
@@ -36,7 +37,7 @@ export interface CloudAgentCreateArgs {
   /** Tmux session name (e.g. `claude`). */
   sessionName: string;
   /** Mode label for the wrapper's footer. */
-  mode: 'claude' | 'codex' | 'opencode';
+  mode: AgentId;
   /** Args passed to the agent after `--`. Threaded through to the attached CLI. */
   extraArgs?: string[];
   /** Bypass the spinner and stream raw provider output to stderr. */

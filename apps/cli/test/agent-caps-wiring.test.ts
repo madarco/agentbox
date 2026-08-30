@@ -3,6 +3,7 @@ import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { resolveSessionArgs } from '../src/commands/fork.js';
 import { prepareTeleport } from '../src/session-teleport/index.js';
 import { TeleportError } from '../src/session-teleport/types.js';
+import type { AgentId } from '@agentbox/core';
 
 /**
  * `caps` is the registry's declaration of what an agent can do. It shipped with
@@ -27,14 +28,14 @@ describe('caps gate behaviour, not the agent name', () => {
   it('refuses --session for every agent that declares resume: false', () => {
     for (const spec of notResumable) {
       expect(() =>
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', {
+        resolveSessionArgs(spec.id as AgentId, {
           session: 'abc',
           workspace: '/tmp',
         }),
       ).toThrow(/resume is not supported/i);
       // …and starts fresh when no session was asked for.
       expect(
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', { workspace: '/tmp' }),
+        resolveSessionArgs(spec.id as AgentId, { workspace: '/tmp' }),
       ).toEqual([]);
     }
   });
@@ -42,7 +43,7 @@ describe('caps gate behaviour, not the agent name', () => {
   it('passes --resume through for every agent that declares resume: true', () => {
     for (const spec of resumable) {
       expect(
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', {
+        resolveSessionArgs(spec.id as AgentId, {
           session: 'abc',
           workspace: '/tmp',
         }),
@@ -54,7 +55,7 @@ describe('caps gate behaviour, not the agent name', () => {
     for (const spec of AGENT_SYNC_SPECS.filter((s) => s.caps.teleport === 'stub')) {
       await expect(
         prepareTeleport({
-          agent: spec.id as 'claude' | 'codex' | 'opencode',
+          agent: spec.id as AgentId,
           hostCwd: '/tmp',
           mode: { kind: 'continue' },
         }),
