@@ -275,6 +275,77 @@ the helpers each needs, so it's all buildable on `@madarco/agentbox-provider-sdk
   `currentCloudBaseFingerprint`. If your snapshots are name-addressed, just
   implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
 
+## Per-agent variants (optional)
+
+A box is created **for an agent set** (`agentbox claude --provider yours`), and
+the built-in providers bake one artifact per set on top of an agentless base:
+`agentbox prepare --provider yours --agents claude` boots the base, runs just
+that agent's install recipe, and re-snapshots. A matching box then starts with
+the agent already present instead of installing it at create.
+
+**This is opt-in and costs nothing to skip.** `agents` is optional on both
+`PrepareOptions` and `CloudProvisionRequest`, so a provider that ignores it keeps
+working exactly as before — it always boots its base, and `ensureAgentInstalled`
+puts the agent in at create. That is why supporting variants needs **no
+`SDK_API_VERSION` bump**.
+
+To opt in:
+
+```ts
+import {
+  agentSetArg, normalizeAgentSet, variantFingerprint,
+  resolveAgentSpec, resolveAgentInstall, renderInstallRecipe, renderPackageInstall,
+} from '@madarco/agentbox-provider-sdk';
+
+// 1. Identity for this bake. '' is the agentless base; the set is normalised,
+//    so ['codex','claude'] and ['claude','codex'] are the SAME artifact.
+const agents = normalizeAgentSet(opts.agents);
+const variantKey = agentSetArg(agents);
+
+// 2. Fingerprint. Use this instead of `claudeInstallFingerprint` — it folds the
+//    agent set in, and is the IDENTITY for the empty set, so an existing base
+//    record keeps its hash and does not spuriously re-bake.
+const contextSha = variantFingerprint(baseSha, { claudeInstall, agents });
+
+// 3. Render the install into your bake. Same data the built-ins and the runtime
+//    installer use, so a baked agent and a runtime-added one are identical.
+for (const id of agents) {
+  const spec = resolveAgentSpec(id);
+  const install = resolveAgentInstall(spec.install, claudeInstall);
+  const steps: string[] = [];
+  if (install.packages?.length) {
+    const line = renderPackageInstall(install.packages);
+    // An OPTIONAL prerequisite must not fail the bake.
+    steps.push(install.packagesOptional ? `{ ${line} } || true` : line);
+  }
+  // `runAs: 'box-user'` is load-bearing: native installers write to the INVOKING
+  // user's ~/.local/bin, so running them as root hides the binary in /root.
+  const recipe = renderInstallRecipe(install.recipe);
+  steps.push(install.runAs === 'box-user' ? `sudo -u vscode -H bash -lc '${recipe}'` : recipe);
+  if (install.postInstall) steps.push(install.postInstall);
+  // Verify on the BOX USER's PATH, not just that the build exited 0.
+  steps.push(`sudo -u vscode -H bash -lc 'command -v ${spec.binary} >/dev/null'`);
+}
+```
+
+`renderPackageInstall` dispatches on the package manager the box actually has
+(`apt-get` | `dnf` | `microdnf`) instead of assuming Debian — Vercel's sandboxes
+are Amazon Linux, where a hardcoded `apt-get` exits 127.
+
+Three rules the built-in providers each learned the hard way:
+
+- **Always fall back to the base.** After a base-only `prepare` — the documented
+  first-run flow — no variant exists yet. Resolving must return the base, not
+  throw, or *every* create fails for a new user.
+- **Never pin a variant** into `box.image<Provider>` or a shared custody record.
+  Those are single-slot: a variant written there makes every box on your provider
+  boot one agent's artifact.
+- **Keep your `base` record meaning the agentless base.** Provider-generic readers
+  (freshness, bake sharing) read `base.contextSha256` and assume exactly that;
+  pointing it at the newest bake reports a permanent false "stale".
+
+---
+
 ## Credentials & config
 
 - Persist your API token however you like; the convention is a 0600

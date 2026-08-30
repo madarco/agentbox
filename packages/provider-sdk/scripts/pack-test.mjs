@@ -37,6 +37,16 @@ const REQUIRED_EXPORTS = [
   'readPreparedStateRaw',
   'writePreparedStateRaw',
   'claudeInstallFingerprint',
+  // per-agent variants — a provider that bakes one artifact per agent set needs
+  // all of these; without them a plugin can compute neither the variant key nor
+  // an agent's install recipe.
+  'variantFingerprint',
+  'normalizeAgentSet',
+  'agentSetArg',
+  'resolveAgentSpec',
+  'resolveAgentInstall',
+  'renderInstallRecipe',
+  'renderPackageInstall',
   // box-state helpers
   'recordBox',
   'readState',

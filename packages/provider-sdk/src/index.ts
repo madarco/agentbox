@@ -122,6 +122,43 @@ export {
   type CliStamp,
 } from '@agentbox/sandbox-core';
 
+// ---- per-agent variants (the "one agent per box" tier) ----
+// A box is created FOR an agent set, and a provider may bake one artifact per
+// set on top of its agentless base — `prepare --agents claude` — so an
+// `agentbox claude` box boots with the agent already in place instead of
+// installing it at create.
+//
+// OPTIONAL: `agents` is optional on both `PrepareOptions` and
+// `CloudProvisionRequest`, so a provider that ignores it keeps working — it
+// always boots its base and `ensureAgentInstalled` adds the agent at create.
+// That is the intended graceful degradation, which is why supporting variants
+// needs no `SDK_API_VERSION` bump.
+//
+// To OPT IN you need all of these:
+//   - `normalizeAgentSet` + `agentSetArg` to build the variant key (`''` is the
+//     agentless base). Order-insensitive, so ['codex','claude'] and
+//     ['claude','codex'] resolve to the same artifact.
+//   - `variantFingerprint` instead of `claudeInstallFingerprint` — it folds the
+//     agent set into the hash, and is the IDENTITY for the empty set, so
+//     existing base records stay valid.
+//   - `resolveAgentSpec` + `resolveAgentInstall` + `renderInstallRecipe` +
+//     `renderPackageInstall` to render an agent's install into your bake. These
+//     are the same data the built-in providers and the runtime installer use,
+//     so a baked agent and a runtime-added one end up identical.
+//
+// `renderPackageInstall` dispatches on the package manager the box actually has
+// (apt-get | dnf | microdnf) rather than assuming Debian — Vercel's sandboxes
+// are Amazon Linux, where `apt-get` exits 127.
+export {
+  variantFingerprint,
+  normalizeAgentSet,
+  agentSetArg,
+  resolveAgentSpec,
+  resolveAgentInstall,
+  renderInstallRecipe,
+  renderPackageInstall,
+} from '@agentbox/sandbox-core';
+
 // ---- config access ----
 export { loadEffectiveConfig, findProjectRoot, type EffectiveConfig } from '@agentbox/config';
 

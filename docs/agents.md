@@ -369,27 +369,17 @@ posting the fresh blob to the relay is what keeps the fleet logged in, so a box
 whose ctl doesn't watch a credential silently degrades the whole fleet's login
 for that agent, not just its own.
 
-### 3. Community provider plugins cannot support per-agent variants
+### 3. Community provider plugins cannot support per-agent variants — **done**
 
-`@madarco/agentbox-provider-sdk` re-exports `claudeInstallFingerprint` but none
-of the helpers the per-agent tier is built on:
+Fixed: the SDK now re-exports `variantFingerprint`, `normalizeAgentSet`,
+`agentSetArg`, `resolveAgentSpec`, `resolveAgentInstall`, `renderInstallRecipe`
+and `renderPackageInstall`, and `docs/provider-plugins.md` documents the opt-in
+with a worked example. Purely additive — `agents` was already optional on
+`PrepareOptions` and `CloudProvisionRequest`, so a plugin that ignores it still
+degrades gracefully and `SDK_API_VERSION` stays at 2.
 
-```
-variantFingerprint · normalizeAgentSet · agentSetArg
-resolveAgentSpec · resolveAgentInstall · renderInstallRecipe · renderPackageInstall
-```
-
-Nothing is *broken*: `agents` is optional on both `PrepareOptions` and
-`CloudProvisionRequest`, so an existing plugin compiles and runs unchanged — it
-just always boots its base and lets `ensureAgentInstalled` add the agent at
-create, which is the intended graceful degradation. `SDK_API_VERSION` stays at
-2 for the same reason.
-
-But a plugin that *wants* the tier can't compute a variant key, render an
-agent's install recipe, or fingerprint a variant. Exporting those is additive
-(no version bump) — it does need a rebuild + republish, since the SDK inlines
-the `@agentbox/*` packages. See
-[`provider-plugins.md`](./provider-plugins.md) → "Publishing the SDK".
+The published surface is pinned by `pack:test`, which installs a real packed
+tarball in isolation and fails naming any missing export.
 
 ### 4. The per-agent command tail
 
