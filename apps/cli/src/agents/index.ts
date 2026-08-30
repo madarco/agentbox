@@ -31,6 +31,7 @@
 import type { AgentId } from '@agentbox/core';
 import { resolveAgentSpec, type AgentSyncSpec } from '@agentbox/sandbox-core';
 import type { AgentLoginSpec } from '../lib/agent-login-specs.js';
+import type { AgentRuntime } from './command/types.js';
 import type { ResolvedTeleport, ResumeMode, TeleportLogger } from '../session-teleport/types.js';
 
 /** Host-side session resolve for one agent — see `session-teleport/index.ts`. */
@@ -46,6 +47,13 @@ export interface AgentModule {
   spec: AgentSyncSpec;
   /** Guided-login prompt detector. */
   login: AgentLoginSpec;
+  /**
+   * Docker bindings and the agent's own login code — everything the CLI needs
+   * that is not the commander tree. Kept here rather than on the command table
+   * so a caller that only wants to restart a session (`agent-sessions.ts`) does
+   * not pull three commanders' worth of imports to do it.
+   */
+  runtime: AgentRuntime;
   /**
    * Host session teleport. Absent exactly when the spec declares
    * `caps.teleport: 'stub'`; `prepareTeleport` refuses on the capability before
@@ -82,7 +90,7 @@ export async function loadAgentModule(id: AgentId): Promise<AgentModule> {
   return (await importer()).agentModule;
 }
 
-/** Shared by the three module files: pull the spec, keep the wiring in one place. */
+/** Shared by the agent module files: pull the spec, keep the wiring in one place. */
 export function defineAgentModule(
   id: AgentId,
   parts: Omit<AgentModule, 'id' | 'spec'>,

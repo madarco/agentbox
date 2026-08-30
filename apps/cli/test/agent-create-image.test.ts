@@ -12,8 +12,9 @@ import { describe, expect, it } from 'vitest';
  * a snapshot id from one is meaningless (or poison) to another. Only
  * `resolveBoxImage(cfg, provider)` reads those keys.
  *
- * `agentbox create` always did. The agent entry points (`agentbox daytona
- * claude`, codex, opencode), the queued-job worker and the dashboard did not:
+ * `agentbox create` always did. The agent entry point (`agentbox daytona
+ * claude`, codex, opencode — one body since the command factory), the
+ * queued-job worker and the dashboard did not:
  * they passed the generic key, so the provider got the default image sentinel
  * instead of the snapshot that had just been baked for it. On daytona's
  * linux-vm class that isn't a slow fallback but a hard failure — a VM can only
@@ -26,20 +27,19 @@ import { describe, expect, it } from 'vitest';
  * what's actually cheap to keep honest.
  */
 const CREATE_CALL_SITES = [
-  'claude.ts',
-  'codex.ts',
-  'opencode.ts',
-  '_run-queued-job.ts',
-  'dashboard.ts',
+  // The one agent create body, shared by claude / codex / opencode.
+  ['agents', 'command', 'create-action.ts'],
+  ['commands', '_run-queued-job.ts'],
+  ['commands', 'dashboard.ts'],
 ];
 
 /** `image:` fields on a create request — excludes the throwaway login containers. */
 const RAW_IMAGE_IN_CREATE = /image:\s*cfg\.effective\.box\.image\b/;
 
 describe('box-create call sites resolve the per-provider image', () => {
-  for (const file of CREATE_CALL_SITES) {
-    it(`${file} passes resolveBoxImage() into its create request`, () => {
-      const src = readFileSync(join(__dirname, '..', 'src', 'commands', file), 'utf8');
+  for (const parts of CREATE_CALL_SITES) {
+    it(`${parts.join('/')} passes resolveBoxImage() into its create request`, () => {
+      const src = readFileSync(join(__dirname, '..', 'src', ...parts), 'utf8');
       const createBlocks = src
         .split(/cloudAgentCreate\(\{|createBox\(\{/)
         .slice(1)

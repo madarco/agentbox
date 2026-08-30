@@ -5,12 +5,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { detectHostTerminal } from '../terminal/host.js';
 import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
-import { claudeCommand } from './claude.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { codexCommand } from './codex.js';
-import { opencodeCommand } from './opencode.js';
 import type { AgentId } from '@agentbox/core';
+import { agentCommandEntry } from '../agents/commands.js';
 
 /** Agents `--agent` accepts — the registry, so a new agent is forkable at once. */
 const FORK_AGENTS: readonly AgentId[] = agentIds();
@@ -59,25 +57,22 @@ export function detectAgentFromEnv(env: NodeJS.ProcessEnv = process.env): AgentI
   return undefined;
 }
 
-/** The create-style command each agent forks through. fork forwards a curated
- *  argv and lets the delegate run its own create+teleport+attach pipeline
- *  (incl. the new-tab spawn, tagged with that agent's attach mode). */
-const AGENT_COMMAND: Record<string, Command> = {
-  claude: claudeCommand,
-  codex: codexCommand,
-  opencode: opencodeCommand,
-};
-
 /**
- * Fail loudly rather than dereferencing `undefined`: with `AgentId` open the
- * compiler no longer proves this map covers every agent, so a registry entry
- * that never got a command here surfaces as a message instead of a TypeError.
- * `agent-command-coverage.test.ts` asserts the map matches `agentIds()`.
+ * The create-style command each agent forks through. fork forwards a curated
+ * argv and lets the delegate run its own create+teleport+attach pipeline
+ * (incl. the new-tab spawn, tagged with that agent's attach mode).
+ *
+ * Read from the agent-command table rather than a second hand-kept map: fork
+ * used to list the three commands itself, which is one more place a fourth
+ * agent has to be remembered. Still fails loudly rather than dereferencing
+ * `undefined` — with `AgentId` open the compiler does not prove the table
+ * covers the registry, so a registry entry that never got a command surfaces as
+ * a message instead of a TypeError.
  */
 function agentCommandFor(agent: AgentId): Command {
-  const cmd = AGENT_COMMAND[agent];
-  if (!cmd) throw new Error(`fork: no command registered for agent '${agent}'`);
-  return cmd;
+  const entry = agentCommandEntry(agent);
+  if (!entry) throw new Error(`fork: no command registered for agent '${agent}'`);
+  return entry.command;
 }
 
 interface ForkOptions {

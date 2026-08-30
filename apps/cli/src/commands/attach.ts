@@ -5,24 +5,16 @@ import { Command } from 'commander';
 import { execa } from 'execa';
 import { reattachRef, resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { attachClaudeWrapped } from './claude.js';
-import { attachCodexWrapped } from './codex.js';
-import { attachOpencodeWrapped } from './opencode.js';
 import { ATTACH_IN_HELP, INLINE_HELP, resolveAttachInOption } from './_attach-in.js';
 import { hostAwareOpenIn } from '../terminal/host.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 import type { AgentId } from '@agentbox/core';
 import { agentIds } from '@agentbox/sandbox-core';
+import { agentCommandEntry } from '../agents/commands.js';
 
 const AGENT_KINDS: readonly AgentId[] = agentIds();
 
-/** Per-agent attach entry points. Each ends in `process.exit`. */
-const ATTACH_WRAPPED: Record<string, typeof attachClaudeWrapped> = {
-  claude: attachClaudeWrapped,
-  codex: attachCodexWrapped,
-  opencode: attachOpencodeWrapped,
-};
 const AGENT_KIND_SET = new Set<string>(AGENT_KINDS);
 
 /**
@@ -183,14 +175,14 @@ async function dispatchDocker(
   // Each wrapper ends in process.exit; the void return is what TS sees
   // because awaiting Promise<never> doesn't terminate control flow at the
   // type level.
-  const attach = ATTACH_WRAPPED[winner.kind];
-  // With `AgentId` open this switch stopped being exhaustive: an agent the
-  // session probe accepts (it reads `agentIds()`) but nothing here handles used
-  // to fall out of the switch and return, so `attach` exited 0 having attached
-  // to nothing. `agent-command-coverage.test.ts` keeps the map matching the
-  // registry; this is the run-time half.
-  if (!attach) throw new Error(`attach: no wrapper registered for agent '${winner.kind}'`);
-  await attach(box, winner.sessionName, ref, undefined, openIn);
+  const entry = agentCommandEntry(winner.kind);
+  // With `AgentId` open this dispatch is not exhaustive: an agent the session
+  // probe accepts (it reads `agentIds()`) but that has no command module used to
+  // fall through and return, so `attach` exited 0 having attached to nothing.
+  // `agent-command-coverage.test.ts` keeps the table matching the registry; this
+  // is the run-time half.
+  if (!entry) throw new Error(`attach: no wrapper registered for agent '${winner.kind}'`);
+  await entry.attachWrapped(box, winner.sessionName, ref, undefined, openIn);
 }
 
 /**

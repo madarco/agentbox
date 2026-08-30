@@ -1,7 +1,6 @@
 /**
- * Restore the agent (Claude / Codex) that was running in a box before it
- * stopped — so a restart (or a cloud idle-timeout resume) looks like the box
- * never went down.
+ * Restore the agent that was running in a box before it stopped — so a restart
+ * (or a cloud idle-timeout resume) looks like the box never went down.
  *
  * The box's agent runs as a detached tmux session that dies with the
  * container/VM; the agent's session files survive in the (shared) config
@@ -15,19 +14,14 @@
  *     no resumable id, so restore falls back to `codex resume --last`).
  *
  * On restart we read those pointers over `provider.exec` and relaunch the agent
- * resuming the exact (claude) / most-recent-in-cwd (codex) session. OpenCode is
- * skipped — it has no session-resume support yet.
+ * resuming the exact (claude) / most-recent-in-cwd (codex) session. An agent
+ * that declares no `caps.resume` is skipped — it has nothing to resume.
  */
-import { loadEffectiveConfig, type EffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig } from '@agentbox/config';
 import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
-import {
-  startClaudeSession,
-  startCodexSession,
-  startOpencodeSession,
-} from '@agentbox/sandbox-docker';
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
+import { loadAgentModule } from './agents/index.js';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
-import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from './lib/skip-permissions.js';
 
 /**
  * Agents that support session resume, straight from `caps.resume` — the same
@@ -38,10 +32,6 @@ import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from './lib/ski
 export function resumableAgents(): AgentId[] {
   return agentIds().filter((id) => resolveAgentSpec(id).caps.resume);
 }
-
-const POINTER_DIR = '"$HOME/.local/state/agentbox"';
-const CLAUDE_POINTER = `${POINTER_DIR}/claude-session`;
-const CODEX_MARKER = `${POINTER_DIR}/codex-active`;
 
 /** Run a small read-only shell snippet in the box; '' on any failure. */
 async function execRead(provider: Provider, box: BoxRecord, script: string): Promise<string> {
@@ -76,78 +66,25 @@ async function killTmuxSession(
 }
 
 /**
- * The per-agent half of resume: read the pointer, layer the agent's own
- * skip-permissions config, launch it in a docker box.
- *
- * A KEYED TABLE, not an `if (claude) … else codex` chain. That chain was total
- * while the parameter was `'claude' | 'codex'`; with `AgentId` open its `else`
- * would hand every future agent Codex's marker file, Codex's argv and — on
- * docker — the `codex` binary. An agent that declares `caps.resume` and has no
- * entry here is caught by `resume-support-coverage.test.ts`, and at run time
- * gets "nothing to resume" rather than someone else's session.
- */
-interface ResumeSupport {
-  /** Args to resume the box's recorded session, or null if there is none. */
-  resumeArgs(provider: Provider, box: BoxRecord): Promise<string[] | null>;
-  applySkipPermissions(args: string[], cfg: EffectiveConfig): string[];
-  startDocker(o: {
-    container: string;
-    args: string[];
-    sessionName: string;
-    workspacePath: string;
-  }): Promise<void>;
-}
-
-const RESUME_SUPPORT: Record<string, ResumeSupport> = {
-  claude: {
-    // Claude resumes the exact captured id.
-    resumeArgs: async (provider, box) => {
-      const id = await execRead(provider, box, `cat ${CLAUDE_POINTER} 2>/dev/null`);
-      // Guard: only a uuid-ish token is safe to hand to `claude --resume`.
-      return /^[0-9a-fA-F][0-9a-fA-F-]{7,}$/.test(id) ? ['--resume', id] : null;
-    },
-    applySkipPermissions: applyClaudeSkipPermissions,
-    startDocker: (o) =>
-      startClaudeSession({
-        container: o.container,
-        claudeArgs: o.args,
-        sessionName: o.sessionName,
-        workspacePath: o.workspacePath,
-      }),
-  },
-  codex: {
-    // Codex exposes no resumable id, so it resumes the most recent session in
-    // the box's cwd off a presence marker.
-    resumeArgs: async (provider, box) => {
-      const ran = await execRead(provider, box, `test -f ${CODEX_MARKER} && echo y`);
-      return ran === 'y' ? ['resume', '--last'] : null;
-    },
-    applySkipPermissions: applyCodexSkipPermissions,
-    startDocker: (o) =>
-      startCodexSession({ container: o.container, codexArgs: o.args, sessionName: o.sessionName }),
-  },
-};
-
-/** Agent ids with a {@link ResumeSupport} entry. */
-export function agentsWithResumeSupport(): string[] {
-  return Object.keys(RESUME_SUPPORT);
-}
-
-/**
  * The args to resume the box's recorded session for `kind`, or null if there's
  * nothing to resume. Skip-permissions is NOT applied here — callers layer it via
  * their own config (the attach paths already do).
+ *
+ * An agent with no resume support gets null, which is the safe answer: falling
+ * through to another agent's probe would restore the wrong session. This was an
+ * `if (claude) … else codex` chain the compiler proved total while the parameter
+ * was `'claude' | 'codex'`; with `AgentId` open its `else` would have handed
+ * every future agent Codex's marker file and Codex's argv.
  */
 export async function agentResumeArgs(
   provider: Provider,
   box: BoxRecord,
   kind: AgentId,
 ): Promise<string[] | null> {
-  const support = RESUME_SUPPORT[kind];
-  // No entry: "nothing to resume" is the safe answer. Falling through to another
-  // agent's probe would restore the wrong session.
-  if (!support) return null;
-  return support.resumeArgs(provider, box);
+  if (!resolveAgentSpec(kind).caps.resume) return null;
+  const { runtime } = await loadAgentModule(kind);
+  if (!runtime.resume) return null;
+  return runtime.resume.resumeArgs((script) => execRead(provider, box, script));
 }
 
 export interface RestoreOptions {
@@ -159,8 +96,8 @@ export interface RestoreOptions {
    * `lastAgent` and wants that agent back, not whatever other (possibly stale)
    * pointers happen to exist in the box. When unset, resume EVERY resumable
    * agent that was running — the `start`/`unpause` "box never went down"
-   * semantics. OpenCode has no session resume, so it only ever comes back via
-   * the fresh path here.
+   * semantics. An agent with no session resume only ever comes back via the
+   * fresh path here.
    */
   restoreOnly?: AgentId;
   /**
@@ -181,29 +118,17 @@ async function startFreshSession(
   cfg: Awaited<ReturnType<typeof loadEffectiveConfig>> | null,
   isDocker: boolean,
 ): Promise<void> {
+  const { runtime } = await loadAgentModule(kind);
   const args =
-    kind === 'claude'
-      ? cfg
-        ? applyClaudeSkipPermissions([], cfg.effective)
-        : []
-      : kind === 'codex'
-        ? cfg
-          ? applyCodexSkipPermissions([], cfg.effective)
-          : []
-        : [];
+    cfg && runtime.skipPermissions ? runtime.skipPermissions.apply([], cfg.effective) : [];
   if (isDocker) {
-    if (kind === 'claude') {
-      await startClaudeSession({
-        container: box.container,
-        claudeArgs: args,
-        sessionName,
-        workspacePath: box.workspacePath,
-      });
-    } else if (kind === 'codex') {
-      await startCodexSession({ container: box.container, codexArgs: args, sessionName });
-    } else {
-      await startOpencodeSession({ container: box.container, opencodeArgs: args, sessionName });
-    }
+    await runtime.startSession({
+      container: box.container,
+      args,
+      sessionName,
+      boxName: box.name,
+      workspacePath: box.workspacePath,
+    });
   } else {
     await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
   }
@@ -225,30 +150,28 @@ export async function restoreAgentSessions(
 ): Promise<void> {
   const cfg = await loadEffectiveConfig(box.workspacePath).catch(() => null);
   const isDocker = (box.provider ?? 'docker') === 'docker';
-  const sessionNameFor = (kind: AgentId): string =>
-    kind === 'claude'
-      ? (cfg?.effective.claude.sessionName ?? 'claude')
-      : kind === 'codex'
-        ? (cfg?.effective.codex.sessionName ?? 'codex')
-        : (cfg?.effective.opencode.sessionName ?? 'opencode');
+  const sessionNameFor = async (kind: AgentId): Promise<string> => {
+    const { runtime } = await loadAgentModule(kind);
+    return cfg ? runtime.sessionNameOf(cfg.effective) : resolveAgentSpec(kind).sessionName;
+  };
 
-  // Resume one resumable agent (claude/codex) from its in-box pointer. Returns
-  // true if it (re)launched, false if there was nothing to resume / it failed.
+  // Resume one resumable agent from its in-box pointer. Returns true if it
+  // (re)launched, false if there was nothing to resume / it failed.
   const tryResume = async (kind: AgentId, sessionName: string): Promise<boolean> => {
-    const support = RESUME_SUPPORT[kind];
-    if (!support) {
-      opts.onLog?.(`no resume support for ${kind}; leaving it stopped`);
-      return false;
-    }
-    const resume = await support.resumeArgs(provider, box);
+    const resume = await agentResumeArgs(provider, box, kind);
     if (!resume) return false;
-    const args = cfg ? support.applySkipPermissions(resume, cfg.effective) : resume;
+    const { runtime } = await loadAgentModule(kind);
+    const args =
+      cfg && runtime.skipPermissions
+        ? runtime.skipPermissions.apply(resume, cfg.effective)
+        : resume;
     try {
       if (isDocker) {
-        await support.startDocker({
+        await runtime.startSession({
           container: box.container,
           args,
           sessionName,
+          boxName: box.name,
           workspacePath: box.workspacePath,
         });
       } else {
@@ -267,16 +190,16 @@ export async function restoreAgentSessions(
   // (possibly stale) pointers happen to exist.
   const only = opts.restoreOnly;
   if (only) {
-    const sessionName = sessionNameFor(only);
+    const sessionName = await sessionNameFor(only);
     if (await tmuxAlive(provider, box, sessionName)) {
       if (!opts.force) return;
       // Force: kill the running session so it relaunches with the current box
-      // env (e.g. after flipping to git direct mode). Claude/Codex then resume
-      // the same conversation via their in-box pointer below.
+      // env (e.g. after flipping to git direct mode). A resumable agent then
+      // resumes the same conversation via its in-box pointer below.
       await killTmuxSession(provider, box, sessionName);
       opts.onLog?.(`stopped the running ${only} session to restart it`);
     }
-    if ((only === 'claude' || only === 'codex') && (await tryResume(only, sessionName))) return;
+    if (await tryResume(only, sessionName)) return;
     try {
       await startFreshSession(box, only, sessionName, cfg, isDocker);
       opts.onLog?.(`started ${only} session`);
@@ -288,7 +211,7 @@ export async function restoreAgentSessions(
 
   // start/unpause: resume every resumable agent that was actually running.
   for (const kind of resumableAgents()) {
-    const sessionName = sessionNameFor(kind);
+    const sessionName = await sessionNameFor(kind);
     if (await tmuxAlive(provider, box, sessionName)) continue;
     await tryResume(kind, sessionName);
   }

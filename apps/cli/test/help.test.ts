@@ -10,11 +10,9 @@ import {
 import { agentCommand } from '../src/commands/agent.js';
 import { appCommand } from '../src/commands/app.js';
 import { attachCommand } from '../src/commands/attach.js';
+import { agentCommands } from '../src/agents/commands.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
-import { claudeCommand } from '../src/commands/claude.js';
 import { codeCommand } from '../src/commands/code.js';
-import { codexCommand } from '../src/commands/codex.js';
-import { opencodeCommand } from '../src/commands/opencode.js';
 import { configCommand } from '../src/commands/config.js';
 import { cpCommand } from '../src/commands/cp.js';
 import { createCommand } from '../src/commands/create.js';
@@ -66,10 +64,8 @@ function buildProgram(): Command {
   const program = new Command();
   for (const cmd of [
     createCommand,
-    claudeCommand,
+    ...agentCommands(),
     forkCommand,
-    codexCommand,
-    opencodeCommand,
     codeCommand,
     shellCommand,
     attachCommand,
