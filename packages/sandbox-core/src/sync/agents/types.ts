@@ -79,6 +79,15 @@ export interface AgentCapabilities {
   resume: boolean;
   /** Session-teleport support. OpenCode: a stub that throws. */
   teleport: 'full' | 'stub';
+  /**
+   * Why teleport is a stub, in the user's words. Required in spirit whenever
+   * `teleport: 'stub'` — it is what the refusal actually prints.
+   *
+   * Data, not a thrown-from-a-module string, so declaring `teleport: 'stub'` is
+   * all an agent has to do to get a good refusal: no per-agent `case` in
+   * `prepareTeleport`, no module of its own. Falls back to a generic message.
+   */
+  teleportStubReason?: string;
   /** How in-box activity is reported. OpenCode uses a plugin, not a tmux scraper. */
   activitySource: 'scraper' | 'plugin';
 }

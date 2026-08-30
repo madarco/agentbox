@@ -7,6 +7,7 @@ import { detectHostTerminal } from '../terminal/host.js';
 import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
 import { claudeCommand } from './claude.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { codexCommand } from './codex.js';
 import { opencodeCommand } from './opencode.js';
 
@@ -95,11 +96,13 @@ const RECENT_SESSION_MS = 5 * 60 * 1000;
  *    and passes it, since Codex exposes no session-id variable.
  *  - opencode: no resume — teleport is a stub, so fork starts a fresh box.
  *    `--session` is rejected (resume isn't possible yet). */
-function resolveSessionArgs(agent: ForkAgent, opts: ForkOptions): string[] {
-  if (agent === 'opencode') {
+export function resolveSessionArgs(agent: ForkAgent, opts: ForkOptions): string[] {
+  // Gate on the DECLARED capability rather than the agent's name, so an agent
+  // that cannot resume states it once in its registry row.
+  if (!resolveAgentSpec(agent).caps.resume) {
     if (opts.session) {
       throw new Error(
-        'OpenCode session resume is not supported yet; `agentbox fork --agent opencode` starts a fresh box. Drop --session.',
+        `${agent} session resume is not supported yet; \`agentbox fork --agent ${agent}\` starts a fresh box. Drop --session.`,
       );
     }
     return [];

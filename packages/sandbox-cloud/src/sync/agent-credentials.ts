@@ -37,6 +37,7 @@ import {
   isRealAgentCredential,
   pushCredentialToBox,
   readCredentialBackup,
+  resolveAgentSpec,
   runDockerCredentialRefresh,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
@@ -120,10 +121,11 @@ export interface EnsureAgentVolumesResult {
   /** Volume mounts ready for `CloudProvisionRequest.volumes`. */
   mounts: CloudVolumeMount[];
   /**
-   * Env vars to merge into the sandbox env at provision time. Includes
-   * `OPENCODE_CONFIG_DIR` (so the in-box opencode reads its config from the
-   * snapshot-baked `config/` subdir of its data dir) and any forwarded
-   * provider API keys present in the host env.
+   * Env vars to merge into the sandbox env at provision time. The `boxRunEnv`
+   * each selected agent declares (OpenCode: `OPENCODE_CONFIG_DIR` so the in-box
+   * opencode reads its config from the snapshot-baked `config/` subdir of its
+   * data dir, plus `XDG_STATE_HOME`) and any forwarded provider API keys present
+   * in the host env.
    */
   env: Record<string, string>;
   /**
@@ -206,14 +208,25 @@ export async function ensureAgentVolumesForCloud(
   return { mounts, env: buildForwardedEnv(allAgents), agents: allAgents };
 }
 
-function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
+/**
+ * The run-env the selected agents declare (`boxRunEnv`), merged.
+ *
+ * PER AGENT, not the union of all of them: a claude-only box has no business
+ * being told where OpenCode keeps its config.
+ *
+ * Read from the registry rather than restated. This used to hardcode
+ * `OPENCODE_CONFIG_DIR` alone and silently omit `XDG_STATE_HOME`, which the
+ * docker provider did set — so a cloud box kept OpenCode's `model.json` outside
+ * the dir the snapshot captures and lost the selected model across a resume.
+ */
+export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<string, string> {
   const env: Record<string, string> = {};
-  // OpenCode reads its config dir from $OPENCODE_CONFIG_DIR; the snapshot
-  // bake puts the config files at <data dir>/config/ to match what the
-  // Docker provider does (see buildOpencodeMounts).
-  if (agents.includes('opencode')) {
-    env['OPENCODE_CONFIG_DIR'] = '/home/vscode/.local/share/opencode/config';
-  }
+  for (const agent of agents) Object.assign(env, resolveAgentSpec(agent).boxRunEnv);
+  return env;
+}
+
+function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
+  const env: Record<string, string> = buildCloudBoxRunEnv(agents);
   // Forward provider API keys from the host process env into the sandbox.
   // For agents authenticated via env-var (ANTHROPIC_API_KEY etc.) rather
   // than a stored auth file, this is the only way the in-box agent finds
@@ -460,12 +473,22 @@ async function seedCredentialsOne(
   }
 }
 
-/** Box-side OpenCode state dir (default XDG location; cloud sets no XDG_STATE_HOME). */
-const OPENCODE_STATE_DIR = '/home/vscode/.local/state/opencode';
+/**
+ * Box-side OpenCode state dir. Derived from the agent's declared `XDG_STATE_HOME`
+ * (OpenCode appends `opencode/` to it), falling back to the XDG default for an
+ * agent that declares none — so the seed always lands where the in-box agent
+ * will actually look.
+ */
+const OPENCODE_STATE_DIR = ((): string => {
+  const stateHome = resolveAgentSpec('opencode').boxRunEnv['XDG_STATE_HOME'];
+  return stateHome ? `${stateHome}/opencode` : '/home/vscode/.local/state/opencode';
+})();
 
 /**
  * Seed the host's selected OpenCode model (`~/.local/state/opencode/model.json`)
- * into the box's default state dir, host-authoritative, on **every** create.
+ * into the box's state dir, host-authoritative, on **every** create. The
+ * destination follows the agent's declared `XDG_STATE_HOME`, so it stays the dir
+ * the in-box opencode actually reads.
  *
  * Unlike credentials (a seed-once volume), the cloud box's state dir is ephemeral
  * — there is no persistent per-box store on either cloud (Daytona's only shared
