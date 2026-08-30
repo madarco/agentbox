@@ -15,6 +15,9 @@ const m = vi.hoisted(() => ({
   uploadEnvFiles: vi.fn(),
   uploadCarryPaths: vi.fn(),
   renderCarryEntries: vi.fn(),
+  agentIds: vi.fn(() => ['claude', 'codex', 'opencode']),
+  createCloudSyncTransport: vi.fn(() => ({}) as never),
+  seedAgentDeclaredFilesViaTransport: vi.fn(),
 }));
 
 vi.mock('../src/sync/agent-credentials.js', () => ({
@@ -30,7 +33,16 @@ vi.mock('../src/sync/claude-json-overlay.js', () => ({ seedClaudeJsonAtCreate: m
 vi.mock('../src/sync/git-identity.js', () => ({ seedGitIdentity: m.seedGitIdentity }));
 vi.mock('../src/sync/env-files.js', () => ({ uploadEnvFiles: m.uploadEnvFiles }));
 vi.mock('../src/sync/carry.js', () => ({ uploadCarryPaths: m.uploadCarryPaths }));
-vi.mock('@agentbox/sandbox-core', () => ({ renderCarryEntries: m.renderCarryEntries }));
+vi.mock('@agentbox/sandbox-core', () => ({
+  renderCarryEntries: m.renderCarryEntries,
+  agentIds: m.agentIds,
+}));
+vi.mock('../src/sync/sync-transport.js', () => ({
+  createCloudSyncTransport: m.createCloudSyncTransport,
+}));
+vi.mock('../src/sync/agent-seed.js', () => ({
+  seedAgentDeclaredFilesViaTransport: m.seedAgentDeclaredFilesViaTransport,
+}));
 
 import { makeCloudSync } from '../src/sync/cloud-sync.js';
 
@@ -60,6 +72,9 @@ beforeEach(() => {
   m.refreshAgentCredentialsBackup.mockResolvedValue(undefined);
   m.seedAgentVolumesIfFresh.mockResolvedValue(undefined);
   m.seedOpencodeModelState.mockResolvedValue(undefined);
+  m.agentIds.mockReturnValue(['claude', 'codex', 'opencode']);
+  m.createCloudSyncTransport.mockReturnValue({} as never);
+  m.seedAgentDeclaredFilesViaTransport.mockResolvedValue({ seeded: [], uploaded: [] });
   m.seedDynamicConfig.mockResolvedValue(undefined);
   m.ensureCodexAgentsOverride.mockResolvedValue(undefined);
   m.seedClaudeJsonAtCreate.mockResolvedValue(undefined);
@@ -97,9 +112,21 @@ describe('makeCloudSync.seedAgentConfig', () => {
     m.seedOpencodeModelState.mockImplementation(() => { order.push('opencode'); return Promise.resolve(); });
     m.seedClaudeJsonAtCreate.mockImplementation(() => { order.push('claudeJson'); return Promise.resolve(); });
     m.seedDynamicConfig.mockImplementation(() => { order.push('dynamic'); return Promise.resolve(); });
+    m.seedAgentDeclaredFilesViaTransport.mockImplementation(() => { order.push('declared'); return Promise.resolve({ seeded: [], uploaded: [] }); });
     const sync = makeCloudSync(backend, handle);
     await sync.seedAgentConfig(ctx());
-    expect(order).toEqual(['ownership', 'codex', 'opencode', 'claudeJson', 'dynamic']);
+    expect(order).toEqual([
+      'ownership',
+      'codex',
+      'opencode',
+      // One per agent: with no `agents` hint every agent that declares seeds is
+      // covered, so a box created without the hint is not left unseeded.
+      'declared',
+      'declared',
+      'declared',
+      'claudeJson',
+      'dynamic',
+    ]);
     expect(m.seedClaudeJsonAtCreate).toHaveBeenCalledWith(backend, handle, {
       hostWorkspace: '/host/ws',
       onLog: expect.any(Function),
