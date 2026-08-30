@@ -6,7 +6,7 @@
  * the agent's config into its volume, launch the agent, then attach. Cloud boxes
  * short-circuit to the SDK attach path before any of that.
  */
-import { loadEffectiveConfig, type UserConfig } from '@agentbox/config';
+import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   inspectBox,
   recordLastAgent,
@@ -35,6 +35,25 @@ import {
 import { clampSpinnerLine } from '../../spinner-line.js';
 import type { AgentStartOptions } from './options.js';
 import type { AgentCliSpec } from './types.js';
+
+/**
+ * The tmux session `<agent> attach` / `<agent> start` should target: the
+ * explicit `--session-name`, else the CONFIGURED name.
+ *
+ * The cloud branches used to fall back to the registry default instead of the
+ * config — three copies of `opts.sessionName ?? 'codex'` — while the docker
+ * branch read `<agent>.sessionName`. With a custom session name that meant
+ * create started one session and a later cloud attach targeted another, silently
+ * creating a second one. Pre-existing in all three hand-written commands; fixing
+ * it is one line now that there is one.
+ */
+export function resolveSessionName(
+  a: AgentCliSpec,
+  opts: AgentStartOptions,
+  cfg: EffectiveConfig,
+): string {
+  return opts.sessionName ?? a.runtime.sessionNameOf(cfg);
+}
 
 /**
  * Shared by `<agent> start` and `<agent> attach`. `resumePrepared` is a host
@@ -238,7 +257,7 @@ export function wireAttachAction(a: AgentCliSpec, cmd: Command): Command {
         await cloudAgentAttach({
           box,
           binary: a.spec.binary,
-          sessionName: opts.sessionName ?? a.spec.sessionName,
+          sessionName: resolveSessionName(a, opts, cfg.effective),
           mode: a.id,
           openIn: hostAwareOpenIn(cfg),
         });
@@ -325,7 +344,7 @@ export function wireStartAction(a: AgentCliSpec, cmd: Command): Command {
             throw err;
           }
         }
-        const sessionName = opts.sessionName ?? a.spec.sessionName;
+        const sessionName = resolveSessionName(a, opts, cfg.effective);
         if (opts.attach === false) {
           // Background mode: start the detached session (matches docker) instead
           // of deferring the agent until the next attach.

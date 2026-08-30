@@ -478,13 +478,20 @@ captured from the three hand-written commands BEFORE the factory existed: every
 flag, short form, description, default and positional argument of all three
 commands and their subcommands. It is unchanged, which is the whole claim.
 
-It is also not sufficient, and the way that surfaced is worth recording. A live
-smoke caught the one regression a surface fixture structurally cannot: with
+The fixture is also not sufficient, and both ways that surfaced are worth
+recording. A live smoke caught the one regression it structurally cannot: with
 teleport living in each agent's own hook, `agentbox opencode -c` — no teleport,
 therefore no hook — silently ignored the flag and built a box instead of
 refusing. The flag was still declared, so the fixture was green. Teleport now
 resolves in the shared body for every agent, and
 `agent-resume-flags.test.ts` drives that body directly so it cannot regress.
+
+Review then caught a bug the fixture was never going to see because it predates
+the factory: the cloud `attach` / `start` branches fell back to the REGISTRY
+default session name (`opts.sessionName ?? 'codex'`, three copies) while the
+docker branch read `<agent>.sessionName`, so a custom session name meant create
+started one session and a later cloud attach silently created a second. One line
+to fix now that there is one; `agent-session-name.test.ts` pins it.
 
 What was already done before this is the identity half. There used to be **eight** types spelling the
 same thing — `SyncAgentKind`, `AgentKind`, `AgentName`, `TeleportAgent`,
