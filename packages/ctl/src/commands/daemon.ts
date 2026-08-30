@@ -6,6 +6,7 @@ import { selectInBoxTransport } from './in-box-transport.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
+import { fetchWatchList } from '../agent-registry.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
@@ -73,11 +74,8 @@ export const daemonCommand = new Command('daemon')
     // Fan refreshed agent credentials out through the host relay (claude's
     // OAuth refresh rotates the refresh token, invalidating every other copy).
     // AGENTBOX_CREDENTIAL_SYNC=0 is the wire form of box.credentialSync=false.
+    // Constructed AFTER the forwarder is listening — see below.
     let credentialsWatcher: CredentialsWatcher | null = null;
-    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
-      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
-      credentialsWatcher.start();
-    }
 
     // Reconcile the per-tool shim symlinks with the host's grants ONCE at
     // startup — the case a push cannot cover (this box was paused, or did not
@@ -232,6 +230,38 @@ export const daemonCommand = new Command('daemon')
     // on a fresh box, leaving already-granted tools unlinked until the next
     // reconcile a minute later.
     toolLinks.start();
+
+    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
+      // Start on the BAKED list immediately, then upgrade. Never await the fetch:
+      // on a cloud box `agents.list` is parked on the in-sandbox relay's
+      // HostActionQueue, which has no timeout and only expires entries when the
+      // host's poller drains it — so with the host off (a resumed independent
+      // box) the await never returns. That cost the box its credential fan-out
+      // entirely, and left SIGTERM/SIGINT unregistered so it could not even shut
+      // down cleanly. `toolLinks.start()` above already has this shape.
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
+      credentialsWatcher.start();
+
+      // Ask the host which files to watch rather than trusting the list compiled
+      // into this binary: ctl is baked into the image, so a box built before an
+      // agent existed would otherwise never watch it — and a plugin agent, which
+      // can never be baked, would be invisible forever. Any failure leaves the
+      // watcher on the baked list it is already running.
+      //
+      // Fired AFTER the forwarder is listening, like `toolLinks.start()`:
+      // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
+      // ECONNREFUSED on a fresh box.
+      const watcher = credentialsWatcher;
+      void fetchWatchList().then((watch) => {
+        if (watch.source === 'host') {
+          watcher.setFiles(watch.files);
+          return;
+        }
+        process.stderr.write(
+          `agentbox-ctl: agents.list ${watch.source === 'timeout' ? 'timed out' : 'unavailable'}; keeping the baked watch list\n`,
+        );
+      });
+    }
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);

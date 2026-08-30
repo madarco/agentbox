@@ -37,6 +37,7 @@ import {
 } from '@agentbox/core';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import {
+  buildAgentDescriptors,
   findBox,
   hostOpenCommand,
   isSupportedApiVersion,
@@ -342,6 +343,18 @@ export async function executeCloudAction(
   const log = deps.log ?? (() => {});
   log(`executing ${action.method} for box ${deps.boxId}`);
 
+  // Cloud twin of the host-relay `agents.list` handler. A cloud box's RPCs are
+  // parked on the HostActionQueue and drained here, so a method handled only in
+  // server.ts works on docker and silently fails on every cloud provider.
+  // Read-only and unprompted, like tool.list — and NOT worktree-scoped, since
+  // the agent registry is machine-global.
+  if (action.method === 'agents.list') {
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify(buildAgentDescriptors()),
+      stderr: '',
+    };
+  }
   if (action.method === 'git.push' || action.method === 'git.fetch') {
     return runGitRpc(action, deps);
   }

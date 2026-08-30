@@ -94,7 +94,7 @@ export function isRetryablePostFailure(outcome: PostOutcome): boolean {
 export class CredentialsWatcher {
   private readonly relay: RelayClient;
   private readonly intervalMs: number;
-  private readonly files: readonly WatchedCredential[];
+  private files: readonly WatchedCredential[];
   private readonly postTimeoutMs: number;
   private readonly lastMtime = new Map<string, number>();
   private readonly lastPosted = new Map<string, string>();
@@ -118,6 +118,21 @@ export class CredentialsWatcher {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * Swap the watched list while running — the daemon starts this watcher with
+   * the BAKED list so credential fan-out is never off, then calls this once the
+   * host answers `agents.list`. Waiting for that answer before constructing the
+   * watcher is what made a cloud box with no host poller lose fan-out entirely.
+   *
+   * Safe mid-flight: `lastMtime` / `lastPosted` are keyed by `file.agent`, so a
+   * carried-over agent keeps its de-dup state and a dropped one just leaves an
+   * unread key behind.
+   */
+  setFiles(files: readonly WatchedCredential[]): void {
+    this.files = files;
+    if (this.timer) void this.scan();
   }
 
   /**
