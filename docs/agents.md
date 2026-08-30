@@ -486,8 +486,14 @@ refusing. The flag was still declared, so the fixture was green. Teleport now
 resolves in the shared body for every agent, and
 `agent-resume-flags.test.ts` drives that body directly so it cannot regress.
 
-Review then caught a bug the fixture was never going to see because it predates
-the factory: the cloud `attach` / `start` branches fell back to the REGISTRY
+Review also caught the one regression the factory itself introduced: claude's
+`--plan` marked the run hub-incompatible but left the *reason* unset, so
+`agentbox claude --plan … --via-hub` printed a blank warning line before building
+locally. The reason had been an optional field on the preflight result that a
+hook could forget; it is now only `text.hubIncompatibleReason`, which
+`AgentCommandText` requires — the omission is no longer representable.
+
+And one the fixture was never going to see because it predates the factory: the cloud `attach` / `start` branches fell back to the REGISTRY
 default session name (`opts.sessionName ?? 'codex'`, three copies) while the
 docker branch read `<agent>.sessionName`, so a custom session name meant create
 started one session and a later cloud attach silently created a second. One line

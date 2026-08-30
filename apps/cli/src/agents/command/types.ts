@@ -250,11 +250,15 @@ export interface PreparedSeed {
 
 export interface AgentPreflight {
   seeds: PreparedSeed[];
-  /** Forces a local build even when a control box is configured — host state
-   *  teleported at create time cannot be reproduced by the hub worker. */
+  /**
+   * Forces a local build even when a control box is configured — host state
+   * teleported at create time cannot be reproduced by the hub worker.
+   *
+   * There is deliberately no companion `reason` field: the wording lives once,
+   * on `text.hubIncompatibleReason`. When a hook could supply it, claude's
+   * `--plan`-only path forgot to, and `--via-hub` printed a blank warning line.
+   */
   hubIncompatible?: boolean;
-  /** Why, for the `--via-hub is ignored` warning. */
-  hubIncompatibleReason?: string;
 }
 
 /** Adjustments a `beforeCreate` hook can make (claude's setup wizard). */

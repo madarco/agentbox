@@ -174,7 +174,6 @@ export async function resolveResumeSeed(
         },
       ],
       hubIncompatible: true,
-      hubIncompatibleReason: a.text.hubIncompatibleReason,
     };
   } catch (err) {
     if (err instanceof TeleportError) ctx.fail(err.message);
@@ -534,7 +533,7 @@ export async function runAgentCreate(
     // worker path can't reproduce, so those runs stay local.
     const route = await routing();
     if (route.where === 'hub' && preflight.hubIncompatible) {
-      if (opts.viaHub) log.warn(preflight.hubIncompatibleReason ?? '');
+      if (opts.viaHub) log.warn(a.text.hubIncompatibleReason);
     } else if (route.where === 'hub') {
       const adopted = await withHubJobLine(
         (onStatus) =>
