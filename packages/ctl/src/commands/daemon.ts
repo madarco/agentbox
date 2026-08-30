@@ -74,21 +74,8 @@ export const daemonCommand = new Command('daemon')
     // Fan refreshed agent credentials out through the host relay (claude's
     // OAuth refresh rotates the refresh token, invalidating every other copy).
     // AGENTBOX_CREDENTIAL_SYNC=0 is the wire form of box.credentialSync=false.
+    // Constructed AFTER the forwarder is listening — see below.
     let credentialsWatcher: CredentialsWatcher | null = null;
-    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
-      // Ask the host which files to watch instead of trusting the list compiled
-      // into this binary: ctl is baked into the image, so a box built before an
-      // agent existed would otherwise never watch it — and a plugin agent, which
-      // can never be baked, would be invisible forever. Falls back to the baked
-      // list on any failure, so an unreachable relay or an older host leaves the
-      // box watching exactly what it watches today.
-      const watch = await fetchWatchList();
-      if (watch.source === 'baked') {
-        process.stderr.write('agentbox-ctl: agents.list unavailable; using the baked watch list\n');
-      }
-      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient, files: watch.files });
-      credentialsWatcher.start();
-    }
 
     // Reconcile the per-tool shim symlinks with the host's grants ONCE at
     // startup — the case a push cannot cover (this box was paused, or did not
@@ -243,6 +230,31 @@ export const daemonCommand = new Command('daemon')
     // on a fresh box, leaving already-granted tools unlinked until the next
     // reconcile a minute later.
     toolLinks.start();
+
+    // Also AFTER the forwarder, and for the same reason: `agents.list` is an RPC
+    // through :8788. Fetched earlier it is a guaranteed ECONNREFUSED on a fresh
+    // box — and because the fallback is silent BY DESIGN, that failure is
+    // invisible: the box quietly keeps its baked list forever and a post-bake or
+    // plugin agent is never watched at all.
+    //
+    // Ask the host rather than trusting the list compiled into this binary: ctl is
+    // baked into the image, so a box built before an agent existed would otherwise
+    // never watch it. Falling back leaves the box watching exactly what it watches
+    // today, never nothing.
+    if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
+      // Ask the host which files to watch instead of trusting the list compiled
+      // into this binary: ctl is baked into the image, so a box built before an
+      // agent existed would otherwise never watch it — and a plugin agent, which
+      // can never be baked, would be invisible forever. Falls back to the baked
+      // list on any failure, so an unreachable relay or an older host leaves the
+      // box watching exactly what it watches today.
+      const watch = await fetchWatchList();
+      if (watch.source === 'baked') {
+        process.stderr.write('agentbox-ctl: agents.list unavailable; using the baked watch list\n');
+      }
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient, files: watch.files });
+      credentialsWatcher.start();
+    }
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
