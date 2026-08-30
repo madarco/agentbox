@@ -6,6 +6,7 @@ import { selectInBoxTransport } from './in-box-transport.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
+import { fetchWatchList } from '../agent-registry.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
@@ -75,7 +76,17 @@ export const daemonCommand = new Command('daemon')
     // AGENTBOX_CREDENTIAL_SYNC=0 is the wire form of box.credentialSync=false.
     let credentialsWatcher: CredentialsWatcher | null = null;
     if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
-      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
+      // Ask the host which files to watch instead of trusting the list compiled
+      // into this binary: ctl is baked into the image, so a box built before an
+      // agent existed would otherwise never watch it — and a plugin agent, which
+      // can never be baked, would be invisible forever. Falls back to the baked
+      // list on any failure, so an unreachable relay or an older host leaves the
+      // box watching exactly what it watches today.
+      const watch = await fetchWatchList();
+      if (watch.source === 'baked') {
+        process.stderr.write('agentbox-ctl: agents.list unavailable; using the baked watch list\n');
+      }
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient, files: watch.files });
       credentialsWatcher.start();
     }
 

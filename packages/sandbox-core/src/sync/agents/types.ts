@@ -190,6 +190,28 @@ export interface AgentSyncSpec {
    * made `download` easy to forget when adding an agent.
    */
   pull?: AgentPullSpec;
+  /**
+   * Extra in-box files ctl should watch, beyond `credential` (which is always
+   * watched). This is the hook a custom agent uses to say "sync these back".
+   *
+   * The credential watch is implicit and always `fanout`; anything declared here
+   * defaults to `backup` — see `AgentWatchSpec.sync`.
+   */
+  watch?: readonly AgentWatchSpec[];
+}
+
+/** One extra file an agent asks ctl to watch. */
+export interface AgentWatchSpec {
+  /** Absolute in-box path. */
+  path: string;
+  /**
+   * `backup` (default) lands the file on the host and stops. `fanout` also
+   * re-distributes it to every other box, which is correct ONLY for a rotating
+   * secret — an agent's own logs or transcripts must never fan out.
+   */
+  sync?: 'fanout' | 'backup';
+  /** Host destination, relative to the box's host workspace. */
+  hostDest?: string;
 }
 
 /**
@@ -207,6 +229,28 @@ export interface AgentPullSpec {
    * value is that dir plus the matching entry's `relocToSubpath`.
    */
   items?: readonly { group: string; names: readonly string[] }[];
+  /**
+   * Roots that exist ONLY in the pull direction, named directly rather than
+   * resolved through `staticPaths`.
+   *
+   * Session logs are the motivating case and are genuinely pull-only: you would
+   * never PUSH transcripts into a box, and every agent's `staticPaths.exclude`
+   * already drops them on the way in (claude: `projects`/`sessions`/
+   * `history.jsonl`; codex: `sessions`/`archived_sessions`/`log`; opencode:
+   * `storage`/`log`/`snapshot`). With groups resolving only through
+   * `staticPaths`, such a location had nowhere to be declared.
+   *
+   * Roots that exist in BOTH directions keep deriving from `staticPaths` — this
+   * is an alternative, not a replacement.
+   */
+  roots?: readonly {
+    /** Group name referenced by `items[].group`. */
+    group: string;
+    /** Absolute in-box directory. */
+    boxDir: string;
+    /** Host destination, as path segments under `os.homedir()`. */
+    hostHomeRel: readonly string[];
+  }[];
   /**
    * Directories whose CHILDREN are the unit — claude's `skills`/`agents`/
    * `commands`. Each child dir is one item.

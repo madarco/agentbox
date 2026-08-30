@@ -16,7 +16,11 @@ import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-ca
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import { hostOpenCommand, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import {
+  buildAgentDescriptors,
+  hostOpenCommand,
+  projectSlugFromOriginUrl,
+} from '@agentbox/sandbox-core';
 import {
   isSanctionedPushBranch,
   isScratchBranch,
@@ -939,6 +943,20 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         const queued = await hostActions.enqueue(reg.boxId, body.method, body.params);
         const status = queued.exitCode === 0 ? 200 : 500;
         send(res, status, queued);
+        return;
+      }
+      // Read-only machine-global metadata: the agent registry ctl reconciles
+      // against at daemon start. Dispatched HERE, before worktree resolution,
+      // for two reasons: the registry is not project-scoped (a box with no
+      // registered worktree must still get it), and it must never be gated
+      // behind askPrompt — a prompt would hang every box's startup reconcile.
+      // Same posture as `tool.list`, which is also read-only and unprompted.
+      if (body.method === 'agents.list') {
+        send(res, 200, {
+          exitCode: 0,
+          stdout: JSON.stringify(buildAgentDescriptors()),
+          stderr: '',
+        });
         return;
       }
       if (body.method === 'git.push' || body.method === 'git.fetch') {

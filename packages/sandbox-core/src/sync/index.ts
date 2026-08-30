@@ -49,6 +49,12 @@ export {
   type FlatInventoryEntry,
 } from './agent-pull.js';
 export {
+  buildAgentDescriptors,
+  type AgentDescriptor,
+  type AgentDescriptorPayload,
+  type AgentWatchDescriptor,
+} from './agent-descriptor.js';
+export {
   agentBoxConfigDir,
   claudeStagedItems,
   codexStagedItems,
