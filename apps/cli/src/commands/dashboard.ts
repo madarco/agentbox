@@ -38,7 +38,14 @@ import {
   type ListedBox,
   ensureClaudeInstalled,
 } from '@agentbox/sandbox-docker';
-import { getHubStatus, hostOpenCommand, readState, removeBoxRecord } from '@agentbox/sandbox-core';
+import {
+  agentIds,
+  getHubStatus,
+  hostOpenCommand,
+  readState,
+  removeBoxRecord,
+  resolveAgentSpec,
+} from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiTarget } from './control-plane.js';
 import { listDashboardBoxes, type DashboardBox } from '../dashboard/box-list.js';
@@ -243,15 +250,18 @@ export const dashboardCommand = new Command('dashboard')
           };
         }
         // Cloud boxes: probe the box's live tmux sessions over SSH and pick
-        // the highest-priority agent (claude > codex > opencode) — mirrors
-        // the docker branch below. One round-trip per selection; cheap with
+        // the highest-priority agent (registry order) — mirrors the docker
+        // branch below. One round-trip per selection; cheap with
         // the hetzner ControlMaster warm. Falls back to the menu if no
         // session is up (or the probe failed).
         if ((box.provider ?? 'docker') !== 'docker') {
           const record = await loadBoxRecord(box.id);
           const sessions = await probeCloudSessions(record);
-          for (const which of ['claude', 'codex', 'opencode'] as const) {
-            if (sessions.has(which)) {
+          // Registry order, so a newly-added agent is considered here without
+          // an edit; matched on each agent's DECLARED session name rather than
+          // assuming the tmux session is spelled like the agent id.
+          for (const which of agentIds()) {
+            if (sessions.has(resolveAgentSpec(which).sessionName)) {
               return buildCloudAttachTarget(record, which);
             }
           }

@@ -35,8 +35,22 @@ const REPO = join(__dirname, '..', '..', '..');
  */
 const AGENT_LITERAL = /'(?:claude|claude-code|codex|opencode)'/g;
 const UNION_CHAIN = /'[a-z-]+'(?:\s*\|\s*'[a-z-]+')+/g;
+/**
+ * ITERATING the agent set as an inline array — `for (const k of ['claude',
+ * 'codex', 'opencode'])`. That exact loop is how the relay's queue gate and
+ * `list`'s AGENT column each hardcoded the built-ins while every type around
+ * them was already open, and the union scan cannot see it.
+ *
+ * Deliberately narrowed to `of [...]` rather than every array of agent names:
+ * declaring the set is often correct and intentional (`PREPARE_AGENTS` keeps the
+ * registry off the CLI's startup path; the OpenAPI `enum`s and the request
+ * validators are the API's own frozen surface). Iterating it is what silently
+ * skips a fourth agent. A guard that shipped with a dozen exemptions would just
+ * train people to add a thirteenth.
+ */
+const ARRAY_CHAIN = /\bof\s*\[\s*'[a-z-]+'(?:\s*,\s*'[a-z-]+')+\s*,?\s*\]/g;
 
-function isAgentSetUnion(chain: string): boolean {
+function isAgentSetLiteral(chain: string): boolean {
   const members = chain.match(/'[a-z-]+'/g) ?? [];
   const agents = new Set(chain.match(AGENT_LITERAL) ?? []);
   return agents.size >= 2 && agents.size * 2 > members.length;
@@ -88,7 +102,22 @@ describe('no inline agent unions', () => {
     for (const file of files) {
       const src = stripComments(readFileSync(file, 'utf8'));
       for (const chain of src.match(UNION_CHAIN) ?? []) {
-        if (isAgentSetUnion(chain)) offenders.push(`${file.slice(REPO.length + 1)}: ${chain}`);
+        if (isAgentSetLiteral(chain)) offenders.push(`${file.slice(REPO.length + 1)}: ${chain}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('nobody LOOPS over the agent set as an inline array', () => {
+    // Iterate the box's status map, `agentIds()`, or `LEGACY_AGENT_STATUS_KEYS`
+    // (the frozen set of names old producers wrote, which deliberately never
+    // grows) — never a fresh array literal a fourth agent will not join.
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(REPO.length + 1);
+      const src = stripComments(readFileSync(file, 'utf8'));
+      for (const chain of src.match(ARRAY_CHAIN) ?? []) {
+        if (isAgentSetLiteral(chain)) offenders.push(`${rel}: ${chain}`);
       }
     }
     expect(offenders).toEqual([]);
