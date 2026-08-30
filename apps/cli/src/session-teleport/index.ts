@@ -9,14 +9,15 @@
  *   4. Returns the canonical argv tokens the agent command should prepend to
  *      the in-box invocation.
  *
- * v1 supports `-c` and `--resume <id>` for claude + codex. opencode throws a
- * "not yet supported" `TeleportError`.
+ * v1 supports `-c` and `--resume <id>` for claude + codex. An agent whose
+ * registry row declares `caps.teleport: 'stub'` is refused up front with the
+ * reason it declares — no per-agent branch here.
  */
 
 import type { BoxRecord, Provider } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveClaudeTeleport } from './claude.js';
 import { resolveCodexTeleport } from './codex.js';
-import { resolveOpencodeTeleport } from './opencode.js';
 import {
   TeleportError,
   type ResolvedTeleport,
@@ -53,9 +54,17 @@ export interface UploadTeleportInput {
  * — call this BEFORE box creation as a pre-flight so users don't pay for a
  * doomed box. Throws `TeleportError` on missing/unmatchable sessions.
  */
-export async function prepareTeleport(
-  input: PrepareTeleportInput,
-): Promise<ResolvedTeleport> {
+export async function prepareTeleport(input: PrepareTeleportInput): Promise<ResolvedTeleport> {
+  // Gate on the DECLARED capability, not on the agent's name: an agent that
+  // cannot teleport says so once in its registry row, and gets this refusal
+  // without a `case` here or a module of its own.
+  const caps = resolveAgentSpec(input.agent).caps;
+  if (caps.teleport === 'stub') {
+    throw new TeleportError(
+      caps.teleportStubReason ??
+        `${input.agent} session teleport is not supported yet. Run \`agentbox ${input.agent}\` without -c / --resume to start a fresh session.`,
+    );
+  }
   switch (input.agent) {
     case 'claude':
       return resolveClaudeTeleport({
@@ -70,8 +79,10 @@ export async function prepareTeleport(
         log: input.log,
       });
     case 'opencode':
-      // Throws TeleportError immediately — v1 stub.
-      resolveOpencodeTeleport();
+      // Unreachable: opencode declares `teleport: 'stub'`, so the capability
+      // gate above already threw. Kept so the switch stays exhaustive over
+      // TeleportAgent.
+      throw new TeleportError(`no teleport resolver for '${input.agent}'`);
   }
 }
 
@@ -87,7 +98,11 @@ export async function uploadTeleport(input: UploadTeleportInput): Promise<void> 
   }
   // Trailing slash → uploadPath treats dst as a directory and lands the file
   // under its existing basename, which already matches the in-box filename.
-  await input.provider.uploadPath(input.box, [input.resolved.hostFile], `${input.resolved.boxParentDir}/`);
+  await input.provider.uploadPath(
+    input.box,
+    [input.resolved.hostFile],
+    `${input.resolved.boxParentDir}/`,
+  );
   input.log?.(
     `teleport: uploaded ${input.resolved.sessionId} into ${input.resolved.boxParentDir}/`,
   );

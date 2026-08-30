@@ -23,7 +23,9 @@ describe('agent sync registry', () => {
     const claude = resolveAgentSpec('claude');
     expect(claude.dockerVolume).toBe('agentbox-claude-config');
     expect(claude.credential.boxAbsPath).toBe('/home/vscode/.claude/.credentials.json');
-    expect(claude.credential.hostBackup).toBe(join(homedir(), '.agentbox', 'claude-credentials.json'));
+    expect(claude.credential.hostBackup).toBe(
+      join(homedir(), '.agentbox', 'claude-credentials.json'),
+    );
     expect(claude.credential.cloudMountPath).toBe('/home/vscode/.agentbox-creds/claude');
 
     const codex = resolveAgentSpec('codex');
@@ -48,7 +50,12 @@ describe('agent sync registry', () => {
       OPENCODE_CONFIG_DIR: '/home/vscode/.local/share/opencode/config',
       XDG_STATE_HOME: '/home/vscode/.local/share/opencode/.state',
     });
-    expect(oc.caps).toEqual({ resume: false, teleport: 'stub', activitySource: 'plugin' });
+    expect(oc.caps.resume).toBe(false);
+    expect(oc.caps.teleport).toBe('stub');
+    expect(oc.caps.activitySource).toBe('plugin');
+    // The refusal text is data on the capability, so declaring the stub is all
+    // an agent has to do — `prepareTeleport` has no per-agent branch.
+    expect(oc.caps.teleportStubReason).toContain('opencode.db');
   });
 
   it('is the single source of truth for the static-stage excludes', () => {

@@ -358,25 +358,44 @@ so collapsing them needs the two strategies implemented, not just declared.
 The docker-side pull also hand-rolls its own inventory shell, so it can still
 drift from the transport path even though both now share the item lists.
 
-### 2. ctl carries a second copy of the credential paths, and is frozen at bake
+### 2. ctl carried a second copy of the credential paths, frozen at bake — **done**
 
 `WATCHED_CREDENTIALS` (`packages/ctl/src/credentials-watcher.ts`) mirrors
-`AGENT_SYNC_SPECS[..].credential.boxAbsPath`. A drift test keeps the two in
-lockstep, so this is safe — but it is still duplication, and it has a sharper
-consequence: **`agentbox-ctl` is baked into the image**. A box built from a
-snapshot baked before a new agent existed watches the old list, so that agent's
-credential refresh is never reported to the host until the image is re-baked.
+`AGENT_SYNC_SPECS[..].credential.boxAbsPath`, and a drift test keeps the two in
+lockstep. The sharper problem was that **`agentbox-ctl` is baked into the
+image**: a box built from a snapshot baked before an agent existed watched the
+old list, so that agent's credential refresh was never reported to the host until
+the image was re-baked — and a plugin-supplied agent, which can never be baked,
+was invisible forever.
 
-Step 1 of the checklist already asks for a JSON-serializable row *"so the
-descriptor can later be shipped into a box whose `agentbox-ctl` was baked before
-the agent existed"* — nothing ships it today. Wiring that is what turns a new
-agent from "re-bake every base" into "restart ctl".
+Fixed: ctl now **pulls** the list from the host over an `agents.list` relay RPC
+at daemon start, modelled on `tool.list`. Pulled rather than pushed as a file, so
+the payload's shape stays host-side and no provider (including a community one)
+has to write it. That turns adding an agent from "re-bake every base" into
+"restart ctl".
+
+Two rules the implementation depends on, both learned the hard way:
+
+- **Failure is silent and keeps the baked list.** An unreachable relay, an older
+  host, or a malformed payload must all leave the box watching what it already
+  watched — never nothing.
+- **The fetch is never awaited on the startup path.** On a cloud box the
+  in-sandbox relay parks every RPC on a `HostActionQueue` that has no timeout and
+  expires entries only when the host poller drains it, so with the host off the
+  call never settles. The watcher therefore starts on the baked list and is
+  upgraded via `setFiles()`; the fetch is additionally bounded at 30s.
 
 Why this matters most for Claude specifically: an OAuth refresh **rotates** the
 refresh token, killing every other copy (host backup, other boxes). The watcher
 posting the fresh blob to the relay is what keeps the fleet logged in, so a box
 whose ctl doesn't watch a credential silently degrades the whole fleet's login
 for that agent, not just its own.
+
+**Still open:** a box already *running* when the host's agent list changes picks
+it up only on the next ctl restart. `ToolLinksWatcher` solves the equivalent with
+`agentbox-ctl tool relink` over `Provider.exec`, but that works because tool links
+are on-disk state another process can rewrite — this list lives in the daemon's
+memory, so the same push needs a ctl socket op.
 
 ### 3. Community provider plugins cannot support per-agent variants — **done**
 
@@ -397,3 +416,35 @@ is a ~1,300-line clone of `opencode.ts` plus five registrations. The
 `agentCommand(spec)` factory and generic ctl status map in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md) are what collapse checklist
 steps 3–6 into data.
+
+### 5. Spec fields that were declared but inert — **partly done**
+
+Three fields shipped on `AgentSyncSpec` with **zero consumers**, so an agent that
+set them got silence and the real behaviour stayed hardcoded elsewhere.
+
+Fixed:
+
+- **`boxRunEnv`** now drives the in-box env on both the docker and cloud paths.
+  They had already drifted: cloud set `OPENCODE_CONFIG_DIR` and silently omitted
+  `XDG_STATE_HOME`, so a cloud box kept OpenCode's `model.json` outside the dir
+  the snapshot captures and lost the selected model across a resume, while a
+  docker box kept it. A test now asserts docker and cloud agree with the
+  declaration key for key.
+- **`caps.resume`** gates `fork`'s `--session` refusal and **`caps.teleport`**
+  gates `prepareTeleport`, instead of both testing `agent === 'opencode'`. The
+  refusal text moved onto the capability as `caps.teleportStubReason`, so
+  declaring `teleport: 'stub'` is now the whole job — no `case` in
+  `prepareTeleport` and no per-agent module (`session-teleport/opencode.ts` is
+  gone).
+
+**Still open:**
+
+- **`caps.activitySource`** has no consumer. Its two values also under-describe
+  reality — claude is hooks-primary with a scraper backstop, codex is
+  scraper-primary, opencode is plugin-only — so it wants widening alongside the
+  hook-seeding work rather than wiring as-is.
+- **`watch` / `roots`** reach the box (see item 2) but nothing consumes the
+  `backup` route yet. Wiring it means routing through `cp.toHost` behind a
+  `box.agentFileSync` config, with the trust rule `download.claude` already uses:
+  a destination inside the box's host project folder is silent, anything outside
+  prompts.

@@ -8,6 +8,7 @@ import {
   OPENCODE_PULL_CONFIG_ITEMS,
   OPENCODE_PULL_DATA_ITEMS,
   ensureAgentInstalled,
+  resolveAgentSpec,
   AgentInstallError,
 } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
@@ -26,16 +27,20 @@ export const SHARED_OPENCODE_VOLUME = 'agentbox-opencode-config';
 export const DEFAULT_OPENCODE_SESSION = 'opencode';
 /** Volume mount point inside the box — OpenCode's native data dir. */
 const CONTAINER_OPENCODE_DIR = '/home/vscode/.local/share/opencode';
-/** Relocated config dir (a subdir of the volume); the value of `OPENCODE_CONFIG_DIR`. */
-const CONTAINER_OPENCODE_CONFIG_DIR = '/home/vscode/.local/share/opencode/config';
 /**
- * Relocated XDG state base (a subdir of the volume); the value of `XDG_STATE_HOME`.
- * OpenCode derives its state dir as `$XDG_STATE_HOME/opencode`, so its state
- * (incl. `model.json` — the last-selected model) lands at
- * `<volume>/.state/opencode` and persists with the volume. OpenCode has no
- * dedicated `OPENCODE_STATE_DIR`, so `XDG_STATE_HOME` is the only knob.
+ * The box run-env this agent needs, straight from the registry — the one place
+ * it is declared (`boxRunEnv`). Restating the values here is how docker and the
+ * clouds drifted apart: cloud set `OPENCODE_CONFIG_DIR` and silently omitted
+ * `XDG_STATE_HOME`.
+ *
+ * `OPENCODE_CONFIG_DIR` relocates the config dir into the volume; it is
+ * OpenCode-specific, so setting it box-global is safe — unlike `XDG_DATA_HOME`,
+ * which would move every app's data dir. `XDG_STATE_HOME` relocates the state
+ * dir (`model.json` — the last-selected model) into the volume too, so it
+ * persists; it is generic, but the only state read back is the `opencode/`
+ * subdir, so another tool's state landing there is harmless.
  */
-const CONTAINER_OPENCODE_STATE_HOME = '/home/vscode/.local/share/opencode/.state';
+const OPENCODE_BOX_RUN_ENV = resolveAgentSpec('opencode').boxRunEnv;
 /** Image-baked AgentBox OpenCode plugin (copied in from packages/sandbox-docker/scripts/). */
 const IN_BOX_OPENCODE_PLUGIN_PATH = '/usr/local/share/agentbox/opencode-agentbox-plugin.js';
 
@@ -249,16 +254,7 @@ export function buildOpencodeMounts(
   spec: OpencodeConfigSpec,
   hostEnv: NodeJS.ProcessEnv,
 ): OpencodeMountResult {
-  // OPENCODE_CONFIG_DIR is a fixed box-internal path (relocates the config dir
-  // into the volume). It is OpenCode-specific, so setting it box-global is
-  // safe — unlike XDG_DATA_HOME, which would move every app's data dir.
-  // XDG_STATE_HOME relocates OpenCode's state dir (model.json etc.) into the
-  // volume too; it is generic, but the only state we read back is the
-  // `opencode/` subdir, so other tools' state landing there is harmless.
-  const env: Record<string, string> = {
-    OPENCODE_CONFIG_DIR: CONTAINER_OPENCODE_CONFIG_DIR,
-    XDG_STATE_HOME: CONTAINER_OPENCODE_STATE_HOME,
-  };
+  const env: Record<string, string> = { ...OPENCODE_BOX_RUN_ENV };
   for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
     const v = hostEnv[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;
@@ -414,10 +410,7 @@ export function buildOpencodeLoginRunArgv(opts: {
     `TERM=${term}`,
     '-e',
     'DISPLAY=',
-    '-e',
-    `OPENCODE_CONFIG_DIR=${CONTAINER_OPENCODE_CONFIG_DIR}`,
-    '-e',
-    `XDG_STATE_HOME=${CONTAINER_OPENCODE_STATE_HOME}`,
+    ...Object.entries(OPENCODE_BOX_RUN_ENV).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
     '-v',
     `${opts.volume}:${CONTAINER_OPENCODE_DIR}`,
     '--user',

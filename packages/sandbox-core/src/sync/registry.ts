@@ -321,7 +321,18 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       OPENCODE_CONFIG_DIR: `${OPENCODE_BOX_DIR}/config`,
       XDG_STATE_HOME: `${OPENCODE_BOX_DIR}/.state`,
     },
-    caps: { resume: false, teleport: 'stub', activitySource: 'plugin' },
+    caps: {
+      resume: false,
+      teleport: 'stub',
+      // OpenCode stores sessions in a multi-tenant SQLite DB with sibling
+      // storage/, snapshot/ and repos/ dirs. A naive teleport would copy the
+      // whole DB (leaking every other project's sessions into the sandbox), and
+      // row-level extraction is real work: foreign keys, FTS indices, and
+      // snapshot artifacts that live on disk outside the DB.
+      teleportStubReason:
+        'OpenCode session teleport is not yet supported in agentbox (sessions live in a multi-tenant SQLite DB at ~/.local/share/opencode/opencode.db; per-project extraction is tracked for a follow-up). Run `agentbox opencode` without -c / --resume to start a fresh session, or open an issue if you need this feature.',
+      activitySource: 'plugin',
+    },
     // Box->host: two roots. `data` is staticPaths[0].boxDir; `config` is that
     // dir plus the config entry's relocToSubpath. The THIRD staticPaths entry
     // (~/.local/state/opencode, `update: true`) is deliberately absent: it is
