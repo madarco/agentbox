@@ -3,7 +3,7 @@
  * a detector is and why the flow is driven from the host.
  */
 
-import { stripAnsi, trimUrl, URL_BODY, INVALID_CODE, type AgentLoginSpec } from '../../lib/agent-login-specs.js';
+import { stripAnsi, trimUrl, URL_BODY, type AgentLoginSpec } from '../../lib/agent-login-specs.js';
 
 // `codex login --device-auth` prints a verification link and a one-time code,
 // then polls until the browser completes — nothing is ever typed.

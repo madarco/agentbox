@@ -28,6 +28,13 @@ import type { AgentId } from '@agentbox/core';
  */
 
 export interface WatchedCredential {
+  /**
+   * Open on purpose. ctl is BAKED into the box image and deliberately does not
+   * read the host's agent registry — the host ships this list over `agents.list`
+   * — so any id the host names is valid here, including one that did not exist
+   * when this binary was built. Narrowing it would only reintroduce the cast
+   * `parseAgentDescriptors` used to need.
+   */
   agent: AgentId;
   /** In-box absolute path — mirrors `AGENT_SYNC_SPECS[..].credential.boxAbsPath`
    * (`@agentbox/sandbox-core`); a drift test keeps them in lockstep. */

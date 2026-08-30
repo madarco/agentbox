@@ -10,6 +10,7 @@ import {
 } from '@agentbox/sandbox-cloud';
 import type { AgentId, BoxRecord } from '@agentbox/core';
 import { claudeTuiEnv } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
@@ -307,9 +308,9 @@ export async function cloudAgentStartDetached(args: {
     binary: args.binary,
     sessionName: args.sessionName,
     extraArgs: args.extraArgs,
-    resolveResumeArgs:
-      args.binary === 'claude' || args.binary === 'codex'
-        ? (box) => agentResumeArgs(provider, box, args.binary as 'claude' | 'codex')
-        : undefined,
+    // Only agents that declare `caps.resume` have a resume pointer to read.
+    resolveResumeArgs: resolveAgentSpec(args.binary).caps.resume
+      ? (box) => agentResumeArgs(provider, box, args.binary)
+      : undefined,
   });
 }

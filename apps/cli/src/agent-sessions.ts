@@ -25,11 +25,19 @@ import {
   startCodexSession,
   startOpencodeSession,
 } from '@agentbox/sandbox-docker';
+import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
 import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from './lib/skip-permissions.js';
 
-/** Agents that support session resume. OpenCode is excluded. */
-export type ResumableAgent = 'claude' | 'codex';
+/**
+ * Agents that support session resume, straight from `caps.resume` — the same
+ * declaration `fork --session` and `prepareTeleport` gate on. It was a literal
+ * `'claude' | 'codex'` here, which is the capability said a second time and in a
+ * place nothing would update.
+ */
+export function resumableAgents(): AgentId[] {
+  return agentIds().filter((id) => resolveAgentSpec(id).caps.resume);
+}
 
 const POINTER_DIR = '"$HOME/.local/state/agentbox"';
 const CLAUDE_POINTER = `${POINTER_DIR}/claude-session`;
@@ -76,7 +84,7 @@ async function killTmuxSession(
 export async function agentResumeArgs(
   provider: Provider,
   box: BoxRecord,
-  kind: ResumableAgent,
+  kind: AgentId,
 ): Promise<string[] | null> {
   if (kind === 'claude') {
     const id = await execRead(provider, box, `cat ${CLAUDE_POINTER} 2>/dev/null`);
@@ -171,7 +179,7 @@ export async function restoreAgentSessions(
 
   // Resume one resumable agent (claude/codex) from its in-box pointer. Returns
   // true if it (re)launched, false if there was nothing to resume / it failed.
-  const tryResume = async (kind: ResumableAgent, sessionName: string): Promise<boolean> => {
+  const tryResume = async (kind: AgentId, sessionName: string): Promise<boolean> => {
     const resume = await agentResumeArgs(provider, box, kind);
     if (!resume) return false;
     const args =
@@ -230,7 +238,7 @@ export async function restoreAgentSessions(
   }
 
   // start/unpause: resume every resumable agent that was actually running.
-  for (const kind of ['claude', 'codex'] as ResumableAgent[]) {
+  for (const kind of resumableAgents()) {
     const sessionName = sessionNameFor(kind);
     if (await tmuxAlive(provider, box, sessionName)) continue;
     await tryResume(kind, sessionName);

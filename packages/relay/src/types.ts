@@ -1,7 +1,7 @@
 // DownloadKind's canonical decision home is `@agentbox/core`'s sync/files.ts;
 // imported here so DownloadRpcParams below can reference it, re-exported below
 // so existing `./types.js` importers stay unchanged.
-import type { AgentId, DownloadKind } from '@agentbox/core';
+import type { DownloadKind } from '@agentbox/core';
 
 export const DEFAULT_RELAY_PORT = 8787;
 /**
@@ -115,7 +115,7 @@ export interface BoxRegistration {
   image?: string;
   /** In-box WebProxy port (mirrors `CloudBoxFields.webPort`), for `url` reconstruction. */
   webPort?: number;
-  /** Agent the box was created for (AgentId) → `BoxRecord.lastAgent`. */
+  /** Agent the box was created for — an `AgentId` → `BoxRecord.lastAgent`. */
   agent?: string;
   /**
    * Custody `projects/<slug>` key of the box's project (owner__repo). Links a

@@ -371,3 +371,16 @@ export function resolveAgentSpec(name: string): AgentSyncSpec {
 export function agentIds(): AgentId[] {
   return AGENT_SYNC_SPECS.map((s) => s.id);
 }
+
+/**
+ * True for any agent this build knows about, by canonical id or alias.
+ *
+ * The open counterpart to `isAgentKind` in `@agentbox/core`: that one answers
+ * from a hardcoded list because a dependency-free leaf has no registry to ask,
+ * this one answers from the registry. Same split as `isProviderKind`
+ * (`@agentbox/config`) vs `isRuntimeProvider` (the CLI's provider loaders), and
+ * the same reason — the registry is the authority, but not everyone can reach it.
+ */
+export function isRuntimeAgent(name: string): boolean {
+  return AGENT_SYNC_SPECS.some((s) => s.id === name || s.aliases.includes(name));
+}

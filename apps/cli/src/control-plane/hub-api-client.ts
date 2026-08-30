@@ -38,8 +38,8 @@ export interface HubApiBox {
   projectRoot?: string;
   projectIndex?: number;
   createdAt?: number;
-  /** Normalized primary agent for display (AgentMode). */
-  agent?: string;
+  /** Normalized primary agent for display — mirrors the hub's `Box.agent`. */
+  agent?: AgentMode;
   // ── Agent activity / session titles (the AGENT column + cmux dock). ──
   claudeActivity?: string;
   codexActivity?: string;
