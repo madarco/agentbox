@@ -187,6 +187,11 @@ export interface AgentCommandText {
   initialPromptExtra?: string;
   /** How this agent names a session handle: `id` or `uuid`. */
   resumeIdWord: string;
+  /** Refusal for `-i` alongside `-c` / `--resume`. */
+  resumeWithPromptError: string;
+  /** Warning when `--via-hub` is overruled because host state is teleported at
+   *  create time and the hub worker cannot reproduce it. */
+  hubIncompatibleReason: string;
   /** `-c` / `--resume` help. Replaced wholesale when `caps.teleport` is a stub. */
   continueHelp: string;
   resumeHelp: string;
@@ -281,10 +286,11 @@ export interface AgentBeforeCreateContext extends AgentCreateContext {
 
 export interface AgentCommandHooks {
   /**
-   * Resolve host state before any box work: session teleport, claude's `--plan`,
-   * and the mutual-exclusion checks between them and `-i`.
+   * Resolve any ADDITIONAL host state before box work — claude's `--plan`.
+   * Session teleport is not here: it is shared, and `base` is what the body
+   * already resolved from `-c` / `--resume`, to be extended rather than redone.
    */
-  preflight?(ctx: AgentCreateContext): Promise<AgentPreflight>;
+  preflight?(ctx: AgentCreateContext, base: AgentPreflight): Promise<AgentPreflight>;
   /** Runs after the gates and before the box is created. */
   beforeCreate?(ctx: AgentBeforeCreateContext): Promise<AgentCreateAdjust>;
   /**
@@ -370,6 +376,9 @@ export type AttachWrapped = (
   onError?: (msg: string) => void,
   openIn?: AttachOpenIn,
 ) => Promise<never>;
+
+/** {@link PreparedSeed.tag} for the shared `-c` / `--resume` teleport. */
+export const RESUME_SEED = 'resume';
 
 /** Carry entries resolved by the create body's gates. */
 export type CarryEntries = ResolvedCarryEntry[];

@@ -43,6 +43,12 @@ const { command, attachWrapped } = buildAgentCommand({
     loginArgsHelp:
       'extra args forwarded to `opencode auth login`; place after `--`, e.g. `agentbox opencode login -- --provider anthropic`',
     loginInteractiveHelp: "attach your terminal to OpenCode's own login TUI (legacy passthrough)",
+    // Both unreachable in practice — teleport refuses on `caps.teleport: 'stub'`
+    // before either can be reached — but the shared body asks for them, and an
+    // accurate message that never prints beats a wrong one that might.
+    resumeWithPromptError: '-i / --initial-prompt cannot be combined with -c / --resume.',
+    hubIncompatibleReason:
+      '--via-hub is ignored for --resume runs (they teleport host state at create time); building this box locally.',
     // Unreachable in practice — teleport refuses before a box is touched — but
     // the shared body asks for it, and a wrong-agent message would be worse than
     // an accurate one that never prints.

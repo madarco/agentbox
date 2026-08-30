@@ -49,7 +49,12 @@ import { directGitModeRefusal, resolveGitCredsCarry } from '../../lib/git-creds-
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
-import { TeleportError, uploadTeleport } from '../../session-teleport/index.js';
+import {
+  prepareTeleport,
+  TeleportError,
+  uploadTeleport,
+  type ResumeMode,
+} from '../../session-teleport/index.js';
 import { clampSpinnerLine } from '../../spinner-line.js';
 import { makeProgressReporter } from '../../lib/progress.js';
 import { printLaunchRecap } from '../../lib/launch-recap.js';
@@ -58,6 +63,7 @@ import { resolveLimits } from '../../limits.js';
 import { maybePromptPortless } from '../../portless-prompt.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { isolateOptionKey, type AgentCreateOptions } from './options.js';
+import { RESUME_SEED } from './types.js';
 import type { AgentCliSpec, AgentCreateContext, AgentPreflight } from './types.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
@@ -112,6 +118,68 @@ function pickQueueCreateOpts(
     pidsLimit: opts.pidsLimit,
     disk: opts.disk,
   };
+}
+
+/**
+ * `-c` / `--resume`: teleport a host session into the new box.
+ *
+ * Shared, not per-agent, and that is load-bearing. When this lived in each
+ * agent's own preflight hook, opencode — which has no teleport and therefore no
+ * hook — silently IGNORED `-c` and went on to build a box, instead of refusing
+ * the way it always had. `prepareTeleport` already refuses on
+ * `caps.teleport: 'stub'` with the reason the registry row carries, so routing
+ * every agent through here is both the fix and the reason no agent needs a hook
+ * for the common case.
+ */
+export async function resolveResumeSeed(
+  a: AgentCliSpec,
+  ctx: AgentCreateContext,
+  opts: AgentCreateOptions,
+): Promise<AgentPreflight> {
+  const wantsResume = opts.continue === true || Boolean(opts.resume);
+  if (!wantsResume) return { seeds: [] };
+
+  // An agent without teleport is refused first, before the flag-combination
+  // checks below: "not supported for this agent" is the useful answer, and
+  // telling someone their two unsupported flags conflict is not.
+  const stub = a.spec.caps.teleport === 'stub';
+  let mode: ResumeMode;
+  if (stub) {
+    mode = { kind: 'continue' };
+  } else {
+    if (opts.continue === true && opts.resume) {
+      ctx.fail('only one of -c / --continue / --resume can be passed');
+    }
+    if (opts.initialPrompt && opts.initialPrompt.length > 0) {
+      ctx.fail(a.text.resumeWithPromptError);
+    }
+    mode = opts.continue === true ? { kind: 'continue' } : { kind: 'resume', id: opts.resume! };
+  }
+
+  try {
+    const resolved = await prepareTeleport({
+      agent: a.id,
+      hostCwd: ctx.workspace,
+      mode,
+      log: ctx.writeLog,
+    });
+    return {
+      seeds: [
+        {
+          label: `uploading ${a.id} session into box`,
+          tag: RESUME_SEED,
+          resolved,
+          forwardArgs: resolved.forwardArgs,
+          ownsFirstTurn: true,
+        },
+      ],
+      hubIncompatible: true,
+      hubIncompatibleReason: a.text.hubIncompatibleReason,
+    };
+  } catch (err) {
+    if (err instanceof TeleportError) ctx.fail(err.message);
+    throw err;
+  }
 }
 
 export async function runAgentCreate(
@@ -169,7 +237,8 @@ export async function runAgentCreate(
 
   // Host state resolved BEFORE any box work, so a missing session id or a bad
   // --plan path fails fast and the user doesn't pay for a doomed box.
-  const preflight: AgentPreflight = (await a.hooks?.preflight?.(ctx)) ?? { seeds: [] };
+  const base = await resolveResumeSeed(a, ctx, opts);
+  const preflight: AgentPreflight = a.hooks?.preflight ? await a.hooks.preflight(ctx, base) : base;
 
   // Docker off under a remote hub (Step 12): a docker box built here can't run
   // with the laptop off, so it's refused under a control box unless hub.mode=local.

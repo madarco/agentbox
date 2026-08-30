@@ -23,11 +23,10 @@ import { pasteHostClipboardImage, uploadImageFileToBox } from '../../lib/paste-i
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
 import { providerForBox } from '../../provider/registry.js';
 import { runPrepare } from '../../commands/prepare.js';
-import { prepareTeleport, TeleportError, type ResumeMode } from '../../session-teleport/index.js';
+import { TeleportError } from '../../session-teleport/index.js';
 import { resolvePlanTeleport } from '../../session-teleport/plan.js';
 import { maybeRunSetupWizard } from '../../wizard.js';
 import { claudeRuntime } from './runtime.js';
-import type { PreparedSeed } from '../command/types.js';
 
 const spec = resolveAgentSpec('claude');
 
@@ -100,85 +99,56 @@ const { command, attachWrapped } = buildAgentCommand({
       'extra args forwarded to `claude auth login`; place after `--`, e.g. `agentbox claude login -- --sso`',
     loginInteractiveHelp:
       "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
+    resumeWithPromptError:
+      '-i / --initial-prompt cannot be combined with -c / --resume (seeding a new turn into a resumed session is not supported).',
+    hubIncompatibleReason:
+      '--via-hub is ignored for --resume / --plan runs (they teleport host state at create time); building this box locally.',
     resumeIntoRunningError: (boxName) =>
       `cannot resume into ${boxName}: a Claude session is already running. Detach and kill the session first (Control+a then :kill-session), or use \`agentbox claude attach\` to reattach to the live one.`,
   },
   hooks: {
     /**
-     * Two host-side payloads, both resolved before any box work so a missing
-     * session id or a bad `--plan` path fails fast — the user doesn't pay for a
-     * doomed box.
+     * `--plan`: copy a host plan file into the box, start in plan mode and seed
+     * a "resume the plan" turn. The `-c` / `--resume` half is shared — `base` is
+     * what the body already resolved — so this only adds claude's own payload.
      */
-    async preflight(ctx) {
-      const opts = ctx.opts as {
-        continue?: boolean;
-        resume?: string;
-        initialPrompt?: string;
-        plan?: string;
-        workspace: string;
-      };
-      let mode: ResumeMode | null = null;
-      if (opts.continue === true && opts.resume) {
-        ctx.fail('only one of -c / --continue / --resume can be passed');
-      }
-      if (opts.continue === true) mode = { kind: 'continue' };
-      else if (opts.resume) mode = { kind: 'resume', id: opts.resume };
-      const hasPrompt = Boolean(opts.initialPrompt && opts.initialPrompt.length > 0);
-      if (mode && hasPrompt) {
-        ctx.fail(
-          '-i / --initial-prompt cannot be combined with -c / --resume (seeding a new turn into a resumed session is not supported).',
-        );
-      }
-      // --plan seeds an interactive "resume the plan" turn, which is incompatible
-      // with -i's background-queue mode (the same reason resume + -i is rejected).
-      if (opts.plan && hasPrompt) {
+    async preflight(ctx, base) {
+      const opts = ctx.opts as { initialPrompt?: string; plan?: string };
+      if (!opts.plan) return base;
+      // --plan seeds an interactive "resume the plan" turn, which is
+      // incompatible with -i's background-queue mode (the same reason resume +
+      // -i is rejected).
+      if (opts.initialPrompt && opts.initialPrompt.length > 0) {
         ctx.fail(
           '--plan cannot be combined with -i / --initial-prompt (--plan already seeds an interactive "resume the plan" turn).',
         );
       }
-
-      const seeds: PreparedSeed[] = [];
       try {
-        if (mode) {
-          const resolved = await prepareTeleport({
-            agent: 'claude',
-            hostCwd: ctx.workspace,
-            mode,
-            log: ctx.writeLog,
-          });
-          seeds.push({
-            label: 'uploading claude session into box',
-            resolved,
-            forwardArgs: resolved.forwardArgs,
-            ownsFirstTurn: true,
-          });
-        }
-        if (opts.plan) {
-          // forwardArgs is empty: the plan drives the prompt + permission-mode
-          // through `argsTransform` below, not through resume flags.
-          const resolved = await resolvePlanTeleport({
-            planPath: opts.plan,
-            hostCwd: ctx.workspace,
-            log: ctx.writeLog,
-          });
-          seeds.push({
-            label: 'uploading plan into box',
-            tag: PLAN_SEED,
-            resolved,
-            forwardArgs: [],
-            ownsFirstTurn: true,
-          });
-        }
+        // forwardArgs is empty: the plan drives the prompt + permission-mode
+        // through `argsTransform` below, not through resume flags.
+        const resolved = await resolvePlanTeleport({
+          planPath: opts.plan,
+          hostCwd: ctx.workspace,
+          log: ctx.writeLog,
+        });
+        return {
+          ...base,
+          seeds: [
+            ...base.seeds,
+            {
+              label: 'uploading plan into box',
+              tag: PLAN_SEED,
+              resolved,
+              forwardArgs: [],
+              ownsFirstTurn: true,
+            },
+          ],
+          hubIncompatible: true,
+        };
       } catch (err) {
         if (err instanceof TeleportError) ctx.fail(err.message);
         throw err;
       }
-      return {
-        seeds,
-        hubIncompatible: seeds.length > 0,
-        hubIncompatibleReason:
-          '--via-hub is ignored for --resume / --plan runs (they teleport host state at create time); building this box locally.',
-      };
     },
 
     /**

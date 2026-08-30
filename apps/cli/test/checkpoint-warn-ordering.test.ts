@@ -25,9 +25,12 @@ describe('checkpoint agent-mismatch warning ordering', () => {
       'utf8',
     );
     const warnAt = src.indexOf('warnCheckpointAgentMismatch(');
-    const queueAt = src.indexOf('if (opts.initialPrompt && opts.initialPrompt.length > 0) {');
+    // Anchor on the queue submission itself, not on the `if (opts.initialPrompt
+    // …)` condition: that condition is also how other helpers in this file test
+    // for a seed prompt, so matching it found the wrong occurrence.
+    const queueAt = src.indexOf('submitQueueJob(');
     expect(warnAt, 'create-action.ts must call warnCheckpointAgentMismatch').toBeGreaterThan(-1);
-    expect(queueAt, 'create-action.ts must have an -i branch').toBeGreaterThan(-1);
+    expect(queueAt, 'create-action.ts must submit the -i job').toBeGreaterThan(-1);
     expect(warnAt).toBeLessThan(queueAt);
   });
 });

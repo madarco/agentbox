@@ -7,7 +7,6 @@
  */
 import { buildAgentCommand } from '../command/factory.js';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { prepareTeleport, TeleportError, type ResumeMode } from '../../session-teleport/index.js';
 import { codexRuntime, seedCodexActivityHooks } from './runtime.js';
 
 const spec = resolveAgentSpec('codex');
@@ -42,51 +41,13 @@ const { command, attachWrapped } = buildAgentCommand({
       'extra args forwarded to `codex login` (default: --device-auth); place after `--`, e.g. `agentbox codex login -- --api-key`',
     loginInteractiveHelp:
       "attach your terminal to codex's own login TUI (legacy passthrough; needs an interactive terminal)",
+    resumeWithPromptError: '-i / --initial-prompt cannot be combined with -c / --resume.',
+    hubIncompatibleReason:
+      '--via-hub is ignored for --resume runs (they teleport host state at create time); building this box locally.',
     resumeIntoRunningError: (boxName) =>
       `cannot resume into ${boxName}: a Codex session is already running. Kill it first or use \`agentbox codex attach\`.`,
   },
   hooks: {
-    /**
-     * Resolve the host session BEFORE any box work so a missing session id fails
-     * fast — the user doesn't pay for a doomed box.
-     */
-    async preflight(ctx) {
-      const opts = ctx.opts as { continue?: boolean; resume?: string; initialPrompt?: string };
-      let mode: ResumeMode | null = null;
-      if (opts.continue === true && opts.resume) {
-        ctx.fail('only one of -c / --continue / --resume can be passed');
-      }
-      if (opts.continue === true) mode = { kind: 'continue' };
-      else if (opts.resume) mode = { kind: 'resume', id: opts.resume };
-      if (mode && opts.initialPrompt && opts.initialPrompt.length > 0) {
-        ctx.fail('-i / --initial-prompt cannot be combined with -c / --resume.');
-      }
-      if (!mode) return { seeds: [] };
-      try {
-        const resolved = await prepareTeleport({
-          agent: 'codex',
-          hostCwd: ctx.workspace,
-          mode,
-          log: ctx.writeLog,
-        });
-        return {
-          seeds: [
-            {
-              label: 'uploading codex session into box',
-              resolved,
-              forwardArgs: resolved.forwardArgs,
-              ownsFirstTurn: true,
-            },
-          ],
-          hubIncompatible: true,
-          hubIncompatibleReason:
-            '--via-hub is ignored for --resume runs (they teleport host state at create time); building this box locally.',
-        };
-      } catch (err) {
-        if (err instanceof TeleportError) ctx.fail(err.message);
-        throw err;
-      }
-    },
     async afterVolumeSync(_box, { volume }) {
       await seedCodexActivityHooks(volume, _box.image);
     },
