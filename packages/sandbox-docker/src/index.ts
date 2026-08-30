@@ -29,7 +29,6 @@ export {
   resolveClaudeVolume,
   runInteractiveClaudeLogin,
   scanPluginCacheForRebuild,
-  seedSetupSkillIntoVolume,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
   waitForTmuxPaneContent,
@@ -83,7 +82,6 @@ export {
   resolveCodexVolume,
   runInteractiveCodexLogin,
   seedCodexAgentsOverride,
-  seedCodexHooks,
   SHARED_CODEX_VOLUME,
   startCodexSession,
   volumeHasCodexAuth,
@@ -114,7 +112,6 @@ export {
   DEFAULT_OPENCODE_SESSION,
   ensureOpencodeInstalled,
   ensureOpencodeVolume,
-  seedOpencodePlugin,
   OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
   opencodeSessionInfo,
@@ -472,3 +469,5 @@ export {
   type PullFailureKind,
   type GhcrLoginResult,
 } from './registry-auth.js';
+
+export { seedAgentDeclaredFiles, seedLabels } from './sync/agents/seed.js';

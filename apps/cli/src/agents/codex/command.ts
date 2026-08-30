@@ -7,7 +7,7 @@
  */
 import { buildAgentCommand } from '../command/factory.js';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { codexRuntime, seedCodexActivityHooks } from './runtime.js';
+import { codexRuntime } from './runtime.js';
 
 const spec = resolveAgentSpec('codex');
 
@@ -46,11 +46,6 @@ const { command, attachWrapped } = buildAgentCommand({
       '--via-hub is ignored for --resume runs (they teleport host state at create time); building this box locally.',
     resumeIntoRunningError: (boxName) =>
       `cannot resume into ${boxName}: a Codex session is already running. Kill it first or use \`agentbox codex attach\`.`,
-  },
-  hooks: {
-    async afterVolumeSync(_box, { volume }) {
-      await seedCodexActivityHooks(volume, _box.image);
-    },
   },
 });
 

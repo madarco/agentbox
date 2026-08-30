@@ -22,7 +22,6 @@ import {
   ensureImage,
   extractCodexCredentials,
   runInteractiveCodexLogin,
-  seedCodexHooks,
   SHARED_CODEX_VOLUME,
   startCodexSession,
   type BoxRecord,
@@ -218,12 +217,3 @@ export const codexRuntime: AgentRuntime = {
     },
   },
 };
-
-/**
- * Re-seed the Codex activity hooks into the box's config volume. Box-only and
- * image-versioned, so it runs even with `--no-sync-config` — otherwise an image
- * upgrade would never reach an existing box.
- */
-export async function seedCodexActivityHooks(volume: string, image: string): Promise<void> {
-  await seedCodexHooks(volume, image);
-}

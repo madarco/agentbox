@@ -15,6 +15,17 @@ import { spawn } from 'node:child_process';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
+
+/**
+ * `AgentSyncSpec.launchFlags` for an agent binary, or none. Guarded on
+ * `isRuntimeAgent`: the binary here is an open string and an unknown one must
+ * launch bare, not throw.
+ */
+function agentLaunchFlags(binary: string): readonly string[] {
+  if (!isRuntimeAgent(binary)) return [];
+  return resolveAgentSpec(binary).launchFlags ?? [];
+}
 
 /** Printed in the pane the instant the session command starts, so a freshly
  * attached pane is never blank during the agent's cold-start (node cold-start +
@@ -47,6 +58,11 @@ export function buildCloudAttachInnerCommand(
   extraArgs?: string[],
   env?: Record<string, string>,
 ): string {
+  // Flags the agent needs to load what its `seeds` placed (codex will not read
+  // `hooks.json` without them). PREPENDED, because codex's `resume` is a
+  // subcommand and global flags must precede it — the same order the docker
+  // launcher uses. This was missing entirely: cloud boxes ran the bare binary,
+  // so the hooks they were (also not) given could not have loaded anyway.
   // Exported on the command itself, not left to /etc/agentbox/box.env. box.env
   // only reaches processes that go through a login shell, and while THIS
   // launcher does (`bash -lc`), the docker path's agent session does not — so
@@ -56,7 +72,9 @@ export function buildCloudAttachInnerCommand(
   const exports = Object.entries(env ?? {})
     .map(([k, v]) => `export ${k}=${shQuote(v)}; `)
     .join('');
-  if (!extraArgs || extraArgs.length === 0) {
+  const launchFlags = agentLaunchFlags(binary);
+  const args = [...launchFlags, ...(extraArgs ?? [])];
+  if (args.length === 0) {
     return `bash -lc '${agentStartBanner(binary)}${exports}exec ${binary}'`;
   }
   // Encode EACH arg to its own base64 token, newline-join the tokens, then
@@ -72,7 +90,7 @@ export function buildCloudAttachInnerCommand(
   // token's base64 payload (alphabet `[A-Za-z0-9+/=]` — no newlines), so they
   // never act as a separator; only the outer per-token newlines split the argv.
   const blob = Buffer.from(
-    extraArgs.map((a) => Buffer.from(a, 'utf8').toString('base64')).join('\n'),
+    args.map((a) => Buffer.from(a, 'utf8').toString('base64')).join('\n'),
     'utf8',
   ).toString('base64');
   // The decode feeds the read loop via a **here-string**, NOT process

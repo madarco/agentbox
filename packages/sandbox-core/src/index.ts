@@ -209,8 +209,10 @@ export {
   type PreparedProviderKind,
 } from './prepared-state.js';
 export {
+  CLI_RUNTIME_DIR_ENV,
   RUNTIME_ROOT_ENV,
   resolveStagedRuntimeRoot,
+  sharedRuntimeAssetPath,
   stagedRuntimeRootCandidates,
 } from './runtime-root.js';
 

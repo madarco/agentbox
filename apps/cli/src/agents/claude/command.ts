@@ -10,7 +10,6 @@ import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import {
   rebuildPluginNativeDeps,
   SHARED_CLAUDE_VOLUME,
-  seedSetupSkillIntoVolume,
   syncClaudeCredentials,
 } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
@@ -246,9 +245,8 @@ const { command, attachWrapped } = buildAgentCommand({
     },
 
     async afterVolumeSync(box, { volume, message }) {
-      // Box-only: ensure /agentbox-setup is in the volume (image-seeded, never on
-      // the host). Re-copied every run so an image upgrade propagates.
-      await seedSetupSkillIntoVolume(volume, box.image);
+      // The /agentbox-setup skill is seeded by the shared body from
+      // `spec.seeds` — what stays here is real behavior, not file placement.
       // Mirror the in-box OAuth credentials with the host backup. Runs regardless
       // of --no-sync-config (this is not the host ~/.claude rsync) — it keeps the
       // backup fresh as the in-box claude rotates its token, and seeds an isolate

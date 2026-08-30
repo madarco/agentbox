@@ -11,6 +11,7 @@ import {
   MINIMAL_TRUSTED_CODEX_CONFIG,
   ensureAgentInstalled,
   AgentInstallError,
+  resolveAgentSpec,
 } from '@agentbox/sandbox-core';
 import { ensureVolume, volumeExists } from '../../docker.js';
 import { createDockerSyncTransport } from '../sync-transport.js';
@@ -32,7 +33,6 @@ const CONTAINER_CODEX_DIR = '/home/vscode/.codex';
  * `scripts/agentbox-codex-hooks.json` here). {@link seedCodexHooks} copies it
  * into the codex-config volume as `~/.codex/hooks.json`.
  */
-const IN_BOX_CODEX_HOOKS_PATH = '/usr/local/share/agentbox/codex-hooks.json';
 /**
  * Image-baked box "system prompt": operational facts about the sandbox (it's a
  * container, `/workspace` is a per-box worktree, push/PR/cp go through the host
@@ -306,47 +306,6 @@ export async function ensureCodexVolume(
 }
 
 /**
- * Seed the AgentBox Codex activity hooks into the codex-config volume from the
- * image-baked copy ({@link IN_BOX_CODEX_HOOKS_PATH}) as `~/.codex/hooks.json`.
- * Codex auto-discovers that file; its hooks accumulate with any the user
- * defined, so this never disables the user's own hooks.
- *
- * Re-seeded on every create/start (image-versioned) so an image upgrade
- * propagates. Best-effort — a failure must not fail box creation.
- *
- * Shape note (codex 0.134.0): `hooks.json` must be `{ hooks: { Event: [...] } }`
- * (matching the `HooksFile` Rust struct), with NO extra top-level keys — codex's
- * strict parser rejects unknown fields (a stray `$comment` produced a startup
- * `failed to parse hooks config` warning). Loading also needs `--enable hooks`
- * and either the in-TUI trust dialog or `--dangerously-bypass-hook-trust`, both
- * supplied by {@link CODEX_AGENTBOX_FLAGS}. In practice JSON-hook firing is still
- * unreliable in 0.134.0 (TUI mode skips them on some startup paths) — the real
- * mechanism that lights up state in production is the tmux-pane scraper in
- * `packages/ctl/src/codex-scraper.ts`. These hooks remain a defense-in-depth
- * seed so any future codex build that fixes the firing also lights up state.
- */
-export async function seedCodexHooks(volume: string, image: string): Promise<{ seeded: boolean }> {
-  try {
-    const { stdout } = await execa('docker', [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${volume}:/dst`,
-      image,
-      'sh',
-      '-c',
-      `{ [ -f ${IN_BOX_CODEX_HOOKS_PATH} ] && cp -a ${IN_BOX_CODEX_HOOKS_PATH} /dst/hooks.json && ` +
-        `chown 1000:1000 /dst/hooks.json && echo SEEDED; } || true`,
-    ]);
-    return { seeded: stdout.includes('SEEDED') };
-  } catch {
-    return { seeded: false };
-  }
-}
-
-/**
  * Regenerate `~/.codex/AGENTS.override.md` in the codex-config volume so the
  * in-box Codex agent picks up the box "system prompt" ({@link
  * BOX_SYSTEM_PROMPT_PATH}). Runs in a throwaway container with the volume at
@@ -579,33 +538,15 @@ export interface StartCodexSessionOptions {
  * shared {@link buildTmuxSessionArgs} remaps the prefix (Ctrl+a / Ctrl+b) and
  * hides the inner status bar, exactly as for the claude session.
  */
-// Flags codex needs to actually try our seeded hooks.json from the box image:
-// - `--enable hooks` opts into Claude-style lifecycle hook loading (the codex
-//   feature was renamed from `codex_hooks` -> `hooks` in 0.134.0).
-// - `--dangerously-bypass-hook-trust` skips the in-TUI "trust these hooks?"
-//   dialog that would otherwise block startup on every fresh box. The hooks
-//   are AgentBox-managed and pre-vetted; the user never sees them, so trust
-//   verification has no UX value here.
-// The flag makes codex print a (cosmetic, duplicated) "--dangerously-bypass-
-//   hook-trust is enabled" warning at startup. There is NO codex option to
-//   silence only that warning. The only way to drop it is to stop passing the
-//   flag and instead persist hook trust in config.toml as
-//   `[hooks.state."<hooks.json path>:<event>:0:0"] trusted_hash = "sha256:…"`
-//   (one entry per event, written when you accept the dialog). We deliberately
-//   do NOT seed those: the hash is an opaque codex-internal digest (not
-//   reproducible from the hook command) tied to both hooks.json content and the
-//   codex version — a mismatch turns the cosmetic warning into a *blocking*
-//   "Hooks need review" dialog on every box. The bypass flag always works, so
-//   the warning is the accepted cost. (`hooks.managed_dir` auto-trusts but did
-//   not fire the hooks in testing.)
-// The actual mechanism that lights up codex.state in production is the
-// tmux-pane scraper (codex-scraper.ts); these flags are defense-in-depth for
-// the day codex's JSON-hook firing becomes reliable (it does fire on 0.141.0).
-const CODEX_AGENTBOX_FLAGS = ['--enable', 'hooks', '--dangerously-bypass-hook-trust'] as const;
+// The flags codex needs to load the hooks.json its `seeds` declaration places.
+// Data on the registry row (`AgentSyncSpec.launchFlags`) rather than a constant
+// here, because the cloud launcher needs the identical prefix and previously had
+// no way to know about it — codex ran bare on every cloud box.
 
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CODEX_SESSION;
-  const cmd = ['codex', ...CODEX_AGENTBOX_FLAGS, ...opts.codexArgs].map(shQuote).join(' ');
+  const flags = resolveAgentSpec('codex').launchFlags ?? [];
+  const cmd = ['codex', ...flags, ...opts.codexArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
   for (const k of CODEX_FORWARDED_ENV_KEYS) {

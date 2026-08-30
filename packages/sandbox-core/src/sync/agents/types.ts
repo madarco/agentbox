@@ -78,6 +78,41 @@ export interface AgentCredential {
   realShape: 'claude-oauth' | 'nonempty-json';
 }
 
+/**
+ * One agentbox-OWNED file that has to be placed where the agent will load it.
+ *
+ * These are not user config and never touch the host: an activity hook, a
+ * plugin, a skill. They are baked into every provider's base image at
+ * `bakedPath` and copied into the agent's config root on every create/start, so
+ * an image upgrade propagates instead of a stale copy pinning an old version in
+ * a long-lived shared volume.
+ *
+ * Data rather than three near-identical `seed*` functions: the copy step was
+ * the only per-agent part, and having it live in `@agentbox/sandbox-docker`
+ * meant the cloud providers silently did not do it at all (a cloud OpenCode box
+ * never got its state plugin, so it reported `unknown` activity forever).
+ */
+export interface AgentSeedSpec {
+  /** Absolute in-image source. Baked into every provider base. */
+  bakedPath: string;
+  /**
+   * Destination, RELATIVE to `staticPaths[0].boxDir` — which is both the docker
+   * config volume's root and the in-box config dir, so one string serves the
+   * volume copy and the in-box copy.
+   */
+  destRel: string;
+  /**
+   * Basename under the CLI's staged `runtime/_shared/`, used as the host-side
+   * source when `bakedPath` is absent. That happens for real: a base snapshot
+   * baked before the asset existed never carries it, and the VPS providers
+   * never shipped the OpenCode plugin at all. Uploading from the host is what
+   * lets the fix land without re-baking every provider's snapshot.
+   */
+  sharedAsset: string;
+  /** Short human label for log lines ("Codex activity hooks"). */
+  label: string;
+}
+
 /** Capabilities that genuinely differ per tool (drive resume/teleport/activity wiring). */
 export interface AgentCapabilities {
   /** Session resume supported (`--resume`). OpenCode: false. */
@@ -189,6 +224,20 @@ export interface AgentSyncSpec {
    * existed. A closure here would foreclose that.
    */
   boxRunEnv: Record<string, string>;
+  /**
+   * Agentbox-owned files seeded into this agent's config root on create/start.
+   * See {@link AgentSeedSpec}. Absent means the agent needs no seeding.
+   */
+  seeds?: readonly AgentSeedSpec[];
+  /**
+   * Extra argv prepended to every launch of this agent's binary, for flags it
+   * needs in order to LOAD what `seeds` placed (codex will not read a
+   * `hooks.json` without `--enable hooks --dangerously-bypass-hook-trust`).
+   *
+   * Prepended, never appended: codex's `resume` is a SUBCOMMAND and global
+   * flags have to precede it.
+   */
+  launchFlags?: readonly string[];
   caps: AgentCapabilities;
   /**
    * Box->host (`agentbox download <agent>`) descriptor.

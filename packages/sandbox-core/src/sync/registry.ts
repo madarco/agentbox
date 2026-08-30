@@ -24,6 +24,9 @@ const BOX_HOME = '/home/vscode';
 const CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
 /** Baked into every provider's base image; the source for the wizard skill. */
 const SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';
+/** Baked alongside it: the two activity-reporting assets (see `AgentSeedSpec`). */
+const CODEX_HOOKS_PATH = '/usr/local/share/agentbox/codex-hooks.json';
+const OPENCODE_PLUGIN_PATH = '/usr/local/share/agentbox/opencode-agentbox-plugin.js';
 const CLAUDE_BOX_DIR = '/home/vscode/.claude';
 const CODEX_BOX_DIR = '/home/vscode/.codex';
 const OPENCODE_BOX_DIR = '/home/vscode/.local/share/opencode';
@@ -151,6 +154,18 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       'ANTHROPIC_MODEL',
     ],
     boxRunEnv: {},
+    // The box-ONLY wizard skill: deliberately never written to the host's
+    // ~/.claude. Claude also gets it at install time via SEED_SETUP_SKILL, but
+    // the docker config volume mounts OVER ~/.claude, so it has to be re-placed
+    // into the volume as well — same bytes, two placements.
+    seeds: [
+      {
+        bakedPath: SETUP_GUIDE_PATH,
+        destRel: 'skills/agentbox-setup/SKILL.md',
+        sharedAsset: 'agentbox-setup-skill.md',
+        label: 'the /agentbox-setup skill',
+      },
+    ],
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
     // Box->host. Claude's unit is a CHILD of a category dir, plus a 2-level
     // plugin cache, plus two registry JSONs merged additively with a
@@ -246,6 +261,28 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
     },
     forwardedEnvKeys: ['OPENAI_API_KEY'],
     boxRunEnv: {},
+    // Codex auto-discovers `~/.codex/hooks.json` and accumulates its hooks with
+    // any the user defined, so seeding this never disables the user's own.
+    seeds: [
+      {
+        bakedPath: CODEX_HOOKS_PATH,
+        destRel: 'hooks.json',
+        sharedAsset: 'agentbox-codex-hooks.json',
+        label: 'Codex activity hooks',
+      },
+    ],
+    // Codex will not load the seeded hooks without these:
+    // - `--enable hooks` opts into lifecycle-hook loading (the feature was
+    //   renamed `codex_hooks` -> `hooks` in 0.134.0).
+    // - `--dangerously-bypass-hook-trust` skips the in-TUI "trust these hooks?"
+    //   dialog that would otherwise block startup on every fresh box. The hooks
+    //   are AgentBox-managed and pre-vetted; the user never sees them.
+    // The flag makes codex print a cosmetic "…is enabled" warning at startup and
+    // there is NO option to silence just that one. Persisting trust hashes in
+    // config.toml instead is worse: the hash is an opaque codex-internal digest
+    // tied to both the file content and the codex version, and a mismatch turns
+    // the cosmetic warning into a *blocking* "Hooks need review" dialog.
+    launchFlags: ['--enable', 'hooks', '--dangerously-bypass-hook-trust'],
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
     // Box->host: a flat list under the single config root.
     pull: { items: [{ group: 'data', names: ['config.toml', 'auth.json', 'prompts'] }] },
@@ -321,6 +358,19 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       OPENCODE_CONFIG_DIR: `${OPENCODE_BOX_DIR}/config`,
       XDG_STATE_HOME: `${OPENCODE_BOX_DIR}/.state`,
     },
+    // OpenCode auto-loads any JS/TS file under `$OPENCODE_CONFIG_DIR/plugins/`
+    // at startup; this one subscribes to its event bus and shells
+    // `agentbox-ctl opencode-state`. It is the ONLY source of opencode activity
+    // (`activitySource: 'plugin'`), which is why its absence on the cloud
+    // providers left every cloud opencode box reporting `unknown`.
+    seeds: [
+      {
+        bakedPath: OPENCODE_PLUGIN_PATH,
+        destRel: 'config/plugins/agentbox-state.js',
+        sharedAsset: 'opencode-agentbox-plugin.js',
+        label: 'the agentbox-state plugin',
+      },
+    ],
     caps: {
       resume: false,
       teleport: 'stub',

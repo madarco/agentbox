@@ -24,7 +24,8 @@
  * CLI-spawned hub, and the VPS deploy Dockerfile for the hub container.
  */
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Env override naming the staged `runtime/` root explicitly. */
 export const RUNTIME_ROOT_ENV = 'AGENTBOX_RUNTIME_ROOT';
@@ -52,4 +53,33 @@ export function resolveStagedRuntimeRoot(self: string, marker: string): string |
     if (existsSync(resolve(candidate, marker))) return candidate;
   }
   return undefined;
+}
+
+/**
+ * Env var the CLI stamps at startup with its staged `runtime/` root. Mirrors
+ * `CLI_RUNTIME_DIR_ENV` in `@madarco/agentbox-provider-sdk` — deliberately a
+ * second literal rather than an import, because the SDK inlines this package
+ * and depending on it here would be a cycle.
+ */
+export const CLI_RUNTIME_DIR_ENV = 'AGENTBOX_CLI_RUNTIME_DIR';
+
+/**
+ * Absolute host path to a provider-NEUTRAL asset staged under
+ * `runtime/_shared/`, or null when it can't be found.
+ *
+ * Null rather than throwing: the one caller is best-effort seeding, where a
+ * missing host copy just means we fall back to whatever the box image baked.
+ */
+export function sharedRuntimeAssetPath(basename: string): string | null {
+  const roots: string[] = [];
+  const stamped = process.env[CLI_RUNTIME_DIR_ENV];
+  if (stamped) roots.push(stamped);
+  const self = dirname(fileURLToPath(import.meta.url));
+  const found = resolveStagedRuntimeRoot(self, `_shared/${basename}`);
+  if (found) roots.push(found);
+  for (const root of roots) {
+    const p = resolve(root, '_shared', basename);
+    if (existsSync(p)) return p;
+  }
+  return null;
 }

@@ -27,15 +27,16 @@ import type {
 } from '@agentbox/core';
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { renderCarryEntries } from '@agentbox/sandbox-core';
+import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
 import type { ClaudeConfigSpec } from './agents/claude.js';
-import { ensureClaudeVolume, seedSetupSkillIntoVolume } from './agents/claude.js';
+import { ensureClaudeVolume } from './agents/claude.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { CodexConfigSpec } from './agents/codex.js';
-import { ensureCodexVolume, seedCodexAgentsOverride, seedCodexHooks } from './agents/codex.js';
+import { ensureCodexVolume, seedCodexAgentsOverride } from './agents/codex.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
 import type { OpencodeConfigSpec } from './agents/opencode.js';
-import { ensureOpencodeVolume, seedOpencodePlugin } from './agents/opencode.js';
+import { ensureOpencodeVolume } from './agents/opencode.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 
@@ -98,15 +99,22 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       // The per-tool config volume seeds, in create order. Static config +
       // skills + dynamic + box-facts all ride these volume rsyncs / overrides:
       //   - claude:   ensureClaudeVolume (host ~/.claude rsync, carries dynamic
-      //               workflows/memory + box-facts via .claude) + the box-only
-      //               /agentbox-setup skill seed.
-      //   - codex:    ensureCodexVolume + activity hooks + the AGENTS.override.md
-      //               box-facts fold.
+      //               workflows/memory + box-facts via .claude).
+      //   - codex:    ensureCodexVolume + the AGENTS.override.md box-facts fold.
       //   - agents:   ensureAgentsVolume (~/.agents skills).
-      //   - opencode: ensureOpencodeVolume + the state-reporting plugin.
+      //   - opencode: ensureOpencodeVolume.
+      // Each agent's declared `seeds` ride `seedDeclared` below.
       // Volume *mounts* are built by create.ts from the same specs.
       const { image } = requireCreateHandle(handle, 'seedAgentConfig');
       const log = ctx.onLog;
+      // Agentbox-owned files (activity hooks, the state plugin, the wizard
+      // skill) come from `AgentSyncSpec.seeds` — one declaration the cloud path
+      // runs too, instead of three hand-written per-agent seeders that only
+      // docker ever called.
+      const seedDeclared = async (agent: string, volume: string): Promise<void> => {
+        const { seeded } = await seedAgentDeclaredFiles(agent, volume, image);
+        for (const label of seedLabels(agent, seeded)) log(`seeded ${label} into ${volume}`);
+      };
 
       if (handle.claudeSpec) {
         const claudeSpec = handle.claudeSpec;
@@ -138,8 +146,7 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         } else {
           log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
         }
-        const seeded = await seedSetupSkillIntoVolume(claudeSpec.volume, image);
-        if (seeded.seeded) log(`refreshed /agentbox-setup skill into ${claudeSpec.volume}`);
+        await seedDeclared('claude', claudeSpec.volume);
       }
 
       if (handle.codexSpec) {
@@ -149,8 +156,7 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         else if (codexEnsured.created)
           log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
         else log(`reusing volume ${codexSpec.volume}`);
-        const codexHooks = await seedCodexHooks(codexSpec.volume, image);
-        if (codexHooks.seeded) log(`seeded Codex activity hooks into ${codexSpec.volume}`);
+        await seedDeclared('codex', codexSpec.volume);
         const codexOverride = await seedCodexAgentsOverride(codexSpec.volume, image);
         if (codexOverride.seeded) log(`seeded Codex AGENTS.override.md into ${codexSpec.volume}`);
       }
@@ -174,8 +180,7 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         else if (opencodeEnsured.created)
           log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
         else log(`reusing volume ${opencodeSpec.volume}`);
-        const opencodePlugin = await seedOpencodePlugin(opencodeSpec.volume, image);
-        if (opencodePlugin.seeded) log(`seeded agentbox-state plugin into ${opencodeSpec.volume}`);
+        await seedDeclared('opencode', opencodeSpec.volume);
       }
     },
 
