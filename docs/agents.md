@@ -171,7 +171,8 @@ message instead of blocking on a password read nothing will answer.
 ## Adding a new agent
 
 1. **Add the row** to `AGENT_SYNC_SPECS`: `id`, `binary`, `install`
-   (recipe + `runAs` + any `apt` + `postInstall`), `sessionName`,
+   (recipe + `runAs` + any OS `packages` (+ `packagesOptional`) +
+   `postInstall`), `sessionName`,
    `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`.
    Keep it JSON-serializable — no closures — so the descriptor can later be
    shipped into a box whose `agentbox-ctl` was baked before the agent existed.
@@ -183,13 +184,19 @@ message instead of blocking on a password read nothing will answer.
 4. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
    `packages/config`.
 5. **ctl**, if the agent should report activity: a `BoxStatus` field, an
-   `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry (drift-tested against
-   the registry).
+   `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry. The last one is
+   enforced, not merely documented: a drift test in `packages/ctl` compares it
+   against `AGENT_SYNC_SPECS` and fails until you add the row.
+6. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
+   (`apps/cli/src/commands/download-<agent>.ts`) plus the pull functions and
+   box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to
+   miss: nothing fails without it, the subcommand is simply absent, so an agent
+   added without this step can never sync its box-side config back.
 
-Nothing in step 1 requires touching `Dockerfile.box`. Steps 3–5 are the tail
+Nothing in step 1 requires touching `Dockerfile.box`. Steps 3–6 are the tail
 that a future `agentCommand(spec)` factory and a generic ctl status map would
 collapse — see the seam analysis in
-[`agent-catalog-plan.md`](./agent-catalog-plan.md).
+[`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
 
 ---
 
@@ -314,3 +321,80 @@ an `agentbox.agents` label (`none` for the base), while daytona's
 is the only channel, hence `agentbox-<set>-<fp12>`. DigitalOcean is the same: a
 snapshot carries no tags, and its name is doubly load-bearing because it is also
 how the bake recovers the snapshot id after the async snapshot action completes.
+
+---
+
+## Backlog: where the seam still leaks
+
+The *install* seam is clean — one `AGENT_SYNC_SPECS` row drives the docker
+derived layer, every cloud derived snapshot, and `ensureAgentInstalled`, so a
+baked agent and a runtime-added one are byte-identical. Everything below is a
+place where agent knowledge still lives as **code** instead of data. None of it
+is broken; all of it is work a fourth agent would pay for.
+
+### 1. `agentbox download` duplicates the registry's paths, in reverse
+
+`packages/sandbox-core/src/sync/agent-pull.ts` hardcodes `CLAUDE_BOX_CONFIG_DIR`
+/ `CODEX_BOX_CONFIG_DIR` / `OPENCODE_BOX_DATA_DIR` and exposes per-agent
+functions (`pullClaudeExtrasViaTransport` and friends). It never reads
+`staticPaths` from `AGENT_SYNC_SPECS` — so the host→box direction is
+registry-driven and the box→host direction is not, with two copies of the same
+path knowledge free to drift.
+
+`apps/cli/src/commands/download-{claude,codex,opencode}.ts` are ~120 lines each
+over shared `_agent-pull.ts` / `_agent-propagate.ts` helpers.
+
+**Fix:** give `staticPaths` a pull direction and drive `agent-pull.ts` from it.
+The categories differ per agent (claude has `skills`/`agents`/`commands`,
+opencode has `themes`), so the row needs a `pullCategories` field rather than
+reusing `staticPaths` verbatim.
+
+### 2. ctl carries a second copy of the credential paths, and is frozen at bake
+
+`WATCHED_CREDENTIALS` (`packages/ctl/src/credentials-watcher.ts`) mirrors
+`AGENT_SYNC_SPECS[..].credential.boxAbsPath`. A drift test keeps the two in
+lockstep, so this is safe — but it is still duplication, and it has a sharper
+consequence: **`agentbox-ctl` is baked into the image**. A box built from a
+snapshot baked before a new agent existed watches the old list, so that agent's
+credential refresh is never reported to the host until the image is re-baked.
+
+Step 1 of the checklist already asks for a JSON-serializable row *"so the
+descriptor can later be shipped into a box whose `agentbox-ctl` was baked before
+the agent existed"* — nothing ships it today. Wiring that is what turns a new
+agent from "re-bake every base" into "restart ctl".
+
+Why this matters most for Claude specifically: an OAuth refresh **rotates** the
+refresh token, killing every other copy (host backup, other boxes). The watcher
+posting the fresh blob to the relay is what keeps the fleet logged in, so a box
+whose ctl doesn't watch a credential silently degrades the whole fleet's login
+for that agent, not just its own.
+
+### 3. Community provider plugins cannot support per-agent variants
+
+`@madarco/agentbox-provider-sdk` re-exports `claudeInstallFingerprint` but none
+of the helpers the per-agent tier is built on:
+
+```
+variantFingerprint · normalizeAgentSet · agentSetArg
+resolveAgentSpec · resolveAgentInstall · renderInstallRecipe · renderPackageInstall
+```
+
+Nothing is *broken*: `agents` is optional on both `PrepareOptions` and
+`CloudProvisionRequest`, so an existing plugin compiles and runs unchanged — it
+just always boots its base and lets `ensureAgentInstalled` add the agent at
+create, which is the intended graceful degradation. `SDK_API_VERSION` stays at
+2 for the same reason.
+
+But a plugin that *wants* the tier can't compute a variant key, render an
+agent's install recipe, or fingerprint a variant. Exporting those is additive
+(no version bump) — it does need a rebuild + republish, since the SDK inlines
+the `@agentbox/*` packages. See
+[`provider-plugins.md`](./provider-plugins.md) → "Publishing the SDK".
+
+### 4. The per-agent command tail
+
+68 non-test files name a specific agent by identifier. A new agent's CLI command
+is a ~1,300-line clone of `opencode.ts` plus five registrations. The
+`agentCommand(spec)` factory and generic ctl status map in
+[`agent-catalog-plan.md`](./agent-catalog-plan.md) are what collapse checklist
+steps 3–6 into data.
