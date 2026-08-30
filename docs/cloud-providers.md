@@ -323,6 +323,36 @@ docker run --rm --privileged -v /:/host alpine \
 The fix persists into the snapshot, so every box booted from that base has working
 sudo from the start.
 
+#### A `linux-vm` execs as `root`, so AgentBox drops it to `vscode`
+
+Same root cause as the stripped setuid bits and the vanished `ENV`: a VM keeps the
+rootfs and loses the image *metadata*, and `USER vscode` is metadata. A `container`
+honours it and execs as the box user; a `linux-vm` execs as **root** with
+`HOME=/root`, while every credential and config file is seeded into `/home/vscode`.
+Left alone, the agent starts in root's empty home and sits at an interactive login
+prompt on a box that otherwise reports healthy.
+
+The SDK offers no lever — `executeCommand(command, cwd, env, timeout)` has no user,
+`createSshAccess` has no user, and the create-time `user` field is not honoured here
+(a VM box reports `user: "daytona"` while actually running as root). So AgentBox
+wraps, the way vercel does:
+
+- **`exec`** defaults to `vscode` and wraps in `sudo -n -u vscode -H bash -lc …`
+  (`buildDaytonaExec`). `cwd`/`env` move *inside* the wrap — the SDK's own arguments
+  apply to the outer root shell and would never reach the dropped user.
+- **attach** declares `attachRunAs`, and `buildAttach` wraps the whole inner command
+  the same way — the tmux *server* included, so the session, its panes and the in-box
+  ctl client share one identity. A root tmux server owning a `vscode` agent could not
+  reach the ctl socket (0660, in a user-owned dir).
+- **`{ user: 'root' }` opts out**, which the bake depends on: `sudo` is not setuid
+  until the repair above runs and refuses to run at all before then, even for root,
+  so the dockerd wait and the repair itself must stay unwrapped.
+- The **container class is untouched** — it already lands on the box user.
+
+Because the ownership of `/home/vscode` is baked into the snapshot, picking this up
+needs `agentbox prepare --provider daytona --force`, and existing `linux-vm` boxes
+should be destroyed and recreated.
+
 #### Snapshot names are never reused
 
 Recreating a snapshot under a **recently deleted name** yields one that reports

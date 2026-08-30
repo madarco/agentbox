@@ -87,7 +87,14 @@ function makeMockBackend(opts: {
     },
   };
 
-  return { backend, execCalls, uploadCalls, get destroyed() { return state.destroyed; } } as never;
+  return {
+    backend,
+    execCalls,
+    uploadCalls,
+    get destroyed() {
+      return state.destroyed;
+    },
+  } as never;
 }
 
 describe('ensureAgentVolumesForCloud', () => {
@@ -152,15 +159,19 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
       ]),
     });
     const logs: string[] = [];
-    await seedAgentVolumesIfFresh(backend, { sandboxId: 's' }, {
-      onLog: (l) => logs.push(l),
-    });
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's' },
+      {
+        onLog: (l) => logs.push(l),
+      },
+    );
     expect(uploadCalls).toEqual([]);
     expect(execCalls.filter((c) => c.cmd.startsWith('test -f ')).length).toBe(3);
     expect(execCalls.some((c) => c.cmd.includes('tar -xzf'))).toBe(false);
-    expect(
-      logs.every((l) => l.includes('already seeded') || l.includes('mounting only')),
-    ).toBe(true);
+    expect(logs.every((l) => l.includes('already seeded') || l.includes('mounting only'))).toBe(
+      true,
+    );
   });
 
   // Tests below pass `agents: ['codex', 'opencode']` to exclude claude — the
@@ -171,9 +182,13 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
 
   it('does not upload when host has no credentials to stage (codex/opencode)', async () => {
     const { backend, uploadCalls } = makeMockBackend({});
-    await seedAgentVolumesIfFresh(backend, { sandboxId: 's' }, {
-      agents: ['codex', 'opencode'],
-    });
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's' },
+      {
+        agents: ['codex', 'opencode'],
+      },
+    );
     expect(uploadCalls).toEqual([]);
   });
 
@@ -185,17 +200,19 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
     await writeFile(join(codexDir, 'config.toml'), 'model = "gpt-5"\n');
 
     const { backend, uploadCalls, execCalls } = makeMockBackend({});
-    await seedAgentVolumesIfFresh(backend, { sandboxId: 's' }, {
-      agents: ['codex', 'opencode'],
-    });
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's' },
+      {
+        agents: ['codex', 'opencode'],
+      },
+    );
 
     expect(uploadCalls).toHaveLength(1);
     expect(uploadCalls[0]!.remotePath).toBe('/tmp/agentbox-codex-creds.tar.gz');
     expect(
       execCalls.some(
-        (c) =>
-          c.cmd.includes('tar -xzf') &&
-          c.cmd.includes('/home/vscode/.agentbox-creds/codex'),
+        (c) => c.cmd.includes('tar -xzf') && c.cmd.includes('/home/vscode/.agentbox-creds/codex'),
       ),
     ).toBe(true);
     expect(uploadCalls.some((c) => c.remotePath.includes('opencode'))).toBe(false);
@@ -228,6 +245,55 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
     await rm(codexDir, { recursive: true, force: true });
   });
 
+  it('takes the ephemeral path on a linux-vm box even though the backend has a volume API', async () => {
+    // Daytona's linux-vm accepts a volume mount, echoes it back in the DTO, and
+    // never surfaces it in the guest. Answering "does the backend have volumes?"
+    // instead of "does THIS box have one?" sent VM boxes down the volume branch,
+    // which extracts as root with no --no-same-owner and then `cp -r` — landing
+    // root:root 0600 credentials the vscode agent cannot read, which is exactly
+    // how the box ended up at an interactive login prompt.
+    const codexDir = join(fakeHome, '.codex');
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(join(codexDir, 'auth.json'), '{"token":"redacted"}\n');
+
+    const { backend, execCalls } = makeMockBackend({});
+    // Volume primitive present — only the sandbox class says otherwise.
+    expect(typeof backend.ensureVolume).toBe('function');
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's', sandboxClass: 'linux-vm' },
+      { agents: ['codex'] },
+    );
+
+    const extractCall = execCalls.find(
+      (c) => c.cmd.includes('tar -xzf') && c.cmd.includes('/home/vscode/.agentbox-creds/codex'),
+    );
+    expect(extractCall).toBeDefined();
+    expect(extractCall!.user).toBe('vscode');
+    expect(extractCall!.cmd).toContain('--no-same-owner');
+    // The volume branch's giveaway: a staging dir + cp instead of a direct extract.
+    expect(execCalls.some((c) => c.cmd.includes('agentbox-creds-stage-'))).toBe(false);
+
+    await rm(codexDir, { recursive: true, force: true });
+  });
+
+  it('keeps the volume path for a container-class box', async () => {
+    const codexDir = join(fakeHome, '.codex');
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(join(codexDir, 'auth.json'), '{"token":"redacted"}\n');
+
+    const { backend, execCalls } = makeMockBackend({});
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's', sandboxClass: 'container' },
+      { agents: ['codex'] },
+    );
+
+    expect(execCalls.some((c) => c.cmd.includes('agentbox-creds-stage-'))).toBe(true);
+
+    await rm(codexDir, { recursive: true, force: true });
+  });
+
   it('warns + skips codex when ~/.codex exists but auth.json is missing (Keychain landmine)', async () => {
     const codexDir = join(fakeHome, '.codex');
     await mkdir(codexDir, { recursive: true });
@@ -236,14 +302,16 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
 
     const { backend, uploadCalls } = makeMockBackend({});
     const logs: string[] = [];
-    await seedAgentVolumesIfFresh(backend, { sandboxId: 's' }, {
-      agents: ['codex', 'opencode'],
-      onLog: (l) => logs.push(l),
-    });
+    await seedAgentVolumesIfFresh(
+      backend,
+      { sandboxId: 's' },
+      {
+        agents: ['codex', 'opencode'],
+        onLog: (l) => logs.push(l),
+      },
+    );
     expect(uploadCalls.some((c) => c.remotePath.includes('codex'))).toBe(false);
-    expect(
-      logs.some((l) => /auth\.json missing|cli_auth_credentials_store/i.test(l)),
-    ).toBe(true);
+    expect(logs.some((l) => /auth\.json missing|cli_auth_credentials_store/i.test(l))).toBe(true);
 
     await rm(codexDir, { recursive: true, force: true });
   });
@@ -264,11 +332,20 @@ describe('extractCloudAgentCredentials', () => {
   function backendCatting(files: Record<string, string | undefined>): CloudBackend {
     return {
       name: 'mock',
-      async provision(): Promise<CloudHandle> { return { sandboxId: 's' }; },
-      async get(): Promise<CloudHandle | null> { return { sandboxId: 's' }; },
-      async start() {}, async stop() {}, async pause() {}, async resume() {},
+      async provision(): Promise<CloudHandle> {
+        return { sandboxId: 's' };
+      },
+      async get(): Promise<CloudHandle | null> {
+        return { sandboxId: 's' };
+      },
+      async start() {},
+      async stop() {},
+      async pause() {},
+      async resume() {},
       async destroy() {},
-      async state(): Promise<CloudState> { return 'running'; },
+      async state(): Promise<CloudState> {
+        return 'running';
+      },
       async exec(_h, cmd: string): Promise<CloudExecResult> {
         const m = /^cat (\S+) 2>\/dev\/null$/.exec(cmd);
         if (m) {
@@ -279,9 +356,14 @@ describe('extractCloudAgentCredentials', () => {
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       },
-      async uploadFile() {}, async downloadFile() {},
-      async listFiles(): Promise<CloudFileEntry[]> { return []; },
-      async previewUrl(): Promise<CloudPreviewUrl> { return { url: 'https://mock/' }; },
+      async uploadFile() {},
+      async downloadFile() {},
+      async listFiles(): Promise<CloudFileEntry[]> {
+        return [];
+      },
+      async previewUrl(): Promise<CloudPreviewUrl> {
+        return { url: 'https://mock/' };
+      },
     };
   }
 
@@ -321,7 +403,9 @@ describe('extractCloudAgentCredentials', () => {
   it('swallows a failing exec and returns []', async () => {
     const backend: CloudBackend = {
       ...backendCatting({}),
-      async exec(): Promise<CloudExecResult> { throw new Error('transient'); },
+      async exec(): Promise<CloudExecResult> {
+        throw new Error('transient');
+      },
     };
     const logs: string[] = [];
     const extracted = await extractCloudAgentCredentials(
@@ -333,4 +417,3 @@ describe('extractCloudAgentCredentials', () => {
     expect(logs.some((l) => l.includes('extract failed'))).toBe(true);
   });
 });
-

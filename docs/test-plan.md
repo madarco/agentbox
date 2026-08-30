@@ -268,8 +268,8 @@ A regression checklist that an AI (or human) can drive end-to-end to declare Age
 - [ ] **CREATE-002** `create --provider daytona` provisions a cloud sandbox.
   - **Providers:** [daytona]
   - **Run:** `node apps/cli/dist/index.js create --provider daytona -y -n cloud-smoke &` and tail the log.
-  - **Signal:** exit 0; box reachable via `agentbox shell cloud-smoke -- pwd` returning `/workspace`; preview URL minted (`url --print` returns a `*.proxy.daytona.work` URL).
-  - **Note:** End-to-end create on Daytona using bundle + stash + untracked seeding.
+  - **Signal:** exit 0; box reachable via `agentbox shell cloud-smoke -- pwd` returning `/workspace`; `agentbox shell cloud-smoke -- 'id -un'` returning **`vscode`**; preview URL minted (`url --print` returns a `*.proxy.daytona.work` URL).
+  - **Note:** End-to-end create on Daytona using bundle + stash + untracked seeding. The box-user check is not cosmetic: a `linux-vm` execs as root unless AgentBox drops it, and this check answered only `pwd` while the agent sat at a login prompt for weeks.
 
 - [ ] **CREATE-003** `create --provider hetzner` provisions a VPS.
   - **Providers:** [hetzner]

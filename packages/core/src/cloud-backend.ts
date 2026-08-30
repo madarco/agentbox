@@ -259,10 +259,40 @@ export interface CloudBackend {
    * Declared by the backend rather than matched on `name` so an out-of-tree
    * provider plugin can opt in. Ownership stays correct under root because the
    * chown resolves the box user from `--reference=$BOX_HOME`, not a hardcoded
-   * uid. Backends whose non-root path already works (hetzner, daytona — whose
-   * S3-backed FUSE volumes reject a root chown anyway) leave this unset.
+   * uid. Backends whose non-root path already works (hetzner, daytona) leave
+   * this unset. (Daytona's reason used to be given as "its S3-backed FUSE
+   * volumes reject a root chown" — that holds only for the container class. A
+   * `linux-vm` mounts no volume at all; it stays unset because its exec now
+   * drops to the box user like everyone else's.)
    */
   readonly stageFilesAsRoot?: boolean;
+
+  /**
+   * Box user an attach must drop to, for backends whose interactive session
+   * lands as root.
+   *
+   * Only Daytona's `linux-vm` needs it: its SSH gateway takes an opaque access
+   * token rather than a unix user (`createSshAccess` has no user parameter), so
+   * the session lands as whatever the sandbox execs as — root on a VM, because
+   * the rootfs conversion drops the image's `USER` metadata. Left unset, the
+   * tmux server and the agent inside it run as root with `HOME=/root` and never
+   * see the credentials seeded into `/home/vscode`.
+   *
+   * When set, `buildAttach` wraps the rendered inner command in
+   * `sudo -n -u <user> -H bash -lc …` so the whole session — tmux server
+   * included — belongs to the box user. Backends that already land on the right
+   * user (hetzner/digitalocean ssh as `vscode`, vercel/e2b select it in their
+   * own attach builders, docker passes `--user`) leave it unset.
+   *
+   * Must agree with what `exec` does: the in-box ctl daemon is started through
+   * `exec` and its socket is 0660 in a user-owned dir, so a tmux client of a
+   * different user could not talk to it.
+   *
+   * A method rather than a flag because it is per-box, not per-backend: Daytona
+   * needs it for `linux-vm` and must NOT wrap its `container` class, which
+   * already lands as the box user. Return undefined to leave the session alone.
+   */
+  attachRunAs?(h: CloudHandle): string | undefined;
 
   provision(req: CloudProvisionRequest): Promise<CloudHandle>;
   /** Resolve an existing sandbox by id; null when it no longer exists. */

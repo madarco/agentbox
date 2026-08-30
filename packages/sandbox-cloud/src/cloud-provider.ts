@@ -65,7 +65,11 @@ import {
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
-import { ensureAgentVolumesForCloud, reconcileAgentCredentials } from './sync/agent-credentials.js';
+import {
+  cloudVolumesUsable,
+  ensureAgentVolumesForCloud,
+  reconcileAgentCredentials,
+} from './sync/agent-credentials.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -818,7 +822,7 @@ export function createCloudProvider(
         onLog: log,
         // Daytona's linux-vm class accepts volume mounts and never honors them
         // (see ensureAgentVolumesForCloud) — take the per-create upload path.
-        volumesUsable: sandboxClass !== 'linux-vm',
+        volumesUsable: cloudVolumesUsable(sandboxClass),
       });
 
       // Read the `expose:` service ports up front so port-capped backends
@@ -1647,7 +1651,7 @@ export function createCloudProvider(
       }
       const handle = handleFor(box);
       const baseArgv = await backend.attachArgv(handle);
-      const inner = renderInnerCommand(kind, opts);
+      const inner = wrapAttachAsUser(renderInnerCommand(kind, opts), backend.attachRunAs?.(handle));
       // -t forces TTY allocation on the remote side (the SSH default of
       // skipping TTY when a command is provided would break tmux + readline).
       // A `detached` build only creates the session (no `exec tmux attach`), so
@@ -1983,6 +1987,23 @@ export function hostTermForCloud(): string {
 export function attachScriptPath(sessionName: string): string {
   const safe = sessionName.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40) || 'attach';
   return `/tmp/agentbox-attach-${safe}.sh`;
+}
+
+/**
+ * Drop an attach's inner command to the box user, for backends whose session
+ * lands as root (see `CloudBackend.attachRunAs`). Wrapping the WHOLE inner
+ * command — not just the agent — is deliberate: it puts the tmux *server* on
+ * the box user's socket, so the session, its panes and the in-box ctl client
+ * all share one identity. Wrapping only the launch command would leave a root
+ * tmux server owning a vscode agent, which is how the ctl socket (0660, in a
+ * user-owned dir) becomes unreachable.
+ *
+ * `-n` fails loudly rather than hanging on a password prompt; `-H` sets HOME,
+ * which is the entire point — the credentials live in the box user's home.
+ */
+export function wrapAttachAsUser(inner: string, user: string | undefined): string {
+  if (!user) return inner;
+  return `exec sudo -n -u ${user} -H bash -lc ${shellSingle(inner)}`;
 }
 
 export function renderInnerCommand(kind: AttachKind, opts?: BuildAttachOptions): string {

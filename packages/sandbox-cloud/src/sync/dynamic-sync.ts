@@ -61,7 +61,10 @@ export async function seedDynamicConfig(
     // 1. Read the manifest the box already carries (absent on a fresh box).
     let boxManifest: DynamicSyncManifest | null = null;
     try {
-      const res = await backend.exec(handle, `cat ${BOX_DYNAMIC_SYNC_MANIFEST} 2>/dev/null || true`);
+      const res = await backend.exec(
+        handle,
+        `cat ${BOX_DYNAMIC_SYNC_MANIFEST} 2>/dev/null || true`,
+      );
       const out = res.stdout.trim();
       if (res.exitCode === 0 && out.length > 0) {
         boxManifest = JSON.parse(out) as DynamicSyncManifest;
@@ -95,7 +98,10 @@ export async function seedDynamicConfig(
         steps.push(
           `rm -rf ${BOX_STAGE}`,
           `mkdir -p ${BOX_STAGE}`,
-          `tar -xzf ${REMOTE_TAR} -C ${BOX_STAGE}`,
+          // See claude-json-overlay: the host tarball carries the host's uid/gid,
+          // which a root extract would restore verbatim and `cp -a` below would
+          // then propagate into the box user's home.
+          `tar -xzf ${REMOTE_TAR} -C ${BOX_STAGE} --no-same-permissions --no-same-owner -m`,
           `if [ -d ${BOX_STAGE}/workflows ]; then cp -a ${BOX_STAGE}/workflows/. ${BOX_WORKFLOWS_DIR}/; fi`,
           `if [ -d ${BOX_STAGE}/memory ]; then cp -a ${BOX_STAGE}/memory/. ${BOX_MEMORY_DIR}/; fi`,
           `rm -rf ${BOX_STAGE} ${REMOTE_TAR}`,

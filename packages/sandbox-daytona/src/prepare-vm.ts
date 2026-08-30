@@ -291,7 +291,13 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<VmBase
   }
   const handle: CloudHandle = { sandboxId: sandbox.id, sandboxClass: 'linux-vm' };
   try {
-    const wait = await opts.backend.exec(handle, buildDockerWaitCommand());
+    // These two run BEFORE the repair, so they must stay as root. `exec`
+    // otherwise drops to the box user via `sudo -n -u vscode`, and sudo is
+    // exactly what is broken here: the rootfs conversion left it non-setuid, so
+    // it refuses to run at all — even for root — until the repair below. Asking
+    // sudo to fix sudo would deadlock the bake.
+    const asRoot = { user: 'root' } as const;
+    const wait = await opts.backend.exec(handle, buildDockerWaitCommand(), asRoot);
     if (wait.exitCode !== 0) {
       throw new Error(
         'dockerd never came up in the VM base, so sudo cannot be repaired ' +
@@ -299,7 +305,7 @@ export async function bakeDaytonaVmBase(opts: VmBaseBakeOptions): Promise<VmBase
       );
     }
     log('repairing sudo (the VM rootfs conversion strips setuid bits)…');
-    const repair = await opts.backend.exec(handle, buildSudoRepairCommand());
+    const repair = await opts.backend.exec(handle, buildSudoRepairCommand(), asRoot);
     if (repair.exitCode !== 0) {
       throw new Error(
         `failed to restore sudo in the VM base (exit ${String(repair.exitCode)}): ` +

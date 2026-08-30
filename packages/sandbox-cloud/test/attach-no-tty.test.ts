@@ -60,10 +60,9 @@ describe('buildAttach on a backend whose exec sessions get no TTY', () => {
     // editor mangles it into a `>` continuation prompt.
     expect(execs).toHaveLength(1);
     expect(execs[0]).toMatch(/base64 -d > \/tmp\/agentbox-attach-claude\.sh/);
-    const staged = Buffer.from(
-      /printf %s '([^']+)'/.exec(execs[0]!)![1]!,
-      'base64',
-    ).toString('utf8');
+    const staged = Buffer.from(/printf %s '([^']+)'/.exec(execs[0]!)![1]!, 'base64').toString(
+      'utf8',
+    );
     expect(staged).toMatch(/tmux attach -t 'claude'/);
 
     // ...and only a short line is typed, newline-terminated so it actually runs.
@@ -88,5 +87,58 @@ describe('buildAttach on a backend whose exec sessions get no TTY', () => {
     expect(spec.argv).toContain('-t');
     expect(spec.argv.some((a) => a.includes('tmux attach'))).toBe(true);
     expect(spec.initialInput).toBeUndefined();
+  });
+});
+
+/**
+ * A backend whose interactive session lands as root (daytona's linux-vm: its SSH
+ * gateway takes an opaque token and offers no unix user) must drop the WHOLE
+ * inner command to the box user — tmux server included, so the session, its
+ * panes and the in-box ctl client share one identity.
+ */
+describe('buildAttach drops to the box user when the backend asks', () => {
+  it('wraps the staged script in sudo -u for the declared user', async () => {
+    const execs: string[] = [];
+    const provider = createCloudProvider(
+      makeBackend({
+        attachExecLacksTty: true,
+        attachRunAs: () => 'vscode',
+        exec: async (_h, cmd: string) => {
+          execs.push(cmd);
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      } as Partial<CloudBackend>),
+    );
+    await provider.buildAttach!(record, 'agent', { sessionName: 'claude' });
+
+    const staged = Buffer.from(/printf %s '([^']+)'/.exec(execs[0]!)![1]!, 'base64').toString(
+      'utf8',
+    );
+    expect(staged).toMatch(/^exec sudo -n -u vscode -H bash -lc /);
+    // The tmux commands must be INSIDE the wrap, not beside it — a root tmux
+    // server owning a vscode agent cannot reach the 0660 ctl socket.
+    expect(staged).toContain('tmux attach');
+  });
+
+  it('leaves the command alone when the backend returns undefined', async () => {
+    // Daytona's container class already lands on the box user; wrapping it would
+    // add a needless sudo dependency.
+    const execs: string[] = [];
+    const provider = createCloudProvider(
+      makeBackend({
+        attachExecLacksTty: true,
+        attachRunAs: () => undefined,
+        exec: async (_h, cmd: string) => {
+          execs.push(cmd);
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      } as Partial<CloudBackend>),
+    );
+    await provider.buildAttach!(record, 'agent', { sessionName: 'claude' });
+
+    const staged = Buffer.from(/printf %s '([^']+)'/.exec(execs[0]!)![1]!, 'base64').toString(
+      'utf8',
+    );
+    expect(staged).not.toContain('sudo');
   });
 });

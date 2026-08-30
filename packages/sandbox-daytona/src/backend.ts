@@ -79,6 +79,77 @@ export const DAYTONA_DEFAULT_RESOURCES = { cpu: 2, memory: 4, disk: 8 } as const
  */
 const clients = new Map<string, Daytona>();
 
+/**
+ * The unprivileged user a box's work runs as, matching every other provider
+ * (vercel/e2b `BOX_USER`, hetzner/digitalocean `VPS_USER`, docker
+ * `CONTAINER_USER`).
+ */
+export const BOX_USER = 'vscode';
+
+/** Single-quote for /bin/sh. */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Decide what Daytona actually runs, honouring `opts.user`.
+ *
+ * The SDK has NO per-exec user — `executeCommand(command, cwd, env, timeout)`
+ * and nothing on sessions or PTYs — so the only lever is an in-shell `sudo -u`,
+ * the same one vercel uses (`packages/sandbox-vercel/src/backend.ts`).
+ *
+ * It is needed because the two sandbox classes land as different users. A
+ * `container` honours the image's `USER vscode` metadata and already execs as
+ * the box user. A `linux-vm` has no image metadata — the rootfs conversion
+ * drops it, which is also why the bake has to hand-repair sudo's setuid bit and
+ * re-inject the image's `ENV` — so it execs as **root**, with `HOME=/root`,
+ * while every credential and config file is seeded into `/home/vscode`. That
+ * mismatch is what left the in-box agent staring at a login prompt.
+ *
+ * `h.sandboxClass !== 'container'` mirrors `pause()` below: the class is absent
+ * on records written before it existed and on the keepalive loop's synthetic
+ * handles, and the VM side is the one that needs the wrap, so `undefined` falls
+ * there.
+ *
+ * cwd/env move INSIDE the wrap when we drop: the SDK applies its own arguments
+ * to the outer root shell, so a `cd`/`export` passed that way would never reach
+ * the dropped user's shell.
+ */
+export function buildDaytonaExec(
+  cmd: string,
+  h: Pick<CloudHandle, 'sandboxClass'>,
+  opts?: CloudExecOptions,
+): { cmd: string; cwd?: string; env?: Record<string, string> } {
+  const user = opts?.user ?? BOX_USER;
+  const isVm = h.sandboxClass !== 'container';
+  // Already the right user: hand the SDK the command untouched. Covers the
+  // container class (execs as vscode) and every explicit `user: 'root'` — which
+  // the bake relies on, since `sudo` is not setuid until the repair runs and
+  // refuses to work at all before then, even for root.
+  if (!isVm || user === 'root') {
+    return {
+      cmd,
+      ...(opts?.cwd ? { cwd: opts.cwd } : {}),
+      ...(opts?.env ? { env: opts.env } : {}),
+    };
+  }
+  const prelude: string[] = [];
+  if (opts?.cwd) prelude.push(`cd ${shq(opts.cwd)}`);
+  for (const [k, v] of Object.entries(opts?.env ?? {})) {
+    // The value is quoted, but the key is interpolated bare into a shell string
+    // that runs as root — reject anything that isn't a POSIX env-var name so a
+    // key like `x;rm -rf /` can't inject a command.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+      throw new Error(`daytona exec: invalid env var name ${JSON.stringify(k)}`);
+    }
+    prelude.push(`export ${k}=${shq(v)}`);
+  }
+  const inner = [...prelude, cmd].join('\n');
+  // `-n` so a sudoers misconfiguration fails loudly instead of hanging on a
+  // password prompt; `-H` so HOME is the target user's.
+  return { cmd: `sudo -n -u ${user} -H bash -lc ${shq(inner)}` };
+}
+
 export function getClient(target = ''): Daytona {
   const cached = clients.get(target);
   if (cached) return cached;
@@ -179,8 +250,8 @@ function resolveImage(ref: string): string | Image {
   const ctx = resolveDockerfileContext();
   if (!ctx) {
     throw new Error(
-      "could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. " +
-        "Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.",
+      'could not locate the AgentBox Dockerfile.box build context for the Daytona snapshot. ' +
+        'Set AGENTBOX_DOCKER_CONTEXT to a directory containing Dockerfile.box, or pass --image <ref> with a Daytona-compatible image.',
     );
   }
   // Image.fromDockerfile bundles the directory the Dockerfile lives in and
@@ -553,6 +624,17 @@ export const daytonaBackend: CloudBackend = {
   attachExecLacksTty: true,
 
   /**
+   * See `CloudBackend.attachRunAs`. The SSH gateway authenticates with an
+   * opaque token and offers no unix user, so a `linux-vm` session lands as root
+   * — the class that has no image metadata to say otherwise. Drop it to the box
+   * user so the tmux server, the agent and the ctl client are all `vscode`,
+   * matching what `exec` now does. `container` already lands there.
+   */
+  attachRunAs(h: CloudHandle): string | undefined {
+    return h.sandboxClass === 'container' ? undefined : BOX_USER;
+  },
+
+  /**
    * Hold off Daytona's auto-stop while the in-box agent is working.
    *
    * Daytona's timeout is an INACTIVITY window, not an absolute deadline like
@@ -610,11 +692,8 @@ export const daytonaBackend: CloudBackend = {
     });
   },
 
-  async exec(
-    h: CloudHandle,
-    cmd: string,
-    opts?: CloudExecOptions,
-  ): Promise<CloudExecResult> {
+  async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
+    const plan = buildDaytonaExec(cmd, h, opts);
     return retry(
       'exec',
       async () => {
@@ -622,7 +701,11 @@ export const daytonaBackend: CloudBackend = {
         // Daytona's ExecuteResponse returns combined output in `result` with no
         // separate stderr stream. Surface it as stdout and leave stderr empty —
         // callers that need split streams must redirect inside `cmd` itself.
-        const r = await sb.process.executeCommand(cmd, opts?.cwd, opts?.env);
+        //
+        // cwd/env go through the SDK only when we are NOT dropping privileges;
+        // the wrapped form folds them into the inner shell instead (see
+        // buildDaytonaExec).
+        const r = await sb.process.executeCommand(plan.cmd, plan.cwd, plan.env);
         return { exitCode: r.exitCode, stdout: r.result, stderr: '' };
       },
       { attemptTimeoutMs: opts?.attemptTimeoutMs ?? 120_000, noRetry: opts?.noRetry },
@@ -635,6 +718,22 @@ export const daytonaBackend: CloudBackend = {
       async () => {
         const sb = await getSandbox(h.sandboxId);
         await sb.fs.uploadFile(localPath, remotePath);
+        // The toolbox writes as its own identity — root on a linux-vm — while
+        // `exec` now drops to the box user. Every caller that uploads a tarball
+        // then extracts and `rm`s it would break on the mismatch: /tmp is
+        // sticky, so a non-owner cannot unlink a root-owned file there, and the
+        // seed died on exactly that ("rm: cannot remove … Operation not
+        // permitted"). Hand the file to the box user, as e2b's uploadFile does.
+        //
+        // Best-effort: the file is present and readable either way, and the
+        // container class already writes as the box user.
+        if (h.sandboxClass !== 'container') {
+          try {
+            await sb.process.executeCommand(`chown ${BOX_USER}: ${shq(remotePath)}`);
+          } catch {
+            // ignore — an unchowned upload is still readable
+          }
+        }
       },
       { attemptTimeoutMs: 300_000 },
     );
@@ -696,7 +795,8 @@ export const daytonaBackend: CloudBackend = {
         'ssh',
         // First-connect to a never-seen host fingerprint should be silent in a
         // PTY — the user already authenticated via Daytona's API.
-        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o',
+        'StrictHostKeyChecking=accept-new',
         // Daytona's SSH gateway terminates per-token; no key file, no port.
         `${ssh.token}@ssh.app.daytona.io`,
       ];
