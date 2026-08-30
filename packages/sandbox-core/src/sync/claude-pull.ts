@@ -18,7 +18,7 @@ export type PullCategory = (typeof PULL_CATEGORIES)[number];
 /**
  * Skills whose directory name starts with one of these prefixes are agentbox's
  * own (currently just `agentbox-setup`, seeded box-only into the claude-config
- * volume by `seedSetupSkillIntoVolume` in claude.ts — never on the host).
+ * volume from claude's `seeds` declaration — never on the host).
  * Pulling them back would re-introduce them onto the host, which is exactly
  * what the box-only design avoids, so we never treat them as user-authored
  * additions.

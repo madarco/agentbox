@@ -26,7 +26,6 @@ import { resolveAttachInOption } from '../../commands/_attach-in.js';
 import { cloudAgentAttach, cloudAgentStartDetached } from '../../commands/_cloud-attach.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
-import { seedAgentDeclaredFilesViaTransport } from '@agentbox/sandbox-cloud';
 import {
   prepareTeleport,
   TeleportError,
@@ -49,21 +48,6 @@ import type { AgentCliSpec } from './types.js';
  * creating a second one. Pre-existing in all three hand-written commands; fixing
  * it is one line now that there is one.
  */
-/**
- * Place the agent's declared `seeds` into a live CLOUD box. Best-effort and
- * silent on failure: these files (activity hooks, the state plugin) make a box
- * report richer status, and not getting them must never block a launch.
- */
-async function seedCloudAgentFiles(box: BoxRecord, agent: string): Promise<void> {
-  try {
-    const provider = await providerForBox(box);
-    if (!provider.syncTransport) return;
-    await seedAgentDeclaredFilesViaTransport(provider.syncTransport(box), agent);
-  } catch {
-    // best-effort
-  }
-}
-
 export function resolveSessionName(
   a: AgentCliSpec,
   opts: AgentStartOptions,
@@ -271,11 +255,6 @@ export function wireAttachAction(a: AgentCliSpec, cmd: Command): Command {
       const attachIn = resolveAttachInOption(opts);
       const box = await resolveBoxOrExit(idOrName);
       if ((box.provider ?? 'docker') !== 'docker') {
-        // Cloud twin of the docker volume seed above. Also the self-heal path:
-        // a box created before its agent declared `seeds` (or before the cloud
-        // side seeded at all) picks the files up on its next start rather than
-        // needing a re-create.
-        await seedCloudAgentFiles(box, a.id);
         const cfg = await loadEffectiveConfig(box.workspacePath, {
           cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
         });

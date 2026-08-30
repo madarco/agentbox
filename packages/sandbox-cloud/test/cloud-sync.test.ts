@@ -28,8 +28,12 @@ vi.mock('../src/sync/agent-credentials.js', () => ({
   seedOpencodeModelState: m.seedOpencodeModelState,
 }));
 vi.mock('../src/sync/dynamic-sync.js', () => ({ seedDynamicConfig: m.seedDynamicConfig }));
-vi.mock('../src/sync/codex-agents-override.js', () => ({ ensureCodexAgentsOverride: m.ensureCodexAgentsOverride }));
-vi.mock('../src/sync/claude-json-overlay.js', () => ({ seedClaudeJsonAtCreate: m.seedClaudeJsonAtCreate }));
+vi.mock('../src/sync/codex-agents-override.js', () => ({
+  ensureCodexAgentsOverride: m.ensureCodexAgentsOverride,
+}));
+vi.mock('../src/sync/claude-json-overlay.js', () => ({
+  seedClaudeJsonAtCreate: m.seedClaudeJsonAtCreate,
+}));
 vi.mock('../src/sync/git-identity.js', () => ({ seedGitIdentity: m.seedGitIdentity }));
 vi.mock('../src/sync/env-files.js', () => ({ uploadEnvFiles: m.uploadEnvFiles }));
 vi.mock('../src/sync/carry.js', () => ({ uploadCarryPaths: m.uploadCarryPaths }));
@@ -107,12 +111,30 @@ describe('makeCloudSync.seedCredentials', () => {
 describe('makeCloudSync.seedAgentConfig', () => {
   it('runs the runtime config seeds in create order', async () => {
     const order: string[] = [];
-    m.ensureAgentHomeDirsOwned.mockImplementation(() => { order.push('ownership'); return Promise.resolve(); });
-    m.ensureCodexAgentsOverride.mockImplementation(() => { order.push('codex'); return Promise.resolve(); });
-    m.seedOpencodeModelState.mockImplementation(() => { order.push('opencode'); return Promise.resolve(); });
-    m.seedClaudeJsonAtCreate.mockImplementation(() => { order.push('claudeJson'); return Promise.resolve(); });
-    m.seedDynamicConfig.mockImplementation(() => { order.push('dynamic'); return Promise.resolve(); });
-    m.seedAgentDeclaredFilesViaTransport.mockImplementation(() => { order.push('declared'); return Promise.resolve({ seeded: [], uploaded: [] }); });
+    m.ensureAgentHomeDirsOwned.mockImplementation(() => {
+      order.push('ownership');
+      return Promise.resolve();
+    });
+    m.ensureCodexAgentsOverride.mockImplementation(() => {
+      order.push('codex');
+      return Promise.resolve();
+    });
+    m.seedOpencodeModelState.mockImplementation(() => {
+      order.push('opencode');
+      return Promise.resolve();
+    });
+    m.seedClaudeJsonAtCreate.mockImplementation(() => {
+      order.push('claudeJson');
+      return Promise.resolve();
+    });
+    m.seedDynamicConfig.mockImplementation(() => {
+      order.push('dynamic');
+      return Promise.resolve();
+    });
+    m.seedAgentDeclaredFilesViaTransport.mockImplementation(() => {
+      order.push('declared');
+      return Promise.resolve({ seeded: [], uploaded: [] });
+    });
     const sync = makeCloudSync(backend, handle);
     await sync.seedAgentConfig(ctx());
     expect(order).toEqual([
@@ -168,12 +190,22 @@ describe('makeCloudSync — remaining ops', () => {
 
   it('applyCarry renders then uploads', async () => {
     const entries = [{ rawSrc: '~/x', absSrc: '/host/x' }];
-    m.uploadCarryPaths.mockResolvedValue({ copied: 1, errors: [], applied: [{ src: 'a', dest: 'b', bytes: 1 }] });
+    m.uploadCarryPaths.mockResolvedValue({
+      copied: 1,
+      errors: [],
+      applied: [{ src: 'a', dest: 'b', bytes: 1 }],
+    });
     const sync = makeCloudSync(backend, handle);
     const res = await sync.applyCarry(ctx(), entries as never);
     expect(m.renderCarryEntries).toHaveBeenCalledWith(
       entries,
-      { name: 'demo', id: 'id123', kind: 'cloud', hostWorkspace: '/host/ws', projectRoot: '/host/ws' },
+      {
+        name: 'demo',
+        id: 'id123',
+        kind: 'cloud',
+        hostWorkspace: '/host/ws',
+        projectRoot: '/host/ws',
+      },
       expect.any(Function),
     );
     expect(m.uploadCarryPaths).toHaveBeenCalledWith({
@@ -187,6 +219,9 @@ describe('makeCloudSync — remaining ops', () => {
 
   it('resyncWorkspace short-circuits when there are no worktrees', async () => {
     const sync = makeCloudSync(backend, handle);
-    await expect(sync.resyncWorkspace(ctx(), [])).resolves.toEqual({ repos: [], hadConflicts: false });
+    await expect(sync.resyncWorkspace(ctx(), [])).resolves.toEqual({
+      repos: [],
+      hadConflicts: false,
+    });
   });
 });

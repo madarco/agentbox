@@ -42,9 +42,9 @@ const OPENCODE_BOX_DIR = '/home/vscode/.local/share/opencode';
  *
  * Guarded: the source is baked into every provider's base image, but a box
  * built from an older base may not have it, and a missing wizard skill must
- * never fail an agent install. On docker the config volume mounts over this dir
- * and `seedSetupSkillIntoVolume` seeds the same content — harmless, identical
- * bytes.
+ * never fail an agent install. On docker the config volume mounts over this dir,
+ * so the `seeds` declaration below re-places the same content into the volume —
+ * harmless, identical bytes.
  *
  * `skills` is created by its OWN `install -d`, not left to the nested path.
  * GNU `install -d -o u -g g a/b/c` applies the ownership to the FINAL component

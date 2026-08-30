@@ -173,7 +173,9 @@ message instead of blocking on a password read nothing will answer.
 1. **Add the row** to `AGENT_SYNC_SPECS`: `id`, `binary`, `install`
    (recipe + `runAs` + any OS `packages` (+ `packagesOptional`) +
    `postInstall`), `sessionName`,
-   `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`.
+   `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`,
+   plus `seeds` / `launchFlags` if the agent needs an agentbox-owned file in
+   place to work (see step 4).
    Keep it JSON-serializable — no closures — so the descriptor can later be
    shipped into a box whose `agentbox-ctl` was baked before the agent existed.
 2. **Add the agent's folder** under `apps/cli/src/agents/<id>/` and its arm in
@@ -193,24 +195,33 @@ message instead of blocking on a password read nothing will answer.
    *Not yet collapsed:* `list.ts` still branches per agent, because it reads the
    five named `BoxStatus` fields — a wire contract the hub `/api/v1` payload and
    the macOS tray consume. That is the ctl status-map item, not this one.
-4. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
+4. **Seeded files**, if the agent loads an agentbox-owned hook/plugin/skill:
+   declare `seeds: [{ bakedPath, destRel, sharedAsset, label }]` on the row, and
+   `launchFlags` for any argv the agent needs to load them. Then add the file to
+   `Dockerfile.box` (a `COPY` to `bakedPath`) and to `sharedFiles` in
+   `apps/cli/scripts/stage-runtime.mjs` (the host copy the cloud path uploads
+   when a base snapshot predates the asset). Both are asserted — a declared seed
+   missing from either fails `packages/sandbox-core/test/agent-seed.test.ts`.
+   There is no per-agent seeding CODE to write: docker seeds into the config
+   volume and the cloud path seeds into the live box, both from this one row.
+5. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
    `packages/config`. Still required: `@agentbox/config` is a zero-internal-dep
    leaf (`sandbox-core` depends on *it*), so it cannot read `AGENT_SYNC_SPECS` to
    generate per-agent keys. The command descriptor reaches them through typed
    accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
-5. **ctl**, if the agent should report activity: a `BoxStatus` field, an
+6. **ctl**, if the agent should report activity: a `BoxStatus` field, an
    `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry. The last one is
    enforced, not merely documented: a drift test in `packages/ctl` compares it
    against `AGENT_SYNC_SPECS` and fails until you add the row.
-6. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
+7. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
    (`apps/cli/src/commands/download-<agent>.ts`) plus the pull functions and
    box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
 
-Nothing in step 1 requires touching `Dockerfile.box`. Step 3 is no longer a
-1,300-line clone (see the backlog below); steps 4–6 are the tail a generic ctl
-status map and a generalized config namespace would collapse — see the seam
+Step 3 is no longer a 1,300-line clone (see the backlog below); steps 5–7 are
+the tail a generic ctl status map and a generalized config namespace would
+collapse — see the seam
 analysis in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
 
@@ -567,9 +578,51 @@ Fixed:
 - **`caps.activitySource`** has no consumer. Its two values also under-describe
   reality — claude is hooks-primary with a scraper backstop, codex is
   scraper-primary, opencode is plugin-only — so it wants widening alongside the
-  hook-seeding work rather than wiring as-is.
+  ctl status-map item rather than wiring as-is. It is not entirely inert now:
+  `agent-seed.test.ts` asserts that an agent declaring `activitySource: 'plugin'`
+  also declares the `seeds` that put the plugin in the box, which is the
+  invariant the OpenCode bug below violated.
 - **`watch` / `roots`** reach the box (see item 2) but nothing consumes the
   `backup` route yet. Wiring it means routing through `cp.toHost` behind a
   `box.agentFileSync` config, with the trust rule `download.claude` already uses:
   a destination inside the box's host project folder is silent, anything outside
-  prompts.
+  prompts. **Parked by choice:** no built-in agent has a file worth mirroring, so
+  the route would ship with no declarer — it wants the agent that needs it.
+  (`roots` is filed here but is a different animal: it is a host-side `download`
+  field that never reaches a box, and nothing resolves a pull group through it.)
+
+### 6. Hook seeding was three hand-written functions, and docker-only — **done**
+
+`seedSetupSkillIntoVolume` / `seedCodexHooks` / `seedOpencodePlugin` were the
+same throwaway-container copy written three times, differing only in which file
+went where. They are now `AgentSyncSpec.seeds` — baked source, destination
+relative to the config root, and the `runtime/_shared` basename to fall back to —
+with `launchFlags` alongside for the argv an agent needs to LOAD what was placed
+(codex ignores a `hooks.json` without `--enable hooks
+--dangerously-bypass-hook-trust`).
+
+Living in `@agentbox/sandbox-docker` meant **the cloud providers never ran any of
+it.** OpenCode's state plugin is its only activity source
+(`caps.activitySource: 'plugin'`) and was not even shipped to the VPS providers,
+so every cloud OpenCode box reported `unknown` forever; codex never got its
+`hooks.json`, nor the flags to load it. Exactly the `boxRunEnv` drift, one item
+earlier.
+
+Both transports now run one plan built in `sandbox-core`, asserted equal key for
+key. The cloud path prefers the baked copy and falls back to uploading the host's
+staged `runtime/_shared/` copy — which is what makes the fix reach **existing**
+snapshots: the deployed Hetzner base has no OpenCode plugin to copy, and a
+re-`prepare` of every provider would otherwise have been a prerequisite.
+
+Two things the tests could not have told us, both found live:
+
+1. **Seeding on `attach` but not on `start`.** The first version put the cloud
+   call on the CLI action closures — and `wireAttachAction` / `wireStartAction`
+   are separate bodies, so one edit covered one of them. Fixed structurally: the
+   call moved onto `cloudAgentAttach` / `cloudAgentStartDetached`, the two
+   primitives every cloud launch funnels through (`start`, `attach`, the generic
+   `agentbox attach`, the `-i` queue worker, restore-on-resume).
+2. **A spinner frame is not evidence.** The create-time seed log line never
+   rendered for OpenCode — set and replaced inside one spinner frame — while the
+   codex one happened to survive. The file in the box was the ground truth; the
+   log was an artifact of timing.

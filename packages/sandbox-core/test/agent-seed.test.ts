@@ -113,7 +113,12 @@ describe('planAgentSeeds — docker and cloud place the same files', () => {
 });
 
 describe('buildAgentSeedScript', () => {
-  const seed = { bakedPath: '/img/hooks.json', destRel: 'hooks.json', sharedAsset: 'h', label: 'h' };
+  const seed = {
+    bakedPath: '/img/hooks.json',
+    destRel: 'hooks.json',
+    sharedAsset: 'h',
+    label: 'h',
+  };
 
   it('never fails the caller when the baked asset is missing', () => {
     // Seeding is best-effort by design: a box whose image predates the asset

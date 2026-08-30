@@ -68,10 +68,7 @@ export function makeCloudSync(
     // the shared resync concern (merge + overlay, box wins; never reset --hard).
     // See workspace-resync.ts. The provider's resyncWorkspace(box) re-derives the
     // worktrees (detectGitRepos) + gates on hostSeeded before calling here.
-    async resyncWorkspace(
-      ctx: SyncContext,
-      worktrees: GitWorktreeRecord[],
-    ): Promise<ResyncResult> {
+    async resyncWorkspace(ctx: SyncContext, worktrees: GitWorktreeRecord[]): Promise<ResyncResult> {
       if (worktrees.length === 0) return { repos: [], hadConflicts: false };
       const repos = await resyncCloudWorkspace(backend, handle, worktrees, ctx.onLog);
       const hadConflicts = repos.some(

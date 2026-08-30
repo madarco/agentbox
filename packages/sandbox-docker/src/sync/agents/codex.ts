@@ -30,7 +30,7 @@ export const DEFAULT_CODEX_SESSION = 'codex';
 const CONTAINER_CODEX_DIR = '/home/vscode/.codex';
 /**
  * Image-baked copy of the AgentBox Codex activity hooks (Dockerfile.box COPYs
- * `scripts/agentbox-codex-hooks.json` here). {@link seedCodexHooks} copies it
+ * `scripts/agentbox-codex-hooks.json` here). The generic seeder copies it
  * into the codex-config volume as `~/.codex/hooks.json`.
  */
 /**
@@ -227,7 +227,7 @@ export async function ensureCodexVolume(
       'sh',
       '-c',
       // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
-      // (seeded by seedCodexHooks); never let the host copy clobber it.
+      // (placed from codex's `seeds` declaration); never let the host copy clobber it.
       // --exclude=/config.toml (anchored — plugin repos legitimately contain
       // files named config.toml): box config is owned by
       // reconcileVolumeCodexConfig (sanitize + merge), never rsynced — copying

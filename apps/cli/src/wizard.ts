@@ -10,7 +10,7 @@ import { type BaseStatus, type CheckpointStatus, evaluateCheckpoint } from './ch
  * by Dockerfile.box). Stable so the wizard's initial-prompt can reference it.
  *
  * The `/agentbox-setup` skill is installed **box-only**: at create /
- * `claude start` time `seedSetupSkillIntoVolume()`
+ * `claude start` time, from claude's `seeds` declaration
  * (packages/sandbox-docker/src/claude.ts) copies this same file into the
  * claude-config volume's `skills/agentbox-setup/SKILL.md`. We deliberately
  * never write it to the host's ~/.claude so `agentbox` doesn't pollute the
@@ -340,7 +340,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   }
 
   // The /agentbox-setup skill is seeded into the box's claude-config volume
-  // by seedSetupSkillIntoVolume() (sandbox-docker) — box-only, never written
+  // from claude's `seeds` declaration (AgentSyncSpec) — box-only, never written
   // to the host's ~/.claude.
 
   // For `agentbox create`, the only sensible yes-path is to hand off to

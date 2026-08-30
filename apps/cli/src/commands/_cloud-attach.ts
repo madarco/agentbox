@@ -4,11 +4,12 @@ import { join } from 'node:path';
 import { log, spinner } from '@clack/prompts';
 import {
   buildCloudAttachInnerCommand,
+  seedAgentDeclaredFilesViaTransport,
   startDetachedCloudAgent,
   startDetachedSession,
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
-import type { AgentId, BoxRecord } from '@agentbox/core';
+import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
 import { claudeTuiEnv } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AttachOpenIn } from '@agentbox/config';
@@ -93,6 +94,34 @@ export interface CloudAgentAttachArgs {
   openIn?: AttachOpenIn;
 }
 
+/**
+ * Place the agent's declared `seeds` (`AgentSyncSpec.seeds`) into a live cloud
+ * box — the twin of the docker volume seed, and the self-heal path for a box
+ * created before its agent declared them.
+ *
+ * Deliberately here, on the two cloud LAUNCH primitives, rather than at the CLI
+ * action closures: `<agent> start`, `<agent> attach`, the generic `agentbox
+ * attach`, the `-i` queue worker and the restore-on-resume path all funnel
+ * through these two, but they do NOT share a body higher up. Seeding at the
+ * call sites instead means one forgotten branch is a silent gap — which is
+ * exactly how the first version shipped, seeding on attach and not on start.
+ *
+ * Best-effort: these files make a box report richer status; failing to place
+ * them must never block a launch.
+ */
+async function seedDeclaredFilesInCloudBox(
+  provider: Provider,
+  box: BoxRecord,
+  agent: string,
+): Promise<void> {
+  try {
+    if (!provider.syncTransport) return;
+    await seedAgentDeclaredFilesViaTransport(provider.syncTransport(box), agent);
+  } catch {
+    // best-effort
+  }
+}
+
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {
   // Working with a control-box box means this machine should be draining the
   // `cp` actions that box parks for it. Nothing else on the hub-box path starts
@@ -124,6 +153,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     box = await provider.start(box);
     s.stop('box running');
   }
+  await seedDeclaredFilesInCloudBox(provider, box, args.mode);
   // Hetzner only: open the SSH tunnel UP FRONT, self-healing a stale firewall (a
   // host egress-IP change locks the per-box firewall) BEFORE any of the later
   // establish touches — the resume probe, the detached pre-start, buildAttach.
@@ -302,6 +332,7 @@ export async function cloudAgentStartDetached(args: {
   extraArgs?: string[];
 }): Promise<void> {
   const provider = await providerForBox(args.box);
+  await seedDeclaredFilesInCloudBox(provider, args.box, args.binary);
   await startDetachedCloudAgent({
     provider,
     box: args.box,
