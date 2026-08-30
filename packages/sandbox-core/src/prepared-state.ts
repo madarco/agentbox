@@ -249,7 +249,9 @@ export function variantFingerprint(
   const parts: string[] = [];
   if (npm) parts.push('claude-install=npm');
   if (agents !== '') parts.push(`agents=${agents}`);
-  return createHash('sha256').update(`${baseSha}\0${parts.join('\0')}`).digest('hex');
+  return createHash('sha256')
+    .update(`${baseSha}\0${parts.join('\0')}`)
+    .digest('hex');
 }
 
 /**

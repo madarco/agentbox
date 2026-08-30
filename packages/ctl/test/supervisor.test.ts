@@ -19,7 +19,9 @@ function spec(
   };
 }
 
-function taskSpec(over: Partial<TaskSpec> & { name: string; command: string | string[] }): TaskSpec {
+function taskSpec(
+  over: Partial<TaskSpec> & { name: string; command: string | string[] },
+): TaskSpec {
   return { needs: [], ...over };
 }
 
@@ -149,10 +151,7 @@ describe('Supervisor', () => {
   it('runs a task and marks it done', async () => {
     const sup = new Supervisor({ workspace: dir, logDir: dir });
     await sup.init(
-      cfg(
-        [],
-        [taskSpec({ name: 'build', command: [NODE, '-e', 'process.exit(0)'] })],
-      ),
+      cfg([], [taskSpec({ name: 'build', command: [NODE, '-e', 'process.exit(0)'] })]),
     );
     const done = await waitFor(() => {
       const t = sup.listTasks()[0]!;
@@ -164,10 +163,7 @@ describe('Supervisor', () => {
   it('marks a failing task as failed', async () => {
     const sup = new Supervisor({ workspace: dir, logDir: dir });
     await sup.init(
-      cfg(
-        [],
-        [taskSpec({ name: 'broken', command: [NODE, '-e', 'process.exit(7)'] })],
-      ),
+      cfg([], [taskSpec({ name: 'broken', command: [NODE, '-e', 'process.exit(7)'] })]),
     );
     const failed = await waitFor(() => {
       const t = sup.listTasks()[0]!;

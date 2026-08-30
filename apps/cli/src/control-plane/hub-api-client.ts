@@ -10,7 +10,8 @@
  * this; see `test/no-internal-wire-client.test.ts`). Every client-facing box and
  * fleet operation (list, lifecycle, git, approvals, custody) goes through here.
  */
-import type { AgentId, AgentMode } from '@agentbox/core';
+import { parseAgentStatusEntry } from '@agentbox/core';
+import type { AgentId, AgentMode, AgentStatusMap } from '@agentbox/core';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -41,8 +42,19 @@ export interface HubApiBox {
   /** Normalized primary agent for display — mirrors the hub's `Box.agent`. */
   agent?: AgentMode;
   // ── Agent activity / session titles (the AGENT column + cmux dock). ──
+  /**
+   * Every reporting agent's activity + session title, keyed by id. THE source;
+   * the named fields below are its derived projection, kept because the macOS
+   * tray decodes those three title keys by name and a hub older than this build
+   * sends only them.
+   *
+   * Read it through `hubBoxAgentStatus`, never directly — that helper falls back
+   * to the named fields so an older hub still renders.
+   */
+  agentStatus?: Record<string, { state?: string; sessionTitle?: string }>;
   claudeActivity?: string;
   codexActivity?: string;
+  opencodeActivity?: string;
   claudeSessionTitle?: string;
   codexSessionTitle?: string;
   opencodeSessionTitle?: string;
@@ -64,6 +76,48 @@ export interface HubApiBox {
   previewUrls?: Record<number, string>;
   lastAgent?: AgentId;
   topology?: string;
+}
+
+/**
+ * The per-agent status map for a hub row, however that hub spells it.
+ *
+ * A current hub sends `agentStatus`; one older than this build sends only the
+ * five named fields, and a laptop CLI is routinely a different build from the
+ * control box it points at. Reconstructing from the named fields keeps `list`,
+ * the dashboard and the cmux dock rendering against either.
+ *
+ * `sessionRunning`/`updatedAt` are not on the wire in either shape, so they come
+ * back as their neutral values — callers here only read state + title.
+ */
+export function hubBoxAgentStatus(b: HubApiBox): AgentStatusMap {
+  if (b.agentStatus) {
+    const out: AgentStatusMap = {};
+    for (const [agent, body] of Object.entries(b.agentStatus)) {
+      const entry = parseAgentStatusEntry({
+        state: body?.state ?? 'unknown',
+        sessionRunning: false,
+        ...(body?.sessionTitle ? { sessionTitle: body.sessionTitle } : {}),
+      });
+      if (entry) out[agent] = entry;
+    }
+    return out;
+  }
+  const named: Array<[string, string | undefined, string | undefined]> = [
+    ['claude', b.claudeActivity, b.claudeSessionTitle],
+    ['codex', b.codexActivity, b.codexSessionTitle],
+    ['opencode', b.opencodeActivity, b.opencodeSessionTitle],
+  ];
+  const out: AgentStatusMap = {};
+  for (const [agent, state, sessionTitle] of named) {
+    if (state === undefined && sessionTitle === undefined) continue;
+    const entry = parseAgentStatusEntry({
+      state: state ?? 'unknown',
+      sessionRunning: false,
+      ...(sessionTitle ? { sessionTitle } : {}),
+    });
+    if (entry) out[agent] = entry;
+  }
+  return out;
 }
 
 /** A create-job's status as `/api/v1/jobs/:id` (and each row of `/api/v1/jobs`) returns it. */

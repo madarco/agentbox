@@ -1,4 +1,5 @@
 import { log } from '@clack/prompts';
+import { LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
 import { execa } from 'execa';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
 import { deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
@@ -7,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
+import { hubBoxAgentStatus } from '../control-plane/hub-api-client.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { cacheAge, fetchBoxListing, type BoxListing } from '../control-plane/hub-list.js';
 import {
@@ -135,16 +137,20 @@ function workspaceCell(path: string, target: number, stream: NodeJS.WriteStream)
 }
 
 /**
- * The merged AGENT column: every active agent session, claude annotated with
- * its activity state (working/idle/…), codex/opencode named when up. Comma-joined
- * when more than one; `-` when none.
+ * The merged AGENT column: every agent reporting in this box, annotated with its
+ * activity state (working/idle/…) or named bare when it is up but silent.
+ * Comma-joined when more than one; `-` when none.
  *
- * `claudeActivity === 'unknown'` is treated as "no claude" — the supervisor seeds
- * that default for *every* box, so showing it would put a spurious
- * `claude:unknown` on nearly every row. Codex/opencode "up" is inferred from a
- * session title (the hub Box carries no per-agent running flag), which is a
- * slightly weaker signal than the old local shell probe but the best the payload
- * exposes.
+ * `state === 'unknown'` is treated as "no activity" — the supervisor seeds that
+ * default, so showing it would put a spurious `claude:unknown` on nearly every
+ * row. An agent that is up but silent is inferred from a session title (the hub
+ * Box carries no per-agent running flag), which is a slightly weaker signal than
+ * the old local shell probe but the best the payload exposes.
+ *
+ * Iterates the status map, so an agent this build has never heard of still shows
+ * up. It used to name the three built-ins one at a time, which is why OpenCode —
+ * whose plugin has always reported a real state — could only ever render as a
+ * bare `opencode`.
  */
 function agentSummary(b: HubApiBox): string {
   // A non-running box can't have a live agent; its persisted status (the source
@@ -152,16 +158,27 @@ function agentSummary(b: HubApiBox): string {
   // `claude:idle` next to `paused`/`stopped` would be contradictory.
   if (effectiveState(b) !== 'running') return '-';
   const agents: string[] = [];
-  if (b.claudeActivity && b.claudeActivity !== 'unknown') {
-    agents.push(`claude:${b.claudeActivity}`);
+  for (const [agent, entry] of sortedAgentStatus(b)) {
+    if (entry.state !== 'unknown') agents.push(`${agent}:${entry.state}`);
+    else if (entry.sessionTitle) agents.push(agent);
   }
-  if (b.codexActivity && b.codexActivity !== 'unknown') {
-    agents.push(`codex:${b.codexActivity}`);
-  } else if (b.codexSessionTitle) {
-    agents.push('codex');
-  }
-  if (b.opencodeSessionTitle) agents.push('opencode');
   return agents.length > 0 ? agents.join(', ') : '-';
+}
+
+/**
+ * A box's agents in a stable display order: the built-ins first, in their
+ * historical claude > codex > opencode precedence, then anything else
+ * alphabetically. Order matters because it decides which agent `primaryAgent`
+ * picks and how the AGENT column reads, and it must not jitter between polls.
+ */
+function sortedAgentStatus(b: HubApiBox): Array<[string, AgentStatusEntry]> {
+  const rank = (id: string): number => {
+    const i = LEGACY_AGENT_STATUS_KEYS.indexOf(id);
+    return i === -1 ? LEGACY_AGENT_STATUS_KEYS.length : i;
+  };
+  return Object.entries(hubBoxAgentStatus(b)).sort(
+    ([a], [c]) => rank(a) - rank(c) || a.localeCompare(c),
+  );
 }
 
 // ---- compact rendering for the cmux dock sidebar (`--cmux`) ----------------
@@ -195,21 +212,18 @@ function tailKeep(s: string, max: number): string {
   return '…' + s.slice(s.length - (max - 1));
 }
 
-/** Resolve a box's primary agent + activity for the compact view. Priority
- *  claude > codex > opencode, matching the dashboard's `resolveAgent`; `unknown`
- *  is not positive evidence, so it never pins claude over a running codex. */
+/** Resolve a box's primary agent + activity for the compact view. Takes the
+ *  first agent with positive evidence in {@link sortedAgentStatus} order, which
+ *  preserves the historical claude > codex > opencode priority and matches the
+ *  dashboard's `resolveAgent`; `unknown` is not positive evidence, so it never
+ *  pins claude over a running codex. */
 export function primaryAgent(b: HubApiBox): {
   agent?: CmuxAgent;
   activity?: string;
 } {
-  const real = (s?: string): boolean => !!s && s !== 'unknown';
-  if (real(b.claudeActivity) || b.claudeSessionTitle) {
-    return { agent: 'claude', activity: b.claudeActivity };
-  }
-  if (real(b.codexActivity) || b.codexSessionTitle) {
-    return { agent: 'codex', activity: b.codexActivity };
-  }
-  if (b.opencodeSessionTitle) return { agent: 'opencode' };
+  const entries = sortedAgentStatus(b);
+  const found = entries.find(([, e]) => e.state !== 'unknown' || e.sessionTitle);
+  if (found) return { agent: found[0] as CmuxAgent, activity: found[1].state };
   // No positive evidence — fall back to claude's fields (a plain box shows its
   // glyph with no label).
   return { agent: 'claude', activity: b.claudeActivity };

@@ -121,7 +121,9 @@ services:
   });
 
   it('joins args lists', () => {
-    const s = svc(`services:\n  cache:\n    image:\n      name: redis:7\n      args: ["--save", "60 1"]\n`);
+    const s = svc(
+      `services:\n  cache:\n    image:\n      name: redis:7\n      args: ["--save", "60 1"]\n`,
+    );
     expect(s.command as string).toContain('redis:7 --save 60 1');
   });
 
@@ -189,8 +191,8 @@ describe('unknown keys are warnings, not errors (forward compat)', () => {
   });
 
   it('still throws on a real error', () => {
-    expect(() => parseConfig(`services:\n  web:\n    restart: sometimes\n    command: x\n`)).toThrow(
-      ConfigError,
-    );
+    expect(() =>
+      parseConfig(`services:\n  web:\n    restart: sometimes\n    command: x\n`),
+    ).toThrow(ConfigError);
   });
 });

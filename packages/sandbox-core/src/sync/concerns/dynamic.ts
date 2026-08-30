@@ -30,10 +30,7 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/p
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
-import {
-  BOX_CLAUDE_PROJECT_DIR,
-  resolveClaudeMemoryDir,
-} from '../agents/claude/paths.js';
+import { BOX_CLAUDE_PROJECT_DIR, resolveClaudeMemoryDir } from '../agents/claude/paths.js';
 
 /** In-box destination for the global workflow scripts. */
 export const BOX_WORKFLOWS_DIR = '/home/vscode/.claude/workflows';

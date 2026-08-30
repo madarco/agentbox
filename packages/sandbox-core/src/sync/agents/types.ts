@@ -128,8 +128,25 @@ export interface AgentCapabilities {
    * `prepareTeleport`, no module of its own. Falls back to a generic message.
    */
   teleportStubReason?: string;
-  /** How in-box activity is reported. OpenCode uses a plugin, not a tmux scraper. */
-  activitySource: 'scraper' | 'plugin';
+  /**
+   * Every mechanism that reports this agent's in-box activity. A LIST because
+   * the real answer is plural and a single value described it wrongly: Claude is
+   * hooks-primary with a promote-only scraper backstop, Codex declares hooks but
+   * is scraper-primary in practice (its own hooks file calls itself
+   * defense-in-depth), and OpenCode is plugin-only.
+   *
+   *  - `hooks`   — the agent invokes `agentbox-ctl agent-state` from its own
+   *    lifecycle hooks.
+   *  - `plugin`  — an agentbox-seeded plugin reports on the agent's event bus.
+   *    Implies `seeds` (asserted by `agent-seed.test.ts`) — the plugin has to
+   *    reach the box for this to be true.
+   *  - `scraper` — ctl watches the agent's tmux pane. Only meaningful for an
+   *    agent ctl actually ships a scraper for; declaring it does not create one.
+   *
+   * EMPTY means the agent reports nothing, and ctl will not probe its session at
+   * all — a permanently-`unknown` entry in every snapshot is worse than absence.
+   */
+  activitySource: readonly ('hooks' | 'plugin' | 'scraper')[];
 }
 
 /**

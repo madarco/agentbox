@@ -6,22 +6,75 @@ import { probeAgentSession } from './tmux.js';
 import {
   BOX_STATUS_EVENT,
   BOX_STATUS_SCHEMA,
+  DEFAULT_CLAUDE_SESSION_NAME,
   DEFAULT_CODEX_SESSION_NAME,
   DEFAULT_OPENCODE_SESSION_NAME,
   type AgentActivityState,
+  type AgentPlanPayload,
+  type AgentQuestionPayload,
+  type AgentStatusEntry,
+  type AgentStatusMap,
   type BoxStatus,
   type BoxStatusPort,
-  type ClaudeActivityState,
-  type ClaudePlanPayload,
-  type ClaudeQuestionPayload,
 } from './types.js';
+import { legacyAgentStatusFields, type AgentId } from '@agentbox/core';
+
+/** One agent whose tmux session the reporter probes each snapshot. */
+export interface WatchedAgentSession {
+  agent: AgentId;
+  /** tmux session name to probe (`tmux has-session -t <name>`). */
+  sessionName: string;
+}
+
+/**
+ * The list compiled into this binary. Used until (and unless) the host answers
+ * `agents.list` with its own — same posture as `WATCHED_CREDENTIALS`: ctl is
+ * BAKED into the box image, so its built-in list is frozen at bake time and an
+ * agent added later would otherwise never be probed at all.
+ */
+export const BAKED_AGENT_SESSIONS: readonly WatchedAgentSession[] = [
+  { agent: 'claude', sessionName: DEFAULT_CLAUDE_SESSION_NAME },
+  { agent: 'codex', sessionName: DEFAULT_CODEX_SESSION_NAME },
+  { agent: 'opencode', sessionName: DEFAULT_OPENCODE_SESSION_NAME },
+];
+
+/**
+ * Per-box pointers an agent's session lifecycle maintains, so a box restart can
+ * resume the conversation that was actually running.
+ *
+ * Agent-specific by nature, not by omission: Claude exposes a resumable session
+ * id (captured by its hooks), Codex exposes none — so it gets a presence marker
+ * instead — and OpenCode has no resume support at all. An agent absent from this
+ * table simply has no pointer, which is the correct default for a new one.
+ */
+interface SessionPointerOps {
+  /** Called the first time the agent shows any activity. */
+  onFirstActivity?: () => void;
+  /** Called on the running -> stopped edge of the agent's tmux session. */
+  onSessionEnded?: () => void;
+}
+
+const SESSION_POINTERS: Readonly<Record<AgentId, SessionPointerOps>> = {
+  claude: { onSessionEnded: clearClaudeSessionPointer },
+  codex: { onFirstActivity: markCodexActive, onSessionEnded: clearCodexMarker },
+};
+
+interface AgentRuntimeState {
+  state: AgentActivityState;
+  updatedAt: string | null;
+  plan?: AgentPlanPayload;
+  question?: AgentQuestionPayload;
+  /** Whether {@link SessionPointerOps.onFirstActivity} has already fired. */
+  marked: boolean;
+}
 
 export interface StatusReporterOptions {
   supervisor: Supervisor;
   /** The same RelayClient the supervisor already pushes service-state on. */
   relay: RelayClient;
   boxId: string;
-  sessionName: string;
+  /** Override the probed agent list (tests); defaults to {@link BAKED_AGENT_SESSIONS}. */
+  sessions?: readonly WatchedAgentSession[];
   /** Coalesce bursty supervisor 'change' events. Default 300ms. */
   debounceMs?: number;
   /** Liveness heartbeat so the host file stays fresh while idle. Default 15000ms. */
@@ -29,32 +82,26 @@ export interface StatusReporterOptions {
 }
 
 /**
- * Aggregates the box's runtime status (services, tasks, listening ports, claude
+ * Aggregates the box's runtime status (services, tasks, listening ports, agent
  * activity) and pushes it to the host relay, which persists it to disk so the
  * host CLI can read it even when the box is paused/stopped. The daemon is the
  * single aggregator and the relay the single writer — no second channel, no
  * races.
+ *
+ * Agents are held in a MAP rather than named fields. The three built-ins used to
+ * have a field, a setter and a snapshot branch each, which is why a fourth agent
+ * could not report activity at all — it had nowhere to put the value.
  */
 export class StatusReporter {
   private readonly supervisor: Supervisor;
   private readonly relay: RelayClient;
   private readonly boxId: string;
-  private readonly sessionName: string;
   private readonly debounceMs: number;
   private readonly periodicMs: number;
-  private claudeState: ClaudeActivityState = 'unknown';
-  private claudeUpdatedAt: string | null = null;
-  private claudePlan: ClaudePlanPayload | undefined;
-  private claudeQuestion: ClaudeQuestionPayload | undefined;
-  private codexMarked = false;
-  // Last-seen tmux liveness per agent, for the running→stopped edge that clears
-  // the session pointer/marker (see snapshot()).
-  private lastClaudeRunning = false;
-  private lastCodexRunning = false;
-  private codexState: AgentActivityState = 'unknown';
-  private codexUpdatedAt: string | null = null;
-  private opencodeState: AgentActivityState = 'unknown';
-  private opencodeUpdatedAt: string | null = null;
+  private sessions: readonly WatchedAgentSession[];
+  private readonly agents = new Map<AgentId, AgentRuntimeState>();
+  /** Last-seen tmux liveness per agent, for the running->stopped edge. */
+  private readonly lastRunning = new Map<AgentId, boolean>();
   private debounceTimer: NodeJS.Timeout | null = null;
   private periodicTimer: NodeJS.Timeout | null = null;
   private readonly onChange = (): void => this.schedulePush();
@@ -63,7 +110,7 @@ export class StatusReporter {
     this.supervisor = opts.supervisor;
     this.relay = opts.relay;
     this.boxId = opts.boxId;
-    this.sessionName = opts.sessionName;
+    this.sessions = opts.sessions ?? BAKED_AGENT_SESSIONS;
     this.debounceMs = opts.debounceMs ?? 300;
     this.periodicMs = opts.periodicMs ?? 15_000;
   }
@@ -87,82 +134,93 @@ export class StatusReporter {
     }
   }
 
-  setClaudeState(
-    state: ClaudeActivityState,
+  /**
+   * Swap the probed agent list while running — the daemon starts on the BAKED
+   * list so activity reporting is never off, then calls this once the host
+   * answers `agents.list`. Exactly {@link CredentialsWatcher.setFiles}'s
+   * contract, and for the same reason: awaiting the host here would put a
+   * network round-trip on the daemon's critical path.
+   *
+   * Safe mid-flight — the state and liveness maps are keyed by agent id, so a
+   * carried-over agent keeps its history and a dropped one just leaves an unread
+   * key behind.
+   */
+  setSessions(sessions: readonly WatchedAgentSession[]): void {
+    if (sessions.length === 0) return;
+    this.sessions = sessions;
+    this.schedulePush();
+  }
+
+  /** The agents currently probed; exposed for the daemon's logs and tests. */
+  watchedSessions(): readonly WatchedAgentSession[] {
+    return this.sessions;
+  }
+
+  /**
+   * Record an agent's activity. Fed by the agent's own hooks/plugin through
+   * `agentbox-ctl <agent>-state`, and by the in-box tmux scrapers.
+   *
+   * Sticky end-plan/question handling. Two pressures:
+   *   1. The pre-tool ExitPlanMode|AskUserQuestion hook races with the catchall
+   *      pre-tool hook ('working'). The catchall must not win.
+   *   2. AskUserQuestion ALSO triggers a permission-prompt notification
+   *      ('waiting'), so the question payload must survive the question ->
+   *      waiting hop. Same for end-plan and the post-approval idle/Stop.
+   *
+   * Semantics:
+   *   - 'working' while currently end-plan/question: swallow unless
+   *     clearPending is set (post-tool cleanup).
+   *   - Any other state: accept, but DON'T auto-clear the plan/question payload
+   *     — only clearPending=true clears them, or a fresh pre-tool hook
+   *     overwrites with new content.
+   */
+  setAgentState(
+    agent: AgentId,
+    state: AgentActivityState,
     payload?: {
-      plan?: ClaudePlanPayload;
-      question?: ClaudeQuestionPayload;
+      plan?: AgentPlanPayload;
+      question?: AgentQuestionPayload;
       clearPending?: boolean;
     },
   ): void {
-    // Sticky end-plan/question handling. Two pressures:
-    //   1. PreToolUse:ExitPlanMode|AskUserQuestion races with the catchall
-    //      PreToolUse:* hook ('working'). The catchall must not win.
-    //   2. AskUserQuestion *also* triggers Notification:permission_prompt
-    //      ('waiting'), so the question payload must survive the question →
-    //      waiting hop. Same for end-plan and the post-approval idle/Stop.
-    //
-    // Semantics:
-    //   - 'working' while currently end-plan/question: swallow unless
-    //     clearPending is set (PostToolUse cleanup).
-    //   - Any other state: accept, but DON'T auto-clear the plan/question
-    //     payload — only clearPending=true clears them, or a fresh PreToolUse
-    //     overwrites with new content.
-    const sticky = this.claudeState === 'end-plan' || this.claudeState === 'question';
+    const cur = this.agentState(agent);
+    const sticky = cur.state === 'end-plan' || cur.state === 'question';
     if (state === 'working' && sticky && !payload?.clearPending) return;
 
-    this.claudeState = state;
-    this.claudeUpdatedAt = new Date().toISOString();
+    cur.state = state;
+    cur.updatedAt = new Date().toISOString();
 
     if (payload?.clearPending) {
-      this.claudePlan = undefined;
-      this.claudeQuestion = undefined;
+      cur.plan = undefined;
+      cur.question = undefined;
     }
-    if (state === 'end-plan' && payload?.plan) {
-      this.claudePlan = payload.plan;
-    }
-    if (state === 'question' && payload?.question) {
-      this.claudeQuestion = payload.question;
+    if (state === 'end-plan' && payload?.plan) cur.plan = payload.plan;
+    if (state === 'question' && payload?.question) cur.question = payload.question;
+
+    if (!cur.marked) {
+      cur.marked = true;
+      SESSION_POINTERS[agent]?.onFirstActivity?.();
     }
     this.schedulePush();
   }
 
   /**
    * Screen-scraper safety net: promote a *stuck* `working` to `waiting` when the
-   * Claude tmux pane shows a prompt the hooks missed (MCP tool dialogs have no
-   * hook; the `Notification:permission_prompt` hook can fire late or drop).
+   * agent's tmux pane shows a prompt the hooks missed (MCP tool dialogs have no
+   * hook; a permission-prompt notification can fire late or drop).
    * Deliberately promote-ONLY — it acts solely when the current state is
    * `working`, so it never clobbers the richer hook-driven `end-plan`/`question`
-   * (sticky) or `idle`/`compacting`/`error`. The next real hook
-   * (`UserPromptSubmit`/`PreToolUse`) overwrites `waiting`→`working` when the
-   * agent resumes, so no demote path is needed. Returns true if it promoted.
+   * (sticky) or `idle`/`compacting`/`error`. The next real hook overwrites
+   * `waiting`->`working` when the agent resumes, so no demote path is needed.
+   * Returns true if it promoted.
    */
-  markScreenWaiting(): boolean {
-    if (this.claudeState !== 'working') return false;
-    this.claudeState = 'waiting';
-    this.claudeUpdatedAt = new Date().toISOString();
+  markScreenWaiting(agent: AgentId): boolean {
+    const cur = this.agents.get(agent);
+    if (!cur || cur.state !== 'working') return false;
+    cur.state = 'waiting';
+    cur.updatedAt = new Date().toISOString();
     this.schedulePush();
     return true;
-  }
-
-  setCodexState(state: AgentActivityState): void {
-    this.codexState = state;
-    this.codexUpdatedAt = new Date().toISOString();
-    // Codex exposes no resumable session id (and its hooks are unreliable — the
-    // scraper is the primary signal), so we can't capture an exact id like
-    // Claude. Drop a per-box presence marker the first time codex shows any
-    // activity so a restart knows codex ran here and can `codex resume --last`.
-    if (!this.codexMarked) {
-      this.codexMarked = true;
-      markCodexActive();
-    }
-    this.schedulePush();
-  }
-
-  setOpencodeState(state: AgentActivityState): void {
-    this.opencodeState = state;
-    this.opencodeUpdatedAt = new Date().toISOString();
-    this.schedulePush();
   }
 
   /** Forced immediate push (used on shutdown). */
@@ -172,6 +230,15 @@ export class StatusReporter {
       this.debounceTimer = null;
     }
     void this.push();
+  }
+
+  private agentState(agent: AgentId): AgentRuntimeState {
+    let cur = this.agents.get(agent);
+    if (!cur) {
+      cur = { state: 'unknown', updatedAt: null, marked: false };
+      this.agents.set(agent, cur);
+    }
+    return cur;
   }
 
   private schedulePush(): void {
@@ -208,57 +275,59 @@ export class StatusReporter {
     const tasks = this.supervisor.listTasks().map((t) => ({ name: t.name, state: t.state }));
 
     const ports = await collectPorts(this.supervisor);
+    const agents = await this.agentStatusMap();
 
-    // Probe all three agent tmux sessions — whichever exist get reported.
-    const claudeSession = await probeAgentSession(this.sessionName);
-    const codexSession = await probeAgentSession(DEFAULT_CODEX_SESSION_NAME);
-    const opencodeSession = await probeAgentSession(DEFAULT_OPENCODE_SESSION_NAME);
-
-    // Clear the per-box session pointer/marker when an agent's tmux session ends
-    // (running → not running). This keeps a box restart from resuming an agent
-    // the user already exited — restore should only bring back what was actually
-    // running when the box went down. A fresh daemon starts from `false`, so a
-    // just-restored agent (rising edge) is never cleared.
-    if (this.lastClaudeRunning && !claudeSession.running) clearClaudeSessionPointer();
-    if (this.lastCodexRunning && !codexSession.running) clearCodexMarker();
-    this.lastClaudeRunning = claudeSession.running;
-    this.lastCodexRunning = codexSession.running;
-
-    const status: BoxStatus = {
+    return {
       schema: BOX_STATUS_SCHEMA,
       boxId: this.boxId,
       timestamp: new Date().toISOString(),
       services,
       tasks,
       ports,
-      claude: {
-        state: this.claudeState,
-        updatedAt: this.claudeUpdatedAt,
-        sessionRunning: claudeSession.running,
-        ...(claudeSession.title ? { sessionTitle: claudeSession.title } : {}),
-        ...(this.claudePlan ? { plan: this.claudePlan } : {}),
-        ...(this.claudeQuestion ? { question: this.claudeQuestion } : {}),
-      },
+      agents,
+      // The legacy mirror, DERIVED — see BoxStatus.claude for why it is still
+      // written. Never assemble these by hand.
+      ...legacyAgentStatusFields(agents),
     };
-    // Codex / OpenCode bodies are additive and present only when there's
-    // something to report — so a claude-only box's snapshot omits them.
-    if (codexSession.running || this.codexState !== 'unknown') {
-      status.codex = {
-        state: this.codexState,
-        updatedAt: this.codexUpdatedAt,
-        sessionRunning: codexSession.running,
-        ...(codexSession.title ? { sessionTitle: codexSession.title } : {}),
+  }
+
+  /**
+   * Probe every watched agent's tmux session and fold it together with the
+   * reported activity.
+   *
+   * An agent is included only when there is something to report — its session is
+   * up, or it has reported a state — so a claude-only box's snapshot carries one
+   * entry, exactly as the named fields used to be omitted.
+   */
+  private async agentStatusMap(): Promise<AgentStatusMap> {
+    const out: AgentStatusMap = {};
+    for (const { agent, sessionName } of this.sessions) {
+      const probe = await probeAgentSession(sessionName);
+
+      // Clear the per-box session pointer/marker when an agent's tmux session
+      // ends (running -> not running). This keeps a box restart from resuming an
+      // agent the user already exited — restore should only bring back what was
+      // actually running when the box went down. A fresh daemon starts from
+      // `false`, so a just-restored agent (rising edge) is never cleared.
+      if (this.lastRunning.get(agent) && !probe.running) {
+        SESSION_POINTERS[agent]?.onSessionEnded?.();
+      }
+      this.lastRunning.set(agent, probe.running);
+
+      const cur = this.agents.get(agent);
+      if (!probe.running && (!cur || cur.state === 'unknown')) continue;
+
+      const entry: AgentStatusEntry = {
+        state: cur?.state ?? 'unknown',
+        updatedAt: cur?.updatedAt ?? null,
+        sessionRunning: probe.running,
+        ...(probe.title ? { sessionTitle: probe.title } : {}),
+        ...(cur?.plan ? { plan: cur.plan } : {}),
+        ...(cur?.question ? { question: cur.question } : {}),
       };
+      out[agent] = entry;
     }
-    if (opencodeSession.running || this.opencodeState !== 'unknown') {
-      status.opencode = {
-        state: this.opencodeState,
-        updatedAt: this.opencodeUpdatedAt,
-        sessionRunning: opencodeSession.running,
-        ...(opencodeSession.title ? { sessionTitle: opencodeSession.title } : {}),
-      };
-    }
-    return status;
+    return out;
   }
 }
 

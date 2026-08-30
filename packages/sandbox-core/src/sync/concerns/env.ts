@@ -112,7 +112,10 @@ async function findEnvFilesForTar(workspaceDir: string, patterns: string[]): Pro
  * by the setup wizard's multiselect. Pure host-side helper (no box mutation).
  * Empty on a scan failure or empty pattern set (best-effort).
  */
-export async function scanHostEnvFiles(workspaceDir: string, patterns: string[]): Promise<string[]> {
+export async function scanHostEnvFiles(
+  workspaceDir: string,
+  patterns: string[],
+): Promise<string[]> {
   const raw = await findEnvFilesForTar(workspaceDir, patterns);
   return raw.map((p) => p.replace(/^\.\//, '')).filter((p) => p.length > 0);
 }

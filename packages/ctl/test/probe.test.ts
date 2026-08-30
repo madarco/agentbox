@@ -99,9 +99,7 @@ describe('probe — log_match', () => {
     });
 
     setTimeout(() => {
-      subscribers.forEach((cb) =>
-        cb({ service: 'x', ts: 't', stream: 'stdout', line: 'noise' }),
-      );
+      subscribers.forEach((cb) => cb({ service: 'x', ts: 't', stream: 'stdout', line: 'noise' }));
       subscribers.forEach((cb) =>
         cb({ service: 'x', ts: 't', stream: 'stdout', line: 'listening on 3000' }),
       );

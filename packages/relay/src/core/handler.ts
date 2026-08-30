@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
 import { gateApproval } from '../permission.js';
-import { isValidBoxStatus } from '../status-store.js';
+import { isValidBoxStatus, normalizeBoxStatus } from '../status-store.js';
 import type { Store } from '../store/store.js';
 import { handleStoreRpcRequest } from '../store/store-rpc-routes.js';
 import { resolveWorktree } from '../worktree.js';
@@ -138,7 +138,10 @@ export async function handleRelayRequest(
 
   const custodyDeps: CustodyRouteDeps = { custody: deps.custody, adminToken: deps.adminToken, log };
   const custody = await handleCustodyRequest(req, custodyDeps);
-  if (custody) return custody.body === undefined ? { status: custody.status } : ok(custody.body, custody.status);
+  if (custody)
+    return custody.body === undefined
+      ? { status: custody.status }
+      : ok(custody.body, custody.status);
 
   // --- box endpoints (per-box bearer) ---
   if (req.method === 'POST' && req.path === '/events') {
@@ -150,7 +153,13 @@ export async function handleRelayRequest(
     }
     if (body.type === 'box-status') {
       if (!isValidBoxStatus(body.payload)) return err(400, 'invalid box-status payload');
-      await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
+      // Normalized at the door — see `normalizeBoxStatus`.
+      await store.setStatus(
+        reg.boxId,
+        reg.name,
+        reg.projectIndex,
+        normalizeBoxStatus(body.payload),
+      );
       return ok({ ok: true }, 202);
     }
     const ev = await store.appendEvent({
@@ -181,7 +190,10 @@ export async function handleRelayRequest(
     if (!row || row.boxId !== reg.boxId) return err(404, 'no such prompt');
     if (row.status === 'pending') return ok({ status: 'pending' });
     if (row.answer !== 'y' || row.cancelled) {
-      return ok({ status: 'done', result: { exitCode: 10, stdout: '', stderr: 'denied by user\n' } });
+      return ok({
+        status: 'done',
+        result: { exitCode: 10, stdout: '', stderr: 'denied by user\n' },
+      });
     }
     const cached = row.result;
     const result = cached ?? (await runApproved(reg, row.method, leaser));
@@ -291,7 +303,9 @@ export async function handleRelayRequest(
   // Vercel plane identically.
   const storeRpc = await handleStoreRpcRequest(req, { store, adminToken: deps.adminToken, log });
   if (storeRpc) {
-    return storeRpc.body === undefined ? { status: storeRpc.status } : ok(storeRpc.body, storeRpc.status);
+    return storeRpc.body === undefined
+      ? { status: storeRpc.status }
+      : ok(storeRpc.body, storeRpc.status);
   }
 
   // Create-queue surface (`/remote/boxes`) — a shared dispatcher mounted in both
@@ -304,7 +318,8 @@ export async function handleRelayRequest(
     custody: deps.custody,
     log,
   });
-  if (remote) return remote.body === undefined ? { status: remote.status } : ok(remote.body, remote.status);
+  if (remote)
+    return remote.body === undefined ? { status: remote.status } : ok(remote.body, remote.status);
 
   return err(404, 'not found');
 }
@@ -325,13 +340,19 @@ async function dispatchRpc(
     // for a human.
     const isAgentboxBranch = isScratchBranch(worktree?.branch);
     if (!isAgentboxBranch) {
-      const gate = await gateApproval({ mode: 'poll', store: deps.store }, reg.boxId, method, params, {
-        kind: 'confirm',
-        message: `Allow box ${reg.name} to lease a push token for ${reg.originUrl ?? 'its repo'}?`,
-        detail: `branch ${worktree?.branch ?? '(unregistered)'}`,
-        defaultAnswer: 'n',
-        context: { command: 'git lease-token', cwd: p?.path },
-      });
+      const gate = await gateApproval(
+        { mode: 'poll', store: deps.store },
+        reg.boxId,
+        method,
+        params,
+        {
+          kind: 'confirm',
+          message: `Allow box ${reg.name} to lease a push token for ${reg.originUrl ?? 'its repo'}?`,
+          detail: `branch ${worktree?.branch ?? '(unregistered)'}`,
+          defaultAnswer: 'n',
+          context: { command: 'git lease-token', cwd: p?.path },
+        },
+      );
       if (gate.kind === 'pending') return ok({ status: 'pending', promptId: gate.promptId }, 202);
       if (gate.kind === 'deny') {
         return ok({ exitCode: 10, stdout: '', stderr: 'denied by user\n' }, 500);
@@ -345,7 +366,11 @@ async function dispatchRpc(
     // The box already opened it locally; just record the event (no host mirror).
     const p = params as { url?: unknown } | undefined;
     if (typeof p?.url === 'string') {
-      await deps.store.appendEvent({ boxId: reg.boxId, type: 'browser-open', payload: { url: p.url } });
+      await deps.store.appendEvent({
+        boxId: reg.boxId,
+        type: 'browser-open',
+        payload: { url: p.url },
+      });
     }
     return ok({ exitCode: 0, stdout: '', stderr: '' });
   }

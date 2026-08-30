@@ -1,3 +1,13 @@
+import {
+  AGENT_ACTIVITY_STATES,
+  type AgentActivityState,
+  type AgentPlanPayload,
+  type AgentQuestionPayload,
+  type AgentStatusEntry,
+  type AgentStatusMap,
+  type AgentId,
+} from '@agentbox/core';
+
 export type ServiceState =
   | 'pending'
   | 'waiting'
@@ -63,72 +73,30 @@ export interface ReloadResult {
 }
 
 /**
- * Coarse activity state of the in-box Claude Code session, fed by Claude Code
- * hooks via `agentbox-ctl claude-state <state>`. `unknown` is the initial value
- * before any hook has fired (or for boxes whose image predates the hooks).
+ * The per-agent activity contract now lives in `@agentbox/core` — the leaf both
+ * this daemon and the host relay can reach (ctl depends on relay, never the
+ * reverse). ctl re-exports it under the historical names so its own importers
+ * (the CLI, sandbox-docker, the hub) keep resolving.
  *
- * `end-plan` and `question` are PreToolUse-driven fine-grained states: Claude
- * is about to call ExitPlanMode (plan finished, awaiting human approval) or
- * AskUserQuestion (interactive prompt shown). The matching PostToolUse hook
- * clears them back to `working`. The hook also pipes the tool input JSON to
- * the daemon so `agentbox agent get-plan-question` can read the plan body or
- * the questions[] array without scraping the terminal.
- *
- * `compacting` is fed by Claude's PreCompact hook (the conversation is being
- * summarized to free context space). PostCompact clears it via
- * `working --clear-pending`. `error` is fed by StopFailure (a turn ended with
- * an unrecoverable failure); the next UserPromptSubmit / Stop naturally
- * supersedes it.
- *
- * The same union is reused for Codex and OpenCode via {@link AgentActivityState}.
+ * `ClaudeActivityState` is a plain alias, not a distinct union: the states were
+ * never Claude-specific — codex and opencode already shared every one of them.
  */
-export type ClaudeActivityState =
-  | 'working'
-  | 'idle'
-  | 'waiting'
-  | 'end-plan'
-  | 'question'
-  | 'compacting'
-  | 'error'
-  | 'unknown';
+export type {
+  AgentActivityState,
+  AgentPlanPayload,
+  AgentQuestionPayload,
+  AgentStatusEntry,
+  AgentStatusMap,
+} from '@agentbox/core';
+export { AGENT_ACTIVITY_STATES } from '@agentbox/core';
 
-export const CLAUDE_ACTIVITY_STATES: readonly ClaudeActivityState[] = [
-  'working',
-  'idle',
-  'waiting',
-  'end-plan',
-  'question',
-  'compacting',
-  'error',
-  'unknown',
-];
+/** Identical to `AgentActivityState`; the states were never Claude-specific. */
+export type ClaudeActivityState = AgentActivityState;
+export type ClaudePlanPayload = AgentPlanPayload;
+export type ClaudeQuestionPayload = AgentQuestionPayload;
 
-/** Body shape extracted from the ExitPlanMode hook payload. */
-export interface ClaudePlanPayload {
-  /** Markdown plan body — Claude Code's `plan` tool input field. */
-  plan: string;
-  /** ISO-8601 timestamp the hook fired. */
-  capturedAt: string;
-}
-
-/** Body shape extracted from the AskUserQuestion hook payload. */
-export interface ClaudeQuestionPayload {
-  /** Each entry is one question Claude is asking; usually length 1. */
-  questions: Array<{
-    question: string;
-    header?: string;
-    multiSelect?: boolean;
-    options: Array<{ label: string; description?: string }>;
-  }>;
-  capturedAt: string;
-}
-
-/**
- * Same coarse activity union, reused for any agent. Codex feeds it via
- * `agentbox-ctl codex-state <state>` (Codex lifecycle hooks); the value space
- * is identical to {@link ClaudeActivityState}.
- */
-export type AgentActivityState = ClaudeActivityState;
+/** The validator every `*-state` command and socket op checks against. */
+export const CLAUDE_ACTIVITY_STATES: readonly AgentActivityState[] = AGENT_ACTIVITY_STATES;
 
 export interface BoxStatusServiceEntry {
   name: string;
@@ -162,60 +130,14 @@ export interface BoxStatusPort {
   service: string | null;
 }
 
-export interface BoxStatusClaude {
-  state: ClaudeActivityState;
-  /** ISO-8601 time the last claude-state hook fired, or null if none yet. */
-  updatedAt: string | null;
-  /** Whether the claude tmux session was present at snapshot time. */
-  sessionRunning: boolean;
-  /**
-   * Human-readable title Claude Code set on its terminal (the in-box tmux
-   * pane title), sanitized. Additive field — snapshots written before this
-   * existed simply lack it (schema stays 1; treat absent as no title).
-   */
-  sessionTitle?: string;
-  /**
-   * Last captured plan body — populated when `state === 'end-plan'`. The
-   * matching PostToolUse hook clears it. Additive — older snapshots lack it.
-   */
-  plan?: ClaudePlanPayload;
-  /**
-   * Last captured AskUserQuestion content — populated when `state === 'question'`.
-   * Cleared on the matching PostToolUse hook. Additive.
-   */
-  question?: ClaudeQuestionPayload;
-}
-
 /**
- * Codex session status — parallel to {@link BoxStatusClaude}. `state` is fed by
- * Codex lifecycle hooks via `agentbox-ctl codex-state <state>`.
+ * Historical per-agent body names. All three were already the same shape modulo
+ * claude's plan/question fields, which are not claude-specific — only its hooks
+ * happen to carry the payload today.
  */
-export interface BoxStatusCodex {
-  state: AgentActivityState;
-  /** ISO-8601 time the last codex-state hook fired, or null if none yet. */
-  updatedAt: string | null;
-  /** Whether the codex tmux session was present at snapshot time. */
-  sessionRunning: boolean;
-  /** Sanitized in-box tmux pane title, when the Codex TUI set one. */
-  sessionTitle?: string;
-}
-
-/**
- * OpenCode session status — parallel to {@link BoxStatusClaude} /
- * {@link BoxStatusCodex}. `state` is fed by the agentbox OpenCode plugin
- * (seeded into `~/.config/opencode/plugin/agentbox-state.js`) which
- * subscribes to OpenCode's event bus and shells `agentbox-ctl opencode-state`
- * for each lifecycle transition.
- */
-export interface BoxStatusOpencode {
-  state: AgentActivityState;
-  /** ISO-8601 time the last opencode-state hook fired, or null if none yet. */
-  updatedAt: string | null;
-  /** Whether the opencode tmux session was present at snapshot time. */
-  sessionRunning: boolean;
-  /** Sanitized in-box tmux pane title, when the OpenCode TUI set one. */
-  sessionTitle?: string;
-}
+export type BoxStatusClaude = AgentStatusEntry;
+export type BoxStatusCodex = AgentStatusEntry;
+export type BoxStatusOpencode = AgentStatusEntry;
 
 /**
  * Durable snapshot of a box's runtime status. The in-box daemon builds it and
@@ -233,12 +155,27 @@ export interface BoxStatus {
   tasks: BoxStatusTaskEntry[];
   /** Live-discovered listening TCP ports inside the box. */
   ports: BoxStatusPort[];
-  claude: BoxStatusClaude;
   /**
-   * Codex / OpenCode session status. Additive + optional — present only when
-   * that agent's tmux session is running (or, for codex, a hook has fired);
-   * a claude-only box's snapshot simply omits them (schema stays 1).
+   * Every reporting agent, keyed by id. THE source of agent status — the named
+   * fields below are a derived mirror of it.
+   *
+   * Additive (schema stays 1): a snapshot from a box baked before this field
+   * existed simply lacks it, and `normalizeAgentStatus` reconstructs the map
+   * from the named fields instead. Readers should go through that helper rather
+   * than touching either shape directly.
    */
+  agents?: AgentStatusMap;
+  /**
+   * The frozen legacy names, written as a MIRROR of `agents` so a host or hub
+   * older than this build keeps reading activity. Skew runs both ways — a baked
+   * ctl outlives the host that reads it, and a laptop CLI can be newer than a
+   * control box's hub — and these drive decisions (the queue's working gate,
+   * autopause, keepalive), not just display.
+   *
+   * Derived, never hand-maintained. A fourth agent appears only in `agents`,
+   * which is correct: an old reader has no field for it either way.
+   */
+  claude?: BoxStatusClaude;
   codex?: BoxStatusCodex;
   opencode?: BoxStatusOpencode;
 }
@@ -269,28 +206,33 @@ export type CtlRequest =
   | { op: 'ping' }
   | { op: 'claude-session'; sessionName?: string }
   | {
-      op: 'claude-state';
-      state: ClaudeActivityState;
       /**
-       * Optional payload from a PreToolUse hook. For `end-plan` carries the
-       * plan body; for `question` carries the AskUserQuestion params. Cleared
-       * when the matching PostToolUse hook fires with `state: 'working'` and
+       * One op for every agent. The three `<agent>-state` CLI commands all send
+       * this — the socket is intra-box (a short-lived `agentbox-ctl` process
+       * talking to the daemon from the SAME binary), so the wire never spans two
+       * builds and needs no per-agent spellings. The CLI command names are the
+       * surface that does span builds; see `bin.ts`.
+       */
+      op: 'agent-state';
+      agent: AgentId;
+      state: AgentActivityState;
+      /**
+       * Optional payload from a pre-tool hook. For `end-plan` carries the plan
+       * body; for `question` carries the question params. Cleared when the
+       * matching post-tool hook fires with `state: 'working'` and
        * `clearPending: true`.
        */
-      plan?: ClaudePlanPayload;
-      question?: ClaudeQuestionPayload;
+      plan?: AgentPlanPayload;
+      question?: AgentQuestionPayload;
       /**
-       * Set by the matching PostToolUse hook (`claude-state working
-       * --clear-pending`) to force-exit a sticky end-plan/question state. The
-       * catchall PreToolUse `working` hook races with the matcher-specific
-       * `end-plan`/`question` hook on the same tool invocation; sticky
-       * semantics in the reporter swallow that race, and `clearPending`
-       * marks the legitimate post-tool transition out.
+       * Set by the matching post-tool hook (`--clear-pending`) to force-exit a
+       * sticky end-plan/question state. The catchall pre-tool `working` hook
+       * races with the matcher-specific `end-plan`/`question` hook on the same
+       * tool invocation; sticky semantics in the reporter swallow that race, and
+       * `clearPending` marks the legitimate post-tool transition out.
        */
       clearPending?: boolean;
-    }
-  | { op: 'codex-state'; state: AgentActivityState }
-  | { op: 'opencode-state'; state: AgentActivityState };
+    };
 
 export type CtlResponse = { ok: true; data: unknown } | { ok: false; error: string };
 

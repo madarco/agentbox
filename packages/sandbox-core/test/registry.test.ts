@@ -52,7 +52,7 @@ describe('agent sync registry', () => {
     });
     expect(oc.caps.resume).toBe(false);
     expect(oc.caps.teleport).toBe('stub');
-    expect(oc.caps.activitySource).toBe('plugin');
+    expect(oc.caps.activitySource).toEqual(['plugin']);
     // The refusal text is data on the capability, so declaring the stub is all
     // an agent has to do — `prepareTeleport` has no per-agent branch.
     expect(oc.caps.teleportStubReason).toContain('opencode.db');

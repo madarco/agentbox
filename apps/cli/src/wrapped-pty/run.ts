@@ -39,6 +39,7 @@ import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client
 import { isValidBoxStatus } from '@agentbox/relay';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
 import type { AgentActivityState, BoxStatus, ClaudeQuestionPayload } from '@agentbox/ctl';
+import { normalizeAgentStatus } from '@agentbox/core';
 import type { AgentMode } from '@agentbox/core';
 
 export interface WrappedAttachOptions {
@@ -1038,14 +1039,10 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     try {
       // Read the title/activity from the body of the agent we attached to;
       // shell mode has no agent session so it keeps the box-name title.
-      const body =
-        opts.mode === 'codex'
-          ? status?.codex
-          : opts.mode === 'opencode'
-            ? status?.opencode
-            : opts.mode === 'shell'
-              ? undefined
-              : status?.claude;
+      // Through the normalizer, so a box whose baked ctl still posts the old
+      // named blocks reads the same as a current one — this payload arrives
+      // over SSE from a hub that may be a different build than this CLI.
+      const body = opts.mode === 'shell' ? undefined : normalizeAgentStatus(status)[opts.mode];
       const nextTitle = body?.sessionTitle?.trim() || undefined;
       const nextActivity = body?.state || undefined;
       // Aggregate agentbox.yaml service status (mode-independent — it's about
@@ -1077,15 +1074,14 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
         lastEmittedTitle = desiredTitle;
         setTerminalTitle(desiredTitle);
       }
-      // Surface claude's AskUserQuestion payload to the band when the agent
-      // is in `question` state; clear it on any other state. Only meaningful
-      // for claude mode (codex/opencode have no question payload). The band's
-      // priority chain (`recomputeBand`) demotes question below prompt/notice,
-      // so it only shows when nothing more urgent is pending.
-      const nextQuestion =
-        opts.mode === 'claude' && status?.claude.state === 'question'
-          ? (status.claude.question ?? null)
-          : null;
+      // Surface the attached agent's question payload to the band while it is in
+      // `question` state; clear it on any other state. Driven by the body rather
+      // than by `mode === 'claude'`: only Claude's hooks carry the payload today,
+      // but nothing about it is Claude-specific, so an agent that grows the same
+      // hook gets the band with no change here. The band's priority chain
+      // (`recomputeBand`) demotes question below prompt/notice, so it only shows
+      // when nothing more urgent is pending.
+      const nextQuestion = body?.state === 'question' ? (body.question ?? null) : null;
       const questionChanged =
         (nextQuestion?.capturedAt ?? null) !== (questionPayload?.capturedAt ?? null);
       if (questionChanged) {

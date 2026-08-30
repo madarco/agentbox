@@ -2,15 +2,24 @@ import { execa } from 'execa';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState, ResyncResult } from '@agentbox/core';
-import { AmbiguousBoxError, BoxNotFoundError, buildNoVncUrl } from '@agentbox/core';
-import type {
-  AgentActivityState,
-  BoxStatus,
-  ClaudeActivityState,
-  ClaudeQuestionPayload,
-} from '@agentbox/ctl';
-import { claudeSessionInfo, SHARED_CLAUDE_VOLUME, type ClaudeSessionInfo } from './sync/agents/claude.js';
-import { codexSessionInfo, SHARED_CODEX_VOLUME, type CodexSessionInfo } from './sync/agents/codex.js';
+import {
+  AmbiguousBoxError,
+  BoxNotFoundError,
+  buildNoVncUrl,
+  normalizeAgentStatus,
+} from '@agentbox/core';
+import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
+import type { BoxStatus } from '@agentbox/ctl';
+import {
+  claudeSessionInfo,
+  SHARED_CLAUDE_VOLUME,
+  type ClaudeSessionInfo,
+} from './sync/agents/claude.js';
+import {
+  codexSessionInfo,
+  SHARED_CODEX_VOLUME,
+  type CodexSessionInfo,
+} from './sync/agents/codex.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
 import {
   opencodeSessionInfo,
@@ -82,16 +91,31 @@ import {
 export interface ListedBox extends BoxRecord {
   state: BoxState;
   endpoints: BoxEndpoints;
+  /**
+   * Every reporting agent's live status, keyed by id; `{}` for pre-feature /
+   * never-pushed boxes. THE source — the named fields below are derived from it
+   * and exist only for clients that predate the map.
+   *
+   * Named `agentStatus`, not `agents`: `BoxRecord.agents` is already the list of
+   * agents INSTALLED in the box, which is a different question.
+   */
+  agentStatus: AgentStatusMap;
   /** From the persisted status file; undefined for pre-feature/never-pushed boxes. */
-  claudeActivity?: ClaudeActivityState;
+  claudeActivity?: AgentActivityState;
   /** Sanitized in-box terminal title Claude set; undefined when none. */
   claudeSessionTitle?: string;
   /** Last captured `AskUserQuestion` payload — present only when
    *  `claudeActivity === 'question'`. Surfaced to the dashboard so it can paint
    *  the agent's question into the alert band above the footer. */
-  claudeQuestion?: ClaudeQuestionPayload;
-  /** Codex activity from the persisted status file (Codex hooks); undefined when none. */
+  claudeQuestion?: AgentQuestionPayload;
+  /** Codex activity from the persisted status file; undefined when none. */
   codexActivity?: AgentActivityState;
+  /**
+   * OpenCode activity. Its plugin has always reported one and it was dropped
+   * at this hop, so every OpenCode box read as "no activity" no matter what it
+   * was doing — `list` could only ever print a bare `opencode`.
+   */
+  opencodeActivity?: AgentActivityState;
   /** Sanitized in-box terminal title the Codex/OpenCode TUI set; undefined when none. */
   codexSessionTitle?: string;
   opencodeSessionTitle?: string;
@@ -101,6 +125,47 @@ export interface ListedBox extends BoxRecord {
   codexSession: CodexSessionInfo | null;
   /** Live probe of the OpenCode tmux session; null when the box isn't running. */
   opencodeSession: OpencodeSessionInfo | null;
+}
+
+/**
+ * Flatten a persisted status snapshot into the per-agent fields a `ListedBox`
+ * carries.
+ *
+ * `agents` is the real payload; the named fields beside it are a derived
+ * projection kept for clients that predate the map (the hub's `/api/v1` Box and
+ * the macOS tray, which decodes the three `*SessionTitle` keys by name). They
+ * cover only the built-in three — a fourth agent is reachable through `agents`,
+ * which is the point.
+ *
+ * Reads through `normalizeAgentStatus`, so a snapshot written by an older box —
+ * baked ctl posts the old shape for as long as that box lives — folds into the
+ * same map as a current one.
+ */
+function agentStatusFields(
+  persisted: BoxStatus | null,
+): Pick<
+  ListedBox,
+  | 'agentStatus'
+  | 'claudeActivity'
+  | 'claudeSessionTitle'
+  | 'claudeQuestion'
+  | 'codexActivity'
+  | 'codexSessionTitle'
+  | 'opencodeActivity'
+  | 'opencodeSessionTitle'
+> {
+  const agents = normalizeAgentStatus(persisted);
+  const claude = agents.claude;
+  return {
+    agentStatus: agents,
+    claudeActivity: claude?.state,
+    claudeSessionTitle: claude?.sessionTitle,
+    claudeQuestion: claude?.state === 'question' ? claude.question : undefined,
+    codexActivity: agents.codex?.state,
+    codexSessionTitle: agents.codex?.sessionTitle,
+    opencodeActivity: agents.opencode?.state,
+    opencodeSessionTitle: agents.opencode?.sessionTitle,
+  };
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -170,13 +235,7 @@ export async function listBoxes(): Promise<ListedBox[]> {
           ...b,
           state: b.cloud?.lastState ?? 'running',
           endpoints,
-          claudeActivity: persisted?.claude.state,
-          claudeSessionTitle: persisted?.claude.sessionTitle,
-          claudeQuestion:
-            persisted?.claude.state === 'question' ? persisted.claude.question : undefined,
-          codexActivity: persisted?.codex?.state,
-          codexSessionTitle: persisted?.codex?.sessionTitle,
-          opencodeSessionTitle: persisted?.opencode?.sessionTitle,
+          ...agentStatusFields(persisted),
           shellSessions: [],
           codexSession: null,
           opencodeSession: null,
@@ -189,23 +248,14 @@ export async function listBoxes(): Promise<ListedBox[]> {
       // running container is reachable via `docker exec`; paused/stopped report
       // none. (Claude activity rides the persisted status snapshot instead, so
       // it needs no live probe.)
-      const shellSessions =
-        state === 'running' ? await listShellSessions(b.container) : [];
-      const codexSession =
-        state === 'running' ? await codexSessionInfo(b.container) : null;
-      const opencodeSession =
-        state === 'running' ? await opencodeSessionInfo(b.container) : null;
+      const shellSessions = state === 'running' ? await listShellSessions(b.container) : [];
+      const codexSession = state === 'running' ? await codexSessionInfo(b.container) : null;
+      const opencodeSession = state === 'running' ? await opencodeSessionInfo(b.container) : null;
       return {
         ...b,
         state,
         endpoints,
-        claudeActivity: persisted?.claude.state,
-        claudeSessionTitle: persisted?.claude.sessionTitle,
-        claudeQuestion:
-          persisted?.claude.state === 'question' ? persisted.claude.question : undefined,
-        codexActivity: persisted?.codex?.state,
-        codexSessionTitle: persisted?.codex?.sessionTitle,
-        opencodeSessionTitle: persisted?.opencode?.sessionTitle,
+        ...agentStatusFields(persisted),
         shellSessions,
         codexSession,
         opencodeSession,
@@ -288,7 +338,9 @@ export async function resyncBox(
   const worktrees = box.gitWorktrees ?? [];
   if (worktrees.length === 0) return { repos: [], hadConflicts: false };
   const repos = await resyncWorkspaceFromHost({ container: box.container, worktrees, onLog });
-  const hadConflicts = repos.some((r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0);
+  const hadConflicts = repos.some(
+    (r) => r.mergeConflicts.length > 0 || r.overlaySkipped.length > 0,
+  );
   return { repos, hadConflicts };
 }
 
@@ -846,9 +898,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     ]);
     const expectedSnapshots = new Set(
       survivingBoxes
-        .filter((b): b is BoxRecord & { snapshotDir: string } =>
-          typeof b.snapshotDir === 'string',
-        )
+        .filter((b): b is BoxRecord & { snapshotDir: string } => typeof b.snapshotDir === 'string')
         .map((b) => b.snapshotDir),
     );
     const expectedBoxDirs = new Set(survivingBoxes.map((b) => boxRunDirFor(b)));
@@ -869,9 +919,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
     orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
-    orphanCheckpointImages = liveCheckpointImages.filter(
-      (t) => !expectedCheckpointImages.has(t),
-    );
+    orphanCheckpointImages = liveCheckpointImages.filter((t) => !expectedCheckpointImages.has(t));
   }
 
   if (dryRun) {

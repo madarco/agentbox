@@ -166,7 +166,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
         label: 'the /agentbox-setup skill',
       },
     ],
-    caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
+    caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
     // Box->host. Claude's unit is a CHILD of a category dir, plus a 2-level
     // plugin cache, plus two registry JSONs merged additively with a
     // container->host path rewrite. See AgentPullSpec.
@@ -283,7 +283,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
     // tied to both the file content and the codex version, and a mismatch turns
     // the cosmetic warning into a *blocking* "Hooks need review" dialog.
     launchFlags: ['--enable', 'hooks', '--dangerously-bypass-hook-trust'],
-    caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
+    caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
     // Box->host: a flat list under the single config root.
     pull: { items: [{ group: 'data', names: ['config.toml', 'auth.json', 'prompts'] }] },
   },
@@ -381,7 +381,7 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       // snapshot artifacts that live on disk outside the DB.
       teleportStubReason:
         'OpenCode session teleport is not yet supported in agentbox (sessions live in a multi-tenant SQLite DB at ~/.local/share/opencode/opencode.db; per-project extraction is tracked for a follow-up). Run `agentbox opencode` without -c / --resume to start a fresh session, or open an issue if you need this feature.',
-      activitySource: 'plugin',
+      activitySource: ['plugin'],
     },
     // Box->host: two roots. `data` is staticPaths[0].boxDir; `config` is that
     // dir plus the config entry's relocToSubpath. The THIRD staticPaths entry

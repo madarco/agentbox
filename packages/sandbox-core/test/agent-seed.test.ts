@@ -18,11 +18,11 @@ const withSeeds = AGENT_SYNC_SPECS.filter((s) => (s.seeds ?? []).length > 0);
 
 describe('AgentSyncSpec.seeds — shape', () => {
   it('every agent that reports activity via a plugin declares a seed to place it', () => {
-    // The invariant the OpenCode cloud bug violated: `activitySource: 'plugin'`
-    // means the plugin file IS the reporting mechanism, so an agent declaring it
+    // The invariant the OpenCode cloud bug violated: declaring `plugin` means
+    // the plugin file IS the reporting mechanism, so an agent declaring it
     // without declaring how the file gets into the box can never report at all.
     for (const spec of AGENT_SYNC_SPECS) {
-      if (spec.caps.activitySource !== 'plugin') continue;
+      if (!spec.caps.activitySource.includes('plugin')) continue;
       expect((spec.seeds ?? []).length, `${spec.id} declares no seeds`).toBeGreaterThan(0);
     }
   });

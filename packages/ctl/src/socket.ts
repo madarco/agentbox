@@ -155,35 +155,20 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       sock.end();
       return;
     }
-    case 'claude-state': {
-      if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
-        writeLine(sock, { ok: false, error: `invalid claude state: ${String(req.state)}` });
+    case 'agent-state': {
+      // Fail-closed on both fields: with AgentId open, the agent name is no
+      // longer checkable against a union, so an empty one must not silently
+      // create a phantom entry in the status map.
+      if (typeof req.agent !== 'string' || req.agent.length === 0) {
+        writeLine(sock, { ok: false, error: `invalid agent: ${String(req.agent)}` });
+      } else if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
+        writeLine(sock, { ok: false, error: `invalid ${req.agent} state: ${String(req.state)}` });
       } else {
-        opts.reporter?.setClaudeState(req.state, {
+        opts.reporter?.setAgentState(req.agent, req.state, {
           plan: req.plan,
           question: req.question,
           clearPending: req.clearPending,
         });
-        writeLine(sock, { ok: true, data: 'ok' });
-      }
-      sock.end();
-      return;
-    }
-    case 'codex-state': {
-      if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
-        writeLine(sock, { ok: false, error: `invalid codex state: ${String(req.state)}` });
-      } else {
-        opts.reporter?.setCodexState(req.state);
-        writeLine(sock, { ok: true, data: 'ok' });
-      }
-      sock.end();
-      return;
-    }
-    case 'opencode-state': {
-      if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
-        writeLine(sock, { ok: false, error: `invalid opencode state: ${String(req.state)}` });
-      } else {
-        opts.reporter?.setOpencodeState(req.state);
         writeLine(sock, { ok: true, data: 'ok' });
       }
       sock.end();

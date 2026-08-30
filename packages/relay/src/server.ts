@@ -83,7 +83,7 @@ import {
 import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
-import { BoxStatusStore, isValidBoxStatus } from './status-store.js';
+import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import { WriteThroughStore } from './store/write-through-store.js';
 import type { Store } from './store/store.js';
@@ -891,12 +891,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'invalid box-status payload' });
           return;
         }
-        await store.setStatus(reg.boxId, reg.name, reg.projectIndex, body.payload);
+        // Normalize at the door, so the stored file, the memory store and the
+        // broadcast below all carry the keyed agent map even when the box's
+        // baked ctl still posts the old named blocks.
+        const snapshot = normalizeBoxStatus(body.payload);
+        await store.setStatus(reg.boxId, reg.name, reg.projectIndex, snapshot);
         // Push it to attached wrappers. The durable file only serves a footer on
         // THIS machine; a box owned by a remote hub has no such file on the
         // user's laptop, so the stream is the only way its footer learns the
         // agent activity and the `starting N/M…` service count.
-        subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, body.payload);
+        subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, snapshot);
         log(`box-status box=${reg.boxId}`);
         send(res, 202, { ok: true });
         return;
@@ -1609,10 +1613,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             },
             onStatus: (status) => {
               if (isValidBoxStatus(status)) {
-                void store.setStatus(reg.boxId, reg.name, reg.projectIndex, status);
+                const snapshot = normalizeBoxStatus(status);
+                void store.setStatus(reg.boxId, reg.name, reg.projectIndex, snapshot);
                 // Same reason as the direct-POST path above: this is the only
                 // status source an attached footer has for a cloud box.
-                subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, status);
+                subscribers.broadcast(reg.boxId, BOX_STATUS_EVENT, snapshot);
               }
             },
             // Drained host-only RPCs (git.push, …) run on the host via the

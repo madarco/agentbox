@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CarryConfigError,
-  parseCarryRaw,
-  parseCarrySection,
-} from '../src/carry.js';
+import { CarryConfigError, parseCarryRaw, parseCarrySection } from '../src/carry.js';
 import { parseConfig } from '../src/config.js';
 
 describe('parseCarrySection', () => {
@@ -74,9 +70,9 @@ describe('parseCarrySection', () => {
   });
 
   it('rejects dest that is not / or ~/', () => {
-    expect(() =>
-      parseCarrySection(`carry:\n  - src: /tmp/x\n    dest: tmp/x\n`),
-    ).toThrow(/must start with \/ or ~\//);
+    expect(() => parseCarrySection(`carry:\n  - src: /tmp/x\n    dest: tmp/x\n`)).toThrow(
+      /must start with \/ or ~\//,
+    );
   });
 
   it('rejects unknown per-entry keys', () => {
@@ -86,12 +82,12 @@ describe('parseCarrySection', () => {
   });
 
   it('rejects non-octal mode', () => {
-    expect(() =>
-      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    mode: "rw-"\n`),
-    ).toThrow(/must be an octal number/);
-    expect(() =>
-      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    mode: 99999\n`),
-    ).toThrow(/between 0 and 0o7777/);
+    expect(() => parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    mode: "rw-"\n`)).toThrow(
+      /must be an octal number/,
+    );
+    expect(() => parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    mode: 99999\n`)).toThrow(
+      /between 0 and 0o7777/,
+    );
   });
 
   it('rejects non-array carry', () => {
@@ -132,12 +128,12 @@ describe('parseCarrySection', () => {
   });
 
   it('rejects negative or > 65535 user', () => {
-    expect(() =>
-      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: -1\n`),
-    ).toThrow(/non-negative/);
-    expect(() =>
-      parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: 99999\n`),
-    ).toThrow(/between 0 and 65535/);
+    expect(() => parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: -1\n`)).toThrow(
+      /non-negative/,
+    );
+    expect(() => parseCarrySection(`carry:\n  - src: /a\n    dest: /b\n    user: 99999\n`)).toThrow(
+      /between 0 and 65535/,
+    );
   });
 
   it('user field is omitted when not declared', () => {

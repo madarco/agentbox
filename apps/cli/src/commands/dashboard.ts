@@ -1,3 +1,4 @@
+import { LEGACY_AGENT_STATUS_KEYS } from '@agentbox/core';
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
@@ -96,22 +97,30 @@ function scoped(all: boolean, projectRoot: string, boxes: ListedBox[]): ListedBo
 
 /**
  * Pick the box's primary agent and return its activity + session title for the
- * sidebar. A box runs one agent in practice; priority is claude > codex >
- * opencode. `unknown` activity is not positive evidence (the supervisor seeds
- * it for every box), so it never pins claude over a running codex/opencode.
+ * sidebar. A box runs one agent in practice; the built-ins keep their historical
+ * claude > codex > opencode precedence and anything else follows. `unknown`
+ * activity with no session is not positive evidence (the supervisor seeds that
+ * default), so it never pins claude over a running codex/opencode.
+ *
+ * The live tmux probes stay in the evidence: they are fresher than the persisted
+ * snapshot for a running box, and a box whose agent is up but has not reported
+ * yet would otherwise look empty.
  */
 function resolveAgent(b: ListedBox): { activity?: string; sessionTitle?: string } {
-  const real = (s?: string): boolean => !!s && s !== 'unknown';
-  if (real(b.claudeActivity) || b.claudeSessionTitle) {
-    return { activity: b.claudeActivity, sessionTitle: b.claudeSessionTitle };
-  }
-  if (b.codexSession?.running || real(b.codexActivity)) {
-    return { activity: b.codexActivity, sessionTitle: b.codexSessionTitle };
-  }
-  if (b.opencodeSession?.running) {
-    // OpenCode reports no activity (no plugin) — title only.
-    return { sessionTitle: b.opencodeSessionTitle };
-  }
+  const rank = (id: string): number => {
+    const i = LEGACY_AGENT_STATUS_KEYS.indexOf(id);
+    return i === -1 ? LEGACY_AGENT_STATUS_KEYS.length : i;
+  };
+  const live = new Set<string>();
+  if (b.codexSession?.running) live.add('codex');
+  if (b.opencodeSession?.running) live.add('opencode');
+  const entries = Object.entries(b.agentStatus).sort(
+    ([a], [c]) => rank(a) - rank(c) || a.localeCompare(c),
+  );
+  const found = entries.find(
+    ([id, e]) => e.state !== 'unknown' || e.sessionRunning || e.sessionTitle || live.has(id),
+  );
+  if (found) return { activity: found[1].state, sessionTitle: found[1].sessionTitle };
   // No positive evidence — fall back to claude's fields, matching today's
   // behavior for a plain box (`? unknown`, name shown).
   return { activity: b.claudeActivity, sessionTitle: b.claudeSessionTitle };
@@ -127,8 +136,9 @@ function toSidebar(b: ListedBox): SidebarBox {
     sessionTitle: agent.sessionTitle,
     index: b.projectIndex,
     project: b.projectRoot,
-    // Only claude reports an AskUserQuestion payload; gated on claudeActivity
-    // === 'question' upstream (lifecycle.listBoxes) so it's undefined otherwise.
+    // Only claude's hooks carry a question payload today; gated on
+    // `claudeActivity === 'question'` upstream (lifecycle.listBoxes) so it is
+    // undefined otherwise.
     claudeQuestion: b.claudeQuestion,
   };
 }

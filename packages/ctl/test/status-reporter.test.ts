@@ -5,7 +5,7 @@ import type { ClaudePlanPayload, ClaudeQuestionPayload } from '../src/types.js';
 
 // The reporter snapshots itself by probing tmux + listing supervisor services.
 // We don't want either side-effect in unit tests, so we fake the supervisor
-// surface to a no-op and look at `setClaudeState`'s effect on internal state
+// surface to a no-op and look at `setAgentState`'s effect on internal state
 // indirectly: by reading what gets posted to a stub RelayClient.
 
 interface Posted {
@@ -32,7 +32,11 @@ function stubSupervisor(): StubSupervisor {
   }) as StubSupervisor;
 }
 
-function stubRelay(): { enabled: boolean; post: (type: string, payload: unknown) => void; posted: Posted[] } {
+function stubRelay(): {
+  enabled: boolean;
+  post: (type: string, payload: unknown) => void;
+  posted: Posted[];
+} {
   const posted: Posted[] = [];
   return {
     enabled: true,
@@ -48,10 +52,7 @@ function stubRelay(): { enabled: boolean; post: (type: string, payload: unknown)
  * has-session`). On slow CI runners with no tmux installed, ENOENT can take
  * 100ms+ to surface, so a fixed sleep is fragile — poll instead.
  */
-async function flushDebounce(
-  reporter: StatusReporter,
-  relay: { posted: Posted[] },
-): Promise<void> {
+async function flushDebounce(reporter: StatusReporter, relay: { posted: Posted[] }): Promise<void> {
   const before = relay.posted.length;
   reporter.flush();
   const deadline = Date.now() + 2000;
@@ -78,7 +79,7 @@ function latestClaude(posted: Posted[]): PaylClaude | undefined {
   return undefined;
 }
 
-describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
+describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
   function makeReporter(): { reporter: StatusReporter; relay: ReturnType<typeof stubRelay> } {
     const sup = stubSupervisor();
     const relay = stubRelay();
@@ -87,7 +88,6 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
       supervisor: sup as unknown as ReporterOpts['supervisor'],
       relay: relay as unknown as ReporterOpts['relay'],
       boxId: 'b1',
-      sessionName: 'claude',
       debounceMs: 0,
       periodicMs: 60_000,
     });
@@ -98,11 +98,11 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const { reporter, relay } = makeReporter();
     const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
-    reporter.setClaudeState('end-plan', { plan });
+    reporter.setAgentState('claude', 'end-plan', { plan });
     await flushDebounce(reporter, relay);
 
     // Racing catchall PreToolUse: working (no clear). Should be ignored.
-    reporter.setClaudeState('working');
+    reporter.setAgentState('claude', 'working');
     await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('end-plan');
@@ -113,8 +113,8 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const { reporter, relay } = makeReporter();
     const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
-    reporter.setClaudeState('end-plan', { plan });
-    reporter.setClaudeState('working', { clearPending: true });
+    reporter.setAgentState('claude', 'end-plan', { plan });
+    reporter.setAgentState('claude', 'working', { clearPending: true });
     await flushDebounce(reporter, relay);
 
     const c = latestClaude(relay.posted);
@@ -129,8 +129,8 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
       capturedAt: '2026-05-27T00:00:00.000Z',
     };
 
-    reporter.setClaudeState('question', { question });
-    reporter.setClaudeState('working');
+    reporter.setAgentState('claude', 'question', { question });
+    reporter.setAgentState('claude', 'working');
     await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('question');
@@ -141,8 +141,8 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const { reporter, relay } = makeReporter();
     const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
-    reporter.setClaudeState('end-plan', { plan });
-    reporter.setClaudeState('idle');
+    reporter.setAgentState('claude', 'end-plan', { plan });
+    reporter.setAgentState('claude', 'idle');
     await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('idle');
@@ -157,11 +157,11 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
       capturedAt: '2026-05-27T00:00:00.000Z',
     };
 
-    reporter.setClaudeState('question', { question });
+    reporter.setAgentState('claude', 'question', { question });
     // AskUserQuestion also fires Notification:permission_prompt -> 'waiting'.
     // The question payload must persist so `agent get-plan-question` works
     // while Claude is parked at the picker.
-    reporter.setClaudeState('waiting');
+    reporter.setAgentState('claude', 'waiting');
     await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.state).toBe('waiting');
@@ -173,8 +173,8 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const planA: ClaudePlanPayload = { plan: 'A', capturedAt: '2026-05-27T00:00:00.000Z' };
     const planB: ClaudePlanPayload = { plan: 'B', capturedAt: '2026-05-27T00:00:01.000Z' };
 
-    reporter.setClaudeState('end-plan', { plan: planA });
-    reporter.setClaudeState('end-plan', { plan: planB });
+    reporter.setAgentState('claude', 'end-plan', { plan: planA });
+    reporter.setAgentState('claude', 'end-plan', { plan: planB });
     await flushDebounce(reporter, relay);
 
     expect(latestClaude(relay.posted)?.plan).toEqual(planB);
@@ -185,14 +185,14 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
     const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     // Compaction can run while a plan is pending — exercise both transitions.
-    reporter.setClaudeState('end-plan', { plan });
-    reporter.setClaudeState('compacting');
+    reporter.setAgentState('claude', 'end-plan', { plan });
+    reporter.setAgentState('claude', 'compacting');
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('compacting');
     // Plan survives a non-`working` transition (same rule as idle / waiting).
     expect(latestClaude(relay.posted)?.plan).toEqual(plan);
 
-    reporter.setClaudeState('working', { clearPending: true });
+    reporter.setAgentState('claude', 'working', { clearPending: true });
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('working');
     expect(latestClaude(relay.posted)?.plan).toBeUndefined();
@@ -201,12 +201,12 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
   it("StopFailure sets 'error'; next UserPromptSubmit naturally clears it back to working", async () => {
     const { reporter, relay } = makeReporter();
 
-    reporter.setClaudeState('error');
+    reporter.setAgentState('claude', 'error');
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('error');
 
     // No clearPending needed — error is not sticky.
-    reporter.setClaudeState('working');
+    reporter.setAgentState('claude', 'working');
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('working');
   });
@@ -214,9 +214,9 @@ describe('StatusReporter.setClaudeState (sticky end-plan / question)', () => {
   it('Subagent hooks keep state at working (sanity — they explicitly re-assert working)', async () => {
     const { reporter, relay } = makeReporter();
 
-    reporter.setClaudeState('working');
-    reporter.setClaudeState('working'); // SubagentStart hook re-fires working
-    reporter.setClaudeState('working'); // SubagentStop hook re-fires working
+    reporter.setAgentState('claude', 'working');
+    reporter.setAgentState('claude', 'working'); // SubagentStart hook re-fires working
+    reporter.setAgentState('claude', 'working'); // SubagentStop hook re-fires working
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('working');
   });
@@ -231,7 +231,6 @@ describe('StatusReporter.markScreenWaiting (promote-only safety net)', () => {
       supervisor: sup as unknown as ReporterOpts['supervisor'],
       relay: relay as unknown as ReporterOpts['relay'],
       boxId: 'b1',
-      sessionName: 'claude',
       debounceMs: 0,
       periodicMs: 60_000,
     });
@@ -240,34 +239,39 @@ describe('StatusReporter.markScreenWaiting (promote-only safety net)', () => {
 
   it('promotes a stuck working -> waiting (and is then a no-op)', async () => {
     const { reporter, relay } = makeReporter();
-    reporter.setClaudeState('working');
-    expect(reporter.markScreenWaiting()).toBe(true);
+    reporter.setAgentState('claude', 'working');
+    expect(reporter.markScreenWaiting('claude')).toBe(true);
     await flushDebounce(reporter, relay);
     expect(latestClaude(relay.posted)?.state).toBe('waiting');
     // Already promoted — a second call doesn't re-fire (state is no longer working).
-    expect(reporter.markScreenWaiting()).toBe(false);
+    expect(reporter.markScreenWaiting('claude')).toBe(false);
   });
 
   it('never clobbers a richer or non-working hook state', () => {
     for (const setup of [
       (r: StatusReporter) =>
-        r.setClaudeState('end-plan', { plan: { plan: 'X', capturedAt: '2026-05-27T00:00:00.000Z' } }),
-      (r: StatusReporter) =>
-        r.setClaudeState('question', {
-          question: { questions: [{ question: 'q', options: [{ label: 'a' }] }], capturedAt: '2026-05-27T00:00:00.000Z' },
+        r.setAgentState('claude', 'end-plan', {
+          plan: { plan: 'X', capturedAt: '2026-05-27T00:00:00.000Z' },
         }),
-      (r: StatusReporter) => r.setClaudeState('idle'),
-      (r: StatusReporter) => r.setClaudeState('compacting'),
-      (r: StatusReporter) => r.setClaudeState('error'),
+      (r: StatusReporter) =>
+        r.setAgentState('claude', 'question', {
+          question: {
+            questions: [{ question: 'q', options: [{ label: 'a' }] }],
+            capturedAt: '2026-05-27T00:00:00.000Z',
+          },
+        }),
+      (r: StatusReporter) => r.setAgentState('claude', 'idle'),
+      (r: StatusReporter) => r.setAgentState('claude', 'compacting'),
+      (r: StatusReporter) => r.setAgentState('claude', 'error'),
     ]) {
       const { reporter } = makeReporter();
       setup(reporter);
-      expect(reporter.markScreenWaiting()).toBe(false);
+      expect(reporter.markScreenWaiting('claude')).toBe(false);
     }
   });
 
   it('is a no-op from the initial unknown state', () => {
     const { reporter } = makeReporter();
-    expect(reporter.markScreenWaiting()).toBe(false);
+    expect(reporter.markScreenWaiting('claude')).toBe(false);
   });
 });

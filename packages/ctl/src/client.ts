@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createConnection, type Socket } from 'node:net';
+import type { AgentId } from '@agentbox/core';
 import type {
-  ClaudeActivityState,
-  ClaudePlanPayload,
-  ClaudeQuestionPayload,
+  AgentActivityState,
+  AgentPlanPayload,
+  AgentQuestionPayload,
   ClaudeSessionStatus,
   CtlRequest,
   CtlResponse,
@@ -173,33 +174,32 @@ export async function claudeSession(
   });
 }
 
-export async function claudeState(
+/**
+ * Report an agent's activity to the in-box daemon.
+ *
+ * One function for every agent: this socket is intra-box — a short-lived
+ * `agentbox-ctl` process talking to the daemon from the SAME binary — so the
+ * wire never spans two builds. The per-agent surface that DOES span builds is
+ * the CLI command name, kept in `bin.ts`.
+ */
+export async function agentState(
   opts: ConnectOptions,
-  state: ClaudeActivityState,
+  agent: AgentId,
+  state: AgentActivityState,
   payload?: {
-    plan?: ClaudePlanPayload;
-    question?: ClaudeQuestionPayload;
+    plan?: AgentPlanPayload;
+    question?: AgentQuestionPayload;
     clearPending?: boolean;
   },
 ): Promise<'ok'> {
   return sendOneShot<'ok'>(opts, {
-    op: 'claude-state',
+    op: 'agent-state',
+    agent,
     state,
     ...(payload?.plan ? { plan: payload.plan } : {}),
     ...(payload?.question ? { question: payload.question } : {}),
     ...(payload?.clearPending ? { clearPending: true } : {}),
   });
-}
-
-export async function codexState(opts: ConnectOptions, state: ClaudeActivityState): Promise<'ok'> {
-  return sendOneShot<'ok'>(opts, { op: 'codex-state', state });
-}
-
-export async function opencodeState(
-  opts: ConnectOptions,
-  state: ClaudeActivityState,
-): Promise<'ok'> {
-  return sendOneShot<'ok'>(opts, { op: 'opencode-state', state });
 }
 
 export interface LogsResult {
