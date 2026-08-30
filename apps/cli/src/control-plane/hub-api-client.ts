@@ -330,8 +330,11 @@ export interface HubApiPruneCloud {
 
 export type HubApiPruneView = HubApiPruneGeneral | HubApiPruneCloud;
 
-/** `GET /boxes/:id/agent` — the raw BoxStatusClaude snapshot (null = none yet). */
+/** `GET /boxes/:id/agent` — the box's raw agent snapshot (null bodies = none yet). */
 export interface HubApiAgentState {
+  /** Every reporting agent, keyed by id. Absent from a hub older than this build. */
+  agents?: Record<string, unknown>;
+  /** Claude's body, kept for clients that predate `agents`. */
   claude: unknown;
 }
 
@@ -745,7 +748,7 @@ export class HubApiClient {
 
   // ── agent state ──
 
-  /** The box's in-box coding-agent status snapshot (Claude activity/plan/question). */
+  /** The box's in-box agent status snapshot (activity/plan/question, per agent). */
   getAgentState(id: string): Promise<HubApiAgentState> {
     return this.request<HubApiAgentState>('GET', `/boxes/${encodeURIComponent(id)}/agent`);
   }

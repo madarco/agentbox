@@ -350,10 +350,15 @@ export type PruneView = PruneGeneralView | PruneCloudView | { kind: 'error'; err
 
 // ── agent state ──
 
-// The box's in-box coding-agent status snapshot. `claude` is the raw
-// `BoxStatusClaude` payload (typed `unknown` here so this pure-type module stays
-// free of @agentbox/ctl; the CLI re-casts it). null = no snapshot yet.
+// The box's in-box coding-agent status snapshot. Bodies are typed `unknown` here
+// so this pure-type module stays free of @agentbox/ctl; the CLI re-casts them.
 export interface AgentStateResult {
+  // Every reporting agent, keyed by id. THE source — `agent state`/`wait-for`
+  // used to be able to read only claude, so those commands were silently
+  // meaningless on a codex or opencode box.
+  agents: Record<string, unknown>;
+  // Claude's body, kept so a client older than this build keeps working.
+  // null = no snapshot yet, or claude is not the agent in this box.
   claude: unknown;
 }
 
