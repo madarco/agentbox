@@ -2,7 +2,7 @@
  * Session-teleport entry point. The agent commands call this AFTER the box is
  * provisioned (so `provider.uploadPath` has a target) and BEFORE the in-box
  * agent CLI launches. It:
- *   1. Resolves the matching host session file (claude/codex/opencode-specific).
+ *   1. Resolves the matching host session file via the agent's own resolver.
  *   2. Stages a rewritten copy on the host (cwd → /workspace).
  *   3. Uploads it into the box at the agent-CLI-expected location via
  *      `provider.uploadPath`.
@@ -11,13 +11,13 @@
  *
  * v1 supports `-c` and `--resume <id>` for claude + codex. An agent whose
  * registry row declares `caps.teleport: 'stub'` is refused up front with the
- * reason it declares — no per-agent branch here.
+ * reason it declares; everyone else resolves through their entry in the agent
+ * module table — no per-agent branch here.
  */
 
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { resolveClaudeTeleport } from './claude.js';
-import { resolveCodexTeleport } from './codex.js';
+import { loadAgentModule } from '../agents/index.js';
 import {
   TeleportError,
   type ResolvedTeleport,
@@ -65,25 +65,15 @@ export async function prepareTeleport(input: PrepareTeleportInput): Promise<Reso
         `${input.agent} session teleport is not supported yet. Run \`agentbox ${input.agent}\` without -c / --resume to start a fresh session.`,
     );
   }
-  switch (input.agent) {
-    case 'claude':
-      return resolveClaudeTeleport({
-        hostCwd: input.hostCwd,
-        mode: input.mode,
-        log: input.log,
-      });
-    case 'codex':
-      return resolveCodexTeleport({
-        hostCwd: input.hostCwd,
-        mode: input.mode,
-        log: input.log,
-      });
-    case 'opencode':
-      // Unreachable: opencode declares `teleport: 'stub'`, so the capability
-      // gate above already threw. Kept so the switch stays exhaustive over
-      // TeleportAgent.
-      throw new TeleportError(`no teleport resolver for '${input.agent}'`);
+  const { teleport } = await loadAgentModule(input.agent);
+  if (!teleport) {
+    // Only reachable if an agent declares `teleport: 'full'` but ships no
+    // resolver — a wiring mistake, not a user-facing state, so it says so.
+    throw new TeleportError(
+      `agent '${input.agent}' declares teleport support but registers no resolver`,
+    );
   }
+  return teleport({ hostCwd: input.hostCwd, mode: input.mode, log: input.log });
 }
 
 /**

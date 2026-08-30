@@ -111,6 +111,7 @@ import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { handleLifecycleError } from './_errors.js';
+import type { AgentId } from '@agentbox/core';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
 const PEM_PATH = join(CP_DIR, 'github-app.pem');
@@ -1310,7 +1311,7 @@ const credentialsPushSub = new Command('push')
         process.exitCode = 1;
         return;
       }
-      const only = opts.agent as 'claude' | 'codex' | 'opencode' | undefined;
+      const only = opts.agent as AgentId | undefined;
       if (opts.agent && !['claude', 'codex', 'opencode'].includes(opts.agent)) {
         log.error(`unknown --agent "${opts.agent}" (expected claude | codex | opencode)`);
         process.exitCode = 1;

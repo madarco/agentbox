@@ -233,4 +233,4 @@ export function cleanupStaleSessions(now: number = Date.now()): void {
 
 // The URL extractor now lives with the other per-agent prompt detectors; keep
 // re-exporting it here, where the headless flow's callers already look for it.
-export { extractOAuthUrl } from './agent-login-specs.js';
+export { extractOAuthUrl } from '../agents/claude/login.js';

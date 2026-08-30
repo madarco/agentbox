@@ -25,7 +25,7 @@
  */
 
 import { join } from 'node:path';
-import type { Provider } from '@agentbox/core';
+import type { AgentId, Provider } from '@agentbox/core';
 import { UserFacingError } from '@agentbox/core';
 import {
   agentSetArg,
@@ -433,7 +433,7 @@ export async function prepareDigitalOcean(
     // skills, not an agent's auth.
     const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
     const stagings: Array<{
-      kind: 'claude' | 'codex' | 'opencode' | 'agents';
+      kind: AgentId | 'agents';
       tar: StageResult;
       dest: string;
     }> = [];

@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { rejectionMessage } from '../src/lib/agent-login-run.js';
-import {
-  CLAUDE_LOGIN_SPEC,
-  CODEX_LOGIN_SPEC,
-  extractCodexUserCode,
-  OPENCODE_LOGIN_SPEC,
-} from '../src/lib/agent-login-specs.js';
+import { CLAUDE_LOGIN_SPEC } from '../src/agents/claude/login.js';
+import { CODEX_LOGIN_SPEC, extractCodexUserCode } from '../src/agents/codex/login.js';
+import { OPENCODE_LOGIN_SPEC } from '../src/agents/opencode/login.js';
 
 const ESC = String.fromCharCode(27);
 
@@ -25,7 +22,9 @@ const CODEX_TRANSCRIPT = [
 ].join('\n');
 
 // Verbatim from `opencode auth login -p <provider>` under a pty.
-const OPENCODE_API_KEY = ['┌  Add credential', '│', '◆  Enter your API key', '│  _', '└'].join('\n');
+const OPENCODE_API_KEY = ['┌  Add credential', '│', '◆  Enter your API key', '│  _', '└'].join(
+  '\n',
+);
 const OPENCODE_ZEN = [
   '┌  Add credential',
   '│',

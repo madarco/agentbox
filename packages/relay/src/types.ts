@@ -115,7 +115,7 @@ export interface BoxRegistration {
   image?: string;
   /** In-box WebProxy port (mirrors `CloudBoxFields.webPort`), for `url` reconstruction. */
   webPort?: number;
-  /** Agent the box was created for ('claude' | 'codex' | 'opencode') → `BoxRecord.lastAgent`. */
+  /** Agent the box was created for — an `AgentId` → `BoxRecord.lastAgent`. */
   agent?: string;
   /**
    * Custody `projects/<slug>` key of the box's project (owner__repo). Links a

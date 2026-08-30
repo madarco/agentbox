@@ -7,12 +7,13 @@ import { detectHostTerminal } from '../terminal/host.js';
 import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
 import { claudeCommand } from './claude.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
-import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { codexCommand } from './codex.js';
 import { opencodeCommand } from './opencode.js';
+import type { AgentId } from '@agentbox/core';
 
-type ForkAgent = 'claude' | 'codex' | 'opencode';
-const FORK_AGENTS = ['claude', 'codex', 'opencode'] as const;
+/** Agents `--agent` accepts — the registry, so a new agent is forkable at once. */
+const FORK_AGENTS: readonly AgentId[] = agentIds();
 
 /** Providers fork accepts positionally (`agentbox fork hetzner`) or via
  *  --provider: every runtime provider, built-in or registered plugin. Resolved
@@ -50,7 +51,7 @@ export function resolveForkProvider(
  *  - codex: CODEX_THREAD_ID=<session uuid> (the id `codex resume` expects).
  *  Returns undefined when neither is present (caller falls back to claude).
  *  Exported for unit testing — keep it pure (env in, agent out, no fs). */
-export function detectAgentFromEnv(env: NodeJS.ProcessEnv = process.env): ForkAgent | undefined {
+export function detectAgentFromEnv(env: NodeJS.ProcessEnv = process.env): AgentId | undefined {
   if (env.CLAUDECODE === '1' || (env.CLAUDE_CODE_SESSION_ID ?? '').trim().length > 0) {
     return 'claude';
   }
@@ -61,11 +62,23 @@ export function detectAgentFromEnv(env: NodeJS.ProcessEnv = process.env): ForkAg
 /** The create-style command each agent forks through. fork forwards a curated
  *  argv and lets the delegate run its own create+teleport+attach pipeline
  *  (incl. the new-tab spawn, tagged with that agent's attach mode). */
-const AGENT_COMMAND: Record<ForkAgent, Command> = {
+const AGENT_COMMAND: Record<string, Command> = {
   claude: claudeCommand,
   codex: codexCommand,
   opencode: opencodeCommand,
 };
+
+/**
+ * Fail loudly rather than dereferencing `undefined`: with `AgentId` open the
+ * compiler no longer proves this map covers every agent, so a registry entry
+ * that never got a command here surfaces as a message instead of a TypeError.
+ * `agent-command-coverage.test.ts` asserts the map matches `agentIds()`.
+ */
+function agentCommandFor(agent: AgentId): Command {
+  const cmd = AGENT_COMMAND[agent];
+  if (!cmd) throw new Error(`fork: no command registered for agent '${agent}'`);
+  return cmd;
+}
 
 interface ForkOptions {
   workspace: string;
@@ -96,7 +109,7 @@ const RECENT_SESSION_MS = 5 * 60 * 1000;
  *    and passes it, since Codex exposes no session-id variable.
  *  - opencode: no resume — teleport is a stub, so fork starts a fresh box.
  *    `--session` is rejected (resume isn't possible yet). */
-export function resolveSessionArgs(agent: ForkAgent, opts: ForkOptions): string[] {
+export function resolveSessionArgs(agent: AgentId, opts: ForkOptions): string[] {
   // Gate on the DECLARED capability rather than the agent's name, so an agent
   // that cannot resume states it once in its registry row.
   if (!resolveAgentSpec(agent).caps.resume) {
@@ -204,8 +217,8 @@ export const forkCommand = new Command('fork')
 
     // Precedence: explicit --agent > env autodetect (so a bare `agentbox fork`
     // works from claude or codex) > legacy claude default.
-    const agent = (opts.agent?.trim() || detectAgentFromEnv() || 'claude') as ForkAgent;
-    if (!(FORK_AGENTS as readonly string[]).includes(agent)) {
+    const agent = (opts.agent?.trim() || detectAgentFromEnv() || 'claude') as AgentId;
+    if (!FORK_AGENTS.includes(agent)) {
       log.error(`--agent: expected one of ${FORK_AGENTS.join(', ')}, got "${opts.agent ?? ''}"`);
       process.exit(2);
     }
@@ -299,5 +312,5 @@ export const forkCommand = new Command('fork')
     // startSession, and (for --attach-in tab/window) spawnInNewTerminal tagged
     // with that agent's attach mode. The action terminates the process itself
     // (process.exit) on every path.
-    await AGENT_COMMAND[agent].parseAsync(subArgv, { from: 'user' });
+    await agentCommandFor(agent).parseAsync(subArgv, { from: 'user' });
   });

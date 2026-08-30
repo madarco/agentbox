@@ -25,6 +25,7 @@ import { ALERT_BAND_ROWS, renderAlertBand, renderFooter } from '../wrapped-pty/f
 import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../terminal/title.js';
 import { postAnswer, subscribePrompts, type PromptStream } from '../wrapped-pty/prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
+import type { AgentId, AgentMode } from '@agentbox/core';
 
 // Sidebar panel styling (256-color, portable). Each sidebar line is already
 // padded to the panel width, so wrapping it in a bg SGR tints the full column.
@@ -64,7 +65,7 @@ export type RightTarget =
       /** Fires when the PtySession is disposed. Used by daytona to revoke the
        *  ephemeral SSH token its `buildAttach` mints. */
       cleanup?: () => Promise<void>;
-      mode?: 'claude' | 'shell' | 'codex' | 'opencode';
+      mode?: AgentMode;
       /** Keep this session alive (pooled) across box switches instead of
        *  disposing it on switch-away. Set for providers where reconnecting is
        *  expensive and has no per-attach cleanup (vercel) — see the dashboard's
@@ -110,7 +111,7 @@ export interface CompositorDeps {
    *  agent's session + return an attach target; `undefined` = create only.
    *  `onProgress` streams createBox log lines. */
   createNewBox: (
-    agent: 'claude' | 'codex' | 'opencode' | undefined,
+    agent: AgentId | undefined,
     onProgress: (line: string) => void,
   ) => Promise<{ boxId: string; attach?: RightTarget }>;
   /** Resume a non-running box (unpause if paused, start if stopped). */
@@ -231,7 +232,7 @@ export class Compositor {
    * 1s cadence: a 401 would become a request per second against the control box.
    */
   private readonly promptStreamFailures = new Map<string, number>();
-  private activeMode: 'claude' | 'shell' | 'codex' | 'opencode' = 'claude';
+  private activeMode: AgentMode = 'claude';
   private flashMsg: string | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | null = null;
   /** True while a start-Claude / open-shell action is in flight (suppresses
@@ -761,7 +762,7 @@ export class Compositor {
     }
   }
 
-  private async chooseAction(which: 'claude' | 'codex' | 'opencode' | 'shell'): Promise<void> {
+  private async chooseAction(which: AgentMode): Promise<void> {
     if (this.busy) return;
     const id = this.selectedId;
     const name = this.selectedBox()?.name ?? id;
@@ -1052,7 +1053,7 @@ export class Compositor {
     }
   }
 
-  private async chooseCreate(agent: 'claude' | 'codex' | 'opencode' | undefined): Promise<void> {
+  private async chooseCreate(agent: AgentId | undefined): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.menu = null;

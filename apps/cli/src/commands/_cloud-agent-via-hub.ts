@@ -29,6 +29,7 @@ import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { pushCreateSeed } from '../control-plane/create-target.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '../lib/progress.js';
+import type { AgentId } from '@agentbox/core';
 
 /**
  * Run a hub create under ONE self-updating status line.
@@ -82,7 +83,7 @@ export interface CloudAgentViaHubArgs {
   /** Absolute project root — its `origin` is what the hub worker clones. */
   projectRoot: string;
   /** Agent this box is for; rides the registration so an adopt relaunches it. */
-  agent: 'claude' | 'codex' | 'opencode';
+  agent: AgentId;
   /** Friendly box name (`--name`), or undefined to let the worker pick one. */
   name?: string;
   /** `--from-branch` base ref for the box's per-box branch. */

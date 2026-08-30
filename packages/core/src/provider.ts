@@ -13,6 +13,7 @@ import type { ReplaceRule } from './replace.js';
 import type { BoxResourceStats } from './types.js';
 import type { SyncTransport } from './sync/transport.js';
 import type { ProviderSync } from './sync/provider-sync.js';
+import type { AgentId } from './sync/agent-kind.js';
 
 /** Coarse lifecycle state, identical across providers. */
 export type BoxRuntimeState = 'running' | 'paused' | 'stopped' | 'missing';
@@ -90,7 +91,7 @@ export interface CreateBoxRequest {
    * the control plane so an adopting PC knows which agent to relaunch. Plain
    * `agentbox create` leaves it unset.
    */
-  agent?: 'claude' | 'codex' | 'opencode';
+  agent?: AgentId;
   /**
    * Which agents this box is FOR. When set, it is authoritative: only these
    * agents get a credential mount, a config seed, or a home dir — so an

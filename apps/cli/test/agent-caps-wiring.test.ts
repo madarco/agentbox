@@ -27,22 +27,20 @@ describe('caps gate behaviour, not the agent name', () => {
   it('refuses --session for every agent that declares resume: false', () => {
     for (const spec of notResumable) {
       expect(() =>
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', {
+        resolveSessionArgs(spec.id, {
           session: 'abc',
           workspace: '/tmp',
         }),
       ).toThrow(/resume is not supported/i);
       // …and starts fresh when no session was asked for.
-      expect(
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', { workspace: '/tmp' }),
-      ).toEqual([]);
+      expect(resolveSessionArgs(spec.id, { workspace: '/tmp' })).toEqual([]);
     }
   });
 
   it('passes --resume through for every agent that declares resume: true', () => {
     for (const spec of resumable) {
       expect(
-        resolveSessionArgs(spec.id as 'claude' | 'codex' | 'opencode', {
+        resolveSessionArgs(spec.id, {
           session: 'abc',
           workspace: '/tmp',
         }),
@@ -54,7 +52,7 @@ describe('caps gate behaviour, not the agent name', () => {
     for (const spec of AGENT_SYNC_SPECS.filter((s) => s.caps.teleport === 'stub')) {
       await expect(
         prepareTeleport({
-          agent: spec.id as 'claude' | 'codex' | 'opencode',
+          agent: spec.id,
           hostCwd: '/tmp',
           mode: { kind: 'continue' },
         }),

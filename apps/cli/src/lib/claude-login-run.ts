@@ -19,7 +19,7 @@ import {
   warmUpClaudeCredentials,
 } from '@agentbox/sandbox-docker';
 import { runAgentLogin, type AgentLoginPhase } from './agent-login-run.js';
-import { CLAUDE_LOGIN_SPEC } from './agent-login-specs.js';
+import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
 import type { LoginPhase } from './claude-login-session.js';
 
 export interface LoginPhaseUpdate {

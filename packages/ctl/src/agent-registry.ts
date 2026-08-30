@@ -79,7 +79,7 @@ export function parseAgentDescriptors(stdout: string): WatchedCredential[] | nul
       // validatable — anything else is dropped rather than posted unvalidated.
       if (sync !== 'fanout') continue;
       if (w.shape !== 'claude-oauth' && w.shape !== 'nonempty-json') continue;
-      out.push({ agent: id as WatchedCredential['agent'], path: w.path, shape: w.shape });
+      out.push({ agent: id, path: w.path, shape: w.shape });
     }
   }
   // An empty list is a malformed answer, not a valid "watch nothing" — refuse it

@@ -14,8 +14,13 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BOX_WORKSPACE } from './cwd-encoding.js';
-import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from './types.js';
+import { BOX_WORKSPACE } from '../../session-teleport/cwd-encoding.js';
+import {
+  TeleportError,
+  type ResolvedTeleport,
+  type ResumeMode,
+  type TeleportLogger,
+} from '../../session-teleport/types.js';
 
 interface CodexResolveOptions {
   hostCwd: string;
@@ -33,9 +38,7 @@ interface CodexSessionFile {
   mtimeMs: number;
 }
 
-export async function resolveCodexTeleport(
-  opts: CodexResolveOptions,
-): Promise<ResolvedTeleport> {
+export async function resolveCodexTeleport(opts: CodexResolveOptions): Promise<ResolvedTeleport> {
   const hostHome = opts.hostHome ?? homedir();
   const sessionsRoot = join(hostHome, '.codex', 'sessions');
 
@@ -61,9 +64,7 @@ export async function resolveCodexTeleport(
     const mode = opts.mode;
     const matches = all.filter((s) => s.uuid === mode.id || s.uuid.startsWith(mode.id));
     if (matches.length === 0) {
-      throw new TeleportError(
-        `Codex session "${mode.id}" not found under ${sessionsRoot}.`,
-      );
+      throw new TeleportError(`Codex session "${mode.id}" not found under ${sessionsRoot}.`);
     }
     if (matches.length > 1) {
       throw new TeleportError(
@@ -233,11 +234,7 @@ function deepRewriteHostPaths(value: unknown, hostCwd: string): unknown {
   return value;
 }
 
-async function rewriteCodexSession(
-  src: string,
-  dst: string,
-  hostCwd: string,
-): Promise<void> {
+async function rewriteCodexSession(src: string, dst: string, hostCwd: string): Promise<void> {
   const raw = await readFile(src, 'utf8');
   const lines = raw.split('\n');
   const out: string[] = [];

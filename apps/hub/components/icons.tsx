@@ -1,4 +1,5 @@
 import type { ReactElement, SVGProps } from 'react';
+import type { AgentMode } from '@agentbox/core';
 
 // lucide-style stroke icons (24 box) ported from the shadcn prototype
 // (../agentbox-design/control-shadcn/icons.jsx). Three brand glyphs
@@ -45,7 +46,10 @@ export const Icons = {
     'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
     'M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.5 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7.5a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z',
   ]),
-  book: mk(['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z']),
+  book: mk([
+    'M4 19.5A2.5 2.5 0 0 1 6.5 17H20',
+    'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z',
+  ]),
   branch: mk([
     'M6 3v12',
     'M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
@@ -63,7 +67,11 @@ export const Icons = {
     'M21 21v-5h-5',
   ]),
   stop: mk(['M7 7h10v10H7z']),
-  trash: mk(['M3 6h18', 'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6']),
+  trash: mk([
+    'M3 6h18',
+    'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+    'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
+  ]),
   chevR: mk(['m9 6 6 6-6 6']),
   arrowL: mk(['M19 12H5', 'm12 19-7-7 7-7']),
   arrowUp: mk(['M12 19V5', 'm5 12 7-7 7 7']),
@@ -81,7 +89,10 @@ export const Icons = {
     'M5 14h14a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2Z',
     'M7 7h.01M7 17h.01',
   ]),
-  repo: mk(['M4 19.5A2.5 2.5 0 0 1 6.5 17H20', 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z']),
+  repo: mk([
+    'M4 19.5A2.5 2.5 0 0 1 6.5 17H20',
+    'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z',
+  ]),
   search: mk(['M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z', 'm20 20-3.5-3.5']),
   menu: mk(['M4 7h16M4 12h16M4 17h16']),
   terminal: mk(['m6 9 3 3-3 3', 'M13 15h5', 'M4 4h16v16H4z']),
@@ -121,9 +132,7 @@ export function LangDot({ lang }: { lang: string }) {
   );
 }
 
-export type AgentId = 'claude' | 'codex' | 'opencode' | 'shell';
-
-export const AGENTS: { id: AgentId; label: string; icon: Icon }[] = [
+export const AGENTS: { id: AgentMode; label: string; icon: Icon }[] = [
   { id: 'claude', label: 'Claude Code', icon: Icons.claude },
   { id: 'codex', label: 'Codex', icon: Icons.codex },
   { id: 'opencode', label: 'OpenCode', icon: Icons.opencode },

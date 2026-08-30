@@ -3,8 +3,9 @@
  * per-agent files (`claude.ts` / `codex.ts` / `opencode.ts`) don't form an
  * import cycle through `index.ts`.
  */
+import type { AgentId } from '@agentbox/core';
 
-export type TeleportAgent = 'claude' | 'codex' | 'opencode';
+export type TeleportAgent = AgentId;
 
 export type TeleportLogger = (line: string) => void;
 
@@ -14,9 +15,7 @@ export type TeleportLogger = (line: string) => void;
  *   - `{ kind: 'continue' }` for `-c` / `--continue` (newest session for cwd)
  *   - `{ kind: 'resume', id }` for `--resume <id>` (specific session)
  */
-export type ResumeMode =
-  | { kind: 'continue' }
-  | { kind: 'resume'; id: string };
+export type ResumeMode = { kind: 'continue' } | { kind: 'resume'; id: string };
 
 export interface ResolvedTeleport {
   agent: TeleportAgent;

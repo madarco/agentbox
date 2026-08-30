@@ -8,8 +8,9 @@ import {
   startDetachedSession,
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
-import type { BoxRecord } from '@agentbox/core';
+import type { AgentId, BoxRecord } from '@agentbox/core';
 import { claudeTuiEnv } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
@@ -74,7 +75,7 @@ export interface CloudAgentAttachArgs {
   /** Tmux session name (e.g. `claude`). */
   sessionName: string;
   /** Mode label for the wrapper's footer. */
-  mode: 'claude' | 'codex' | 'opencode';
+  mode: AgentId;
   /**
    * Extra args the user typed after `--`, plus any seed prompt slotted ahead of
    * them. Passed through to the in-box agent verbatim via a base64-encoded
@@ -307,9 +308,9 @@ export async function cloudAgentStartDetached(args: {
     binary: args.binary,
     sessionName: args.sessionName,
     extraArgs: args.extraArgs,
-    resolveResumeArgs:
-      args.binary === 'claude' || args.binary === 'codex'
-        ? (box) => agentResumeArgs(provider, box, args.binary as 'claude' | 'codex')
-        : undefined,
+    // Only agents that declare `caps.resume` have a resume pointer to read.
+    resolveResumeArgs: resolveAgentSpec(args.binary).caps.resume
+      ? (box) => agentResumeArgs(provider, box, args.binary)
+      : undefined,
   });
 }

@@ -25,7 +25,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
-import type { Provider } from '@agentbox/core';
+import type { AgentId, Provider } from '@agentbox/core';
 import { UserFacingError } from '@agentbox/core';
 import {
   agentSetArg,
@@ -375,7 +375,7 @@ async function stageAgentConfig(
   // an agent's auth.
   const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
   const stagings: Array<{
-    kind: 'claude' | 'codex' | 'opencode' | 'agents';
+    kind: AgentId | 'agents';
     tar: StageResult;
     dest: string;
   }> = [];

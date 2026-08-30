@@ -1,45 +1,29 @@
-import type { AgentKind } from './types.js';
+import type { QueueAgentKind } from './sync/agent-kind.js';
 
 export interface AgentLauncher {
-  readonly kind: AgentKind;
+  readonly kind: QueueAgentKind;
   buildArgs(initialMessage: string, userArgs: string[]): string[];
 }
 
-const claudeCodeLauncher: AgentLauncher = {
-  kind: 'claude-code',
-  // claude treats its first positional argument as the seed user turn in
-  // interactive mode (`claude "<message>"`), so we slot the initial message
-  // ahead of any user-passed flags.
-  buildArgs(initialMessage, userArgs) {
-    if (!initialMessage) return [...userArgs];
-    return [initialMessage, ...userArgs];
-  },
-};
+/**
+ * Every agent we ship takes a leading positional as the seed user turn
+ * (`claude "<msg>"`, `codex "<msg>"`, `opencode "<msg>"`), dropping the user into
+ * the TUI with that turn pre-submitted — so one launcher serves all of them.
+ *
+ * The indirection stays because the shape is not guaranteed: an agent that wants
+ * its seed prompt on stdin, or behind a flag, gets its own launcher here without
+ * every call site learning about it.
+ */
+function positionalSeedLauncher(kind: QueueAgentKind): AgentLauncher {
+  return {
+    kind,
+    buildArgs(initialMessage, userArgs) {
+      if (!initialMessage) return [...userArgs];
+      return [initialMessage, ...userArgs];
+    },
+  };
+}
 
-// codex accepts a leading positional as the seed prompt — `codex "<message>"`
-// drops the user into the TUI with that turn pre-submitted. Same shape as
-// claude, so the launcher is structurally identical.
-const codexLauncher: AgentLauncher = {
-  kind: 'codex',
-  buildArgs(initialMessage, userArgs) {
-    if (!initialMessage) return [...userArgs];
-    return [initialMessage, ...userArgs];
-  },
-};
-
-// opencode also accepts a leading positional as the seed prompt — `opencode
-// "<message>"` enters the TUI with that turn pre-submitted. Mirrors claude/codex.
-const opencodeLauncher: AgentLauncher = {
-  kind: 'opencode',
-  buildArgs(initialMessage, userArgs) {
-    if (!initialMessage) return [...userArgs];
-    return [initialMessage, ...userArgs];
-  },
-};
-
-export function resolveAgentLauncher(kind: AgentKind): AgentLauncher {
-  if (kind === 'claude-code') return claudeCodeLauncher;
-  if (kind === 'codex') return codexLauncher;
-  if (kind === 'opencode') return opencodeLauncher;
-  throw new Error(`unknown agent kind: ${String(kind)}`);
+export function resolveAgentLauncher(kind: QueueAgentKind): AgentLauncher {
+  return positionalSeedLauncher(kind);
 }

@@ -12,12 +12,12 @@
  */
 import { homedir } from 'node:os';
 import { note } from '@clack/prompts';
-import type { BoxRecord } from '@agentbox/core';
+import type { AgentMode, BoxRecord } from '@agentbox/core';
 import { currentHostBranch } from './from-branch.js';
 
 export interface LaunchRecapArgs {
   record: BoxRecord;
-  mode: 'claude' | 'codex' | 'opencode' | 'shell';
+  mode: AgentMode;
   /** Reattach ref shown in the hint: the per-project index `n` or the box name. */
   reattach: string;
   /** Host repo path — used to resolve the base branch label when none was given. */
@@ -56,10 +56,7 @@ export async function printLaunchRecap(args: LaunchRecapArgs): Promise<void> {
   const { record } = args;
   const rows: Array<[string, string]> = [];
 
-  rows.push([
-    'box',
-    args.checkpointRef ? `${record.name} (${args.checkpointRef})` : record.name,
-  ]);
+  rows.push(['box', args.checkpointRef ? `${record.name} (${args.checkpointRef})` : record.name]);
 
   if (record.projectRoot) {
     rows.push(['project', homeShorten(record.projectRoot)]);

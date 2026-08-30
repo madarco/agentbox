@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isSyncAgentKind,
+  BUILTIN_AGENT_KINDS,
+  isAgentKind,
   normalizeLastAgent,
-  SYNC_AGENT_KINDS,
   toQueueKind,
   toSyncKind,
 } from '../src/sync/agent-kind.js';
@@ -26,7 +26,7 @@ describe('agent-kind adapter', () => {
   });
 
   it('round-trips through the boundary', () => {
-    for (const k of SYNC_AGENT_KINDS) {
+    for (const k of BUILTIN_AGENT_KINDS) {
       expect(toSyncKind(toQueueKind(k))).toBe(k);
     }
   });
@@ -41,9 +41,10 @@ describe('agent-kind adapter', () => {
     expect(normalizeLastAgent('gemini')).toBeUndefined(); // unknown, no throw
   });
 
-  it('isSyncAgentKind guards the canonical set', () => {
-    expect(isSyncAgentKind('claude')).toBe(true);
-    expect(isSyncAgentKind('claude-code')).toBe(false); // wire spelling is not canonical
-    expect(isSyncAgentKind('nope')).toBe(false);
+  it('isAgentKind guards the canonical set', () => {
+    expect(isAgentKind('claude')).toBe(true);
+    expect(isAgentKind('claude-code')).toBe(false); // wire spelling is not canonical
+    expect(isAgentKind('nope')).toBe(false);
+    expect(isAgentKind(undefined)).toBe(false);
   });
 });

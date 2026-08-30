@@ -14,8 +14,13 @@
  * cycle).
  */
 
-/** Canonical agent id. Mirrors `SyncAgentKind` from `@agentbox/core`. */
-export type AgentId = 'claude' | 'codex' | 'opencode';
+import type { AgentId } from '@agentbox/core';
+
+/**
+ * Canonical agent id. Re-exported from `@agentbox/core` rather than redeclared:
+ * one open string type, one home.
+ */
+export type { AgentId };
 
 /**
  * One host static-config source dir and where it lands inside the box. Most

@@ -1,13 +1,7 @@
 /** Public surface of the core sync contracts. Implementation lives in
  * `@agentbox/sandbox-core`'s `sync/` folder and the two provider packages. */
 
-export type {
-  SyncDirection,
-  SyncTopology,
-  SyncParty,
-  SyncConcern,
-  SyncState,
-} from './types.js';
+export type { SyncDirection, SyncTopology, SyncParty, SyncConcern, SyncState } from './types.js';
 export type {
   SyncTransport,
   TransportCaps,
@@ -16,10 +10,10 @@ export type {
   SyncExecOptions,
   SyncExecResult,
 } from './transport.js';
-export type { SyncAgentKind, QueueAgentKind } from './agent-kind.js';
+export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export {
-  SYNC_AGENT_KINDS,
-  isSyncAgentKind,
+  BUILTIN_AGENT_KINDS,
+  isAgentKind,
   toSyncKind,
   toQueueKind,
   normalizeLastAgent,
@@ -38,12 +32,7 @@ export { resolveSyncTopology } from './topology.js';
 export type { GitRpcParams } from './git-refs.js';
 export type { DownloadKind } from './files.js';
 export { parseDownloadKind, resolveHostPath } from './files.js';
-export {
-  realpathSafe,
-  isInside,
-  isContainedInWorkspace,
-  looksLikeSecret,
-} from './containment.js';
+export { realpathSafe, isInside, isContainedInWorkspace, looksLikeSecret } from './containment.js';
 export {
   SCRATCH_BRANCH_PREFIX,
   isScratchBranch,

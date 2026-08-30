@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type {
+  AgentId,
   BoxRecord,
   DockerBoxFields,
   FindBoxResult,
@@ -156,7 +157,7 @@ export async function recordBox(box: BoxRecord, path: string = STATE_FILE): Prom
  */
 export async function recordLastAgent(
   boxId: string,
-  kind: 'claude' | 'codex' | 'opencode',
+  kind: AgentId,
   path: string = STATE_FILE,
 ): Promise<void> {
   await mutateState(

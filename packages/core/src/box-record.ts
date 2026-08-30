@@ -8,6 +8,7 @@
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxRuntimeState } from './provider.js';
 import type { SyncTopology } from './sync/types.js';
+import type { AgentId } from './sync/agent-kind.js';
 
 /** Sandbox backend a box runs on. Open-ended so future providers need no core change. */
 export type ProviderName = 'docker' | 'daytona' | 'hetzner' | (string & {});
@@ -447,7 +448,7 @@ export interface BoxRecord {
    * relaunch/attach, and the only such signal for an adopted box with no live
    * session.
    */
-  lastAgent?: 'claude' | 'codex' | 'opencode';
+  lastAgent?: AgentId;
   /**
    * The agents this box was created FOR, as passed to `create`.
    *

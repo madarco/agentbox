@@ -10,6 +10,7 @@
  * this; see `test/no-internal-wire-client.test.ts`). Every client-facing box and
  * fleet operation (list, lifecycle, git, approvals, custody) goes through here.
  */
+import type { AgentId, AgentMode } from '@agentbox/core';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -37,8 +38,8 @@ export interface HubApiBox {
   projectRoot?: string;
   projectIndex?: number;
   createdAt?: number;
-  /** Normalized primary agent for display ('claude' | 'codex' | 'opencode' | 'shell'). */
-  agent?: string;
+  /** Normalized primary agent for display — mirrors the hub's `Box.agent`. */
+  agent?: AgentMode;
   // ── Agent activity / session titles (the AGENT column + cmux dock). ──
   claudeActivity?: string;
   codexActivity?: string;
@@ -61,7 +62,7 @@ export interface HubApiBox {
   image?: string;
   webPort?: number;
   previewUrls?: Record<number, string>;
-  lastAgent?: 'claude' | 'codex' | 'opencode';
+  lastAgent?: AgentId;
   topology?: string;
 }
 
@@ -90,7 +91,7 @@ export interface HubApiCreateBoxInput {
   /** Exactly one of projectId / repoUrl. */
   projectId?: string;
   repoUrl?: string;
-  agent: 'claude' | 'codex' | 'opencode' | 'none';
+  agent: AgentId | 'none';
   provider?: string;
   name?: string;
   prompt?: string;

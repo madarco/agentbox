@@ -1,4 +1,5 @@
 import type { HubState, ProviderOption } from './types';
+import type { AgentId } from '@agentbox/core';
 
 // Result of a lifecycle server action.
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -156,7 +157,7 @@ export interface CreateBoxInput {
   projectId?: string;
   repoUrl?: string;
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
-  agent: 'claude' | 'codex' | 'opencode' | 'none';
+  agent: AgentId | 'none';
   // Sandbox provider to create on. Defaults to 'docker'. A bare provider name
   // (ProviderKind) OR a host-qualified `docker:<alias>` / `remote-docker:<alias>`
   // spec targeting a registered remote-docker host. The backend rejects a provider

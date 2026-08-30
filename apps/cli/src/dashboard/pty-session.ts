@@ -1,6 +1,7 @@
 import type { Terminal as XtermTerminal } from '@xterm/headless';
 import type { ScreenSnapshot, CellLike, ColorSpec } from './renderer.js';
 import type { IPtyLike, PtySpawn, TerminalCtor } from '../pty/pty-backend.js';
+import type { AgentMode } from '@agentbox/core';
 
 // Re-export types so dashboard-internal imports don't have to know about the
 // shared module split. New code should import directly from ../pty/pty-backend.
@@ -99,7 +100,7 @@ export class PtySession {
   readonly keepAlive: boolean;
   /** Agent/shell mode of this attach. The compositor restores `activeMode`
    *  (drives the footer) from this when re-showing a pooled session. */
-  readonly mode: 'claude' | 'shell' | 'codex' | 'opencode';
+  readonly mode: AgentMode;
   /**
    * Whether this session is the one currently shown in the right pane. A
    * kept-alive hidden session (`active === false`) still consumes PTY output
@@ -125,7 +126,7 @@ export class PtySession {
     TerminalClass: TerminalCtor,
     boxId: string,
     keepAlive: boolean,
-    mode: 'claude' | 'shell' | 'codex' | 'opencode',
+    mode: AgentMode,
     command: string,
     args: string[],
     cols: number,

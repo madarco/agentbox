@@ -1,4 +1,4 @@
-import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
+import { resolveAgentLauncher, type QueueAgentKind } from '@agentbox/core';
 
 /**
  * Build the argv the in-box agent CLI is launched with, slotting `prompt` as
@@ -8,7 +8,7 @@ import { resolveAgentLauncher, type AgentKind } from '@agentbox/core';
  * shape. Empty prompt is a no-op — userArgs are returned as-is.
  */
 export function buildPromptArgs(
-  agentKind: AgentKind,
+  agentKind: QueueAgentKind,
   prompt: string,
   userArgs: string[],
 ): string[] {

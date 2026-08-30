@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { loadEffectiveConfig } from '@agentbox/config';
 import type { AgentActivityState } from '@agentbox/ctl';
 import { cmuxBinary } from './host.js';
+import type { AgentMode } from '@agentbox/core';
 
 /**
  * Surface a box's live agent activity on its cmux workspace so you can see, from
@@ -18,7 +19,7 @@ import { cmuxBinary } from './host.js';
  * status.json, captures the workspace's original colour/description on attach and
  * restores them on detach.
  */
-export type CmuxAgentMode = 'claude' | 'codex' | 'opencode' | 'shell';
+export type CmuxAgentMode = AgentMode;
 
 /** The workspace's prior colour/description, captured so we can restore on detach. */
 export interface CmuxWorkspaceState {

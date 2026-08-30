@@ -10,6 +10,7 @@ import {
   volumeHasOpencodeAuth,
 } from '@agentbox/sandbox-docker';
 import type { QueueAgentKind } from '@agentbox/relay';
+import { normalizeLastAgent } from '@agentbox/core';
 import { resolveClaudeAuth } from '../../auth.js';
 import { resolveClaudeCredHealth } from '../claude-cred-health.js';
 
@@ -97,7 +98,11 @@ export async function opencodeAuthAvailable(
   return volumeHasOpencodeAuth(SHARED_OPENCODE_VOLUME, image);
 }
 
-const MESSAGES: Record<QueueAgentKind, string> = {
+/**
+ * Wording for the agents we have something specific to say about. Not total —
+ * see {@link missingCredsMessage}.
+ */
+const MESSAGES: Record<string, string> = {
   'claude-code':
     'No Claude credentials on host. Run `agentbox claude login` first (or `agentbox claude` interactively) to seed them, then retry.',
   codex:
@@ -105,6 +110,19 @@ const MESSAGES: Record<QueueAgentKind, string> = {
   opencode:
     'No OpenCode credentials on host. Run `agentbox opencode login` first to seed them, then retry.',
 };
+
+/**
+ * The specific message where we have one, a generic one otherwise. With
+ * `QueueAgentKind` open, indexing {@link MESSAGES} is no longer total, and an
+ * agent with no entry deserves usable wording rather than `undefined`.
+ */
+function missingCredsMessage(agent: QueueAgentKind): string {
+  const id = normalizeLastAgent(agent) ?? agent;
+  return (
+    MESSAGES[agent] ??
+    `No ${id} credentials on host. Run \`agentbox ${id} login\` first to seed them, then retry.`
+  );
+}
 
 const CLAUDE_EXPIRED_MESSAGE =
   'Your saved Claude login can no longer be renewed. Sign in again with `agentbox claude login`, then retry.';
@@ -153,7 +171,8 @@ export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): P
   if (input.agent === 'claude-code') {
     const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
     const status = await claudeCredStatus(env, isCloud, input.image);
-    if (status === 'missing') throw new MissingAgentCredsError(input.agent, MESSAGES[input.agent]);
+    if (status === 'missing')
+      throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
     if (status === 'expired') throw new ExpiredAgentCredsError(input.agent, CLAUDE_EXPIRED_MESSAGE);
     return;
   }
@@ -161,5 +180,5 @@ export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): P
     input.agent === 'codex'
       ? await codexAuthAvailable(input.image, env)
       : await opencodeAuthAvailable(input.image, env);
-  if (!ok) throw new MissingAgentCredsError(input.agent, MESSAGES[input.agent]);
+  if (!ok) throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
 }

@@ -1,20 +1,20 @@
+import type { QueueAgentKind } from './sync/agent-kind.js';
+
 export type BoxId = string;
 
 export type BoxState = 'running' | 'paused' | 'stopped' | 'destroyed' | 'missing';
 
-export type AgentKind = 'claude-code' | 'codex' | (string & {});
-
 export interface BoxDescriptor {
   id: BoxId;
   state: BoxState;
-  agent: AgentKind;
+  agent: QueueAgentKind;
   workspacePath: string;
   createdAt: Date;
 }
 
 export interface StartBoxOptions {
   workspacePath: string;
-  agent: AgentKind;
+  agent: QueueAgentKind;
 }
 
 export interface BoxResourceLimits {

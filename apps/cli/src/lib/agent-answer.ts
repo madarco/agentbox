@@ -16,6 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import type { BoxStatusClaude } from '@agentbox/ctl';
+import type { AgentId } from '@agentbox/core';
 
 export const TUI_ID_PREFIX = 'tui';
 
@@ -23,7 +24,7 @@ export const TUI_ID_PREFIX = 'tui';
 export type InTuiKind = 'plan' | 'question' | 'permission';
 
 /** Which coding agent owns the session (drives keystroke conventions). */
-export type AgentKind = 'claude' | 'codex' | 'opencode';
+export type AgentKind = AgentId;
 
 export interface TuiId {
   boxId: string;
@@ -73,7 +74,10 @@ function digestForBlock(claude: BoxStatusClaude, kind: InTuiKind): string {
  * Computed identically by `approvals` (to hand the orchestrator an id) and by
  * `approve` (to verify the same prompt is still up).
  */
-export function mintTuiId(boxId: string, claude: BoxStatusClaude): { id: string; kind: InTuiKind } | null {
+export function mintTuiId(
+  boxId: string,
+  claude: BoxStatusClaude,
+): { id: string; kind: InTuiKind } | null {
   const kind = inTuiKind(claude);
   if (kind === null) return null;
   return { id: `${TUI_ID_PREFIX}:${boxId}:${kind}:${digestForBlock(claude, kind)}`, kind };
@@ -118,7 +122,11 @@ const OPTION_ENTER_DELAY_MS = 150;
  * option first). `--option N` types the 1-based digit then Enter; `--deny`
  * sends Escape (keep planning / cancel the question / decline the permission).
  */
-export function answerKeystrokes(_agent: AgentKind, _kind: InTuiKind, decision: AnswerDecision): AnswerStep[] {
+export function answerKeystrokes(
+  _agent: AgentKind,
+  _kind: InTuiKind,
+  decision: AnswerDecision,
+): AnswerStep[] {
   if (decision.deny === true) {
     return [{ type: 'key', value: 'Escape' }];
   }
