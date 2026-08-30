@@ -11,6 +11,22 @@ export type {
   SyncExecResult,
 } from './transport.js';
 export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
+export type {
+  AgentActivityState,
+  AgentPlanPayload,
+  AgentQuestionPayload,
+  AgentStatusEntry,
+  AgentStatusMap,
+} from './agent-status.js';
+export {
+  AGENT_ACTIVITY_STATES,
+  LEGACY_AGENT_STATUS_KEYS,
+  isAgentActivityState,
+  parseAgentStatusEntry,
+  normalizeAgentStatus,
+  legacyAgentStatusFields,
+  pickPrimaryAgent,
+} from './agent-status.js';
 export {
   BUILTIN_AGENT_KINDS,
   isAgentKind,
