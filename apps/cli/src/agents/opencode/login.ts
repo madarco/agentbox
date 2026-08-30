@@ -3,7 +3,13 @@
  * a detector is and why the flow is driven from the host.
  */
 
-import { stripAnsi, trimUrl, URL_BODY, INVALID_CODE, type AgentLoginSpec } from '../../lib/agent-login-specs.js';
+import {
+  stripAnsi,
+  trimUrl,
+  URL_BODY,
+  INVALID_CODE,
+  type AgentLoginSpec,
+} from '../../lib/agent-login-specs.js';
 
 // `opencode auth login` is a per-provider prompt TREE (clack), not one prompt:
 // most providers ask for an API key, `opencode` prefixes a "create a key at
@@ -14,7 +20,10 @@ const OPENCODE_KEY_HINT = new RegExp(`Create an api key at\\s+(https?://${URL_BO
 // The clack prompt symbol keeps this off prose that merely says "select".
 const OPENCODE_SELECT = /[◆◇]\s+Select\s+([^\n]+)/i;
 const OPENCODE_UNKNOWN_PROVIDER = /Unknown provider\s+"([^"]*)"/i;
-const OPENCODE_OAUTH_URL = new RegExp(`https?://${URL_BODY}*(?:oauth|device|authorize)${URL_BODY}*`, 'i');
+const OPENCODE_OAUTH_URL = new RegExp(
+  `https?://${URL_BODY}*(?:oauth|device|authorize)${URL_BODY}*`,
+  'i',
+);
 
 export const OPENCODE_LOGIN_SPEC: AgentLoginSpec = {
   agent: 'opencode',

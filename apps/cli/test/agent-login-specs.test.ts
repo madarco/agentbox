@@ -22,7 +22,9 @@ const CODEX_TRANSCRIPT = [
 ].join('\n');
 
 // Verbatim from `opencode auth login -p <provider>` under a pty.
-const OPENCODE_API_KEY = ['┌  Add credential', '│', '◆  Enter your API key', '│  _', '└'].join('\n');
+const OPENCODE_API_KEY = ['┌  Add credential', '│', '◆  Enter your API key', '│  _', '└'].join(
+  '\n',
+);
 const OPENCODE_ZEN = [
   '┌  Add credential',
   '│',

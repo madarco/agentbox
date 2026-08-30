@@ -171,7 +171,8 @@ export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): P
   if (input.agent === 'claude-code') {
     const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
     const status = await claudeCredStatus(env, isCloud, input.image);
-    if (status === 'missing') throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
+    if (status === 'missing')
+      throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
     if (status === 'expired') throw new ExpiredAgentCredsError(input.agent, CLAUDE_EXPIRED_MESSAGE);
     return;
   }

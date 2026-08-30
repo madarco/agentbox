@@ -14,8 +14,17 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BOX_WORKSPACE, BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from '../../session-teleport/cwd-encoding.js';
-import { TeleportError, type ResolvedTeleport, type ResumeMode, type TeleportLogger } from '../../session-teleport/types.js';
+import {
+  BOX_WORKSPACE,
+  BOX_WORKSPACE_ENCODED,
+  encodeClaudeProjectsDir,
+} from '../../session-teleport/cwd-encoding.js';
+import {
+  TeleportError,
+  type ResolvedTeleport,
+  type ResumeMode,
+  type TeleportLogger,
+} from '../../session-teleport/types.js';
 
 /** In-box `~/.claude/projects/-workspace/` directory. */
 export const BOX_CLAUDE_PROJECTS_DIR = `/home/vscode/.claude/projects/${BOX_WORKSPACE_ENCODED}`;
@@ -28,16 +37,9 @@ interface ClaudeResolveOptions {
   log?: TeleportLogger;
 }
 
-export async function resolveClaudeTeleport(
-  opts: ClaudeResolveOptions,
-): Promise<ResolvedTeleport> {
+export async function resolveClaudeTeleport(opts: ClaudeResolveOptions): Promise<ResolvedTeleport> {
   const hostHome = opts.hostHome ?? homedir();
-  const projectDir = join(
-    hostHome,
-    '.claude',
-    'projects',
-    encodeClaudeProjectsDir(opts.hostCwd),
-  );
+  const projectDir = join(hostHome, '.claude', 'projects', encodeClaudeProjectsDir(opts.hostCwd));
 
   if (!existsSync(projectDir)) {
     throw new TeleportError(
@@ -46,7 +48,11 @@ export async function resolveClaudeTeleport(
   }
 
   const sessionPath = await pickSessionFile(projectDir, opts.mode);
-  const sessionId = sessionPath.replace(/\.jsonl$/u, '').split('/').pop() ?? '';
+  const sessionId =
+    sessionPath
+      .replace(/\.jsonl$/u, '')
+      .split('/')
+      .pop() ?? '';
 
   // Stage the rewritten copy in a host tmp dir. The caller will upload from
   // here via `provider.uploadPath`.
@@ -93,11 +99,7 @@ async function pickSessionFile(projectDir: string, mode: ResumeMode): Promise<st
   return stats[0]!.full;
 }
 
-async function rewriteSessionFile(
-  src: string,
-  dst: string,
-  hostCwd: string,
-): Promise<void> {
+async function rewriteSessionFile(src: string, dst: string, hostCwd: string): Promise<void> {
   const raw = await readFile(src, 'utf8');
   // Preserve original line endings — split on \n keeps a trailing empty entry
   // when the file ends with \n; we restore that on join.

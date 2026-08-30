@@ -15,9 +15,7 @@ export type TeleportLogger = (line: string) => void;
  *   - `{ kind: 'continue' }` for `-c` / `--continue` (newest session for cwd)
  *   - `{ kind: 'resume', id }` for `--resume <id>` (specific session)
  */
-export type ResumeMode =
-  | { kind: 'continue' }
-  | { kind: 'resume'; id: string };
+export type ResumeMode = { kind: 'continue' } | { kind: 'resume'; id: string };
 
 export interface ResolvedTeleport {
   agent: TeleportAgent;

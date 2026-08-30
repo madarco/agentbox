@@ -44,7 +44,13 @@ import {
   SEED_MARKER,
   type StageResult,
 } from '@agentbox/sandbox-core';
-import type { AgentId, CloudBackend, CloudHandle, CloudVolumeMount, SyncTransport } from '@agentbox/core';
+import type {
+  AgentId,
+  CloudBackend,
+  CloudHandle,
+  CloudVolumeMount,
+  SyncTransport,
+} from '@agentbox/core';
 import { createCloudSyncTransport } from './sync-transport.js';
 
 /** Identifier for one of the three agents we sync into cloud sandboxes. */

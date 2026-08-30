@@ -118,7 +118,14 @@ function sendAgentState(
   if (!pane) return;
   herdrSend(
     'pane.report_agent',
-    { pane_id: pane, source: `agentbox:${mode}`, agent: mode, state, message, custom_status: boxName },
+    {
+      pane_id: pane,
+      source: `agentbox:${mode}`,
+      agent: mode,
+      state,
+      message,
+      custom_status: boxName,
+    },
     env,
   );
 }

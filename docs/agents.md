@@ -176,11 +176,17 @@ message instead of blocking on a password read nothing will answer.
    `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`.
    Keep it JSON-serializable — no closures — so the descriptor can later be
    shipped into a box whose `agentbox-ctl` was baked before the agent existed.
-2. **Open the identity unions**: `AgentId`, `SyncAgentKind`/`QueueAgentKind`
-   (`packages/core/src/sync/agent-kind.ts`).
+2. **Add the agent's folder** under `apps/cli/src/agents/<id>/` and its arm in
+   the `AGENT_MODULES` table (`apps/cli/src/agents/index.ts`) — the guided-login
+   detector, and a session-teleport resolver if the agent declares
+   `caps.teleport: 'full'`. Keep the `import()` specifier LITERAL; a computed one
+   is not bundled and `MODULE_NOT_FOUND`s in the published CLI only.
+   *No identity union to open* — `AgentId` is an open `string`, so step 1 is what
+   makes the agent real to every consumer that reads the registry.
 3. **Add the CLI command** — today a clone of `apps/cli/src/commands/opencode.ts`
    (the smallest of the three), registered in `index.ts`, `attach.ts`,
-   `agent-sessions.ts`, `list.ts` and `argv-prefix.ts`.
+   `agent-sessions.ts`, `list.ts`, `argv-prefix.ts` and `fork.ts`'s
+   `AGENT_COMMAND`.
 4. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
    `packages/config`.
 5. **ctl**, if the agent should report activity: a `BoxStatus` field, an
@@ -409,13 +415,50 @@ degrades gracefully and `SDK_API_VERSION` stays at 2.
 The published surface is pinned by `pack:test`, which installs a real packed
 tarball in isolation and fails naming any missing export.
 
-### 4. The per-agent command tail
+### 4. The per-agent command tail — **partly done**
 
-68 non-test files name a specific agent by identifier. A new agent's CLI command
-is a ~1,300-line clone of `opencode.ts` plus five registrations. The
-`agentCommand(spec)` factory and generic ctl status map in
+A new agent's CLI command is still a ~1,300-line clone of `opencode.ts` plus its
+registrations; the `agentCommand(spec)` factory and generic ctl status map in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md) are what collapse checklist
 steps 3–6 into data.
+
+What is done is the identity half. There used to be **eight** types spelling the
+same thing — `SyncAgentKind`, `AgentKind`, `AgentName`, `TeleportAgent`,
+`CloudAgentKind`, `ForkAgent`, `CmuxAgentMode`, `HerdrAgentMode` — plus ~35 more
+sites re-declaring `'claude' | 'codex' | 'opencode'` inline. All of them now read
+`AgentId` / `AgentMode` / `QueueAgentKind` from `@agentbox/core`.
+
+`AgentId` is an **open `string`**, not a union: an agent is a registry row, so
+which ids are valid is a runtime fact. `isAgentKind` (`@agentbox/core`) answers
+for the built-ins — a dependency-free leaf has no registry to ask — and
+`isRuntimeAgent` (`@agentbox/sandbox-core`) answers from the registry. That is
+the same split as `isProviderKind` vs `isRuntimeProvider`, for the same reason.
+
+The trade is real and is paid for by tests, because the compiler no longer lists
+the sites a new agent misses:
+
+- `no-inline-agent-union.test.ts` fails if any file re-declares the agent set as
+  a literal union. It is tuned to the *agent set*, not to any union containing
+  two agent names — `OpenInApp` in `commands/_open-in.ts` legitimately lists
+  `Claude.app` and `Codex.app` beside herdr, cmux and finder, and a fourth agent
+  does not belong there.
+- `agent-module-table.test.ts` asserts `AGENT_MODULES`'s keys equal `agentIds()`,
+  that each module carries its registry row **by reference**, and that a
+  `teleport` resolver is present exactly when `caps.teleport` is `'full'`.
+- `agent-command-coverage.test.ts` does the same for `fork`'s delegate map.
+
+Deleting any of those silently re-closes the type. Writing the sweep also
+surfaced four more places where a capability had been spelled out a second time
+as a literal — `agent-sessions`' `ResumableAgent`, `_cloud-attach`'s resume gate,
+`attach`'s agent-priority map and the custody store's valid-agent segments — all
+of which now read `caps.resume` or `agentIds()`.
+
+**Deliberately not done:** `AGENT_SYNC_SPECS` does not derive from the module
+table. The table is lazy and the specs are read synchronously in ~40 places
+across sandbox-core / cloud / docker / relay / hub; deriving would make all of
+them async to no benefit, since a spec is small pure data rather than a heavy
+SDK. The registry stays the synchronous source of truth and the module table is
+the behavior tier above it.
 
 ### 5. Spec fields that were declared but inert — **partly done**
 

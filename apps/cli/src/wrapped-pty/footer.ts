@@ -79,9 +79,7 @@ const FLASH_FG = '\x1b[38;5;150m\x1b[1m'; // soft green + bold
 
 /** Collapsed idle hint (plain `--no-tmux` shell) — the leader is hidden
  *  behind one chord. */
-const COLLAPSED_HINTS_PLAIN: ReadonlyArray<readonly [string, string]> = [
-  ['Control+a', 'Actions'],
-];
+const COLLAPSED_HINTS_PLAIN: ReadonlyArray<readonly [string, string]> = [['Control+a', 'Actions']];
 /** Collapsed idle hint (detachable session) — the detach chord stays pinned
  *  on the right even while the actions menu is closed. */
 const COLLAPSED_HINTS_DETACHABLE: ReadonlyArray<readonly [string, string]> = [
@@ -90,9 +88,7 @@ const COLLAPSED_HINTS_DETACHABLE: ReadonlyArray<readonly [string, string]> = [
 ];
 /** Narrow-bar fallback for a detachable session: drop the `Actions` hint
  *  first, but never the detach chord. */
-const DETACH_PIN_HINTS: ReadonlyArray<readonly [string, string]> = [
-  ['Control+a d', 'detach'],
-];
+const DETACH_PIN_HINTS: ReadonlyArray<readonly [string, string]> = [['Control+a d', 'detach']];
 /** Expanded which-key menu shown while the Ctrl+a leader is open. A
  *  detachable (tmux-backed) session also gets `d: detach`; a plain shell
  *  has nothing to detach from. */
@@ -284,12 +280,7 @@ function renderPromptBand(prompt: PromptAskEvent, cols: number, rows: number): s
   return [line1, line2, line3].slice(0, rows);
 }
 
-function renderNoticeBand(
-  message: string,
-  frame: number,
-  cols: number,
-  rows: number,
-): string[] {
+function renderNoticeBand(message: string, frame: number, cols: number, rows: number): string[] {
   const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length]!;
   const prefix = ` ${spinner} `;
   const indent = ' '.repeat(prefix.length);
@@ -317,11 +308,7 @@ function renderNoticeBand(
   return out;
 }
 
-function renderQuestionBand(
-  payload: ClaudeQuestionPayload,
-  cols: number,
-  rows: number,
-): string[] {
+function renderQuestionBand(payload: ClaudeQuestionPayload, cols: number, rows: number): string[] {
   const q = payload.questions[0];
   if (!q) return Array.from({ length: rows }, () => blankBar(cols, BAR_BG));
 

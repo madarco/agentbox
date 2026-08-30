@@ -53,7 +53,7 @@ export function trimUrl(url: string): string {
 
 // The char class excludes whitespace, quotes/brackets, and control bytes (so an
 // OSC-8 hyperlink's trailing BEL terminates the match cleanly).
-export const URL_BODY = "[^\\s'\"`<>)\\]\\u0000-\\u001f]";
+export const URL_BODY = '[^\\s\'"`<>)\\]\\u0000-\\u001f]';
 
 /** Output meaning "that input was wrong, try again" — claude and opencode both re-prompt. */
 export const INVALID_CODE = /invalid|incorrect|not a valid|try again|expired|rejected/i;

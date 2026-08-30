@@ -203,9 +203,7 @@ async function applySeedFromCustody(
  * An unknown value is dropped rather than passed through — the box still gets
  * created, it just registers without an agent hint.
  */
-function normalizeCreateAgent(
-  agent: string | undefined,
-): AgentId | undefined {
+function normalizeCreateAgent(agent: string | undefined): AgentId | undefined {
   return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
 }
 

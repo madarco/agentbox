@@ -62,8 +62,7 @@ describe('reconcileAgentCredentialsViaTransport', () => {
   it('codex: host-wins on difference, no capture of the box copy', async () => {
     await writeFile(backups.codex, '{"token":"host"}');
     const t = makeRecordingTransport({
-      readText: (path) =>
-        path === '/home/vscode/.codex/auth.json' ? '{"token":"box"}' : null,
+      readText: (path) => (path === '/home/vscode/.codex/auth.json' ? '{"token":"box"}' : null),
     });
     await reconcileAgentCredentialsViaTransport(t, { backups });
     const push = t.ops.find((o) => o.op === 'pushFile');

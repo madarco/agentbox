@@ -7,7 +7,10 @@ import { stripAnsi, trimUrl, URL_BODY, type AgentLoginSpec } from '../../lib/age
 
 // `codex login --device-auth` prints a verification link and a one-time code,
 // then polls until the browser completes — nothing is ever typed.
-const CODEX_DEVICE_URL = new RegExp(`https?://${URL_BODY}*openai\\.com/${URL_BODY}*device${URL_BODY}*`, 'i');
+const CODEX_DEVICE_URL = new RegExp(
+  `https?://${URL_BODY}*openai\\.com/${URL_BODY}*device${URL_BODY}*`,
+  'i',
+);
 // e.g. `YQ16-PPHIE` — two uppercase alphanumeric groups, alone on its line.
 const CODEX_USER_CODE = /^\s*([A-Z0-9]{4}-[A-Z0-9]{4,6})\s*$/m;
 

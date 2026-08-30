@@ -3,7 +3,13 @@
  * a detector is and why the flow is driven from the host.
  */
 
-import { stripAnsi, trimUrl, URL_BODY, INVALID_CODE, type AgentLoginSpec } from '../../lib/agent-login-specs.js';
+import {
+  stripAnsi,
+  trimUrl,
+  URL_BODY,
+  INVALID_CODE,
+  type AgentLoginSpec,
+} from '../../lib/agent-login-specs.js';
 
 // Match an OAuth approval URL on any current Claude/Anthropic auth host
 // (claude.com/cai/oauth/…, claude.ai, console.anthropic.com) and REQUIRE the

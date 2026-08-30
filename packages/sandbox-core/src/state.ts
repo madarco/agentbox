@@ -2,7 +2,14 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AgentId, BoxRecord, DockerBoxFields, FindBoxResult, SshTargetRecord, StateFile } from '@agentbox/core';
+import type {
+  AgentId,
+  BoxRecord,
+  DockerBoxFields,
+  FindBoxResult,
+  SshTargetRecord,
+  StateFile,
+} from '@agentbox/core';
 
 export const STATE_DIR = join(homedir(), '.agentbox');
 export const STATE_FILE = join(STATE_DIR, 'state.json');

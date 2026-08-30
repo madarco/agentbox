@@ -56,10 +56,7 @@ export async function printLaunchRecap(args: LaunchRecapArgs): Promise<void> {
   const { record } = args;
   const rows: Array<[string, string]> = [];
 
-  rows.push([
-    'box',
-    args.checkpointRef ? `${record.name} (${args.checkpointRef})` : record.name,
-  ]);
+  rows.push(['box', args.checkpointRef ? `${record.name} (${args.checkpointRef})` : record.name]);
 
   if (record.projectRoot) {
     rows.push(['project', homeShorten(record.projectRoot)]);

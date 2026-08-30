@@ -36,10 +36,9 @@ describe('agent module table', () => {
     for (const id of agentIds()) {
       const mod = await loadAgentModule(id);
       const declared = resolveAgentSpec(id).caps.teleport;
-      expect(
-        typeof mod.teleport === 'function',
-        `${id} declares teleport '${declared}'`,
-      ).toBe(declared === 'full');
+      expect(typeof mod.teleport === 'function', `${id} declares teleport '${declared}'`).toBe(
+        declared === 'full',
+      );
     }
   });
 
