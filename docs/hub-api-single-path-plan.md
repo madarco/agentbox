@@ -1204,8 +1204,9 @@ temporarily-reintroduced `/admin/store` call, then reverted. `hub-backend.ts`'s
   drives a box or the fleet. If a later step moves the local file-queue behind `/api/v1`, the first
   can go.
 - **`route-create.ts` was KEPT deliberately — this is the ONE remaining inline create path, and it is
-  narrow and intentional, not an oversight.** The three agent launchers — `commands/claude.ts`,
-  `commands/codex.ts`, `commands/opencode.ts` — still run an **inline local `createBox`** for their
+  narrow and intentional, not an oversight.** The agent launchers — one shared
+  create body in `agents/command/create-action.ts` since the command factory —
+  still run an **inline local `createBox`** for their
   **foreground** create path (both the `-i` background path and the foreground path call
   `resolveCreateRouting` from `route-create.ts` to choose hub-vs-local, then build locally on the
   local arm). `route-create.ts` holds **no `/admin`//`/remote` client call**, so the guard test — the
@@ -1342,7 +1343,7 @@ pure downside. Without a remote hub it stays exactly as it is today.
   is set, with a message naming leasing as the replacement — not a generic "unsupported". Same
   gate for `agentbox connect`'s post-create equivalent.
 - Keep the existing guards intact: cloud-only, TTY-required (no `-y`/env bypass), incompatible
-  with `-i` background runs. It is already refused with `--via-hub` (`commands/opencode.ts:745`)
+  with `-i` background runs. It is already refused with `--via-hub` (`agents/command/create-action.ts`)
   — that check becomes redundant once the broader gate lands, so fold it in rather than leaving
   two guards to drift.
 - `git.pushMode` resolution (`auto` → lease when `relay.controlPlaneUrl` is set, else relay)

@@ -183,12 +183,21 @@ message instead of blocking on a password read nothing will answer.
    is not bundled and `MODULE_NOT_FOUND`s in the published CLI only.
    *No identity union to open* — `AgentId` is an open `string`, so step 1 is what
    makes the agent real to every consumer that reads the registry.
-3. **Add the CLI command** — today a clone of `apps/cli/src/commands/opencode.ts`
-   (the smallest of the three), registered in `index.ts`, `attach.ts`,
-   `agent-sessions.ts`, `list.ts`, `argv-prefix.ts` and `fork.ts`'s
-   `AGENT_COMMAND`.
+3. **Add the CLI command** — a descriptor, not a clone. In the same
+   `apps/cli/src/agents/<id>/` folder: `runtime.ts` (the docker bindings and the
+   agent's own login code) and `command.ts` (`buildAgentCommand({...})` with the
+   help strings that are genuinely yours), plus one arm in
+   `apps/cli/src/agents/commands.ts`. `index.ts`, `attach.ts`,
+   `agent-sessions.ts`, `fork.ts` and `argv-prefix.ts` all read the tables, so
+   there is nothing to register in any of them.
+   *Not yet collapsed:* `list.ts` still branches per agent, because it reads the
+   five named `BoxStatus` fields — a wire contract the hub `/api/v1` payload and
+   the macOS tray consume. That is the ctl status-map item, not this one.
 4. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
-   `packages/config`.
+   `packages/config`. Still required: `@agentbox/config` is a zero-internal-dep
+   leaf (`sandbox-core` depends on *it*), so it cannot read `AGENT_SYNC_SPECS` to
+   generate per-agent keys. The command descriptor reaches them through typed
+   accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
 5. **ctl**, if the agent should report activity: a `BoxStatus` field, an
    `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry. The last one is
    enforced, not merely documented: a drift test in `packages/ctl` compares it
@@ -199,9 +208,10 @@ message instead of blocking on a password read nothing will answer.
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
 
-Nothing in step 1 requires touching `Dockerfile.box`. Steps 3–6 are the tail
-that a future `agentCommand(spec)` factory and a generic ctl status map would
-collapse — see the seam analysis in
+Nothing in step 1 requires touching `Dockerfile.box`. Step 3 is no longer a
+1,300-line clone (see the backlog below); steps 4–6 are the tail a generic ctl
+status map and a generalized config namespace would collapse — see the seam
+analysis in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
 
 ---
@@ -415,14 +425,68 @@ degrades gracefully and `SDK_API_VERSION` stays at 2.
 The published surface is pinned by `pack:test`, which installs a real packed
 tarball in isolation and fails naming any missing export.
 
-### 4. The per-agent command tail — **partly done**
+### 4. The per-agent command tail — **mostly done**
 
-A new agent's CLI command is still a ~1,300-line clone of `opencode.ts` plus its
-registrations; the `agentCommand(spec)` factory and generic ctl status map in
-[`agent-catalog-plan.md`](./agent-catalog-plan.md) are what collapse checklist
-steps 3–6 into data.
+`agentbox claude`, `agentbox codex` and `agentbox opencode` were three
+hand-maintained files totalling **4,866 lines** for what is one command.
+Measured, not estimated: normalise the agent's name out of codex and opencode and
+`diff` is 671 lines — ~1,070 were byte-identical. Claude was closer than its line
+count suggested: normalised against codex it added exactly **four** options
+(`--plan`, `--headless`, `--code`, and one login flag); its extra ~600 lines were
+the headless-login machinery and the `--plan` / plugin-rebuild blocks woven
+through a body that was otherwise the same.
 
-What is done is the identity half. There used to be **eight** types spelling the
+They are now one factory (`apps/cli/src/agents/command/`) and three descriptors:
+
+| file | holds |
+| --- | --- |
+| `agents/command/options.ts` | the 38-option surface, in order |
+| `agents/command/create-action.ts` | the create body: `-i` queue path, gates, hub route, cloud delegate, docker create |
+| `agents/command/start-attach.ts` | `<agent> start` / `<agent> attach` |
+| `agents/command/login.ts` | the default `<agent> login` |
+| `agents/<id>/runtime.ts` | the agent's docker bindings + its own login code |
+| `agents/<id>/command.ts` | the descriptor: help strings that genuinely differ, plus hooks |
+
+Two tables, both with literal specifiers, both under `agents/`: the lazy
+`AGENT_MODULES` (`index.ts`) for spec/login/teleport/runtime, and the eager
+`AGENT_COMMANDS` (`commands.ts`) for the commander tree. Lazy vs eager is not
+cosmetic — `session-teleport` and `agent-sessions` load a module on paths that
+must not pull three commanders' worth of imports behind them.
+
+**Per-agent behavior is a closed set of five hooks**, and claude is why they
+exist: `preflight` (its `--plan` payload), `beforeCreate` (the setup wizard),
+`afterCreate` + `afterVolumeSync` (plugin native deps, setup-skill seeding,
+codex's activity hooks), `attachExtras` (clipboard paste), plus `extendCommand`
+for `--plan` itself. If a sixth is ever needed the body is not actually shared,
+and forking that agent's path is the honest answer.
+
+Some things that looked like accidents turned out to be deliberate and are now
+**declared** rather than forked:
+
+- `signInOfferTiming` — claude asks you to sign in BEFORE its wizard can spend
+  minutes re-baking a stale base; codex and opencode ask after the hub-routing
+  decision, so a box the control box will build never prompts for a local login
+  it will not use. Unifying either way loses one of those.
+- `acceptsSeedPrompt: false` (opencode) — its launch takes no opening turn, so a
+  resync-conflict warning goes to stderr instead of becoming a prompt.
+- `ensureInstalledOnCreate: false` (claude) — it has never probed for its binary
+  on create, and turning that on is a behavior change on the daily driver's hot
+  path, not a cleanup.
+
+**How the collapse was kept honest.** `test/_fixtures/agent-cli-surface.json` was
+captured from the three hand-written commands BEFORE the factory existed: every
+flag, short form, description, default and positional argument of all three
+commands and their subcommands. It is unchanged, which is the whole claim.
+
+It is also not sufficient, and the way that surfaced is worth recording. A live
+smoke caught the one regression a surface fixture structurally cannot: with
+teleport living in each agent's own hook, `agentbox opencode -c` — no teleport,
+therefore no hook — silently ignored the flag and built a box instead of
+refusing. The flag was still declared, so the fixture was green. Teleport now
+resolves in the shared body for every agent, and
+`agent-resume-flags.test.ts` drives that body directly so it cannot regress.
+
+What was already done before this is the identity half. There used to be **eight** types spelling the
 same thing — `SyncAgentKind`, `AgentKind`, `AgentName`, `TeleportAgent`,
 `CloudAgentKind`, `ForkAgent`, `CmuxAgentMode`, `HerdrAgentMode` — plus ~35 more
 sites re-declaring `'claude' | 'codex' | 'opencode'` inline. All of them now read
@@ -445,7 +509,12 @@ the sites a new agent misses:
 - `agent-module-table.test.ts` asserts `AGENT_MODULES`'s keys equal `agentIds()`,
   that each module carries its registry row **by reference**, and that a
   `teleport` resolver is present exactly when `caps.teleport` is `'full'`.
-- `agent-command-coverage.test.ts` does the same for `fork`'s delegate map.
+- `agent-command-coverage.test.ts` asserts the eager command table covers the
+  registry, and that each entry carries both a command and an attach wrapper.
+- `agent-cli-surface.test.ts` diffs the whole CLI surface against the fixture
+  above.
+- `agent-resume-flags.test.ts` drives the create body's `-c` / `--resume`
+  handling for every agent, including one with no teleport.
 
 Deleting any of those silently re-closes the type. Writing the sweep also
 surfaced four more places where a capability had been spelled out a second time
