@@ -21,7 +21,7 @@ import type { AttachOpenIn } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/sandbox-docker';
 import { claudeCommand, attachClaudeWrapped } from '../commands/claude.js';
 import { codexCommand, attachCodexWrapped } from './codex/command.js';
-import { opencodeCommand, attachOpencodeWrapped } from '../commands/opencode.js';
+import { opencodeCommand, attachOpencodeWrapped } from './opencode/command.js';
 
 /**
  * Attach to a box's agent tmux session through the wrapped-pty footer, then
