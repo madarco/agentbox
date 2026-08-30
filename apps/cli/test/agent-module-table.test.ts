@@ -1,6 +1,7 @@
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { describe, expect, it } from 'vitest';
 import { agentModuleIds, loadAgentModule } from '../src/agents/index.js';
+import { agentsWithResumeSupport } from '../src/agent-sessions.js';
 
 /**
  * The exhaustiveness `Record<AgentId, …>` used to give for free.
@@ -46,5 +47,19 @@ describe('agent module table', () => {
     await expect(loadAgentModule('nosuchagent')).rejects.toThrow(
       /no agent module for 'nosuchagent'/,
     );
+  });
+});
+
+/**
+ * `restoreAgentSessions` resumes every agent declaring `caps.resume`. The
+ * per-agent half of that (pointer probe, skip-permissions, docker starter) is a
+ * separate table, and the two must agree: an agent that declares the capability
+ * with no implementation used to fall through an `else` and be restored with
+ * Codex's marker, Codex's argv and the `codex` binary.
+ */
+describe('resume support', () => {
+  it('every agent declaring caps.resume has an implementation', () => {
+    const declared = agentIds().filter((id) => resolveAgentSpec(id).caps.resume);
+    expect([...agentsWithResumeSupport()].sort()).toEqual([...declared].sort());
   });
 });

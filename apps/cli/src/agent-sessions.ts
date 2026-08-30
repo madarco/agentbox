@@ -18,7 +18,7 @@
  * resuming the exact (claude) / most-recent-in-cwd (codex) session. OpenCode is
  * skipped — it has no session-resume support yet.
  */
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, type EffectiveConfig } from '@agentbox/config';
 import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
 import {
   startClaudeSession,
@@ -76,23 +76,78 @@ async function killTmuxSession(
 }
 
 /**
+ * The per-agent half of resume: read the pointer, layer the agent's own
+ * skip-permissions config, launch it in a docker box.
+ *
+ * A KEYED TABLE, not an `if (claude) … else codex` chain. That chain was total
+ * while the parameter was `'claude' | 'codex'`; with `AgentId` open its `else`
+ * would hand every future agent Codex's marker file, Codex's argv and — on
+ * docker — the `codex` binary. An agent that declares `caps.resume` and has no
+ * entry here is caught by `resume-support-coverage.test.ts`, and at run time
+ * gets "nothing to resume" rather than someone else's session.
+ */
+interface ResumeSupport {
+  /** Args to resume the box's recorded session, or null if there is none. */
+  resumeArgs(provider: Provider, box: BoxRecord): Promise<string[] | null>;
+  applySkipPermissions(args: string[], cfg: EffectiveConfig): string[];
+  startDocker(o: {
+    container: string;
+    args: string[];
+    sessionName: string;
+    workspacePath: string;
+  }): Promise<void>;
+}
+
+const RESUME_SUPPORT: Record<string, ResumeSupport> = {
+  claude: {
+    // Claude resumes the exact captured id.
+    resumeArgs: async (provider, box) => {
+      const id = await execRead(provider, box, `cat ${CLAUDE_POINTER} 2>/dev/null`);
+      // Guard: only a uuid-ish token is safe to hand to `claude --resume`.
+      return /^[0-9a-fA-F][0-9a-fA-F-]{7,}$/.test(id) ? ['--resume', id] : null;
+    },
+    applySkipPermissions: applyClaudeSkipPermissions,
+    startDocker: (o) =>
+      startClaudeSession({
+        container: o.container,
+        claudeArgs: o.args,
+        sessionName: o.sessionName,
+        workspacePath: o.workspacePath,
+      }),
+  },
+  codex: {
+    // Codex exposes no resumable id, so it resumes the most recent session in
+    // the box's cwd off a presence marker.
+    resumeArgs: async (provider, box) => {
+      const ran = await execRead(provider, box, `test -f ${CODEX_MARKER} && echo y`);
+      return ran === 'y' ? ['resume', '--last'] : null;
+    },
+    applySkipPermissions: applyCodexSkipPermissions,
+    startDocker: (o) =>
+      startCodexSession({ container: o.container, codexArgs: o.args, sessionName: o.sessionName }),
+  },
+};
+
+/** Agent ids with a {@link ResumeSupport} entry. */
+export function agentsWithResumeSupport(): string[] {
+  return Object.keys(RESUME_SUPPORT);
+}
+
+/**
  * The args to resume the box's recorded session for `kind`, or null if there's
- * nothing to resume. Claude resumes the exact captured id; Codex (no id) resumes
- * the most-recent session in the box's cwd. Skip-permissions is NOT applied here
- * — callers layer it via their own config (the attach paths already do).
+ * nothing to resume. Skip-permissions is NOT applied here — callers layer it via
+ * their own config (the attach paths already do).
  */
 export async function agentResumeArgs(
   provider: Provider,
   box: BoxRecord,
   kind: AgentId,
 ): Promise<string[] | null> {
-  if (kind === 'claude') {
-    const id = await execRead(provider, box, `cat ${CLAUDE_POINTER} 2>/dev/null`);
-    // Guard: only a uuid-ish token is safe to hand to `claude --resume`.
-    return /^[0-9a-fA-F][0-9a-fA-F-]{7,}$/.test(id) ? ['--resume', id] : null;
-  }
-  const ran = await execRead(provider, box, `test -f ${CODEX_MARKER} && echo y`);
-  return ran === 'y' ? ['resume', '--last'] : null;
+  const support = RESUME_SUPPORT[kind];
+  // No entry: "nothing to resume" is the safe answer. Falling through to another
+  // agent's probe would restore the wrong session.
+  if (!support) return null;
+  return support.resumeArgs(provider, box);
 }
 
 export interface RestoreOptions {
@@ -180,28 +235,22 @@ export async function restoreAgentSessions(
   // Resume one resumable agent (claude/codex) from its in-box pointer. Returns
   // true if it (re)launched, false if there was nothing to resume / it failed.
   const tryResume = async (kind: AgentId, sessionName: string): Promise<boolean> => {
-    const resume = await agentResumeArgs(provider, box, kind);
+    const support = RESUME_SUPPORT[kind];
+    if (!support) {
+      opts.onLog?.(`no resume support for ${kind}; leaving it stopped`);
+      return false;
+    }
+    const resume = await support.resumeArgs(provider, box);
     if (!resume) return false;
-    const args =
-      kind === 'claude'
-        ? cfg
-          ? applyClaudeSkipPermissions(resume, cfg.effective)
-          : resume
-        : cfg
-          ? applyCodexSkipPermissions(resume, cfg.effective)
-          : resume;
+    const args = cfg ? support.applySkipPermissions(resume, cfg.effective) : resume;
     try {
       if (isDocker) {
-        if (kind === 'claude') {
-          await startClaudeSession({
-            container: box.container,
-            claudeArgs: args,
-            sessionName,
-            workspacePath: box.workspacePath,
-          });
-        } else {
-          await startCodexSession({ container: box.container, codexArgs: args, sessionName });
-        }
+        await support.startDocker({
+          container: box.container,
+          args,
+          sessionName,
+          workspacePath: box.workspacePath,
+        });
       } else {
         await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
       }

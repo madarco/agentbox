@@ -16,6 +16,13 @@ import type { AgentId } from '@agentbox/core';
 import { agentIds } from '@agentbox/sandbox-core';
 
 const AGENT_KINDS: readonly AgentId[] = agentIds();
+
+/** Per-agent attach entry points. Each ends in `process.exit`. */
+const ATTACH_WRAPPED: Record<string, typeof attachClaudeWrapped> = {
+  claude: attachClaudeWrapped,
+  codex: attachCodexWrapped,
+  opencode: attachOpencodeWrapped,
+};
 const AGENT_KIND_SET = new Set<string>(AGENT_KINDS);
 
 /**
@@ -176,17 +183,14 @@ async function dispatchDocker(
   // Each wrapper ends in process.exit; the void return is what TS sees
   // because awaiting Promise<never> doesn't terminate control flow at the
   // type level.
-  switch (winner.kind) {
-    case 'claude':
-      await attachClaudeWrapped(box, winner.sessionName, ref, undefined, openIn);
-      return;
-    case 'codex':
-      await attachCodexWrapped(box, winner.sessionName, ref, undefined, openIn);
-      return;
-    case 'opencode':
-      await attachOpencodeWrapped(box, winner.sessionName, ref, undefined, openIn);
-      return;
-  }
+  const attach = ATTACH_WRAPPED[winner.kind];
+  // With `AgentId` open this switch stopped being exhaustive: an agent the
+  // session probe accepts (it reads `agentIds()`) but nothing here handles used
+  // to fall out of the switch and return, so `attach` exited 0 having attached
+  // to nothing. `agent-command-coverage.test.ts` keeps the map matching the
+  // registry; this is the run-time half.
+  if (!attach) throw new Error(`attach: no wrapper registered for agent '${winner.kind}'`);
+  await attach(box, winner.sessionName, ref, undefined, openIn);
 }
 
 /**
