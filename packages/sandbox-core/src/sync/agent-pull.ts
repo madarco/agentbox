@@ -19,6 +19,8 @@ import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
+import { resolveAgentSpec } from './registry.js';
+import type { AgentId } from './agents/types.js';
 import {
   mergeInstalledPlugins,
   mergeKnownMarketplaces,
@@ -27,16 +29,47 @@ import {
   type MergeResult,
 } from './claude-pull.js';
 
+/**
+ * Box-side agent config root, DERIVED from the registry rather than restated.
+ *
+ * `staticPaths[0].boxDir` is the same value the host->box push already syncs to,
+ * so the two directions can no longer disagree. It used to be three literals
+ * here plus three more in `registry.ts` — the box->host direction restating what
+ * the push direction already knew, with nothing to catch a divergence.
+ *
+ * Note `staticPaths[0]` specifically: opencode has three roots and the DATA one
+ * is first (`~/.local/share/opencode`); its config root is that same `boxDir`
+ * plus the entry's `relocToSubpath`, which `pullOpencodeConfigViaTransport`
+ * applies itself.
+ */
+/** A pull spec's flat item names for one group, from the registry. */
+export function pullItems(agent: AgentId, group: string): readonly string[] {
+  const g = resolveAgentSpec(agent).pull?.items?.find((i) => i.group === group);
+  return g?.names ?? [];
+}
+
+/** A pull spec's category dirs, from the registry. */
+export function pullCategories(agent: AgentId): readonly string[] {
+  return resolveAgentSpec(agent).pull?.categories ?? [];
+}
+
+export function agentBoxDir(agent: AgentId): string {
+  const dir = resolveAgentSpec(agent).staticPaths[0]?.boxDir;
+  if (!dir) throw new Error(`agent ${agent} declares no staticPaths[0].boxDir`);
+  return dir;
+}
+
 /** Box-side agent config roots (identical to the docker volume layout). */
-export const CLAUDE_BOX_CONFIG_DIR = '/home/vscode/.claude';
-export const CODEX_BOX_CONFIG_DIR = '/home/vscode/.codex';
-export const OPENCODE_BOX_DATA_DIR = '/home/vscode/.local/share/opencode';
+export const CLAUDE_BOX_CONFIG_DIR = agentBoxDir('claude');
+export const CODEX_BOX_CONFIG_DIR = agentBoxDir('codex');
+export const OPENCODE_BOX_DATA_DIR = agentBoxDir('opencode');
 
 // ---------------------------------------------------------------------------
 // claude
 // ---------------------------------------------------------------------------
 
-export const CLAUDE_PULL_DIR_CATEGORIES = ['skills', 'agents', 'commands'] as const;
+/** Claude's category dirs, from the registry. */
+export const CLAUDE_PULL_DIR_CATEGORIES = pullCategories('claude');
 
 export interface PullClaudeResult {
   /**
@@ -191,9 +224,13 @@ export async function computeClaudePullPlan(
 
   const hostInstalled = await readJsonFile(join(hostClaude, 'plugins', 'installed_plugins.json'));
   const hostMarkets = await readJsonFile(join(hostClaude, 'plugins', 'known_marketplaces.json'));
-  const mergedInstalled = mergeInstalledPlugins(hostInstalled, inv.registries['installed_plugins'], {
-    hostHome,
-  });
+  const mergedInstalled = mergeInstalledPlugins(
+    hostInstalled,
+    inv.registries['installed_plugins'],
+    {
+      hostHome,
+    },
+  );
   const mergedMarkets = mergeKnownMarketplaces(hostMarkets, inv.registries['known_marketplaces'], {
     hostHome,
   });
@@ -273,26 +310,16 @@ export async function pullClaudeExtrasViaTransport(
 // ---------------------------------------------------------------------------
 
 /** Top-level codex-config items `download codex` considers. */
-export const CODEX_PULL_ITEMS = ['config.toml', 'auth.json', 'prompts'] as const;
+export const CODEX_PULL_ITEMS = pullItems('codex', 'data');
 
 /** Data-dir items (data root → host ~/.local/share/opencode). */
-export const OPENCODE_PULL_DATA_ITEMS = ['auth.json'] as const;
+export const OPENCODE_PULL_DATA_ITEMS = pullItems('opencode', 'data');
 /**
  * Config-dir items (`config/` under the data root → host ~/.config/opencode).
  * Covers both the `.json` and `.jsonc` global config and OpenCode's
  * user-extension subdirs.
  */
-export const OPENCODE_PULL_CONFIG_ITEMS = [
-  'opencode.json',
-  'opencode.jsonc',
-  'agents',
-  'commands',
-  'modes',
-  'plugins',
-  'skills',
-  'tools',
-  'themes',
-] as const;
+export const OPENCODE_PULL_CONFIG_ITEMS = pullItems('opencode', 'config');
 
 /**
  * Inventory script for flat item lists: prints `<group> <FILE|DIR> <name>` per

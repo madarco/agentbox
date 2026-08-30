@@ -152,6 +152,16 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
     ],
     boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
+    // Box->host. Claude's unit is a CHILD of a category dir, plus a 2-level
+    // plugin cache, plus two registry JSONs merged additively with a
+    // container->host path rewrite. See AgentPullSpec.
+    pull: {
+      categories: ['skills', 'agents', 'commands'],
+      jsonMerges: [
+        { rel: 'plugins/installed_plugins.json', projection: 'plugins' },
+        { rel: 'plugins/known_marketplaces.json', projection: 'root' },
+      ],
+    },
   },
   {
     id: 'codex',
@@ -237,6 +247,8 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
     forwardedEnvKeys: ['OPENAI_API_KEY'],
     boxRunEnv: {},
     caps: { resume: true, teleport: 'full', activitySource: 'scraper' },
+    // Box->host: a flat list under the single config root.
+    pull: { items: [{ group: 'data', names: ['config.toml', 'auth.json', 'prompts'] }] },
   },
   {
     id: 'opencode',
@@ -310,6 +322,30 @@ export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = [
       XDG_STATE_HOME: `${OPENCODE_BOX_DIR}/.state`,
     },
     caps: { resume: false, teleport: 'stub', activitySource: 'plugin' },
+    // Box->host: two roots. `data` is staticPaths[0].boxDir; `config` is that
+    // dir plus the config entry's relocToSubpath. The THIRD staticPaths entry
+    // (~/.local/state/opencode, `update: true`) is deliberately absent: it is
+    // newest-wins two-way state, and newest-wins is the opposite of pull's
+    // additive never-overwrite rule.
+    pull: {
+      items: [
+        { group: 'data', names: ['auth.json'] },
+        {
+          group: 'config',
+          names: [
+            'opencode.json',
+            'opencode.jsonc',
+            'agents',
+            'commands',
+            'modes',
+            'plugins',
+            'skills',
+            'tools',
+            'themes',
+          ],
+        },
+      ],
+    },
   },
 ];
 

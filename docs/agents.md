@@ -332,22 +332,31 @@ baked agent and a runtime-added one are byte-identical. Everything below is a
 place where agent knowledge still lives as **code** instead of data. None of it
 is broken; all of it is work a fourth agent would pay for.
 
-### 1. `agentbox download` duplicates the registry's paths, in reverse
+### 1. `agentbox download` duplicates the registry's paths, in reverse — **partly done**
 
-`packages/sandbox-core/src/sync/agent-pull.ts` hardcodes `CLAUDE_BOX_CONFIG_DIR`
-/ `CODEX_BOX_CONFIG_DIR` / `OPENCODE_BOX_DATA_DIR` and exposes per-agent
-functions (`pullClaudeExtrasViaTransport` and friends). It never reads
-`staticPaths` from `AGENT_SYNC_SPECS` — so the host→box direction is
-registry-driven and the box→host direction is not, with two copies of the same
-path knowledge free to drift.
+Fixed: the box roots and the pull item lists now derive from the registry.
+`agentBoxDir(agent)` reads `staticPaths[0].boxDir`, and each spec carries an
+`AgentPullSpec` (`items` / `categories` / `jsonMerges`) that
+`CLAUDE_PULL_DIR_CATEGORIES`, `CODEX_PULL_ITEMS` and the two opencode lists are
+derived from. A drift test asserts the derivation and that every agent declaring
+`staticPaths` also declares how to pull them — the gap that let `download` be
+forgotten silently.
 
-`apps/cli/src/commands/download-{claude,codex,opencode}.ts` are ~120 lines each
-over shared `_agent-pull.ts` / `_agent-propagate.ts` helpers.
+`AgentPullSpec` is deliberately NOT `staticPaths`: that field's
+`exclude`/`include` are push-direction hygiene (claude drops `projects` and
+`sessions` on the way in) while the pull's real filters are different ones, and
+opencode's `update: true` state root must never be pulled at all — newest-wins is
+the opposite of pull's additive rule. The test pins that exclusion.
 
-**Fix:** give `staticPaths` a pull direction and drive `agent-pull.ts` from it.
-The categories differ per agent (claude has `skills`/`agents`/`commands`,
-opencode has `themes`), so the row needs a `pullCategories` field rather than
-reusing `staticPaths` verbatim.
+**Still open:** the three `download-<agent>.ts` commands remain separate
+(~120 lines each), and `pullClaudeExtrasViaTransport` /
+`pullCodexConfigViaTransport` / `pullOpencodeConfigViaTransport` are still three
+functions rather than one driven by the strategy in the spec. Codex and opencode
+are the same function differing only in group/root/items; claude is a genuinely
+different shape (category children + a JSON registry merge with a path rewrite),
+so collapsing them needs the two strategies implemented, not just declared.
+The docker-side pull also hand-rolls its own inventory shell, so it can still
+drift from the transport path even though both now share the item lists.
 
 ### 2. ctl carries a second copy of the credential paths, and is frozen at bake
 
