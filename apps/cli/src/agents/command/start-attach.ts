@@ -10,6 +10,7 @@ import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@age
 import {
   inspectBox,
   recordLastAgent,
+  seedAgentDeclaredFiles,
   startBox,
   unpauseBox,
   type BoxRecord,
@@ -153,9 +154,12 @@ async function startOrAttach(
       { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
     );
   }
-  // Box-only, image-versioned seeding (codex's activity hooks, claude's setup
-  // skill + credential mirror + plugin native deps). Runs even with
+  // Box-only, image-versioned seeding. The DECLARED files (`spec.seeds`:
+  // codex's activity hooks, opencode's state plugin, claude's setup skill) are
+  // placed for every agent from one call; the hook is only for the rest
+  // (claude's credential mirror + plugin native deps). Runs even with
   // --no-sync-config so an image upgrade still propagates.
+  if (volume) await seedAgentDeclaredFiles(a.id, volume, box.image);
   const seeded = volume
     ? await a.hooks?.afterVolumeSync?.(box, {
         volume,

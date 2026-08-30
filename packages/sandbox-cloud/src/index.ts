@@ -186,3 +186,8 @@ export {
   type PortlessServiceState,
   type PortlessState,
 } from '@agentbox/sandbox-docker';
+
+export {
+  seedAgentDeclaredFilesViaTransport,
+  seedDeclaredFilesForLaunch,
+} from './sync/agent-seed.js';

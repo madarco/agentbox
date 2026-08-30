@@ -22,7 +22,7 @@ import {
   relayPort,
   pauseBox,
   rebuildPluginNativeDeps,
-  seedCodexHooks,
+  seedAgentDeclaredFiles,
   SHARED_CLAUDE_VOLUME,
   shellSessionInfo,
   startBox,
@@ -398,7 +398,9 @@ export const dashboardCommand = new Command('dashboard')
         }
         // Install codex if the box image lacks it (checkpoint predating Codex).
         await ensureCodexInstalled(box.container);
-        if (box.codexConfigVolume) await seedCodexHooks(box.codexConfigVolume, box.image);
+        if (box.codexConfigVolume) {
+          await seedAgentDeclaredFiles('codex', box.codexConfigVolume, box.image);
+        }
         const codexCfg = await loadEffectiveConfig(box.workspacePath);
         await startCodexSession({
           container: box.container,

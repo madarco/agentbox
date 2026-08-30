@@ -80,8 +80,17 @@ export type {
   AgentCapabilities,
   AgentInstall,
   AgentInstallRecipe,
+  AgentSeedSpec,
 } from './agents/types.js';
 export { resolveAgentInstall } from './agents/types.js';
+export {
+  agentSeedPlacements,
+  buildAgentSeedScript,
+  parseSeedMarkers,
+  planAgentSeeds,
+  AGENT_SEED_MARKER,
+  type AgentSeedPlacement,
+} from './agent-seed.js';
 export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
 export {
   ensureAgentInstalled,

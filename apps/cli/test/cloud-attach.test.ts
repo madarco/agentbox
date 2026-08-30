@@ -5,6 +5,7 @@ import {
   verifyDetachedSession,
 } from '../src/commands/_cloud-attach.js';
 import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 
 /**
  * The launcher embeds args as base64. To verify the round-trip we extract the
@@ -89,8 +90,36 @@ describe('buildCloudAttachInnerCommand', () => {
 
   it('preserves args with double-quotes and dollar signs', () => {
     const args = ['-p', 'say "$HOME"', '--dry-run'];
-    const cmd = buildCloudAttachInnerCommand('codex', args);
+    const cmd = buildCloudAttachInnerCommand('claude', args);
     expect(decodeArgs(cmd)).toEqual(args);
+  });
+
+  it("prepends the agent's declared launchFlags, before its own args", () => {
+    // Codex will not load the hooks.json its `seeds` declaration places without
+    // these. The cloud launcher used to run the bare binary, so a cloud codex
+    // box could not have loaded them even once the file was seeded.
+    //
+    // Order matters and is not cosmetic: codex's `resume` is a SUBCOMMAND, so a
+    // global flag appended after it is rejected.
+    const flags = resolveAgentSpec('codex').launchFlags ?? [];
+    expect(flags.length).toBeGreaterThan(0);
+    expect(decodeArgs(buildCloudAttachInnerCommand('codex', ['resume', '--last']))).toEqual([
+      ...flags,
+      'resume',
+      '--last',
+    ]);
+    // Declared per agent, so the ones that need nothing get nothing.
+    expect(decodeArgs(buildCloudAttachInnerCommand('claude', ['-p', 'hi']))).toEqual(['-p', 'hi']);
+    expect(decodeArgs(buildCloudAttachInnerCommand('opencode', ['-m', 'x']))).toEqual(['-m', 'x']);
+  });
+
+  it('launches an agent with launchFlags but no args through the argv path', () => {
+    // The no-args shortcut is `exec <binary>` with nothing appended — which
+    // would silently drop the flags. Codex has to take the encoded-argv branch.
+    const cmd = buildCloudAttachInnerCommand('codex', []);
+    expect(decodeArgs(cmd)).toEqual(resolveAgentSpec('codex').launchFlags);
+    // …while an agent with no launchFlags keeps the cheap shortcut.
+    expect(buildCloudAttachInnerCommand('claude', [])).toContain('exec claude');
   });
 
   it('uses the same binary name in the exec line', () => {

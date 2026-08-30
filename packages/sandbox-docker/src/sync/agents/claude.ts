@@ -46,9 +46,7 @@ const CONTAINER_WORKSPACE = '/workspace';
  * claude-config volume so `/agentbox-setup` is available *inside boxes only* —
  * it is intentionally never written to the host's ~/.claude.
  */
-const IN_BOX_SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';
 /** Destination skill file inside the claude-config volume (mounted at /dst). */
-const SETUP_SKILL_DST = '/dst/skills/agentbox-setup/SKILL.md';
 
 export interface ClaudeConfigSpec {
   /** Resolved Docker volume name mounted at /home/vscode/.claude. */
@@ -374,50 +372,6 @@ export async function ensureClaudeVolume(
     aliasedProjectKey,
     workspaceTrusted,
   };
-}
-
-/**
- * Seed the `agentbox-setup` skill into the claude-config volume from the
- * image-baked copy ({@link IN_BOX_SETUP_GUIDE_PATH}). This is the box-only
- * install path: the skill is intentionally never written to the host's
- * ~/.claude (so `agentbox claude` doesn't pollute the user's machine).
- *
- * Independent of `ensureClaudeVolume`'s host rsync — it runs even when the
- * host has no ~/.claude or `syncFromHost` was false. The skill is
- * agentbox-owned and image-versioned (not user-customizable, excluded from
- * the host<->box sync), so we re-copy it unconditionally: a stale copy in a
- * long-lived shared volume must not pin an old skill after an image upgrade.
- *
- * Best-effort: a failure here must not fail box creation.
- */
-export async function seedSetupSkillIntoVolume(
-  volume: string,
-  image: string,
-): Promise<{ seeded: boolean }> {
-  try {
-    const { stdout } = await execa('docker', [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${volume}:/dst`,
-      image,
-      'sh',
-      '-c',
-      // Always overwrite from the image so an image upgrade propagates. Prints
-      // SEEDED on success; the whole thing is `|| true` so a missing image
-      // asset is a clean no-op, never a non-zero exit.
-      `{ [ -f ${IN_BOX_SETUP_GUIDE_PATH} ] && ` +
-        `rm -rf /dst/skills/agentbox-setup && ` +
-        `mkdir -p /dst/skills/agentbox-setup && ` +
-        `cp -a ${IN_BOX_SETUP_GUIDE_PATH} ${SETUP_SKILL_DST} && ` +
-        `chown -R 1000:1000 /dst/skills/agentbox-setup && echo SEEDED; } || true`,
-    ]);
-    return { seeded: stdout.includes('SEEDED') };
-  } catch {
-    return { seeded: false };
-  }
 }
 
 /**

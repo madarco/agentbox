@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { log, spinner } from '@clack/prompts';
 import {
   buildCloudAttachInnerCommand,
+  seedDeclaredFilesForLaunch,
   startDetachedCloudAgent,
   startDetachedSession,
   verifyDetachedSession,
@@ -124,6 +125,8 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     box = await provider.start(box);
     s.stop('box running');
   }
+  // Box is running by here — the seeder needs that (see its doc).
+  await seedDeclaredFilesForLaunch(provider, box, args.mode);
   // Hetzner only: open the SSH tunnel UP FRONT, self-healing a stale firewall (a
   // host egress-IP change locks the per-box firewall) BEFORE any of the later
   // establish touches — the resume probe, the detached pre-start, buildAttach.

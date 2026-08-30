@@ -30,7 +30,9 @@ import type {
   SyncContext,
 } from '@agentbox/core';
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
-import { renderCarryEntries } from '@agentbox/sandbox-core';
+import { agentIds, renderCarryEntries } from '@agentbox/sandbox-core';
+import { seedAgentDeclaredFilesViaTransport } from './agent-seed.js';
+import { createCloudSyncTransport } from './sync-transport.js';
 import { resyncCloudWorkspace } from './workspace-resync.js';
 import {
   type CloudAgentKind,
@@ -66,10 +68,7 @@ export function makeCloudSync(
     // the shared resync concern (merge + overlay, box wins; never reset --hard).
     // See workspace-resync.ts. The provider's resyncWorkspace(box) re-derives the
     // worktrees (detectGitRepos) + gates on hostSeeded before calling here.
-    async resyncWorkspace(
-      ctx: SyncContext,
-      worktrees: GitWorktreeRecord[],
-    ): Promise<ResyncResult> {
+    async resyncWorkspace(ctx: SyncContext, worktrees: GitWorktreeRecord[]): Promise<ResyncResult> {
       if (worktrees.length === 0) return { repos: [], hadConflicts: false };
       const repos = await resyncCloudWorkspace(backend, handle, worktrees, ctx.onLog);
       const hadConflicts = repos.some(
@@ -84,11 +83,25 @@ export function makeCloudSync(
       //   - normalize the agent static-config home dirs to vscode ownership;
       //   - fold the box facts into ~/.codex/AGENTS.override.md;
       //   - seed the host's OpenCode model into the box state dir;
+      //   - place each agent's DECLARED files (`AgentSyncSpec.seeds`: the codex
+      //     activity hooks, the OpenCode state plugin, the wizard skill) — the
+      //     cloud twin of the docker volume seed, which used to be missing
+      //     entirely;
       //   - overlay ~/.claude/_claude.json from the host's ~/.claude.json;
       //   - seed the dynamic Claude config (workflows/ + this project's memory/).
       await ensureAgentHomeDirsOwned(backend, handle, { onLog: ctx.onLog });
       await ensureCodexAgentsOverride(backend, handle, { onLog: ctx.onLog });
       await seedOpencodeModelState(backend, handle, { onLog: ctx.onLog });
+      {
+        const transport = createCloudSyncTransport({ backend, handle });
+        // A cloud box carries one agent, but `agents` is only set when the
+        // caller knew which; fall back to every agent that declares seeds so a
+        // box created without that hint is not left unseeded.
+        const targets = opts.agents && opts.agents.length > 0 ? opts.agents : agentIds();
+        for (const agent of targets) {
+          await seedAgentDeclaredFilesViaTransport(transport, agent, { onLog: ctx.onLog });
+        }
+      }
       await seedClaudeJsonAtCreate(backend, handle, {
         hostWorkspace: ctx.hostWorkspace,
         onLog: ctx.onLog,

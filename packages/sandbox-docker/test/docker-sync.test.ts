@@ -5,14 +5,13 @@ import type { SyncContext } from '@agentbox/core';
 // never shelling out to docker. Each mock exposes a hoisted vi.fn we inspect.
 const m = vi.hoisted(() => ({
   ensureClaudeVolume: vi.fn(),
-  seedSetupSkillIntoVolume: vi.fn(),
   syncClaudeCredentials: vi.fn(),
   ensureCodexVolume: vi.fn(),
-  seedCodexHooks: vi.fn(),
   seedCodexAgentsOverride: vi.fn(),
   ensureAgentsVolume: vi.fn(),
   ensureOpencodeVolume: vi.fn(),
-  seedOpencodePlugin: vi.fn(),
+  seedAgentDeclaredFiles: vi.fn(),
+  seedLabels: vi.fn(),
   copyHostEnvFilesToBox: vi.fn(),
   copyCarryPathsToBox: vi.fn(),
   resyncWorkspaceFromHost: vi.fn(),
@@ -21,20 +20,21 @@ const m = vi.hoisted(() => ({
 
 vi.mock('../src/sync/agents/claude.js', () => ({
   ensureClaudeVolume: m.ensureClaudeVolume,
-  seedSetupSkillIntoVolume: m.seedSetupSkillIntoVolume,
+}));
+vi.mock('../src/sync/agents/seed.js', () => ({
+  seedAgentDeclaredFiles: m.seedAgentDeclaredFiles,
+  seedLabels: m.seedLabels,
 }));
 vi.mock('../src/sync/claude-credentials.js', () => ({
   syncClaudeCredentials: m.syncClaudeCredentials,
 }));
 vi.mock('../src/sync/agents/codex.js', () => ({
   ensureCodexVolume: m.ensureCodexVolume,
-  seedCodexHooks: m.seedCodexHooks,
   seedCodexAgentsOverride: m.seedCodexAgentsOverride,
 }));
 vi.mock('../src/sync/agents/skills.js', () => ({ ensureAgentsVolume: m.ensureAgentsVolume }));
 vi.mock('../src/sync/agents/opencode.js', () => ({
   ensureOpencodeVolume: m.ensureOpencodeVolume,
-  seedOpencodePlugin: m.seedOpencodePlugin,
 }));
 vi.mock('../src/sync/host-export.js', () => ({
   copyHostEnvFilesToBox: m.copyHostEnvFilesToBox,
@@ -67,14 +67,13 @@ beforeEach(() => {
   logs.length = 0;
   // Sensible defaults so awaited results don't blow up.
   m.ensureClaudeVolume.mockResolvedValue({ created: false, synced: false });
-  m.seedSetupSkillIntoVolume.mockResolvedValue({ seeded: false });
+  m.seedAgentDeclaredFiles.mockResolvedValue({ seeded: [] });
+  m.seedLabels.mockReturnValue([]);
   m.syncClaudeCredentials.mockResolvedValue({ direction: 'noop', volumeHasCredentials: false });
   m.ensureCodexVolume.mockResolvedValue({ created: false, synced: false });
-  m.seedCodexHooks.mockResolvedValue({ seeded: false });
   m.seedCodexAgentsOverride.mockResolvedValue({ seeded: false });
   m.ensureAgentsVolume.mockResolvedValue({ created: false, synced: false });
   m.ensureOpencodeVolume.mockResolvedValue({ created: false, synced: false });
-  m.seedOpencodePlugin.mockResolvedValue({ seeded: false });
   m.copyHostEnvFilesToBox.mockResolvedValue({ copied: 0 });
   m.copyCarryPathsToBox.mockResolvedValue({ copied: 0, errors: [], applied: [] });
   m.resyncWorkspaceFromHost.mockResolvedValue([]);
@@ -197,14 +196,15 @@ describe('makeDockerSync.seedCredentials', () => {
 });
 
 describe('makeDockerSync.seedAgentConfig', () => {
-  it('always seeds the claude volume + setup skill', async () => {
+  it('always seeds the claude volume + its declared files', async () => {
     const sync = makeDockerSync(createHandle);
     await sync.seedAgentConfig(ctx());
     expect(m.ensureClaudeVolume).toHaveBeenCalledWith(
       { volume: 'agentbox-claude-config' },
       { syncFromHost: true, image: 'agentbox/box:dev', hostWorkspace: '/host/ws' },
     );
-    expect(m.seedSetupSkillIntoVolume).toHaveBeenCalledWith(
+    expect(m.seedAgentDeclaredFiles).toHaveBeenCalledWith(
+      'claude',
       'agentbox-claude-config',
       'agentbox/box:dev',
     );
@@ -241,7 +241,13 @@ describe('makeDockerSync.seedAgentConfig', () => {
     await sync.seedAgentConfig(ctx());
     expect(order).toEqual(['claude', 'codex', 'agents', 'opencode']);
     expect(m.seedCodexAgentsOverride).toHaveBeenCalledWith('agentbox-codex', 'agentbox/box:dev');
-    expect(m.seedOpencodePlugin).toHaveBeenCalledWith('agentbox-opencode', 'agentbox/box:dev');
+    // Every agent with a volume gets its declared seeds placed — one call site
+    // instead of the three per-agent seeders this replaced.
+    expect(m.seedAgentDeclaredFiles.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ['claude', 'agentbox-claude-config'],
+      ['codex', 'agentbox-codex'],
+      ['opencode', 'agentbox-opencode'],
+    ]);
   });
 
   it('throws when built without a create-time handle', async () => {
