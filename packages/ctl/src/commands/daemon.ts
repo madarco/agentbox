@@ -231,29 +231,36 @@ export const daemonCommand = new Command('daemon')
     // reconcile a minute later.
     toolLinks.start();
 
-    // Also AFTER the forwarder, and for the same reason: `agents.list` is an RPC
-    // through :8788. Fetched earlier it is a guaranteed ECONNREFUSED on a fresh
-    // box — and because the fallback is silent BY DESIGN, that failure is
-    // invisible: the box quietly keeps its baked list forever and a post-bake or
-    // plugin agent is never watched at all.
-    //
-    // Ask the host rather than trusting the list compiled into this binary: ctl is
-    // baked into the image, so a box built before an agent existed would otherwise
-    // never watch it. Falling back leaves the box watching exactly what it watches
-    // today, never nothing.
     if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
-      // Ask the host which files to watch instead of trusting the list compiled
+      // Start on the BAKED list immediately, then upgrade. Never await the fetch:
+      // on a cloud box `agents.list` is parked on the in-sandbox relay's
+      // HostActionQueue, which has no timeout and only expires entries when the
+      // host's poller drains it — so with the host off (a resumed independent
+      // box) the await never returns. That cost the box its credential fan-out
+      // entirely, and left SIGTERM/SIGINT unregistered so it could not even shut
+      // down cleanly. `toolLinks.start()` above already has this shape.
+      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
+      credentialsWatcher.start();
+
+      // Ask the host which files to watch rather than trusting the list compiled
       // into this binary: ctl is baked into the image, so a box built before an
       // agent existed would otherwise never watch it — and a plugin agent, which
-      // can never be baked, would be invisible forever. Falls back to the baked
-      // list on any failure, so an unreachable relay or an older host leaves the
-      // box watching exactly what it watches today.
-      const watch = await fetchWatchList();
-      if (watch.source === 'baked') {
-        process.stderr.write('agentbox-ctl: agents.list unavailable; using the baked watch list\n');
-      }
-      credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient, files: watch.files });
-      credentialsWatcher.start();
+      // can never be baked, would be invisible forever. Any failure leaves the
+      // watcher on the baked list it is already running.
+      //
+      // Fired AFTER the forwarder is listening, like `toolLinks.start()`:
+      // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
+      // ECONNREFUSED on a fresh box.
+      const watcher = credentialsWatcher;
+      void fetchWatchList().then((watch) => {
+        if (watch.source === 'host') {
+          watcher.setFiles(watch.files);
+          return;
+        }
+        process.stderr.write(
+          `agentbox-ctl: agents.list ${watch.source === 'timeout' ? 'timed out' : 'unavailable'}; keeping the baked watch list\n`,
+        );
+      });
     }
 
     const shutdown = async (signal: string): Promise<void> => {

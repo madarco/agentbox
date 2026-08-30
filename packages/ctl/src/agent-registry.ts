@@ -31,6 +31,11 @@ import { WATCHED_CREDENTIALS, type WatchedCredential } from './credentials-watch
  * host with no `agents.list`, or a malformed payload must all leave the box
  * watching what it already watched — never nothing. Losing the credential
  * watcher would silently break login fan-out for the whole fleet.
+ *
+ * OFF THE CRITICAL PATH, for the same reason. The watcher starts on the baked
+ * list first and this only ever upgrades it, so no failure mode here can cost a
+ * box its fan-out. Awaiting it instead did exactly that: see
+ * {@link AGENTS_LIST_TIMEOUT_MS}.
  */
 
 interface WireWatch {
@@ -83,15 +88,39 @@ export function parseAgentDescriptors(stdout: string): WatchedCredential[] | nul
 }
 
 /**
- * Fetch the watch list, falling back to the baked one on any failure.
- * Never throws.
+ * How long to wait for `agents.list` before giving up and keeping the baked list.
+ *
+ * There is NO other bound on this call. On a cloud box the in-sandbox relay parks
+ * every RPC on `HostActionQueue`, whose `enqueue` is deliberately timeout-free,
+ * and whose expiry sweep runs only inside `drain()` — which only runs when the
+ * host's `CloudBoxPoller` polls. Host off, poller down, or box resumed with the
+ * PC asleep and the promise simply never settles, holding a socket and a queue
+ * slot open for the life of the daemon.
+ *
+ * Generous, because the cost of being slow here is nil (the watcher is already
+ * running on the baked list) while a premature give-up on a merely-sluggish host
+ * leaves a post-bake agent unwatched until the next ctl restart.
+ */
+const AGENTS_LIST_TIMEOUT_MS = 30_000;
+
+/**
+ * Fetch the watch list, falling back to the baked one on any failure or if the
+ * host does not answer within {@link AGENTS_LIST_TIMEOUT_MS}. Never throws.
+ *
+ * MUST NOT be awaited on the daemon's critical path — see the call site in
+ * `commands/daemon.ts`.
  */
 export async function fetchWatchList(): Promise<{
   files: readonly WatchedCredential[];
-  source: 'host' | 'baked';
+  source: 'host' | 'baked' | 'timeout';
 }> {
   try {
-    const res = await postRpcAwait('agents.list', {});
+    const timeout = new Promise<'timeout'>((resolve) => {
+      // unref: a pending timer must never be the reason the daemon stays alive.
+      setTimeout(() => resolve('timeout'), AGENTS_LIST_TIMEOUT_MS).unref();
+    });
+    const res = await Promise.race([postRpcAwait('agents.list', {}), timeout]);
+    if (res === 'timeout') return { files: WATCHED_CREDENTIALS, source: 'timeout' };
     if (res.exitCode !== 0) return { files: WATCHED_CREDENTIALS, source: 'baked' };
     const parsed = parseAgentDescriptors(res.stdout);
     if (!parsed) return { files: WATCHED_CREDENTIALS, source: 'baked' };

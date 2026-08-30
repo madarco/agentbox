@@ -189,6 +189,43 @@ describe('CredentialsWatcher', () => {
     const [, , opts] = post.mock.calls[0] as [string, unknown, { timeoutMs?: number }];
     expect(opts.timeoutMs).toBeGreaterThan(2000);
   });
+  describe('setFiles', () => {
+    // The daemon starts this watcher on the BAKED list so credential fan-out is
+    // never off, then upgrades it once the host answers `agents.list`. Awaiting
+    // that answer first is what let a cloud box with no host poller lose fan-out
+    // outright (PR #340 review).
+    it('picks up an agent that was not in the starting list', async () => {
+      const extra = join(dir, 'auth.json');
+      await writeFile(extra, JSON.stringify({ some: 'auth' }));
+      const { relay, post } = fakeRelay();
+      const w = watcher(relay);
+      await w.scan();
+      expect(post).not.toHaveBeenCalled();
+
+      w.setFiles([{ agent: 'codex', path: extra, shape: 'nonempty-json' }]);
+      await w.scan();
+      expect(post).toHaveBeenCalledTimes(1);
+      const [, payload] = post.mock.calls[0] as [string, Record<string, unknown>];
+      expect(payload['agent']).toBe('codex');
+    });
+
+    // `lastMtime` / `lastPosted` are keyed by agent, so a carried-over agent must
+    // keep its de-dup state across the swap rather than re-post an unchanged blob.
+    it('does not repost a carried-over agent whose file did not change', async () => {
+      await writeFile(path, CLAUDE_BLOB);
+      const { relay, post } = fakeRelay();
+      const w = watcher(relay);
+      await w.scan();
+      expect(post).toHaveBeenCalledTimes(1);
+
+      w.setFiles([
+        { agent: 'claude', path, shape: 'claude-oauth' },
+        { agent: 'codex', path: join(dir, 'absent.json'), shape: 'nonempty-json' },
+      ]);
+      await w.scan();
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('isRetryablePostFailure', () => {

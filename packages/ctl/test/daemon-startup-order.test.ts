@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Source-level guard on daemon startup ordering.
+ * Source-level guards on daemon startup ordering.
  *
  * `agents.list` is an RPC through the in-box relay on :8788. Fetched before the
  * forwarder binds it is a guaranteed ECONNREFUSED on a fresh box — and because
@@ -26,11 +26,22 @@ describe('daemon startup order', () => {
     expect(fetchAt).toBeGreaterThan(forwarderAt);
   });
 
-  it('starts the credentials watcher after that fetch, not before', () => {
-    // Starting it earlier with the baked list would work, but then the pulled
-    // list would never reach it — the watcher reads `files` once, at construction.
-    const fetchAt = src.indexOf('fetchWatchList(');
+  it('starts the credentials watcher BEFORE the fetch, on the baked list', () => {
+    // The fetch must never gate the watcher. On a cloud box `agents.list` parks
+    // on a HostActionQueue that has no timeout and only expires on a host drain,
+    // so with the host off it never settles: awaiting it cost the box credential
+    // fan-out outright. Start baked, upgrade later via setFiles().
     const startAt = src.indexOf('credentialsWatcher = new CredentialsWatcher(');
-    expect(startAt).toBeGreaterThan(fetchAt);
+    const fetchAt = src.indexOf('fetchWatchList(');
+    expect(startAt).toBeGreaterThan(-1);
+    expect(startAt).toBeLessThan(fetchAt);
+  });
+
+  it('does not await the fetch on the critical path', () => {
+    // `await fetchWatchList()` anywhere here also delays the SIGTERM/SIGINT
+    // handlers registered below it, so a stop during the hang skips the whole
+    // graceful path (credential flush, stopAll, relay close).
+    expect(src).not.toMatch(/await\s+fetchWatchList\(/);
+    expect(src).toMatch(/void\s+fetchWatchList\(/);
   });
 });
