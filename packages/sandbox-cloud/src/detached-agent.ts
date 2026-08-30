@@ -16,6 +16,7 @@ import type { BoxRecord, Provider } from '@agentbox/core';
 import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
+import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
 
 /**
  * `AgentSyncSpec.launchFlags` for an agent binary, or none. Guarded on
@@ -319,6 +320,11 @@ export async function startDetachedCloudAgent(
   if (state !== 'running') {
     box = await provider.start(box);
   }
+  // AFTER the box is running: a seed exec against a paused sandbox fails, and
+  // best-effort means that failure is silent. Seeded here rather than at the
+  // callers so every consumer of this primitive — the CLI's detached start and
+  // the control box's create worker — gets it in the right order.
+  await seedDeclaredFilesForLaunch(provider, box, binary);
   let extraArgs = args.extraArgs;
   if ((!extraArgs || extraArgs.length === 0) && args.resolveResumeArgs) {
     const resume = await args.resolveResumeArgs(box);

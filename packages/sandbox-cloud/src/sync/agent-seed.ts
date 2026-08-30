@@ -22,7 +22,7 @@
  * degraded, not broken, and must never fail a box create.
  */
 
-import type { SyncTransport } from '@agentbox/core';
+import type { BoxRecord, Provider, SyncTransport } from '@agentbox/core';
 import {
   buildAgentSeedScript,
   parseSeedMarkers,
@@ -95,4 +95,31 @@ export async function seedAgentDeclaredFilesViaTransport(
     log(`seeded ${seed.label}${uploaded.includes(seed.destRel) ? ' (from host)' : ''}`);
   }
   return { seeded: [...seeded], uploaded };
+}
+
+/**
+ * Seed a box's declared files through a `Provider`, for the launch paths.
+ *
+ * MUST be called with the box already RUNNING. A paused or stopped sandbox
+ * answers every exec with a failure, and since this is best-effort that failure
+ * is swallowed — the agent then launches without its hooks or plugin and nothing
+ * says so. That is not hypothetical: resume-from-pause is precisely when a box
+ * created before its agent declared `seeds` needs this most.
+ *
+ * One helper for both launch primitives (`startDetachedCloudAgent` here,
+ * `cloudAgentAttach` in the CLI) so the ordering rule above is stated once
+ * rather than re-derived at each call site — the two disagreed on exactly this
+ * when they each had their own copy.
+ */
+export async function seedDeclaredFilesForLaunch(
+  provider: Provider,
+  box: BoxRecord,
+  agent: string,
+): Promise<void> {
+  try {
+    if (!provider.syncTransport) return;
+    await seedAgentDeclaredFilesViaTransport(provider.syncTransport(box), agent);
+  } catch {
+    // best-effort: richer status is not worth blocking a launch for.
+  }
 }

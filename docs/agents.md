@@ -614,15 +614,26 @@ staged `runtime/_shared/` copy — which is what makes the fix reach **existing*
 snapshots: the deployed Hetzner base has no OpenCode plugin to copy, and a
 re-`prepare` of every provider would otherwise have been a prerequisite.
 
-Two things the tests could not have told us, both found live:
+Three things, all about WHERE the seed call goes — the declaration was the easy
+half:
 
 1. **Seeding on `attach` but not on `start`.** The first version put the cloud
    call on the CLI action closures — and `wireAttachAction` / `wireStartAction`
-   are separate bodies, so one edit covered one of them. Fixed structurally: the
-   call moved onto `cloudAgentAttach` / `cloudAgentStartDetached`, the two
-   primitives every cloud launch funnels through (`start`, `attach`, the generic
-   `agentbox attach`, the `-i` queue worker, restore-on-resume).
-2. **A spinner frame is not evidence.** The create-time seed log line never
+   are separate bodies, so one edit covered one of them. Found by deleting the
+   plugin from a live Hetzner box and running `start`.
+2. **Seeding a box that was still paused.** Moving the call onto the two launch
+   primitives fixed (1) but left them disagreeing: `cloudAgentAttach` resumes the
+   box first, `cloudAgentStartDetached` did not. A seed exec against a paused
+   sandbox fails, and best-effort means it fails *silently* — so the agent
+   launched without its plugin on exactly the resume-from-pause path where an
+   older box needs the seed most. Caught by Bugbot.
+3. **A spinner frame is not evidence.** The create-time seed log line never
    rendered for OpenCode — set and replaced inside one spinner frame — while the
    codex one happened to survive. The file in the box was the ground truth; the
    log was an artifact of timing.
+
+(1) and (2) are the same mistake twice: the ordering rule ("box running, then
+seed, then launch") was re-derived at each call site. It is now stated once, on
+`seedDeclaredFilesForLaunch`, and the seed for the detached path lives *inside*
+`startDetachedCloudAgent` after its own `provider.start` — so the control box's
+create worker gets it too, not just the CLI.

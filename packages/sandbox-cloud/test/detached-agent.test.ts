@@ -14,6 +14,8 @@ const isSessionExistsProbe = (argv: string[]): boolean =>
 
 interface FakeOpts {
   state?: 'running' | 'paused' | 'stopped' | 'missing';
+  /** Records lifecycle events (start / seed / launch) in call order. */
+  onEvent?: (event: string) => void;
   exec?: (argv: string[]) => ExecResult;
   onBuildAttach?: (opts: unknown) => void;
   /** argv runDetached spawns, per attempt (1-indexed); defaults to `true`. */
@@ -32,12 +34,22 @@ function fakeProvider(opts: FakeOpts = {}): {
     probeState: () => Promise.resolve(opts.state ?? 'running'),
     start: (box: BoxRecord) => {
       starts++;
+      opts.onEvent?.('start');
       return Promise.resolve(box);
     },
+    // The launch path seeds the agent's declared files through this.
+    syncTransport: () => ({
+      exec: () => {
+        opts.onEvent?.('seed');
+        return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      },
+      pushFile: () => Promise.resolve(),
+    }),
     // `true` is a real no-op binary, so runDetached spawns it → exit 0 without
     // touching a sandbox. The verify step below drives the mocked exec.
     buildAttach: (_box: BoxRecord, _kind: string, o: unknown) => {
       opts.onBuildAttach?.(o);
+      opts.onEvent?.('launch');
       attempts++;
       return Promise.resolve({ argv: opts.argvForAttempt?.(attempts) ?? ['true'], env: undefined });
     },
@@ -205,5 +217,45 @@ describe('startDetachedCloudAgent', () => {
     // The resumed args reached the launcher (base64-embedded, so just assert the
     // read-loop launcher form, not the literal flags).
     expect((seen[0] as { command: string }).command).toContain('while IFS= read -r t');
+  });
+});
+
+describe('startDetachedCloudAgent — declared-file seeding', () => {
+  it('resumes a paused box BEFORE seeding, and seeds before launching', async () => {
+    // Ordering is the bug this pins. The seed exec has to hit a RUNNING box: a
+    // paused sandbox fails every exec, and since seeding is best-effort that
+    // failure is swallowed — the agent then launches without its hooks or
+    // plugin and nothing says so. Resume-from-pause is precisely when a box
+    // created before its agent declared `seeds` needs the seed most.
+    //
+    // Seeding last would be just as wrong: the agent reads its plugins at
+    // startup, so a file that lands afterwards does nothing until next launch.
+    const order: string[] = [];
+    const { provider } = fakeProvider({ state: 'paused', onEvent: (e) => order.push(e) });
+    await startDetachedCloudAgent({
+      provider,
+      box,
+      binary: 'opencode',
+      sessionName: 'opencode',
+      extraArgs: ['x'],
+      verify: { windowMs: 0 },
+    });
+    expect(order.slice(0, 3)).toEqual(['start', 'seed', 'launch']);
+  });
+
+  it('seeds a box that was already running too', async () => {
+    const order: string[] = [];
+    const { provider } = fakeProvider({ onEvent: (e) => order.push(e) });
+    await startDetachedCloudAgent({
+      provider,
+      box,
+      binary: 'codex',
+      sessionName: 'codex',
+      extraArgs: ['x'],
+      verify: { windowMs: 0 },
+    });
+    expect(order).not.toContain('start');
+    expect(order.indexOf('seed')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('seed')).toBeLessThan(order.indexOf('launch'));
   });
 });
