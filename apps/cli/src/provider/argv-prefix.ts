@@ -22,13 +22,21 @@
  * host back out of it (see `./spec.ts`). It is NOT expanded to `--remote-host`
  * here, so that the last-one-wins property above still holds for the whole spec.
  */
+import { agentIds } from '@agentbox/sandbox-core';
 import { isKnownProvider } from './registry.js';
 
-export const SUGARED_COMMANDS = ['create', 'claude', 'codex', 'opencode'] as const;
-export type SugaredCommand = (typeof SUGARED_COMMANDS)[number];
+/**
+ * `create` plus every agent, from the registry — an agent added to
+ * `AGENT_SYNC_SPECS` is sugared without a second edit here. Computed lazily:
+ * this module is imported while commander is still being assembled, and the
+ * rewrite runs once per process, so there is nothing to memoise.
+ */
+export function sugaredCommands(): string[] {
+  return ['create', ...agentIds()];
+}
 
-function isSugared(name: string): name is SugaredCommand {
-  return (SUGARED_COMMANDS as readonly string[]).includes(name);
+function isSugared(name: string): boolean {
+  return sugaredCommands().includes(name);
 }
 
 export function rewriteProviderPrefix(argv: readonly string[]): string[] {

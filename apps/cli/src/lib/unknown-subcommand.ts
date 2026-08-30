@@ -16,7 +16,7 @@
 
 import { isProviderKind } from '@agentbox/config';
 import type { Command } from 'commander';
-import { SUGARED_COMMANDS } from '../provider/argv-prefix.js';
+import { sugaredCommands } from '../provider/argv-prefix.js';
 
 /** Everything the group accepts, for the error message. */
 function acceptedCommands(group: Command): string[] {
@@ -28,7 +28,7 @@ function acceptedCommands(group: Command): string[] {
   // A provider group's create/claude/codex/opencode never reach commander — the
   // argv rewriter turns them into `--provider <name>` first — so they are absent
   // from `commands` yet are exactly what a mistyped provider subcommand meant.
-  const sugar = isProviderKind(group.name()) ? [...SUGARED_COMMANDS] : [];
+  const sugar = isProviderKind(group.name()) ? sugaredCommands() : [];
   return [...own, ...sugar];
 }
 

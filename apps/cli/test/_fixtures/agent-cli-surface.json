@@ -1,0 +1,1308 @@
+{
+  "claude": {
+    "name": "claude",
+    "aliases": [],
+    "description": "Create a sandboxed box and launch Claude Code in a detachable tmux session",
+    "arguments": [
+      {
+        "name": "claude-args",
+        "description": "extra args passed to claude inside the box; place after `--`, e.g. `agentbox claude -- --model sonnet`",
+        "required": false,
+        "variadic": true,
+        "defaultValue": null
+      }
+    ],
+    "options": [
+      {
+        "flags": "-w, --workspace <path>",
+        "description": "host workspace to mount",
+        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-n, --name <name>",
+        "description": "friendly box name (default: <workspace-basename>-<id>)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--host-snapshot",
+        "description": "APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-host-snapshot",
+        "description": "tar-pipe directly from the live host workspace at create time",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--snapshot <ref>",
+        "description": "start from a project checkpoint (see `agentbox checkpoint`); overrides box.defaultCheckpoint",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--image <ref>",
+        "description": "override the box image",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-y, --yes",
+        "description": "skip prompts, accept defaults",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry-yes",
+        "description": "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry <mode>",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+        "defaultValue": "ask",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-with-credentials",
+        "description": "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--isolate-claude-config",
+        "description": "use a per-box ~/.claude volume instead of the shared agentbox-claude-config",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-playwright",
+        "description": "also install @playwright/cli@latest globally inside the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-skip-permissions",
+        "description": "launch claude with --dangerously-skip-permissions (auto-accept tool use); on by default since boxes are isolated",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-dangerously-skip-permissions",
+        "description": "do not pass --dangerously-skip-permissions to claude in this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--with-env",
+        "description": "copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-vnc",
+        "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--no-resync",
+        "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--shared-docker-cache",
+        "description": "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--portless",
+        "description": "map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-portless",
+        "description": "do not register a Portless alias for this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--session-name <name>",
+        "description": "tmux session name (default from config; built-in: claude)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--memory <size>",
+        "description": "memory ceiling (e.g. 512m, 2g); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--cpus <n>",
+        "description": "CPU count cap (fractional ok, e.g. 1.5); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--pids-limit <n>",
+        "description": "max process count (PIDs cgroup); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--disk <size>",
+        "description": "best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--provider <name>",
+        "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--from-branch <ref>",
+        "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-b, --use-branch <name>",
+        "description": "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--via-hub",
+        "description": "force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--local",
+        "description": "force building the box on this machine even when a control box is configured (the opposite of --via-hub).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--url <url>",
+        "description": "control-box URL for the hub route (default: relay.controlPlaneUrl)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-v, --verbose",
+        "description": "bypass the spinner and stream raw provider output (docker build / Daytona snapshot create) to stderr. The same content always lands in ~/.agentbox/logs/claude.log.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--attach-in <mode>",
+        "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--inline",
+        "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-d, --no-attach",
+        "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "-i, --initial-prompt <text>",
+        "description": "seed the claude session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent). NOTE: this is NOT claude's own `-p` headless print mode — for that, pass `-- -p ...`.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-running <n>",
+        "description": "per-invocation override of queue.maxConcurrent; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-working <n>",
+        "description": "per-invocation override of queue.maxWorking; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-c, --continue",
+        "description": "teleport the most recent host Claude Code session for this cwd into the box and resume from it",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--resume <id>",
+        "description": "teleport the specified host Claude Code session id into the box and resume from it",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--plan <path>",
+        "description": "copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, launch claude with --permission-mode plan, and seed a \"resume the plan\" prompt",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Attach to a Claude Code tmux session in a box, starting one if none is running (auto-unpause/start; never re-syncs ~/.claude — use `claude start` for that)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: claude)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "start",
+        "aliases": [],
+        "description": "Start a Claude Code tmux session in an already-existing box (auto-unpause/start). If a session is already running, just attach.",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          },
+          {
+            "name": "claude-args",
+            "description": "extra args passed to claude when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox claude start 1 -- --model sonnet`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: claude)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--no-sync-config",
+            "description": "skip rsyncing the host's ~/.claude into the box's volume before starting (faster; use existing in-box state)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-d, --no-attach",
+            "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "-c, --continue",
+            "description": "teleport the most recent host Claude Code session for this cwd into the box and resume",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--resume <id>",
+            "description": "teleport the specified host Claude Code session id into the box and resume",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "login",
+        "aliases": [],
+        "description": "Sign in to Claude for use in sandboxes (forwards args to `claude auth login`, e.g. --sso, --console). Runs in a throwaway container against the shared claude-config volume — usable before the first `agentbox claude`. In a terminal it prints the auth URL and prompts for the code. Non-interactive (no TTY) or `--headless`: prints the auth URL, then finish with `--code <CODE>`.",
+        "arguments": [
+          {
+            "name": "args",
+            "description": "extra args forwarded to `claude auth login`; place after `--`, e.g. `agentbox claude login -- --sso`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--headless",
+            "description": "drive login without a terminal: print the auth URL, then finish with `--code` (auto-selected when stdin is not a TTY)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--code <code>",
+            "description": "deliver the OAuth code to a pending headless login session",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--interactive",
+            "description": "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      }
+    ]
+  },
+  "codex": {
+    "name": "codex",
+    "aliases": [],
+    "description": "Create a sandboxed box and launch OpenAI Codex in a detachable tmux session",
+    "arguments": [
+      {
+        "name": "codex-args",
+        "description": "extra args passed to codex inside the box; place after `--`, e.g. `agentbox codex -- -m gpt-5.4`",
+        "required": false,
+        "variadic": true,
+        "defaultValue": null
+      }
+    ],
+    "options": [
+      {
+        "flags": "-w, --workspace <path>",
+        "description": "host workspace to mount",
+        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-n, --name <name>",
+        "description": "friendly box name (default: <workspace-basename>-<id>)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--host-snapshot",
+        "description": "APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-host-snapshot",
+        "description": "tar-pipe directly from the live host workspace at create time",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--snapshot <ref>",
+        "description": "start from a project checkpoint (see `agentbox checkpoint`); overrides box.defaultCheckpoint",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--image <ref>",
+        "description": "override the box image",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-y, --yes",
+        "description": "skip prompts, accept defaults",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry-yes",
+        "description": "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry <mode>",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+        "defaultValue": "ask",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-with-credentials",
+        "description": "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--isolate-codex-config",
+        "description": "use a per-box ~/.codex volume instead of the shared agentbox-codex-config",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-playwright",
+        "description": "also install @playwright/cli@latest globally inside the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-skip-permissions",
+        "description": "launch codex with --dangerously-bypass-approvals-and-sandbox (never prompt for approval); on by default since boxes are isolated",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-dangerously-skip-permissions",
+        "description": "do not pass --dangerously-bypass-approvals-and-sandbox to codex in this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--with-env",
+        "description": "copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-vnc",
+        "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--no-resync",
+        "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--shared-docker-cache",
+        "description": "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--portless",
+        "description": "map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-portless",
+        "description": "do not register a Portless alias for this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--session-name <name>",
+        "description": "tmux session name (default from config; built-in: codex)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--memory <size>",
+        "description": "memory ceiling (e.g. 512m, 2g); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--cpus <n>",
+        "description": "CPU count cap (fractional ok, e.g. 1.5); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--pids-limit <n>",
+        "description": "max process count (PIDs cgroup); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--disk <size>",
+        "description": "best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--provider <name>",
+        "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--from-branch <ref>",
+        "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-b, --use-branch <name>",
+        "description": "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--via-hub",
+        "description": "force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--local",
+        "description": "force building the box on this machine even when a control box is configured (the opposite of --via-hub).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--url <url>",
+        "description": "control-box URL for the hub route (default: relay.controlPlaneUrl)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-v, --verbose",
+        "description": "bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/codex.log.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--attach-in <mode>",
+        "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--inline",
+        "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-d, --no-attach",
+        "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "-i, --initial-prompt <text>",
+        "description": "seed the codex session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-running <n>",
+        "description": "per-invocation override of queue.maxConcurrent; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-working <n>",
+        "description": "per-invocation override of queue.maxWorking; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-c, --continue",
+        "description": "teleport the most recent host Codex session for this cwd into the box and resume from it",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--resume <id>",
+        "description": "teleport the specified host Codex session uuid into the box and resume from it",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Attach to a Codex tmux session in a box, starting one if none is running (auto-unpause/start; never re-syncs ~/.codex — use `codex start` for that)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: codex)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "start",
+        "aliases": [],
+        "description": "Start a Codex tmux session in an already-existing box (auto-unpause/start). If a session is already running, just attach.",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          },
+          {
+            "name": "codex-args",
+            "description": "extra args passed to codex when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox codex start 1 -- -m gpt-5.4`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: codex)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--no-sync-config",
+            "description": "skip rsyncing the host's ~/.codex into the box's volume before starting (faster; use existing in-box state)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-d, --no-attach",
+            "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "-c, --continue",
+            "description": "teleport the most recent host Codex session for this cwd into the box and resume",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--resume <id>",
+            "description": "teleport the specified host Codex session uuid into the box and resume",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "login",
+        "aliases": [],
+        "description": "Sign in to Codex for use in sandboxes. Runs `codex login` in a throwaway container against the shared codex-config volume (default: --device-auth; pass e.g. `-- --api-key`). Usable before the first `agentbox codex`.",
+        "arguments": [
+          {
+            "name": "args",
+            "description": "extra args forwarded to `codex login` (default: --device-auth); place after `--`, e.g. `agentbox codex login -- --api-key`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--interactive",
+            "description": "attach your terminal to codex's own login TUI (legacy passthrough; needs an interactive terminal)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      }
+    ]
+  },
+  "opencode": {
+    "name": "opencode",
+    "aliases": [],
+    "description": "Create a sandboxed box and launch OpenCode in a detachable tmux session",
+    "arguments": [
+      {
+        "name": "opencode-args",
+        "description": "extra args passed to opencode inside the box; place after `--`, e.g. `agentbox opencode -- -m anthropic/claude-sonnet-4-5`",
+        "required": false,
+        "variadic": true,
+        "defaultValue": null
+      }
+    ],
+    "options": [
+      {
+        "flags": "-w, --workspace <path>",
+        "description": "host workspace to mount",
+        "defaultValue": "/Users/marco/Projects/AgentBox/agentbox/apps/cli",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-n, --name <name>",
+        "description": "friendly box name (default: <workspace-basename>-<id>)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--host-snapshot",
+        "description": "APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-host-snapshot",
+        "description": "tar-pipe directly from the live host workspace at create time",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--snapshot <ref>",
+        "description": "start from a project checkpoint (see `agentbox checkpoint`); overrides box.defaultCheckpoint",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--image <ref>",
+        "description": "override the box image",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-y, --yes",
+        "description": "skip prompts, accept defaults",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry-yes",
+        "description": "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry <mode>",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+        "defaultValue": "ask",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-with-credentials",
+        "description": "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--isolate-opencode-config",
+        "description": "use a per-box OpenCode volume instead of the shared agentbox-opencode-config",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-playwright",
+        "description": "also install @playwright/cli@latest globally inside the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-env",
+        "description": "copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-vnc",
+        "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--no-resync",
+        "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--shared-docker-cache",
+        "description": "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--portless",
+        "description": "map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-portless",
+        "description": "do not register a Portless alias for this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--session-name <name>",
+        "description": "tmux session name (default from config; built-in: opencode)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--memory <size>",
+        "description": "memory ceiling (e.g. 512m, 2g); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--cpus <n>",
+        "description": "CPU count cap (fractional ok, e.g. 1.5); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--pids-limit <n>",
+        "description": "max process count (PIDs cgroup); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--disk <size>",
+        "description": "best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--provider <name>",
+        "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--from-branch <ref>",
+        "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-b, --use-branch <name>",
+        "description": "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--via-hub",
+        "description": "force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--local",
+        "description": "force building the box on this machine even when a control box is configured (the opposite of --via-hub).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--url <url>",
+        "description": "control-box URL for the hub route (default: relay.controlPlaneUrl)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-v, --verbose",
+        "description": "bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/opencode.log.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--attach-in <mode>",
+        "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--inline",
+        "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-d, --no-attach",
+        "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "-i, --initial-prompt <text>",
+        "description": "seed the opencode session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-running <n>",
+        "description": "per-invocation override of queue.maxConcurrent; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-working <n>",
+        "description": "per-invocation override of queue.maxWorking; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-c, --continue",
+        "description": "session teleport (not yet supported for opencode in v1; emits a friendly error)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--resume <id>",
+        "description": "session teleport (not yet supported for opencode in v1; emits a friendly error)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Attach to an OpenCode tmux session in a box, starting one if none is running (auto-unpause/start; never re-syncs config — use `opencode start` for that)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: opencode)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "start",
+        "aliases": [],
+        "description": "Start an OpenCode tmux session in an already-existing box (auto-unpause/start). If a session is already running, just attach.",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          },
+          {
+            "name": "opencode-args",
+            "description": "extra args passed to opencode when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox opencode start 1 -- -m anthropic/claude-sonnet-4-5`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: opencode)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--no-sync-config",
+            "description": "skip rsyncing the host's OpenCode config into the box's volume before starting (faster; use existing in-box state)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-d, --no-attach",
+            "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "-c, --continue",
+            "description": "session teleport (not yet supported for opencode in v1; emits a friendly error)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--resume <id>",
+            "description": "session teleport (not yet supported for opencode in v1; emits a friendly error)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "login",
+        "aliases": [],
+        "description": "Sign in to OpenCode for use in sandboxes. Runs `opencode auth login` in a throwaway container against the shared opencode-config volume (interactive provider picker; pass e.g. `-- --provider anthropic`). Usable before the first `agentbox opencode`.",
+        "arguments": [
+          {
+            "name": "args",
+            "description": "extra args forwarded to `opencode auth login`; place after `--`, e.g. `agentbox opencode login -- --provider anthropic`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--interactive",
+            "description": "attach your terminal to OpenCode's own login TUI (legacy passthrough)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      }
+    ]
+  }
+}

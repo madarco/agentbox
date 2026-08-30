@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  SUGARED_COMMANDS,
-  rewriteProviderPrefix,
-} from '../src/provider/argv-prefix.js';
+import { sugaredCommands, rewriteProviderPrefix } from '../src/provider/argv-prefix.js';
 
 const NODE = '/usr/local/bin/node';
 const BIN = '/path/to/agentbox';
@@ -20,7 +17,7 @@ describe('rewriteProviderPrefix', () => {
 
   it('rewrites every (provider × sugared-command) pair', () => {
     for (const provider of ['docker', 'daytona', 'hetzner'] as const) {
-      for (const sub of SUGARED_COMMANDS) {
+      for (const sub of sugaredCommands()) {
         expect(rewriteProviderPrefix(argv(provider, sub))).toEqual(
           argv(sub, '--provider', provider),
         );

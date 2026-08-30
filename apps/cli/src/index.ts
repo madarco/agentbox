@@ -41,12 +41,11 @@ import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
-import { claudeCommand } from './commands/claude.js';
+import { agentCommands } from './agents/commands.js';
+import { agentIds } from '@agentbox/sandbox-core';
 import { checkpointCommand } from './commands/checkpoint.js';
 import { credentialsCommand } from './commands/credentials.js';
 import { codeCommand } from './commands/code.js';
-import { codexCommand } from './commands/codex.js';
-import { opencodeCommand } from './commands/opencode.js';
 import { configCommand } from './commands/config.js';
 import { cpCommand } from './commands/cp.js';
 import { createCommand } from './commands/create.js';
@@ -185,11 +184,12 @@ program
 program.enablePositionalOptions();
 
 program.addCommand(createCommand);
-program.addCommand(claudeCommand);
+// Every agent's command, from the one table. Registration order does not affect
+// help — `buildGroupedHelp` groups by explicit name lists — so a new agent shows
+// up here without an edit.
+for (const cmd of agentCommands()) program.addCommand(cmd);
 program.addCommand(forkCommand);
-program.addCommand(codexCommand);
 program.addCommand(gitCommand);
-program.addCommand(opencodeCommand);
 program.addCommand(codeCommand);
 program.addCommand(shellCommand);
 program.addCommand(attachCommand);
@@ -322,9 +322,9 @@ const FIRST_RUN_EXEMPT = new Set([
 // the passive one-line nudge, which never blocks.
 const UPDATE_PROMPT_EXEMPT = new Set([
   'create',
-  'claude',
-  'codex',
-  'opencode',
+  // Every agent command — derived, so a new agent is exempt from day one rather
+  // than getting an update prompt in the middle of its first launch.
+  ...agentIds(),
   'shell',
   'sh',
   'attach',

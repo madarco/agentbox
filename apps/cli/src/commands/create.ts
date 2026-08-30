@@ -32,7 +32,7 @@ import {
 } from '../wizard.js';
 import { evaluateBaseFreshness, warnCheckpointAgentMismatch } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
-import { claudeCommand } from './claude.js';
+import { agentCommandEntry } from '../agents/commands.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   resolveCreateTarget,
@@ -631,7 +631,9 @@ export const createCommand = new Command('create')
       const serialized = serializeEnvFilesForEnv(wiz.envFilesToImport);
       if (serialized !== undefined) process.env[WIZARD_ENV_FILES_ENV] = serialized;
       try {
-        await claudeCommand.parseAsync(passthroughFlags(opts), { from: 'user' });
+        const claude = agentCommandEntry('claude');
+        if (!claude) throw new Error('create: no claude command registered');
+        await claude.command.parseAsync(passthroughFlags(opts), { from: 'user' });
       } finally {
         delete process.env[WIZARD_AUTOLAUNCH_ENV];
         delete process.env[WIZARD_RECREATE_ENV];
