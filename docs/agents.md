@@ -192,9 +192,9 @@ message instead of blocking on a password read nothing will answer.
    `apps/cli/src/agents/commands.ts`. `index.ts`, `attach.ts`,
    `agent-sessions.ts`, `fork.ts` and `argv-prefix.ts` all read the tables, so
    there is nothing to register in any of them.
-   *Not yet collapsed:* `list.ts` still branches per agent, because it reads the
-   five named `BoxStatus` fields — a wire contract the hub `/api/v1` payload and
-   the macOS tray consume. That is the ctl status-map item, not this one.
+   *Nothing per-agent left in `list.ts`:* it iterates the box's agent status map,
+   so a new agent shows up in the AGENT column and the cmux dock with no edit
+   there.
 4. **Seeded files**, if the agent loads an agentbox-owned hook/plugin/skill:
    declare `seeds: [{ bakedPath, destRel, sharedAsset, label }]` on the row, and
    `launchFlags` for any argv the agent needs to load them. Then add the file to
@@ -209,19 +209,32 @@ message instead of blocking on a password read nothing will answer.
    leaf (`sandbox-core` depends on *it*), so it cannot read `AGENT_SYNC_SPECS` to
    generate per-agent keys. The command descriptor reaches them through typed
    accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
-6. **ctl**, if the agent should report activity: a `BoxStatus` field, an
-   `<agent>-state` op, and a `WATCHED_CREDENTIALS` entry. The last one is
-   enforced, not merely documented: a drift test in `packages/ctl` compares it
-   against `AGENT_SYNC_SPECS` and fails until you add the row.
+6. **Activity reporting**, if the agent should report one: declare
+   `caps.activitySource` — a list of `hooks` / `plugin` / `scraper`, empty if it
+   reports nothing (ctl then skips probing it rather than adding a permanently
+   `unknown` entry to every snapshot). *There is no ctl code to write:* status is
+   a keyed map, one `agent-state <agent> <state>` op serves every agent, and the
+   tmux session to probe ships from the host over the `agents.list` descriptor —
+   so an agent added after an image was baked reports activity with no re-bake.
+   Two things are enforced rather than documented: declaring `plugin` requires
+   the `seeds` that put the plugin in the box, and a `WATCHED_CREDENTIALS` entry
+   must match the registry (drift tests in `packages/sandbox-core` and
+   `packages/ctl`).
+   *Do not repoint the seeded hook files at `agent-state`.* ctl still ships the
+   frozen `<agent>-state` names for the built-in three, because agent config
+   volumes are SHARED BETWEEN BOXES: a `hooks.json` seeded by a newer image can
+   be read by a box running older baked ctl, and that box would silently stop
+   reporting.
 7. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
    (`apps/cli/src/commands/download-<agent>.ts`) plus the pull functions and
    box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
 
-Step 3 is no longer a 1,300-line clone (see the backlog below); steps 5–7 are
-the tail a generic ctl status map and a generalized config namespace would
-collapse — see the seam
+Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change
+(see the backlog below). **Step 5 is the only per-agent tax left** — a
+generalized config namespace collapses it; step 7 is the other open one. See the
+seam
 analysis in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
 
