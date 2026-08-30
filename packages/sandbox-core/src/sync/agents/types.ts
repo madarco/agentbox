@@ -176,4 +176,46 @@ export interface AgentSyncSpec {
    */
   boxRunEnv: Record<string, string>;
   caps: AgentCapabilities;
+  /**
+   * Box->host (`agentbox download <agent>`) descriptor.
+   *
+   * Separate from `staticPaths` on purpose: that field's `exclude`/`include` are
+   * PUSH-direction hygiene (claude drops `projects`/`sessions` on the way in),
+   * while the pull's real filters are different ones. Reusing it verbatim would
+   * be wrong in both directions. The ROOTS do map one-to-one, which is why
+   * `agentBoxDir` derives them from `staticPaths[0].boxDir` instead of
+   * restating them.
+   *
+   * Absent means the agent has no box->host sync — which is the silent gap that
+   * made `download` easy to forget when adding an agent.
+   */
+  pull?: AgentPullSpec;
+}
+
+/**
+ * How `download <agent>` enumerates what a box has that the host doesn't.
+ *
+ * Two strategies because the agents genuinely differ in SHAPE, not just data:
+ * codex/opencode are flat item lists, while claude's unit is "child of a
+ * category dir" plus a 2-level plugin cache and a JSON registry merge. A single
+ * strategy would have to model claude's case for everyone.
+ */
+export interface AgentPullSpec {
+  /**
+   * Flat items (files or dirs) directly under a root — codex, opencode.
+   * `group` selects which root: `data` is `staticPaths[0].boxDir`, any other
+   * value is that dir plus the matching entry's `relocToSubpath`.
+   */
+  items?: readonly { group: string; names: readonly string[] }[];
+  /**
+   * Directories whose CHILDREN are the unit — claude's `skills`/`agents`/
+   * `commands`. Each child dir is one item.
+   */
+  categories?: readonly string[];
+  /**
+   * JSON files merged additively rather than copied — claude's plugin
+   * registries. `projection` names the sub-object holding the entries (`root`
+   * for a flat map). Never overwrites an existing host key.
+   */
+  jsonMerges?: readonly { rel: string; projection: 'root' | 'plugins' }[];
 }
