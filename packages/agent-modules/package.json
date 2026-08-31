@@ -29,6 +29,7 @@
     "@agentbox/agent-codex": "workspace:*",
     "@agentbox/agent-example": "workspace:*",
     "@agentbox/agent-opencode": "workspace:*",
+    "@agentbox/agent-registry": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*"
   },
   "devDependencies": {

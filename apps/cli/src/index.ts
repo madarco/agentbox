@@ -34,7 +34,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 }
 
 import { Command } from 'commander';
-import { registerAllAgentModules } from '@agentbox/agent-modules';
+import { registerAllAgentModules, registerInstalledAgentModules } from '@agentbox/agent-modules';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { applyRelayPortAtStartup } from './relay-port-override.js';
 import { applyHostReachEnvAtStartup } from './host-reach-env.js';
@@ -177,6 +177,15 @@ setDockerCredentialRefresh(dockerCredentialRefresh);
 // skips this gets `requireAgentSyncModule`'s throw at create time — which is why
 // it is one call here rather than a registration scattered per command.
 registerAllAgentModules();
+// Installed agents load separately: their entry is a VARIABLE `import()`, so it
+// is async. Awaited at the top level rather than per command — a create must
+// not be the first thing to discover the module is missing. When nothing is
+// installed (the normal case) this reads one absent file and returns.
+const installedAgents = await registerInstalledAgentModules();
+for (const f of installedAgents.failed) {
+  // Reported, never fatal: a broken plugin must not take down every command.
+  process.stderr.write(`agentbox: agent package "${f.packageName}" not loaded — ${f.reason}\n`);
+}
 
 const program = new Command();
 

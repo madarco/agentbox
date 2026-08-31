@@ -35,3 +35,5 @@ export function registerAllAgentModules(): void {
   // Hidden from users, real to the machinery — see @agentbox/agent-example.
   registerExampleAgent();
 }
+
+export { registerInstalledAgentModules, type InstalledAgentLoadResult } from './plugins.js';

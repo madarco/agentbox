@@ -444,13 +444,13 @@ importers:
       '@agentbox/agent-opencode':
         specifier: workspace:*
         version: link:../agent-opencode
+      '@agentbox/agent-registry':
+        specifier: workspace:*
+        version: link:../agent-registry
       '@agentbox/sandbox-docker':
         specifier: workspace:*
         version: link:../sandbox-docker
     devDependencies:
-      '@agentbox/agent-registry':
-        specifier: workspace:*
-        version: link:../agent-registry
       '@types/node':
         specifier: ^22.10.1
         version: 22.19.19

@@ -482,11 +482,33 @@ built-in, a package exporting no spec, and a corrupt registry file are each
 refused with a message rather than a stack trace, and the registry was removed
 afterwards so the dev machine is back to the built-ins.
 
-**Still open — the CODE half.** An installed agent that needs docker behavior
-must have its `AgentSyncModule` loaded through a variable `import()` of
-`resolvedEntry`. The record already carries that path; nothing loads it yet. The
-data half is what unlocks the rest, since it is what every reader resolves
-against.
+**Phase 7b — the code half — DONE too.** `registerInstalledAgentModules()` in
+`@agentbox/agent-modules` loads each record's `resolvedEntry` through a variable
+`import()` and registers whatever `agentSyncModule` it exports. Both entry points
+that create docker boxes await it (the CLI at top level, the hub at startup).
+
+Kept separate from the sync `registerAllAgentModules()` rather than folded in:
+it is async, and an app that forgets it still gets a fully working plugin agent
+for everything data-driven — only a docker create fails, with
+`requireAgentSyncModule`'s explicit message rather than a silent wrong answer.
+Failures are reported and skipped, and the loop continues, because a broken or
+half-uninstalled package must not take down every box command.
+
+A package may only supply modules for agents IT registered — otherwise a plugin
+could hand back a module for `claude` and take over the built-in, the code-half
+equivalent of shadowing. Data-only packages are a no-op, not a failure: an agent
+whose config is purely declarative needs no docker code.
+
+Validated with the demo package extended to export a real `agentSyncModule`: it
+loads, appears in `registeredAgentSyncModules()`, and its `afterVolumeSync` runs
+through the very hook Bugbot flagged. The takeover attempt is refused and the
+built-in survives. Both guards mutation-checked.
+
+The loader's test had to be rewritten once: mocking `@agentbox/agent-registry`
+forked the module graph, so the loader registered into a DIFFERENT
+`sandbox-docker` instance than the test read — it passed while proving nothing.
+It takes a `registryPath` now and runs against a real fixture package, so the
+dynamic `import()` under test is the real one.
 
 The measurement the plan asked for is recorded in `docs/agents.md` →
 "What a new agent actually costs, measured".

@@ -22,7 +22,7 @@ import {
   type CustodyStore,
 } from '@agentbox/relay/control-plane';
 import { setCloudBackendLoader, startRelayDaemon } from '@agentbox/relay/daemon';
-import { registerAllAgentModules } from '@agentbox/agent-modules';
+import { registerAllAgentModules, registerInstalledAgentModules } from '@agentbox/agent-modules';
 import {
   controlPlaneDeployPath,
   readPreparedStateRaw,
@@ -152,6 +152,11 @@ async function main(): Promise<void> {
   // than importing them — so it needs the same one-call wiring the CLI does.
   // Without it a hub-driven create dies on `requireAgentSyncModule`.
   registerAllAgentModules();
+  // The hub creates docker boxes too, so it needs installed agents' behavior as
+  // much as the CLI does. Failures are logged, never fatal.
+  for (const f of (await registerInstalledAgentModules()).failed) {
+    console.warn(`agent package "${f.packageName}" not loaded — ${f.reason}`);
+  }
 
   const hostReachTimeoutFromConfig = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.relay.hostReachTimeoutMs)
