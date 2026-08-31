@@ -133,6 +133,61 @@ Say yes to that prompt only when you see it — signing in when you did not need
   automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).
 </Callout>
 
+## Add an agent AgentBox does not ship
+
+The four built-ins are not the whole list. An agent can also arrive as an npm
+package, the way a [custom provider](/docs/build-a-provider) does:
+
+```console
+$ npm i -g agentbox-agent-demo
+$ agentbox agent add agentbox-agent-demo
+registered demo from agentbox-agent-demo@0.1.0
+
+$ agentbox agent list
+claude               built-in
+codex                built-in
+opencode             built-in
+demo                 agentbox-agent-demo@0.1.0 (agent API v1)
+```
+
+A path works too, for a package you are developing: `agentbox agent add ./my-agent`.
+`agentbox agent remove <package>` unregisters it (it does not uninstall the npm
+package).
+
+An agent package exports one thing — an `agentSpec` describing where its config
+lives on the host and in the box, how to install it, and what it can do:
+
+```js
+export const AGENT_API_VERSION = 1;
+
+export const agentSpec = {
+  id: 'demo',
+  aliases: ['demo-agent'],
+  sessionName: 'demo',
+  binary: 'demo-cli',
+  install: { kind: 'npm', package: 'demo-cli' },
+  dockerVolume: 'agentbox-demo-config',
+  staticPaths: [{ hostHomeRel: ['.demo'], boxDir: '/home/vscode/.demo' }],
+  credential: {
+    /* where its login lives, on the box and in the host backup */
+  },
+  forwardedEnvKeys: [],
+  boxRunEnv: {},
+  caps: { resume: false, teleport: 'stub', activitySource: [] },
+};
+```
+
+`agentbox agent add` loads the package once, checks the spec, and snapshots it
+into `~/.agentbox/agents.json`. Everything afterwards reads the snapshot, so no
+part of AgentBox has to import your package to know the agent exists — and your
+agent's host config is staged into every cloud provider's snapshot from those
+`staticPaths` alone.
+
+<Callout title="NOTE">
+  A package cannot claim the name — or an alias — of a built-in agent; `agent add` refuses it, so
+  nothing can quietly take over `agentbox claude`.
+</Callout>
+
 ## Next steps
 
 - [Access your box](/docs/access-your-box) — shell, VS Code/Cursor (`agentbox code`), the dashboard.

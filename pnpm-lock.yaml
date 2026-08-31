@@ -44,6 +44,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@agentbox/agent-registry':
+        specifier: workspace:*
+        version: link:../../packages/agent-registry
       '@clack/prompts':
         specifier: ^0.9.0
         version: 0.9.1

@@ -242,11 +242,35 @@ message instead of blocking on a password read nothing will answer.
    added without this step can never sync its box-side config back.
 
 Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change
-(see the backlog below). **Step 5 is the only per-agent tax left** — a
-generalized config namespace collapses it; step 7 is the other open one. See the
-seam
-analysis in
+(see the backlog below). See the seam analysis in
 [`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
+
+### What a new agent actually costs, measured
+
+The deliverable of the agents-as-packages work is this number, not the claim.
+Two paths, both real and both exercised:
+
+**An agent installed from a package — nothing in this repo changes.**
+`agentbox agent add <package>` loads the package once, validates its
+`AgentSyncSpec` and snapshots it into `~/.agentbox/agents.json`; every reader
+resolves it from there, synchronously and without importing the package. Proven
+with a two-file package (`package.json` + one `index.js` exporting `agentSpec`)
+that imports **no `@agentbox/*` module at all**: after `agent add` it appears in
+`AGENT_SYNC_SPECS`, resolves by id and by alias, satisfies `isRuntimeAgent`, and
+is dispatched by `stageAllAgentStatic` into every cloud provider's snapshot —
+with zero edits to AgentBox. A plugin cannot shadow a built-in id or alias, and
+that refusal is enforced at add time.
+
+That path covers DATA. An installed agent that also needs docker behavior still
+has to have its `AgentSyncModule` loaded, which is the remaining half.
+
+**An agent compiled in — its own package, plus what the open phases still hold.**
+`@agentbox/agent-example` is the canary: a real hidden agent with real behavior,
+four files of its own. Everything still needing a hand edit is listed in one
+place, `apps/cli/test/_agents-in-cli.ts`, whose doc names the phase that removes
+each. It currently has **4 callers**, all in `apps/cli` — the module and command
+tables and the runtime probes that phase 2 moves into the agent packages. When
+that file has no callers, the claim is a test result rather than a promise.
 
 ---
 

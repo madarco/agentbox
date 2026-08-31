@@ -33,6 +33,7 @@ import { claudeSpec } from './specs/claude.js';
 import { codexSpec } from './specs/codex.js';
 import { exampleSpec } from './specs/example.js';
 import { opencodeSpec } from './specs/opencode.js';
+import { pluginAgentSpecs } from './plugin-agents.js';
 import type { AgentId, AgentSyncSpec } from '@agentbox/core';
 
 /**
@@ -40,12 +41,51 @@ import type { AgentId, AgentSyncSpec } from '@agentbox/core';
  * lived in one table. `list`, the dashboard and the pickers all present agents
  * in this order, so it is a user-visible fact, not an implementation detail.
  */
-export const AGENT_SPECS: readonly AgentSyncSpec[] = [
+export const BUILTIN_AGENT_SPECS: readonly AgentSyncSpec[] = [
   claudeSpec,
   codexSpec,
   opencodeSpec,
   exampleSpec,
 ];
+
+/**
+ * Built-ins plus whatever `agentbox agent add` registered, resolved once at
+ * import.
+ *
+ * A snapshot rather than a live read because ~50 call sites treat this as a
+ * constant, and a plugin agent appearing halfway through a create would be far
+ * worse than one that appears on the next command. Every CLI invocation is a
+ * fresh process, so "the next command" is immediately; the long-lived host
+ * processes (relay, hub) pick it up on restart, and {@link allAgentSpecs} is
+ * there for a caller that must not wait for one.
+ *
+ * A built-in always wins: a plugin cannot shadow a shipped agent, the same rule
+ * `plugin add` enforces for providers.
+ */
+export const AGENT_SPECS: readonly AgentSyncSpec[] = mergeAgentSpecs(
+  BUILTIN_AGENT_SPECS,
+  pluginAgentSpecs(),
+);
+
+function mergeAgentSpecs(
+  builtins: readonly AgentSyncSpec[],
+  plugins: readonly AgentSyncSpec[],
+): readonly AgentSyncSpec[] {
+  // Aliases count as taken too, or a plugin claiming `claude-code` would
+  // silently capture every `agentbox claude-code`.
+  const taken = new Set(builtins.flatMap((s) => [s.id, ...s.aliases]));
+  const extra = plugins.filter((s) => ![s.id, ...s.aliases].some((n) => taken.has(n)));
+  return [...builtins, ...extra];
+}
+
+/**
+ * Re-read the plugin registry and return the current set. For a long-lived
+ * process that must see an agent added since it started — the relay answering
+ * `agents.list` for a box created a moment ago.
+ */
+export function allAgentSpecs(): readonly AgentSyncSpec[] {
+  return mergeAgentSpecs(BUILTIN_AGENT_SPECS, pluginAgentSpecs());
+}
 
 /**
  * The agents a user should be offered — pickers, `--help`, the install wizard,
@@ -64,9 +104,9 @@ export function visibleAgentIds(): AgentId[] {
   return visibleAgentSpecs().map((s) => s.id);
 }
 
-/** Every built-in agent id, in canonical order. */
+/** Every built-in agent id, in canonical order. Excludes plugin agents. */
 export function builtinAgentIds(): AgentId[] {
-  return AGENT_SPECS.map((s) => s.id);
+  return BUILTIN_AGENT_SPECS.map((s) => s.id);
 }
 
 /**
@@ -76,3 +116,18 @@ export function builtinAgentIds(): AgentId[] {
 export function findAgentSpec(id: string): AgentSyncSpec | undefined {
   return AGENT_SPECS.find((s) => s.id === id || s.aliases.includes(id));
 }
+
+export {
+  AGENTS_FILE,
+  AGENTS_FILE_VERSION,
+  SUPPORTED_AGENT_API_VERSIONS,
+  isSupportedAgentApiVersion,
+  agentSpecProblem,
+  readAgentRegistrySync,
+  pluginAgentSpecs,
+  pluginForAgent,
+  addAgentPluginRecord,
+  removeAgentPluginRecord,
+  type AgentPluginRecord,
+  type AgentsFile,
+} from './plugin-agents.js';

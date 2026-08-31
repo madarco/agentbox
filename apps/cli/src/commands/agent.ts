@@ -29,12 +29,17 @@ import { HubApiError } from '../control-plane/hub-api-client.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { handleLifecycleError } from './_errors.js';
+import { agentPluginCommands } from './agent-plugin.js';
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const agentCommand = new Command('agent').description(
-  "Query and wait on the in-box coding agent's state (Claude Code plan-mode end, AskUserQuestion, idle/prompt-ready).",
+  "Query and wait on the in-box coding agent's state, and manage installed agent packages.",
 );
+
+// add / list / remove — externally-installed agents. Separate module because it
+// is a different concern from the state queries below, sharing only the noun.
+for (const cmd of agentPluginCommands()) agentCommand.addCommand(cmd);
 
 interface BoxRefOpts {
   json?: boolean;

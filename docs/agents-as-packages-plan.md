@@ -455,11 +455,41 @@ agent-named code is excluded rather than exempted: `apps/cli/src/agents/<id>/`
 (an agent's own folder, pending phase 2) and ctl's scrapers (baked into the
 image; the plan says they stay).
 
-**Phase 7b — the dynamic plugin path.** `agentbox agent add`, an agent registry
-file, `AgentModule.descriptor` snapshotting and a version gate, mirroring
-`plugin.ts` / `plugin-registry.ts`. **Measure the fourth agent again here** and
-record the final number in `docs/agents.md` — that count is the deliverable, not
-a vague "it's a package now". Still open.
+**Phase 7b — the dynamic plugin path — DATA HALF DONE.**
+`agentbox agent add|list|remove`, backed by `~/.agentbox/agents.json`, mirroring
+`plugin.ts` / `plugin-registry.ts` exactly.
+
+Simpler than the provider version for one reason: an agent's descriptor IS its
+`AgentSyncSpec`, which is already pure JSON — the spec has never been allowed to
+hold a function, because it is shipped into boxes whose `agentbox-ctl` predates
+the agent. So there is nothing to derive; the spec is the snapshot.
+
+`AGENT_SPECS` is `BUILTIN_AGENT_SPECS` merged with the snapshot at import (a
+constant, because ~50 sites treat it as one and an agent appearing mid-create
+would be worse than one appearing on the next command; `allAgentSpecs()` re-reads
+for a long-lived process). A built-in always wins, by id AND by alias — a plugin
+taking `claude-code` would otherwise capture every `agentbox claude-code`. Both
+halves mutation-checked, and one test had to be rewritten because it passed for
+the wrong reason: built-ins are scanned first, so `findAgentSpec` returns claude
+whether or not the impostor was admitted. The real claim is that it never
+entered the table.
+
+**Validated end to end** with a two-file package importing no `@agentbox/*`
+module at all: after `agent add` it appears in `AGENT_SYNC_SPECS`, resolves by id
+and alias, satisfies `isRuntimeAgent`, and is dispatched by `stageAllAgentStatic`
+into every cloud provider's snapshot — zero edits to AgentBox. Shadowing a
+built-in, a package exporting no spec, and a corrupt registry file are each
+refused with a message rather than a stack trace, and the registry was removed
+afterwards so the dev machine is back to the built-ins.
+
+**Still open — the CODE half.** An installed agent that needs docker behavior
+must have its `AgentSyncModule` loaded through a variable `import()` of
+`resolvedEntry`. The record already carries that path; nothing loads it yet. The
+data half is what unlocks the rest, since it is what every reader resolves
+against.
+
+The measurement the plan asked for is recorded in `docs/agents.md` →
+"What a new agent actually costs, measured".
 
 ## What adding an agent costs today — measured, after phase 3b
 
