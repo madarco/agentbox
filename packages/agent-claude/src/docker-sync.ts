@@ -4,9 +4,9 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
-import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, type ClaudeTuiMode } from '@agentbox/config';
 import {
+  agentTuiEnv,
   ensureAgentInstalled,
   AgentInstallError,
   resolveAgentSpec,
@@ -942,7 +942,7 @@ export function claudeSessionEnvFlags(tui: ClaudeTuiMode, env: NodeJS.ProcessEnv
   // `auto` could never get back to Claude's own choice. Blank the one we don't
   // want — empty is falsy to Claude's check, and an explicit empty value
   // overrides whatever the container has.
-  const wanted = claudeTuiEnv(tui);
+  const wanted = agentTuiEnv('claude', tui);
   for (const k of ['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', 'CLAUDE_CODE_NO_FLICKER'] as const) {
     flags.push('-e', `${k}=${wanted[k] ?? ''}`);
   }

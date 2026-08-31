@@ -43,3 +43,20 @@ export function agentIds(): AgentId[] {
 export function isRuntimeAgent(name: string): boolean {
   return AGENT_SYNC_SPECS.some((s) => s.id === name || s.aliases.includes(name));
 }
+
+/**
+ * The env that pins `binary`'s in-box terminal renderer for `mode`.
+ *
+ * The generic counterpart of `agentLaunchFlags`: reads `AgentSyncSpec.tuiEnv`,
+ * and answers `{}` for an agent that declares none. Replaces the
+ * `binary === 'claude'` branches the cloud launch sites used to carry — claude
+ * is still the only agent with an entry, but that is now a fact about the
+ * registry rather than about the code.
+ *
+ * Guarded on `isRuntimeAgent`, like `agentLaunchFlags`: the binary here is an
+ * open string and an unknown one must not throw.
+ */
+export function agentTuiEnv(binary: string, mode: string): Record<string, string> {
+  if (!isRuntimeAgent(binary)) return {};
+  return { ...(resolveAgentSpec(binary).tuiEnv?.[mode] ?? {}) };
+}

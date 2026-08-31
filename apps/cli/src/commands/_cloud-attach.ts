@@ -10,8 +10,7 @@ import {
   verifyDetachedSession,
 } from '@agentbox/sandbox-cloud';
 import type { AgentId, BoxRecord } from '@agentbox/core';
-import { claudeTuiEnv } from '@agentbox/core';
-import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { agentTuiEnv, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
@@ -156,14 +155,15 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     const resume = await agentResumeArgs(provider, box, args.mode);
     if (resume) extraArgs = resume;
   }
-  // Renderer pin rides the launch command (see `buildCloudAttachInnerCommand`);
-  // claude is the only agent it applies to.
+  // Renderer pin rides the launch command (see `buildCloudAttachInnerCommand`).
+  // Which agents have one is registry data (`AgentSyncSpec.tuiEnv`).
   const command = buildCloudAttachInnerCommand(
     args.binary,
     extraArgs,
-    args.binary === 'claude'
-      ? claudeTuiEnv((await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui)
-      : undefined,
+    agentTuiEnv(
+      args.binary,
+      (await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui,
+    ),
   );
   // Every cloud provider honours `attach.openIn`.
   //

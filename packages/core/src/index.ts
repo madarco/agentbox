@@ -10,8 +10,6 @@ export type {
 export { parseProviderWarning, providerWarning } from './provider-warning.js';
 export type { AgentLauncher } from './agent.js';
 export { resolveAgentLauncher } from './agent.js';
-export type { ClaudeTuiMode } from './claude-tui.js';
-export { claudeTuiEnv } from './claude-tui.js';
 export type {
   BoxRecord,
   CloudBoxFields,

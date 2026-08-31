@@ -13,9 +13,8 @@
  */
 import { spawn } from 'node:child_process';
 import type { BoxRecord, Provider } from '@agentbox/core';
-import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
-import { loadEffectiveConfig } from '@agentbox/config';
-import { isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
+import { loadEffectiveConfig, type ClaudeTuiMode } from '@agentbox/config';
+import { agentTuiEnv, isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
 
 /**
@@ -330,11 +329,12 @@ export async function startDetachedCloudAgent(
     const resume = await args.resolveResumeArgs(box);
     if (resume) extraArgs = resume;
   }
-  // Claude is the only agent with a renderer to pin; codex/opencode get nothing.
+  // Which agents have a renderer to pin is registry data (`AgentSyncSpec.tuiEnv`);
+  // one with none gets an empty env here.
   const command = buildCloudAttachInnerCommand(
     binary,
     extraArgs,
-    binary === 'claude' ? claudeTuiEnv(await resolveBoxClaudeTui(box)) : undefined,
+    agentTuiEnv(binary, await resolveBoxClaudeTui(box)),
   );
   const attempts = Math.max(1, args.startRetry?.attempts ?? DEFAULT_START_ATTEMPTS);
   const backoffMs = args.startRetry?.backoffMs ?? DEFAULT_START_BACKOFF_MS;

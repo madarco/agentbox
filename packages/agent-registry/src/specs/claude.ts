@@ -137,6 +137,15 @@ export const claudeSpec: AgentSyncSpec = {
     'ANTHROPIC_MODEL',
   ],
   boxRunEnv: {},
+  // Claude Code's own renderer overrides. See `AgentSyncSpec.tuiEnv` for why
+  // this is data: it replaced a `binary === 'claude'` branch at each cloud
+  // launch site. `auto` is present and empty on purpose — "no override, Claude
+  // Code decides" is a real mode, not a missing entry.
+  tuiEnv: {
+    default: { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' },
+    fullscreen: { CLAUDE_CODE_NO_FLICKER: '1' },
+    auto: {},
+  },
   // The box-ONLY wizard skill: deliberately never written to the host's
   // ~/.claude. Claude also gets it at install time via SEED_SETUP_SKILL, but
   // the docker config volume mounts OVER ~/.claude, so it has to be re-placed

@@ -278,6 +278,26 @@ export interface AgentSyncSpec {
    * flags have to precede it.
    */
   launchFlags?: readonly string[];
+  /**
+   * Environment that pins the agent's in-box terminal renderer, keyed by mode.
+   *
+   * Data rather than code because the alternative was a `binary === 'claude'`
+   * branch at each launch site — and claude is only the agent this happens to
+   * matter for TODAY, not the only one it could ever matter for. An agent with
+   * no renderer to pin omits the field and gets an empty env.
+   *
+   * Claude's entry exists because its `fullscreen` renderer repaints
+   * differentially: it skips cells it believes are already blank, which over a
+   * network transport leaves stale characters behind in the GAPS of the text.
+   * The variables are Claude Code's own overrides (verified against v2.1.250)
+   * and beat the `tui` key in `~/.claude/settings.json`, so the pin holds
+   * whatever a box's settings volume carries. Reported upstream behaviour, not
+   * an AgentBox bug — `agentbox shell` is clean, and so is `/tui default`.
+   *
+   * Callers write these into the box env file, not just onto the agent's launch
+   * argv, so a `claude` started by hand from `agentbox shell` renders the same.
+   */
+  tuiEnv?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   caps: AgentCapabilities;
   /**
    * Box->host (`agentbox download <agent>`) descriptor.

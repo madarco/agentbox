@@ -15,6 +15,7 @@ export {
   type ConfigScope,
   type ConfigSource,
   type EffectiveConfig,
+  type ClaudeTuiMode,
   type EngineKind,
   type GitPushMode,
   type HubGitAuthMode,
