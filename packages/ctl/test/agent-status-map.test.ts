@@ -74,12 +74,17 @@ describe('BAKED_AGENT_SESSIONS drift vs the agent registry', () => {
     // ctl deliberately does NOT import the registry (it is baked into the box
     // image and the host owns the list), so the baked default can only be kept
     // honest from the outside — here.
-    for (const spec of AGENT_SYNC_SPECS) {
+    // Baked agents only: ctl ships inside the image, so an agent added after the
+    // bake cannot be in a compiled-in list — it arrives over `agents.list`
+    // (#340), which `agent-registry-fetch.test.ts` covers. A hidden agent is
+    // exactly that case.
+    const baked_specs = AGENT_SYNC_SPECS.filter((s) => !s.hidden);
+    for (const spec of baked_specs) {
       const baked = BAKED_AGENT_SESSIONS.find((s) => s.agent === spec.id);
       expect(baked, `missing baked session probe for '${spec.id}'`).toBeDefined();
       expect(baked!.sessionName).toBe(spec.sessionName);
     }
-    expect(BAKED_AGENT_SESSIONS).toHaveLength(AGENT_SYNC_SPECS.length);
+    expect(BAKED_AGENT_SESSIONS).toHaveLength(baked_specs.length);
   });
 });
 

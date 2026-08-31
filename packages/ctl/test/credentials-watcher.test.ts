@@ -28,15 +28,29 @@ function fakeRelay(outcomes: PostOutcome[] = []): {
   return { relay: { enabled: true, post } as unknown as RelayClient, post };
 }
 
+/**
+ * ctl's baked lists cover the agents that were IN the image when it was baked —
+ * not every agent the host's registry knows about.
+ *
+ * That distinction is the whole point of the `agents.list` RPC (#340): ctl ships
+ * inside the box, so an agent added after the bake can never appear in a
+ * compiled-in list, and demanding one here would re-impose exactly the coupling
+ * that RPC exists to break. A hidden agent is precisely that case — it is not
+ * baked into any image — so it is excluded here and covered by
+ * `agent-registry-fetch.test.ts`, which asserts the host-supplied list reaches
+ * the daemon.
+ */
+const BAKED_SPECS = AGENT_SYNC_SPECS.filter((s) => !s.hidden);
+
 describe('WATCHED_CREDENTIALS drift vs @agentbox/sandbox-core registry', () => {
-  it('mirrors credential.boxAbsPath and realShape per agent', () => {
-    for (const spec of AGENT_SYNC_SPECS) {
+  it('mirrors credential.boxAbsPath and realShape per baked agent', () => {
+    for (const spec of BAKED_SPECS) {
       const watched = WATCHED_CREDENTIALS.find((w) => w.agent === spec.id);
       expect(watched, `missing watcher entry for '${spec.id}'`).toBeDefined();
       expect(watched!.path).toBe(spec.credential.boxAbsPath);
       expect(watched!.shape).toBe(spec.credential.realShape);
     }
-    expect(WATCHED_CREDENTIALS).toHaveLength(AGENT_SYNC_SPECS.length);
+    expect(WATCHED_CREDENTIALS).toHaveLength(BAKED_SPECS.length);
   });
 
   it('isRealCredentialText agrees with isRealAgentCredential', () => {
@@ -48,7 +62,7 @@ describe('WATCHED_CREDENTIALS drift vs @agentbox/sandbox-core registry', () => {
       'not-json',
       JSON.stringify([1, 2]),
     ];
-    for (const spec of AGENT_SYNC_SPECS) {
+    for (const spec of BAKED_SPECS) {
       const watched = WATCHED_CREDENTIALS.find((w) => w.agent === spec.id)!;
       for (const sample of samples) {
         expect(

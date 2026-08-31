@@ -1,4 +1,4 @@
-import { agentIds } from '@agentbox/sandbox-core';
+import { agentIdsWiredIntoCli } from './_agents-in-cli.js';
 import { describe, expect, it } from 'vitest';
 import { agentCommandEntry, agentCommandIds, agentCommands } from '../src/agents/commands.js';
 
@@ -20,11 +20,11 @@ import { agentCommandEntry, agentCommandIds, agentCommands } from '../src/agents
  */
 describe('per-agent dispatch table', () => {
   it('registers a command for every agent in the registry', () => {
-    expect([...agentCommandIds()].sort()).toEqual([...agentIds()].sort());
+    expect([...agentCommandIds()].sort()).toEqual([...agentIdsWiredIntoCli()].sort());
   });
 
   it('every entry carries both a command and an attach wrapper', () => {
-    for (const id of agentIds()) {
+    for (const id of agentIdsWiredIntoCli()) {
       const entry = agentCommandEntry(id);
       expect(entry, `no command entry for '${id}'`).toBeDefined();
       expect(entry!.command.name()).toBe(id);
@@ -34,7 +34,7 @@ describe('per-agent dispatch table', () => {
 
   it('agentCommands() returns one command per agent, no duplicates', () => {
     const names = agentCommands().map((c) => c.name());
-    expect(names.sort()).toEqual([...agentIds()].sort());
+    expect(names.sort()).toEqual([...agentIdsWiredIntoCli()].sort());
     expect(new Set(names).size).toBe(names.length);
   });
 

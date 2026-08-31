@@ -1,8 +1,8 @@
 {
-  "name": "@agentbox/agent-registry",
+  "name": "@agentbox/agent-example",
   "version": "0.0.0",
   "private": true,
-  "description": "The built-in agent specs, aggregated \u2014 the data half of the agent layer",
+  "description": "The fourth agent \u2014 a deliberately minimal package that proves adding an agent needs nothing outside it",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./spec": {
+      "types": "./dist/spec.d.ts",
+      "import": "./dist/spec.js"
     }
   },
   "files": [
@@ -25,10 +29,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/agent-claude": "workspace:*",
-    "@agentbox/agent-codex": "workspace:*",
-    "@agentbox/agent-example": "workspace:*",
-    "@agentbox/agent-opencode": "workspace:*",
+    "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*"
   },
   "devDependencies": {

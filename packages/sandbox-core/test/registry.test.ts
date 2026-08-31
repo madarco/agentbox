@@ -15,8 +15,10 @@ describe('agent sync registry', () => {
     expect(() => resolveAgentSpec('gemini')).toThrow(/no agent sync spec/);
   });
 
-  it('exposes the three canonical ids in registry order', () => {
-    expect(agentIds()).toEqual(['claude', 'codex', 'opencode']);
+  it('exposes the canonical ids in registry order, shipped agents first', () => {
+    // `example` is the seam canary (hidden, see @agentbox/agent-example). It is
+    // last so the order the three shipped agents are presented in never moves.
+    expect(agentIds()).toEqual(['claude', 'codex', 'opencode', 'example']);
   });
 
   it('credential + volume data matches the known docker/cloud layout', () => {

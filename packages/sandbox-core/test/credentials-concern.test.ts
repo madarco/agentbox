@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeRecordingTransport } from '../src/sync/recording-transport.js';
+import { AGENT_SYNC_SPECS } from '../src/sync/registry.js';
 import {
   SEED_MARKER,
   extractCredentials,
@@ -210,12 +211,13 @@ describe('credentials concern — extractCredentials', () => {
     expect(extracted).toEqual(['claude']);
 
     // One readText per agent, in registry order, at the canonical box paths.
-    expect(t.ops.map((o) => o.op)).toEqual(['readText', 'readText', 'readText']);
-    expect(t.ops.map((o) => o.args['boxPath'])).toEqual([
-      '/home/vscode/.claude/.credentials.json',
-      '/home/vscode/.codex/auth.json',
-      '/home/vscode/.local/share/opencode/auth.json',
-    ]);
+    // Derived from the registry rather than listed: this asserts the concern
+    // visits EVERY agent, which a hardcoded list quietly stops doing the moment
+    // an agent is added.
+    expect(t.ops.map((o) => o.op)).toEqual(AGENT_SYNC_SPECS.map(() => 'readText'));
+    expect(t.ops.map((o) => o.args['boxPath'])).toEqual(
+      AGENT_SYNC_SPECS.map((spec) => spec.credential.boxAbsPath),
+    );
 
     expect(await readFile(b.claude, 'utf8')).toBe(realClaude);
     expect((await stat(b.claude)).mode & 0o777).toBe(0o600);

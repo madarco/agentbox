@@ -222,6 +222,17 @@ export interface AgentSyncSpec {
    * everything else wants `'claude'`.
    */
   wireId?: string;
+  /**
+   * Keep this agent out of user-facing listings — pickers, `--help`, the install
+   * wizard, the `--agents` bake list. It stays fully real everywhere else: the
+   * registry resolves it, the machinery iterates it, its box works.
+   *
+   * For an agent that exists to exercise the seam rather than to be used. The
+   * repo's fourth agent is a deliberate canary: every layer that still needs
+   * hand-wiring to support a new agent fails loudly while it is present, which
+   * is a running count of how far "an agent is a package" actually goes.
+   */
+  hidden?: boolean;
   /** Default tmux session name. */
   sessionName: string;
   /** Command name to probe with `command -v` — how we tell "already installed". */

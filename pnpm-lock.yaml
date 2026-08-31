@@ -357,6 +357,28 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
+  packages/agent-example:
+    dependencies:
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../config
+      '@agentbox/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
+
   packages/agent-opencode:
     dependencies:
       '@agentbox/config':
@@ -387,6 +409,9 @@ importers:
       '@agentbox/agent-codex':
         specifier: workspace:*
         version: link:../agent-codex
+      '@agentbox/agent-example':
+        specifier: workspace:*
+        version: link:../agent-example
       '@agentbox/agent-opencode':
         specifier: workspace:*
         version: link:../agent-opencode

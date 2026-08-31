@@ -23,6 +23,7 @@
 
 import { claudeSpec } from '@agentbox/agent-claude/spec';
 import { codexSpec } from '@agentbox/agent-codex/spec';
+import { exampleSpec } from '@agentbox/agent-example/spec';
 import { opencodeSpec } from '@agentbox/agent-opencode/spec';
 import type { AgentId, AgentSyncSpec } from '@agentbox/core';
 
@@ -31,7 +32,29 @@ import type { AgentId, AgentSyncSpec } from '@agentbox/core';
  * lived in one table. `list`, the dashboard and the pickers all present agents
  * in this order, so it is a user-visible fact, not an implementation detail.
  */
-export const AGENT_SPECS: readonly AgentSyncSpec[] = [claudeSpec, codexSpec, opencodeSpec];
+export const AGENT_SPECS: readonly AgentSyncSpec[] = [
+  claudeSpec,
+  codexSpec,
+  opencodeSpec,
+  exampleSpec,
+];
+
+/**
+ * The agents a user should be offered — pickers, `--help`, the install wizard,
+ * the `--agents` bake list.
+ *
+ * Everything else iterates {@link AGENT_SPECS}: a hidden agent is fully real to
+ * the machinery and merely unadvertised. Surfaces that ask a human to choose
+ * should use this instead.
+ */
+export function visibleAgentSpecs(): AgentSyncSpec[] {
+  return AGENT_SPECS.filter((s) => !s.hidden);
+}
+
+/** Ids of the agents a user should be offered. */
+export function visibleAgentIds(): AgentId[] {
+  return visibleAgentSpecs().map((s) => s.id);
+}
 
 /** Every built-in agent id, in canonical order. */
 export function builtinAgentIds(): AgentId[] {

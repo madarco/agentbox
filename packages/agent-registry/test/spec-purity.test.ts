@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AGENT_SPECS, builtinAgentIds, findAgentSpec } from '../src/index.js';
+import { AGENT_SPECS, builtinAgentIds, findAgentSpec, visibleAgentIds } from '../src/index.js';
 
 /**
  * The `./spec` entry of every agent package must stay dependency-free.
@@ -77,7 +77,13 @@ describe('agent ./spec entries stay importable from the bottom of the graph', ()
 
 describe('the aggregated registry', () => {
   it('carries every built-in, in canonical order with claude first', () => {
-    expect(builtinAgentIds()).toEqual(['claude', 'codex', 'opencode']);
+    expect(builtinAgentIds()).toEqual(['claude', 'codex', 'opencode', 'example']);
+  });
+
+  it('hides the canary from the agents a user is offered', () => {
+    // `example` is real to the machinery and absent from every picker.
+    expect(visibleAgentIds()).toEqual(['claude', 'codex', 'opencode']);
+    expect(findAgentSpec('example')?.hidden).toBe(true);
   });
 
   it('resolves an agent by id and by wire alias', () => {
