@@ -1,8 +1,8 @@
 /**
  * A complete AgentBox agent plugin, in one file.
  *
- * Deliberately plain JavaScript with NO dependencies — not even an
- * `@agentbox/*` one. That is the claim this example exists to prove: an agent
+ * Deliberately plain JavaScript with no dependencies beyond node builtins —
+ * not one `@agentbox/*` import. That is the claim this example exists to prove: an agent
  * package never enters AgentBox's build graph. Its data is a plain object that
  * `agentbox agent add` snapshots into `~/.agentbox/agents.json`, and its code is
  * reached through a variable `import()` of the entry path recorded there. A
@@ -16,6 +16,9 @@
  *
  * and remove it with `agentbox agent remove agentbox-agent-example`.
  */
+
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 /** The agent API version this package targets. Gated at `agent add`. */
 export const AGENT_API_VERSION = 1;
@@ -71,7 +74,7 @@ export const agentSpec = {
   credential: {
     boxRelPath: 'auth.json',
     boxAbsPath: `${BOX_DIR}/auth.json`,
-    hostBackup: `${process.env.HOME ?? ''}/.agentbox/example-agent-credentials.json`,
+    hostBackup: join(homedir(), '.agentbox', 'example-agent-credentials.json'),
     cloudMountPath: '/home/vscode/.agentbox-creds/example-agent',
     cloudSubpath: 'auth.json',
     realShape: 'nonempty-json',
