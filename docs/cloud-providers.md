@@ -435,6 +435,21 @@ On the rare from-image create path the size is applied directly. Invalid
 specs (anything other than positive integers separated by `-`) throw at
 prepare time with the `4-8-20` example.
 
+Both bake paths (`linux-vm` and `container`) always send explicit
+`resources`. This matters: a snapshot created with none takes Daytona's
+**1 vCPU / 1 GiB / 3 GiB** server-side default, and since `resources` is
+rejected on create-from-snapshot, every box booted from it is stuck there
+for the snapshot's whole life — under the box image itself, so a real
+project's install step dies to an OOM kill with no other signal.
+
+The ceiling is the Daytona **plan's** per-sandbox limit, not ours: the free
+tier caps disk at 10 GB, and a larger ask is refused outright at bake time
+(`Disk request 20GB exceeds maximum allowed per sandbox (10GB)`). AgentBox
+restates that as the size it asked for plus the cap Daytona reported, so
+`4-8-10` is the practical maximum until support raises the limit. A 10 GB
+disk is the binding constraint for a large monorepo — the box image, an
+in-box `pnpm install` and any DinD images all share it.
+
 ### 2.1 Workspace seeding
 
 `seedCloudWorkspace` (`packages/sandbox-cloud/src/workspace-seed.ts`) ships

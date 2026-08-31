@@ -122,6 +122,16 @@ Daytona resources are fixed **at snapshot-bake time** — the SDK rejects custom
 agentbox prepare --provider daytona --size 4-8-20 --force
 ```
 
+Every bake sends an explicit size — the default is **2 vCPU / 4 GB / 8 GB disk**. Leaving it to Daytona is not an option: a snapshot created with no resources takes Daytona's own 1 vCPU / 1 GB / 3 GB default, and because resources are rejected on the snapshot-resume path, every box booted from that snapshot stays that small for its whole life.
+
+Your **Daytona plan** caps resources per sandbox, and a bigger ask is refused at bake time rather than silently clamped:
+
+```
+Disk request 20GB exceeds maximum allowed per sandbox (10GB).
+```
+
+On the free tier that makes `4-8-10` the practical maximum; email support@daytona.io to raise it. The 10 GB disk is usually what binds first on a large monorepo — the box image, an in-box `pnpm install`, and any containers the box runs itself all share it.
+
 The snapshot name carries a size suffix (`agentbox-base-<sha>-4-8-20`), so re-sized bakes don't collide. If you later `create --provider daytona --size 2-4-8` against a snapshot baked at a different size, the box still boots — AgentBox warns loudly that the size is fixed at bake time and points you at `prepare --provider daytona --size 2-4-8 --force`. Re-running `prepare` with the same size skips the rebuild. `--size` (and `box.sizeDaytona` / `box.daytonaClass`) travel with the bake request, so a bake through a [control box](/docs/deployed-hub) uses the size you ask for, falling back to the control box's own pins when you omit the flag.
 
 See [CLI commands](/docs/cli) for all flags.

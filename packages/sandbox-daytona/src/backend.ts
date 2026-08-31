@@ -278,6 +278,34 @@ export function parseDaytonaSize(
   return { cpu: nums[0]!, memory: nums[1]!, disk: nums[2]! };
 }
 
+/**
+ * Daytona's per-sandbox resource ceiling, which is an ACCOUNT limit, not an
+ * AgentBox one — the free plan caps disk at 10 GB and rejects the snapshot
+ * outright ("Disk request 20GB exceeds maximum allowed per sandbox (10GB)").
+ * The SDK raises that as a `DaytonaValidationError`, so without this the bake
+ * dies under twenty lines of axios stack and the one line that matters — the
+ * cap, and that support can raise it — scrolls away.
+ */
+export function isResourceLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\bexceeds maximum allowed\b/i.test(msg);
+}
+
+/** Restate the cap Daytona reported against the size we actually asked for. */
+export function sizeOverQuotaMessage(
+  requested: { cpu: number; memory: number; disk: number },
+  err: unknown,
+): string {
+  const detail = (err instanceof Error ? err.message : String(err)).split('\n')[0] ?? '';
+  return (
+    `Daytona rejected the ${String(requested.cpu)}-${String(requested.memory)}-${String(requested.disk)} ` +
+    `(cpu-memory-disk GB) bake: ${detail}\n` +
+    `  That ceiling is set by your Daytona plan, not by AgentBox. Bake within it — e.g.\n` +
+    `    agentbox prepare --provider daytona --size 4-8-10 --force\n` +
+    `  or ask support@daytona.io to raise the limit for your organization.`
+  );
+}
+
 export const daytonaBackend: CloudBackend = {
   name: 'daytona',
 

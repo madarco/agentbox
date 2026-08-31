@@ -45,6 +45,11 @@ import {
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
+import {
+  DAYTONA_DEFAULT_RESOURCES,
+  isResourceLimitError,
+  sizeOverQuotaMessage,
+} from './backend.js';
 
 /**
  * Restore sudo's setuid bit (and quiet its hostname warning) from inside the
@@ -484,6 +489,10 @@ async function createVmBaseSnapshot(
   imageRef: string,
   log: (line: string) => void,
 ): Promise<string> {
+  // Always explicit: a snapshot with no `resources` gets Daytona's 1 vCPU /
+  // 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB — the build
+  // dies mid-pull with a bare "internal error".
+  const resources = opts.resources ?? { ...DAYTONA_DEFAULT_RESOURCES };
   log(`creating linux-vm base image snapshot '${name}' from ${imageRef}…`);
   try {
     await opts.client.snapshot.create(
@@ -492,16 +501,16 @@ async function createVmBaseSnapshot(
         image: imageRef,
         sandboxClass: SandboxClass.LINUX_VM,
         regionId: opts.regionId,
-        // Always explicit: a snapshot with no `resources` gets Daytona's 1 vCPU /
-        // 1 GiB / 3 GiB default, and the box image does not fit in 3 GiB — the
-        // build dies mid-pull with a bare "internal error".
-        resources: opts.resources ?? { cpu: 2, memory: 4, disk: 8 },
+        resources,
       },
       { onLogs: (c: string) => log(String(c).split('\n').filter(Boolean).join(' ')) },
     );
   } catch (err) {
     if (isRegionNotFound(err)) {
       throw new Error(vmRegionUnavailableMessage(opts.regionId));
+    }
+    if (isResourceLimitError(err)) {
+      throw new Error(sizeOverQuotaMessage(resources, err));
     }
     throw err;
   }

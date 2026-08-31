@@ -39,6 +39,8 @@ import {
 } from '@agentbox/sandbox-core';
 import {
   DAYTONA_DEFAULT_RESOURCES,
+  isResourceLimitError,
+  sizeOverQuotaMessage,
   daytonaBackend,
   getClient,
   parseDaytonaSize,
@@ -264,14 +266,6 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     snapshotName =
       opts.name ??
       defaultSnapshotName(fingerprint?.contextSha256 ?? null, sizeKey, sandboxClass, variantKey);
-    // Never reuse a snapshot name: Daytona's delete is async, so a name
-    // recreated soon after its predecessor was reaped can report `active` and
-    // still fail to boot. Container variants reap (below) and so need this;
-    // linux-vm ones must NOT get it here, because `bakeDaytonaVmVariant` treats
-    // `snapshotName` as a stem and appends its own nonce — doing both yields a
-    // double token. The name needn't be deterministic: prepared state records
-    // whatever we pinned, and that is what skip-fast reads.
-    if (!opts.name && baseClass !== 'linux-vm') snapshotName = `${snapshotName}-${nonce()}`;
   }
 
   if (
@@ -455,6 +449,18 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     }
   }
 
+  // Everything below builds a CONTAINER snapshot (the linux-vm paths returned
+  // above; only the no-published-image fallback lands here). Never reuse a
+  // name: Daytona refuses a duplicate outright ("Snapshot with name ... already
+  // exists for this organization"), so a second `prepare --force` at the same
+  // size — the exact move that re-bakes a bigger box — died on the collision
+  // rather than replacing anything. The predecessor is reaped after the new
+  // snapshot is recorded. Its delete is also async, so a name recreated right
+  // after its predecessor was reaped can report `active` and still fail to
+  // boot; a fresh name avoids that too. Determinism isn't lost that matters:
+  // prepared state records whatever we pinned, and that is what skip-fast reads.
+  if (!opts.name) snapshotName = `${snapshotName}-${nonce()}`;
+
   const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
   // Surface staging warnings (codex Keychain landmine, etc.) before the
   // longer build kicks off.
@@ -509,17 +515,27 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     // Region: a container snapshot registers wherever the client points (the
     // account default unless the user pinned `box.daytonaRegion`).
     const client = getClient(opts.location ?? '');
-    log(`creating Daytona snapshot '${snapshotName}'${sizeResources ? ` (${sizeKey})` : ''}…`);
-    const snapshot = await client.snapshot.create(
-      {
-        name: snapshotName,
-        image,
-        ...(sizeResources ? { resources: sizeResources } : {}),
-        ...(opts.location ? { regionId: opts.location } : {}),
-      },
-      {
-        onLogs: (chunk: string) => log(String(chunk).split('\n').filter(Boolean).join(' ')),
-      },
+    // Always explicit, exactly like the linux-vm path: a snapshot created with
+    // no `resources` gets Daytona's 1 vCPU / 1 GiB / 3 GiB default, and since
+    // Daytona rejects `resources` on the create-from-snapshot call, every box
+    // booted from it is stuck at 1 GiB with a 3 GiB disk for the snapshot's
+    // whole life. That is under the box image itself, so an install step or a
+    // real project's `pnpm install` dies with no signal but an OOM kill.
+    const bakeResources = sizeResources ?? { ...DAYTONA_DEFAULT_RESOURCES };
+    const bakeSizeKey = sizeKey ?? formatDaytonaSize(DAYTONA_DEFAULT_RESOURCES);
+    log(`creating Daytona snapshot '${snapshotName}' (${bakeSizeKey})…`);
+    const snapshot = await createSnapshotOrExplainQuota(bakeResources, () =>
+      client.snapshot.create(
+        {
+          name: snapshotName,
+          image,
+          resources: bakeResources,
+          ...(opts.location ? { regionId: opts.location } : {}),
+        },
+        {
+          onLogs: (chunk: string) => log(String(chunk).split('\n').filter(Boolean).join(' ')),
+        },
+      ),
     );
     log(`snapshot '${snapshot.name}' is ${snapshot.state ?? 'created'}`);
     if (fingerprint) {
@@ -528,25 +544,25 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
         size: sizeKey,
-        // Without an explicit size this path lets Daytona pick, so read the
-        // resources back off the created snapshot. Absent when the SDK doesn't
-        // report them — better silent than a guessed number in a warning.
-        effectiveSize: sizeKey ?? snapshotResourceKey(snapshot),
+        // This path always sends explicit resources (see `bakeResources`), so
+        // the baked size is known. Still prefer what the API reports back when
+        // it reports anything — that is the ground truth if Daytona ever clamps
+        // a request — and fall back to what we asked for.
+        effectiveSize: snapshotResourceKey(snapshot) ?? bakeSizeKey,
         class: 'container',
       });
       log(`recorded daytona-prepared.json (fingerprint ${fingerprint.contextSha256.slice(0, 12)})`);
-      // Reap the snapshot this bake replaces — only this exact variant, and
-      // only after the replacement is recorded, so a failed bake never leaves
-      // the user with no snapshot. Matches the linux-vm path. Variants only:
-      // the container BASE has always overwritten by name and a user who flips
-      // `box.daytonaClass` back would want the old one.
-      if (derived) {
-        const superseded = preparedEntryFor(prepared, variantKey)?.imageRef;
-        const created = snapshot.name ?? snapshotName;
-        if (superseded && superseded !== created) {
-          log(`removing superseded ${variantKey} snapshot '${superseded}'`);
-          await deleteSnapshotQuietly(getClient(opts.location ?? ''), superseded);
-        }
+      // Reap the snapshot this bake replaces — only after the replacement is
+      // recorded, so a failed bake never leaves the user with no snapshot.
+      // Matches the linux-vm path. Guarded on class: a user who flips
+      // `box.daytonaClass` still has the other class's snapshot, which this
+      // bake did not replace and cannot substitute for.
+      const supersededEntry = preparedEntryFor(prepared, variantKey);
+      const superseded = supersededEntry?.imageRef;
+      const created = snapshot.name ?? snapshotName;
+      if (superseded && superseded !== created && supersededEntry?.extras?.class === 'container') {
+        log(`removing superseded ${variantKey || 'base'} snapshot '${superseded}'`);
+        await deleteSnapshotQuietly(getClient(opts.location ?? ''), superseded);
       }
     }
     return { snapshotName: snapshot.name ?? snapshotName };
@@ -581,6 +597,22 @@ function writeNpmDockerfile(originalPath: string): string {
 }
 
 /** `cpu-memory-disk` key for a resource triple, the form `extras.size` uses. */
+/**
+ * Both bake paths hit the same account ceiling, and the SDK reports it as a
+ * validation error buried in an axios stack — see `isResourceLimitError`.
+ */
+async function createSnapshotOrExplainQuota<T>(
+  requested: { cpu: number; memory: number; disk: number },
+  create: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await create();
+  } catch (err) {
+    if (isResourceLimitError(err)) throw new Error(sizeOverQuotaMessage(requested, err));
+    throw err;
+  }
+}
+
 function formatDaytonaSize(r: { cpu: number; memory: number; disk: number }): string {
   return `${String(r.cpu)}-${String(r.memory)}-${String(r.disk)}`;
 }
