@@ -63,6 +63,7 @@ import { installHerdrCommand } from './install-herdr.js';
 import { installPortlessCommand } from './install-portless.js';
 import { installCodexCommand } from './install-codex.js';
 import { installCodexPlugin } from '@agentbox/agent-codex/cli';
+import { resolveDevRepoRoot } from '../lib/source-checkout.js';
 import {
   fetchTrayLatestVersion,
   installAppCommand,
@@ -701,6 +702,12 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       force: opts.force,
       dryRun: opts.dryRun,
       quiet: true,
+      // Required, not optional-looking: the resolver is injected because finding
+      // the source checkout is the CLI's job, so omitting it here would make the
+      // main `agentbox install` path treat every host as a published install —
+      // silently staging from GitHub and skipping the skill symlinks inside a
+      // checkout, while `agentbox install codex` kept working.
+      resolveDevRepoRoot,
     });
     // Only announce a real change — an already-enabled plugin is a silent no-op.
     if (codexRes.ran && codexRes.enableStatus !== 'user-enabled') {

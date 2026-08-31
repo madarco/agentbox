@@ -44,13 +44,14 @@ const PLUGIN_BUNDLE_REL = join('plugins', 'agentbox');
  * so dev edits land in Codex without a publish/re-fetch round-trip. On a published
  * install (or with `--no-dev`) it's the `madarco/agentbox` GitHub slug.
  */
-export function marketplaceSource(
-  opts: { noDev?: boolean; resolveDevRepoRoot?: () => string | null } = {},
-): {
+export function marketplaceSource(opts: {
+  noDev?: boolean;
+  resolveDevRepoRoot: () => string | null;
+}): {
   source: string;
   devRoot: string | null;
 } {
-  const devRoot = opts.noDev ? null : (opts.resolveDevRepoRoot?.() ?? null);
+  const devRoot = opts.noDev ? null : opts.resolveDevRepoRoot();
   return { source: devRoot ?? MARKETPLACE_SOURCE, devRoot };
 }
 
@@ -272,10 +273,16 @@ export interface InstallCodexOptions {
    *
    * Injected because finding it is the CLI's business (it reads the running
    * binary's own path), not codex's — and an agent package must not import
-   * `apps/cli`. Omitted means "no dev checkout", which is what a published
-   * install always sees.
+   * `apps/cli`.
+   *
+   * REQUIRED on purpose. As an optional it was dropped twice in one change —
+   * once inside this file, once at the `agentbox install` wizard's call — and
+   * each time the only symptom was that a source checkout silently staged from
+   * the GitHub marketplace and skipped its skill symlinks, with every build,
+   * type and test still green. A caller with genuinely no checkout to offer
+   * passes `() => null` and says so.
    */
-  resolveDevRepoRoot?: () => string | null;
+  resolveDevRepoRoot: () => string | null;
 }
 
 export interface InstallCodexResult {
@@ -297,9 +304,7 @@ export interface InstallCodexResult {
  * clean no-op. Never throws on a Codex/network failure — returns what it managed
  * to do and logs hints.
  */
-export async function installCodexPlugin(
-  opts: InstallCodexOptions = {},
-): Promise<InstallCodexResult> {
+export async function installCodexPlugin(opts: InstallCodexOptions): Promise<InstallCodexResult> {
   const env = process.env;
   const cfgPath = codexConfigPath(env);
   // Forward the resolver, not just `noDev`: dropping it here silently disables
@@ -307,7 +312,7 @@ export async function installCodexPlugin(
   // build and type still passes.
   const { source, devRoot } = marketplaceSource({
     noDev: opts.noDev,
-    ...(opts.resolveDevRepoRoot ? { resolveDevRepoRoot: opts.resolveDevRepoRoot } : {}),
+    resolveDevRepoRoot: opts.resolveDevRepoRoot,
   });
   const result: InstallCodexResult = {
     ran: false,

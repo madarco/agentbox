@@ -30,9 +30,11 @@ describe('codex plugin marketplace source', () => {
     expect(r.source).toBe('madarco/agentbox');
   });
 
-  it('treats an absent resolver as "no checkout" rather than throwing', () => {
-    // A published install passes none at all.
-    expect(marketplaceSource({}).devRoot).toBeNull();
+  it('makes "no checkout" explicit rather than implicit', () => {
+    // `resolveDevRepoRoot` is REQUIRED: it was dropped twice as an optional, and
+    // each time the only symptom was a source checkout silently staging from
+    // GitHub. A caller with no checkout says so.
+    expect(marketplaceSource({ resolveDevRepoRoot: () => null }).devRoot).toBeNull();
   });
 
   it('threads the resolver through installCodexPlugin, not just noDev', async () => {
