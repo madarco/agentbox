@@ -53,10 +53,11 @@ const REQUIRED_EXPORTS = [
   // attach helpers
   'renderInnerCommand',
   'hostTermForCloud',
-  // prepare-time agent-config staging
-  'stageClaudeStaticForUpload',
-  'stageCodexStaticForUpload',
-  'stageOpencodeStaticForUpload',
+  // prepare-time agent-config staging. v3 replaced the three per-agent stagers
+  // with the registry-driven call, so a provider stages whatever agents the
+  // host has rather than a hardcoded three.
+  'stageAllAgentStatic',
+  'stageAgentsStaticForUpload',
   // cloud checkpoint authoring (id-addressed snapshots)
   'writeCloudCheckpointManifest',
   'listCloudCheckpoints',

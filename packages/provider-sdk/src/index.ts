@@ -19,7 +19,7 @@
  * supported range includes this major (see `agentbox plugin add`). Bump on any
  * breaking change to `Provider` / `CloudBackend` / `ProviderModule`.
  */
-export const SDK_API_VERSION = 2;
+export const SDK_API_VERSION = 3;
 
 // ---- core provider contract (types) ----
 export type {
@@ -170,14 +170,18 @@ export { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
 
 // ---- prepare-time agent-config staging (bake host ~/.claude etc into a base) ----
 // A provider that bakes its base image by booting a builder sandbox stages the
-// host's static agent config into the snapshot with these (same helpers the
-// built-in cloud `prepare` flows use).
-export {
-  stageClaudeStaticForUpload,
-  stageCodexStaticForUpload,
-  stageOpencodeStaticForUpload,
-  type StageResult,
-} from '@agentbox/sandbox-cloud';
+// host's static agent config into the snapshot with this — the same call every
+// built-in cloud `prepare` flow uses.
+//
+// v3 REPLACED the three per-agent stagers (`stageClaudeStaticForUpload` and
+// friends) with this one registry-driven call. Naming the agents meant a
+// provider staged exactly three of them forever: an agent added later — or
+// installed from a package — was silently absent from that provider's baked
+// snapshot, with nothing failing. `stageAllAgentStatic` returns one entry per
+// agent the host actually knows about, plus the shared `~/.agents` skills tree,
+// each with the `extractDir` to unpack it at.
+export { stageAllAgentStatic, type AgentStaticStage } from '@agentbox/sandbox-core';
+export { stageAgentsStaticForUpload, type StageResult } from '@agentbox/sandbox-cloud';
 
 // ---- cloud checkpoint authoring (for id-addressed-snapshot providers) ----
 // A provider whose snapshots are id-addressed (like vercel/e2b, where the cloud

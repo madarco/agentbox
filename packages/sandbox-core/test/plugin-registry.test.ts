@@ -92,9 +92,15 @@ describe('plugin registry', () => {
     expect(readFileSync(path, 'utf8')).toContain('hand-edited');
   });
 
-  it('api-version gate', () => {
-    expect(isSupportedApiVersion(1)).toBe(true);
+  it('api-version gate accepts v3 and refuses everything older', () => {
+    // v3 is a deliberate CLEAN break, not an additive bump. A v2 provider
+    // stages a hardcoded three agents, so on a host with a fourth it bakes a
+    // base that silently lacks it — wrong boxes rather than a missing feature,
+    // which is why the older majors are refused instead of tolerated.
+    expect(isSupportedApiVersion(3)).toBe(true);
+    expect(isSupportedApiVersion(2)).toBe(false);
+    expect(isSupportedApiVersion(1)).toBe(false);
     expect(isSupportedApiVersion(999)).toBe(false);
-    expect(SUPPORTED_SDK_API_VERSIONS).toContain(1);
+    expect(SUPPORTED_SDK_API_VERSIONS).toEqual([3]);
   });
 });

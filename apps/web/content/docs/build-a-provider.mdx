@@ -78,9 +78,9 @@ Only `provider` and `doctorChecks` are required — `createCloudProvider` suppli
 - Name it `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`).
 - Declare the contract version in `package.json`:
   ```json
-  { "agentbox": { "providerApiVersion": 2 } }
+  { "agentbox": { "providerApiVersion": 3 } }
   ```
-- Depend on `@madarco/agentbox-provider-sdk` (`^2`).
+- Depend on `@madarco/agentbox-provider-sdk` (`^3`).
 - Export a `providerModule` (or `providerModules` for a multi-provider package).
 
 ## Describe your provider
@@ -144,7 +144,7 @@ Three capabilities are easy to get wrong:
 
 A cloud provider that bakes its own base image typically overrides three optional capabilities on top of `createCloudProvider` — the SDK re-exports the helpers each one needs, so they're all buildable on the SDK alone:
 
-- **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake the host's static agent config in with `stageClaudeStaticForUpload` / `stageCodexStaticForUpload` / `stageOpencodeStaticForUpload`; persist the result in your own `~/.agentbox/<name>-prepared.json`.
+- **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake the host's static agent config in with `stageAllAgentStatic`, which returns one entry per agent the host has (plus the shared `~/.agents` skills tree), each with the `extractDir` to unpack it at; persist the result in your own `~/.agentbox/<name>-prepared.json`.
 - **`buildAttach`** — for a provider with no SSH, render the shared inner tmux command with `renderInnerCommand` + `hostTermForCloud` and return your transport's argv.
 - **`checkpoint`** — if your snapshots are **id-addressed** (an opaque id you can't name, like Vercel/E2B), override the whole capability and store the snapshot _id_ in the manifest via `writeCloudCheckpointManifest` and friends. If they're name-addressed, just implement `backend.createSnapshot`/`deleteSnapshot` and skip the override.
 
@@ -192,5 +192,15 @@ agentbox plugin remove myprovider            # unregister (does not uninstall th
 ## Compatibility & publishing
 
 The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported set — the SDK's exported `SDK_API_VERSION` is the gate. An incompatible plugin is refused at `plugin add` and skipped (with a warning) at load; it never crashes the CLI.
+
+<Callout title="v3 is a clean break">
+  A provider built on SDK v2 is **not** loaded by this release. v2 exposed three
+  per-agent staging helpers, so a v2 provider bakes a snapshot containing exactly
+  claude, codex and opencode — on a host with any other agent it produces a base
+  that silently lacks it. v3 replaces them with `stageAllAgentStatic`, which
+  stages whatever agents the host actually has. Rebuild against `^3`, set
+  `providerApiVersion: 3`, and replace the three `stage<Agent>StaticForUpload`
+  calls with the single one.
+</Callout>
 
 Publish your package to npm under the `agentbox-provider-<name>` name and users install it like any other. For the full authoring reference — the complete `CloudBackend` contract, the backend conformance test suite, and publishing notes — see [`docs/provider-plugins.md`](https://github.com/madarco/agentbox/blob/main/docs/provider-plugins.md) and the [`agentbox-provider-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-provider-example) package.

@@ -23,9 +23,8 @@ import {
   claudeInstallFingerprint,
   computeContextSha256,
   readCliStamp,
-  stageClaudeStaticForUpload,
-  stageCodexStaticForUpload,
-  stageOpencodeStaticForUpload,
+  stageAllAgentStatic,
+  type AgentStaticStage,
   type Provider,
   type StageResult,
 } from '@madarco/agentbox-provider-sdk';
@@ -187,22 +186,20 @@ async function stageAgentConfig(
 ): Promise<void> {
   const progress = (s: string) => log(`prepare-example: ${s}`);
   progress('staging host agent static config');
-  const stagings: Array<{ kind: 'claude' | 'codex' | 'opencode'; tar: StageResult; dest: string }> = [];
+  // v3: one registry-driven call instead of three per-agent stagers. This is
+  // the whole reason to prefer it — a host that has a fourth agent (added, or
+  // installed from a package) gets it staged here with no change to this file.
+  // Naming the agents would have baked a snapshot silently missing it.
+  const stagings: Array<{ kind: AgentStaticStage['kind']; tar: StageResult; dest: string }> = [];
   try {
-    const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace });
-    for (const w of claudeTar.warnings) progress(w);
-    if (claudeTar.tarballPath) stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
-    else await claudeTar.cleanup();
-
-    const codexTar = await stageCodexStaticForUpload();
-    for (const w of codexTar.warnings) progress(w);
-    if (codexTar.tarballPath) stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
-    else await codexTar.cleanup();
-
-    const opencodeTar = await stageOpencodeStaticForUpload();
-    for (const w of opencodeTar.warnings) progress(w);
-    if (opencodeTar.tarballPath) stagings.push({ kind: 'opencode', tar: opencodeTar, dest: '/home/vscode/.local/share/opencode' });
-    else await opencodeTar.cleanup();
+    for (const stage of await stageAllAgentStatic({ hostWorkspace })) {
+      for (const w of stage.staged.warnings) progress(w);
+      if (stage.staged.tarballPath) {
+        stagings.push({ kind: stage.kind, tar: stage.staged, dest: stage.extractDir });
+      } else {
+        await stage.staged.cleanup();
+      }
+    }
 
     for (const s of stagings) {
       const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

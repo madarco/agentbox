@@ -71,7 +71,7 @@ checkpoints, cp) on top of the thin `CloudBackend`. "A cloud is one file."
 - Name it `agentbox-provider-<name>` (or `@scope/agentbox-provider-<name>`).
 - Declare the contract version in `package.json`:
   ```json
-  { "agentbox": { "providerApiVersion": 2 } }
+  { "agentbox": { "providerApiVersion": 3 } }
   ```
 - Export a `providerModule` (or `providerModules` for a multi-provider package).
 

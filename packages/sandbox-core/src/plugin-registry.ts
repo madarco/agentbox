@@ -31,7 +31,15 @@ export const PLUGINS_FILE = join(homedir(), '.agentbox', 'plugins.json');
  */
 // v2: BoxRecord.cloud.ssh moved to top-level BoxRecord.ssh (+port, docker sshd
 // fields). v1 plugins still load — only ones reading box.cloud.ssh notice.
-export const SUPPORTED_SDK_API_VERSIONS: readonly number[] = [1, 2];
+//
+// v3: the three per-agent staging exports (`stage<Agent>StaticForUpload`) are
+// replaced by the registry-driven `stageAllAgentStatic`. Unlike v2 this is a
+// CLEAN BREAK — v1 and v2 are no longer accepted — because a v2 provider stages
+// a hardcoded three agents, so on a host with a fourth it bakes a snapshot that
+// silently lacks it. Loading such a plugin would produce wrong boxes rather
+// than a missing feature, which is worse than refusing it. A v2 plugin is
+// refused at `plugin add` and skipped at load with a message naming the version.
+export const SUPPORTED_SDK_API_VERSIONS: readonly number[] = [3];
 
 export function isSupportedApiVersion(v: number): boolean {
   return SUPPORTED_SDK_API_VERSIONS.includes(v);

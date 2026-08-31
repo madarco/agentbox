@@ -10,13 +10,13 @@
     }
   },
   "agentbox": {
-    "providerApiVersion": 2
+    "providerApiVersion": 3
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --target node20 --no-splitting"
   },
   "dependencies": {
-    "@madarco/agentbox-provider-sdk": "^2.0.0"
+    "@madarco/agentbox-provider-sdk": "^3.0.0"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

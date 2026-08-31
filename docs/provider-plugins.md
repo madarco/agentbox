@@ -43,7 +43,7 @@ that:
 1. Depends on `@madarco/agentbox-provider-sdk` (`^2`).
 2. Declares its contract version in `package.json`:
    ```json
-   { "agentbox": { "providerApiVersion": 2 } }
+   { "agentbox": { "providerApiVersion": 3 } }
    ```
 3. Exports a **`providerModule`** (or `providerModules` for a multi-provider
    package) — the uniform surface AgentBox loads it through:
@@ -259,8 +259,10 @@ the helpers each needs, so it's all buildable on `@madarco/agentbox-provider-sdk
 
 - **`prepare`** — boot a builder sandbox, run your installer, snapshot it. Bake
   the host's static agent config into the snapshot with
-  `stageClaudeStaticForUpload` / `stageCodexStaticForUpload` /
-  `stageOpencodeStaticForUpload`. Persist the result in your own
+  `stageAllAgentStatic` — one entry per agent the host actually has, plus the
+  shared `~/.agents` tree, each carrying the `extractDir` to unpack it at. (v3
+  replaced the three per-agent stagers: naming them meant a provider baked
+  exactly three agents forever.) Persist the result in your own
   `~/.agentbox/<name>-prepared.json` via `read/writePreparedStateRaw` +
   `preparedStatePathFor` (these accept a plugin's open-string provider name).
 - **`buildAttach`** — for a provider with no SSH, render the shared inner tmux
