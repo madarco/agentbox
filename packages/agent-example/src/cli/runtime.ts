@@ -31,9 +31,13 @@ export const exampleRuntime: AgentRuntime = {
   sharedVolume: SPEC.dockerVolume,
   SessionError: ExampleSessionError,
 
-  startSession: (o) => startExampleSession(o.container),
-  sessionInfo: (container) => exampleSessionInfo(container),
-  buildAttachArgv: (container) => buildExampleAttachArgv(container),
+  // Every parameter forwarded, none dropped. `--session-name` and
+  // `agentbox example -- <args>` have to reach tmux, and this package is the
+  // template a new agent copies — a lossy adapter here propagates.
+  startSession: (o) =>
+    startExampleSession({ container: o.container, sessionName: o.sessionName, args: o.args }),
+  sessionInfo: (container, sessionName) => exampleSessionInfo(container, sessionName),
+  buildAttachArgv: (container, sessionName) => buildExampleAttachArgv(container, sessionName),
   ensureVolume: (target, o) => ensureExampleVolume(target, { image: o.image }),
 
   // Its binary is a login shell, already in every box image — nothing to

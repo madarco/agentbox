@@ -82,58 +82,66 @@ export async function ensureExampleVolume(
 }
 
 /** Probe the agent's tmux session. Mirrors every other agent's version. */
-export async function exampleSessionInfo(container: string): Promise<AgentSessionInfo> {
+export async function exampleSessionInfo(
+  container: string,
+  sessionName?: string,
+): Promise<AgentSessionInfo> {
+  const target = sessionName ?? SPEC.sessionName;
   const r = await execa(
     'docker',
-    [
-      'exec',
-      container,
-      'tmux',
-      'display-message',
-      '-p',
-      '-t',
-      SPEC.sessionName,
-      '#{session_created}',
-    ],
+    ['exec', container, 'tmux', 'display-message', '-p', '-t', target, '#{session_created}'],
     { reject: false },
   );
   if (r.exitCode !== 0) {
-    return { running: false, sessionName: SPEC.sessionName, startedAt: null };
+    return { running: false, sessionName: target, startedAt: null };
   }
   const secs = Number.parseInt(r.stdout.trim(), 10);
   return {
     running: true,
-    sessionName: SPEC.sessionName,
+    sessionName: target,
     startedAt: Number.isFinite(secs) ? new Date(secs * 1000).toISOString() : null,
   };
 }
 
 /** Start the agent in a tmux session, under the shared TERM guard. */
-export async function startExampleSession(container: string): Promise<void> {
+export interface StartExampleSessionOptions {
+  container: string;
+  /** tmux session name. Defaults to the spec's — `--session-name` overrides it. */
+  sessionName?: string;
+  /** Extra argv for the agent binary, from `agentbox example -- <args>`. */
+  args?: string[];
+}
+
+export async function startExampleSession(opts: StartExampleSessionOptions): Promise<void> {
+  // `sessionName` and `args` are threaded rather than ignored: this package is
+  // the template a new agent copies, so an adapter that silently dropped them
+  // would teach every future agent to drop them too.
+  const sessionName = opts.sessionName ?? SPEC.sessionName;
   await execa('docker', [
     'exec',
     '--user',
     CONTAINER_USER,
-    container,
+    opts.container,
     'tmux',
     'new-session',
     '-d',
     '-s',
-    SPEC.sessionName,
+    sessionName,
     '-c',
     '/workspace',
     SPEC.binary,
     '-l',
-    ...buildTmuxSessionArgs(SPEC.sessionName),
+    ...(opts.args ?? []),
+    ...buildTmuxSessionArgs(sessionName),
   ]);
 }
 
 /** The `docker exec` argv that attaches a terminal to the session. */
-export function buildExampleAttachArgv(container: string): string[] {
+export function buildExampleAttachArgv(container: string, sessionName?: string): string[] {
   return buildTermSafeTmuxExec({
     container,
     user: CONTAINER_USER,
     tmuxScript: 'tmux attach -t "$1"',
-    positionals: [SPEC.sessionName],
+    positionals: [sessionName ?? SPEC.sessionName],
   });
 }
