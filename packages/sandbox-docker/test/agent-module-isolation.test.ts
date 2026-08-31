@@ -25,6 +25,18 @@ const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 's
 /** Module basenames that are one agent's implementation, not shared plumbing. */
 const AGENT_MODULES = ['claude', 'codex', 'opencode'];
 
+/**
+ * `builtins.ts` is the one file allowed to import every agent: it is the
+ * registration point that adapts the three shipped modules to
+ * `AgentSyncModule`, and it exists precisely so no OTHER file has to import
+ * them.
+ *
+ * It is a staging post. Each agent's arm leaves this file when that agent
+ * becomes a package and the app registers it instead, so the exemption shrinks
+ * to nothing rather than being permanent.
+ */
+const REGISTRATION_POINT = 'builtins.ts';
+
 function sourceFiles(): string[] {
   return readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.ts'));
 }
@@ -41,6 +53,7 @@ describe('agent modules are isolated from each other', () => {
   it('no module imports from another agent module', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
+      if (file === REGISTRATION_POINT) continue;
       const self = file.replace(/\.ts$/, '');
       const src = readFileSync(join(AGENTS_DIR, file), 'utf8');
       for (const other of AGENT_MODULES) {

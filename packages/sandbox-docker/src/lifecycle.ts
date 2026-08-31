@@ -10,10 +10,10 @@ import {
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
-import { claudeSessionInfo, type ClaudeSessionInfo } from './sync/agents/claude.js';
-import { codexSessionInfo, type CodexSessionInfo } from './sync/agents/codex.js';
+import type { ClaudeSessionInfo } from './sync/agents/claude.js';
+import type { CodexSessionInfo } from './sync/agents/codex.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
-import { opencodeSessionInfo, type OpencodeSessionInfo } from './sync/agents/opencode.js';
+import type { OpencodeSessionInfo } from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
 import {
@@ -56,6 +56,7 @@ import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { AGENT_SYNC_SPECS, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { agentSyncModule, type AgentSessionInfo } from './sync/agents/module.js';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
@@ -169,6 +170,19 @@ function agentStatusFields(
  * phase. What matters now is that the SHARED name comes from the registry
  * instead of a second copy in this package.
  */
+/**
+ * Probe one agent's tmux session through the registry.
+ *
+ * `null` for an agent with no registered module rather than a throw: a box may
+ * reference an agent this build has no docker behavior for, and a listing must
+ * degrade to "no session" instead of failing.
+ */
+async function agentSession(id: string, container: string): Promise<AgentSessionInfo | null> {
+  const mod = agentSyncModule(id);
+  if (!mod) return null;
+  return mod.sessionInfo(container);
+}
+
 function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
   const byAgent: Record<string, string | undefined> = {
     claude: box.claudeConfigVolume,
@@ -262,8 +276,9 @@ export async function listBoxes(): Promise<ListedBox[]> {
       // none. (Claude activity rides the persisted status snapshot instead, so
       // it needs no live probe.)
       const shellSessions = state === 'running' ? await listShellSessions(b.container) : [];
-      const codexSession = state === 'running' ? await codexSessionInfo(b.container) : null;
-      const opencodeSession = state === 'running' ? await opencodeSessionInfo(b.container) : null;
+      const codexSession = state === 'running' ? await agentSession('codex', b.container) : null;
+      const opencodeSession =
+        state === 'running' ? await agentSession('opencode', b.container) : null;
       return {
         ...b,
         state,
@@ -598,17 +613,17 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
     try {
-      claudeSession = await claudeSessionInfo(record.container);
+      claudeSession = await agentSession('claude', record.container);
     } catch {
       claudeSession = null;
     }
     try {
-      codexSession = await codexSessionInfo(record.container);
+      codexSession = await agentSession('codex', record.container);
     } catch {
       codexSession = null;
     }
     try {
-      opencodeSession = await opencodeSessionInfo(record.container);
+      opencodeSession = await agentSession('opencode', record.container);
     } catch {
       opencodeSession = null;
     }

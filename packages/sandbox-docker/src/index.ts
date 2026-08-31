@@ -1,3 +1,18 @@
+// The agent contract this package RECEIVES rather than imports. See
+// `sync/agents/module.ts` for why the direction is inverted.
+export {
+  agentSyncModule,
+  registerAgentSyncModule,
+  registeredAgentSyncModules,
+  requireAgentSyncModule,
+  type AgentMountResult,
+  type AgentSessionInfo,
+  type AgentSyncModule,
+  type AgentVolumeChoice,
+  type EnsureAgentVolumeResult,
+} from './sync/agents/module.js';
+export { registerBuiltinAgentSyncModules } from './sync/agents/builtins.js';
+
 // Box plumbing shared by every agent (and by `agentbox shell`, which has no
 // agent at all) — deliberately not sourced from any one agent's module.
 export {
