@@ -289,7 +289,14 @@ It now derives from the registry, and destroy's cleanup + prune's never-reap lis
 iterate `AGENT_SYNC_SPECS` instead of naming agents. Verified the derived names
 are byte-identical — a mismatch would repoint every existing box's volume.
 
-**Phase 3b — the inversion — DONE for the seam (`d4c01a36`, `3962c3a9`); the file moves remain.** What is left of phase 3 is behavior, and the
+**Phase 3b — DONE (`d4c01a36`, `3962c3a9`, `b8548be2`, `17a8675c`, `f6d95f28`, `2ed3d832`).**
+All three agents are packages, `builtins.ts` is deleted, and
+`packages/sandbox-docker/src/sync/agents/` holds only shared plumbing
+(`module`, `seed`, `shared`, `skills`). `@agentbox/agent-modules` is the single
+registration home — the CLI and the hub each call it once, because both create
+docker boxes and a missed one is a create-time throw, not a compile error.
+The demo agent (`@agentbox/agent-example`) implements the same contract and was
+verified end to end against real docker. What is left of phase 3 is behavior, and the
 interface is now known exactly, because the import surface was measured rather
 than guessed:
 
@@ -348,6 +355,20 @@ snapshotting and a version gate, mirroring `plugin.ts` / `plugin-registry.ts`.
 **Measure the fourth agent again here** and record the final number in
 `docs/agents.md` — that count is the deliverable, not a vague "it's a package now".
 
+## What adding an agent costs today — measured, after phase 3b
+
+| step | needed? |
+| --- | --- |
+| a spec row in `agent-registry/src/specs/` | **yes** — one file, data only |
+| a behavior package `packages/agent-<id>/` | **yes** — that is the point |
+| one arm in `agent-modules` | **yes** — the literal-import table, same as a provider |
+| anything in `sandbox-docker` | **no** — it receives agents now |
+| **a CLI command** | **yes, still** — `agents/commands.ts` + `AGENT_MODULES` are hand-maintained in `apps/cli`. This is why `agentbox example` is not a command even though the agent works. |
+| config keys | **yes, still** — phase 6 |
+| cloud provider staging | **yes, still** — phase 5 |
+
+The exemptions in `apps/cli/test/_agents-in-cli.ts` are exactly that middle row.
+
 ## Smoke test — run 2026-08-31, all green
 
 Against the branch tip, after the phases above:
@@ -366,6 +387,14 @@ Against the branch tip, after the phases above:
   descriptor with its session name and empty `activitySource`, with no ctl change.
 - Full CI: plugin-skill, lint, build, hub standalone, cloud-backends, typecheck,
   and the suite (1,417 CLI tests among them).
+
+**Re-run after phase 3b, with every agent a package** — packed install resolves
+all three; all three created live with their registry-resolved volumes; each
+reported through the keyed status map; `agent state` answered per box; codex's
+`afterVolumeSync` hook wrote `AGENTS.override.md`; claude's `notes` channel
+carried `filtered 17 host-path hook(s)` and the `hostWorkspace` alias on an
+isolated create. The demo agent was driven through its own module against real
+docker: volume created and chowned, mounted, tmux session started and probed.
 
 ## Files that will NOT change
 
