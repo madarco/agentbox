@@ -29,42 +29,15 @@
  */
 
 import type { AgentId } from '@agentbox/core';
-import { resolveAgentSpec, type AgentSyncSpec } from '@agentbox/sandbox-core';
-import type { AgentLoginSpec } from '@agentbox/cli-kit';
-import type { AgentRuntime } from '@agentbox/cli-kit';
-import type { ResolvedTeleport, ResumeMode, TeleportLogger } from '@agentbox/cli-kit';
+import { defineAgentModule, type AgentModule, type TeleportResolver } from '@agentbox/cli-kit';
 
-/** Host-side session resolve for one agent — see `session-teleport/index.ts`. */
-export type TeleportResolver = (input: {
-  hostCwd: string;
-  mode: ResumeMode;
-  log?: TeleportLogger;
-}) => Promise<ResolvedTeleport>;
-
-export interface AgentModule {
-  id: AgentId;
-  /** The registry row, by reference. Never a copy — one source of truth. */
-  spec: AgentSyncSpec;
-  /** Guided-login prompt detector. */
-  login: AgentLoginSpec;
-  /**
-   * Docker bindings and the agent's own login code — everything the CLI needs
-   * that is not the commander tree. Kept here rather than on the command table
-   * so a caller that only wants to restart a session (`agent-sessions.ts`) does
-   * not pull three commanders' worth of imports to do it.
-   */
-  runtime: AgentRuntime;
-  /**
-   * Host session teleport. Absent exactly when the spec declares
-   * `caps.teleport: 'stub'`; `prepareTeleport` refuses on the capability before
-   * it ever looks here, so the two can never disagree silently.
-   */
-  teleport?: TeleportResolver;
-}
+// Re-exported: ~4 call sites reach for these through this barrel, and the
+// contract's new home is an implementation detail to them.
+export { defineAgentModule, type AgentModule, type TeleportResolver };
 
 const AGENT_MODULES: Record<string, () => Promise<{ agentModule: AgentModule }>> = {
   claude: () => import('./claude/index.js'),
-  codex: () => import('./codex/index.js'),
+  codex: () => import('@agentbox/agent-codex/cli'),
   opencode: () => import('./opencode/index.js'),
 };
 
@@ -90,10 +63,3 @@ export async function loadAgentModule(id: AgentId): Promise<AgentModule> {
   return (await importer()).agentModule;
 }
 
-/** Shared by the agent module files: pull the spec, keep the wiring in one place. */
-export function defineAgentModule(
-  id: AgentId,
-  parts: Omit<AgentModule, 'id' | 'spec'>,
-): AgentModule {
-  return { id, spec: resolveAgentSpec(id), ...parts };
-}

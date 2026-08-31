@@ -110,3 +110,9 @@ export type {
   CarryEntries,
 } from './agent-contract.js';
 export { RESUME_SEED } from './agent-contract.js';
+
+export {
+  defineAgentModule,
+  type AgentModule,
+  type TeleportResolver,
+} from './agent-module.js';

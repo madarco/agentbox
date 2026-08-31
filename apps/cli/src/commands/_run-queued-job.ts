@@ -56,7 +56,7 @@ import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { claudeRuntime } from '../agents/claude/runtime.js';
-import { codexRuntime } from '../agents/codex/runtime.js';
+import { codexRuntime } from '@agentbox/agent-codex/cli';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';

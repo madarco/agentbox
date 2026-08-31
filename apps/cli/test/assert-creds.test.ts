@@ -48,10 +48,9 @@ const { assertAgentCredsAvailable, MissingAgentCredsError, ExpiredAgentCredsErro
 // longer knows any agent's name. The mock has to follow the symbol.
 const { claudeAuthAvailable, claudeCredStatus } =
   await import('../src/agents/claude/host-creds.js');
-const { codexAuthAvailable } = await import('../src/agents/codex/host-creds.js');
 const { opencodeAuthAvailable } = await import('../src/agents/opencode/host-creds.js');
 const { claudeRuntime } = await import('../src/agents/claude/runtime.js');
-const { codexRuntime } = await import('../src/agents/codex/runtime.js');
+const { codexRuntime } = await import('@agentbox/agent-codex/cli');
 const { opencodeRuntime } = await import('../src/agents/opencode/runtime.js');
 
 /** The agent supplies its own check now, so every assert call carries one. */
@@ -177,51 +176,6 @@ describe('claudeCredStatus', () => {
     // No health probe at all when the provider is docker.
     expect(sandboxDockerMock.hostClaudeLoginDead).not.toHaveBeenCalled();
     expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
-  });
-});
-
-describe('codexAuthAvailable', () => {
-  let homeDir: string;
-  const origHome = process.env['HOME'];
-
-  beforeEach(async () => {
-    sandboxDockerMock.volumeHasCodexAuth.mockReset();
-    // Redirect homedir() to a tmpdir so the file probe is deterministic and
-    // doesn't see the developer's real ~/.codex/auth.json.
-    homeDir = await mkdtemp(join(tmpdir(), 'agentbox-codex-creds-'));
-    process.env['HOME'] = homeDir;
-  });
-  afterEach(async () => {
-    if (origHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = origHome;
-    await rm(homeDir, { recursive: true, force: true });
-  });
-
-  it('returns true when OPENAI_API_KEY is set', async () => {
-    sandboxDockerMock.volumeHasCodexAuth.mockResolvedValue(false);
-    expect(await codexAuthAvailable(IMAGE, { OPENAI_API_KEY: 'sk-test' })).toBe(true);
-    expect(sandboxDockerMock.volumeHasCodexAuth).not.toHaveBeenCalled();
-  });
-
-  it('returns true when ~/.codex/auth.json exists', async () => {
-    sandboxDockerMock.volumeHasCodexAuth.mockResolvedValue(false);
-    await mkdir(join(homeDir, '.codex'), { recursive: true });
-    await writeFile(join(homeDir, '.codex', 'auth.json'), '{}', 'utf8');
-    expect(await codexAuthAvailable(IMAGE, {})).toBe(true);
-  });
-
-  it('falls back to the shared codex-config volume probe', async () => {
-    sandboxDockerMock.volumeHasCodexAuth.mockResolvedValue(true);
-    expect(await codexAuthAvailable(IMAGE, {})).toBe(true);
-    expect(sandboxDockerMock.volumeHasCodexAuth).toHaveBeenCalledWith(
-      'agentbox-codex-config',
-      IMAGE,
-    );
-  });
-
-  it('returns false when every source is empty', async () => {
-    sandboxDockerMock.volumeHasCodexAuth.mockResolvedValue(false);
-    expect(await codexAuthAvailable(IMAGE, {})).toBe(false);
   });
 });
 

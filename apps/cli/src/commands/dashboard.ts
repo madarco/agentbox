@@ -69,7 +69,7 @@ import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 import { claudeRuntime } from '../agents/claude/runtime.js';
-import { codexRuntime } from '../agents/codex/runtime.js';
+import { codexRuntime } from '@agentbox/agent-codex/cli';
 
 interface DashboardOptions {
   project?: boolean;

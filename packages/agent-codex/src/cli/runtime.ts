@@ -27,7 +27,7 @@ import {
   runInteractiveCodexLogin,
   SHARED_CODEX_VOLUME,
   startCodexSession,
-} from '@agentbox/agent-codex';
+} from '../docker-sync.js';
 import { confirm, log, spinner } from '@agentbox/cli-kit';
 import { codexLoginBinding } from './login-binding.js';
 import { codexAuthAvailable } from './host-creds.js';

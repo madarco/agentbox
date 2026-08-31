@@ -6,7 +6,7 @@ import {
   buildCodexLoginRunArgv,
   SHARED_CODEX_VOLUME,
   volumeHasCodexAuth,
-} from '@agentbox/agent-codex';
+} from '../docker-sync.js';
 import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { CODEX_LOGIN_SPEC } from './login.js';
 

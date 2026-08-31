@@ -5,7 +5,7 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { SHARED_CODEX_VOLUME, volumeHasCodexAuth } from '@agentbox/agent-codex';
+import { SHARED_CODEX_VOLUME, volumeHasCodexAuth } from '../docker-sync.js';
 
 async function fileExists(p: string): Promise<boolean> {
   try {

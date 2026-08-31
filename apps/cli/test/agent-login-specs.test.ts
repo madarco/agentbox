@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { rejectionMessage } from '@agentbox/cli-kit';
 import { CLAUDE_LOGIN_SPEC } from '../src/agents/claude/login.js';
-import { CODEX_LOGIN_SPEC, extractCodexUserCode } from '../src/agents/codex/login.js';
+import { CODEX_LOGIN_SPEC, extractCodexUserCode } from '@agentbox/agent-codex/cli';
 import { OPENCODE_LOGIN_SPEC } from '../src/agents/opencode/login.js';
 
 const ESC = String.fromCharCode(27);

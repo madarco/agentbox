@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveCodexTeleport } from '../src/agents/codex/teleport.js';
+import { resolveCodexTeleport } from '@agentbox/agent-codex/cli';
 import { TeleportError } from '@agentbox/cli-kit';
 
 const HOST_CWD = '/Users/marco/Projects/AgentBox/agentbox';
