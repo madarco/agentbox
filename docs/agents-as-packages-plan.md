@@ -759,6 +759,37 @@ the host credential file; codex warns about the macOS keychain), and mixing that
 behavioural change into the same commit as a mechanical table inversion is how
 credential bugs ship.
 
+## Final smoke — every phase landed
+
+Run on `e1d74624`, the merge candidate:
+
+- **All four agent commands** resolve from their packages (claude, codex,
+  opencode, and the hidden `example`).
+- **A packed install into a clean prefix** — all four work in the
+  published-bundle shape, which is the only place the literal-import rule can
+  fail.
+- **The external plugin agent**: `agent add ./examples/agentbox-agent-example`
+  -> listed -> its `agentSyncModule` loaded through the variable `import()` ->
+  removed cleanly.
+- **A real docker box**, which first rebuilt the base image from scratch —
+  itself correct, since phase 4b moved code that `agentbox-ctl` inlines and that
+  shifts the image tag. The box came up `claude:idle`, with
+  `agentbox-claude-config` and `agentbox-agents-config` mounted (both
+  registry-derived now), the keyed `agents` status map AND its legacy mirror
+  both written, and `claude --dangerously-skip-permissions` as the real process.
+- **Phase 7's specific risk, checked live**: the box wrote its session pointer to
+  `~/.local/state/agentbox/claude-session` — the frozen path — with a valid
+  uuid, and `stop` then `start` printed `resumed claude session`. That is the
+  behaviour a renamed path would have broken silently. (The CLI's resume line is
+  the evidence; the box was destroyed before its `--resume <id>` argv was
+  captured.)
+- **Earlier, on real cloud**: an e2b `prepare` baked through the new staging
+  path and an e2b claude box came up with `~/.agentbox-creds/claude/` mounted
+  0700 carrying a live refresh token.
+
+Not run: a cloud `prepare` against phase 5b's renamed build arg. That IS the
+re-bake, which is why 5b sits on its own branch.
+
 ## Files that will NOT change
 
 - `packages/ctl/src/{claude,codex}-scraper.ts` — ctl is baked; it gets its agent
