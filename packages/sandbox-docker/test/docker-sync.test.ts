@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerAgentSyncModule } from '../src/sync/agents/module.js';
 import type { SyncContext } from '@agentbox/core';
 
 // Mock every delegated module so the facade tests assert delegation only —
@@ -28,14 +29,32 @@ vi.mock('../src/sync/agents/seed.js', () => ({
 vi.mock('../src/sync/claude-credentials.js', () => ({
   syncClaudeCredentials: m.syncClaudeCredentials,
 }));
-vi.mock('../src/sync/agents/codex.js', () => ({
-  ensureCodexVolume: m.ensureCodexVolume,
-  seedCodexAgentsOverride: m.seedCodexAgentsOverride,
-}));
+
 vi.mock('../src/sync/agents/skills.js', () => ({ ensureAgentsVolume: m.ensureAgentsVolume }));
-vi.mock('../src/sync/agents/opencode.js', () => ({
-  ensureOpencodeVolume: m.ensureOpencodeVolume,
-}));
+
+/**
+ * codex and opencode reach `docker-sync` through the AgentSyncModule registry,
+ * so they are REGISTERED here rather than module-mocked. That is the better
+ * test: it exercises the seam an agent package will use, instead of the import
+ * it no longer has. claude is still module-mocked because its call site is
+ * still by name (it converts when claude moves into its package).
+ */
+function registerStub(id: string, onEnsure: () => Promise<{ created: boolean; synced: boolean }>) {
+  registerAgentSyncModule({
+    id,
+    resolveVolume: () => ({ volume: `agentbox-${id}` }),
+    buildMounts: () => ({ extraVolumes: [], env: {}, volumeName: `agentbox-${id}` }),
+    ensureVolume: onEnsure,
+    sessionInfo: () => Promise.resolve({ running: false, sessionName: id, startedAt: null }),
+    ...(id === 'codex'
+      ? {
+          afterVolumeSync: (volume: string, image: string) =>
+            m.seedCodexAgentsOverride(volume, image) as Promise<{ notes: string[] }>,
+        }
+      : {}),
+  });
+}
+
 vi.mock('../src/sync/host-export.js', () => ({
   copyHostEnvFilesToBox: m.copyHostEnvFilesToBox,
   copyCarryPathsToBox: m.copyCarryPathsToBox,
@@ -220,7 +239,7 @@ describe('makeDockerSync.seedAgentConfig', () => {
       order.push('claude');
       return Promise.resolve({ created: false, synced: false });
     });
-    m.ensureCodexVolume.mockImplementation(() => {
+    registerStub('codex', () => {
       order.push('codex');
       return Promise.resolve({ created: false, synced: false });
     });
@@ -228,7 +247,7 @@ describe('makeDockerSync.seedAgentConfig', () => {
       order.push('agents');
       return Promise.resolve({ created: false, synced: false });
     });
-    m.ensureOpencodeVolume.mockImplementation(() => {
+    registerStub('opencode', () => {
       order.push('opencode');
       return Promise.resolve({ created: false, synced: false });
     });

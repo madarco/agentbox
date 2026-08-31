@@ -7,22 +7,11 @@ import { makeSyncContext, relayPort, syncAgentboxSshConfig } from '@agentbox/san
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { makeDockerSync } from './sync/docker-sync.js';
-import { buildClaudeMounts, resolveClaudeVolume } from './sync/agents/claude.js';
-import {
-  buildCodexMounts,
-  resolveCodexVolume,
-  type CodexMountResult,
-} from './sync/agents/codex.js';
 import {
   buildAgentsMounts,
   resolveAgentsVolume,
   type AgentsMountResult,
 } from './sync/agents/skills.js';
-import {
-  buildOpencodeMounts,
-  resolveOpencodeVolume,
-  type OpencodeMountResult,
-} from './sync/agents/opencode.js';
 import {
   type BoxLimitSpec,
   containerExists,
@@ -79,6 +68,7 @@ import { resolveCheckpoint } from './checkpoint.js';
 import { computeDockerContextFingerprint, readPreparedDockerState } from './prepared-state.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
+import { requireAgentSyncModule, type AgentMountResult } from './sync/agents/module.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import {
   ensureRelay,
@@ -657,7 +647,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // to run the actual volume seeds + credential sync.
   const wantClaude = await wants('claude', async () => true);
   const claudeSpec = wantClaude
-    ? resolveClaudeVolume({
+    ? requireAgentSyncModule('claude').resolveVolume({
         isolate: opts.claudeConfig?.isolate ?? false,
         boxId: id,
       })
@@ -670,7 +660,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     async () => opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex'))),
   );
   const codexSpec = wantCodex
-    ? resolveCodexVolume({ isolate: opts.codexConfig?.isolate ?? false, boxId: id })
+    ? requireAgentSyncModule('codex').resolveVolume({
+        isolate: opts.codexConfig?.isolate ?? false,
+        boxId: id,
+      })
     : undefined;
   // Agents skills (~/.agents): mounted whenever the host has one; shared across
   // boxes (skills only, no auth). Codex discovers skills from ~/.agents/skills.
@@ -687,7 +680,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       (await pathExists(join(homedir(), '.local', 'share', 'opencode'))),
   );
   const opencodeSpec = wantOpencode
-    ? resolveOpencodeVolume({ isolate: opts.opencodeConfig?.isolate ?? false, boxId: id })
+    ? requireAgentSyncModule('opencode').resolveVolume({
+        isolate: opts.opencodeConfig?.isolate ?? false,
+        boxId: id,
+      })
     : undefined;
 
   // Walk the docker ProviderSync facade (see sync/docker-sync.ts for the full
@@ -717,17 +713,18 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await sync.seedAgentConfig(syncCtx);
   await sync.seedCredentials(syncCtx);
 
-  // Container mounts, built from the same specs (pure).
-  let claudeMounts: ReturnType<typeof buildClaudeMounts> | undefined;
+  // Container mounts, built from the same specs (pure). Through the registry, so
+  // an agent contributes its mounts without this file naming it.
+  let claudeMounts: AgentMountResult | undefined;
   let claudeConfigVolume: string | undefined;
   if (claudeSpec) {
-    claudeMounts = buildClaudeMounts(claudeSpec, process.env);
+    claudeMounts = requireAgentSyncModule('claude').buildMounts(claudeSpec, process.env);
     claudeConfigVolume = claudeSpec.volume;
   }
-  let codexMounts: CodexMountResult | undefined;
+  let codexMounts: AgentMountResult | undefined;
   let codexConfigVolume: string | undefined;
   if (codexSpec) {
-    codexMounts = buildCodexMounts(codexSpec, process.env);
+    codexMounts = requireAgentSyncModule('codex').buildMounts(codexSpec, process.env);
     codexConfigVolume = codexSpec.volume;
   }
   let agentsMounts: AgentsMountResult | undefined;
@@ -736,10 +733,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     agentsMounts = buildAgentsMounts(agentsSpec);
     agentsConfigVolume = agentsSpec.volume;
   }
-  let opencodeMounts: OpencodeMountResult | undefined;
+  let opencodeMounts: AgentMountResult | undefined;
   let opencodeConfigVolume: string | undefined;
   if (opencodeSpec) {
-    opencodeMounts = buildOpencodeMounts(opencodeSpec, process.env);
+    opencodeMounts = requireAgentSyncModule('opencode').buildMounts(opencodeSpec, process.env);
     opencodeConfigVolume = opencodeSpec.volume;
   }
 

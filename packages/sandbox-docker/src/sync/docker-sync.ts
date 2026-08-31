@@ -30,13 +30,12 @@ import { renderCarryEntries } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
 import type { ClaudeConfigSpec } from './agents/claude.js';
 import { ensureClaudeVolume } from './agents/claude.js';
+import { requireAgentSyncModule } from './agents/module.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { CodexConfigSpec } from './agents/codex.js';
-import { ensureCodexVolume, seedCodexAgentsOverride } from './agents/codex.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
 import type { OpencodeConfigSpec } from './agents/opencode.js';
-import { ensureOpencodeVolume } from './agents/opencode.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 
@@ -118,6 +117,10 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
 
       if (handle.claudeSpec) {
         const claudeSpec = handle.claudeSpec;
+        // Still called by name. Claude's ensure reports four extra outcomes and
+        // one of the log lines interpolates `ctx.hostWorkspace`, which the module
+        // contract has no channel for yet. It converts when claude moves into
+        // its package — deliberately last, since it is the daily driver.
         const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
           syncFromHost: true,
           image,
@@ -151,14 +154,19 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
 
       if (handle.codexSpec) {
         const codexSpec = handle.codexSpec;
-        const codexEnsured = await ensureCodexVolume(codexSpec, { syncFromHost: true, image });
+        const codex = requireAgentSyncModule('codex');
+        const codexEnsured = await codex.ensureVolume(codexSpec, { syncFromHost: true, image });
         if (codexEnsured.synced) log(`synced ${codexSpec.volume} from ~/.codex`);
         else if (codexEnsured.created)
           log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
         else log(`reusing volume ${codexSpec.volume}`);
         await seedDeclared('codex', codexSpec.volume);
-        const codexOverride = await seedCodexAgentsOverride(codexSpec.volume, image);
-        if (codexOverride.seeded) log(`seeded Codex AGENTS.override.md into ${codexSpec.volume}`);
+        // The AGENTS.override.md box-facts fold used to be called by name here.
+        // It is the agent's own post-sync step now, so a new agent gets one
+        // without this file learning about it.
+        for (const note of (await codex.afterVolumeSync?.(codexSpec.volume, image))?.notes ?? []) {
+          log(`${note} (${codexSpec.volume})`);
+        }
       }
 
       if (handle.agentsSpec) {
@@ -171,10 +179,10 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
 
       if (handle.opencodeSpec) {
         const opencodeSpec = handle.opencodeSpec;
-        const opencodeEnsured = await ensureOpencodeVolume(opencodeSpec, {
-          syncFromHost: true,
-          image,
-        });
+        const opencodeEnsured = await requireAgentSyncModule('opencode').ensureVolume(
+          opencodeSpec,
+          { syncFromHost: true, image },
+        );
         if (opencodeEnsured.synced)
           log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
         else if (opencodeEnsured.created)
