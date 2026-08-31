@@ -25,6 +25,7 @@ import type { CreateRouting } from '../../control-plane/route-create.js';
 import type { WrappedAttachOptions } from '../../wrapped-pty/index.js';
 import type { Command } from 'commander';
 import type { AgentLoginBinding } from '../../lib/agent-login-bindings.js';
+import type { HostCredVerdict } from '../../lib/queue/assert-creds.js';
 import type { ResolvedTeleport } from '../../session-teleport/index.js';
 import type { AgentSyncSpec } from '@agentbox/sandbox-core';
 
@@ -152,6 +153,19 @@ export interface AgentRuntime {
    * means "don't check".
    */
   requireCredsWhenNonTty?(): Promise<boolean>;
+  /**
+   * This agent's verdict on its own host credentials, for the `-i` pre-flight.
+   *
+   * Required, not optional: the shared helper used to dispatch with
+   * `agent === 'codex' ? … : opencode`, so an agent nobody had wired got
+   * OpenCode's check and a wrong answer. Making it part of the contract turns
+   * that into a compile error.
+   */
+  hostCredStatus(o: {
+    image: string;
+    env: NodeJS.ProcessEnv;
+    isCloud: boolean;
+  }): Promise<HostCredVerdict>;
   /** An agent whose login is a protocol of its own replaces the default
    *  subcommand body here — see `command/login.ts`. */
   loginCommand?: {

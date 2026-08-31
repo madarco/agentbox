@@ -29,8 +29,8 @@ import {
   startCodexSession,
 } from '@agentbox/agent-codex';
 import { confirm, log, spinner } from '../../lib/prompt.js';
-import { codexAuthAvailable } from '../../lib/queue/assert-creds.js';
 import { codexLoginBinding } from './login-binding.js';
+import { codexAuthAvailable } from './host-creds.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
 import { imageProgress } from '../../lib/progress.js';
@@ -154,6 +154,8 @@ const SKIP_PERMISSIONS_RULE: SkipPermissionsRule = {
 };
 
 export const codexRuntime: AgentRuntime = {
+  hostCredStatus: async ({ image, env }) =>
+    (await codexAuthAvailable(image, env)) ? { status: 'ok' } : { status: 'missing' },
   sharedVolume: SHARED_CODEX_VOLUME,
   SessionError: CodexSessionError,
 

@@ -30,8 +30,8 @@ import {
   startOpencodeSession,
 } from '@agentbox/agent-opencode';
 import { confirm, log, spinner, text } from '../../lib/prompt.js';
-import { opencodeAuthAvailable } from '../../lib/queue/assert-creds.js';
 import { opencodeLoginBinding } from './login-binding.js';
+import { opencodeAuthAvailable } from './host-creds.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
 import { imageProgress } from '../../lib/progress.js';
@@ -174,6 +174,8 @@ const SIGN_IN_PROMPT = 'Sign in to OpenCode? (pick a provider; saved and reused 
 const SKIPPED = 'Skipped sign-in — opencode will prompt you to sign in inside the box.';
 
 export const opencodeRuntime: AgentRuntime = {
+  hostCredStatus: async ({ image, env }) =>
+    (await opencodeAuthAvailable(image, env)) ? { status: 'ok' } : { status: 'missing' },
   sharedVolume: SHARED_OPENCODE_VOLUME,
   SessionError: OpencodeSessionError,
 

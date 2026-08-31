@@ -31,6 +31,7 @@ import {
 import { confirm, log, spinner } from '../../lib/prompt.js';
 import { resolveClaudeAuth } from '../../auth.js';
 import { claudeLoginBinding } from './login-binding.js';
+import { claudeCredStatus } from './host-creds.js';
 import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { imageProgress } from '../../lib/progress.js';
@@ -140,6 +141,16 @@ const SKIP_PERMISSIONS_RULE: SkipPermissionsRule = {
 };
 
 export const claudeRuntime: AgentRuntime = {
+  hostCredStatus: async ({ image, env, isCloud }) => {
+    const status = await claudeCredStatus(env, isCloud, image);
+    if (status === 'ok') return { status: 'ok' };
+    if (status === 'missing') return { status: 'missing' };
+    return {
+      status: 'expired',
+      message:
+        'Your saved Claude login can no longer be renewed. Sign in again with `agentbox claude login`, then retry.',
+    };
+  },
   sharedVolume: SHARED_CLAUDE_VOLUME,
   SessionError: ClaudeSessionError,
 

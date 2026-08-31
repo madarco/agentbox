@@ -48,7 +48,7 @@ import {
 } from '@agentbox/relay';
 import { toSyncKind } from '@agentbox/core';
 import { resolveClaudeAuth } from '../auth.js';
-import { claudeCredStatus } from '../lib/queue/assert-creds.js';
+import { claudeCredStatus } from '../agents/claude/host-creds.js';
 import { runClaudeLogin } from '../lib/claude-login-run.js';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';

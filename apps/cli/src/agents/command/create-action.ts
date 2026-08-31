@@ -357,6 +357,8 @@ export async function runAgentCreate(
         agent: a.spec.wireId ?? a.id,
         image: cfg.box.image,
         providerName,
+        // The agent's own check, not a chain in the shared helper.
+        hostCredStatus: (o) => a.runtime.hostCredStatus(o),
       });
     } catch (err) {
       if (err instanceof MissingAgentCredsError) fail(err.message);
@@ -442,6 +444,7 @@ export async function runAgentCreate(
           agent: a.spec.wireId ?? a.id,
           image: cfg.box.image,
           providerName,
+          hostCredStatus: (o) => a.runtime.hostCredStatus(o),
         });
       } catch (err) {
         if (err instanceof MissingAgentCredsError) fail(err.message);

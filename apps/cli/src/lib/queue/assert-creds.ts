@@ -1,101 +1,17 @@
-import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { hostBackupHasCredentials } from '@agentbox/sandbox-docker';
-import {
-  OPENCODE_FORWARDED_ENV_KEYS,
-  SHARED_OPENCODE_VOLUME,
-  volumeHasOpencodeAuth,
-} from '@agentbox/agent-opencode';
-import { SHARED_CODEX_VOLUME, volumeHasCodexAuth } from '@agentbox/agent-codex';
+/**
+ * The `-i` pre-flight: refuse to submit a detached job whose agent has no
+ * host-side credentials to seed into the box.
+ *
+ * This file names no agent. It used to hold each one's host check and dispatch
+ * between them with `agent === 'codex' ? … : opencode` — so a fourth agent
+ * silently got OpenCode's credential check and a wrong answer. The check is the
+ * agent's own now (`AgentRuntime.hostCredStatus`, implemented in
+ * `agents/<id>/host-creds.ts`); what stays here is the contract, the errors and
+ * the wording, which already had a generic fallback for an agent it had never
+ * heard of.
+ */
 import type { QueueAgentKind } from '@agentbox/relay';
 import { normalizeLastAgent } from '@agentbox/core';
-import { resolveClaudeAuth } from '../../auth.js';
-import { resolveClaudeCredHealth } from '../claude-cred-health.js';
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * True when Claude is already authenticated on the host: a forwarded env var
- * (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), the legacy
- * `~/.agentbox/auth.json` setup-token, or a real OAuth refresh token in the
- * host backup (`~/.agentbox/claude-credentials.json`). The backup is what the
- * foreground sync writes whenever a box's claude logs in, so its presence is
- * the load-bearing signal that the shared volume has been seeded.
- */
-export async function claudeAuthAvailable(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const resolved = await resolveClaudeAuth(env);
-  if (resolved.source !== 'none') return true;
-  return hostBackupHasCredentials();
-}
-
-/**
- * Richer Claude credential verdict for the non-interactive paths. `'missing'`
- * when nothing can seed a box; `'expired'` when the saved login can no longer be
- * renewed AND we're on a cloud provider — cloud has no shared volume to fall
- * back to, whereas a docker box boots from the volume's live copy and refreshes
- * it in-box. A host-env token (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`)
- * or legacy `auth.json` short-circuits to `'ok'`: it has no expiry concept here.
- * Mirrors the interactive `maybeRunCloudClaudeLogin` split, and shares its
- * verdict helper — so a merely-lapsed access token is renewed here too rather
- * than failing the job. This used to gate on `expiresAt` (the ~8h access token)
- * and so refused to submit perfectly good jobs every day.
- */
-export async function claudeCredStatus(
-  env: NodeJS.ProcessEnv,
-  isCloud: boolean,
-  image?: string,
-): Promise<'ok' | 'missing' | 'expired'> {
-  const resolved = await resolveClaudeAuth(env);
-  if (resolved.source !== 'none') return 'ok';
-  if (!isCloud) return (await hostBackupHasCredentials()) ? 'ok' : 'missing';
-  const health = await resolveClaudeCredHealth({
-    image: image ?? '',
-    // No image to probe with means no renewal; answer off the backup alone.
-    ...(image === undefined ? { offlineOnly: true } : {}),
-  });
-  if (health === 'missing') return 'missing';
-  return health === 'dead' ? 'expired' : 'ok';
-}
-
-/**
- * True when Codex is already authenticated: `OPENAI_API_KEY` in env, a host
- * `~/.codex/auth.json`, or an `auth.json` already in the shared codex-config
- * volume. Mirrors the foreground command's local helper so the `-i`
- * pre-flight and the interactive login offer agree on what counts as
- * "seeded".
- */
-export async function codexAuthAvailable(
-  image: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<boolean> {
-  if ((env['OPENAI_API_KEY'] ?? '').length > 0) return true;
-  if (await fileExists(join(homedir(), '.codex', 'auth.json'))) return true;
-  return volumeHasCodexAuth(SHARED_CODEX_VOLUME, image);
-}
-
-/**
- * True when OpenCode is already authenticated: any of its forwarded provider
- * env keys, a host `~/.local/share/opencode/auth.json`, or an `auth.json`
- * already in the shared opencode volume.
- */
-export async function opencodeAuthAvailable(
-  image: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<boolean> {
-  for (const k of OPENCODE_FORWARDED_ENV_KEYS) {
-    if ((env[k] ?? '').length > 0) return true;
-  }
-  if (await fileExists(join(homedir(), '.local', 'share', 'opencode', 'auth.json'))) return true;
-  return volumeHasOpencodeAuth(SHARED_OPENCODE_VOLUME, image);
-}
 
 /**
  * Wording for the agents we have something specific to say about. Not total —
@@ -123,9 +39,6 @@ function missingCredsMessage(agent: QueueAgentKind): string {
   );
 }
 
-const CLAUDE_EXPIRED_MESSAGE =
-  'Your saved Claude login can no longer be renewed. Sign in again with `agentbox claude login`, then retry.';
-
 export class MissingAgentCredsError extends Error {
   readonly agent: QueueAgentKind;
   constructor(agent: QueueAgentKind, message: string) {
@@ -148,13 +61,36 @@ export class ExpiredAgentCredsError extends MissingAgentCredsError {
   }
 }
 
+/**
+ * An agent's verdict on its own host credentials. `'expired'` is for the
+ * present-but-unrenewable case; an agent with no such concept simply never
+ * returns it.
+ */
+export type HostCredVerdict =
+  | { status: 'ok' }
+  | { status: 'missing' }
+  | { status: 'expired'; message: string };
+
 export interface AssertAgentCredsInput {
   agent: QueueAgentKind;
   image: string;
   env?: NodeJS.ProcessEnv;
-  /** Provider for this run; gates the Claude renewability check to cloud (see
-   *  {@link claudeCredStatus}). Omitted/`'docker'` → presence check only. */
+  /**
+   * Provider for this run. Passed to the agent's own check as `isCloud`, which
+   * claude uses to gate its renewability probe — cloud has no shared volume to
+   * fall back on. Omitted/`'docker'` → presence check only.
+   */
   providerName?: string;
+  /**
+   * The agent's own host-credential check. Required: there is no default, so an
+   * agent that has not supplied one is a compile error rather than a silent
+   * pass — which is what the removed three-arm chain gave a fourth agent.
+   */
+  hostCredStatus: (o: {
+    image: string;
+    env: NodeJS.ProcessEnv;
+    isCloud: boolean;
+  }) => Promise<HostCredVerdict>;
 }
 
 /**
@@ -167,17 +103,11 @@ export interface AssertAgentCredsInput {
  */
 export async function assertAgentCredsAvailable(input: AssertAgentCredsInput): Promise<void> {
   const env = input.env ?? process.env;
-  if (input.agent === 'claude-code') {
-    const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
-    const status = await claudeCredStatus(env, isCloud, input.image);
-    if (status === 'missing')
-      throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
-    if (status === 'expired') throw new ExpiredAgentCredsError(input.agent, CLAUDE_EXPIRED_MESSAGE);
-    return;
+  const isCloud = input.providerName !== undefined && input.providerName !== 'docker';
+  const verdict = await input.hostCredStatus({ image: input.image, env, isCloud });
+  if (verdict.status === 'ok') return;
+  if (verdict.status === 'expired') {
+    throw new ExpiredAgentCredsError(input.agent, verdict.message);
   }
-  const ok =
-    input.agent === 'codex'
-      ? await codexAuthAvailable(input.image, env)
-      : await opencodeAuthAvailable(input.image, env);
-  if (!ok) throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
+  throw new MissingAgentCredsError(input.agent, missingCredsMessage(input.agent));
 }

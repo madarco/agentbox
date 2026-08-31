@@ -42,15 +42,35 @@ vi.mock('@agentbox/agent-opencode', async (importOriginal) => ({
   volumeHasOpencodeAuth: sandboxDockerMock.volumeHasOpencodeAuth,
 }));
 
-const {
-  assertAgentCredsAvailable,
-  claudeAuthAvailable,
-  claudeCredStatus,
-  codexAuthAvailable,
-  opencodeAuthAvailable,
-  MissingAgentCredsError,
-  ExpiredAgentCredsError,
-} = await import('../src/lib/queue/assert-creds.js');
+const { assertAgentCredsAvailable, MissingAgentCredsError, ExpiredAgentCredsError } =
+  await import('../src/lib/queue/assert-creds.js');
+// The per-agent checks moved next to their runtimes — the shared helper no
+// longer knows any agent's name. The mock has to follow the symbol.
+const { claudeAuthAvailable, claudeCredStatus } =
+  await import('../src/agents/claude/host-creds.js');
+const { codexAuthAvailable } = await import('../src/agents/codex/host-creds.js');
+const { opencodeAuthAvailable } = await import('../src/agents/opencode/host-creds.js');
+const { claudeRuntime } = await import('../src/agents/claude/runtime.js');
+const { codexRuntime } = await import('../src/agents/codex/runtime.js');
+const { opencodeRuntime } = await import('../src/agents/opencode/runtime.js');
+
+/** The agent supplies its own check now, so every assert call carries one. */
+const RUNTIMES: Record<string, { hostCredStatus: (typeof claudeRuntime)['hostCredStatus'] }> = {
+  'claude-code': claudeRuntime,
+  codex: codexRuntime,
+  opencode: opencodeRuntime,
+};
+function assertFor(input: {
+  agent: string;
+  image: string;
+  env?: NodeJS.ProcessEnv;
+  providerName?: string;
+}) {
+  return assertAgentCredsAvailable({
+    ...input,
+    hostCredStatus: (o) => RUNTIMES[input.agent]!.hostCredStatus(o),
+  } as Parameters<typeof assertAgentCredsAvailable>[0]);
+}
 
 // Re-import the auth file path AFTER the mock; the module reads STATE_DIR from
 // the mocked sandbox-docker, but resolveClaudeAuth pulls it through readAuthFile
@@ -274,22 +294,22 @@ describe('assertAgentCredsAvailable dispatcher', () => {
   it('returns silently when claude has creds', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
     await expect(
-      assertAgentCredsAvailable({ agent: 'claude-code', image: IMAGE, env: {} }),
+      assertFor({ agent: 'claude-code', image: IMAGE, env: {} }),
     ).resolves.toBeUndefined();
   });
 
   it('throws MissingAgentCredsError for claude when no source has creds', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
-    await expect(
-      assertAgentCredsAvailable({ agent: 'claude-code', image: IMAGE, env: {} }),
-    ).rejects.toBeInstanceOf(MissingAgentCredsError);
+    await expect(assertFor({ agent: 'claude-code', image: IMAGE, env: {} })).rejects.toBeInstanceOf(
+      MissingAgentCredsError,
+    );
   });
 
   it('throws ExpiredAgentCredsError for claude on cloud when the login cannot be renewed', async () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
     sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
     try {
-      await assertAgentCredsAvailable({
+      await assertFor({
         agent: 'claude-code',
         image: IMAGE,
         env: {},
@@ -310,7 +330,7 @@ describe('assertAgentCredsAvailable dispatcher', () => {
     sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
     sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
     await expect(
-      assertAgentCredsAvailable({
+      assertFor({
         agent: 'claude-code',
         image: IMAGE,
         env: {},
@@ -322,7 +342,7 @@ describe('assertAgentCredsAvailable dispatcher', () => {
   it('error carries the agent kind and a helpful message', async () => {
     sandboxDockerMock.volumeHasCodexAuth.mockResolvedValue(false);
     try {
-      await assertAgentCredsAvailable({ agent: 'codex', image: IMAGE, env: {} });
+      await assertFor({ agent: 'codex', image: IMAGE, env: {} });
       throw new Error('expected to throw');
     } catch (err) {
       expect(err).toBeInstanceOf(MissingAgentCredsError);
@@ -335,11 +355,73 @@ describe('assertAgentCredsAvailable dispatcher', () => {
 
   it('routes opencode through the opencode predicate', async () => {
     sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(true);
-    await expect(
-      assertAgentCredsAvailable({ agent: 'opencode', image: IMAGE, env: {} }),
-    ).resolves.toBeUndefined();
+    await expect(assertFor({ agent: 'opencode', image: IMAGE, env: {} })).resolves.toBeUndefined();
     // Wrong-agent predicates must not be consulted.
     expect(sandboxDockerMock.hostBackupHasCredentials).not.toHaveBeenCalled();
     expect(sandboxDockerMock.volumeHasCodexAuth).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertAgentCredsAvailable dispatch', () => {
+  it("uses the AGENT's own check, so a fourth agent is never given another's", async () => {
+    // The removed three-arm chain was `agent === 'codex' ? codex : opencode`,
+    // so any agent that was not claude or codex silently got OpenCode's
+    // credential check — a wrong answer with nothing failing.
+    let sawImage: string | undefined;
+    await expect(
+      assertAgentCredsAvailable({
+        agent: 'demo' as never,
+        image: 'demo-image',
+        env: {},
+        hostCredStatus: ({ image }) => {
+          sawImage = image;
+          return Promise.resolve({ status: 'ok' as const });
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(sawImage).toBe('demo-image');
+  });
+
+  it('reports a missing credential for an agent it has never heard of', async () => {
+    await expect(
+      assertAgentCredsAvailable({
+        agent: 'demo' as never,
+        image: 'demo-image',
+        env: {},
+        hostCredStatus: () => Promise.resolve({ status: 'missing' as const }),
+      }),
+    ).rejects.toThrow(/No demo credentials on host/);
+  });
+
+  it('passes isCloud through, since only the agent knows what to do with it', async () => {
+    const seen: boolean[] = [];
+    const probe = (providerName?: string) =>
+      assertAgentCredsAvailable({
+        agent: 'demo' as never,
+        image: 'i',
+        env: {},
+        ...(providerName === undefined ? {} : { providerName }),
+        hostCredStatus: ({ isCloud }) => {
+          seen.push(isCloud);
+          return Promise.resolve({ status: 'ok' as const });
+        },
+      });
+    await probe('daytona');
+    await probe('docker');
+    await probe();
+    expect(seen).toEqual([true, false, false]);
+  });
+
+  it("surfaces the agent's own wording for an unrenewable login", async () => {
+    // The expired message used to be a claude constant in the shared helper.
+    await expect(
+      assertAgentCredsAvailable({
+        agent: 'demo' as never,
+        image: 'i',
+        env: {},
+        hostCredStatus: () =>
+          Promise.resolve({ status: 'expired' as const, message: 'demo says: re-auth' }),
+      }),
+    ).rejects.toThrow('demo says: re-auth');
   });
 });

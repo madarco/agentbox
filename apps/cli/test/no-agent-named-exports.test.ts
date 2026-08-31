@@ -61,7 +61,6 @@ const ALLOWLIST: Record<string, string> = {
   'apps/cli/src/commands/download-opencode.ts': 'phase 2',
   'apps/cli/src/commands/install-codex.ts': 'phase 2',
   'apps/cli/src/commands/_claude-login-worker.ts': 'phase 2',
-  'apps/cli/src/lib/queue/assert-creds.ts': 'phase 2',
   'apps/cli/src/session-teleport/cwd-encoding.ts': 'phase 2',
   'apps/cli/src/session-teleport/plan.ts': 'phase 2',
 

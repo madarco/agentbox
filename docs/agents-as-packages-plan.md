@@ -350,9 +350,28 @@ allowlisted against its owning phase, except `commands/_open-in.ts`, which is
 excluded rather than exempted: its `codexAddUrl` is the Codex.app `codex://`
 deep link, and renaming that would be wrong.
 
-**Next (2b):** extract the ten-module kit and move codex + opencode. Then
-claude's heavy six, most likely by inverting them through the existing
-`AgentCliSpec` ctx seam rather than extracting `control-plane.ts`.
+**Done (2b, part 1): the queue's credential pre-flight is agent-agnostic.**
+`lib/queue/assert-creds.ts` was the one kit module with agent-specific
+dependencies, and it dispatched with `agent === 'codex' ? codex : opencode` — so
+**an agent that was neither claude nor codex silently got OpenCode's credential
+check**, and a wrong answer with nothing failing. Found while sizing the kit, not
+by a test.
+
+Each agent's host check moved to `agents/<id>/host-creds.ts`, and
+`AgentRuntime.hostCredStatus` is a REQUIRED member: an agent that has not
+supplied one is now a compile error rather than a silent pass. The shared helper
+keeps the contract, the errors, and the wording — which already had a generic
+fallback for an unknown agent, so only the dispatch was ever wrong. Claude's
+`'expired'` message travels in the verdict rather than sitting in the shared file
+as a constant.
+
+That emptied `assert-creds.ts` of agent names, and the stale-exemption half of
+the `no-agent-named-exports` guard fired on the next run demanding its removal —
+the allowlist is 27 files, down from 29.
+
+**Next (2b, part 2):** extract the remaining nine-module kit and move codex +
+opencode. Then claude's heavy six, most likely by inverting them through the
+existing `AgentCliSpec` ctx seam rather than extracting `control-plane.ts`.
 
 **Phase 4 — `sandbox-cloud` — PARTLY DONE (`568cac29`).** `AgentCloudModule` is
 the cloud twin of `AgentSyncModule`; codex's `AGENTS.override` fold and
