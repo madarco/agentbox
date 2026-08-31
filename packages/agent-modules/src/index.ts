@@ -20,6 +20,7 @@
 
 import { registerClaudeAgent } from '@agentbox/agent-claude';
 import { registerCodexAgent } from '@agentbox/agent-codex';
+import { registerExampleAgent } from '@agentbox/agent-example';
 import { registerOpencodeAgent } from '@agentbox/agent-opencode';
 
 /**
@@ -31,4 +32,6 @@ export function registerAllAgentModules(): void {
   registerClaudeAgent();
   registerCodexAgent();
   registerOpencodeAgent();
+  // Hidden from users, real to the machinery — see @agentbox/agent-example.
+  registerExampleAgent();
 }

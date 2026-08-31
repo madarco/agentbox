@@ -18,9 +18,9 @@ describe('registerAllAgentModules', () => {
     registerAllAgentModules();
     const registered = new Set(registeredAgentSyncModules().map((m) => m.id));
 
-    // Every visible agent must be drivable on docker. `example` is the hidden
-    // canary and is exempt until it grows behavior — the last step of this phase.
-    const missing = AGENT_SPECS.filter((s) => !s.hidden && !registered.has(s.id)).map((s) => s.id);
+    // EVERY agent, hidden or not. The canary is no longer exempt: it has a
+    // package like the rest, which is the claim this whole phase makes.
+    const missing = AGENT_SPECS.filter((s) => !registered.has(s.id)).map((s) => s.id);
     expect(missing, 'agents with no registered docker module').toEqual([]);
   });
 

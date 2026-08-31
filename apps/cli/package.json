@@ -78,6 +78,7 @@
   "devDependencies": {
     "@agentbox/agent-claude": "workspace:*",
     "@agentbox/agent-codex": "workspace:*",
+    "@agentbox/agent-example": "workspace:*",
     "@agentbox/agent-modules": "workspace:*",
     "@agentbox/agent-opencode": "workspace:*",
     "@agentbox/config": "workspace:*",
