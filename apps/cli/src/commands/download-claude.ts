@@ -8,7 +8,6 @@ import {
 } from '@agentbox/agent-claude';
 import {
   agentBoxConfigDir,
-  claudeStagedItems,
   pullClaudeExtrasViaTransport,
   stageItemsViaTransport,
   type PullClaudeResult,
@@ -18,6 +17,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { cloudTransportForPull } from './_agent-pull.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { claudeStagedItems } from '@agentbox/agent-claude';
 
 interface DownloadClaudeOpts {
   yes?: boolean;

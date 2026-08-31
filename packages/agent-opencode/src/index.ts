@@ -57,3 +57,5 @@ export function registerOpencodeAgent(): void {
 
 export { seedOpencodeModelState } from './cloud-sync.js';
 export * from './docker-sync.js';
+
+export { opencodeStagedItems } from './staged-items.js';

@@ -74,7 +74,6 @@ const ALLOWLIST: Record<string, string> = {
   'packages/sandbox-core/src/sync/agents/claude/paths.ts': 'phase 4',
   'packages/sandbox-core/src/claude-app-config.ts': 'phase 4',
   'packages/sandbox-docker/src/sync/claude-credentials.ts': 'phase 4',
-  'packages/sandbox-core/src/sync/agent-propagate.ts': 'phase 4',
 
   // Phase 5b — `claudeInstall`. 300 sites across 79 files, reaching the
   // published SDK, the hub's REST schema, on-disk prepared state and a

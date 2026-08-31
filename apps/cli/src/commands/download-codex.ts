@@ -4,7 +4,6 @@ import { DEFAULT_BOX_IMAGE, stageItemsFromVolume } from '@agentbox/sandbox-docke
 import { pullCodexConfig, resolveCodexVolume, SHARED_CODEX_VOLUME } from '@agentbox/agent-codex';
 import {
   agentBoxConfigDir,
-  codexStagedItems,
   pullCodexConfigViaTransport,
   stageItemsViaTransport,
 } from '@agentbox/sandbox-core';
@@ -13,6 +12,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { cloudTransportForPull } from './_agent-pull.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { codexStagedItems } from '@agentbox/agent-codex';
 
 interface DownloadCodexOpts {
   yes?: boolean;

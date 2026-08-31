@@ -8,7 +8,6 @@ import {
 } from '@agentbox/agent-opencode';
 import {
   agentBoxConfigDir,
-  opencodeStagedItems,
   pullOpencodeConfigViaTransport,
   stageItemsViaTransport,
 } from '@agentbox/sandbox-core';
@@ -17,6 +16,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { cloudTransportForPull } from './_agent-pull.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { opencodeStagedItems } from '@agentbox/agent-opencode';
 
 interface DownloadOpencodeOpts {
   yes?: boolean;

@@ -62,9 +62,6 @@ export {
 } from './agent-descriptor.js';
 export {
   agentBoxConfigDir,
-  claudeStagedItems,
-  codexStagedItems,
-  opencodeStagedItems,
   makeStagingDir,
   removeStagingDir,
   stageItemsViaTransport,

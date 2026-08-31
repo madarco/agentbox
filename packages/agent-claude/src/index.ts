@@ -127,3 +127,5 @@ export * from './docker-sync.js';
 export * from './host-stage.js';
 export * from './hooks-filter.js';
 export * from './cloud-json-overlay.js';
+
+export { claudeStagedItems } from './staged-items.js';

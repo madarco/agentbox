@@ -3,52 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  claudeStagedItems,
-  codexStagedItems,
   makeRecordingTransport,
-  opencodeStagedItems,
   planPropagateTargets,
   propagateStagedSettings,
   transportSettingsTarget,
   type SettingsTarget,
 } from '../src/index.js';
 
-describe('staged item mappers', () => {
-  it('claude: category rels, plugins under plugins/cache', () => {
-    expect(
-      claudeStagedItems({
-        newItems: [
-          { category: 'skills', name: 'foo' },
-          { category: 'plugins', name: 'mkt/plug' },
-        ],
-        mergedRegistries: [],
-      }),
-    ).toEqual([
-      { rel: 'skills/foo', label: 'skills/foo', kind: 'dir' },
-      { rel: 'plugins/cache/mkt/plug', label: 'plugins/mkt/plug', kind: 'dir' },
-    ]);
-  });
-
-  it('codex: prompts is a dir, the rest are files', () => {
-    expect(codexStagedItems(['config.toml', 'prompts']).map((i) => i.kind)).toEqual([
-      'file',
-      'dir',
-    ]);
-  });
-
-  it('opencode: auth/global config are files, extension dirs are dirs', () => {
-    expect(
-      opencodeStagedItems(['auth.json', 'config/opencode.json', 'config/skills']).map((i) => [
-        i.rel,
-        i.kind,
-      ]),
-    ).toEqual([
-      ['auth.json', 'file'],
-      ['config/opencode.json', 'file'],
-      ['config/skills', 'dir'],
-    ]);
-  });
-});
+// The three `<agent>StagedItems` mappers moved to their agent packages; their
+// tests went with them (`packages/agent-<id>/test/staged-items.test.ts`).
 
 describe('planPropagateTargets', () => {
   const boxes = [

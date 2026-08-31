@@ -71,3 +71,5 @@ export { ensureCodexAgentsOverride } from './cloud-sync.js';
 export * from './docker-sync.js';
 export * from './host-stage.js';
 export * from './box-config.js';
+
+export { codexStagedItems } from './staged-items.js';

@@ -28,7 +28,6 @@ import {
   CLAUDE_BOX_CONFIG_DIR,
   CODEX_BOX_CONFIG_DIR,
   OPENCODE_BOX_DATA_DIR,
-  type PullClaudeResult,
 } from './agent-pull.js';
 
 /** One staged settings item, in the volume-style relative layout. */
@@ -62,32 +61,10 @@ export function agentBoxConfigDir(agent: AgentId): string {
   }
 }
 
-/** Map a claude pull result to staged-item descriptors (all claude items are dirs). */
-export function claudeStagedItems(result: PullClaudeResult): StagedItem[] {
-  return result.newItems.map((it) => ({
-    rel: it.category === 'plugins' ? `plugins/cache/${it.name}` : `${it.category}/${it.name}`,
-    label: `${it.category}/${it.name}`,
-    kind: 'dir' as const,
-  }));
-}
-
-/** Map codex pull items (`config.toml`/`auth.json` files, `prompts` dir). */
-export function codexStagedItems(newItems: string[]): StagedItem[] {
-  return newItems.map((name) => ({
-    rel: name,
-    label: name,
-    kind: name === 'prompts' ? ('dir' as const) : ('file' as const),
-  }));
-}
-
-/** Map opencode pull labels (`auth.json`, `config/<item>`) to volume-style rels. */
-export function opencodeStagedItems(newItems: string[]): StagedItem[] {
-  return newItems.map((label) => {
-    const name = label.startsWith('config/') ? label.slice('config/'.length) : label;
-    const isFile = name === 'auth.json' || name === 'opencode.json' || name === 'opencode.jsonc';
-    return { rel: label, label, kind: isFile ? ('file' as const) : ('dir' as const) };
-  });
-}
+// The three `<agent>StagedItems` mappers lived here — a per-agent table in a
+// layer that must not know about agents. Each knew only its own agent's pull
+// shape, so each moved to `packages/agent-<id>/src/staged-items.ts`. The
+// `StagedItem` contract and the transport that consumes it stay shared.
 
 /** Stage box-side items into `stagingDir` (volume-style layout) over a transport. */
 export async function stageItemsViaTransport(
