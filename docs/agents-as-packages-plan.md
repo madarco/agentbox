@@ -266,7 +266,7 @@ exemption. **When that file has no callers, the claim is proven.**
 Verified live: `resolveAgentSpec('example')` resolves through the built package
 and already reaches ctl over `agents.list` with no ctl change at all.
 
-**Phase 1c — collapse to the central table (the correction) — NEXT.** Move the four
+**Phase 1c — collapse to the central table — DONE (`0354c052`).** Move the four
 `packages/agent-<id>/src/spec.ts` files to
 `packages/agent-registry/src/specs/<id>.ts` and delete the four packages. They
 return in Phase 2 carrying behavior, which is the only thing they can hold
@@ -282,9 +282,34 @@ leftovers: `download-<agent>.ts`, `lib/claude-*.ts`, `_claude-login-worker.ts`,
 `-i` path today) and the branching in `dashboard.ts` / `compositor.ts` /
 `fork.ts`.
 
-**Phase 3 — `sandbox-docker` (the big one).** Define `AgentSyncModule`, move the
-3,077 lines out, invert the 314 references. Land per file, claude last — it is
-the daily driver.
+**Phase 3a — the duplicated data — DONE (`f739ac96`).** The measured surface
+`sandbox-docker` consumes from the three agent modules is only six concepts, and
+one of them, `SHARED_<A>_VOLUME`, was a literal duplicate of `spec.dockerVolume`.
+It now derives from the registry, and destroy's cleanup + prune's never-reap list
+iterate `AGENT_SYNC_SPECS` instead of naming agents. Verified the derived names
+are byte-identical — a mismatch would repoint every existing box's volume.
+
+**Phase 3b — the inversion — NEXT.** What is left of phase 3 is behavior, and the
+interface is now known exactly, because the import surface was measured rather
+than guessed:
+
+| what `sandbox-docker` pulls per agent | becomes |
+| --- | --- |
+| `ensure<A>Volume`, `resolve<A>Volume`, `build<A>Mounts` | `AgentSyncModule` |
+| `<a>SessionInfo` | `AgentSyncModule.sessionInfo` |
+| `warmUpClaudeCredentials` | claude-only; `AgentSyncModule.warmUpCredentials?` |
+| `seedCodexAgentsOverride` | `AgentSyncModule.afterVolumeSync?` |
+| `<A>ConfigSpec` types | `AgentConfigSpec` |
+
+Land per file, claude last — it is the daily driver.
+
+**Phase 2 — the CLI layer — BLOCKED, and reordered after 3b.** Measured: the
+per-agent folders import **26 distinct shared CLI modules** (`lib/prompt`,
+`lib/progress`, `pty/pty-backend`, `lib/guided-login`, `session-teleport/*`,
+`wizard.ts`, `provider/registry.ts`, `checkpoint-lookup.ts`, …). Moving them into
+packages needs a CLI-kit extraction first, or an inversion of the app-level ones
+through the existing `AgentCliSpec` ctx seam. That is its own phase, not a file
+move — the original plan assumed this step was mechanical and it is not.
 
 **Phase 4 — `sandbox-core` + `sandbox-cloud`.** `claude-pull`, `codex-config`,
 `claude-hooks-filter`, `claude-json-overlay`, `codex-agents-override`,
