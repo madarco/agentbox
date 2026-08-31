@@ -10,7 +10,7 @@ import {
 import { agentCommand } from '../src/commands/agent.js';
 import { appCommand } from '../src/commands/app.js';
 import { attachCommand } from '../src/commands/attach.js';
-import { agentCommands } from '../src/agents/commands.js';
+import { agentCommands, hiddenAgentCommandIds } from '../src/agents/commands.js';
 import { checkpointCommand } from '../src/commands/checkpoint.js';
 import { codeCommand } from '../src/commands/code.js';
 import { configCommand } from '../src/commands/config.js';
@@ -62,9 +62,13 @@ import { waitCommand } from '../src/commands/wait.js';
 // below is the drift guard.
 function buildProgram(): Command {
   const program = new Command();
+  // A hidden agent's command is registered but excluded from help, exactly as
+  // `index.ts` does it — the demo agent would otherwise land in "Other" and
+  // fail the drift assertion below, which is the assertion working.
+  const hiddenAgents = hiddenAgentCommandIds();
   for (const cmd of [
     createCommand,
-    ...agentCommands(),
+    ...agentCommands().filter((c) => !hiddenAgents.has(c.name())),
     forkCommand,
     codeCommand,
     shellCommand,
@@ -117,6 +121,9 @@ function buildProgram(): Command {
   // The queue worker is hidden — buildGroupedHelp filters it out, so it must
   // NOT appear in HELP_GROUPS either. Register it the same way index.ts does
   // (with `{ hidden: true }`) so the drift assertion mirrors production.
+  for (const cmd of agentCommands().filter((c) => hiddenAgents.has(c.name()))) {
+    program.addCommand(cmd, { hidden: true });
+  }
   program.addCommand(runQueuedJobCommand, { hidden: true });
   return program;
 }

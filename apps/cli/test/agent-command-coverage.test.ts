@@ -1,4 +1,4 @@
-import { agentIdsWiredIntoCli } from './_agents-in-cli.js';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { describe, expect, it } from 'vitest';
 import { agentCommandEntry, agentCommandIds, agentCommands } from '../src/agents/commands.js';
 
@@ -20,11 +20,11 @@ import { agentCommandEntry, agentCommandIds, agentCommands } from '../src/agents
  */
 describe('per-agent dispatch table', () => {
   it('registers a command for every agent in the registry', () => {
-    expect([...agentCommandIds()].sort()).toEqual([...agentIdsWiredIntoCli()].sort());
+    expect([...agentCommandIds()].sort()).toEqual([...AGENT_SYNC_SPECS.map((s) => s.id)].sort());
   });
 
   it('every entry carries both a command and an attach wrapper', () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const entry = agentCommandEntry(id);
       expect(entry, `no command entry for '${id}'`).toBeDefined();
       expect(entry!.command.name()).toBe(id);
@@ -34,7 +34,7 @@ describe('per-agent dispatch table', () => {
 
   it('agentCommands() returns one command per agent, no duplicates', () => {
     const names = agentCommands().map((c) => c.name());
-    expect(names.sort()).toEqual([...agentIdsWiredIntoCli()].sort());
+    expect(names.sort()).toEqual([...AGENT_SYNC_SPECS.map((s) => s.id)].sort());
     expect(new Set(names).size).toBe(names.length);
   });
 

@@ -3,7 +3,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
-import { agentCommandIds, agentCommandEntry } from '../src/agents/commands.js';
+import {
+  agentCommandIds,
+  agentCommandEntry,
+  hiddenAgentCommandIds,
+} from '../src/agents/commands.js';
 
 /**
  * The golden CLI surface for `agentbox claude|codex|opencode`.
@@ -93,9 +97,24 @@ function surfaceOf(cmd: Command): CommandSurface {
   };
 }
 
+/**
+ * The agents whose surface this fixture pins.
+ *
+ * VISIBLE agents only, which is what the fixture was ever for: it is the proof
+ * that no USER-FACING flag moved. A hidden agent is not user-facing — it is
+ * absent from `--help`, from pickers and from the bake list — so pinning it
+ * would make the fixture churn on a canary while telling nobody anything. That
+ * a hidden agent HAS a full command surface is asserted separately below,
+ * which is the claim that actually matters for it.
+ */
+function surfacedAgentIds(): string[] {
+  const hidden = hiddenAgentCommandIds();
+  return [...agentCommandIds()].filter((id) => !hidden.has(id)).sort();
+}
+
 function currentSurface(): Record<string, CommandSurface> {
   const out: Record<string, CommandSurface> = {};
-  for (const id of [...agentCommandIds()].sort()) {
+  for (const id of surfacedAgentIds()) {
     const entry = agentCommandEntry(id);
     if (!entry) throw new Error(`no command entry for '${id}'`);
     out[id] = surfaceOf(entry.command);
@@ -114,8 +133,23 @@ describe('agent CLI surface', () => {
     expect(actual).toEqual(expected);
   });
 
-  it('covers every agent that has a command', () => {
+  it('covers every VISIBLE agent that has a command', () => {
     const expected = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, CommandSurface>;
-    expect(Object.keys(expected).sort()).toEqual([...agentCommandIds()].sort());
+    expect(Object.keys(expected).sort()).toEqual(surfacedAgentIds());
+  });
+
+  it('gives a hidden agent a real command surface, just an unpinned one', () => {
+    // The demo agent's whole purpose is to prove an agent can supply a complete
+    // CLI surface from its own package. "Hidden" must mean absent from help —
+    // not absent from the command table.
+    for (const id of hiddenAgentCommandIds()) {
+      const entry = agentCommandEntry(id);
+      expect(entry, `hidden agent '${id}' has no command entry`).toBeDefined();
+      const surface = surfaceOf(entry!.command);
+      expect(surface.name).toBe(id);
+      // The same subcommands every agent gets from the shared factory.
+      const subs = surface.subcommands.map((c) => c.name).sort();
+      expect(subs).toEqual(['attach', 'login', 'start']);
+    }
   });
 });

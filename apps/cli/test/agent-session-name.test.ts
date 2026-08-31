@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentIdsWiredIntoCli } from './_agents-in-cli.js';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import type { EffectiveConfig } from '@agentbox/config';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveSessionName } from '../src/agents/command/start-attach.js';
@@ -20,7 +20,7 @@ describe('session name resolution', () => {
     ({ [id]: { sessionName: name } }) as unknown as EffectiveConfig;
 
   it('prefers --session-name over everything', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const { runtime } = await loadAgentModule(id);
       const a = { id, spec: resolveAgentSpec(id), runtime } as unknown as AgentCliSpec;
       expect(resolveSessionName(a, { sessionName: 'mine' }, cfgWith(id, 'configured'))).toBe(
@@ -30,7 +30,7 @@ describe('session name resolution', () => {
   });
 
   it('falls back to the configured name, not the registry default', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const { runtime } = await loadAgentModule(id);
       const a = { id, spec: resolveAgentSpec(id), runtime } as unknown as AgentCliSpec;
       const configured = `${id}-custom`;

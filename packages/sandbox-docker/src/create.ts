@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
-import { makeSyncContext, relayPort, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import {
+  AGENT_SYNC_SPECS,
+  makeSyncContext,
+  relayPort,
+  syncAgentboxSshConfig,
+  type AgentSyncSpec,
+} from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { makeDockerSync } from './sync/docker-sync.js';
@@ -649,47 +655,50 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // volume. Resolve the specs + want-conditionals here (one source of truth —
   // they also drive the mounts below), then walk the docker ProviderSync facade
   // to run the actual volume seeds + credential sync.
-  const wantClaude = await wants('claude', async () => true);
-  const claudeSpec = wantClaude
-    ? requireAgentSyncModule('claude').resolveVolume({
-        isolate: opts.claudeConfig?.isolate ?? false,
-        boxId: id,
-      })
-    : undefined;
-  // Codex: wanted when the caller passes `codexConfig` (`agentbox codex`) OR the
-  // host already uses codex (`~/.codex` exists) — so a plain create for a Codex
-  // user still gets a working box.
-  const wantCodex = await wants(
-    'codex',
-    async () => opts.codexConfig !== undefined || (await pathExists(join(homedir(), '.codex'))),
-  );
-  const codexSpec = wantCodex
-    ? requireAgentSyncModule('codex').resolveVolume({
-        isolate: opts.codexConfig?.isolate ?? false,
-        boxId: id,
-      })
-    : undefined;
+  // One entry per agent the registry knows, not three hand-written consts.
+  //
+  // The consts were the last per-agent table in the create path, and the demo
+  // agent found it the way a canary should: `agentbox example` produced a box
+  // with no config volume at all, silently, because there was no
+  // `exampleSpec` for `wants()` to have an opinion about.
+  //
+  // The host HINT is what differs. `--agents` (or `agentbox <agent>`) is
+  // authoritative when given; without it the historical behaviour is "mount
+  // whatever the host already has", which for every agent means "any of its
+  // declared static paths exists". Claude is the one exception and stays
+  // explicit: it is mounted always, even on a host with no `~/.claude` yet,
+  // because a first-run claude box has to have somewhere to put its login.
+  // `--isolate-<agent>-config` is per-agent on the options object; an agent with
+  // no such flag simply never isolates.
+  const isolateFor = (agent: string): boolean => {
+    if (agent === 'claude') return opts.claudeConfig?.isolate ?? false;
+    if (agent === 'codex') return opts.codexConfig?.isolate ?? false;
+    if (agent === 'opencode') return opts.opencodeConfig?.isolate ?? false;
+    return false;
+  };
+  const hostHasAnyStaticPath = async (spec: AgentSyncSpec): Promise<boolean> => {
+    for (const path of spec.staticPaths) {
+      if (await pathExists(join(homedir(), ...path.hostHomeRel))) return true;
+    }
+    return false;
+  };
+  const agentSpecs: Record<string, AgentVolumeChoice> = {};
+  for (const spec of AGENT_SYNC_SPECS) {
+    const wanted = await wants(spec.id, () =>
+      spec.id === 'claude' ? Promise.resolve(true) : hostHasAnyStaticPath(spec),
+    );
+    if (!wanted) continue;
+    agentSpecs[spec.id] = requireAgentSyncModule(spec.id).resolveVolume({
+      isolate: isolateFor(spec.id),
+      boxId: id,
+    });
+  }
+
   // Agents skills (~/.agents): mounted whenever the host has one; shared across
   // boxes (skills only, no auth). Codex discovers skills from ~/.agents/skills.
   const agentsSpec = (await pathExists(join(homedir(), '.agents')))
     ? resolveAgentsVolume()
     : undefined;
-  // OpenCode: wanted when the caller passes `opencodeConfig` OR the host already
-  // uses OpenCode (`~/.config/opencode` or `~/.local/share/opencode`).
-  const wantOpencode = await wants(
-    'opencode',
-    async () =>
-      opts.opencodeConfig !== undefined ||
-      (await pathExists(join(homedir(), '.config', 'opencode'))) ||
-      (await pathExists(join(homedir(), '.local', 'share', 'opencode'))),
-  );
-  const opencodeSpec = wantOpencode
-    ? requireAgentSyncModule('opencode').resolveVolume({
-        isolate: opts.opencodeConfig?.isolate ?? false,
-        boxId: id,
-      })
-    : undefined;
-
   // Walk the docker ProviderSync facade (see sync/docker-sync.ts for the full
   // per-op picture): seed every agent-config volume (claude static+skills+dynamic
   // +box-facts, codex hooks+AGENTS.override, opencode plugin) then sync the claude
@@ -708,19 +717,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const sync = makeDockerSync({
     container: containerName,
     image: ensureRef,
-    // Keyed by agent id: the sync walks the registry, so an agent this file
-    // never names still gets its volume seeded.
-    agentSpecs: Object.fromEntries(
-      (
-        [
-          ['claude', claudeSpec],
-          ['codex', codexSpec],
-          ['opencode', opencodeSpec],
-        ] satisfies Array<[string, AgentVolumeChoice | undefined]>
-      )
-        .filter((e) => e[1] !== undefined)
-        .map(([id, choice]) => [id, choice as AgentVolumeChoice]),
-    ),
+    // Keyed by agent id, straight from the registry-derived map above: the sync
+    // walks the registry, so an agent this file never names still gets its
+    // volume seeded.
+    agentSpecs,
     claudeIsolate: opts.claudeConfig?.isolate ?? false,
     agentsSpec,
   });
@@ -729,29 +729,23 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   // Container mounts, built from the same specs (pure). Through the registry, so
   // an agent contributes its mounts without this file naming it.
-  let claudeMounts: AgentMountResult | undefined;
-  let claudeConfigVolume: string | undefined;
-  if (claudeSpec) {
-    claudeMounts = requireAgentSyncModule('claude').buildMounts(claudeSpec, process.env);
-    claudeConfigVolume = claudeSpec.volume;
+  // Mounts, from the same map. One loop, so an agent contributes its mounts
+  // without this file naming it.
+  const agentMounts: AgentMountResult[] = [];
+  const configVolumes: Record<string, string> = {};
+  for (const [agent, choice] of Object.entries(agentSpecs)) {
+    agentMounts.push(requireAgentSyncModule(agent).buildMounts(choice, process.env));
+    configVolumes[agent] = choice.volume;
   }
-  let codexMounts: AgentMountResult | undefined;
-  let codexConfigVolume: string | undefined;
-  if (codexSpec) {
-    codexMounts = requireAgentSyncModule('codex').buildMounts(codexSpec, process.env);
-    codexConfigVolume = codexSpec.volume;
-  }
+  const claudeConfigVolume = configVolumes['claude'];
+  const codexConfigVolume = configVolumes['codex'];
+  const opencodeConfigVolume = configVolumes['opencode'];
+
   let agentsMounts: AgentsMountResult | undefined;
   let agentsConfigVolume: string | undefined;
   if (agentsSpec) {
     agentsMounts = buildAgentsMounts(agentsSpec);
     agentsConfigVolume = agentsSpec.volume;
-  }
-  let opencodeMounts: AgentMountResult | undefined;
-  let opencodeConfigVolume: string | undefined;
-  if (opencodeSpec) {
-    opencodeMounts = requireAgentSyncModule('opencode').buildMounts(opencodeSpec, process.env);
-    opencodeConfigVolume = opencodeSpec.volume;
   }
 
   const boxDir = boxRunDirFor({ id, name, projectIndex });
@@ -765,10 +759,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await mkdir(mergedExportDir, { recursive: true });
 
   const extraVolumes = await buildIdentityMounts();
-  if (claudeMounts) extraVolumes.push(...claudeMounts.extraVolumes);
-  if (codexMounts) extraVolumes.push(...codexMounts.extraVolumes);
+  for (const m of agentMounts) extraVolumes.push(...m.extraVolumes);
   if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
-  if (opencodeMounts) extraVolumes.push(...opencodeMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
@@ -983,9 +975,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     env: {
       AGENTBOX_BOX_ID: id,
       ...agentboxEnv,
-      ...(claudeMounts?.env ?? {}),
-      ...(codexMounts?.env ?? {}),
-      ...(opencodeMounts?.env ?? {}),
+      ...Object.assign({}, ...agentMounts.map((m) => m.env)),
       ...relayEnv,
       ...vncEnv,
       ...portlessEnv,

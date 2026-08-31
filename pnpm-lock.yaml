@@ -416,6 +416,9 @@ importers:
 
   packages/agent-example:
     dependencies:
+      '@agentbox/cli-kit':
+        specifier: workspace:*
+        version: link:../cli-kit
       '@agentbox/config':
         specifier: workspace:*
         version: link:../config

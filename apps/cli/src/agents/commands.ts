@@ -19,9 +19,11 @@
 import type { Command } from 'commander';
 import type { AttachOpenIn } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/sandbox-docker';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { claudeCommand, attachClaudeWrapped } from './claude/command.js';
 import { codexCommand, attachCodexWrapped } from './codex/command.js';
 import { opencodeCommand, attachOpencodeWrapped } from './opencode/command.js';
+import { exampleCommand, attachExampleWrapped } from './example/command.js';
 
 /**
  * Attach to a box's agent tmux session through the wrapped-pty footer, then
@@ -44,6 +46,7 @@ const AGENT_COMMANDS: Record<string, AgentCommandEntry> = {
   claude: { command: claudeCommand, attachWrapped: attachClaudeWrapped },
   codex: { command: codexCommand, attachWrapped: attachCodexWrapped },
   opencode: { command: opencodeCommand, attachWrapped: attachOpencodeWrapped },
+  example: { command: exampleCommand, attachWrapped: attachExampleWrapped },
 };
 
 /** Agent ids with a command in this build. */
@@ -54,6 +57,18 @@ export function agentCommandIds(): string[] {
 /** Every agent's command, in table order — what `index.ts` registers. */
 export function agentCommands(): Command[] {
   return Object.values(AGENT_COMMANDS).map((e) => e.command);
+}
+
+/**
+ * Agent ids whose command must not appear in `--help`.
+ *
+ * Straight off the registry's `hidden` flag: an agent that is hidden from
+ * pickers and the bake list has no business showing up in the command list
+ * either. The demo agent is the only one today, and without this it lands in
+ * the grouped help's "Other" bucket — which `grouped --help` fails on, correctly.
+ */
+export function hiddenAgentCommandIds(): Set<string> {
+  return new Set(AGENT_SYNC_SPECS.filter((s) => s.hidden).map((s) => s.id));
 }
 
 /**

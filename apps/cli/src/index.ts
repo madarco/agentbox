@@ -42,7 +42,7 @@ import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
 import { appCommand } from './commands/app.js';
 import { attachCommand } from './commands/attach.js';
-import { agentCommands } from './agents/commands.js';
+import { agentCommands, hiddenAgentCommandIds } from './agents/commands.js';
 import { agentIds } from '@agentbox/sandbox-core';
 import { checkpointCommand } from './commands/checkpoint.js';
 import { credentialsCommand } from './commands/credentials.js';
@@ -203,7 +203,12 @@ program.addCommand(createCommand);
 // Every agent's command, from the one table. Registration order does not affect
 // help — `buildGroupedHelp` groups by explicit name lists — so a new agent shows
 // up here without an edit.
-for (const cmd of agentCommands()) program.addCommand(cmd);
+// A hidden agent's command is registered but kept out of `--help`, matching the
+// `hidden` flag on its registry row — it is a canary, not a supported agent.
+const hiddenAgents = hiddenAgentCommandIds();
+for (const cmd of agentCommands()) {
+  program.addCommand(cmd, hiddenAgents.has(cmd.name()) ? { hidden: true } : {});
+}
 program.addCommand(forkCommand);
 program.addCommand(gitCommand);
 program.addCommand(codeCommand);

@@ -1,5 +1,5 @@
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { agentIdsWiredIntoCli } from './_agents-in-cli.js';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { describe, expect, it } from 'vitest';
 import { agentModuleIds, loadAgentModule } from '../src/agents/index.js';
 
@@ -13,11 +13,11 @@ import { agentModuleIds, loadAgentModule } from '../src/agents/index.js';
  */
 describe('agent module table', () => {
   it('covers exactly the registry, no more and no less', () => {
-    expect([...agentModuleIds()].sort()).toEqual([...agentIdsWiredIntoCli()].sort());
+    expect([...agentModuleIds()].sort()).toEqual([...AGENT_SYNC_SPECS.map((s) => s.id)].sort());
   });
 
   it('every module carries the registry row by reference, not a copy', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       expect(mod.id).toBe(id);
       // Identity, not deep-equality: a copy could drift from the registry while
@@ -27,14 +27,14 @@ describe('agent module table', () => {
   });
 
   it('login detectors are wired to the agent they claim', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       expect(mod.login.agent).toBe(id);
     }
   });
 
   it('teleport resolver presence matches the declared capability', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       const declared = resolveAgentSpec(id).caps.teleport;
       expect(typeof mod.teleport === 'function', `${id} declares teleport '${declared}'`).toBe(
@@ -59,7 +59,7 @@ describe('agent module table', () => {
  */
 describe('resume support', () => {
   it('a resume probe exists exactly for the agents declaring caps.resume', async () => {
-    for (const id of agentIdsWiredIntoCli()) {
+    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
       const { runtime } = await loadAgentModule(id);
       expect(
         Boolean(runtime.resume),

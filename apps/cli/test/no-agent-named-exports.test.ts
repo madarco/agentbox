@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
  * an unlisted offender fails, and a listed file that no longer offends fails
  * too. It can only shrink, and when it is empty the rule holds repo-wide with
  * no exemptions — which is the phase's own proof, the same arrangement
- * `_agents-in-cli.ts` uses.
+ * the now-deleted `_agents-in-cli.ts` used.
  */
 
 const REPO = join(__dirname, '..', '..', '..');
