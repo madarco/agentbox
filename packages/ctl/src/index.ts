@@ -32,7 +32,7 @@ export {
   DEFAULT_SOCKET_PATH,
 } from './types.js';
 export {
-  claudeSession,
+  agentSession,
   agentState,
   ping,
   status,

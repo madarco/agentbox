@@ -22,10 +22,45 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const SESSION_POINTER_DIR = join(homedir(), '.local', 'state', 'agentbox');
-/** Holds the box's current Claude session id (uuid). */
-export const CLAUDE_SESSION_POINTER = join(SESSION_POINTER_DIR, 'claude-session');
-/** Presence marker: Codex has run in this box (Codex exposes no resumable id). */
-export const CODEX_ACTIVE_MARKER = join(SESSION_POINTER_DIR, 'codex-active');
+
+/**
+ * How an agent's pointer behaves. Two mechanisms, because two agents genuinely
+ * differ: Claude's hooks carry a resumable `session_id`, Codex exposes none and
+ * resumes with `--last`, so its pointer is presence-only.
+ */
+export type SessionPointerKind = 'session-id' | 'presence';
+
+export interface AgentSessionPointer {
+  /**
+   * FROZEN. Do not change these strings.
+   *
+   * The WRITER is the `agentbox-ctl` baked into a box's image; the READER is the
+   * host CLI, which greps these exact paths over `provider.exec` on restart
+   * (`apps/cli/src/agents/{claude,codex}/runtime.ts`). A box created from an
+   * older snapshot writes the old name for its whole life, so renaming the path
+   * silently costs every existing box its resume-on-restart — and a restored
+   * checkpoint too. The SYMBOLS around them are free to change; the values are
+   * a wire contract.
+   */
+  readonly path: string;
+  readonly kind: SessionPointerKind;
+}
+
+/**
+ * The agents that have a pointer at all, keyed by id.
+ *
+ * A ctl-internal table on purpose: ctl is baked into the image and must never
+ * import the agent registry — it learns its agent list from the host over
+ * `agents.list`. An agent absent here simply has nothing to record, which is the
+ * right default for one added after this image was built.
+ *
+ * This used to be TWO hand-written tables, one in `commands/agent-state.ts` and
+ * one in `status-reporter.ts`, each holding half the fact.
+ */
+export const AGENT_SESSION_POINTERS: Readonly<Record<string, AgentSessionPointer>> = {
+  claude: { path: join(SESSION_POINTER_DIR, 'claude-session'), kind: 'session-id' },
+  codex: { path: join(SESSION_POINTER_DIR, 'codex-active'), kind: 'presence' },
+};
 
 function writePointer(path: string, content: string): void {
   try {
@@ -37,37 +72,43 @@ function writePointer(path: string, content: string): void {
 }
 
 /**
- * Record the box's current Claude session id (pulled from a hook payload's
- * `session_id`). Updates on every capture so `/new`, `/clear`, `/branch` —
- * which mint a new session id — are tracked, not a stale launch-time id.
+ * Record an agent's current session id (pulled from a hook payload's
+ * `session_id`). Updates on every capture so `/new`, `/clear` and `/branch` —
+ * which mint a new id — are tracked, not a stale launch-time one.
+ *
+ * No-op for an agent with no pointer, or one whose pointer is presence-only.
  */
-export function recordClaudeSessionId(id: string): void {
+export function recordAgentSessionId(agent: string, id: string): void {
+  const pointer = AGENT_SESSION_POINTERS[agent];
+  if (!pointer || pointer.kind !== 'session-id') return;
   // Defensive: only accept a uuid-ish token so a malformed payload can't write
-  // junk we'd later hand to `claude --resume`.
+  // junk we'd later hand to `--resume`.
   if (!/^[0-9a-fA-F][0-9a-fA-F-]{7,}$/.test(id)) return;
-  writePointer(CLAUDE_SESSION_POINTER, `${id}\n`);
+  writePointer(pointer.path, `${id}\n`);
 }
 
-/** Mark that Codex has run in this box (presence-only; resume uses `--last`). */
-export function markCodexActive(): void {
-  writePointer(CODEX_ACTIVE_MARKER, `${new Date().toISOString()}\n`);
+/**
+ * Mark that a presence-only agent has run in this box. No-op for an agent whose
+ * pointer carries a real session id, or one with no pointer.
+ */
+export function markAgentActive(agent: string): void {
+  const pointer = AGENT_SESSION_POINTERS[agent];
+  if (!pointer || pointer.kind !== 'presence') return;
+  writePointer(pointer.path, `${new Date().toISOString()}\n`);
 }
 
-function clearPointer(path: string): void {
+/**
+ * Drop an agent's pointer when its session ends, so a restart only resumes an
+ * agent that was actually running when the box went down — not one the user had
+ * already exited.
+ */
+export function clearAgentSessionPointer(agent: string): void {
+  const pointer = AGENT_SESSION_POINTERS[agent];
+  if (!pointer) return;
   try {
-    rmSync(path, { force: true });
+    rmSync(pointer.path, { force: true });
   } catch {
     // Best-effort: a stale pointer just means restore may relaunch an already-
     // exited agent — annoying, not harmful.
   }
-}
-
-/** Drop the Claude pointer when its session ends (no resume target anymore). */
-export function clearClaudeSessionPointer(): void {
-  clearPointer(CLAUDE_SESSION_POINTER);
-}
-
-/** Drop the Codex marker when its session ends. */
-export function clearCodexMarker(): void {
-  clearPointer(CODEX_ACTIVE_MARKER);
 }

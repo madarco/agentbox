@@ -85,11 +85,15 @@ const ALLOWLIST: Record<string, string> = {
   'packages/sandbox-core/src/prepared-state.ts': 'phase 5b',
 
   // Phase 7 — the remaining renames.
-  'packages/core/src/claude-tui.ts': 'phase 7',
+  // Re-tagged from phase 7 after reading it: this is NOT a name-only alias.
+  // `claudeTuiEnv` returns Claude Code's own env vars
+  // (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN / _NO_FLICKER) and exists because of
+  // Claude's fullscreen renderer, so renaming it `agentTuiEnv` would claim a
+  // generality it does not have. The real fix is phase 4's shape: put the
+  // renderer env on the agent's spec as data and delete the
+  // `binary === 'claude'` branch in `sandbox-cloud/src/detached-agent.ts:337`.
+  'packages/core/src/claude-tui.ts': 'phase 4',
   'packages/ctl/src/types.ts': 'phase 7',
-  'packages/ctl/src/session-pointer.ts': 'phase 7',
-  'packages/ctl/src/client.ts': 'phase 7',
-  'packages/ctl/src/commands/claude-session.ts': 'phase 7',
 };
 
 /**

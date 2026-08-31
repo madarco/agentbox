@@ -165,11 +165,11 @@ export async function reload(opts: ConnectOptions): Promise<ReloadResult> {
   return sendOneShot<ReloadResult>(opts, { op: 'reload' });
 }
 
-export async function claudeSession(
+export async function agentSession(
   opts: ConnectOptions & { sessionName?: string },
 ): Promise<AgentSessionStatus> {
   return sendOneShot<AgentSessionStatus>(opts, {
-    op: 'claude-session',
+    op: 'agent-session',
     sessionName: opts.sessionName,
   });
 }

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { agentState } from '../client.js';
-import { clearClaudeSessionPointer, recordClaudeSessionId } from '../session-pointer.js';
+import { clearAgentSessionPointer, recordAgentSessionId } from '../session-pointer.js';
 import {
   AGENT_ACTIVITY_STATES,
   DEFAULT_SOCKET_PATH,
@@ -26,11 +26,6 @@ interface AgentStateOptions {
  * An agent absent from this table accepts the capture flags and has nothing to
  * record, which is the right default for a new agent.
  */
-const SESSION_POINTERS: Readonly<
-  Record<AgentId, { record: (id: string) => void; clear: () => void }>
-> = {
-  claude: { record: recordClaudeSessionId, clear: clearClaudeSessionPointer },
-};
 
 /**
  * The frozen per-agent command names, with the wording each one's help text has
@@ -115,13 +110,12 @@ export async function reportAgentState(
   try {
     if (agent.length === 0) return;
     if (!AGENT_ACTIVITY_STATES.includes(state as AgentActivityState)) return;
-    const pointer = SESSION_POINTERS[agent];
-    if (opts.clearSession) pointer?.clear();
+    if (opts.clearSession) clearAgentSessionPointer(agent);
     const typedState = state as AgentActivityState;
     // Read stdin at most once, shared by both consumers.
     const raw = opts.payloadStdin || opts.captureSession ? await readStdinJson() : null;
     if (opts.captureSession && typeof raw?.session_id === 'string') {
-      pointer?.record(raw.session_id);
+      recordAgentSessionId(agent, raw.session_id);
     }
     const extracted = opts.payloadStdin ? extractPayload(typedState, raw) : undefined;
     const payload: {

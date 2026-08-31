@@ -149,7 +149,7 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       sock.end();
       return;
     }
-    case 'claude-session': {
+    case 'agent-session': {
       const data = await probeAgentSession(req.sessionName ?? DEFAULT_CLAUDE_SESSION_NAME);
       writeLine(sock, { ok: true, data });
       sock.end();

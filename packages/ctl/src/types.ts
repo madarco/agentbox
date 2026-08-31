@@ -188,7 +188,7 @@ export type CtlRequest =
   | { op: 'start'; service: string }
   | { op: 'reload' }
   | { op: 'ping' }
-  | { op: 'claude-session'; sessionName?: string }
+  | { op: 'agent-session'; sessionName?: string }
   | {
       /**
        * One op for every agent. The three `<agent>-state` CLI commands all send

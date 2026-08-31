@@ -49,7 +49,7 @@ function runTool(cmd: string, args: string[]): Promise<ToolResult> {
  * server socket under /tmp/tmux-1000/. A missing tmux server, missing session,
  * or tmux-not-installed all surface uniformly as `running: false`.
  *
- * Shared by the `claude-session` wire op (socket.ts) and the status reporter
+ * Shared by the `agent-session` wire op (socket.ts) and the status reporter
  * so both report the same thing.
  */
 export async function probeAgentSession(sessionName: string): Promise<AgentSessionStatus> {

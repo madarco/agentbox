@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { RelayClient } from './relay-client.js';
-import { clearClaudeSessionPointer, clearCodexMarker, markCodexActive } from './session-pointer.js';
+import { clearAgentSessionPointer, markAgentActive } from './session-pointer.js';
 import type { Supervisor } from './supervisor.js';
 import { probeAgentSession } from './tmux.js';
 import {
@@ -38,33 +38,12 @@ export const BAKED_AGENT_SESSIONS: readonly WatchedAgentSession[] = [
   { agent: 'opencode', sessionName: DEFAULT_OPENCODE_SESSION_NAME },
 ];
 
-/**
- * Per-box pointers an agent's session lifecycle maintains, so a box restart can
- * resume the conversation that was actually running.
- *
- * Agent-specific by nature, not by omission: Claude exposes a resumable session
- * id (captured by its hooks), Codex exposes none — so it gets a presence marker
- * instead — and OpenCode has no resume support at all. An agent absent from this
- * table simply has no pointer, which is the correct default for a new one.
- */
-interface SessionPointerOps {
-  /** Called the first time the agent shows any activity. */
-  onFirstActivity?: () => void;
-  /** Called on the running -> stopped edge of the agent's tmux session. */
-  onSessionEnded?: () => void;
-}
-
-const SESSION_POINTERS: Readonly<Record<AgentId, SessionPointerOps>> = {
-  claude: { onSessionEnded: clearClaudeSessionPointer },
-  codex: { onFirstActivity: markCodexActive, onSessionEnded: clearCodexMarker },
-};
-
 interface AgentRuntimeState {
   state: AgentActivityState;
   updatedAt: string | null;
   plan?: AgentPlanPayload;
   question?: AgentQuestionPayload;
-  /** Whether {@link SessionPointerOps.onFirstActivity} has already fired. */
+  /** Whether the first-activity pointer write has already fired. */
   marked: boolean;
 }
 
@@ -199,7 +178,8 @@ export class StatusReporter {
 
     if (!cur.marked) {
       cur.marked = true;
-      SESSION_POINTERS[agent]?.onFirstActivity?.();
+      // No-op unless this agent has a presence-only pointer.
+      markAgentActive(agent);
     }
     this.schedulePush();
   }
@@ -310,7 +290,7 @@ export class StatusReporter {
       // actually running when the box went down. A fresh daemon starts from
       // `false`, so a just-restored agent (rising edge) is never cleared.
       if (this.lastRunning.get(agent) && !probe.running) {
-        SESSION_POINTERS[agent]?.onSessionEnded?.();
+        clearAgentSessionPointer(agent);
       }
       this.lastRunning.set(agent, probe.running);
 
