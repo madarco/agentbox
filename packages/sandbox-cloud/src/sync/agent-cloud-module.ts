@@ -17,9 +17,31 @@
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import type { AgentId } from '@agentbox/core';
 
+/** A staged tarball, or an empty result when the host has nothing to send. */
+export interface CloudStageResult {
+  tarballPath: string | null;
+  cleanup(): Promise<void>;
+  warnings: string[];
+}
+
 /** One agent's cloud-side behavior. */
 export interface AgentCloudModule {
   readonly id: AgentId;
+  /**
+   * Stage this agent's host credentials for upload into the shared credentials
+   * volume.
+   *
+   * Optional: an agent with no host-side credential to send simply has none,
+   * and gets a mount with nothing seeded into it rather than being dropped from
+   * the box entirely — which is what a hardcoded table did to it before.
+   */
+  stageCredentials?(): Promise<CloudStageResult>;
+  /**
+   * Stage this agent's static config. Optional for the same reason, and rarely
+   * needed: `stageAllAgentStatic` already covers any agent from its registry
+   * row. Only an agent whose staging is more than a copy supplies one.
+   */
+  stageStatic?(opts: { hostWorkspace?: string }): Promise<CloudStageResult>;
   /**
    * Run after the box's agent config has been seeded, before it is used.
    *

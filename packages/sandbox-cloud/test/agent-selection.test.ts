@@ -1,5 +1,6 @@
 import type { CloudBackend, CloudExecResult, CloudHandle, CloudState } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { ensureAgentVolumesForCloud } from '../src/sync/agent-credentials.js';
 
 /** Minimal backend WITH a volume primitive, so mounts are actually built. */
@@ -48,11 +49,18 @@ describe('cloud agent selection', () => {
     expect(res.mounts.map((m) => m.mountPath)).toEqual(['/home/vscode/.agentbox-creds/claude']);
   });
 
-  it('mounts every agent when no selection is given', async () => {
+  it('mounts every agent the registry has, not a hardcoded three', async () => {
     // Absent = historical behaviour, so an un-migrated caller keeps working.
+    // Derived rather than listed: this table used to name three agents, so a
+    // fourth got no credentials mount and no static mount at all — silently,
+    // since `CloudAgentKind` is an open string. Hardcoding the expectation here
+    // is what let that ship.
+    const expected = AGENT_SYNC_SPECS.filter((a) => a.staticPaths[0]?.boxDir).map((a) => a.id);
     const res = await ensureAgentVolumesForCloud(volumeBackend(), {});
-    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
-    expect(res.mounts).toHaveLength(3);
+    expect(res.agents).toEqual(expected);
+    expect(res.mounts).toHaveLength(expected.length);
+    // The canary specifically: a hidden agent is still a real one here.
+    expect(res.agents).toContain('example');
   });
 
   it('narrows the agent list on the no-volume path too', async () => {

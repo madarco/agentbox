@@ -25,12 +25,6 @@
 
 import {
   AGENT_SYNC_SPECS,
-  stageClaudeStaticForUpload,
-  stageClaudeCredentialsForUpload,
-  stageCodexStaticForUpload,
-  stageCodexCredentialsForUpload,
-  stageOpencodeStaticForUpload,
-  stageOpencodeCredentialsForUpload,
   ensureAgentInstalled,
   extractCredentials,
   isRealAgentCredential,
@@ -50,6 +44,7 @@ import type {
   CloudVolumeMount,
   SyncTransport,
 } from '@agentbox/core';
+import { agentCloudModule } from './agent-cloud-module.js';
 import { createCloudSyncTransport } from './sync-transport.js';
 
 /** Identifier for one of the three agents we sync into cloud sandboxes. */
@@ -71,10 +66,23 @@ const CLOUD_BOX_USER = 'vscode';
 const CREDENTIALS_VOLUME = 'agentbox-credentials';
 
 /**
- * Per-agent metadata. `staticMountPath` is where the snapshot-baked static
- * config lives in the sandbox FS; `credentialsMountPath` is where the
- * credentials volume's per-agent subpath gets attached at runtime.
- * `credentialsSubpath` is the subdir inside the shared volume.
+ * Per-agent metadata, DERIVED from the registry row rather than hand-listed.
+ *
+ * This was a hardcoded three-row table, and every consumer below does
+ * `agentSpecs().filter(...)` — so an agent that was not one of those three got
+ * no credentials mount, no static mount and no seed, silently. `CloudAgentKind`
+ * is `AgentId`, which is an open string, so that included both a newly shipped
+ * agent and any installed from a package.
+ *
+ * All three fields are already on the spec, exactly:
+ *   staticMountPath      == staticPaths[0].boxDir
+ *   credentialsMountPath == credential.cloudMountPath
+ *   credentialsSubpath   == credential.cloudSubpath
+ *
+ * The staging closures are the genuinely per-agent part and come from the
+ * agent's own cloud module. An agent with no module still gets its mounts — it
+ * simply has nothing to seed into them, which is the right answer for one whose
+ * config is purely declarative.
  */
 interface AgentSpec {
   kind: CloudAgentKind;
@@ -84,36 +92,28 @@ interface AgentSpec {
   credentialsMountPath: string;
   /** Subdir of the shared credentials volume for this agent. */
   credentialsSubpath: string;
-  stageStatic: (opts: { hostWorkspace?: string }) => Promise<StageResult>;
-  stageCredentials: () => Promise<StageResult>;
+  stageStatic?: (opts: { hostWorkspace?: string }) => Promise<StageResult>;
+  stageCredentials?: () => Promise<StageResult>;
 }
 
-const AGENT_SPECS: AgentSpec[] = [
-  {
-    kind: 'claude',
-    staticMountPath: '/home/vscode/.claude',
-    credentialsMountPath: '/home/vscode/.agentbox-creds/claude',
-    credentialsSubpath: 'claude/',
-    stageStatic: (opts) => stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }),
-    stageCredentials: () => stageClaudeCredentialsForUpload(),
-  },
-  {
-    kind: 'codex',
-    staticMountPath: '/home/vscode/.codex',
-    credentialsMountPath: '/home/vscode/.agentbox-creds/codex',
-    credentialsSubpath: 'codex/',
-    stageStatic: () => stageCodexStaticForUpload(),
-    stageCredentials: () => stageCodexCredentialsForUpload(),
-  },
-  {
-    kind: 'opencode',
-    staticMountPath: '/home/vscode/.local/share/opencode',
-    credentialsMountPath: '/home/vscode/.agentbox-creds/opencode',
-    credentialsSubpath: 'opencode/',
-    stageStatic: () => stageOpencodeStaticForUpload(),
-    stageCredentials: () => stageOpencodeCredentialsForUpload(),
-  },
-];
+function agentSpecs(): AgentSpec[] {
+  const out: AgentSpec[] = [];
+  for (const spec of AGENT_SYNC_SPECS) {
+    const boxDir = spec.staticPaths[0]?.boxDir;
+    // An agent with no static path has nothing to mount here at all.
+    if (!boxDir) continue;
+    const mod = agentCloudModule(spec.id);
+    out.push({
+      kind: spec.id,
+      staticMountPath: boxDir,
+      credentialsMountPath: spec.credential.cloudMountPath,
+      credentialsSubpath: spec.credential.cloudSubpath,
+      ...(mod?.stageStatic ? { stageStatic: (o) => mod.stageStatic!(o) } : {}),
+      ...(mod?.stageCredentials ? { stageCredentials: () => mod.stageCredentials!() } : {}),
+    });
+  }
+  return out;
+}
 
 /** Result of `ensureAgentVolumesForCloud` — pass `.mounts` straight into `provision({ volumes })`. */
 export interface EnsureAgentVolumesResult {
@@ -177,7 +177,8 @@ export async function ensureAgentVolumesForCloud(
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
   const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
-  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  const all = agentSpecs();
+  const specs = wanted ? all.filter((s) => wanted.has(s.kind)) : all;
   const allAgents = specs.map((s) => s.kind);
   // `volumesUsable: false` means the backend has a volume API but this
   // particular sandbox shape can't use it. Daytona's linux-vm class *accepts* a
@@ -296,8 +297,9 @@ export async function seedAgentVolumesIfFresh(
   opts: SeedAgentVolumesOptions = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const wanted = new Set<CloudAgentKind>(opts.agents ?? AGENT_SPECS.map((s) => s.kind));
-  const specs = AGENT_SPECS.filter((s) => wanted.has(s.kind));
+  const all = agentSpecs();
+  const wanted = new Set<CloudAgentKind>(opts.agents ?? all.map((s) => s.kind));
+  const specs = all.filter((s) => wanted.has(s.kind));
   // Best-effort per agent: one agent's seed failure (transient SDK error,
   // missing host creds for that agent) must never sink `agentbox create`.
   // Matches the prior vercel/hetzner custom pushers, which caught + warned.
@@ -337,7 +339,8 @@ export async function ensureAgentHomeDirsOwned(
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
   const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
-  const specs = wanted ? AGENT_SPECS.filter((s) => wanted.has(s.kind)) : AGENT_SPECS;
+  const all = agentSpecs();
+  const specs = wanted ? all.filter((s) => wanted.has(s.kind)) : all;
   if (specs.length === 0) return;
   const paths = specs.map((s) => s.staticMountPath).join(' ');
   try {
@@ -381,6 +384,17 @@ async function seedCredentialsOne(
   opts: SeedAgentVolumesOptions,
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
+
+  // Before anything touches the box: an agent whose cloud module supplies no
+  // credential stager has nothing to send, so probing its marker would be a
+  // round-trip for a seed that cannot happen. Its MOUNTS still exist, so an
+  // in-box interactive login lands in the right place — which is the point of
+  // deriving the agent list from the registry rather than a hardcoded three.
+  if (!spec.stageCredentials) {
+    log(`${spec.kind}: no host credential stager; mounting only`);
+    return;
+  }
+
   // Non-volume backends (e2b, vercel, hetzner) have an ephemeral per-box FS:
   // the `.agentbox-seeded-at` marker can't survive across boxes, and the host
   // tokens are renewable, so we just push fresh every create. Volume backends
@@ -501,7 +515,7 @@ export function agentSpecsForCloud(): Array<{
   credentialsMountPath: string;
   credentialsSubpath: string;
 }> {
-  return AGENT_SPECS.map((s) => ({
+  return agentSpecs().map((s) => ({
     kind: s.kind,
     staticMountPath: s.staticMountPath,
     credentialsMountPath: s.credentialsMountPath,

@@ -14,6 +14,10 @@ import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { ensureCodexAgentsOverride } from './cloud-sync.js';
 import {
+  stageCodexCredentialsForUpload,
+  stageCodexStaticForUpload,
+} from '@agentbox/sandbox-core';
+import {
   buildCodexMounts,
   codexSessionInfo,
   ensureCodexVolume,
@@ -40,6 +44,11 @@ export const codexSyncModule: AgentSyncModule = {
 export const codexCloudModule: AgentCloudModule = {
   id: 'codex',
   afterSeed: (backend, handle, opts) => ensureCodexAgentsOverride(backend, handle, opts),
+  // Codex's staging is more than a copy of its declared paths — it sanitizes
+  // config.toml's host-only entries and purges orphan marketplace caches — so
+  // it supplies its own rather than riding the generic stager.
+  stageStatic: () => stageCodexStaticForUpload(),
+  stageCredentials: () => stageCodexCredentialsForUpload(),
 };
 
 /** Register Codex on both layers. Called by `@agentbox/agent-modules`. */

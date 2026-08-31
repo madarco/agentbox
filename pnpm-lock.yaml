@@ -342,6 +342,9 @@ importers:
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/sandbox-cloud':
+        specifier: workspace:*
+        version: link:../sandbox-cloud
       '@agentbox/sandbox-core':
         specifier: workspace:*
         version: link:../sandbox-core

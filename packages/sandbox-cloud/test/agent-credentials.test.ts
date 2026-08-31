@@ -12,10 +12,19 @@ import type {
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
 import {
+  AGENT_SYNC_SPECS,
+  stageClaudeCredentialsForUpload,
+  stageClaudeStaticForUpload,
+  stageCodexCredentialsForUpload,
+  stageCodexStaticForUpload,
+  stageOpencodeCredentialsForUpload,
+} from '@agentbox/sandbox-core';
+import {
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
   seedAgentVolumesIfFresh,
 } from '../src/sync/agent-credentials.js';
+import { registerAgentCloudModule } from '../src/sync/agent-cloud-module.js';
 
 interface ExecCall {
   cmd: string;
@@ -97,14 +106,46 @@ function makeMockBackend(opts: {
   } as never;
 }
 
+/**
+ * Every agent the registry has a static path for. The credential table used to
+ * be a hardcoded three, which meant a fourth agent got no mounts at all.
+ */
+const EXPECTED_AGENTS = AGENT_SYNC_SPECS.filter((a) => a.staticPaths[0]?.boxDir).map((a) => a.id);
+
+/**
+ * `sandbox-cloud` cannot import an agent package — that is the cycle — so the
+ * staging closures arrive by registration, exactly as they do in production
+ * (`@agentbox/agent-modules`). Registering the real stagers here keeps this test
+ * exercising the real seeding path rather than a stub of it.
+ */
+registerAgentCloudModule({
+  id: 'claude',
+  afterSeed: () => Promise.resolve(),
+  stageStatic: (o) => stageClaudeStaticForUpload({ hostWorkspace: o.hostWorkspace }),
+  stageCredentials: () => stageClaudeCredentialsForUpload(),
+});
+registerAgentCloudModule({
+  id: 'codex',
+  afterSeed: () => Promise.resolve(),
+  stageStatic: () => stageCodexStaticForUpload(),
+  stageCredentials: () => stageCodexCredentialsForUpload(),
+});
+registerAgentCloudModule({
+  id: 'opencode',
+  afterSeed: () => Promise.resolve(),
+  stageCredentials: () => stageOpencodeCredentialsForUpload(),
+});
+
 describe('ensureAgentVolumesForCloud', () => {
-  it('returns three subpath mounts of the shared credentials volume', async () => {
+  it('returns one subpath mount per registry agent, on the shared volume', async () => {
     const { backend } = makeMockBackend({});
     const res = await ensureAgentVolumesForCloud(backend);
-    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
-    expect(res.mounts).toHaveLength(3);
+    // Derived, not listed: the rows come from the registry now, so an agent
+    // added later gets a mount instead of being silently absent.
+    expect(res.agents).toEqual(EXPECTED_AGENTS);
+    expect(res.mounts).toHaveLength(EXPECTED_AGENTS.length);
 
-    // All three mounts share the same volumeId (single shared volume).
+    // Every mount shares the same volumeId (single shared volume).
     const volumeIds = new Set(res.mounts.map((m) => m.volumeId));
     expect(volumeIds.size).toBe(1);
     expect([...volumeIds][0]).toBe('mock-agentbox-credentials');
@@ -118,6 +159,35 @@ describe('ensureAgentVolumesForCloud', () => {
     expect(res.env['OPENCODE_CONFIG_DIR']).toBe('/home/vscode/.local/share/opencode/config');
   });
 
+  it('gives an agent with no cloud module its mounts anyway', async () => {
+    // The bug this replaced: the table named three agents, so a fourth got no
+    // credentials mount and no static mount — it simply was not in the box.
+    // `example` has no cloud module at all, which is the hardest case: it must
+    // still be mounted so an in-box login has somewhere to land.
+    const { backend } = makeMockBackend({});
+    const res = await ensureAgentVolumesForCloud(backend);
+    expect(res.agents).toContain('example');
+    const byPath = new Map(res.mounts.map((m) => [m.mountPath, m] as const));
+    const spec = AGENT_SYNC_SPECS.find((a) => a.id === 'example');
+    // Both paths come from its registry row, with nothing hand-written here.
+    expect(byPath.get(spec!.credential.cloudMountPath)?.subpath).toBe(
+      spec!.credential.cloudSubpath,
+    );
+  });
+
+  it('derives every mount from the registry row, not a local copy', async () => {
+    const { backend } = makeMockBackend({});
+    const res = await ensureAgentVolumesForCloud(backend);
+    const byPath = new Map(res.mounts.map((m) => [m.mountPath, m] as const));
+    for (const spec of AGENT_SYNC_SPECS) {
+      if (!spec.staticPaths[0]?.boxDir) continue;
+      expect(byPath.get(spec.credential.cloudMountPath), spec.id).toBeDefined();
+      expect(byPath.get(spec.credential.cloudMountPath)?.subpath, spec.id).toBe(
+        spec.credential.cloudSubpath,
+      );
+    }
+  });
+
   it('returns empty mounts but full agents list when backend has no volume primitive', async () => {
     const { backend } = makeMockBackend({});
     delete (backend as { ensureVolume?: unknown }).ensureVolume;
@@ -128,7 +198,7 @@ describe('ensureAgentVolumesForCloud', () => {
     // box-baked ~/.agentbox-creds/<agent>/ dirs. No volume to mount, but the
     // agent list must be populated so the seed actually runs.
     expect(res.mounts).toEqual([]);
-    expect(res.agents).toEqual(['claude', 'codex', 'opencode']);
+    expect(res.agents).toEqual(EXPECTED_AGENTS);
     expect(res.env['OPENCODE_CONFIG_DIR']).toBe('/home/vscode/.local/share/opencode/config');
     expect(logs.some((l) => l.includes('has no volume primitive'))).toBe(true);
   });
@@ -167,6 +237,8 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
       },
     );
     expect(uploadCalls).toEqual([]);
+    // Only agents that actually have a credential stager are probed — one with
+    // none is mounted and skipped without a round-trip to the box.
     expect(execCalls.filter((c) => c.cmd.startsWith('test -f ')).length).toBe(3);
     expect(execCalls.some((c) => c.cmd.includes('tar -xzf'))).toBe(false);
     expect(logs.every((l) => l.includes('already seeded') || l.includes('mounting only'))).toBe(

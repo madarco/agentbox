@@ -76,7 +76,7 @@ export const agentSpec = {
     boxAbsPath: `${BOX_DIR}/auth.json`,
     hostBackup: join(homedir(), '.agentbox', 'example-agent-credentials.json'),
     cloudMountPath: '/home/vscode/.agentbox-creds/example-agent',
-    cloudSubpath: 'auth.json',
+    cloudSubpath: 'example-agent/',
     realShape: 'nonempty-json',
   },
   /** Host env keys forwarded into the box so an env-authed agent finds creds. */

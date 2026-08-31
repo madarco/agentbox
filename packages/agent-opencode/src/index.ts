@@ -8,6 +8,7 @@
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { seedOpencodeModelState } from './cloud-sync.js';
+import { stageOpencodeCredentialsForUpload } from '@agentbox/sandbox-core';
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
@@ -31,6 +32,10 @@ export const opencodeSyncModule: AgentSyncModule = {
 export const opencodeCloudModule: AgentCloudModule = {
   id: 'opencode',
   afterSeed: (backend, handle, opts) => seedOpencodeModelState(backend, handle, opts),
+  // Static staging rides the generic registry-driven stager — OpenCode's
+  // multi-source layout is entirely `staticPaths` data. Only the credential
+  // stager is its own.
+  stageCredentials: () => stageOpencodeCredentialsForUpload(),
 };
 
 /** Register OpenCode on both layers. Called by `@agentbox/agent-modules`. */

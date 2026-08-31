@@ -162,6 +162,18 @@ describe('agentSpecProblem', () => {
     }
   });
 
+  it('refuses a cloudSubpath that is a filename rather than a sub-dir', () => {
+    // Documented as a sub-dir, and every built-in uses `<id>/`. The example
+    // spec shipped with `auth.json` for a while — it mounts the shared
+    // credentials volume at the wrong depth, and nothing downstream notices.
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        credential: { ...exampleSpec.credential, cloudSubpath: 'auth.json' },
+      }),
+    ).toMatch(/cloudSubpath/);
+  });
+
   it('refuses a relative credential path the push would truncate', () => {
     // The push derives the dir with `slice(0, lastIndexOf('/'))`, so
     // `auth.json` gives an empty dir and the copy silently never lands.

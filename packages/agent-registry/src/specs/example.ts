@@ -56,7 +56,7 @@ export const exampleSpec: AgentSyncSpec = {
     boxAbsPath: `${EXAMPLE_BOX_DIR}/auth.json`,
     hostBackup: join(STATE_DIR, 'example-credentials.json'),
     cloudMountPath: `${BOX_CREDS_DIR}/example`,
-    cloudSubpath: 'auth.json',
+    cloudSubpath: 'example/',
     realShape: 'nonempty-json',
   },
   forwardedEnvKeys: [],

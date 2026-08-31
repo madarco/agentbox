@@ -140,6 +140,12 @@ function credentialProblem(raw: unknown): string | null {
   if (typeof cred.hostBackup !== 'string' || !cred.hostBackup.startsWith('/')) {
     return '`credential.hostBackup` must be an absolute host path (the fan-out writes to it)';
   }
+  // A SUB-DIR of the shared cloud credentials volume, so it must end in `/`.
+  // Every built-in uses `<id>/`; a filename here mounts the volume subpath at
+  // the wrong depth, and nothing downstream notices.
+  if (typeof cred.cloudSubpath !== 'string' || !cred.cloudSubpath.endsWith('/')) {
+    return '`credential.cloudSubpath` must be a sub-directory, ending in `/` (e.g. `myagent/`)';
+  }
   return null;
 }
 

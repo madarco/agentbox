@@ -9,6 +9,11 @@
  */
 
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
+import {
+  stageClaudeCredentialsForUpload,
+  stageClaudeStaticForUpload,
+} from '@agentbox/sandbox-core';
 import {
   buildClaudeMounts,
   claudeSessionInfo,
@@ -62,9 +67,33 @@ export const claudeSyncModule: AgentSyncModule = {
   },
 };
 
-/** Register Claude. Called by `@agentbox/agent-modules`. */
+/**
+ * Claude's cloud behavior.
+ *
+ * `afterSeed` is a no-op today: claude's cloud post-seed step
+ * (`seedClaudeJsonAtCreate`) is still called by name from `cloud-sync.ts`
+ * because it runs AFTER the declared files and needs `hostWorkspace`, so
+ * folding it into the loop would move it in the sequence — worth verifying
+ * against a real cloud box before doing.
+ *
+ * The staging hooks are the point of registering now: without them the cloud
+ * credential path could not look claude up by id, and its rows were the reason
+ * that table was hardcoded.
+ */
+export const claudeCloudModule: AgentCloudModule = {
+  id: 'claude',
+  afterSeed: () => Promise.resolve(),
+  // Claude's staging filters host-path hooks, coerces the install method,
+  // aliases the project key and pre-trusts the workspace — more than a copy of
+  // its declared paths, so it supplies its own.
+  stageStatic: (opts) => stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }),
+  stageCredentials: () => stageClaudeCredentialsForUpload(),
+};
+
+/** Register Claude on both layers. Called by `@agentbox/agent-modules`. */
 export function registerClaudeAgent(): void {
   registerAgentSyncModule(claudeSyncModule);
+  registerAgentCloudModule(claudeCloudModule);
 }
 
 export * from './docker-sync.js';
