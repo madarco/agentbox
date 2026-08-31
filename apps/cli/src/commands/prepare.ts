@@ -33,7 +33,7 @@ import {
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
-import { UserFacingError } from '@agentbox/core';
+import { parseProviderWarning, UserFacingError } from '@agentbox/core';
 import type { Provider } from '@agentbox/core';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
@@ -734,6 +734,11 @@ async function runPrepareViaHub(args: {
   const what = args.remoteHost ? `${args.providerName} host ${args.remoteHost}` : args.providerName;
   const sp = spinner();
   sp.start(`preparing ${what} on the ${where}…`);
+  // Every bake line is rendered as an 80-column spinner frame the NEXT line
+  // overwrites, so a decision that changed what got baked (a daytona linux-vm
+  // that could only produce a container) was gone a second after it appeared.
+  // Hold the marked ones and re-state them once the spinner is down.
+  const warnings: string[] = [];
   const outcome = await bakeViaHub({
     client,
     providerName: args.providerName,
@@ -748,13 +753,18 @@ async function runPrepareViaHub(args: {
     custody,
     coLocated,
     remoteHost: args.remoteHost,
-    onLog: (line) => sp.message(line.slice(0, 80)),
+    onLog: (line) => {
+      const marked = parseProviderWarning(line);
+      if (marked && !warnings.includes(marked)) warnings.push(marked);
+      sp.message((marked ?? line).slice(0, 80));
+    },
   });
   if (outcome.status === 'failed') {
     sp.stop(`prepare failed on the ${where}: ${outcome.detail}`);
     throw new Error(outcome.detail);
   }
   sp.stop(`prepared ${what} on the ${where}`);
+  for (const w of warnings) log.warn(w);
   if (outcome.status === 'baked-not-adopted') {
     // The hub can now create with it; this machine just can't verify it locally.
     log.warn(`${outcome.detail} — cloud creates route to the control box, so this is not fatal`);

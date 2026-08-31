@@ -800,6 +800,13 @@ export const createCommand = new Command('create')
       }
     }
 
+    // Provider decisions that changed what the user got (a daytona linux-vm bake
+    // that could only produce a container, say). They streamed past inside the
+    // progress reporter, which overwrites itself, so re-state them here where
+    // they stay on screen — this is the last moment before the box is handed
+    // over or attached to.
+    for (const w of cmdLog.warnings()) log.warn(w);
+
     outro('done');
 
     // Cloud + switch-to-claude: attach claude over SSH now the box is provisioned.

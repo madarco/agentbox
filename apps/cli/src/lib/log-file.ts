@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { parseProviderWarning } from '@agentbox/core';
 
 export interface CommandLog {
   /** Absolute path agents can tail. */
@@ -20,6 +21,13 @@ export interface CommandLog {
   raw(chunk: string): void;
   /** Time a step; emits BEGIN/END markers and elapsed ms. On throw, emits FAIL and rethrows. */
   step<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  /**
+   * Lines a provider marked with `providerWarning()` — decisions the user must
+   * still see once the spinner chrome they streamed through is gone. Collected
+   * here rather than at each `onLog` site because a create wires five of them,
+   * and a warning is worth exactly as much from any one.
+   */
+  warnings(): string[];
   /** Idempotent. */
   close(): void;
 }
@@ -101,10 +109,22 @@ export function openCommandLog(command: string): CommandLog {
   // Last-resort flush. Don't unhook anything else; this is purely additive.
   process.on('exit', closeOnce);
 
+  const warnings: string[] = [];
   const log: CommandLog = {
     path,
+    warnings(): string[] {
+      return [...warnings];
+    },
     write(line: string): void {
       if (closed) return;
+      // Collect, but write the line through UNCHANGED. A queued job's log is a
+      // transport, not just a record: the hub worker writes here and the CLI
+      // streams those lines back, so stripping the marker at this end would
+      // consume it before the process that has a terminal ever sees it. Keeping
+      // it also makes a past warning greppable in `~/.agentbox/logs`.
+      // De-duplicated: a retried step can emit the same warning twice.
+      const marked = parseProviderWarning(line.trimEnd());
+      if (marked && !warnings.includes(marked)) warnings.push(marked);
       const ts = new Date().toISOString();
       const body = line.endsWith('\n') ? line : line + '\n';
       try {

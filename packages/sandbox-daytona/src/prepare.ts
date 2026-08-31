@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Image } from '@daytona/sdk';
 import type { PrepareOptions, PrepareResult } from '@agentbox/core';
+import { providerWarning } from '@agentbox/core';
 import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
   stageAllAgentStatic,
@@ -437,9 +438,12 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       // the usual cause — a contributor, not an end user). Daytona cannot build
       // a VM from a Dockerfile, so the only thing we *can* bake is a container.
       log(
-        `daytona: ${err.message} This usually means a locally modified Dockerfile.box. ` +
-          `Daytona can't build a linux-vm base from a Dockerfile, so falling back to a ` +
-          `container snapshot (no pause/resume).`,
+        providerWarning(
+          `daytona: ${err.message} This usually means a locally modified Dockerfile.box. ` +
+            `Daytona can't build a linux-vm base from a Dockerfile, so this base is a ` +
+            `CONTAINER snapshot, not a linux-vm one — no pause/resume, and every box off it ` +
+            `is a container. Set \`box.daytonaVmBaseImage\` to a published image to bake a VM.`,
+        ),
       );
       sandboxClass = 'container';
       // Re-derive the name without the `-vm` suffix, or we'd register a

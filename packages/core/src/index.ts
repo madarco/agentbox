@@ -7,6 +7,7 @@ export type {
   SandboxProvider,
   StartBoxOptions,
 } from './types.js';
+export { parseProviderWarning, providerWarning } from './provider-warning.js';
 export type { AgentLauncher } from './agent.js';
 export { resolveAgentLauncher } from './agent.js';
 export type { ClaudeTuiMode } from './claude-tui.js';

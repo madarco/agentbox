@@ -7,6 +7,7 @@
 import { Daytona, DaytonaNotFoundError, Image, SandboxState, type Sandbox } from '@daytona/sdk';
 import { DAYTONA_VM_REGION } from '@agentbox/config';
 import type { CloudSandboxSummary } from '@agentbox/core';
+import { providerWarning } from '@agentbox/core';
 import type {
   CloudBackend,
   CloudExecOptions,
@@ -411,9 +412,11 @@ export const daytonaBackend: CloudBackend = {
         const sandboxClass = bakedClass ?? req.sandboxClass;
         if (bakedClass && req.sandboxClass && bakedClass !== req.sandboxClass) {
           req.onLog?.(
-            `daytona: base '${baseRef ?? ''}' was baked as '${bakedClass}', so this box will be a ` +
-              `'${bakedClass}' one (box.daytonaClass asks for '${req.sandboxClass}'). ` +
-              `Re-bake with \`agentbox prepare --provider daytona --force\` to change it.`,
+            providerWarning(
+              `daytona: base '${baseRef ?? ''}' was baked as '${bakedClass}', so this box will be a ` +
+                `'${bakedClass}' one (box.daytonaClass asks for '${req.sandboxClass}'). ` +
+                `Re-bake with \`agentbox prepare --provider daytona --force\` to change it.`,
+            ),
           );
         }
         // `create` places the sandbox in its CLIENT's region — the `regionId`
