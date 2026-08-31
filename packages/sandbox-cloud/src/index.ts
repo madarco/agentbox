@@ -1,3 +1,14 @@
+// The cloud twin of `AgentSyncModule` — what this layer needs from an agent,
+// received rather than imported. See `sync/agent-cloud-module.ts`.
+export { buildCloudBoxRunEnv } from './sync/agent-credentials.js';
+
+export {
+  agentCloudModule,
+  registerAgentCloudModule,
+  registeredAgentCloudModules,
+  type AgentCloudModule,
+} from './sync/agent-cloud-module.js';
+
 export {
   CLOUD_VNC_PORT,
   CLOUD_WEB_PROXY_PORT,
@@ -72,7 +83,6 @@ export {
   reconcileAgentCredentials,
   reconcileAgentCredentialsViaTransport,
   seedAgentVolumesIfFresh,
-  seedOpencodeModelState,
   type CloudAgentKind,
   type EnsureAgentVolumesResult,
   type ReconcileAgentCredentialsOptions,

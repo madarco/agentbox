@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { buildOpencodeMounts } from '@agentbox/agent-opencode';
-import { buildCloudBoxRunEnv } from '../src/sync/agent-credentials.js';
+import { buildOpencodeMounts } from '../src/docker-sync.js';
+import { buildCloudBoxRunEnv } from '@agentbox/sandbox-cloud';
 
 /**
+ * Lives here, not in `sandbox-cloud`, because it spans both layers: it compares
+ * this agent's docker mounts against the cloud env builder. `sandbox-cloud`
+ * cannot import an agent (that is the cycle); an agent package can import
+ * `sandbox-cloud`, so the drift test belongs on this side.
+ *
  * `boxRunEnv` is the registry's single declaration of the env an agent needs
  * inside a box. It existed with ZERO consumers: docker restated its values as
  * local consts and the cloud path hardcoded its own, shorter, copy.

@@ -370,6 +370,9 @@ importers:
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/sandbox-cloud':
+        specifier: workspace:*
+        version: link:../sandbox-cloud
       '@agentbox/sandbox-core':
         specifier: workspace:*
         version: link:../sandbox-core
@@ -466,6 +469,9 @@ importers:
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/sandbox-cloud':
+        specifier: workspace:*
+        version: link:../sandbox-cloud
       '@agentbox/sandbox-core':
         specifier: workspace:*
         version: link:../sandbox-core
@@ -655,9 +661,6 @@ importers:
 
   packages/sandbox-cloud:
     dependencies:
-      '@agentbox/agent-codex':
-        specifier: workspace:*
-        version: link:../agent-codex
       '@agentbox/config':
         specifier: workspace:*
         version: link:../config
@@ -677,9 +680,6 @@ importers:
         specifier: ^2.6.1
         version: 2.9.0
     devDependencies:
-      '@agentbox/agent-opencode':
-        specifier: workspace:*
-        version: link:../agent-opencode
       '@types/node':
         specifier: ^22.10.1
         version: 22.19.19

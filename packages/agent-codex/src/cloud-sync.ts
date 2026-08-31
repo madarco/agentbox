@@ -1,10 +1,14 @@
-// NOTE: this file is Codex behavior sitting in the shared cloud layer, and the
-// import below says so out loud — it now reaches into `@agentbox/agent-codex`
-// because that is where the script builders moved. The file itself moves into
-// that package in the sandbox-cloud phase, at which point this dependency goes
-// away rather than being made permanent.
+/**
+ * Codex's cloud-side behavior: fold the box facts into `AGENTS.override.md` on a
+ * freshly seeded cloud box.
+ *
+ * The docker twin is `afterVolumeSync` in this package's `index.ts`; this is the
+ * same idea for a box that has no docker volume. It lived in
+ * `sandbox-cloud/src/sync/` and was called by name from `cloud-sync.ts`, which
+ * is what made adding an agent mean editing the shared cloud layer.
+ */
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { buildCodexAgentsOverrideScript, CODEX_OVERRIDE_WROTE_MARKER } from '@agentbox/agent-codex';
+import { buildCodexAgentsOverrideScript, CODEX_OVERRIDE_WROTE_MARKER } from './docker-sync.js';
 
 /** CODEX_HOME is `/home/vscode/.codex` on every provider (the box user is `vscode`). */
 const BOX_CODEX_HOME = '/home/vscode/.codex';

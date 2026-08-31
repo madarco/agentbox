@@ -11,6 +11,8 @@
  */
 
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
+import { ensureCodexAgentsOverride } from './cloud-sync.js';
 import {
   buildCodexMounts,
   codexSessionInfo,
@@ -34,11 +36,19 @@ export const codexSyncModule: AgentSyncModule = {
   },
 };
 
-/** Register Codex. Called by `@agentbox/agent-modules`, never by a lower layer. */
+/** Codex's cloud behavior — the same box-facts fold, for a box with no volume. */
+export const codexCloudModule: AgentCloudModule = {
+  id: 'codex',
+  afterSeed: (backend, handle, opts) => ensureCodexAgentsOverride(backend, handle, opts),
+};
+
+/** Register Codex on both layers. Called by `@agentbox/agent-modules`. */
 export function registerCodexAgent(): void {
   registerAgentSyncModule(codexSyncModule);
+  registerAgentCloudModule(codexCloudModule);
 }
 
 // The CLI still reaches for these by name; they move behind the module contract
 // as the remaining phases convert their call sites.
+export { ensureCodexAgentsOverride } from './cloud-sync.js';
 export * from './docker-sync.js';

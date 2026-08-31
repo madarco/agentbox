@@ -32,6 +32,7 @@ import type {
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { agentIds, renderCarryEntries } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFilesViaTransport } from './agent-seed.js';
+import { registeredAgentCloudModules } from './agent-cloud-module.js';
 import { createCloudSyncTransport } from './sync-transport.js';
 import { resyncCloudWorkspace } from './workspace-resync.js';
 import {
@@ -40,10 +41,8 @@ import {
   extractCloudAgentCredentials,
   refreshAgentCredentialsBackup,
   seedAgentVolumesIfFresh,
-  seedOpencodeModelState,
 } from './agent-credentials.js';
 import { seedDynamicConfig } from './dynamic-sync.js';
-import { ensureCodexAgentsOverride } from './codex-agents-override.js';
 import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
 import { seedGitIdentity as seedCloudGitIdentity } from './git-identity.js';
 import { uploadEnvFiles } from './env-files.js';
@@ -90,8 +89,13 @@ export function makeCloudSync(
       //   - overlay ~/.claude/_claude.json from the host's ~/.claude.json;
       //   - seed the dynamic Claude config (workflows/ + this project's memory/).
       await ensureAgentHomeDirsOwned(backend, handle, { onLog: ctx.onLog });
-      await ensureCodexAgentsOverride(backend, handle, { onLog: ctx.onLog });
-      await seedOpencodeModelState(backend, handle, { onLog: ctx.onLog });
+      // Each agent's own post-seed step, in registration order. These were three
+      // calls by name — codex's AGENTS.override fold, opencode's model state,
+      // claude's _claude.json overlay — with one signature between them. An
+      // agent that needs nothing registers nothing.
+      for (const mod of registeredAgentCloudModules()) {
+        await mod.afterSeed(backend, handle, { onLog: ctx.onLog });
+      }
       {
         const transport = createCloudSyncTransport({ backend, handle });
         // A cloud box carries one agent, but `agents` is only set when the
@@ -102,6 +106,11 @@ export function makeCloudSync(
           await seedAgentDeclaredFilesViaTransport(transport, agent, { onLog: ctx.onLog });
         }
       }
+      // Still called by name. Unlike the hooks above it runs AFTER the declared
+      // files are placed and needs `hostWorkspace`, so folding it into the same
+      // loop would move it in the sequence — a behavior change worth verifying
+      // against a real cloud box rather than assuming. It joins the registry
+      // when that check happens.
       await seedClaudeJsonAtCreate(backend, handle, {
         hostWorkspace: ctx.hostWorkspace,
         onLog: ctx.onLog,

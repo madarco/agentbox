@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerAgentCloudModule } from '../src/sync/agent-cloud-module.js';
 import type { CloudBackend, CloudHandle, SyncContext } from '@agentbox/core';
 
 // Mock every delegated module so the facade tests assert delegation only.
@@ -115,13 +116,22 @@ describe('makeCloudSync.seedAgentConfig', () => {
       order.push('ownership');
       return Promise.resolve();
     });
-    m.ensureCodexAgentsOverride.mockImplementation(() => {
-      order.push('codex');
-      return Promise.resolve();
+    // codex's and opencode's post-seed steps are their own packages' cloud
+    // modules now, registered rather than imported. Registering stubs here
+    // exercises the seam that a real agent package uses.
+    registerAgentCloudModule({
+      id: 'codex',
+      afterSeed: () => {
+        order.push('codex');
+        return Promise.resolve();
+      },
     });
-    m.seedOpencodeModelState.mockImplementation(() => {
-      order.push('opencode');
-      return Promise.resolve();
+    registerAgentCloudModule({
+      id: 'opencode',
+      afterSeed: () => {
+        order.push('opencode');
+        return Promise.resolve();
+      },
     });
     m.seedClaudeJsonAtCreate.mockImplementation(() => {
       order.push('claudeJson');

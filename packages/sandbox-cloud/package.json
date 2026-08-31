@@ -25,7 +25,6 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/agent-codex": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
@@ -34,7 +33,6 @@
     "yaml": "^2.6.1"
   },
   "devDependencies": {
-    "@agentbox/agent-opencode": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

@@ -6,6 +6,8 @@
  */
 
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
+import { seedOpencodeModelState } from './cloud-sync.js';
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
@@ -22,9 +24,20 @@ export const opencodeSyncModule: AgentSyncModule = {
   sessionInfo: (container) => opencodeSessionInfo(container),
 };
 
-/** Register OpenCode. Called by `@agentbox/agent-modules`. */
+/**
+ * OpenCode's cloud behavior: seed the host's selected model. A cloud box's state
+ * dir is ephemeral, so the host is authoritative on every create.
+ */
+export const opencodeCloudModule: AgentCloudModule = {
+  id: 'opencode',
+  afterSeed: (backend, handle, opts) => seedOpencodeModelState(backend, handle, opts),
+};
+
+/** Register OpenCode on both layers. Called by `@agentbox/agent-modules`. */
 export function registerOpencodeAgent(): void {
   registerAgentSyncModule(opencodeSyncModule);
+  registerAgentCloudModule(opencodeCloudModule);
 }
 
+export { seedOpencodeModelState } from './cloud-sync.js';
 export * from './docker-sync.js';

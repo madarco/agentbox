@@ -396,7 +396,13 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<RepoSeedCon
         );
         await rm(cloneDir, { recursive: true, force: true });
         await rm(tarPath, { force: true });
-        await runShallowClone(args.hostRepo, cloneDir, LARGE_BUNDLE_DEPTH, stashRefCreated, cloneBranch);
+        await runShallowClone(
+          args.hostRepo,
+          cloneDir,
+          LARGE_BUNDLE_DEPTH,
+          stashRefCreated,
+          cloneBranch,
+        );
         // Fresh cloneDir from the rebuild — re-seed its LFS objects too.
         await seedCloneLfsObjects(args.hostRepo, cloneDir, lfsRef, log);
         await tarCloneDir(cloneDir, tarPath);
@@ -676,7 +682,9 @@ async function tryReseedRepoDelta(args: SeedFromGitCloneArgs): Promise<RepoSeedC
     if (r.exitCode !== 0) {
       // The box's .git is intact (we only fetched + checked out); a clean
       // fall-back to the full-clone overlay can still recover.
-      log(`checkpoint restore: ${args.workspaceDir}: delta apply failed, falling back: ${r.stderr || r.stdout}`);
+      log(
+        `checkpoint restore: ${args.workspaceDir}: delta apply failed, falling back: ${r.stderr || r.stdout}`,
+      );
       return null;
     }
     return parseSeedConflicts(r.stdout);
@@ -903,15 +911,11 @@ async function maybeBuildUntrackedTar(hostRepo: string, outPath: string): Promis
   // newlines in filenames survive. Use COPYFILE_DISABLE=1 to suppress
   // macOS' AppleDouble `._<name>` sidecars (same hardening as the
   // agent-credential tarballs).
-  const tar = await execa(
-    'tar',
-    ['-C', hostRepo, '--null', '-T', '-', '-czf', outPath],
-    {
-      input: list.stdout,
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-      reject: false,
-    },
-  );
+  const tar = await execa('tar', ['-C', hostRepo, '--null', '-T', '-', '-czf', outPath], {
+    input: list.stdout,
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+    reject: false,
+  });
   if (tar.exitCode !== 0) return 0;
   try {
     const { stat } = await import('node:fs/promises');

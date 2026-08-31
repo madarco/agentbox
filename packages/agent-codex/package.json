@@ -27,6 +27,7 @@
   "dependencies": {
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
     "execa": "^9.5.2"

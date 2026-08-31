@@ -94,7 +94,8 @@ export async function resyncCloudWorkspace(
       // The stash object is in-box (bundled + fetched); the concern applies by SHA.
       createHostStash: (hostMain) => Promise.resolve(prefetch.get(hostMain)?.stashSha ?? null),
       boxGit: (ct, args) => boxGit(backend, handle, ct, args),
-      probeUntrackedTokens: (ct, paths) => probeUntrackedTokens(backend, handle, ct, paths, probeAsRoot),
+      probeUntrackedTokens: (ct, paths) =>
+        probeUntrackedTokens(backend, handle, ct, paths, probeAsRoot),
       applyTarToBox: (ct, tar) => applyTarToBox(backend, handle, stage, ct, tar),
     };
 
@@ -126,7 +127,9 @@ async function prefetchRepo(
   // 1. The box branch's commits (newest first), capped.
   const rev = await backend.exec(
     handle,
-    bashScript(`git -C ${quoteShellArg(ct)} rev-list --max-count=${String(BOX_REVLIST_CAP)} ${quoteShellArg(w.branch)} 2>/dev/null || true`),
+    bashScript(
+      `git -C ${quoteShellArg(ct)} rev-list --max-count=${String(BOX_REVLIST_CAP)} ${quoteShellArg(w.branch)} 2>/dev/null || true`,
+    ),
   );
   const boxShas = rev.stdout
     .split('\n')
@@ -151,7 +154,9 @@ async function prefetchRepo(
   }
   const base = boxShas.find((s) => present.has(s));
   if (!base) {
-    log(`resync: ${ct}: no shared ancestor with the host (repo replaced?); overlay only (non-destructive)`);
+    log(
+      `resync: ${ct}: no shared ancestor with the host (repo replaced?); overlay only (non-destructive)`,
+    );
     return none;
   }
 
@@ -181,8 +186,10 @@ async function prefetchRepo(
 
   const bundlePath = join(stage, `resync-${String(idx)}.bundle`);
   try {
-    if (needTarget) await execa('git', ['-C', hostMain, 'update-ref', TARGET_REF, hostTip], { reject: false });
-    if (stashSha) await execa('git', ['-C', hostMain, 'update-ref', STASH_REF, stashSha], { reject: false });
+    if (needTarget)
+      await execa('git', ['-C', hostMain, 'update-ref', TARGET_REF, hostTip], { reject: false });
+    if (stashSha)
+      await execa('git', ['-C', hostMain, 'update-ref', STASH_REF, stashSha], { reject: false });
     const b = await execa(
       'git',
       ['-C', hostMain, 'bundle', 'create', bundlePath, ...bundleRefs, `^${base}`],
@@ -193,8 +200,10 @@ async function prefetchRepo(
       return none;
     }
   } finally {
-    if (needTarget) await execa('git', ['-C', hostMain, 'update-ref', '-d', TARGET_REF], { reject: false });
-    if (stashSha) await execa('git', ['-C', hostMain, 'update-ref', '-d', STASH_REF], { reject: false });
+    if (needTarget)
+      await execa('git', ['-C', hostMain, 'update-ref', '-d', TARGET_REF], { reject: false });
+    if (stashSha)
+      await execa('git', ['-C', hostMain, 'update-ref', '-d', STASH_REF], { reject: false });
   }
 
   // 5. Upload + fetch the bundle into the worktree's own .git (private refs).
@@ -210,7 +219,9 @@ async function prefetchRepo(
     ),
   );
   if (fetch.exitCode !== 0) {
-    log(`resync: ${ct}: in-box bundle fetch failed; overlay only: ${(fetch.stderr || fetch.stdout || '').split('\n')[0]}`);
+    log(
+      `resync: ${ct}: in-box bundle fetch failed; overlay only: ${(fetch.stderr || fetch.stdout || '').split('\n')[0]}`,
+    );
     return none;
   }
   log(
@@ -280,7 +291,9 @@ async function applyTarToBox(
   await backend.uploadFile(handle, local, remote);
   await backend.exec(
     handle,
-    bashScript(`tar -C ${quoteShellArg(ct)} -xf ${quoteShellArg(remote)} && rm -f ${quoteShellArg(remote)}`),
+    bashScript(
+      `tar -C ${quoteShellArg(ct)} -xf ${quoteShellArg(remote)} && rm -f ${quoteShellArg(remote)}`,
+    ),
   );
 }
 
