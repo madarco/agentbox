@@ -33,7 +33,9 @@ describe('buildAgentStaticSeedCommands', () => {
 
   it('installs the CLAUDE.md overlay with sudo, only when one is supplied', () => {
     const withOverlay = buildAgentStaticSeedCommands(STAGES, { claudeMdOverlay: true }).join('\n');
-    expect(withOverlay).toContain('sudo -n install -m 0644 /tmp/agentbox-custom-CLAUDE.md /etc/claude-code/CLAUDE.md');
+    expect(withOverlay).toContain(
+      'sudo -n install -m 0644 /tmp/agentbox-custom-CLAUDE.md /etc/claude-code/CLAUDE.md',
+    );
 
     const without = buildAgentStaticSeedCommands(STAGES).join('\n');
     expect(without).not.toContain('/etc/claude-code/CLAUDE.md');
@@ -43,9 +45,21 @@ describe('buildAgentStaticSeedCommands', () => {
     expect(buildAgentStaticSeedCommands([])).toEqual([]);
   });
 
-  it('guards ~/.agents, which only exists when the host had one', () => {
+  it('chowns exactly what it extracted, including an agent it has never heard of', () => {
+    // Derived from the stages, not a fixed list of the built-in agents' home
+    // dirs: a later agent brings its own extractDir, and a fixed list would
+    // leave it root-owned in every snapshot with nothing failing.
+    const joined = buildAgentStaticSeedCommands([
+      ...STAGES,
+      { kind: 'example' as const, extractDir: '/home/vscode/.agentbox-example' },
+    ]).join('\n');
+    expect(joined).toContain('chown -R vscode:vscode /home/vscode/.agentbox-example');
+    expect(joined).toContain('chown -R vscode:vscode /home/vscode/.claude');
+  });
+
+  it('guards each chown — a dir only exists when its host source did', () => {
     const joined = buildAgentStaticSeedCommands(STAGES).join('\n');
-    expect(joined).toContain('[ -d /home/vscode/.agents ]');
+    expect(joined).toContain('[ -d /home/vscode/.claude ]');
     expect(joined).toContain('|| true');
   });
 });

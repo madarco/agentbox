@@ -65,12 +65,13 @@ export function buildAgentStaticSeedCommands(
         `--no-same-permissions --no-same-owner -m && rm -f ${remoteTarFor(s.kind)}`,
     );
   }
-  if (usable.length > 0) {
-    // `~/.agents` only exists when the host had one; guard it so its absence
-    // isn't a failure.
+  // Take ownership of exactly what was extracted. Derived from the stages
+  // rather than a fixed list of agent home dirs: an agent added later brings
+  // its own `extractDir`, and a fixed list would silently leave it root-owned.
+  // Each is guarded — a dir only exists when its source did on the host.
+  for (const s of usable) {
     cmds.push(
-      'sudo -n chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.local' +
-        ' && ( [ -d /home/vscode/.agents ] && sudo -n chown -R vscode:vscode /home/vscode/.agents || true )',
+      `( [ -d ${s.extractDir} ] && sudo -n chown -R vscode:vscode ${s.extractDir} || true )`,
     );
   }
   return cmds;

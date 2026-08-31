@@ -37,14 +37,9 @@ import {
   resolveAgentInstall,
   resolveAgentSpec,
   variantFingerprint,
+  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import {
-  stageAgentsStaticForUpload,
-  stageClaudeStaticForUpload,
-  stageCodexStaticForUpload,
-  stageOpencodeStaticForUpload,
-  type StageResult,
-} from '@agentbox/sandbox-cloud';
+import { type StageResult } from '@agentbox/sandbox-cloud';
 import { ensureVercelCredentials } from './credentials.js';
 import {
   ensureFreshCredentials,
@@ -373,41 +368,22 @@ async function stageAgentConfig(
   // a claude-only snapshot would put codex's and opencode's settings in a box
   // that has neither binary. `~/.agents` is always staged -- shared skills, not
   // an agent's auth.
-  const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
+  const wantsAll = agents.length === 0;
   const stagings: Array<{
     kind: AgentId | 'agents';
     tar: StageResult;
     dest: string;
   }> = [];
   try {
-    const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace });
-    for (const w of claudeTar.warnings) progress(w);
-    if (claudeTar.tarballPath && wantsAgent('claude'))
-      stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
-    else await claudeTar.cleanup();
-
-    const codexTar = await stageCodexStaticForUpload();
-    for (const w of codexTar.warnings) progress(w);
-    if (codexTar.tarballPath && wantsAgent('codex'))
-      stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
-    else await codexTar.cleanup();
-
-    const opencodeTar = await stageOpencodeStaticForUpload();
-    for (const w of opencodeTar.warnings) progress(w);
-    if (opencodeTar.tarballPath && wantsAgent('opencode'))
-      stagings.push({
-        kind: 'opencode',
-        tar: opencodeTar,
-        dest: '/home/vscode/.local/share/opencode',
-      });
-    else await opencodeTar.cleanup();
-
-    // ~/.agents (cross-agent Agent Skills) — codex reads ~/.agents/skills.
-    const agentsTar = await stageAgentsStaticForUpload();
-    for (const w of agentsTar.warnings) progress(w);
-    if (agentsTar.tarballPath)
-      stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
-    else await agentsTar.cleanup();
+    const stages = await stageAllAgentStatic({
+      hostWorkspace,
+      agents: wantsAll ? undefined : agents,
+    });
+    for (const s of stages) {
+      for (const w of s.staged.warnings) progress(w);
+      if (s.staged.tarballPath) stagings.push({ kind: s.kind, tar: s.staged, dest: s.extractDir });
+      else await s.staged.cleanup();
+    }
 
     for (const s of stagings) {
       const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

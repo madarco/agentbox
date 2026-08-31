@@ -43,6 +43,16 @@ export interface AgentPathMap {
   /** rsync `--update` (newest-wins) — OpenCode `model.json` is two-way state. */
   update?: boolean;
   /**
+   * Which staging tarball carries this source.
+   *
+   * `'static'` (the default) is the one-way host config baked into a cloud
+   * provider's snapshot. `'state'` marks two-way runtime state that ships on
+   * its own newest-wins path and must NOT be baked — a snapshot is shared by
+   * every box made from it, so a per-box state file in one would be handed to
+   * all of them.
+   */
+  stagedAs?: 'static' | 'state';
+  /**
    * rsync/tar `--exclude` patterns for this source. Populated per tool as the
    * static-config concern migrates (Phase 7); OpenCode's are already exact.
    */

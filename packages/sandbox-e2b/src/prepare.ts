@@ -237,7 +237,10 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
     // Stage the host's per-tool static config (shared sync-layer producer) and
     // copy each tarball into the build context (E2B copy sources must be
     // relative to fileContextPath).
-    agentStages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
+    agentStages = await stageAllAgentStatic({
+      hostWorkspace: opts.hostWorkspace,
+      agents: agents.length === 0 ? undefined : agents,
+    });
     for (const s of agentStages) for (const w of s.staged.warnings) log(w);
     const usableStages = agentStages.filter((s) => s.staged.tarballPath !== null);
     for (const s of usableStages) {

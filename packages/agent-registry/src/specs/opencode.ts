@@ -65,6 +65,9 @@ export const opencodeSpec: AgentSyncSpec = {
       relocToSubpath: '.state/opencode',
       update: true,
       exclude: ['locks'],
+      // Two-way, per-box state (the selected model). It ships via its own
+      // newest-wins stager, never baked into a shared snapshot.
+      stagedAs: 'state',
     },
   ],
   credential: {

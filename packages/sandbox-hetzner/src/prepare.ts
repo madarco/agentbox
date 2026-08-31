@@ -42,14 +42,9 @@ import {
   resolveAgentInstall,
   renderInstallRecipe,
   renderPackageInstall,
+  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import {
-  stageClaudeStaticForUpload,
-  stageCodexStaticForUpload,
-  stageAgentsStaticForUpload,
-  stageOpencodeStaticForUpload,
-  type StageResult,
-} from '@agentbox/sandbox-cloud';
+import { type StageResult } from '@agentbox/sandbox-cloud';
 import { ensureHetznerCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';
@@ -402,42 +397,18 @@ export async function prepareHetzner(
       tar: StageResult;
       dest: string;
     }> = [];
-    const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
+    const wantsAll = agents.length === 0;
     try {
-      if (wantsAgent('claude')) {
-        const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace });
-        for (const w of claudeTar.warnings) log(`prepare-hetzner: ${w}`);
-        if (claudeTar.tarballPath)
-          stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
-        else await claudeTar.cleanup();
+      const stages = await stageAllAgentStatic({
+        hostWorkspace: opts.hostWorkspace,
+        agents: wantsAll ? undefined : agents,
+      });
+      for (const s of stages) {
+        for (const w of s.staged.warnings) log(`prepare-hetzner: ${w}`);
+        if (s.staged.tarballPath)
+          stagings.push({ kind: s.kind, tar: s.staged, dest: s.extractDir });
+        else await s.staged.cleanup();
       }
-
-      if (wantsAgent('codex')) {
-        const codexTar = await stageCodexStaticForUpload();
-        for (const w of codexTar.warnings) log(`prepare-hetzner: ${w}`);
-        if (codexTar.tarballPath)
-          stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
-        else await codexTar.cleanup();
-      }
-
-      if (wantsAgent('opencode')) {
-        const opencodeTar = await stageOpencodeStaticForUpload();
-        for (const w of opencodeTar.warnings) log(`prepare-hetzner: ${w}`);
-        if (opencodeTar.tarballPath)
-          stagings.push({
-            kind: 'opencode',
-            tar: opencodeTar,
-            dest: '/home/vscode/.local/share/opencode',
-          });
-        else await opencodeTar.cleanup();
-      }
-
-      // ~/.agents (cross-agent Agent Skills) — codex reads ~/.agents/skills.
-      const agentsTar = await stageAgentsStaticForUpload();
-      for (const w of agentsTar.warnings) log(`prepare-hetzner: ${w}`);
-      if (agentsTar.tarballPath)
-        stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
-      else await agentsTar.cleanup();
 
       for (const s of stagings) {
         const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

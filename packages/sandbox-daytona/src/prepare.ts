@@ -465,7 +465,10 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // prepared state records whatever we pinned, and that is what skip-fast reads.
   if (!opts.name) snapshotName = `${snapshotName}-${nonce()}`;
 
-  const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
+  const stages = await stageAllAgentStatic({
+    hostWorkspace: opts.hostWorkspace,
+    agents: agents.length === 0 ? undefined : agents,
+  });
   // Surface staging warnings (codex Keychain landmine, etc.) before the
   // longer build kicks off.
   for (const s of stages) {

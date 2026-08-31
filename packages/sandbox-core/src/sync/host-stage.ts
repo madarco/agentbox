@@ -38,9 +38,9 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './claude-hooks-filter.js';
-import { resolveAgentSpec } from './registry.js';
+import { AGENT_SYNC_SPECS, resolveAgentSpec } from './registry.js';
 import { sanitizeCodexConfigForBox } from './codex-config.js';
-import type { AgentId } from '@agentbox/core';
+import type { AgentId, AgentPathMap } from '@agentbox/core';
 
 /**
  * Portable host backup of the claude OAuth creds — the single source of truth is
@@ -157,6 +157,69 @@ async function stageSingleFileTarball(
       cleanup: makeCleanup([stageDir, tarballPath]),
       warnings: [],
     };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    if (tarballPath) await rm(tarballPath, { force: true });
+    throw err;
+  }
+}
+
+// ---------- the generic stager ----------
+
+/**
+ * Stage one agent's static config from its registry row alone.
+ *
+ * Every `staticPaths` entry carries what an rsync needs — host source, box
+ * destination, sub-path to land at, includes and excludes — so an agent that
+ * needs no post-processing needs no code here at all: it declares its paths and
+ * this stages them. That is what makes a newly added agent reach every cloud
+ * provider's snapshot without an edit to this file.
+ *
+ * `stagedAs: 'state'` entries are skipped. They are two-way per-box state, and
+ * a snapshot is shared by every box made from it.
+ *
+ * Agents whose staging needs more than a copy (claude filters host hooks, codex
+ * sanitizes `config.toml` and purges orphan marketplaces) keep a dedicated
+ * stager, listed in `DEDICATED_STATIC_STAGERS` below.
+ */
+export async function stageAgentStaticForUpload(
+  agent: string,
+  opts: { hostHome?: string } = {},
+): Promise<StageResult> {
+  const spec = resolveAgentSpec(agent);
+  const hostHome = opts.hostHome ?? homedir();
+  const sources = spec.staticPaths.filter((sp) => (sp.stagedAs ?? 'static') === 'static');
+
+  const present: Array<{ path: AgentPathMap; hostPath: string }> = [];
+  for (const path of sources) {
+    const hostPath = join(hostHome, ...path.hostHomeRel);
+    if (await pathExists(hostPath)) present.push({ path, hostPath });
+  }
+  if (present.length === 0) return emptyResult();
+
+  const stageDir = await mkStageDir(`${spec.id}-static`);
+  let tarballPath: string | null = null;
+  try {
+    for (const { path, hostPath } of present) {
+      const dest = path.relocToSubpath ? join(stageDir, path.relocToSubpath) : stageDir;
+      // `-L` dereferences symlinks (Daytona's FUSE volumes reject creating
+      // them); a broken one would abort the whole rsync, so pre-scan and
+      // exclude. Rule order is first-match-wins: the anchored broken-symlink
+      // excludes come first, then the includes that carve out of the excludes.
+      const broken = await findBrokenSymlinks(hostPath);
+      await execa('rsync', [
+        '-a',
+        STAGE_WRITABLE_CHMOD,
+        '-L',
+        ...broken.map((r) => `--exclude=/${r}`),
+        ...(path.include ?? []).map((pat) => `--include=${pat}`),
+        ...(path.exclude ?? []).map((pat) => `--exclude=${pat}`),
+        `${hostPath}/`,
+        `${dest}/`,
+      ]);
+    }
+    tarballPath = await tarballFromDir(stageDir, `${spec.id}-static`);
+    return { tarballPath, cleanup: makeCleanup([stageDir, tarballPath]), warnings: [] };
   } catch (err) {
     await rm(stageDir, { recursive: true, force: true });
     if (tarballPath) await rm(tarballPath, { force: true });
@@ -609,11 +672,6 @@ export interface StageOpencodeOptions {
   hostHome?: string;
 }
 
-// Registry data (single source of truth, drift-guarded by the registry test).
-// Bare patterns mapped to `--exclude=` at the rsync call. `auth.json` ships
-// separately; the rest is host-only runtime state.
-const OPENCODE_DATA_EXCLUDES = resolveAgentSpec('opencode').staticPaths[0]?.exclude ?? [];
-
 /**
  * Filtered tarball of opencode static config. Layout extracts into
  * `/home/vscode/.local/share/opencode/`:
@@ -621,60 +679,15 @@ const OPENCODE_DATA_EXCLUDES = resolveAgentSpec('opencode').staticPaths[0]?.excl
  *   ./<data files>            ← from ~/.local/share/opencode/ (minus auth.json)
  *   ./config/<config files>   ← from ~/.config/opencode/
  *
- * `auth.json` is **excluded** — it ships separately via the credentials
- * variant.
+ * Both sources, their `relocToSubpath` and their excludes are registry data, so
+ * this is the generic stager with nothing added. It stays a named export
+ * because it is part of the published provider SDK's surface. `auth.json` and
+ * the two-way state tree ship separately (their own variants below).
  */
 export async function stageOpencodeStaticForUpload(
   opts: StageOpencodeOptions = {},
 ): Promise<StageResult> {
-  const hostHome = opts.hostHome ?? homedir();
-  const hostData = join(hostHome, '.local', 'share', 'opencode');
-  const hostConfig = join(hostHome, '.config', 'opencode');
-  const hasData = await pathExists(hostData);
-  const hasConfig = await pathExists(hostConfig);
-  if (!hasData && !hasConfig) return emptyResult();
-
-  const stageDir = await mkStageDir('opencode-static');
-  let tarballPath: string | null = null;
-  try {
-    // `-L` dereferences every symlink — Daytona's FUSE volumes reject symlink
-    // creation, and the sandbox FS doesn't care either way. Broken symlinks
-    // would abort rsync under `-L`, so pre-scan and skip them.
-    if (hasData) {
-      const dataBroken = await findBrokenSymlinks(hostData);
-      await execa('rsync', [
-        '-a',
-        STAGE_WRITABLE_CHMOD,
-        '-L',
-        ...dataBroken.map((r) => `--exclude=/${r}`),
-        ...OPENCODE_DATA_EXCLUDES.map((p) => `--exclude=${p}`),
-        `${hostData}/`,
-        `${stageDir}/`,
-      ]);
-    }
-    if (hasConfig) {
-      const configStage = join(stageDir, 'config');
-      const cfgBroken = await findBrokenSymlinks(hostConfig);
-      await execa('rsync', [
-        '-a',
-        STAGE_WRITABLE_CHMOD,
-        '-L',
-        ...cfgBroken.map((r) => `--exclude=/${r}`),
-        `${hostConfig}/`,
-        `${configStage}/`,
-      ]);
-    }
-    tarballPath = await tarballFromDir(stageDir, 'opencode-static');
-    return {
-      tarballPath,
-      cleanup: makeCleanup([stageDir, tarballPath]),
-      warnings: [],
-    };
-  } catch (err) {
-    await rm(stageDir, { recursive: true, force: true });
-    if (tarballPath) await rm(tarballPath, { force: true });
-    throw err;
-  }
+  return stageAgentStaticForUpload('opencode', opts);
 }
 
 /**
@@ -718,9 +731,6 @@ export async function stageOpencodeStateForUpload(
 
 /** Box-side dir each tool's static tarball extracts into. Provider-neutral —
  *  the same target on every backend (docker model). */
-const CLAUDE_STATIC_BOX_DIR = '/home/vscode/.claude';
-const CODEX_STATIC_BOX_DIR = '/home/vscode/.codex';
-const OPENCODE_STATIC_BOX_DIR = '/home/vscode/.local/share/opencode';
 const AGENTS_STATIC_BOX_DIR = '/home/vscode/.agents';
 
 export interface AgentStaticStage {
@@ -738,6 +748,23 @@ export interface AgentStaticStage {
  * copy of the producer→dir mapping. The caller must `staged.cleanup()` each
  * result after the build has picked the tarball up.
  */
+/**
+ * Agents whose static staging needs more than a copy of their declared paths.
+ * Everything else is served by the generic `stageAgentStaticForUpload`, which
+ * is the point: an agent added tomorrow reaches every cloud provider's snapshot
+ * from its registry row, with no entry here.
+ */
+const DEDICATED_STATIC_STAGERS: Record<
+  string,
+  (opts: { hostWorkspace?: string; hostHome?: string }) => Promise<StageResult>
+> = {
+  // Filters host-path hooks, forces the native install method, aliases the host
+  // workspace onto /workspace, marks it trusted.
+  claude: (opts) => stageClaudeStaticForUpload(opts),
+  // Sanitizes config.toml's host-only paths, purges orphan marketplace caches.
+  codex: (opts) => stageCodexStaticForUpload({ hostHome: opts.hostHome }),
+};
+
 export async function stageAllAgentStatic(
   opts: {
     hostWorkspace?: string;
@@ -752,22 +779,35 @@ export async function stageAllAgentStatic(
      * not only `create`.
      */
     agents?: readonly string[];
+    /**
+     * Defaults to `homedir()`. Threaded through every stager so a test can
+     * point the whole thing at a fixture home instead of the developer's own —
+     * without it, the only way to exercise this is to rsync a real `~/.claude`.
+     */
+    hostHome?: string;
   } = {},
 ): Promise<AgentStaticStage[]> {
   const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
-  const want = (kind: string): boolean => !wanted || wanted.has(kind);
-  const [claude, codex, opencode, agents] = await Promise.all([
-    want('claude') ? stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace }) : null,
-    want('codex') ? stageCodexStaticForUpload() : null,
-    want('opencode') ? stageOpencodeStaticForUpload() : null,
-    stageAgentsStaticForUpload(),
-  ]);
-  const out: AgentStaticStage[] = [];
-  if (claude) out.push({ kind: 'claude', extractDir: CLAUDE_STATIC_BOX_DIR, staged: claude });
-  if (codex) out.push({ kind: 'codex', extractDir: CODEX_STATIC_BOX_DIR, staged: codex });
-  if (opencode) {
-    out.push({ kind: 'opencode', extractDir: OPENCODE_STATIC_BOX_DIR, staged: opencode });
-  }
-  out.push({ kind: 'agents', extractDir: AGENTS_STATIC_BOX_DIR, staged: agents });
+  const specs = AGENT_SYNC_SPECS.filter((spec) => !wanted || wanted.has(spec.id));
+
+  const staged = await Promise.all(
+    specs.map(async (spec) => {
+      const dedicated = DEDICATED_STATIC_STAGERS[spec.id];
+      const result = dedicated
+        ? await dedicated({ hostWorkspace: opts.hostWorkspace, hostHome: opts.hostHome })
+        : await stageAgentStaticForUpload(spec.id, { hostHome: opts.hostHome });
+      // `staticPaths[0].boxDir` is the extract root for every source of an
+      // agent: the relocations inside the tarball are relative to it.
+      const extractDir = spec.staticPaths[0]?.boxDir;
+      return extractDir ? { kind: spec.id, extractDir, staged: result } : null;
+    }),
+  );
+
+  const out: AgentStaticStage[] = staged.filter((s): s is AgentStaticStage => s !== null);
+  out.push({
+    kind: 'agents',
+    extractDir: AGENTS_STATIC_BOX_DIR,
+    staged: await stageAgentsStaticForUpload({ hostHome: opts.hostHome }),
+  });
   return out;
 }

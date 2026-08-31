@@ -37,14 +37,9 @@ import {
   resolveAgentInstall,
   resolveAgentSpec,
   variantFingerprint,
+  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import {
-  stageClaudeStaticForUpload,
-  stageCodexStaticForUpload,
-  stageAgentsStaticForUpload,
-  stageOpencodeStaticForUpload,
-  type StageResult,
-} from '@agentbox/sandbox-cloud';
+import { type StageResult } from '@agentbox/sandbox-cloud';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureDigitalOceanCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
@@ -431,40 +426,23 @@ export async function prepareDigitalOcean(
     // into a claude-only snapshot would put codex's and opencode's settings in
     // a box that has neither binary. `~/.agents` is always staged -- shared
     // skills, not an agent's auth.
-    const wantsAgent = (id: string): boolean => agents.length === 0 || agents.includes(id);
+    const wantsAll = agents.length === 0;
     const stagings: Array<{
       kind: AgentId | 'agents';
       tar: StageResult;
       dest: string;
     }> = [];
     try {
-      const claudeTar = await stageClaudeStaticForUpload({ hostWorkspace: opts.hostWorkspace });
-      for (const w of claudeTar.warnings) log(`prepare-digitalocean: ${w}`);
-      if (claudeTar.tarballPath && wantsAgent('claude'))
-        stagings.push({ kind: 'claude', tar: claudeTar, dest: '/home/vscode/.claude' });
-      else await claudeTar.cleanup();
-
-      const codexTar = await stageCodexStaticForUpload();
-      for (const w of codexTar.warnings) log(`prepare-digitalocean: ${w}`);
-      if (codexTar.tarballPath && wantsAgent('codex'))
-        stagings.push({ kind: 'codex', tar: codexTar, dest: '/home/vscode/.codex' });
-      else await codexTar.cleanup();
-
-      const opencodeTar = await stageOpencodeStaticForUpload();
-      for (const w of opencodeTar.warnings) log(`prepare-digitalocean: ${w}`);
-      if (opencodeTar.tarballPath && wantsAgent('opencode'))
-        stagings.push({
-          kind: 'opencode',
-          tar: opencodeTar,
-          dest: '/home/vscode/.local/share/opencode',
-        });
-      else await opencodeTar.cleanup();
-
-      const agentsTar = await stageAgentsStaticForUpload();
-      for (const w of agentsTar.warnings) log(`prepare-digitalocean: ${w}`);
-      if (agentsTar.tarballPath)
-        stagings.push({ kind: 'agents', tar: agentsTar, dest: '/home/vscode/.agents' });
-      else await agentsTar.cleanup();
+      const stages = await stageAllAgentStatic({
+        hostWorkspace: opts.hostWorkspace,
+        agents: wantsAll ? undefined : agents,
+      });
+      for (const s of stages) {
+        for (const w of s.staged.warnings) log(`prepare-digitalocean: ${w}`);
+        if (s.staged.tarballPath)
+          stagings.push({ kind: s.kind, tar: s.staged, dest: s.extractDir });
+        else await s.staged.cleanup();
+      }
 
       for (const s of stagings) {
         const remote = `/tmp/agentbox-${s.kind}-static.tar.gz`;

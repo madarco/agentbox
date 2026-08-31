@@ -344,12 +344,47 @@ sequence — verify against a real cloud box first), and the `sandbox-core` side
 `claude-pull`, `codex-config`, `claude-hooks-filter`, `host-stage.ts`. The pull
 strategy becoming spec-driven is open since #338.
 
-**Phase 5 — the cloud providers + `claudeInstall`.** Add `assets:` to the spec so
-`sandbox-{hetzner,vercel,digitalocean,daytona}` iterate instead of hardcoding
-three staging blocks and re-declaring asset filenames. Generalize `claudeInstall`
-to an agent-keyed install variant across its ~35 sites — including the
-`AGENTBOX_CLAUDE_INSTALL` build arg, which is a rename with a bake implication, so
-it lands with a forced re-`prepare` and its own live check.
+**Measured blocker on that `sandbox-core` side, found when the moves were
+attempted.** `claude-hooks-filter` and `codex-config` have exactly one consumer
+each outside `sandbox-core` — the matching agent package — and neither is on the
+published SDK surface, so both look like clean moves. They are not:
+`host-stage.ts` (in `sandbox-core`) imports both, and it cannot import an agent
+package without recreating the cycle. So those file moves are gated on
+`host-stage.ts` itself moving, and ITS exports (`stage<Agent>StaticForUpload`)
+are published SDK surface — a `SDK_API_VERSION` bump and a republish, not a
+refactor. Sequence it with the bump rather than before it.
+
+Phase 5a below took the useful half without touching the SDK: the DISPATCH is
+registry-driven, so a new agent is staged everywhere even while the two
+dedicated stagers still live in `sandbox-core`.
+
+**Phase 5a — the cloud providers' static staging — DONE.** The measurement was
+right and the fix needed no new `assets:` field: every `staticPaths` entry
+already carries host source, box dir, sub-path, includes and excludes, so
+`stageAgentStaticForUpload(agent)` stages any agent from its row alone.
+`stageAllAgentStatic` iterates the registry and falls back to it, keeping a
+dedicated stager only for the two agents whose staging is not a copy (claude
+filters host hooks; codex sanitizes `config.toml` and purges orphan
+marketplaces). `stageOpencodeStaticForUpload` became a one-line delegation,
+which is the proof the generic path handles a real multi-source layout.
+`hetzner`/`vercel`/`digitalocean` dropped their hardcoded three-block staging for
+the shared call, and the cloud seed's `chown` derives from what it extracted
+rather than listing the built-in agents' home dirs.
+
+One spec field was added: `AgentPathMap.stagedAs`, marking OpenCode's two-way
+state tree as shipping on its own newest-wins path. Baking it into a snapshot
+would hand one box's state to every box made from that snapshot.
+
+Two bugs found on the way: `daytona` and `e2b` computed the `--agents` set and
+never passed it to `stageAllAgentStatic`, so a claude-only snapshot on those
+providers carried codex's and opencode's host config; and `host-stage.ts` had no
+tests at all — it has them now, mutation-checked against the excludes, the
+relocation, the `stagedAs` filter and the dispatch.
+
+**Phase 5b — `claudeInstall`.** Generalize it to an agent-keyed install variant
+across its ~35 sites — including the `AGENTBOX_CLAUDE_INSTALL` build arg, which
+is a rename with a bake implication, so it lands with a forced re-`prepare` and
+its own live check. Still open.
 
 **Phase 6 — config keys — DONE.** `packages/config/src/agents.ts` holds
 `AGENT_KINDS`, and `<agent>.sessionName`,
