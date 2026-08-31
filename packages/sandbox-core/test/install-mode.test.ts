@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 // import time, so redirecting $HOME in-process does nothing. Mock the config
 // module instead — this file is separate so the mock can't leak into the other
 // install tests.
-vi.mock('@agentbox/config', () => ({
+// Partial mock: the agent specs now read STATE_DIR from here to build their
+// host credential-backup paths, so a bare stub breaks the registry import.
+vi.mock('@agentbox/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/config')>()),
   loadEffectiveConfig: async () => ({ effective: { box: { claudeInstall: 'npm' } } }),
 }));
 
@@ -60,14 +63,14 @@ describe('both claude recipes seed the first-run wizard skill', () => {
 
   it('the native recipe copies it', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
-    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const { resolveAgentInstall } = await import('@agentbox/core');
     const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
     expect(install.postInstall).toContain(SKILL);
   });
 
   it('the npm alternate copies it too', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
-    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const { resolveAgentInstall } = await import('@agentbox/core');
     const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
     // ...and it really is the npm recipe, not a silent fall-through to native.
     expect(JSON.stringify(install.recipe)).toContain('@anthropic-ai/claude-code');
@@ -88,14 +91,14 @@ describe('the wizard skill seeds a box-user-owned skills/ directory', () => {
 
   it('the native recipe creates skills/ with its own install -d', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
-    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const { resolveAgentInstall } = await import('@agentbox/core');
     const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
     expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
   });
 
   it('the npm alternate does too', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
-    const { resolveAgentInstall } = await import('../src/sync/agents/types.js');
+    const { resolveAgentInstall } = await import('@agentbox/core');
     const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
     expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
   });

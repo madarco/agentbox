@@ -20,7 +20,10 @@ const desugar = (value: string): { provider?: string; remoteDockerHost?: string 
   return { provider: 'remote-docker', remoteDockerHost: value.slice(colon + 1) };
 };
 
-vi.mock('@agentbox/config', () => ({
+// Partial: the agent specs read STATE_DIR from here to build their host
+// credential-backup paths, so a full stub breaks the registry import.
+vi.mock('@agentbox/config', async (orig) => ({
+  ...(await orig<typeof import('@agentbox/config')>()),
   REMOTE_DOCKER: 'remote-docker',
   loadEffectiveConfig: vi.fn(async () => ({
     layers: { global: { values: { box: globalBox } } },

@@ -12,6 +12,24 @@ export type {
 } from './transport.js';
 export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export type {
+  AgentCapabilities,
+  AgentCredential,
+  AgentInstall,
+  AgentInstallRecipe,
+  AgentPathMap,
+  AgentPullSpec,
+  AgentSeedSpec,
+  AgentSyncSpec,
+  AgentWatchSpec,
+} from './agent-spec.js';
+export {
+  resolveAgentInstall,
+  BOX_USER,
+  BOX_HOME,
+  BOX_CREDS_DIR,
+  SETUP_GUIDE_PATH,
+} from './agent-spec.js';
+export type {
   AgentActivityState,
   AgentPlanPayload,
   AgentQuestionPayload,

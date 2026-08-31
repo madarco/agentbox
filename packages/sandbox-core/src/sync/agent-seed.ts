@@ -19,7 +19,7 @@
  */
 
 import { resolveAgentSpec } from './registry.js';
-import type { AgentId, AgentSeedSpec } from './agents/types.js';
+import type { AgentId, AgentSeedSpec } from '@agentbox/core';
 
 /** One resolved copy: absolute source, absolute destination, dirs to create. */
 export interface AgentSeedPlacement {

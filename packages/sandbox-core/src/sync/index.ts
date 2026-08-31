@@ -72,6 +72,10 @@ export {
   type PropagateBoxLike,
   type PropagatePlan,
 } from './agent-propagate.js';
+// The agent spec contract lives in `@agentbox/core` (the zero-internal-dep leaf)
+// so an agent package can declare its own row without importing anything that
+// imports it back. Re-exported here because ~40 call sites already reach for it
+// through `@agentbox/sandbox-core`.
 export type {
   AgentId,
   AgentSyncSpec,
@@ -81,8 +85,8 @@ export type {
   AgentInstall,
   AgentInstallRecipe,
   AgentSeedSpec,
-} from './agents/types.js';
-export { resolveAgentInstall } from './agents/types.js';
+} from '@agentbox/core';
+export { resolveAgentInstall } from '@agentbox/core';
 export {
   agentSeedPlacements,
   buildAgentSeedScript,

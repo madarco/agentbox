@@ -1,8 +1,8 @@
 {
-  "name": "@agentbox/sandbox-core",
+  "name": "@agentbox/agent-claude",
   "version": "0.0.0",
   "private": true,
-  "description": "Provider-neutral runtime logic shared by every AgentBox sandbox provider",
+  "description": "Claude Code as an AgentBox agent package \u2014 spec (data) and, later, its behavior",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./spec": {
+      "types": "./dist/spec.d.ts",
+      "import": "./dist/spec.js"
     }
   },
   "files": [
@@ -19,17 +23,14 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "lint": "eslint src test",
-    "test": "vitest run",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/agent-registry": "workspace:*",
     "@agentbox/config": "workspace:*",
-    "@agentbox/core": "workspace:*",
-    "execa": "^9.5.2",
-    "smol-toml": "^1.7.0"
+    "@agentbox/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

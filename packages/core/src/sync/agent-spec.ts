@@ -1,20 +1,22 @@
 /**
- * `AgentSyncSpec` — the single source of truth for every per-tool datum the
- * sync layer needs (paths, credential locations, forwarded env keys,
- * capabilities). Generalizes the cloud `AGENT_SPECS` table
- * (`@agentbox/sandbox-cloud/agent-credentials.ts`) so the docker + cloud
- * providers, the driver, and the CLI all read one registry instead of
- * re-branching on tool name in ~10 places.
+ * `AgentSyncSpec` — the single source of truth for every per-agent datum the
+ * sync layer needs: paths, credential locations, forwarded env keys, install
+ * recipes, capabilities.
  *
- * This holds DATA only. Per-tool *behavior* that needs the host FS (static-tree
- * transforms, stage producers, box→host pull inventories) lives in
- * `@agentbox/sandbox-docker` today and migrates into `sync/agents/<tool>/` in
- * later phases; those fields are added to this spec as they move (a
- * sandbox-core registry can't reference sandbox-docker without a dependency
- * cycle).
+ * **DATA ONLY, and that is what makes an agent packageable.** Every field is a
+ * string, array or plain object — nothing function-valued — so a spec can be
+ * read synchronously and offline by code that must never `import()` the agent
+ * it describes: the relay (whose bundle carries no workspace packages at all),
+ * the hub, and `sandbox-core`, which everything depends on. Per-agent
+ * *behavior* lives in that agent's own package.
+ *
+ * It lives in `@agentbox/core` — the zero-internal-dep leaf — rather than in
+ * `sandbox-core`, so an agent package can declare its own row without importing
+ * anything that would import it back. Moving it here is what lets the registry
+ * be assembled FROM the agent packages instead of listing them.
  */
 
-import type { AgentId } from '@agentbox/core';
+import type { AgentId } from './agent-kind.js';
 
 /**
  * Canonical agent id. Re-exported from `@agentbox/core` rather than redeclared:
@@ -343,3 +345,14 @@ export interface AgentPullSpec {
    */
   jsonMerges?: readonly { rel: string; projection: 'root' | 'plugins' }[];
 }
+
+/**
+ * The box user's NAME, not uid: the vscode uid differs per provider
+ * (docker/hetzner 1000, vercel 1001, e2b 1002) but the name is stable.
+ */
+export const BOX_USER = 'vscode';
+export const BOX_HOME = '/home/vscode';
+/** Where a cloud credential volume mounts, pivoted into each agent's real path. */
+export const BOX_CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
+/** Baked into every provider's base image; the source for the wizard skill. */
+export const SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';

@@ -21,7 +21,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
-import type { AgentId } from './agents/types.js';
+import type { AgentId } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import { mergeInstalledPlugins, mergeKnownMarketplaces } from './claude-pull.js';
 import {

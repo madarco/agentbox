@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
-import type { AgentId } from './agents/types.js';
+import type { AgentId } from '@agentbox/core';
 import {
   mergeInstalledPlugins,
   mergeKnownMarketplaces,

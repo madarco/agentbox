@@ -15,9 +15,9 @@
 
 import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
-import { resolveAgentInstall } from '../agents/types.js';
+import { resolveAgentInstall } from '@agentbox/core';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
-import type { AgentInstallRecipe } from '../agents/types.js';
+import type { AgentInstallRecipe } from '@agentbox/core';
 
 /**
  * `box.claudeInstall`, or undefined when the config can't be read.
