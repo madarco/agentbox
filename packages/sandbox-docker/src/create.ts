@@ -68,7 +68,11 @@ import { resolveCheckpoint } from './checkpoint.js';
 import { computeDockerContextFingerprint, readPreparedDockerState } from './prepared-state.js';
 import { launchCtlDaemon } from './ctl.js';
 import { writeBoxEnvFile } from './box-env.js';
-import { requireAgentSyncModule, type AgentMountResult } from './sync/agents/module.js';
+import {
+  requireAgentSyncModule,
+  type AgentMountResult,
+  type AgentVolumeChoice,
+} from './sync/agents/module.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import {
   ensureRelay,
@@ -704,11 +708,21 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const sync = makeDockerSync({
     container: containerName,
     image: ensureRef,
-    claudeSpec,
+    // Keyed by agent id: the sync walks the registry, so an agent this file
+    // never names still gets its volume seeded.
+    agentSpecs: Object.fromEntries(
+      (
+        [
+          ['claude', claudeSpec],
+          ['codex', codexSpec],
+          ['opencode', opencodeSpec],
+        ] satisfies Array<[string, AgentVolumeChoice | undefined]>
+      )
+        .filter((e) => e[1] !== undefined)
+        .map(([id, choice]) => [id, choice as AgentVolumeChoice]),
+    ),
     claudeIsolate: opts.claudeConfig?.isolate ?? false,
-    codexSpec,
     agentsSpec,
-    opencodeSpec,
   });
   await sync.seedAgentConfig(syncCtx);
   await sync.seedCredentials(syncCtx);

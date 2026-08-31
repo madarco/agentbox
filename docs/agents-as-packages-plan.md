@@ -502,6 +502,26 @@ carried `filtered 17 host-path hook(s)` and the `hostWorkspace` alias on an
 isolated create. The demo agent was driven through its own module against real
 docker: volume created and chowned, mounted, tmux session started and probed.
 
+## Bugbot review (PR #346)
+
+One finding, and it was a real one: **`afterVolumeSync` only ran for codex.**
+The hook is declared on the shared `AgentSyncModule` contract, but
+`seedAgentConfig` called it inside the codex branch only — so an agent that
+implemented it was silently skipped, with nothing failing. Exactly the class of
+bug this whole refactor exists to remove, hiding in the refactor itself.
+
+The cause was the shape, not the line: `DockerSyncHandle` carried
+`claudeSpec` / `codexSpec` / `opencodeSpec` as three named fields, which grew
+three near-identical branches, and only one of them learned about the hook. It
+is `agentSpecs: Record<string, AgentVolumeChoice>` now and `seedAgentConfig` is
+one loop over the registry, so the hook runs for every agent by construction.
+The per-agent log text derives from `staticPaths` instead of being written out
+three times. `~/.agents` stays a separate step — it is the shared skills tree,
+not an agent.
+
+The regression test registers the hook on a NON-codex agent and asserts it
+fires; mutating the loop back to `spec.id === 'codex'` fails it.
+
 ## Smoke, after phases 6 and 5a
 
 Run live, on this branch, docker + the real host home:

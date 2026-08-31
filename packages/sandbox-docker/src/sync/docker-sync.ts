@@ -26,7 +26,8 @@ import type {
   SyncContext,
 } from '@agentbox/core';
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
-import { renderCarryEntries } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, renderCarryEntries } from '@agentbox/sandbox-core';
+import type { AgentSyncSpec } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
 import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
@@ -44,25 +45,39 @@ export interface DockerSyncHandle {
    * omitted post-create (those ops don't run then).
    */
   image?: string;
-  /** Resolved claude config-volume spec (create-path). */
-  claudeSpec?: AgentVolumeChoice;
+  /**
+   * Resolved config-volume spec per agent, keyed by agent id. Absent key = that
+   * agent isn't wanted in this box (the host has no `~/.codex` and the caller
+   * didn't ask for codex, say).
+   *
+   * Keyed rather than one field per agent: the three named fields grew three
+   * near-identical branches below, and the divergence between them is how
+   * `afterVolumeSync` came to run for codex only. A map has one branch.
+   */
+  agentSpecs?: Record<string, AgentVolumeChoice>;
   /** Whether the claude config volume is per-box isolated (gates the credential extract). */
   claudeIsolate?: boolean;
-  /** Resolved codex spec, or undefined when codex isn't wanted (host has no ~/.codex + no `agentbox codex`). */
-  codexSpec?: AgentVolumeChoice;
   /** Resolved agents (~/.agents) spec, or undefined when the host has no ~/.agents. */
   agentsSpec?: AgentsConfigSpec;
-  /** Resolved opencode spec, or undefined when opencode isn't wanted. */
-  opencodeSpec?: AgentVolumeChoice;
 }
 
 /**
  * Guard: the create-path seeds need the box image in the handle.
  *
- * `claudeSpec` is deliberately NOT required — a box selected for codex or
- * opencode alone has no claude volume, and demanding one here would make
- * one-agent-per-box impossible. Each agent's block guards its own spec.
+ * `agentSpecs` is deliberately NOT required — a box selected for one agent has
+ * no volume for the others, and demanding one here would make one-agent-per-box
+ * impossible. An absent key is simply an agent this box doesn't have.
  */
+/**
+ * Where an agent's config comes from on the host, for the progress line —
+ * derived from its `staticPaths` rather than written per agent, so a new agent
+ * gets a truthful line instead of a missing one.
+ */
+function hostSourceLabel(spec: AgentSyncSpec): string {
+  const paths = spec.staticPaths.map((sp) => `~/${sp.hostHomeRel.join('/')}`);
+  return paths.length > 0 ? paths.join(' + ') : `~/.${spec.id}`;
+}
+
 function requireCreateHandle(handle: DockerSyncHandle, op: string): { image: string } {
   if (!handle.image) {
     throw new Error(
@@ -93,12 +108,9 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
     async seedAgentConfig(ctx: SyncContext): Promise<void> {
       // The per-tool config volume seeds, in create order. Static config +
       // skills + dynamic + box-facts all ride these volume rsyncs / overrides:
-      //   - claude:   ensureClaudeVolume (host ~/.claude rsync, carries dynamic
-      //               workflows/memory + box-facts via .claude).
-      //   - codex:    ensureCodexVolume + the AGENTS.override.md box-facts fold.
-      //   - agents:   ensureAgentsVolume (~/.agents skills).
-      //   - opencode: ensureOpencodeVolume.
-      // Each agent's declared `seeds` ride `seedDeclared` below.
+      //   - every wanted agent: its module's `ensureVolume` (host config rsync),
+      //     its declared `seeds`, then its `afterVolumeSync`.
+      //   - agents: ensureAgentsVolume (~/.agents skills) — not an agent.
       // Volume *mounts* are built by create.ts from the same specs.
       const { image } = requireCreateHandle(handle, 'seedAgentConfig');
       const log = ctx.onLog;
@@ -111,67 +123,49 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         for (const label of seedLabels(agent, seeded)) log(`seeded ${label} into ${volume}`);
       };
 
-      if (handle.claudeSpec) {
-        const claudeSpec = handle.claudeSpec;
-        // Through the registry like every other agent now. Claude's ensure
-        // reports more than created/synced — filtered hooks, a coerced install
-        // method, an aliased project key, a pre-trusted workspace — and those
-        // travel as `notes` so the shared contract keeps no field only one agent
-        // can fill. `hostWorkspace` goes in because claude rewrites host-scoped
-        // state as it syncs.
-        const claudeEnsured = await requireAgentSyncModule('claude').ensureVolume(claudeSpec, {
+      // One loop, in registry order. There is no per-agent branch left here:
+      // which volume, where it comes from and what to seed into it are all the
+      // agent's own data, and the post-sync step is the agent's own code.
+      for (const spec of AGENT_SYNC_SPECS) {
+        const choice = handle.agentSpecs?.[spec.id];
+        if (!choice) continue;
+        const mod = requireAgentSyncModule(spec.id);
+        // `hostWorkspace` is passed to every agent, not just claude: it is a
+        // fact about the box, and an agent that doesn't rewrite host-scoped
+        // state simply ignores it.
+        const ensured = await mod.ensureVolume(choice, {
           syncFromHost: true,
           image,
           hostWorkspace: ctx.hostWorkspace,
         });
-        if (claudeEnsured.synced) {
-          log(`synced ${claudeSpec.volume} from ~/.claude`);
-          for (const note of claudeEnsured.notes ?? []) log(note);
-        } else if (claudeEnsured.created) {
-          log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-        } else {
-          log(`reusing volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
-        }
-        await seedDeclared('claude', claudeSpec.volume);
-      }
+        if (ensured.synced) log(`synced ${choice.volume} from ${hostSourceLabel(spec)}`);
+        else if (ensured.created)
+          log(`created empty volume ${choice.volume} (no host ${hostSourceLabel(spec)})`);
+        else log(`reusing volume ${choice.volume}`);
+        // An ensure can report more than created/synced — claude's filters host
+        // hooks, coerces the install method, aliases the project key and
+        // pre-trusts the workspace. Those travel as free-form notes so the
+        // shared contract keeps no field only one agent can fill.
+        for (const note of ensured.notes ?? []) log(note);
 
-      if (handle.codexSpec) {
-        const codexSpec = handle.codexSpec;
-        const codex = requireAgentSyncModule('codex');
-        const codexEnsured = await codex.ensureVolume(codexSpec, { syncFromHost: true, image });
-        if (codexEnsured.synced) log(`synced ${codexSpec.volume} from ~/.codex`);
-        else if (codexEnsured.created)
-          log(`created empty volume ${codexSpec.volume} (no host ~/.codex)`);
-        else log(`reusing volume ${codexSpec.volume}`);
-        await seedDeclared('codex', codexSpec.volume);
-        // The AGENTS.override.md box-facts fold used to be called by name here.
-        // It is the agent's own post-sync step now, so a new agent gets one
-        // without this file learning about it.
-        for (const note of (await codex.afterVolumeSync?.(codexSpec.volume, image))?.notes ?? []) {
-          log(`${note} (${codexSpec.volume})`);
+        await seedDeclared(spec.id, choice.volume);
+
+        // Every agent's post-sync step, not just codex's. Codex's AGENTS.override
+        // fold was called by name here and the hook was wired into that one
+        // branch, so an agent implementing it was silently skipped.
+        for (const note of (await mod.afterVolumeSync?.(choice.volume, image))?.notes ?? []) {
+          log(`${note} (${choice.volume})`);
         }
       }
 
+      // `~/.agents` is the cross-agent skills tree, not an agent: no module, no
+      // seeds, shared across boxes. It stays a separate step for that reason.
       if (handle.agentsSpec) {
         const agentsSpec = handle.agentsSpec;
         const agentsEnsured = await ensureAgentsVolume(agentsSpec, { syncFromHost: true, image });
         if (agentsEnsured.synced) log(`synced ${agentsSpec.volume} from ~/.agents`);
         else if (agentsEnsured.created) log(`created empty volume ${agentsSpec.volume}`);
         else log(`reusing volume ${agentsSpec.volume}`);
-      }
-
-      if (handle.opencodeSpec) {
-        const opencodeSpec = handle.opencodeSpec;
-        const opencodeEnsured = await requireAgentSyncModule('opencode').ensureVolume(
-          opencodeSpec,
-          { syncFromHost: true, image },
-        );
-        if (opencodeEnsured.synced)
-          log(`synced ${opencodeSpec.volume} from ~/.config + ~/.local/share opencode`);
-        else if (opencodeEnsured.created)
-          log(`created empty volume ${opencodeSpec.volume} (no host opencode)`);
-        else log(`reusing volume ${opencodeSpec.volume}`);
-        await seedDeclared('opencode', opencodeSpec.volume);
       }
     },
 
@@ -182,8 +176,8 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       // boxes are read-seed only. Best-effort (never throws).
       const { image } = requireCreateHandle(handle, 'seedCredentials');
       // Nothing to mirror when this box wasn't created for claude.
-      if (!handle.claudeSpec) return;
-      const claudeSpec = handle.claudeSpec;
+      const claudeSpec = handle.agentSpecs?.claude;
+      if (!claudeSpec) return;
       const credSync = await syncClaudeCredentials(claudeSpec, {
         image,
         isolate: handle.claudeIsolate ?? false,

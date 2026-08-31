@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { registerAgentSyncModule } from '../src/sync/agents/module.js';
+import { registerAgentSyncModule, requireAgentSyncModule } from '../src/sync/agents/module.js';
 import type { SyncContext } from '@agentbox/core';
 
 // Mock every delegated module so the facade tests assert delegation only —
@@ -62,7 +62,13 @@ vi.mock('../src/sync/host-export.js', () => ({
 vi.mock('../src/sync/in-box-git.js', () => ({
   resyncWorkspaceFromHost: m.resyncWorkspaceFromHost,
 }));
-vi.mock('@agentbox/sandbox-core', () => ({ renderCarryEntries: m.renderCarryEntries }));
+// Spread the real module: the seed loop walks `AGENT_SYNC_SPECS`, and a full
+// stub would silently make it iterate nothing — the loop would "pass" by doing
+// no work at all.
+vi.mock('@agentbox/sandbox-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/sandbox-core')>()),
+  renderCarryEntries: m.renderCarryEntries,
+}));
 
 import { makeDockerSync } from '../src/sync/docker-sync.js';
 
@@ -185,7 +191,7 @@ const createHandle = {
   container: 'box1',
   image: 'agentbox/box:dev',
   claudeIsolate: false,
-  claudeSpec: { volume: 'agentbox-claude-config' },
+  agentSpecs: { claude: { volume: 'agentbox-claude-config' } },
 };
 
 describe('makeDockerSync.seedCredentials', () => {
@@ -235,6 +241,27 @@ describe('makeDockerSync.seedAgentConfig', () => {
     expect(m.ensureAgentsVolume).not.toHaveBeenCalled();
   });
 
+  it("runs an agent's post-sync step, whichever agent it is", async () => {
+    // `afterVolumeSync` is on the shared contract, but it used to be called
+    // only inside the codex branch — an agent that implemented it was silently
+    // skipped, and nothing failed. The loop is what makes this true by
+    // construction; this is what would have caught it.
+    const after = vi.fn(() => Promise.resolve({ notes: ['folded box facts'] }));
+    registerStub('claude', () => Promise.resolve({ created: false, synced: false }));
+    registerStub('opencode', () => Promise.resolve({ created: false, synced: false }));
+    registerAgentSyncModule({
+      ...requireAgentSyncModule('opencode'),
+      afterVolumeSync: after,
+    });
+    const sync = makeDockerSync({
+      ...createHandle,
+      agentSpecs: { ...createHandle.agentSpecs, opencode: { volume: 'agentbox-opencode' } },
+    });
+    await sync.seedAgentConfig(ctx());
+    expect(after).toHaveBeenCalledWith('agentbox-opencode', 'agentbox/box:dev');
+    expect(logs.some((l) => l.includes('folded box facts (agentbox-opencode)'))).toBe(true);
+  });
+
   it('seeds codex/agents/opencode when their specs are present, in order', async () => {
     const order: string[] = [];
     registerStub('claude', () => {
@@ -255,12 +282,17 @@ describe('makeDockerSync.seedAgentConfig', () => {
     });
     const sync = makeDockerSync({
       ...createHandle,
-      codexSpec: { volume: 'agentbox-codex' } as never,
+      agentSpecs: {
+        ...createHandle.agentSpecs,
+        codex: { volume: 'agentbox-codex' },
+        opencode: { volume: 'agentbox-opencode' },
+      },
       agentsSpec: { volume: 'agentbox-agents' } as never,
-      opencodeSpec: { volume: 'agentbox-opencode' } as never,
     });
     await sync.seedAgentConfig(ctx());
-    expect(order).toEqual(['claude', 'codex', 'agents', 'opencode']);
+    // Agents first, in registry order, then `~/.agents` — which is the shared
+    // skills tree, not an agent, and is independent of all of them.
+    expect(order).toEqual(['claude', 'codex', 'opencode', 'agents']);
     expect(m.seedCodexAgentsOverride).toHaveBeenCalledWith('agentbox-codex', 'agentbox/box:dev');
     // Every agent with a volume gets its declared seeds placed — one call site
     // instead of the three per-agent seeders this replaced.
