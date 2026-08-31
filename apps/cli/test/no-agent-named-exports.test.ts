@@ -70,7 +70,6 @@ const ALLOWLIST: Record<string, string> = {
   // Phase 4 — the `sandbox-core` / `sandbox-cloud` moves. Gated: `host-stage.ts`
   // imports the first two, and ITS exports are published SDK surface, so the
   // move is an SDK_API_VERSION bump rather than a refactor.
-  'packages/sandbox-core/src/sync/host-stage.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agent-pull.ts': 'phase 4',
   'packages/sandbox-core/src/sync/concerns/credentials.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agents/claude/paths.ts': 'phase 4',

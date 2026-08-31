@@ -51,7 +51,6 @@ export interface StageResult {
   warnings: string[];
 }
 
-
 export async function pathExists(p: string): Promise<boolean> {
   try {
     await stat(p);
@@ -217,7 +216,6 @@ export async function stageAgentStaticForUpload(
   }
 }
 
-
 /**
  * Filtered tarball of `~/.agents/` (the cross-agent "Agent Skills" dir).
  * Extracts into `/home/vscode/.agents/` on the sandbox FS at snapshot-bake time
@@ -255,68 +253,6 @@ export async function stageAgentsStaticForUpload(
     if (tarballPath) await rm(tarballPath, { force: true });
     throw err;
   }
-}
-
-
-// ---------- opencode ----------
-
-export interface StageOpencodeOptions {
-  hostHome?: string;
-}
-
-/**
- * Filtered tarball of opencode static config. Layout extracts into
- * `/home/vscode/.local/share/opencode/`:
- *
- *   ./<data files>            ← from ~/.local/share/opencode/ (minus auth.json)
- *   ./config/<config files>   ← from ~/.config/opencode/
- *
- * Both sources, their `relocToSubpath` and their excludes are registry data, so
- * this is the generic stager with nothing added. It stays a named export
- * because it is part of the published provider SDK's surface. `auth.json` and
- * the two-way state tree ship separately (their own variants below).
- */
-export async function stageOpencodeStaticForUpload(
-  opts: StageOpencodeOptions = {},
-): Promise<StageResult> {
-  return stageAgentStaticForUpload('opencode', opts);
-}
-
-/**
- * Tarball with **only** `auth.json`. Prefers the cloud backup
- * `~/.agentbox/opencode-credentials.json` (captured from a previous cloud box);
- * falls back to the host's real `~/.local/share/opencode/auth.json`. Returns an
- * empty result when neither exists.
- */
-export async function stageOpencodeCredentialsForUpload(
-  opts: StageOpencodeOptions = {},
-): Promise<StageResult> {
-  const hostHome = opts.hostHome ?? homedir();
-  // Cloud backup under <hostHome>/.agentbox, derived from hostHome (see the
-  // codex stager above) so the path tracks the active home and tests stay
-  // hermetic; production matches OPENCODE_CREDENTIALS_BACKUP_FILE.
-  const cloudBackup = join(hostHome, '.agentbox', 'opencode-credentials.json');
-  if (await pathExists(cloudBackup)) {
-    return stageSingleFileTarball('opencode-creds', cloudBackup, 'auth.json');
-  }
-  const hostAuth = join(hostHome, '.local', 'share', 'opencode', 'auth.json');
-  if (!(await pathExists(hostAuth))) return emptyResult();
-  return stageSingleFileTarball('opencode-creds', hostAuth, 'auth.json');
-}
-
-/**
- * Tarball with **only** the selected-model state (`model.json`, sourced from
- * `~/.local/state/opencode/model.json`). Extracts to a box's state dir so a
- * fresh box inherits the host's active model instead of OpenCode's default.
- * Returns an empty result when the host has never picked a model.
- */
-export async function stageOpencodeStateForUpload(
-  opts: StageOpencodeOptions = {},
-): Promise<StageResult> {
-  const hostHome = opts.hostHome ?? homedir();
-  const hostModel = join(hostHome, '.local', 'state', 'opencode', 'model.json');
-  if (!(await pathExists(hostModel))) return emptyResult();
-  return stageSingleFileTarball('opencode-state', hostModel, 'model.json');
 }
 
 // ---------- all-agent static bake (shared across cloud prepare paths) ----------

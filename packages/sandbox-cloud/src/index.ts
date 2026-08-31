@@ -145,13 +145,7 @@ export {
 // rule). The implementations live in sandbox-docker for historical reasons:
 // they were originally built for the docker rsync-into-volume flow and stayed
 // there when the cloud path adopted them.
-export {
-  stageAgentsStaticForUpload,
-  stageOpencodeStaticForUpload,
-  stageOpencodeCredentialsForUpload,
-  type StageOpencodeOptions,
-  type StageResult,
-} from '@agentbox/sandbox-core';
+export { stageAgentsStaticForUpload, type StageResult } from '@agentbox/sandbox-core';
 export {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,

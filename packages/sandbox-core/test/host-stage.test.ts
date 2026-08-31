@@ -3,10 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import {
-  stageAgentStaticForUpload,
-  stageOpencodeStaticForUpload,
-} from '../src/sync/host-stage.js';
+import { stageAgentStaticForUpload } from '../src/sync/host-stage.js';
 
 /** Every path inside a staged tarball, relative and without the leading `./`. */
 async function tarEntries(tarball: string): Promise<string[]> {
@@ -46,7 +43,10 @@ describe('stageAgentStaticForUpload', () => {
         // `stagedAs: 'state'` — must NOT be baked into a shared snapshot.
         await writeFileAt(join(home, '.local', 'state', 'opencode', 'cwd'), '/workspace');
 
-        const res = await stageOpencodeStaticForUpload({ hostHome: home });
+        // The generic stager directly: opencode's own wrapper moved into
+        // `@agentbox/agent-opencode`, and what is under test here is that the
+        // registry row alone reproduces the layout.
+        const res = await stageAgentStaticForUpload('opencode', { hostHome: home });
         expect(res.tarballPath).not.toBeNull();
         const entries = await tarEntries(res.tarballPath as string);
         await res.cleanup();

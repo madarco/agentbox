@@ -8,7 +8,7 @@
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { seedOpencodeModelState } from './cloud-sync.js';
-import { stageOpencodeCredentialsForUpload } from '@agentbox/sandbox-core';
+import { stageOpencodeCredentialsForUpload } from './host-stage.js';
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,

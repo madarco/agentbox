@@ -8,7 +8,8 @@
  */
 
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { resolveAgentSpec, stageOpencodeStateForUpload } from '@agentbox/sandbox-core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { stageOpencodeStateForUpload } from './host-stage.js';
 
 /**
  * Box-side OpenCode state dir. Derived from the agent's declared `XDG_STATE_HOME`

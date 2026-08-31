@@ -172,9 +172,6 @@ export {
 } from './concerns/dynamic.js';
 export {
   stageAgentsStaticForUpload,
-  stageOpencodeStaticForUpload,
-  stageOpencodeCredentialsForUpload,
-  stageOpencodeStateForUpload,
   stageAgentStaticForUpload,
   AGENTS_STATIC_BOX_DIR,
   // Staging primitives. Exported so an agent package can build its OWN stager
@@ -190,6 +187,5 @@ export {
   stageSingleFileTarball,
   STAGE_WRITABLE_CHMOD,
   type AgentStaticStage,
-  type StageOpencodeOptions,
   type StageResult,
 } from './host-stage.js';
