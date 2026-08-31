@@ -289,7 +289,7 @@ It now derives from the registry, and destroy's cleanup + prune's never-reap lis
 iterate `AGENT_SYNC_SPECS` instead of naming agents. Verified the derived names
 are byte-identical — a mismatch would repoint every existing box's volume.
 
-**Phase 3b — the inversion — NEXT.** What is left of phase 3 is behavior, and the
+**Phase 3b — the inversion — DONE for the seam (`d4c01a36`, `3962c3a9`); the file moves remain.** What is left of phase 3 is behavior, and the
 interface is now known exactly, because the import surface was measured rather
 than guessed:
 
@@ -301,7 +301,16 @@ than guessed:
 | `seedCodexAgentsOverride` | `AgentSyncModule.afterVolumeSync?` |
 | `<A>ConfigSpec` types | `AgentConfigSpec` |
 
-Land per file, claude last — it is the daily driver.
+`AgentSyncModule` + a registry now exist in `sandbox-docker`, and every call
+site goes through them except claude's `ensureVolume` (its result reports four
+extra outcomes and one log line interpolates `ctx.hostWorkspace` — it converts
+when claude moves). `builtins.ts` adapts the three shipped modules and registers
+them on import, so behavior is unchanged while nothing has moved yet.
+
+**What is left of 3b:** move `sync/agents/<id>.ts` into `packages/agent-<id>`
+and register from the app instead of `builtins.ts`. Each agent's arm leaves that
+file as it goes, so the exemption in `agent-module-isolation.test.ts` shrinks to
+nothing. Land per file, claude last — it is the daily driver.
 
 **Phase 2 — the CLI layer — BLOCKED, and reordered after 3b.** Measured: the
 per-agent folders import **26 distinct shared CLI modules** (`lib/prompt`,
