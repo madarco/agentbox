@@ -171,7 +171,7 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
     // Docker hot path lean, same reason as the provider registry).
     const { Daytona } = await import('@daytona/sdk');
     const client = new Daytona();
-    await client.list();
+    await probeDaytonaAuth(client);
     s.stop('Daytona credentials accepted');
     return { ok: true };
   } catch (err) {
@@ -183,6 +183,23 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
     }
     return { ok: false, kind: 'network', message };
   }
+}
+
+/**
+ * Force a real round trip to Daytona, rather than merely building a call.
+ *
+ * `client.list()` returns an AsyncIterableIterator that pages lazily (see
+ * `backend.ts`), so `await client.list()` resolves the *generator object* and
+ * issues no request at all — validation accepted every string, including a
+ * revoked key, and the failure only surfaced a bake later as a bare
+ * "Invalid credentials". Pulling the first item forces the first page, which is
+ * where a dead key raises `DaytonaAuthenticationError`. An organization with no
+ * sandboxes yields nothing and the loop simply ends: still a successful call.
+ */
+export async function probeDaytonaAuth(client: {
+  list: () => AsyncIterable<unknown>;
+}): Promise<void> {
+  for await (const _sandbox of client.list()) break;
 }
 
 function snapshotManagedEnv(): Record<ManagedKey, string | undefined> {
