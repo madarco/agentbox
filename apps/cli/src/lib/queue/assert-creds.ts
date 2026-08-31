@@ -12,6 +12,9 @@
  */
 import type { QueueAgentKind } from '@agentbox/relay';
 import { normalizeLastAgent } from '@agentbox/core';
+import type { HostCredVerdict } from '@agentbox/cli-kit';
+
+export type { HostCredVerdict };
 
 /**
  * Wording for the agents we have something specific to say about. Not total —
@@ -66,10 +69,7 @@ export class ExpiredAgentCredsError extends MissingAgentCredsError {
  * present-but-unrenewable case; an agent with no such concept simply never
  * returns it.
  */
-export type HostCredVerdict =
-  | { status: 'ok' }
-  | { status: 'missing' }
-  | { status: 'expired'; message: string };
+
 
 export interface AssertAgentCredsInput {
   agent: QueueAgentKind;

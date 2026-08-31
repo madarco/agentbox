@@ -63,8 +63,8 @@ import { resolveLimits } from '../../limits.js';
 import { maybePromptPortless } from '../../portless-prompt.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { isolateOptionKey, type AgentCreateOptions } from './options.js';
-import { RESUME_SEED } from './types.js';
-import type { AgentCliSpec, AgentCreateContext, AgentPreflight } from './types.js';
+import { RESUME_SEED } from '@agentbox/cli-kit';
+import type { AgentCliSpec, AgentCreateContext, AgentPreflight } from '@agentbox/cli-kit';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {

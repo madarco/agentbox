@@ -18,8 +18,12 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
-    "@clack/prompts": "^0.9.0"
+    "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-docker": "workspace:*",
+    "@clack/prompts": "^0.9.0",
+    "commander": "^12.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

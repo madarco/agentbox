@@ -528,12 +528,24 @@ importers:
 
   packages/cli-kit:
     dependencies:
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../config
       '@agentbox/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbox/sandbox-core':
+        specifier: workspace:*
+        version: link:../sandbox-core
+      '@agentbox/sandbox-docker':
+        specifier: workspace:*
+        version: link:../sandbox-docker
       '@clack/prompts':
         specifier: ^0.9.0
         version: 0.9.1
+      commander:
+        specifier: ^12.1.0
+        version: 12.1.0
     optionalDependencies:
       '@homebridge/node-pty-prebuilt-multiarch':
         specifier: ^0.13.1

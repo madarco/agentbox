@@ -85,3 +85,28 @@ export {
   type RunAgentLoginResult,
 } from './agent-login-run.js';
 export { openCommandLog, logToActiveCommand, type CommandLog } from './log-file.js';
+
+// The agent CLI contract. It lives here so an agent PACKAGE can implement it —
+// it used to sit in `apps/cli/src/agents/command/types.ts`, which a package
+// cannot import.
+export type {
+  SignInResult,
+  AttachExtras,
+  CreateRouting,
+  HostCredVerdict,
+  AgentResumeSupport,
+  AgentRuntime,
+  AgentCommandText,
+  AgentCreateContext,
+  PreparedSeed,
+  AgentPreflight,
+  AgentCreateAdjust,
+  AgentBeforeCreateContext,
+  AgentCommandHooks,
+  HookOutput,
+  AgentSubcommands,
+  AgentCliSpec,
+  AttachWrapped,
+  CarryEntries,
+} from './agent-contract.js';
+export { RESUME_SEED } from './agent-contract.js';

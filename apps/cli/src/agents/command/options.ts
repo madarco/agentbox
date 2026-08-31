@@ -9,7 +9,7 @@
  */
 import { Command } from 'commander';
 import { ATTACH_IN_HELP, INLINE_HELP, NO_ATTACH_HELP } from '../../commands/_attach-in.js';
-import type { AgentCliSpec } from './types.js';
+import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 /** Flags shared by the create action and both subcommands. */
 export interface AgentCreateOptions {

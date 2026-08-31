@@ -4,7 +4,7 @@ import type { EffectiveConfig } from '@agentbox/config';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveSessionName } from '../src/agents/command/start-attach.js';
 import { loadAgentModule } from '../src/agents/index.js';
-import type { AgentCliSpec } from '../src/agents/command/types.js';
+import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 /**
  * `<agent> attach` / `<agent> start` must target the CONFIGURED tmux session.

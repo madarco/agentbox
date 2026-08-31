@@ -24,7 +24,7 @@ import {
   buildStartSubcommand,
   type AgentCreateOptions,
 } from './options.js';
-import type { AgentCliSpec, AgentSubcommands, AttachWrapped } from './types.js';
+import type { AgentCliSpec, AgentSubcommands, AttachWrapped } from '@agentbox/cli-kit';
 
 /** What an agent declares; the factory fills in `attachWrapped`. */
 export type AgentCliSpecInput = Omit<AgentCliSpec, 'attachWrapped'>;

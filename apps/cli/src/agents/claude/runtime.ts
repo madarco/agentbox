@@ -39,7 +39,7 @@ import { loadPtyBackend } from '@agentbox/cli-kit';
 import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
 import { clampSpinnerLine } from '@agentbox/cli-kit';
 import { addClaudeLoginOptions, runClaudeLoginCommand } from './login-command.js';
-import type { AgentRuntime, SignInResult } from '../command/types.js';
+import type { AgentRuntime, SignInResult } from '@agentbox/cli-kit';
 
 /**
  * Run `claude auth login` in a throwaway container against the shared

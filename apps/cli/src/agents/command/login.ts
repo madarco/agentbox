@@ -16,7 +16,7 @@ import type { Command } from 'commander';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { imageProgress } from '@agentbox/cli-kit';
-import type { AgentCliSpec } from './types.js';
+import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 export interface LoginOptions {
   interactive?: boolean;

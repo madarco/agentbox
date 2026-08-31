@@ -1,4 +1,5 @@
 import type { EffectiveConfig } from '@agentbox/config';
+import type { CreateRouting } from '@agentbox/cli-kit';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { resolveCustodyTarget } from '../commands/control-plane.js';
 import { hubCanRunEngine, unsharedHostReason } from './remote-docker-share.js';
@@ -20,11 +21,10 @@ export interface CreateRoutingInput {
   urlFlag?: string;
 }
 
-export type CreateRouting =
-  | { where: 'hub' }
-  // `fellBackReason` is set only when the hub WAS the default but a prerequisite
-  // was missing — the caller surfaces it so the local build isn't silent.
-  | { where: 'local'; fellBackReason?: string };
+// Declared on the agent contract in `@agentbox/cli-kit`, because an agent
+// package reads `ctx.routing()` and cannot import `apps/cli`. Re-exported here
+// so this module stays the obvious home for the routing decision itself.
+export type { CreateRouting } from '@agentbox/cli-kit';
 
 /**
  * Decide whether a cloud create runs on the remote hub (the control box) or on

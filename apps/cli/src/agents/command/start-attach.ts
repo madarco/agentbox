@@ -35,7 +35,7 @@ import {
 } from '../../session-teleport/index.js';
 import { clampSpinnerLine } from '@agentbox/cli-kit';
 import type { AgentStartOptions } from './options.js';
-import type { AgentCliSpec } from './types.js';
+import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 /**
  * The tmux session `<agent> attach` / `<agent> start` should target: the

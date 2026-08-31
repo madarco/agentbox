@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveResumeSeed } from '../src/agents/command/create-action.js';
 import { agentCommandEntry } from '../src/agents/commands.js';
-import type { AgentCliSpec, AgentCreateContext } from '../src/agents/command/types.js';
+import type { AgentCliSpec, AgentCreateContext } from '@agentbox/cli-kit';
 import type { AgentCreateOptions } from '../src/agents/command/options.js';
 
 /**

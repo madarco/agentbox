@@ -21,12 +21,9 @@
 import type { AttachOpenIn, EffectiveConfig, UserConfig } from '@agentbox/config';
 import type { AgentId, ResolvedCarryEntry } from '@agentbox/core';
 import type { BoxRecord, CreateBoxOptions } from '@agentbox/sandbox-docker';
-import type { CreateRouting } from '../../control-plane/route-create.js';
-import type { WrappedAttachOptions } from '../../wrapped-pty/index.js';
 import type { Command } from 'commander';
-import type { AgentLoginBinding } from '@agentbox/cli-kit';
-import type { HostCredVerdict } from '../../lib/queue/assert-creds.js';
-import type { ResolvedTeleport } from '../../session-teleport/index.js';
+import type { AgentLoginBinding } from './agent-login-bindings.js';
+import type { ResolvedTeleport } from './teleport-types.js';
 import type { AgentSyncSpec } from '@agentbox/sandbox-core';
 
 /** Result of an agent's guided-or-passthrough sign-in. */
@@ -37,7 +34,35 @@ export interface SignInResult {
 }
 
 /** Extra wrapped-attach wiring only some agents have (claude's clipboard paste). */
-export type AttachExtras = Pick<WrappedAttachOptions, 'onPasteImage' | 'onPasteImageFile'>;
+/**
+ * The two paste hooks an agent contributes to a wrapped attach.
+ *
+ * Declared here rather than `Pick`ed off `WrappedAttachOptions`: that type lives
+ * in the CLI's PTY compositor, and this contract has to be importable by an
+ * agent PACKAGE, which cannot import `apps/cli`. The compositor's options type
+ * is structurally compatible, so the direction of the dependency is the only
+ * thing that changed.
+ */
+export interface AttachExtras {
+  onPasteImage?: () => Promise<'pasted' | 'no-image' | 'error'>;
+  onPasteImageFile?: (hostPath: string) => Promise<string | null>;
+}
+
+/**
+ * Where a cloud create runs. Mirrors `control-plane/route-create.ts`'s union —
+ * two variants, and the contract only ever reads `where`.
+ */
+export type CreateRouting = { where: 'hub' } | { where: 'local'; fellBackReason?: string };
+
+/**
+ * An agent's verdict on its own host credentials, for the `-i` pre-flight.
+ * `'expired'` is the present-but-unrenewable case; an agent with no such
+ * concept simply never returns it.
+ */
+export type HostCredVerdict =
+  | { status: 'ok' }
+  | { status: 'missing' }
+  | { status: 'expired'; message: string };
 
 /**
  * How the box's recorded session is brought back — read by `agent-sessions.ts`

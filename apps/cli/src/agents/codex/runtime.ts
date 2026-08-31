@@ -35,7 +35,7 @@ import { runGuidedLogin } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';
 import { imageProgress } from '@agentbox/cli-kit';
 import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
-import type { AgentRuntime, SignInResult } from '../command/types.js';
+import type { AgentRuntime, SignInResult } from '@agentbox/cli-kit';
 
 /**
  * Run `codex login` in a throwaway container against the shared codex-config
