@@ -39,7 +39,7 @@ export {
   type TerminalCtor,
 } from './pty-backend.js';
 export { clampSpinnerLine } from './spinner-line.js';
-export { BOX_WORKSPACE, BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from './cwd-encoding.js';
+export { BOX_WORKSPACE } from './cwd-encoding.js';
 export {
   TeleportError,
   type TeleportAgent,

@@ -61,7 +61,8 @@ import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installPortlessCommand } from './install-portless.js';
-import { installCodexCommand, installCodexPlugin } from './install-codex.js';
+import { installCodexCommand } from './install-codex.js';
+import { installCodexPlugin } from '@agentbox/agent-codex/cli';
 import {
   fetchTrayLatestVersion,
   installAppCommand,

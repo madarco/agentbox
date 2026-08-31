@@ -13,3 +13,16 @@ export { CODEX_LOGIN_SPEC, extractCodexUserCode } from './login.js';
 export { codexLoginBinding } from './login-binding.js';
 export { codexAuthAvailable } from './host-creds.js';
 export { resolveCodexTeleport } from './teleport.js';
+
+export {
+  installCodexPlugin,
+  upsertCodexPluginEnable,
+  marketplaceSource,
+  codexHomeDir,
+  codexConfigPath,
+  codexPluginEnableTable,
+  type InstallCodexOptions,
+  type InstallCodexResult,
+  type CodexEnableStatus,
+  type CodexEnableResult,
+} from '../install-plugin.js';

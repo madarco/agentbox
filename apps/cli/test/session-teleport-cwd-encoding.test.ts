@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  BOX_WORKSPACE_ENCODED,
-  encodeClaudeProjectsDir,
-} from '@agentbox/cli-kit';
+import { BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from '@agentbox/agent-claude/cli';
 
 describe('encodeClaudeProjectsDir', () => {
   it('encodes a normal Projects path', () => {

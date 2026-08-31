@@ -59,7 +59,12 @@ export function makeHostServices(init: HostServicesInit): AgentHostServices {
     showInstallHint: () => maybeShowInstallHint(),
 
     resolvePlanFile(req: AgentPlanFileRequest): Promise<ResolvedTeleport> {
-      return resolvePlanTeleport({ planPath: req.path, hostCwd: req.hostCwd, log: req.log });
+      return resolvePlanTeleport({
+        planPath: req.path,
+        hostCwd: req.hostCwd,
+        log: req.log,
+        boxParentDir: req.boxParentDir,
+      });
     },
 
     async setupWizard(req: AgentSetupWizardRequest): Promise<AgentSetupWizardOutcome> {

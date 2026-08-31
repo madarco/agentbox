@@ -4,7 +4,12 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { detectHostTerminal } from '../terminal/host.js';
-import { encodeClaudeProjectsDir } from '@agentbox/cli-kit';
+// Deliberately `sandbox-core`'s copy, not `@agentbox/agent-claude/cli`'s: this
+// module is bundled into the hub, and pulling that entry in for one pure string
+// function drags its whole dependency tree (node-pty included) into the build.
+// The two encoders are the same rule, duplicated for layering — see the comment
+// on `encodeClaudeProjectsKey`.
+import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AgentId } from '@agentbox/core';
@@ -118,7 +123,7 @@ export function resolveSessionArgs(agent: AgentId, opts: ForkOptions): string[] 
   if (opts.session) return ['--resume', opts.session];
   if (agent === 'codex') return ['--continue'];
   // claude: guard against an ambiguous newest-by-mtime pick.
-  const dir = join(homedir(), '.claude', 'projects', encodeClaudeProjectsDir(opts.workspace));
+  const dir = join(homedir(), '.claude', 'projects', encodeClaudeProjectsKey(opts.workspace));
   if (!existsSync(dir)) return ['--continue']; // claude emits the clear "run claude here first" error
   const now = Date.now();
   const recent = readdirSync(dir)
@@ -265,7 +270,7 @@ export const forkCommand = new Command('fork')
             homedir(),
             '.claude',
             'projects',
-            encodeClaudeProjectsDir(opts.workspace),
+            encodeClaudeProjectsKey(opts.workspace),
           );
           if (existsSync(join(dir, `${envId}.jsonl`))) opts.session = envId;
         }

@@ -21,6 +21,7 @@ import { syncClaudeCredentials } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import { rebuildPluginNativeDeps, SHARED_CLAUDE_VOLUME } from '../docker-sync.js';
 import { claudeRuntime } from './runtime.js';
+import { BOX_CLAUDE_PLANS_DIR } from './projects-dir.js';
 
 const spec = resolveAgentSpec('claude');
 
@@ -124,6 +125,7 @@ export const claudeCliSpec: Omit<AgentCliSpec, 'attachWrapped'> = {
           path: opts.plan,
           hostCwd: ctx.workspace,
           log: ctx.writeLog,
+          boxParentDir: BOX_CLAUDE_PLANS_DIR,
         });
         return {
           ...base,

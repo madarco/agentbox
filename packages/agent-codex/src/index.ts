@@ -73,3 +73,10 @@ export * from './host-stage.js';
 export * from './box-config.js';
 
 export { codexStagedItems } from './staged-items.js';
+
+// The plugin installer is exported from `@agentbox/agent-codex/cli`, NOT here.
+// This entry is imported by `sandbox-docker`'s module registry and reaches the
+// hub bundle; the installer pulls `@agentbox/cli-kit` for its logger, and
+// cli-kit carries the pty backend, so re-exporting it here fails the hub's
+// esbuild bundle on a `.node` binary. Subpath entries keep that cost where it
+// belongs.

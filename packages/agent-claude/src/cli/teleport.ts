@@ -14,17 +14,14 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  BOX_WORKSPACE,
-  BOX_WORKSPACE_ENCODED,
-  encodeClaudeProjectsDir,
-} from '@agentbox/cli-kit';
+import { BOX_WORKSPACE } from '@agentbox/cli-kit';
 import {
   TeleportError,
   type ResolvedTeleport,
   type ResumeMode,
   type TeleportLogger,
 } from '@agentbox/cli-kit';
+import { BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from './projects-dir.js';
 
 /** In-box `~/.claude/projects/-workspace/` directory. */
 export const BOX_CLAUDE_PROJECTS_DIR = `/home/vscode/.claude/projects/${BOX_WORKSPACE_ENCODED}`;

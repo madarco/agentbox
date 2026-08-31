@@ -333,6 +333,12 @@ export interface AgentPlanFileRequest {
   path: string;
   hostCwd: string;
   log: (line: string) => void;
+  /**
+   * In-box directory to upload the plan into — the asking agent's own
+   * (`/home/vscode/.claude/plans` for claude). Passed rather than looked up so
+   * the staging helper stays agent-neutral.
+   */
+  boxParentDir: string;
 }
 
 export interface AgentClipboardServices {

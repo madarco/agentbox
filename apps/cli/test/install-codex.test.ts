@@ -5,14 +5,13 @@ import {
   codexPluginEnableTable,
   marketplaceSource,
   upsertCodexPluginEnable,
-} from '../src/commands/install-codex.js';
+} from '@agentbox/agent-codex/cli';
 import { resolveDevRepoRoot } from '../src/lib/source-checkout.js';
 
 const ID = 'agentbox@agentbox';
 const enabledOf = (text: string) =>
   (parseToml(text) as { plugins?: Record<string, { enabled?: boolean }> }).plugins?.[ID]?.enabled;
-const tableCount = (text: string) =>
-  text.match(/\[plugins\."agentbox@agentbox"\]/g)?.length ?? 0;
+const tableCount = (text: string) => text.match(/\[plugins\."agentbox@agentbox"\]/g)?.length ?? 0;
 
 describe('upsertCodexPluginEnable', () => {
   it('appends the enable table to an empty config', () => {
@@ -109,17 +108,21 @@ describe('codexPluginEnableTable', () => {
   });
 });
 
-describe('marketplaceSource', () => {
-  // Tests run from the source checkout, so the default resolves to the local repo.
+describe('marketplaceSource wiring', () => {
+  // `resolveDevRepoRoot` is the CLI's, and is injected — an agent package cannot
+  // read the running binary's own path. These are the app-side half: that the
+  // real resolver finds this checkout, and that what the command hands over
+  // actually reaches the source decision. The pure cases live in
+  // `packages/agent-codex/test/install-plugin.test.ts`.
   it('points at the local repo root in a source checkout (dev)', () => {
-    const { source, devRoot } = marketplaceSource();
+    const { source, devRoot } = marketplaceSource({ resolveDevRepoRoot });
     expect(devRoot).toBe(resolveDevRepoRoot());
     expect(devRoot).not.toBeNull();
     expect(source).toBe(devRoot);
   });
 
   it('falls back to the GitHub slug with --no-dev', () => {
-    const { source, devRoot } = marketplaceSource({ noDev: true });
+    const { source, devRoot } = marketplaceSource({ noDev: true, resolveDevRepoRoot });
     expect(devRoot).toBeNull();
     expect(source).toBe('madarco/agentbox');
   });

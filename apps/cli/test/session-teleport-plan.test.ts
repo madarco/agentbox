@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BOX_CLAUDE_PLANS_DIR, resolvePlanTeleport } from '../src/session-teleport/plan.js';
+import { resolvePlanTeleport } from '../src/session-teleport/plan.js';
+import { BOX_CLAUDE_PLANS_DIR } from '@agentbox/agent-claude/cli';
 import { TeleportError } from '@agentbox/cli-kit';
 
 const HOST_CWD = '/Users/marco/Projects/AgentBox/agentbox';
@@ -12,6 +13,7 @@ describe('resolvePlanTeleport', () => {
     const home = await mkdtemp(join(tmpdir(), 'plan-test-'));
     await expect(
       resolvePlanTeleport({
+        boxParentDir: BOX_CLAUDE_PLANS_DIR,
         planPath: join(home, '.claude', 'plans', 'missing.md'),
         hostCwd: HOST_CWD,
         hostHome: home,
@@ -31,6 +33,7 @@ describe('resolvePlanTeleport', () => {
     );
 
     const r = await resolvePlanTeleport({
+      boxParentDir: BOX_CLAUDE_PLANS_DIR,
       planPath: '~/.claude/plans/my-plan.md',
       hostCwd: HOST_CWD,
       hostHome: home,
@@ -54,7 +57,12 @@ describe('resolvePlanTeleport', () => {
     await writeFile(planFile, `Edit ${absCwd}/src/foo.ts.\n`, 'utf8');
 
     // Pass the workspace as a path relative to process.cwd() (here: '.').
-    const r = await resolvePlanTeleport({ planPath: planFile, hostCwd: '.', hostHome: home });
+    const r = await resolvePlanTeleport({
+      boxParentDir: BOX_CLAUDE_PLANS_DIR,
+      planPath: planFile,
+      hostCwd: '.',
+      hostHome: home,
+    });
 
     const staged = await readFile(r.hostFile, 'utf8');
     expect(staged).toBe('Edit /workspace/src/foo.ts.\n');
@@ -67,6 +75,7 @@ describe('resolvePlanTeleport', () => {
     await writeFile(planFile, '# Standalone\n\nNo workspace references here.\n', 'utf8');
 
     const r = await resolvePlanTeleport({
+      boxParentDir: BOX_CLAUDE_PLANS_DIR,
       planPath: planFile,
       hostCwd: HOST_CWD,
       hostHome: home,

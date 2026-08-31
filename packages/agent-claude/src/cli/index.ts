@@ -47,3 +47,8 @@ export {
 } from './login-session.js';
 export { addClaudeLoginOptions, runClaudeLoginCommand } from './login-command.js';
 export { resolveClaudeTeleport } from './teleport.js';
+export {
+  encodeClaudeProjectsDir,
+  BOX_WORKSPACE_ENCODED,
+  BOX_CLAUDE_PLANS_DIR,
+} from './projects-dir.js';

@@ -16,8 +16,14 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { BOX_WORKSPACE } from '@agentbox/cli-kit';
 import { TeleportError, type ResolvedTeleport, type TeleportLogger } from '@agentbox/cli-kit';
 
-/** In-box `~/.claude/plans/` directory (vscode user home). */
-export const BOX_CLAUDE_PLANS_DIR = '/home/vscode/.claude/plans';
+// The in-box destination is the AGENT's, so it arrives as `boxParentDir` rather
+// than as a constant here. What stays is the generic staging: read a host file,
+// rewrite it into a tmp dir, hand back a `ResolvedTeleport` the caller uploads.
+//
+// Importing claude's constant instead would have been the obvious move and is a
+// trap: this module is bundled into the hub, and reaching into
+// `@agentbox/agent-claude/cli` for one string drags that entry's whole
+// dependency tree (node-pty included) into the hub build.
 
 interface PlanResolveOptions {
   /** Host path to the plan file; `~`-prefixed or absolute/relative. */
@@ -27,6 +33,12 @@ interface PlanResolveOptions {
   /** Override for tests. */
   hostHome?: string;
   log?: TeleportLogger;
+  /**
+   * In-box directory the plan is uploaded into — the agent's own
+   * (`/home/vscode/.claude/plans` for claude). Supplied by the caller so this
+   * module stays agent-neutral and stays cheap to bundle.
+   */
+  boxParentDir: string;
 }
 
 /** Expand a leading `~` / `~/` to the host home, then resolve to absolute. */
@@ -37,6 +49,7 @@ function expandHome(p: string, hostHome: string): string {
 }
 
 export async function resolvePlanTeleport(opts: PlanResolveOptions): Promise<ResolvedTeleport> {
+  const { boxParentDir } = opts;
   const hostHome = opts.hostHome ?? homedir();
   const planFile = expandHome(opts.planPath, hostHome);
 
@@ -65,8 +78,8 @@ export async function resolvePlanTeleport(opts: PlanResolveOptions): Promise<Res
     agent: 'claude',
     sessionId: name,
     hostFile: stagedFile,
-    boxPath: `${BOX_CLAUDE_PLANS_DIR}/${name}`,
-    boxParentDir: BOX_CLAUDE_PLANS_DIR,
+    boxPath: `${boxParentDir}/${name}`,
+    boxParentDir,
     forwardArgs: [],
   };
 }

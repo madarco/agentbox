@@ -59,13 +59,6 @@ const ALLOWLIST: Record<string, string> = {
   //
   // Claude's `~/.claude/projects` path encoding rode into the shared kit with
   // the teleport helpers; it belongs in `packages/agent-claude`.
-  'packages/cli-kit/src/cwd-encoding.ts': 'phase 2',
-  'apps/cli/src/commands/download-claude.ts': 'phase 2',
-  'apps/cli/src/commands/download-codex.ts': 'phase 2',
-  'apps/cli/src/commands/download-opencode.ts': 'phase 2',
-  'apps/cli/src/commands/install-codex.ts': 'phase 2',
-  'apps/cli/src/commands/_claude-login-worker.ts': 'phase 2',
-  'apps/cli/src/session-teleport/plan.ts': 'phase 2',
 
   // Phase 4 — the `sandbox-core` / `sandbox-cloud` moves. Gated: `host-stage.ts`
   // imports the first two, and ITS exports are published SDK surface, so the
@@ -144,6 +137,20 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 }
 
+/**
+ * A commander `Command` for one agent, e.g.
+ * `export const installCodexCommand = new Command('codex')`.
+ *
+ * These are correct: the CLI's two dispatch tables need literal,
+ * statically-resolvable specifiers, so `agentbox install codex` and
+ * `agentbox download claude` each need a file and an export that names their
+ * agent. What must NOT hide behind that is an agent's LOGIC — so this exempts
+ * the single declaration line, not the file. Any other agent-named export in
+ * the same file still fails, which is what forced codex's plugin installer
+ * (ten exports) out of `commands/install-codex.ts` and into its package.
+ */
+const AGENT_COMMAND_DECL = /^export const [A-Za-z]+Command(?::\s*Command)? = new Command\(/;
+
 function offendingFiles(): string[] {
   const found = new Set<string>();
   for (const root of ROOTS) {
@@ -151,7 +158,10 @@ function offendingFiles(): string[] {
       const rel = file.slice(REPO.length + 1);
       if (NOT_APPLICABLE.some((p) => rel.startsWith(p))) continue;
       const src = stripComments(readFileSync(file, 'utf8'));
-      if (src.split('\n').some((l) => EXPORTED_AGENT_NAME.test(l))) found.add(rel);
+      const offends = src
+        .split('\n')
+        .some((l) => EXPORTED_AGENT_NAME.test(l) && !AGENT_COMMAND_DECL.test(l));
+      if (offends) found.add(rel);
     }
   }
   return [...found].sort();

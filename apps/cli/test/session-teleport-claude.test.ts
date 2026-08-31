@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveClaudeTeleport } from '@agentbox/agent-claude/cli';
-import { encodeClaudeProjectsDir } from '@agentbox/cli-kit';
+import { encodeClaudeProjectsDir } from '@agentbox/agent-claude/cli';
 import { TeleportError } from '@agentbox/cli-kit';
 
 async function seedClaudeProject(
