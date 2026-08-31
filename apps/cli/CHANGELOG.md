@@ -9,6 +9,30 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.29.2] - 2026-08-30
+
+### Added
+
+- Provider SDK 2.10.0: `CloudBackend.attachRunAs?(handle)` lets a provider drop
+  its attach session to the box user when the transport lands as root. Optional
+  and additive — existing plugins are unaffected.
+
+### Fixed
+
+- **Daytona `linux-vm` boxes ran as `root`**, so the agent never saw the
+  credentials seeded into `/home/vscode` and started at a login prompt on a box
+  that reported healthy. Boxes now run as `vscode` throughout — exec, attach,
+  tmux and the in-box daemons. **Re-bake with `agentbox prepare --provider
+  daytona --force`, and destroy and recreate existing `linux-vm` boxes.**
+- Daytona now explains when your organization has no VM region — a *dedicated*
+  region that Daytona must enable, which neither a new org nor added credit
+  grants — instead of failing the bake with a raw SDK stack trace. The docs page
+  leads with the requirement.
+- A failed `agentbox prepare` now reports why it failed, instead of only
+  `bake job <id> ended failed` with the real cause left in the job log.
+- `agentbox self-update` could skip a menu-bar app update for up to 24 hours by
+  answering from the daily check's cache; it now re-resolves the release.
+
 ## [0.29.1] - 2026-08-30
 
 ### Fixed
