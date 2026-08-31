@@ -128,8 +128,11 @@ function installProblem(raw: unknown): string | null {
 function credentialProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return '`credential` must be an object';
   const cred = raw as Record<string, unknown>;
-  if (typeof cred.boxAbsPath !== 'string' || cred.boxAbsPath.length === 0) {
-    return '`credential.boxAbsPath` must be a non-empty in-box path';
+  // Absolute, like `boxDir` and `hostBackup`. The credential push derives the
+  // directory with `slice(0, lastIndexOf('/'))`, so a relative `auth.json`
+  // yields an empty dir, `mkdir -p ''`, and a copy that never lands.
+  if (typeof cred.boxAbsPath !== 'string' || !cred.boxAbsPath.startsWith('/')) {
+    return '`credential.boxAbsPath` must be an absolute in-box path';
   }
   // The credential fan-out WRITES here when a box logs in. An empty or relative
   // path drops a temp file in whatever directory the CLI was run from and loses
@@ -146,8 +149,16 @@ function staticPathsProblem(raw: unknown): string | null {
     if (entry === null || typeof entry !== 'object')
       return `\`staticPaths[${i}]\` must be an object`;
     const path = entry as Record<string, unknown>;
-    if (!Array.isArray(path.hostHomeRel)) {
-      return `\`staticPaths[${i}].hostHomeRel\` must be an array of path segments`;
+    // NON-EMPTY, and every segment non-empty. Staging does
+    // `join(homedir(), ...hostHomeRel)`, so `[]` and `['']` both resolve to the
+    // user's HOME — and cloud staging would then rsync their entire home tree
+    // into a snapshot that every box made from it shares.
+    if (
+      !Array.isArray(path.hostHomeRel) ||
+      path.hostHomeRel.length === 0 ||
+      path.hostHomeRel.some((seg) => typeof seg !== 'string' || seg.length === 0)
+    ) {
+      return `\`staticPaths[${i}].hostHomeRel\` must be a non-empty array of non-empty path segments`;
     }
     if (typeof path.boxDir !== 'string' || !path.boxDir.startsWith('/')) {
       return `\`staticPaths[${i}].boxDir\` must be an absolute in-box path`;

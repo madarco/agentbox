@@ -147,6 +147,32 @@ describe('agentSpecProblem', () => {
     ).toMatch(/boxDir/);
   });
 
+  it('refuses a staticPath that would stage the whole home directory', () => {
+    // `join(homedir(), ...[])` IS homedir(). A spec with an empty
+    // `hostHomeRel` — or an empty segment — would make cloud staging rsync the
+    // user's entire home into a snapshot every box then shares.
+    for (const hostHomeRel of [[], [''], ['.ok', '']]) {
+      expect(
+        agentSpecProblem({
+          ...exampleSpec,
+          staticPaths: [{ hostHomeRel, boxDir: '/home/vscode/.x' }],
+        }),
+        JSON.stringify(hostHomeRel),
+      ).toMatch(/hostHomeRel/);
+    }
+  });
+
+  it('refuses a relative credential path the push would truncate', () => {
+    // The push derives the dir with `slice(0, lastIndexOf('/'))`, so
+    // `auth.json` gives an empty dir and the copy silently never lands.
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        credential: { ...exampleSpec.credential, boxAbsPath: 'auth.json' },
+      }),
+    ).toMatch(/boxAbsPath/);
+  });
+
   it('rejects a non-object and an empty id', () => {
     expect(agentSpecProblem('claude')).toBe('not an object');
     expect(agentSpecProblem({ ...exampleSpec, id: '' })).toMatch(/non-empty string/);

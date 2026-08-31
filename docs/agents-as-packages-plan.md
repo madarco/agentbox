@@ -580,6 +580,20 @@ empty one drops a temp file in the process cwd and loses the login), and each
 `staticPaths` entry. Every built-in spec still passes; both halves
 mutation-checked.
 
+A SECOND Bugbot pass then found two holes in that validation itself, and one was
+the worst bug of the series: `hostHomeRel` was checked for being an array but
+not for being NON-EMPTY, and staging does `join(homedir(), ...hostHomeRel)` — so
+`[]` or `['']` resolves to the user's HOME, and cloud staging would rsync their
+entire home tree into a snapshot every box made from it shares. The other:
+`boxAbsPath` was only required to be non-empty while its siblings had to be
+absolute, and the credential push derives the directory with
+`slice(0, lastIndexOf('/'))`, so a relative `auth.json` gives an empty dir and a
+copy that silently never lands. Both fixed and mutation-checked.
+
+The lesson worth keeping: each round of validation I wrote was itself too weak,
+and only an adversarial reader found it. "The example registered successfully"
+never proved the spec was correct — it proved the checks were loose.
+
 ## What adding an agent costs today — measured, after phase 3b
 
 | step | needed? |
