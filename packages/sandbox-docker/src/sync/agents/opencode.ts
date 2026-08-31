@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './claude.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './shared.js';
 import {
   OPENCODE_PULL_CONFIG_ITEMS,
   OPENCODE_PULL_DATA_ITEMS,

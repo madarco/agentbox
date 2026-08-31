@@ -6,14 +6,13 @@ import {
   buildDashboardAttachArgv,
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
-  buildTmuxSessionArgs,
-  buildTmuxConfigShellSnippet,
   formatDetachNotice,
   DEFAULT_CLAUDE_SESSION,
   resolveClaudeVolume,
   scanPluginCacheForRebuild,
   SHARED_CLAUDE_VOLUME,
 } from '../src/sync/agents/claude.js';
+import { buildTmuxSessionArgs, buildTmuxConfigShellSnippet } from '../src/sync/agents/shared.js';
 
 describe('resolveClaudeVolume', () => {
   it('returns the shared volume name when isolate is false', () => {

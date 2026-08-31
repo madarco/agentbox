@@ -23,7 +23,7 @@ import {
   resolveAgentSpec,
   type AgentId,
 } from '@agentbox/sandbox-core';
-import { CONTAINER_USER } from './claude.js';
+import { CONTAINER_USER } from './shared.js';
 
 /** Volume mount point inside the throwaway container. */
 const DST = '/dst';

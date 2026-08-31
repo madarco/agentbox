@@ -1,3 +1,14 @@
+// Box plumbing shared by every agent (and by `agentbox shell`, which has no
+// agent at all) — deliberately not sourced from any one agent's module.
+export {
+  buildShellArgv,
+  buildTermSafeTmuxExec,
+  buildTmuxConfigShellSnippet,
+  buildTmuxSessionArgs,
+  CONTAINER_USER,
+  TERM_FALLBACK_SNIPPET,
+} from './sync/agents/shared.js';
+
 export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
 export { providerModule, dockerChecks } from './provider-module.js';
 export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
@@ -12,16 +23,11 @@ export {
   buildDashboardAttachArgv,
   buildClaudeLoginRunArgv,
   buildClaudeMounts,
-  buildTmuxSessionArgs,
-  buildTmuxConfigShellSnippet,
-  TERM_FALLBACK_SNIPPET,
-  buildShellArgv,
   CLAUDE_FORWARDED_ENV_KEYS,
   ClaudeSessionError,
   ensureClaudeInstalled,
   type EnsureClaudeInstalledResult,
   claudeSessionInfo,
-  CONTAINER_USER,
   DEFAULT_CLAUDE_SESSION,
   ensureClaudeVolume,
   pullClaudeExtras,

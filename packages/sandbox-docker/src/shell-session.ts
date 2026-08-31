@@ -1,5 +1,9 @@
 import { execa } from 'execa';
-import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './sync/agents/claude.js';
+import {
+  buildTermSafeTmuxExec,
+  buildTmuxSessionArgs,
+  CONTAINER_USER,
+} from './sync/agents/shared.js';
 
 /** Default tmux session name for `agentbox shell` (the box's first shell). */
 export const DEFAULT_SHELL_SESSION = 'shell';
