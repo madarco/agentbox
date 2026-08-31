@@ -43,7 +43,6 @@ import {
   seedAgentVolumesIfFresh,
 } from './agent-credentials.js';
 import { seedDynamicConfig } from './dynamic-sync.js';
-import { seedClaudeJsonAtCreate } from './claude-json-overlay.js';
 import { seedGitIdentity as seedCloudGitIdentity } from './git-identity.js';
 import { uploadEnvFiles } from './env-files.js';
 import { uploadCarryPaths } from './carry.js';
@@ -106,15 +105,17 @@ export function makeCloudSync(
           await seedAgentDeclaredFilesViaTransport(transport, agent, { onLog: ctx.onLog });
         }
       }
-      // Still called by name. Unlike the hooks above it runs AFTER the declared
-      // files are placed and needs `hostWorkspace`, so folding it into the same
-      // loop would move it in the sequence — a behavior change worth verifying
-      // against a real cloud box rather than assuming. It joins the registry
-      // when that check happens.
-      await seedClaudeJsonAtCreate(backend, handle, {
-        hostWorkspace: ctx.hostWorkspace,
-        onLog: ctx.onLog,
-      });
+      // The post-seed step, at the same point in the sequence it always ran:
+      // after the declared files are on disk, before dynamic config. It reaches
+      // the agent through `afterDeclaredSeeds` rather than by name now — a
+      // dedicated hook precisely so the position does not move, which was the
+      // open question the by-name call was waiting on.
+      for (const mod of registeredAgentCloudModules()) {
+        await mod.afterDeclaredSeeds?.(backend, handle, {
+          hostWorkspace: ctx.hostWorkspace,
+          onLog: ctx.onLog,
+        });
+      }
       await seedDynamicConfig(backend, handle, {
         workspacePath: ctx.hostWorkspace,
         onLog: ctx.onLog,

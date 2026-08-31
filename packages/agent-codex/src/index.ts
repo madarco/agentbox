@@ -13,10 +13,7 @@
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { ensureCodexAgentsOverride } from './cloud-sync.js';
-import {
-  stageCodexCredentialsForUpload,
-  stageCodexStaticForUpload,
-} from '@agentbox/sandbox-core';
+import { stageCodexCredentialsForUpload, stageCodexStaticForUpload } from './host-stage.js';
 import {
   buildCodexMounts,
   codexSessionInfo,
@@ -61,3 +58,5 @@ export function registerCodexAgent(): void {
 // as the remaining phases convert their call sites.
 export { ensureCodexAgentsOverride } from './cloud-sync.js';
 export * from './docker-sync.js';
+export * from './host-stage.js';
+export * from './box-config.js';

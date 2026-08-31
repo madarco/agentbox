@@ -43,6 +43,20 @@ export interface AgentCloudModule {
    */
   stageStatic?(opts: { hostWorkspace?: string }): Promise<CloudStageResult>;
   /**
+   * Run AFTER this agent's declared `seeds` are placed, before dynamic config.
+   *
+   * A separate hook from `afterSeed` because the POSITION matters: claude's
+   * `_claude.json` overlay has to see the seeded files already on disk, and it
+   * needs `hostWorkspace` to alias the host's project key onto `/workspace`.
+   * Folding it into `afterSeed` would move it earlier in the sequence — a
+   * behaviour change dressed up as a refactor.
+   */
+  afterDeclaredSeeds?(
+    backend: CloudBackend,
+    handle: CloudHandle,
+    opts: { hostWorkspace?: string; onLog?: (line: string) => void },
+  ): Promise<void>;
+  /**
    * Run after the box's agent config has been seeded, before it is used.
    *
    * Best-effort by contract: an implementation logs and returns rather than

@@ -5,7 +5,7 @@ import {
   mergeCodexConfigForBox,
   sanitizeCodexConfigForBox,
   MINIMAL_TRUSTED_CODEX_CONFIG,
-} from '../src/sync/codex-config.js';
+} from '../src/box-config.js';
 
 const HOST_HOME = '/Users/marco';
 

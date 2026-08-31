@@ -10,10 +10,8 @@
 
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
-import {
-  stageClaudeCredentialsForUpload,
-  stageClaudeStaticForUpload,
-} from '@agentbox/sandbox-core';
+import { stageClaudeCredentialsForUpload, stageClaudeStaticForUpload } from './host-stage.js';
+import { seedClaudeJsonAtCreate } from './cloud-json-overlay.js';
 import {
   buildClaudeMounts,
   claudeSessionInfo,
@@ -83,6 +81,11 @@ export const claudeSyncModule: AgentSyncModule = {
 export const claudeCloudModule: AgentCloudModule = {
   id: 'claude',
   afterSeed: () => Promise.resolve(),
+  // The `_claude.json` overlay, at the same point in the create sequence it has
+  // always run: after the declared seeds land, before dynamic config. It used
+  // to be called by name from `cloud-sync.ts`; `afterDeclaredSeeds` exists so
+  // moving it here did not move it in the sequence.
+  afterDeclaredSeeds: (backend, handle, opts) => seedClaudeJsonAtCreate(backend, handle, opts),
   // Claude's staging filters host-path hooks, coerces the install method,
   // aliases the project key and pre-trusts the workspace — more than a copy of
   // its declared paths, so it supplies its own.
@@ -97,3 +100,6 @@ export function registerClaudeAgent(): void {
 }
 
 export * from './docker-sync.js';
+export * from './host-stage.js';
+export * from './hooks-filter.js';
+export * from './cloud-json-overlay.js';

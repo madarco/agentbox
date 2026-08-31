@@ -13,13 +13,15 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   CODEX_PULL_ITEMS,
-  sanitizeCodexConfigForBox,
-  mergeCodexConfigForBox,
-  MINIMAL_TRUSTED_CODEX_CONFIG,
   ensureAgentInstalled,
   AgentInstallError,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
+import {
+  mergeCodexConfigForBox,
+  sanitizeCodexConfigForBox,
+  MINIMAL_TRUSTED_CODEX_CONFIG,
+} from './box-config.js';
 
 /**
  * Codex support mirrors the Claude support in `claude.ts`, trimmed for what

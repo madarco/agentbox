@@ -112,6 +112,7 @@ describe('makeCloudSync.seedCredentials', () => {
 describe('makeCloudSync.seedAgentConfig', () => {
   it('runs the runtime config seeds in create order', async () => {
     const order: string[] = [];
+    let seenOverlayOpts: unknown;
     m.ensureAgentHomeDirsOwned.mockImplementation(() => {
       order.push('ownership');
       return Promise.resolve();
@@ -133,9 +134,18 @@ describe('makeCloudSync.seedAgentConfig', () => {
         return Promise.resolve();
       },
     });
-    m.seedClaudeJsonAtCreate.mockImplementation(() => {
-      order.push('claudeJson');
-      return Promise.resolve();
+    // claude's `_claude.json` overlay is its package's cloud module now, on
+    // `afterDeclaredSeeds` — a hook that exists specifically so the step keeps
+    // its POSITION (after the declared files, before dynamic config) rather
+    // than being folded into `afterSeed` and running earlier.
+    registerAgentCloudModule({
+      id: 'claude',
+      afterSeed: () => Promise.resolve(),
+      afterDeclaredSeeds: (_b, _h, o) => {
+        order.push('claudeJson');
+        seenOverlayOpts = o;
+        return Promise.resolve();
+      },
     });
     m.seedDynamicConfig.mockImplementation(() => {
       order.push('dynamic');
@@ -159,10 +169,9 @@ describe('makeCloudSync.seedAgentConfig', () => {
       'claudeJson',
       'dynamic',
     ]);
-    expect(m.seedClaudeJsonAtCreate).toHaveBeenCalledWith(backend, handle, {
-      hostWorkspace: '/host/ws',
-      onLog: expect.any(Function),
-    });
+    // `hostWorkspace` still reaches it — the overlay needs it to alias the
+    // host's project key onto /workspace.
+    expect(seenOverlayOpts).toEqual({ hostWorkspace: '/host/ws', onLog: expect.any(Function) });
   });
 });
 

@@ -171,40 +171,25 @@ export {
   type StagedTarball,
 } from './concerns/dynamic.js';
 export {
-  stageClaudeStaticForUpload,
-  stageClaudeJsonOnlyForUpload,
-  stageClaudeCredentialsForUpload,
-  stageCodexStaticForUpload,
-  stageCodexCredentialsForUpload,
   stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
   stageOpencodeStateForUpload,
   stageAgentStaticForUpload,
   AGENTS_STATIC_BOX_DIR,
+  // Staging primitives. Exported so an agent package can build its OWN stager
+  // when a copy of its declared paths is not enough (claude filters host-path
+  // hooks, codex sanitizes config.toml) without re-implementing the rsync/tar
+  // plumbing or the cleanup contract.
+  pathExists,
+  findBrokenSymlinks,
+  mkStageDir,
+  emptyResult,
+  tarballFromDir,
+  makeCleanup,
+  stageSingleFileTarball,
+  STAGE_WRITABLE_CHMOD,
   type AgentStaticStage,
-  type StageClaudeOptions,
-  type StageCodexOptions,
   type StageOpencodeOptions,
   type StageResult,
 } from './host-stage.js';
-export {
-  filterHostHooks,
-  isHostPathHookCommand,
-  setInstallMethodNative,
-  addProjectAlias,
-  trustWorkspace,
-  type HookFilterResult,
-  type SetInstallMethodNativeResult,
-  type AddProjectAliasResult,
-  type TrustWorkspaceResult,
-} from './claude-hooks-filter.js';
-export {
-  sanitizeCodexConfigForBox,
-  mergeCodexConfigForBox,
-  isHostOnlyPath,
-  BOX_WORKSPACE,
-  MINIMAL_TRUSTED_CODEX_CONFIG,
-  type SanitizeCodexConfigResult,
-  type MergeCodexConfigResult,
-} from './codex-config.js';

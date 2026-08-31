@@ -102,7 +102,6 @@ export {
 export { createCloudSyncTransport, type CloudSyncTransportInit } from './sync/sync-transport.js';
 export { makeCloudSync, type CloudSyncOptions } from './sync/cloud-sync.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './sync/dynamic-sync.js';
-export { seedClaudeJsonAtCreate, type SeedClaudeJsonOptions } from './sync/claude-json-overlay.js';
 export {
   seedGitIdentity,
   seedGitCredentials,
@@ -147,16 +146,9 @@ export {
 // they were originally built for the docker rsync-into-volume flow and stayed
 // there when the cloud path adopted them.
 export {
-  stageClaudeStaticForUpload,
-  stageClaudeJsonOnlyForUpload,
-  stageClaudeCredentialsForUpload,
-  stageCodexStaticForUpload,
-  stageCodexCredentialsForUpload,
   stageAgentsStaticForUpload,
   stageOpencodeStaticForUpload,
   stageOpencodeCredentialsForUpload,
-  type StageClaudeOptions,
-  type StageCodexOptions,
   type StageOpencodeOptions,
   type StageResult,
 } from '@agentbox/sandbox-core';

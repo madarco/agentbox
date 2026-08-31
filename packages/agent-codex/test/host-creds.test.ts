@@ -54,14 +54,35 @@ describe('codexAuthAvailable', () => {
   it('falls back to the shared codex-config volume probe', async () => {
     volumeHasCodexAuth.mockResolvedValue(true);
     expect(await codexAuthAvailable(IMAGE, {})).toBe(true);
-    expect(volumeHasCodexAuth).toHaveBeenCalledWith(
-      'agentbox-codex-config',
-      IMAGE,
-    );
+    expect(volumeHasCodexAuth).toHaveBeenCalledWith('agentbox-codex-config', IMAGE);
   });
 
   it('returns false when every source is empty', async () => {
     volumeHasCodexAuth.mockResolvedValue(false);
     expect(await codexAuthAvailable(IMAGE, {})).toBe(false);
   });
+});
+
+describe('stageCodexCredentialsForUpload', () => {
+  /**
+   * Moved out of `sandbox-cloud`'s seeding test with the stager itself. What it
+   * asserts is CODEX's behaviour — the macOS Keychain landmine, where the
+   * config exists but `auth.json` never will because the token lives in the
+   * Keychain — not anything about how a cloud box is seeded.
+   */
+  it('warns rather than failing when ~/.codex exists but auth.json does not', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'agentbox-codex-keychain-'));
+    try {
+      await mkdir(join(home, '.codex'), { recursive: true });
+      await writeFile(join(home, '.codex', 'config.toml'), 'model = "gpt-5"\n');
+      // intentionally NO auth.json
+      const { stageCodexCredentialsForUpload } = await import('../src/host-stage.js');
+      const res = await stageCodexCredentialsForUpload({ hostHome: home });
+      expect(res.tarballPath).toBeNull();
+      expect(res.warnings.join(' ')).toMatch(/Keychain/i);
+      await res.cleanup();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
   CloudBackend,
@@ -13,12 +13,20 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
 import {
   AGENT_SYNC_SPECS,
-  stageClaudeCredentialsForUpload,
-  stageClaudeStaticForUpload,
-  stageCodexCredentialsForUpload,
-  stageCodexStaticForUpload,
-  stageOpencodeCredentialsForUpload,
+  pathExists,
+  emptyResult,
+  stageSingleFileTarball,
 } from '@agentbox/sandbox-core';
+/**
+ * The per-agent stagers live in their agent packages now, and this package
+ * CANNOT import one — that is the cycle the whole layering avoids (an agent
+ * package depends on `sandbox-cloud`). So the modules registered below stage
+ * with `sandbox-core`'s own primitives instead.
+ *
+ * That is not a weaker test: what is under test here is the SEEDING path —
+ * upload, extract, marker, ownership — which needs a real tarball, not claude's
+ * particular hook filtering. Each agent's own staging is tested in its package.
+ */
 import {
   ensureAgentVolumesForCloud,
   extractCloudAgentCredentials,
@@ -118,22 +126,27 @@ const EXPECTED_AGENTS = AGENT_SYNC_SPECS.filter((a) => a.staticPaths[0]?.boxDir)
  * (`@agentbox/agent-modules`). Registering the real stagers here keeps this test
  * exercising the real seeding path rather than a stub of it.
  */
+/** Stage one host file as a single-entry tarball, or nothing when absent. */
+async function stageHostFile(hostPath: string, entryName: string) {
+  if (!(await pathExists(hostPath))) return emptyResult();
+  return stageSingleFileTarball('creds', hostPath, entryName);
+}
+
 registerAgentCloudModule({
   id: 'claude',
   afterSeed: () => Promise.resolve(),
-  stageStatic: (o) => stageClaudeStaticForUpload({ hostWorkspace: o.hostWorkspace }),
-  stageCredentials: () => stageClaudeCredentialsForUpload(),
+  stageCredentials: () => stageHostFile(join(homedir(), '.agentbox', 'claude-credentials.json'), '.credentials.json'),
 });
 registerAgentCloudModule({
   id: 'codex',
   afterSeed: () => Promise.resolve(),
-  stageStatic: () => stageCodexStaticForUpload(),
-  stageCredentials: () => stageCodexCredentialsForUpload(),
+  stageCredentials: () => stageHostFile(join(homedir(), '.codex', 'auth.json'), 'auth.json'),
 });
 registerAgentCloudModule({
   id: 'opencode',
   afterSeed: () => Promise.resolve(),
-  stageCredentials: () => stageOpencodeCredentialsForUpload(),
+  stageCredentials: () =>
+    stageHostFile(join(homedir(), '.local', 'share', 'opencode', 'auth.json'), 'auth.json'),
 });
 
 describe('ensureAgentVolumesForCloud', () => {
@@ -366,27 +379,6 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
     await rm(codexDir, { recursive: true, force: true });
   });
 
-  it('warns + skips codex when ~/.codex exists but auth.json is missing (Keychain landmine)', async () => {
-    const codexDir = join(fakeHome, '.codex');
-    await mkdir(codexDir, { recursive: true });
-    await writeFile(join(codexDir, 'config.toml'), 'model = "gpt-5"\n');
-    // intentionally NO auth.json
-
-    const { backend, uploadCalls } = makeMockBackend({});
-    const logs: string[] = [];
-    await seedAgentVolumesIfFresh(
-      backend,
-      { sandboxId: 's' },
-      {
-        agents: ['codex', 'opencode'],
-        onLog: (l) => logs.push(l),
-      },
-    );
-    expect(uploadCalls.some((c) => c.remotePath.includes('codex'))).toBe(false);
-    expect(logs.some((l) => /auth\.json missing|cli_auth_credentials_store/i.test(l))).toBe(true);
-
-    await rm(codexDir, { recursive: true, force: true });
-  });
 });
 
 describe('extractCloudAgentCredentials', () => {

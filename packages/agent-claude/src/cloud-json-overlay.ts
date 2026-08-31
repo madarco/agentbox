@@ -18,7 +18,7 @@
  * Claude will fall back to its baked / first-run behavior.
  */
 
-import { stageClaudeJsonOnlyForUpload } from '@agentbox/sandbox-core';
+import { stageClaudeJsonOnlyForUpload } from './host-stage.js';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 
 export interface SeedClaudeJsonOptions {

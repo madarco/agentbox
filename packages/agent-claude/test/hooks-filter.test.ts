@@ -5,7 +5,7 @@ import {
   filterHostHooks,
   isHostPathHookCommand,
   trustWorkspace,
-} from '../src/sync/claude-hooks-filter.js';
+} from '../src/hooks-filter.js';
 
 describe('isHostPathHookCommand', () => {
   const home = '/Users/marco';

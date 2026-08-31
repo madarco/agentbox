@@ -73,12 +73,10 @@ const ALLOWLIST: Record<string, string> = {
   // imports the first two, and ITS exports are published SDK surface, so the
   // move is an SDK_API_VERSION bump rather than a refactor.
   'packages/sandbox-core/src/sync/host-stage.ts': 'phase 4',
-  'packages/sandbox-core/src/sync/codex-config.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agent-pull.ts': 'phase 4',
   'packages/sandbox-core/src/sync/concerns/credentials.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agents/claude/paths.ts': 'phase 4',
   'packages/sandbox-core/src/claude-app-config.ts': 'phase 4',
-  'packages/sandbox-cloud/src/sync/claude-json-overlay.ts': 'phase 4',
   'packages/sandbox-docker/src/sync/claude-credentials.ts': 'phase 4',
   'packages/sandbox-docker/src/credential-refresh.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agent-propagate.ts': 'phase 4',

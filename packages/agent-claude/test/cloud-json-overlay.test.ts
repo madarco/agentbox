@@ -10,8 +10,8 @@ import type {
   CloudState,
 } from '@agentbox/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { seedClaudeJsonAtCreate } from '../src/sync/claude-json-overlay.js';
-import { stageClaudeJsonOnlyForUpload } from '@agentbox/sandbox-core';
+import { seedClaudeJsonAtCreate } from '../src/cloud-json-overlay.js';
+import { stageClaudeJsonOnlyForUpload } from '../src/host-stage.js';
 
 interface ExecCall { cmd: string }
 interface UploadCall { localPath: string; remotePath: string }

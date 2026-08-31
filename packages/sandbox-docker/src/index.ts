@@ -169,8 +169,6 @@ export {
   encodeClaudeProjectsKey,
   resolveClaudeMemoryDir,
   BOX_CLAUDE_PROJECT_DIR,
-  type StageClaudeOptions,
-  type StageCodexOptions,
   type StageOpencodeOptions,
   type StageResult,
 } from '@agentbox/sandbox-core';

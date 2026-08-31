@@ -7,14 +7,16 @@ import { execa } from 'execa';
 import { claudeTuiEnv, type ClaudeTuiMode } from '@agentbox/core';
 import { loadEffectiveConfig } from '@agentbox/config';
 import {
-  addProjectAlias,
-  filterHostHooks,
-  setInstallMethodNative,
-  trustWorkspace,
   ensureAgentInstalled,
   AgentInstallError,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
+import {
+  addProjectAlias,
+  filterHostHooks,
+  setInstallMethodNative,
+  trustWorkspace,
+} from './hooks-filter.js';
 import {
   claudeInventoryScript,
   computeClaudePullPlan,
