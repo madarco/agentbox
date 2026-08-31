@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { agentState } from '../client.js';
 import { clearClaudeSessionPointer, recordClaudeSessionId } from '../session-pointer.js';
 import {
-  CLAUDE_ACTIVITY_STATES,
+  AGENT_ACTIVITY_STATES,
   DEFAULT_SOCKET_PATH,
   type AgentActivityState,
   type AgentPlanPayload,
@@ -88,7 +88,7 @@ export function buildAgentStateCommand(
   );
   if (generic) cmd.argument('<agent>', 'agent id (claude, codex, opencode, ...)');
   cmd
-    .argument('<state>', `one of: ${CLAUDE_ACTIVITY_STATES.join(', ')}`)
+    .argument('<state>', `one of: ${AGENT_ACTIVITY_STATES.join(', ')}`)
     .option('--socket <path>', 'unix socket path', DEFAULT_SOCKET_PATH)
     .option('--payload-stdin', "parse the agent's hook JSON from stdin (pre-tool plan/question)")
     .option('--clear-pending', 'force-clear a sticky end-plan/question state (post-tool cleanup)')
@@ -114,7 +114,7 @@ export async function reportAgentState(
 ): Promise<void> {
   try {
     if (agent.length === 0) return;
-    if (!CLAUDE_ACTIVITY_STATES.includes(state as AgentActivityState)) return;
+    if (!AGENT_ACTIVITY_STATES.includes(state as AgentActivityState)) return;
     const pointer = SESSION_POINTERS[agent];
     if (opts.clearSession) pointer?.clear();
     const typedState = state as AgentActivityState;

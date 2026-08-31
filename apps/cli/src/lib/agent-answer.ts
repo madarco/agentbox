@@ -15,7 +15,7 @@
 // can resolve the box and recompute the digest without any host-side registry.
 
 import { createHash } from 'node:crypto';
-import type { BoxStatusClaude } from '@agentbox/ctl';
+import type { AgentStatusEntry } from '@agentbox/ctl';
 import type { AgentId } from '@agentbox/core';
 
 export const TUI_ID_PREFIX = 'tui';
@@ -39,7 +39,7 @@ export interface TuiId {
  * Notification:permission_prompt hook or the screen-scraper fallback) is a
  * generic tool-permission dialog with no structured payload.
  */
-export function inTuiKind(claude: BoxStatusClaude): InTuiKind | null {
+export function inTuiKind(claude: AgentStatusEntry): InTuiKind | null {
   // While the agent is busy it isn't parked on a prompt — a still-attached
   // plan/question payload is stale (mirrors `isInputNeeded`'s busy guard).
   if (claude.state === 'working' || claude.state === 'compacting') return null;
@@ -57,7 +57,7 @@ export function inTuiKind(claude: BoxStatusClaude): InTuiKind | null {
  * back-to-back permission prompts can share a digest if no state push landed
  * between them) — documented, and acceptable for the best-effort path.
  */
-function digestForBlock(claude: BoxStatusClaude, kind: InTuiKind): string {
+function digestForBlock(claude: AgentStatusEntry, kind: InTuiKind): string {
   let material: string;
   if (kind === 'plan') {
     material = `plan|${claude.plan?.capturedAt ?? ''}|${claude.plan?.plan ?? ''}`;
@@ -76,7 +76,7 @@ function digestForBlock(claude: BoxStatusClaude, kind: InTuiKind): string {
  */
 export function mintTuiId(
   boxId: string,
-  claude: BoxStatusClaude,
+  claude: AgentStatusEntry,
 ): { id: string; kind: InTuiKind } | null {
   const kind = inTuiKind(claude);
   if (kind === null) return null;
@@ -146,7 +146,7 @@ export function answerKeystrokes(
  * case-insensitively against the option labels (exact first, then prefix).
  * Returns null when it can't be resolved (caller errors with the option list).
  */
-export function resolveQuestionOption(claude: BoxStatusClaude, raw: string): number | null {
+export function resolveQuestionOption(claude: AgentStatusEntry, raw: string): number | null {
   const options = claude.question?.questions?.[0]?.options ?? [];
   const asNum = Number.parseInt(raw, 10);
   if (Number.isFinite(asNum) && String(asNum) === raw.trim()) {

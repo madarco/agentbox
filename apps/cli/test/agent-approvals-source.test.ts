@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BoxRecord } from '@agentbox/core';
-import type { BoxStatusClaude } from '@agentbox/ctl';
+import type { AgentStatusEntry } from '@agentbox/ctl';
 import { gatherApprovals, missingHalves } from '../src/commands/agent.js';
 import { boxAnswersOnLocalHub } from '../src/control-plane/box-plane.js';
 import type { BoxPromptSource } from '../src/control-plane/box-plane.js';
@@ -13,7 +13,7 @@ import type { BoxPromptSource } from '../src/control-plane/box-plane.js';
 
 const BOX = { id: 'b0x1', name: 'smoke' } as BoxRecord;
 
-const PLAN: BoxStatusClaude = {
+const PLAN: AgentStatusEntry = {
   state: 'waiting',
   updatedAt: '2026-08-26T00:00:00.000Z',
   sessionRunning: true,
@@ -22,7 +22,7 @@ const PLAN: BoxStatusClaude = {
 
 interface Stub {
   approvals?: unknown[];
-  claude?: BoxStatusClaude | null;
+  claude?: AgentStatusEntry | null;
   approvalsError?: Error;
   agentStateError?: Error;
 }

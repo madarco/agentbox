@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoxStatusClaude, ClaudePlanPayload, ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentStatusEntry, AgentPlanPayload, AgentQuestionPayload } from '@agentbox/ctl';
 import {
   AGENT_WAIT_STATES,
   derivedAgentState,
@@ -9,15 +9,15 @@ import {
   matchesAgentWaitState,
 } from '../src/lib/wait/agent-state.js';
 
-const PLAN: ClaudePlanPayload = { plan: '## test plan', capturedAt: '2026-05-27T00:00:00.000Z' };
-const QUESTION: ClaudeQuestionPayload = {
+const PLAN: AgentPlanPayload = { plan: '## test plan', capturedAt: '2026-05-27T00:00:00.000Z' };
+const QUESTION: AgentQuestionPayload = {
   questions: [
     { question: 'Which option?', options: [{ label: 'A' }, { label: 'B' }] },
   ],
   capturedAt: '2026-05-27T00:00:00.000Z',
 };
 
-function claude(overrides: Partial<BoxStatusClaude> = {}): BoxStatusClaude {
+function claude(overrides: Partial<AgentStatusEntry> = {}): AgentStatusEntry {
   return {
     state: 'idle',
     updatedAt: null,

@@ -1,5 +1,4 @@
 import {
-  AGENT_ACTIVITY_STATES,
   type AgentActivityState,
   type AgentPlanPayload,
   type AgentQuestionPayload,
@@ -75,11 +74,13 @@ export interface ReloadResult {
 /**
  * The per-agent activity contract now lives in `@agentbox/core` — the leaf both
  * this daemon and the host relay can reach (ctl depends on relay, never the
- * reverse). ctl re-exports it under the historical names so its own importers
- * (the CLI, sandbox-docker, the hub) keep resolving.
+ * reverse). ctl re-exports it so its own importers (the CLI, sandbox-docker,
+ * the hub) resolve it from one place.
  *
- * `ClaudeActivityState` is a plain alias, not a distinct union: the states were
- * never Claude-specific — codex and opencode already shared every one of them.
+ * These were also re-exported under claude-shaped aliases — `ClaudeActivityState`,
+ * `ClaudePlanPayload`, `ClaudeQuestionPayload`, `BoxStatusClaude/Codex/Opencode`,
+ * `CLAUDE_ACTIVITY_STATES`. None was ever claude-specific (codex and opencode
+ * shared every state), so they are deleted rather than deprecated.
  */
 export type {
   AgentActivityState,
@@ -89,14 +90,6 @@ export type {
   AgentStatusMap,
 } from '@agentbox/core';
 export { AGENT_ACTIVITY_STATES } from '@agentbox/core';
-
-/** Identical to `AgentActivityState`; the states were never Claude-specific. */
-export type ClaudeActivityState = AgentActivityState;
-export type ClaudePlanPayload = AgentPlanPayload;
-export type ClaudeQuestionPayload = AgentQuestionPayload;
-
-/** The validator every `*-state` command and socket op checks against. */
-export const CLAUDE_ACTIVITY_STATES: readonly AgentActivityState[] = AGENT_ACTIVITY_STATES;
 
 export interface BoxStatusServiceEntry {
   name: string;
@@ -129,15 +122,6 @@ export interface BoxStatusPort {
   /** Name of the service whose `ready_when` port matches, else null (ad-hoc). */
   service: string | null;
 }
-
-/**
- * Historical per-agent body names. All three were already the same shape modulo
- * claude's plan/question fields, which are not claude-specific — only its hooks
- * happen to carry the payload today.
- */
-export type BoxStatusClaude = AgentStatusEntry;
-export type BoxStatusCodex = AgentStatusEntry;
-export type BoxStatusOpencode = AgentStatusEntry;
 
 /**
  * Durable snapshot of a box's runtime status. The in-box daemon builds it and
@@ -175,9 +159,9 @@ export interface BoxStatus {
    * Derived, never hand-maintained. A fourth agent appears only in `agents`,
    * which is correct: an old reader has no field for it either way.
    */
-  claude?: BoxStatusClaude;
-  codex?: BoxStatusCodex;
-  opencode?: BoxStatusOpencode;
+  claude?: AgentStatusEntry;
+  codex?: AgentStatusEntry;
+  opencode?: AgentStatusEntry;
 }
 
 export const BOX_STATUS_SCHEMA = 1 as const;
@@ -237,19 +221,19 @@ export type CtlRequest =
 export type CtlResponse = { ok: true; data: unknown } | { ok: false; error: string };
 
 /**
- * Status of the in-container tmux session running Claude Code. The daemon
- * doesn't own this session lifecycle — it probes via `tmux has-session` and
+ * Status of an in-container tmux session running an agent. The daemon doesn't
+ * own the session lifecycle — it probes via `tmux has-session` and
  * `tmux display-message`. Missing tmux server / missing session both surface
  * as `running: false`.
  */
-export interface ClaudeSessionStatus {
+export interface AgentSessionStatus {
   running: boolean;
   sessionName: string;
   /** ISO-8601 timestamp from tmux's `#{session_created}`, or null when not running. */
   startedAt: string | null;
   /**
-   * Sanitized tmux `#{pane_title}` (the title Claude Code set on its
-   * terminal), or null when not running / no meaningful title.
+   * Sanitized tmux `#{pane_title}` (the title the agent set on its terminal),
+   * or null when not running / no meaningful title.
    */
   title: string | null;
 }

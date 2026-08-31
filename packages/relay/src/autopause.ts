@@ -17,7 +17,13 @@ export interface AutopauseConfig {
 }
 
 export type ContainerState = 'running' | 'paused' | 'stopped' | 'missing';
-export type ClaudeState = 'working' | 'idle' | 'waiting' | 'unknown';
+/**
+ * The pause decision's coarse view of an agent, flattened from the full
+ * activity union. Not claude's: `readPauseState` folds whichever agent is live
+ * in the box, so a box where codex is working is never paused because claude
+ * happens to be idle.
+ */
+export type CoarseAgentState = 'working' | 'idle' | 'waiting' | 'unknown';
 
 /** One box's runtime facts the pure selector reasons about. No I/O, no clock. */
 export interface BoxScanEntry {
@@ -25,9 +31,9 @@ export interface BoxScanEntry {
   containerName: string;
   /** docker inspect status === 'running'. */
   running: boolean;
-  /** Latest reported claude activity, or null when no snapshot exists. */
-  claudeState: ClaudeState | null;
-  /** ms the box has been idle (now - claude.updatedAt) when idle; else null. */
+  /** Latest reported activity of whichever agent is live, or null when no snapshot exists. */
+  agentState: CoarseAgentState | null;
+  /** ms the box has been idle (now - the agent entry's updatedAt) when idle; else null. */
   idleMs: number | null;
   /** Box creation time as epoch ms; 0 when unknown/unparseable. */
   createdAt: number;
@@ -47,7 +53,7 @@ export function selectBoxesToPause(entries: BoxScanEntry[], cfg: AutopauseConfig
 
   const idleThresholdMs = cfg.idleMinutes * 60_000;
   const candidates = entries.filter(
-    (e) => e.running && e.claudeState === 'idle' && e.idleMs != null && e.idleMs >= idleThresholdMs,
+    (e) => e.running && e.agentState === 'idle' && e.idleMs != null && e.idleMs >= idleThresholdMs,
   );
   candidates.sort(
     (a, b) =>
@@ -132,7 +138,7 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
           boxId: reg.boxId,
           containerName: reg.containerName,
           running: state === 'running',
-          claudeState: active.state,
+          agentState: active.state,
           idleMs,
           createdAt: reg.createdAt ? toEpoch(reg.createdAt) : 0,
         });
@@ -201,8 +207,8 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
   };
 }
 
-interface ClaudeSnap {
-  state: ClaudeState | null;
+interface AgentSnap {
+  state: CoarseAgentState | null;
   updatedAt: string | null;
 }
 
@@ -214,12 +220,12 @@ interface ClaudeSnap {
  * compacting, waiting, end-plan, question, error) maps to a non-`idle` value,
  * so only a box whose live agent has settled to `idle` becomes a candidate.
  */
-function readPauseState(snap: Record<string, unknown> | undefined): ClaudeSnap {
+function readPauseState(snap: Record<string, unknown> | undefined): AgentSnap {
   const active = readActiveAgent(snap);
   return { state: coarsePauseState(active.state), updatedAt: active.updatedAt };
 }
 
-function coarsePauseState(s: WorkingAgentState | null): ClaudeState | null {
+function coarsePauseState(s: WorkingAgentState | null): CoarseAgentState | null {
   switch (s) {
     case 'idle':
       return 'idle';

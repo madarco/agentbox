@@ -1,4 +1,4 @@
-import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentQuestionPayload } from '@agentbox/ctl';
 
 export interface SidebarBox {
   id: string;
@@ -29,7 +29,7 @@ export interface SidebarBox {
   /** Last `AskUserQuestion` payload from the box's claude status; populated
    *  only while `activity === 'question'`. The compositor renders it into the
    *  alert band above the footer for the selected box. */
-  claudeQuestion?: ClaudeQuestionPayload;
+  claudeQuestion?: AgentQuestionPayload;
 }
 
 /** Per-row ownership + styling map returned alongside the rendered lines so

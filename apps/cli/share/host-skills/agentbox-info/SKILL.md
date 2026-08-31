@@ -107,7 +107,7 @@ All three feed the same status pipeline; `agent state` / `agent wait-for` work t
 
 ```sh
 agentbox agent state 1                # → working | idle | waiting | end-plan | question | prompt | compacting | error
-agentbox agent state 1 --json         # full BoxStatusClaude (state, updatedAt, sessionTitle, plan?, question?)
+agentbox agent state 1 --json         # full AgentStatusEntry (state, updatedAt, sessionTitle, plan?, question?)
 
 agentbox agent get-plan-question 1            # print the plan body OR question + options (human)
 agentbox agent get-plan-question 1 --json     # structured payload

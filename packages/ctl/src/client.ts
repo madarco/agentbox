@@ -6,7 +6,7 @@ import type {
   AgentActivityState,
   AgentPlanPayload,
   AgentQuestionPayload,
-  ClaudeSessionStatus,
+  AgentSessionStatus,
   CtlRequest,
   CtlResponse,
   LogEvent,
@@ -167,8 +167,8 @@ export async function reload(opts: ConnectOptions): Promise<ReloadResult> {
 
 export async function claudeSession(
   opts: ConnectOptions & { sessionName?: string },
-): Promise<ClaudeSessionStatus> {
-  return sendOneShot<ClaudeSessionStatus>(opts, {
+): Promise<AgentSessionStatus> {
+  return sendOneShot<AgentSessionStatus>(opts, {
     op: 'claude-session',
     sessionName: opts.sessionName,
   });

@@ -246,7 +246,7 @@ export {
   type AutopauseLoopDeps,
   type AutopauseLoopHandle,
   type BoxScanEntry,
-  type ClaudeState,
+  type CoarseAgentState,
   type ContainerState,
 } from './autopause.js';
 export {

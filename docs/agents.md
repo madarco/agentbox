@@ -686,7 +686,7 @@ detached, never on the daemon's critical path).
    finished making that plugin reach cloud boxes, and the result was invisible.
 2. **`agentbox agent state` / `wait-for` / `get-plan-question` were claude-only.**
    Not by a missing flag: `getAgentState` returned `{ claude }` and every wait
-   predicate took `BoxStatusClaude`, so on a codex or opencode box they read
+   predicate took claude's status entry, so on a codex or opencode box they read
    claude's permanent `unknown` forever. They now read the box's most active
    agent, or `--agent <id>`.
 3. **The hosted (Postgres) plane emitted none of the five fields**, unlike the

@@ -38,7 +38,7 @@ import { appendTail, endsMidEscape } from './escape-boundary.js';
 import { postAnswer, subscribePrompts, type PromptStream } from './prompt-client.js';
 import { isValidBoxStatus } from '@agentbox/relay';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
-import type { AgentActivityState, BoxStatus, ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentActivityState, BoxStatus, AgentQuestionPayload } from '@agentbox/ctl';
 import { normalizeAgentStatus } from '@agentbox/core';
 import type { AgentMode } from '@agentbox/core';
 
@@ -388,7 +388,7 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
   // dismiss it. Takes precedence over everything while a reconnect is in flight.
   let reconnectBanner: string | null = null;
   let noticeFrame = 0;
-  let questionPayload: ClaudeQuestionPayload | null = null;
+  let questionPayload: AgentQuestionPayload | null = null;
   let bandState: AlertBandState | null = null;
   let bandReservedRows = 0; // 0 or ALERT_BAND_ROWS depending on band visibility
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;

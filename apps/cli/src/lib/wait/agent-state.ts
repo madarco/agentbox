@@ -1,7 +1,7 @@
 // Pure state-matching helpers for `agentbox agent`. Extracted so they have a
 // unit-testable surface — see test/agent-state.test.ts.
 
-import type { BoxStatusClaude, ClaudeActivityState } from '@agentbox/ctl';
+import type { AgentStatusEntry, AgentActivityState } from '@agentbox/ctl';
 
 export const AGENT_WAIT_STATES = [
   'working',
@@ -26,7 +26,7 @@ export function isAgentWaitState(s: string): s is AgentWaitState {
  * by `agent wait-for prompt` and as the human-readable label in `agent state`
  * when those conditions hold.
  */
-export function isPromptReady(claude: BoxStatusClaude): boolean {
+export function isPromptReady(claude: AgentStatusEntry): boolean {
   return (
     claude.state === 'idle' &&
     claude.sessionRunning &&
@@ -44,7 +44,7 @@ export function isPromptReady(claude: BoxStatusClaude): boolean {
  * where the agent is still busy. It's the robust single waiter to race instead
  * of chaining `wait-for end-plan` / `wait-for question` / `wait-for prompt`.
  */
-export function isInputNeeded(claude: BoxStatusClaude): boolean {
+export function isInputNeeded(claude: AgentStatusEntry): boolean {
   // While the agent is busy it never "needs input" — even if a stale plan /
   // question payload is still attached (the payload guards below would
   // otherwise match through a `working` / `compacting` state).
@@ -60,7 +60,7 @@ export function isInputNeeded(claude: BoxStatusClaude): boolean {
   );
 }
 
-export function matchesAgentWaitState(claude: BoxStatusClaude, target: AgentWaitState): boolean {
+export function matchesAgentWaitState(claude: AgentStatusEntry, target: AgentWaitState): boolean {
   if (target === 'input-needed') return isInputNeeded(claude);
   if (target === 'prompt') return isPromptReady(claude);
   if (target === 'end-plan') {
@@ -72,14 +72,14 @@ export function matchesAgentWaitState(claude: BoxStatusClaude, target: AgentWait
   if (target === 'question') {
     return claude.question !== undefined || claude.state === 'question';
   }
-  return claude.state === (target as ClaudeActivityState);
+  return claude.state === (target as AgentActivityState);
 }
 
 /**
  * Display string used when no `--json` is requested. Prefers the semantic
  * label (`prompt` / `end-plan` / `question`) over the raw `waiting` flicker.
  */
-export function derivedAgentState(claude: BoxStatusClaude): string {
+export function derivedAgentState(claude: AgentStatusEntry): string {
   if (isPromptReady(claude)) return 'prompt';
   if (claude.plan !== undefined) return 'end-plan';
   if (claude.question !== undefined) return 'question';

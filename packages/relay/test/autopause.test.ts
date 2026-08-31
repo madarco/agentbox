@@ -16,7 +16,7 @@ function entry(p: Partial<BoxScanEntry> & { boxId: string }): BoxScanEntry {
   return {
     containerName: `agentbox-${p.boxId}`,
     running: true,
-    claudeState: 'idle',
+    agentState: 'idle',
     idleMs: IDLE,
     createdAt: 1000,
     ...p,
@@ -56,10 +56,10 @@ describe('selectBoxesToPause', () => {
 
   it('excludes non-idle (working/waiting/unknown/null) from candidates but counts them as running', () => {
     const es = [
-      entry({ boxId: 'work', claudeState: 'working', idleMs: null }),
-      entry({ boxId: 'wait', claudeState: 'waiting', idleMs: null }),
-      entry({ boxId: 'unk', claudeState: 'unknown', idleMs: null }),
-      entry({ boxId: 'no-snap', claudeState: null, idleMs: null }),
+      entry({ boxId: 'work', agentState: 'working', idleMs: null }),
+      entry({ boxId: 'wait', agentState: 'waiting', idleMs: null }),
+      entry({ boxId: 'unk', agentState: 'unknown', idleMs: null }),
+      entry({ boxId: 'no-snap', agentState: null, idleMs: null }),
       entry({ boxId: 'idle1', idleMs: 9 * 60_000 }),
       entry({ boxId: 'idle2', idleMs: 8 * 60_000 }),
     ];

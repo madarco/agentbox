@@ -1,6 +1,6 @@
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
-import { type BoxStatusClaude } from '@agentbox/ctl';
+import { type AgentStatusEntry } from '@agentbox/ctl';
 import { normalizeAgentStatus, pickPrimaryAgent } from '@agentbox/core';
 import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -114,7 +114,7 @@ const agentWaitForCommand = new Command('wait-for')
       // reach: it would answer `{claude: null}` for the full timeout, then
       // report the agent "did not reach" a state nobody ever asked about.
       if (reportedUnauthenticatedPlane(source)) process.exit(1);
-      let matched: BoxStatusClaude | undefined;
+      let matched: AgentStatusEntry | undefined;
       let elapsedMs = 0;
       const start = Date.now();
       for (;;) {
@@ -417,7 +417,7 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
     process.exit(1);
   }
   if (reportedUnauthenticatedPlane(source)) process.exit(1);
-  let claude: BoxStatusClaude | null;
+  let claude: AgentStatusEntry | null;
   try {
     claude = await agentClaudeFrom(source, box.id);
   } catch (err) {
@@ -543,11 +543,11 @@ async function agentClaudeFrom(
   source: BoxPromptSource,
   boxId: string,
   agent?: string,
-): Promise<BoxStatusClaude | null> {
+): Promise<AgentStatusEntry | null> {
   const res = await source.client.getAgentState(boxId);
   const map = normalizeAgentStatus(res.agents ? { agents: res.agents } : { claude: res.claude });
-  if (agent) return (map[agent] ?? null) as BoxStatusClaude | null;
-  return (pickPrimaryAgent(map)?.entry ?? null) as BoxStatusClaude | null;
+  if (agent) return (map[agent] ?? null) as AgentStatusEntry | null;
+  return (pickPrimaryAgent(map)?.entry ?? null) as AgentStatusEntry | null;
 }
 
 /**
@@ -605,7 +605,7 @@ export async function gatherApprovals(
     relayError = err instanceof Error ? err.message : String(err);
   }
 
-  let claude: BoxStatusClaude | null = null;
+  let claude: AgentStatusEntry | null = null;
   try {
     claude = await agentClaudeFrom(source, box.id);
   } catch (err) {
@@ -693,7 +693,7 @@ const HUB_NOT_FOUND = Symbol('hub-not-found');
 async function fetchAgentClaude(
   box: BoxRecord,
   agent?: string,
-): Promise<BoxStatusClaude | null | typeof HUB_ERROR | typeof HUB_NOT_FOUND> {
+): Promise<AgentStatusEntry | null | typeof HUB_ERROR | typeof HUB_NOT_FOUND> {
   const source = await resolveBoxPromptSource(box);
   if (!source) {
     log.error("Could not reach a hub to read this box's agent state.");
@@ -751,7 +751,7 @@ function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
   process.exit(2);
 }
 
-function emitMatch(claude: BoxStatusClaude, asJson: boolean): void {
+function emitMatch(claude: AgentStatusEntry, asJson: boolean): void {
   if (asJson) {
     process.stdout.write(JSON.stringify(claude) + '\n');
   } else {
@@ -759,7 +759,7 @@ function emitMatch(claude: BoxStatusClaude, asJson: boolean): void {
   }
 }
 
-function statusDisplay(claude: BoxStatusClaude): string {
+function statusDisplay(claude: AgentStatusEntry): string {
   return derivedAgentState(claude);
 }
 

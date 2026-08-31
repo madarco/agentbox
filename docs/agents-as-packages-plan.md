@@ -435,14 +435,31 @@ records) and the branch in `user-config.schema.json`, which is
 `additionalProperties: false`. Both fail the config suite when omitted, which is
 how the demo agent's keys were found missing.
 
-**Phase 7 — the name sweep + the plugin path.** Rename the ~124 name-only sites
-(`BoxStatusClaude`, `ClaudeActivityState`, `ClaudeQuestionPayload`, relay's
-`ClaudeState`) to their agent-agnostic equivalents — mechanical, and the aliases
-are already documented as such in `packages/ctl/src/types.ts`. Then the dynamic
-path: `agentbox agent add`, an agent registry file, `AgentModule.descriptor`
-snapshotting and a version gate, mirroring `plugin.ts` / `plugin-registry.ts`.
-**Measure the fourth agent again here** and record the final number in
-`docs/agents.md` — that count is the deliverable, not a vague "it's a package now".
+**Phase 7a — the name-only aliases — DONE.** Seven aliases over agent-agnostic
+types, 77 references, all deleted rather than deprecated:
+`ClaudeActivityState`, `ClaudePlanPayload`, `ClaudeQuestionPayload`,
+`BoxStatusClaude/Codex/Opencode` and `CLAUDE_ACTIVITY_STATES` collapse onto the
+`@agentbox/core` names they already aliased; `ClaudeSessionStatus` →
+`AgentSessionStatus` (it was always a tmux probe, for any agent); and the
+relay's `ClaudeState` / `BoxScanEntry.claudeState` → `CoarseAgentState` /
+`agentState`, whose own doc comment already said "across ALL agents ... not just
+claude".
+
+The guard the plan asked for landed with it:
+`apps/cli/test/no-agent-named-exports.test.ts` fails on any agent-named EXPORT
+outside `packages/agent-*`. It carries a 23-file allowlist, each entry annotated
+with the phase that removes it — and it is checked BOTH ways, so a listed file
+that no longer offends fails too. The list can only shrink; when it is empty the
+rule holds with no exemptions. Both directions mutation-checked. Correctly
+agent-named code is excluded rather than exempted: `apps/cli/src/agents/<id>/`
+(an agent's own folder, pending phase 2) and ctl's scrapers (baked into the
+image; the plan says they stay).
+
+**Phase 7b — the dynamic plugin path.** `agentbox agent add`, an agent registry
+file, `AgentModule.descriptor` snapshotting and a version gate, mirroring
+`plugin.ts` / `plugin-registry.ts`. **Measure the fourth agent again here** and
+record the final number in `docs/agents.md` — that count is the deliverable, not
+a vague "it's a package now". Still open.
 
 ## What adding an agent costs today — measured, after phase 3b
 

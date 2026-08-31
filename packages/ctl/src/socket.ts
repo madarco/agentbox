@@ -5,7 +5,7 @@ import { readLogFile, type Supervisor } from './supervisor.js';
 import { collectPorts, type StatusReporter } from './status-reporter.js';
 import { probeAgentSession } from './tmux.js';
 import {
-  CLAUDE_ACTIVITY_STATES,
+  AGENT_ACTIVITY_STATES,
   DEFAULT_CLAUDE_SESSION_NAME,
   type CtlRequest,
   type CtlResponse,
@@ -161,7 +161,7 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       // create a phantom entry in the status map.
       if (typeof req.agent !== 'string' || req.agent.length === 0) {
         writeLine(sock, { ok: false, error: `invalid agent: ${String(req.agent)}` });
-      } else if (!CLAUDE_ACTIVITY_STATES.includes(req.state)) {
+      } else if (!AGENT_ACTIVITY_STATES.includes(req.state)) {
         writeLine(sock, { ok: false, error: `invalid ${req.agent} state: ${String(req.state)}` });
       } else {
         opts.reporter?.setAgentState(req.agent, req.state, {

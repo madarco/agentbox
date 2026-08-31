@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { StatusReporter } from '../src/status-reporter.js';
-import type { ClaudePlanPayload, ClaudeQuestionPayload } from '../src/types.js';
+import type { AgentPlanPayload, AgentQuestionPayload } from '../src/types.js';
 
 // The reporter snapshots itself by probing tmux + listing supervisor services.
 // We don't want either side-effect in unit tests, so we fake the supervisor
@@ -65,8 +65,8 @@ async function flushDebounce(reporter: StatusReporter, relay: { posted: Posted[]
 
 interface PaylClaude {
   state: string;
-  plan?: ClaudePlanPayload;
-  question?: ClaudeQuestionPayload;
+  plan?: AgentPlanPayload;
+  question?: AgentQuestionPayload;
 }
 
 function latestClaude(posted: Posted[]): PaylClaude | undefined {
@@ -96,7 +96,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it("ignores a 'working' transition while in end-plan unless clearPending is set", async () => {
     const { reporter, relay } = makeReporter();
-    const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
+    const plan: AgentPlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     reporter.setAgentState('claude', 'end-plan', { plan });
     await flushDebounce(reporter, relay);
@@ -111,7 +111,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it("clears end-plan when PostToolUse sends 'working --clear-pending'", async () => {
     const { reporter, relay } = makeReporter();
-    const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
+    const plan: AgentPlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     reporter.setAgentState('claude', 'end-plan', { plan });
     reporter.setAgentState('claude', 'working', { clearPending: true });
@@ -124,7 +124,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it("ignores 'working' while in question state unless cleared", async () => {
     const { reporter, relay } = makeReporter();
-    const question: ClaudeQuestionPayload = {
+    const question: AgentQuestionPayload = {
       questions: [{ question: 'pick', options: [{ label: 'a' }] }],
       capturedAt: '2026-05-27T00:00:00.000Z',
     };
@@ -139,7 +139,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it('allows non-working transitions out of end-plan (idle from Stop hook), but keeps the plan payload', async () => {
     const { reporter, relay } = makeReporter();
-    const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
+    const plan: AgentPlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     reporter.setAgentState('claude', 'end-plan', { plan });
     reporter.setAgentState('claude', 'idle');
@@ -152,7 +152,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it('keeps the question payload through the question → waiting Notification race', async () => {
     const { reporter, relay } = makeReporter();
-    const question: ClaudeQuestionPayload = {
+    const question: AgentQuestionPayload = {
       questions: [{ question: 'pick', options: [{ label: 'a' }] }],
       capturedAt: '2026-05-27T00:00:00.000Z',
     };
@@ -170,8 +170,8 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it('overwrites end-plan with a fresh end-plan payload (re-fires)', async () => {
     const { reporter, relay } = makeReporter();
-    const planA: ClaudePlanPayload = { plan: 'A', capturedAt: '2026-05-27T00:00:00.000Z' };
-    const planB: ClaudePlanPayload = { plan: 'B', capturedAt: '2026-05-27T00:00:01.000Z' };
+    const planA: AgentPlanPayload = { plan: 'A', capturedAt: '2026-05-27T00:00:00.000Z' };
+    const planB: AgentPlanPayload = { plan: 'B', capturedAt: '2026-05-27T00:00:01.000Z' };
 
     reporter.setAgentState('claude', 'end-plan', { plan: planA });
     reporter.setAgentState('claude', 'end-plan', { plan: planB });
@@ -182,7 +182,7 @@ describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
 
   it("PreCompact sets 'compacting'; PostCompact (with clearPending) resets to working and clears any pending plan", async () => {
     const { reporter, relay } = makeReporter();
-    const plan: ClaudePlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
+    const plan: AgentPlanPayload = { plan: 'do X', capturedAt: '2026-05-27T00:00:00.000Z' };
 
     // Compaction can run while a plan is pending — exercise both transitions.
     reporter.setAgentState('claude', 'end-plan', { plan });

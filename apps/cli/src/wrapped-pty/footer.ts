@@ -1,6 +1,6 @@
 import { BAR_BG, statusLine, type SidebarBox } from '../dashboard/sidebar.js';
 import type { PromptAskEvent } from '@agentbox/relay';
-import type { ClaudeQuestionPayload } from '@agentbox/ctl';
+import type { AgentQuestionPayload } from '@agentbox/ctl';
 import type { AgentMode } from '@agentbox/core';
 
 /**
@@ -247,7 +247,7 @@ export const SYNC_END = '\x1b[?2026l';
 export type AlertBandState =
   | { kind: 'prompt'; prompt: PromptAskEvent }
   | { kind: 'notice'; message: string; frame: number }
-  | { kind: 'question'; question: ClaudeQuestionPayload };
+  | { kind: 'question'; question: AgentQuestionPayload };
 
 /** Default band height; both TUIs reserve this many rows above the footer. */
 export const ALERT_BAND_ROWS = 3;
@@ -308,7 +308,7 @@ function renderNoticeBand(message: string, frame: number, cols: number, rows: nu
   return out;
 }
 
-function renderQuestionBand(payload: ClaudeQuestionPayload, cols: number, rows: number): string[] {
+function renderQuestionBand(payload: AgentQuestionPayload, cols: number, rows: number): string[] {
   const q = payload.questions[0];
   if (!q) return Array.from({ length: rows }, () => blankBar(cols, BAR_BG));
 

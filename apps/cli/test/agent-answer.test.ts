@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoxStatusClaude } from '@agentbox/ctl';
+import type { AgentStatusEntry } from '@agentbox/ctl';
 import {
   answerKeystrokes,
   inTuiKind,
@@ -9,7 +9,7 @@ import {
   resolveQuestionOption,
 } from '../src/lib/agent-answer.js';
 
-function claude(partial: Partial<BoxStatusClaude>): BoxStatusClaude {
+function claude(partial: Partial<AgentStatusEntry>): AgentStatusEntry {
   return {
     state: 'idle',
     updatedAt: '2026-06-05T00:00:00.000Z',
@@ -38,7 +38,7 @@ describe('inTuiKind', () => {
 
   it('returns null when not parked', () => {
     expect(inTuiKind(claude({ state: 'idle' }))).toBeNull();
-    expect(inTuiKind(claude({ state: 'prompt' as BoxStatusClaude['state'] }))).toBeNull();
+    expect(inTuiKind(claude({ state: 'prompt' as AgentStatusEntry['state'] }))).toBeNull();
   });
 
   it('ignores a stale payload while the agent is busy', () => {

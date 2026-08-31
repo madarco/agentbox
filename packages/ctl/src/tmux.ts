@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { hostname } from 'node:os';
-import type { ClaudeSessionStatus } from './types.js';
+import type { AgentSessionStatus } from './types.js';
 
 /** Hard cap so a pathological terminal title can't bloat the status snapshot. */
 const MAX_TITLE_LEN = 120;
@@ -52,7 +52,7 @@ function runTool(cmd: string, args: string[]): Promise<ToolResult> {
  * Shared by the `claude-session` wire op (socket.ts) and the status reporter
  * so both report the same thing.
  */
-export async function probeAgentSession(sessionName: string): Promise<ClaudeSessionStatus> {
+export async function probeAgentSession(sessionName: string): Promise<AgentSessionStatus> {
   const has = await runTool('tmux', ['has-session', '-t', sessionName]);
   if (has.exitCode !== 0) return { running: false, sessionName, startedAt: null, title: null };
   const ts = await runTool('tmux', [
