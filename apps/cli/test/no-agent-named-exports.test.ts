@@ -62,9 +62,6 @@ const ALLOWLIST: Record<string, string> = {
   // Claude's `~/.claude/projects` path encoding rode into the shared kit with
   // the teleport helpers; it belongs in `packages/agent-claude`.
   'packages/cli-kit/src/cwd-encoding.ts': 'phase 2',
-  'apps/cli/src/auth.ts': 'phase 2',
-  'apps/cli/src/lib/claude-cred-health.ts': 'phase 2',
-  'apps/cli/src/lib/claude-login-run.ts': 'phase 2',
   'apps/cli/src/commands/download-claude.ts': 'phase 2',
   'apps/cli/src/commands/download-codex.ts': 'phase 2',
   'apps/cli/src/commands/download-opencode.ts': 'phase 2',

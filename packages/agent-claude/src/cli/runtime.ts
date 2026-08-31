@@ -27,12 +27,12 @@ import {
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
   warmUpClaudeCredentials,
-} from '@agentbox/agent-claude';
+} from '../docker-sync.js';
 import { confirm, log, spinner } from '@agentbox/cli-kit';
-import { resolveClaudeAuth } from '../../auth.js';
+import { resolveClaudeAuth } from './auth.js';
 import { claudeLoginBinding } from './login-binding.js';
 import { claudeCredStatus } from './host-creds.js';
-import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
+import { resolveClaudeCredHealth } from './cred-health.js';
 import { runGuidedLogin } from '@agentbox/cli-kit';
 import { imageProgress } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';

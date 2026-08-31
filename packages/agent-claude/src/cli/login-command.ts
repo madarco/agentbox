@@ -21,9 +21,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
+import type { AgentLoginHost } from '@agentbox/cli-kit';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
-import { handleLifecycleError } from '../../commands/_errors.js';
-import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
 import {
   cleanupStaleSessions,
   findLiveSession,
@@ -34,7 +33,7 @@ import {
   writeLoginRequest,
   writeLoginState,
   type LoginState,
-} from '../../lib/claude-login-session.js';
+} from './login-session.js';
 import { imageProgress } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';
 import { signInToClaude } from './runtime.js';
@@ -204,6 +203,7 @@ export function addClaudeLoginOptions(cmd: Command): void {
 export async function runClaudeLoginCommand(
   args: string[],
   rawOpts: Record<string, unknown>,
+  host: AgentLoginHost,
 ): Promise<void> {
   const opts = rawOpts as { headless?: boolean; code?: string; interactive?: boolean };
   const mode = selectLoginMode({
@@ -256,8 +256,8 @@ export async function runClaudeLoginCommand(
     // A fresh login is exactly when the control box's copy goes stale — push the
     // refreshed backup to custody (best-effort, silent, no-op without a control
     // box or when the hash is unchanged).
-    await syncAgentCredentialsIfChanged();
+    await host.syncCredentialsIfChanged();
   } catch (err) {
-    handleLifecycleError(err);
+    host.fail(err);
   }
 }

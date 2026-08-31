@@ -59,7 +59,7 @@ import { tryAutoAdopt } from '../control-plane/auto-adopt.js';
 import { withOwningHub } from '../control-plane/with-hub.js';
 import type { AgentId, AgentMode, BoxRecord } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { resolveClaudeAuth } from '../auth.js';
+import { resolveClaudeAuth } from '@agentbox/agent-claude/cli';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
 import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '@agentbox/cli-kit';
@@ -68,7 +68,7 @@ import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
-import { claudeRuntime } from '../agents/claude/runtime.js';
+import { claudeRuntime } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
 
 interface DashboardOptions {

@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
     }
   },
   "files": [
@@ -25,11 +29,13 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@agentbox/cli-kit": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-cloud": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
+    "commander": "^12.1.0",
     "execa": "^9.5.2"
   },
   "devDependencies": {

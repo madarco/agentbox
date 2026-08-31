@@ -15,7 +15,7 @@ import {
   writeLoginCode,
   writeLoginRequest,
   writeLoginState,
-} from '../src/lib/claude-login-session.js';
+} from '@agentbox/agent-claude/cli';
 
 const DEAD_PID = 2 ** 30; // astronomically unlikely to be a live process
 

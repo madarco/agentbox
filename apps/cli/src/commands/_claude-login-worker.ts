@@ -11,14 +11,14 @@
  */
 import { Command } from 'commander';
 import { openCommandLog } from '@agentbox/cli-kit';
-import { runClaudeLogin } from '../lib/claude-login-run.js';
+import { runClaudeLogin } from '@agentbox/agent-claude/cli';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   readLoginRequest,
   takeLoginCode,
   writeLoginState,
   type LoginState,
-} from '../lib/claude-login-session.js';
+} from '@agentbox/agent-claude/cli';
 
 export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
   .description(

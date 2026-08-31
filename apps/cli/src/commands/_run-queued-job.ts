@@ -47,15 +47,15 @@ import {
   type QueueJobLogin,
 } from '@agentbox/relay';
 import { toSyncKind } from '@agentbox/core';
-import { resolveClaudeAuth } from '../auth.js';
-import { claudeCredStatus } from '../agents/claude/host-creds.js';
-import { runClaudeLogin } from '../lib/claude-login-run.js';
+import { resolveClaudeAuth } from '@agentbox/agent-claude/cli';
+import { claudeCredStatus } from '@agentbox/agent-claude/cli';
+import { runClaudeLogin } from '@agentbox/agent-claude/cli';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
-import { claudeRuntime } from '../agents/claude/runtime.js';
+import { claudeRuntime } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';

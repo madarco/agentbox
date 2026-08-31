@@ -47,8 +47,8 @@ const { assertAgentCredsAvailable, MissingAgentCredsError, ExpiredAgentCredsErro
 // The per-agent checks moved next to their runtimes — the shared helper no
 // longer knows any agent's name. The mock has to follow the symbol.
 const { claudeAuthAvailable, claudeCredStatus } =
-  await import('../src/agents/claude/host-creds.js');
-const { claudeRuntime } = await import('../src/agents/claude/runtime.js');
+  await import('@agentbox/agent-claude/cli');
+const { claudeRuntime } = await import('@agentbox/agent-claude/cli');
 const { codexRuntime } = await import('@agentbox/agent-codex/cli');
 const { opencodeRuntime } = await import('@agentbox/agent-opencode/cli');
 

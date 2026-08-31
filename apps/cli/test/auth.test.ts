@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readAuthFile, resolveClaudeAuth } from '../src/auth.js';
+import { readAuthFile, resolveClaudeAuth } from '@agentbox/agent-claude/cli';
 
 describe('readAuthFile', () => {
   let dir: string;

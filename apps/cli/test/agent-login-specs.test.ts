@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rejectionMessage } from '@agentbox/cli-kit';
-import { CLAUDE_LOGIN_SPEC } from '../src/agents/claude/login.js';
+import { CLAUDE_LOGIN_SPEC } from '@agentbox/agent-claude/cli';
 import { CODEX_LOGIN_SPEC, extractCodexUserCode } from '@agentbox/agent-codex/cli';
 import { OPENCODE_LOGIN_SPEC } from '@agentbox/agent-opencode/cli';
 

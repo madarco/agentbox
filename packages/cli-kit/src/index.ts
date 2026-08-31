@@ -96,6 +96,7 @@ export type {
   HostCredVerdict,
   AgentResumeSupport,
   AgentRuntime,
+  AgentLoginHost,
   AgentCommandText,
   AgentCreateContext,
   PreparedSeed,

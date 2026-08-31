@@ -16,10 +16,10 @@ import {
   buildClaudeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
   warmUpClaudeCredentials,
-} from '@agentbox/agent-claude';
+} from '../docker-sync.js';
 import { runAgentLogin, type AgentLoginPhase } from '@agentbox/cli-kit';
-import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
-import type { LoginPhase } from './claude-login-session.js';
+import { CLAUDE_LOGIN_SPEC } from './login.js';
+import type { LoginPhase } from './login-session.js';
 
 export interface LoginPhaseUpdate {
   url?: string;

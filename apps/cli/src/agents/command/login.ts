@@ -13,8 +13,9 @@
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
-import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { handleLifecycleError } from '../../commands/_errors.js';
+import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
+import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { imageProgress } from '@agentbox/cli-kit';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 
@@ -24,7 +25,17 @@ export interface LoginOptions {
 
 export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
   const custom = a.runtime.loginCommand?.run;
-  if (custom) return cmd.action(async (args: string[], opts) => custom(args, opts));
+  if (custom) {
+    // The two app-level calls a custom login needs, injected rather than
+    // imported: an agent package cannot reach `commands/control-plane.ts` or
+    // `commands/_errors.ts`.
+    return cmd.action(async (args: string[], opts) =>
+      custom(args, opts, {
+        syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
+        fail: handleLifecycleError,
+      }),
+    );
+  }
   return cmd.action(async (args: string[], opts: LoginOptions) => {
     intro(`Signing in to ${a.shortName}...`);
     // Two shapes: an agent whose guided flow needs no keystroke (codex's device

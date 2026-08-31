@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
-import { claudeRuntime } from '../src/agents/claude/runtime.js';
+import { claudeRuntime } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
 import { opencodeRuntime } from '@agentbox/agent-opencode/cli';
 import type { EffectiveConfig } from '@agentbox/config';

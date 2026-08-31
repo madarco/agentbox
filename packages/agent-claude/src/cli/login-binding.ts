@@ -9,7 +9,7 @@ import {
   buildClaudeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
   warmUpClaudeCredentials,
-} from '@agentbox/agent-claude';
+} from '../docker-sync.js';
 import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { CLAUDE_LOGIN_SPEC } from './login.js';
 

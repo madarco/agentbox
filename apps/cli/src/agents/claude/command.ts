@@ -22,7 +22,7 @@ import { runPrepare } from '../../commands/prepare.js';
 import { TeleportError } from '../../session-teleport/index.js';
 import { resolvePlanTeleport } from '../../session-teleport/plan.js';
 import { maybeRunSetupWizard } from '../../wizard.js';
-import { claudeRuntime } from './runtime.js';
+import { claudeRuntime } from '@agentbox/agent-claude/cli';
 
 const spec = resolveAgentSpec('claude');
 

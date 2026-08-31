@@ -84,6 +84,19 @@ export interface AgentResumeSupport {
 }
 
 /** The docker-side bindings + login code for one agent. */
+/**
+ * What a login action needs from the app. Two leaf calls, injected rather than
+ * imported: `syncAgentCredentialsIfChanged` reaches the control-plane module
+ * (2,700 lines) and `handleLifecycleError` maps an error to an exit code — both
+ * live in `apps/cli`, which an agent package cannot import.
+ */
+export interface AgentLoginHost {
+  /** Push a refreshed credential to the control box. Best-effort, never throws. */
+  syncCredentialsIfChanged(): Promise<void>;
+  /** Map a lifecycle error to a message + exit code. Never returns. */
+  fail(err: unknown): never;
+}
+
 export interface AgentRuntime {
   /** Shared docker config volume — the one a throwaway login container writes. */
   sharedVolume: string;
@@ -196,8 +209,20 @@ export interface AgentRuntime {
   loginCommand?: {
     /** Extra flags, declared BEFORE `--interactive`. */
     options?(cmd: Command): void;
-    /** Replaces the whole action. */
-    run(args: string[], opts: Record<string, unknown>): Promise<void>;
+    /**
+     * Replaces the whole action.
+     *
+     * `host` carries the two app-level calls a login needs and an agent package
+     * cannot import: pushing a refreshed credential to a control box, and the
+     * CLI's error-to-exit-code mapping. Both are leaf calls — plain data in,
+     * nothing back — so injecting them is what lets this action live in the
+     * agent's own package instead of the app.
+     */
+    run(
+      args: string[],
+      opts: Record<string, unknown>,
+      host: AgentLoginHost,
+    ): Promise<void>;
   };
   /**
    * Whether `agentbox <agent>` probes for the binary on a freshly created box.

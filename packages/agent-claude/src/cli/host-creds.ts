@@ -5,8 +5,8 @@
  * three-arm chain that a fourth agent fell through silently.
  */
 import { hostBackupHasCredentials } from '@agentbox/sandbox-docker';
-import { resolveClaudeAuth } from '../../auth.js';
-import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
+import { resolveClaudeAuth } from './auth.js';
+import { resolveClaudeCredHealth } from './cred-health.js';
 
 /**
  * True when Claude is already authenticated on the host: a forwarded env var
