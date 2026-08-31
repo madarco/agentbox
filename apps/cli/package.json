@@ -54,7 +54,6 @@
     "publish:minor": "npm version minor && git push --follow-tags"
   },
   "dependencies": {
-    "@agentbox/agent-registry": "workspace:*",
     "@clack/prompts": "^0.9.0",
     "@daytona/sdk": "^0.196.0",
     "@vercel/sandbox": "^2.0.1",
@@ -82,6 +81,7 @@
     "@agentbox/agent-example": "workspace:*",
     "@agentbox/agent-modules": "workspace:*",
     "@agentbox/agent-opencode": "workspace:*",
+    "@agentbox/agent-registry": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",
