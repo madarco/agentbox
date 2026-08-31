@@ -381,10 +381,30 @@ providers carried codex's and opencode's host config; and `host-stage.ts` had no
 tests at all — it has them now, mutation-checked against the excludes, the
 relocation, the `stagedAs` filter and the dispatch.
 
-**Phase 5b — `claudeInstall`.** Generalize it to an agent-keyed install variant
-across its ~35 sites — including the `AGENTBOX_CLAUDE_INSTALL` build arg, which
-is a rename with a bake implication, so it lands with a forced re-`prepare` and
-its own live check. Still open.
+**Phase 5b — `claudeInstall` — OPEN, and bigger than this plan estimated.**
+Re-measured: **300 sites across 79 files**, not ~35. The original count was
+`claudeInstall` alone; the real surface is that name plus
+`AGENTBOX_CLAUDE_INSTALL` and the prepared-state plumbing that carries it, and
+it reaches places a refactor cannot quietly change:
+
+- `packages/provider-sdk/src/index.ts` — published SDK surface, so a rename is
+  an `SDK_API_VERSION` bump and a republish.
+- `apps/hub/app/(dashboard)/api/v1/lib/{openapi,validate}.ts` — the REST API's
+  request schema, which the tray and the CLI-against-a-control-box both speak.
+- `packages/config/schema/user-config.schema.json` and every provider's
+  `prepared-state.ts` — persisted on disk in `~/.agentbox`, so a rename has a
+  migration question attached.
+- `Dockerfile.box` and four providers' `install-box.sh` / `provision.sh` /
+  `build-template.sh` — a build arg, so it forces a re-`prepare` on every
+  provider and shifts the published box-image tag.
+- Seven `apps/web/content/docs/*.mdx` pages.
+
+The mechanism underneath is already generic —
+`resolveAgentInstall(spec.install, mode)` takes any agent's install block — so
+what is left is the NAME and its plumbing, not the design. That makes it a
+mechanical but wide change with a release implication, and it wants its own
+session and its own sequencing against the SDK bump rather than being folded
+into a refactor commit.
 
 **Phase 6 — config keys — DONE.** `packages/config/src/agents.ts` holds
 `AGENT_KINDS`, and `<agent>.sessionName`,
@@ -464,6 +484,35 @@ reported through the keyed status map; `agent state` answered per box; codex's
 carried `filtered 17 host-path hook(s)` and the `hostWorkspace` alias on an
 isolated create. The demo agent was driven through its own module against real
 docker: volume created and chowned, mounted, tmux session started and probed.
+
+## Smoke, after phases 6 and 5a
+
+Run live, on this branch, docker + the real host home:
+
+- **Generated config keys** (`config list`): all four agents get
+  `<agent>.sessionName`, `box.isolate<Agent>Config` for each, and
+  `dangerouslySkipPermissions` only for claude and codex — OpenCode's absence is
+  the point. `example.sessionName` and `box.isolateExampleConfig` set, get and
+  unset through the normal precedence chain.
+- **A real box**: `agentbox claude -y -d` on `examples/test-workspace` came up,
+  `list` showed `claude:idle`, and the box's `status.json` carried both the
+  keyed `agents` map and the legacy mirror (item 5's contract, live).
+- **The skip-permissions refactor reached the real launch**: the in-box process
+  is `claude --dangerously-skip-permissions`, from the rule that now lives on
+  claude's runtime rather than in the shared lib.
+- **The demo agent against real docker**: `resolveVolume` → `buildMounts` →
+  `ensureVolume` created `agentbox-example-config` for real, through the shared
+  `AgentSyncModule` contract, with no code outside `packages/agent-example`.
+- **Cloud staging against the developer's actual home**: `stageAllAgentStatic`
+  dispatched claude (dedicated stager — `settings.json` present and filtered),
+  codex, opencode, `example` and `agents`. OpenCode's tarball, now produced by
+  the GENERIC path, still has the `config/` relocation, still excludes
+  `auth.json`, and still excludes the `stagedAs: 'state'` tree. With a
+  `~/.agentbox-example` on the host the demo agent stages too — from its
+  registry row alone.
+
+Not yet run: a real cloud `prepare` (it bakes a snapshot), and the queued `-i`
+runs, which belong with phase 2.
 
 ## Files that will NOT change
 
