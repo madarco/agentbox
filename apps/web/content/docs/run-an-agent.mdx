@@ -177,6 +177,11 @@ export const agentSpec = {
 };
 ```
 
+A complete, working example ships in the repo at
+[`examples/agentbox-agent-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-agent-example)
+— one dependency-free file. Register it with
+`agentbox agent add ./examples/agentbox-agent-example` to see the whole flow.
+
 `agentbox agent add` loads the package once, checks the spec, and snapshots it
 into `~/.agentbox/agents.json`. Everything afterwards reads the snapshot, so no
 part of AgentBox has to import your package to know the agent exists — and your

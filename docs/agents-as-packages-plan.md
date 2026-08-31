@@ -559,6 +559,14 @@ dynamic `import()` under test is the real one.
 The measurement the plan asked for is recorded in `docs/agents.md` →
 "What a new agent actually costs, measured".
 
+**The example is committed, not a transcript claim.**
+`examples/agentbox-agent-example` is a real, dependency-free agent plugin beside
+the existing `agentbox-provider-example`, with a README and a test that loads it
+the way `agent add` does and validates it with the same function the command
+uses. A doc example that has rotted proves the opposite of what it claims, so the
+test mutation-checks three ways: claiming a built-in alias, dropping a required
+spec field, and declaring a module for an agent the package did not register.
+
 ## What adding an agent costs today — measured, after phase 3b
 
 | step | needed? |
