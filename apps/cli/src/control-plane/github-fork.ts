@@ -48,7 +48,11 @@ export async function ghLogin(): Promise<string | null> {
  * Fork `repo` to the authenticated user (idempotent — tolerates an existing
  * fork) and wait until the GitHub API sees it. Returns `<login>/<name>`.
  */
-export async function ensureFork(repo: string, login: string, log: (l: string) => void): Promise<string> {
+export async function ensureFork(
+  repo: string,
+  login: string,
+  log: (l: string) => void,
+): Promise<string> {
   const fork = `${login}/${nameOf(repo)}`;
   log(`forking ${repo} -> ${fork}…`);
   const f = await gh(['repo', 'fork', repo, '--clone=false']);

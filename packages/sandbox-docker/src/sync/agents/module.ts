@@ -72,10 +72,17 @@ export interface AgentSyncModule {
   /** Mounts + env this agent contributes to `docker run`. */
   buildMounts(spec: AgentVolumeChoice, hostEnv: NodeJS.ProcessEnv): AgentMountResult;
 
-  /** Create the volume if absent and seed it from the host config. */
+  /**
+   * Create the volume if absent and seed it from the host config.
+   *
+   * `hostWorkspace` is passed because an agent may need to rewrite host-scoped
+   * state as it syncs — claude aliases its `projects[<hostWorkspace>]` key to
+   * `/workspace` so the in-box session sees the host's project state. Optional:
+   * an agent that does not care simply ignores it.
+   */
   ensureVolume(
     spec: AgentVolumeChoice,
-    opts: { syncFromHost: boolean; image: string },
+    opts: { syncFromHost: boolean; image: string; hostWorkspace?: string },
   ): Promise<EnsureAgentVolumeResult>;
 
   /** Probe the agent's tmux session in a running box. */
@@ -91,8 +98,15 @@ export interface AgentSyncModule {
   /**
    * Refresh a credential that expires on its own, before a box starts.
    * Claude-only today; optional because most agents' tokens do not expire.
+   *
+   * `attempts` and `onProgress` are here because renewing is a real, slow,
+   * fallible operation the host reports on as it goes — not a fire-and-forget.
    */
-  warmUpCredentials?(volume: string, image: string): Promise<{ notes: string[] }>;
+  warmUpCredentials?(
+    volume: string,
+    image: string,
+    opts?: { attempts?: number; onProgress?: (line: string) => void },
+  ): Promise<{ warmed: boolean; notes: string[] }>;
 }
 
 /**

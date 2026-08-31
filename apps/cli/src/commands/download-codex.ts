@@ -1,14 +1,7 @@
 import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
-import {
-  DEFAULT_BOX_IMAGE,
-  stageItemsFromVolume,
-} from '@agentbox/sandbox-docker';
-import {
-  pullCodexConfig,
-  resolveCodexVolume,
-  SHARED_CODEX_VOLUME,
-} from '@agentbox/agent-codex';
+import { DEFAULT_BOX_IMAGE, stageItemsFromVolume } from '@agentbox/sandbox-docker';
+import { pullCodexConfig, resolveCodexVolume, SHARED_CODEX_VOLUME } from '@agentbox/agent-codex';
 import {
   agentBoxConfigDir,
   codexStagedItems,

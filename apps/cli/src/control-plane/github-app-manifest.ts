@@ -43,7 +43,11 @@ export interface ManifestFlowResult {
 }
 
 function htmlEscape(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -209,7 +213,9 @@ export async function runGitHubAppManifestFlow(
       const startUrl = `http://127.0.0.1:${String(listenPort)}/`;
       log(`opening ${startUrl} to create the GitHub App…`);
       void Promise.resolve(opts.openBrowser(startUrl)).catch((err: unknown) => {
-        log(`could not open the browser automatically: ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `could not open the browser automatically: ${err instanceof Error ? err.message : String(err)}`,
+        );
         log(`open this URL manually: ${startUrl}`);
       });
     });

@@ -9,29 +9,31 @@ import {
   resolveDefaultCheckpoint,
 } from '@agentbox/config';
 import {
-  buildDashboardAttachArgv,
   buildShellSessionAttachArgv,
-  claudeSessionInfo,
   createBox,
   destroyBox,
   ensureBoxBrowser,
   listBoxes,
   relayPort,
   pauseBox,
-  rebuildPluginNativeDeps,
   seedAgentDeclaredFiles,
-  SHARED_CLAUDE_VOLUME,
   shellSessionInfo,
   startBox,
-  startClaudeSession,
   startShellSession,
   stopBox,
   syncClaudeCredentials,
   unpauseBox,
-  waitForTmuxPaneContent,
   type ListedBox,
-  ensureClaudeInstalled,
 } from '@agentbox/sandbox-docker';
+import {
+  buildDashboardAttachArgv,
+  claudeSessionInfo,
+  rebuildPluginNativeDeps,
+  SHARED_CLAUDE_VOLUME,
+  startClaudeSession,
+  waitForTmuxPaneContent,
+  ensureClaudeInstalled,
+} from '@agentbox/agent-claude';
 import {
   DEFAULT_OPENCODE_SESSION,
   ensureOpencodeInstalled,

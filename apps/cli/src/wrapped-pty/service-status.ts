@@ -25,8 +25,9 @@ export function serviceStatusLabel(status: BoxStatus | null): string | null {
   if (services.length === 0 && tasks.length === 0) return null;
 
   const errored =
-    services.some((s) => s.state === 'crashed' || s.state === 'unhealthy' || s.state === 'backoff') ||
-    tasks.some((t) => t.state === 'failed');
+    services.some(
+      (s) => s.state === 'crashed' || s.state === 'unhealthy' || s.state === 'backoff',
+    ) || tasks.some((t) => t.state === 'failed');
   if (errored) return 'service error';
 
   // A probed service (`ready_when`) sits in `running` while its probe warms up
@@ -38,7 +39,9 @@ export function serviceStatusLabel(status: BoxStatus | null): string | null {
   const total = counted.length;
   const up = counted.filter(isUp).length;
   const settling =
-    services.some((s) => s.state === 'pending' || s.state === 'waiting' || s.state === 'starting') ||
+    services.some(
+      (s) => s.state === 'pending' || s.state === 'waiting' || s.state === 'starting',
+    ) ||
     services.some((s) => s.state === 'running' && Boolean(s.probed)) ||
     tasks.some((t) => t.state === 'pending' || t.state === 'waiting' || t.state === 'running');
 

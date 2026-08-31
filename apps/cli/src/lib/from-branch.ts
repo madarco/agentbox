@@ -55,11 +55,9 @@ export async function resolveFromBranch(
   // remote's actual tip — boxes started from `--from-branch main` should
   // pick up new commits the user hasn't pulled locally yet.
   if (!isSha) {
-    const fetched = await execa(
-      'git',
-      ['-C', opts.repo, 'fetch', '--quiet', remote, ref],
-      { reject: false },
-    );
+    const fetched = await execa('git', ['-C', opts.repo, 'fetch', '--quiet', remote, ref], {
+      reject: false,
+    });
     if (fetched.exitCode !== 0) {
       // Soft-fail: the ref might be local-only (e.g. a private branch) — fall
       // through to the rev-parse check below so we still error clearly when
@@ -67,11 +65,9 @@ export async function resolveFromBranch(
     }
   }
 
-  const verify = await execa(
-    'git',
-    ['-C', opts.repo, 'rev-parse', '--verify', `${ref}^{commit}`],
-    { reject: false },
-  );
+  const verify = await execa('git', ['-C', opts.repo, 'rev-parse', '--verify', `${ref}^{commit}`], {
+    reject: false,
+  });
   if (verify.exitCode !== 0) {
     throw new FromBranchError(
       `--from-branch: unknown ref "${ref}" (not found in ${opts.repo} after fetch). ` +

@@ -35,7 +35,8 @@ export async function resolveClaudeAuth(
   const envApiKey = processEnv['ANTHROPIC_API_KEY'];
   const envOauth = processEnv['CLAUDE_CODE_OAUTH_TOKEN'];
   if (typeof envApiKey === 'string' && envApiKey.length > 0) env['ANTHROPIC_API_KEY'] = envApiKey;
-  if (typeof envOauth === 'string' && envOauth.length > 0) env['CLAUDE_CODE_OAUTH_TOKEN'] = envOauth;
+  if (typeof envOauth === 'string' && envOauth.length > 0)
+    env['CLAUDE_CODE_OAUTH_TOKEN'] = envOauth;
   if (Object.keys(env).length > 0) return { env, source: 'host-env' };
 
   const file = await readAuthFile(opts.authFilePath);

@@ -14,7 +14,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const CONTROL_PLANE_ENV_PATH = join(homedir(), '.agentbox', 'control-plane', 'control-plane.env');
+export const CONTROL_PLANE_ENV_PATH = join(
+  homedir(),
+  '.agentbox',
+  'control-plane',
+  'control-plane.env',
+);
 
 /**
  * Merge the env file into `process.env` for keys that aren't already set, so an
@@ -40,7 +45,9 @@ export function loadControlPlaneEnv(path: string = CONTROL_PLANE_ENV_PATH): void
  * values regardless of what happens to be exported in the current shell.
  * Returns {} when the file is absent.
  */
-export function readControlPlaneEnvMap(path: string = CONTROL_PLANE_ENV_PATH): Record<string, string> {
+export function readControlPlaneEnvMap(
+  path: string = CONTROL_PLANE_ENV_PATH,
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (!existsSync(path)) return out;
   for (const line of readFileSync(path, 'utf8').split('\n')) {

@@ -11,8 +11,8 @@ import {
   resolveClaudeVolume,
   scanPluginCacheForRebuild,
   SHARED_CLAUDE_VOLUME,
-} from '../src/sync/agents/claude.js';
-import { buildTmuxSessionArgs, buildTmuxConfigShellSnippet } from '../src/sync/agents/shared.js';
+} from '../src/docker-sync.js';
+import { buildTmuxSessionArgs, buildTmuxConfigShellSnippet } from '@agentbox/sandbox-docker';
 
 describe('resolveClaudeVolume', () => {
   it('returns the shared volume name when isolate is false', () => {

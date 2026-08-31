@@ -7,11 +7,8 @@
  * and the clipboard paste handlers on attach.
  */
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import {
-  rebuildPluginNativeDeps,
-  SHARED_CLAUDE_VOLUME,
-  syncClaudeCredentials,
-} from '@agentbox/sandbox-docker';
+import { syncClaudeCredentials } from '@agentbox/sandbox-docker';
+import { rebuildPluginNativeDeps, SHARED_CLAUDE_VOLUME } from '@agentbox/agent-claude';
 import type { Command } from 'commander';
 import { log } from '../../lib/prompt.js';
 import { buildAgentCommand } from '../command/factory.js';

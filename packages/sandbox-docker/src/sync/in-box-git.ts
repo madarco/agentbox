@@ -9,7 +9,11 @@ import { GitWorktreeError } from '../git-worktree.js';
 // the shared `makeHostGitPorts()` (host git is provider-neutral); only the
 // box-side ports are docker-specific here. `classifyUntrackedOverlay` is
 // re-exported so the docker test is untouched.
-import { classifyUntrackedOverlay, makeHostGitPorts, resyncWorkspace } from '@agentbox/sandbox-core';
+import {
+  classifyUntrackedOverlay,
+  makeHostGitPorts,
+  resyncWorkspace,
+} from '@agentbox/sandbox-core';
 import type { RepoResyncResult, WorkspaceResyncPorts } from '@agentbox/core';
 export { classifyUntrackedOverlay };
 export type { RepoResyncResult };
@@ -152,11 +156,9 @@ async function dexec(
   user: 'vscode' | 'root' = 'vscode',
   cwd: string = '/',
 ): Promise<void> {
-  const r = await execa(
-    'docker',
-    ['exec', '-w', cwd, '--user', user, container, ...argv],
-    { reject: false },
-  );
+  const r = await execa('docker', ['exec', '-w', cwd, '--user', user, container, ...argv], {
+    reject: false,
+  });
   if (r.exitCode !== 0) {
     throw new GitWorktreeError(`${argv.join(' ')} failed: ${r.stderr || r.stdout}`);
   }
@@ -241,7 +243,17 @@ export async function bindWorktrees(
     // leave one in place).
     await execa(
       'docker',
-      ['exec', '-w', '/', '--user', 'root', container, 'sh', '-c', `mountpoint -q ${b.containerPath} && umount ${b.containerPath} || true`],
+      [
+        'exec',
+        '-w',
+        '/',
+        '--user',
+        'root',
+        container,
+        'sh',
+        '-c',
+        `mountpoint -q ${b.containerPath} && umount ${b.containerPath} || true`,
+      ],
       { reject: false },
     );
     // For nested: parent must exist. The root bind exposes the root

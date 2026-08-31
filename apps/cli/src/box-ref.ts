@@ -169,7 +169,9 @@ export async function resolveBoxOrExit(
   if (adopted === 'unreachable') {
     // The box may well exist on the control box — don't let the error imply it
     // definitely doesn't.
-    log.warn(`could not reach the control box — did not check whether '${ref}' is one of its boxes.`);
+    log.warn(
+      `could not reach the control box — did not check whether '${ref}' is one of its boxes.`,
+    );
   }
   if (/^[1-9][0-9]*$/.test(ref.trim())) {
     log.error(`no box with index ${ref.trim()} in this project (${project.root})`);

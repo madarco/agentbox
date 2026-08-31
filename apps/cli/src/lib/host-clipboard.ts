@@ -30,9 +30,7 @@ export async function captureClipboardImage(): Promise<string | null> {
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-clip-'));
   const pngPath = join(dir, 'clip.png');
   const ok =
-    process.platform === 'darwin'
-      ? await captureDarwin(dir, pngPath)
-      : await captureLinux(pngPath);
+    process.platform === 'darwin' ? await captureDarwin(dir, pngPath) : await captureLinux(pngPath);
 
   if (ok) return pngPath;
   await rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -93,11 +91,9 @@ async function captureDarwin(dir: string, pngPath: string): Promise<boolean> {
 
   if (kind === 'TIFF' && (await fileHasBytes(tiffPath))) {
     // Screenshots land on the clipboard as TIFF; convert to PNG with sips.
-    const conv = await execa(
-      'sips',
-      ['-s', 'format', 'png', tiffPath, '--out', pngPath],
-      { reject: false },
-    );
+    const conv = await execa('sips', ['-s', 'format', 'png', tiffPath, '--out', pngPath], {
+      reject: false,
+    });
     if (conv.exitCode === 0) return fileHasBytes(pngPath);
   }
   return false;
@@ -162,11 +158,7 @@ function asBuffer(out: unknown): Buffer | null {
 
 function isPng(buf: Buffer): boolean {
   return (
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47
+    buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
   );
 }
 

@@ -16,7 +16,16 @@ export async function writeBoxEnvFile(
   const body = formatBoxEnvBody(env);
   const result = await execa(
     'docker',
-    ['exec', '--user', 'root', '-i', container, 'sh', '-c', 'umask 022 && cat > /etc/agentbox/box.env'],
+    [
+      'exec',
+      '--user',
+      'root',
+      '-i',
+      container,
+      'sh',
+      '-c',
+      'umask 022 && cat > /etc/agentbox/box.env',
+    ],
     { input: body, reject: false },
   );
   if (result.exitCode !== 0) {

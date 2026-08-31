@@ -10,7 +10,6 @@ import {
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
-import type { ClaudeSessionInfo } from './sync/agents/claude.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
@@ -572,7 +571,7 @@ export interface InspectedBox {
   snapshotSizeBytes: number | null;
   dockerInspect: unknown;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
-  claudeSession: ClaudeSessionInfo | null;
+  claudeSession: AgentSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'codex' session. */
   codexSession: AgentSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'opencode' session. */
@@ -605,7 +604,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   const snapshotSizeBytes = record.snapshotDir ? await dirSizeBytes(record.snapshotDir) : null;
   const dockerJson = await inspectContainer(record.container);
 
-  let claudeSession: ClaudeSessionInfo | null = null;
+  let claudeSession: AgentSessionInfo | null = null;
   let codexSession: AgentSessionInfo | null = null;
   let opencodeSession: AgentSessionInfo | null = null;
   let shellSessions: ShellSessionSummary[] = [];

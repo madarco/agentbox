@@ -57,10 +57,18 @@ function isConnectError(msg: string): boolean {
 }
 
 /** Best-effort Neon provisioning via the logged-in `vercel` CLI, in a temp cwd. */
-function provisionNeon(teamId: string | undefined, projectId: string, log: (l: string) => void): Promise<void> {
+function provisionNeon(
+  teamId: string | undefined,
+  projectId: string,
+  log: (l: string) => void,
+): Promise<void> {
   return new Promise((resolve) => {
     const work = mkdtempSync(join(tmpdir(), 'agentbox-neon-'));
-    const env = { ...process.env, VERCEL_PROJECT_ID: projectId, ...(teamId ? { VERCEL_ORG_ID: teamId } : {}) };
+    const env = {
+      ...process.env,
+      VERCEL_PROJECT_ID: projectId,
+      ...(teamId ? { VERCEL_ORG_ID: teamId } : {}),
+    };
     const child = spawn('vercel', ['integration', 'add', 'neon', '--non-interactive'], {
       cwd: work,
       env,
@@ -84,7 +92,10 @@ function provisionNeon(teamId: string | undefined, projectId: string, log: (l: s
       done();
     });
     child.on('close', (code) => {
-      if (code !== 0) log(`neon: integration add exited ${String(code)} — continuing (it may already be attached)`);
+      if (code !== 0)
+        log(
+          `neon: integration add exited ${String(code)} — continuing (it may already be attached)`,
+        );
       done();
     });
   });
@@ -238,7 +249,9 @@ async function buttonDeploy(a: DeployArgs): Promise<{ url: string }> {
   return { url: alias.startsWith('http') ? alias : `https://${alias}` };
 }
 
-export async function deployControlPlaneToVercel(opts: VercelDeployOptions): Promise<{ url: string }> {
+export async function deployControlPlaneToVercel(
+  opts: VercelDeployOptions,
+): Promise<{ url: string }> {
   const auth = await resolveVercelApiAuth();
   if (!auth) {
     throw new Error('not logged in to Vercel — run `agentbox vercel login` (or set VERCEL_TOKEN)');
@@ -260,12 +273,22 @@ export async function deployControlPlaneToVercel(opts: VercelDeployOptions): Pro
     }
   }
 
-  const args: DeployArgs = { token, teamId, repo: target, ref: opts.ref, env: opts.env, projectName, log: opts.log };
+  const args: DeployArgs = {
+    token,
+    teamId,
+    repo: target,
+    ref: opts.ref,
+    env: opts.env,
+    projectName,
+    log: opts.log,
+  };
   try {
     return await apiDeploy(args);
   } catch (e) {
     if (e instanceof GitConnectError) {
-      opts.log(`Vercel can't connect ${target} via the API (GitHub App not installed); using the Deploy Button…`);
+      opts.log(
+        `Vercel can't connect ${target} via the API (GitHub App not installed); using the Deploy Button…`,
+      );
       return buttonDeploy(args);
     }
     throw e;

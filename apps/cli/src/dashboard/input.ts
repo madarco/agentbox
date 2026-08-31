@@ -57,8 +57,7 @@ export class InputParser {
     this.leaderMs = opts.leaderMs ?? 700;
     this.escMs = opts.escMs ?? 50;
     this.setTimer = opts.setTimer ?? ((ms, fn) => setTimeout(fn, ms) as unknown);
-    this.clearTimer =
-      opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
 
   feed(buf: Buffer): void {
@@ -99,7 +98,8 @@ export class InputParser {
           // different things across the two UIs. Box switching is Control+Option+↑/↓.
           else if (c === 'k') this.onEvent({ type: 'action', name: 'destroy' });
           else if (c === 'q') this.onEvent({ type: 'quit' });
-          else if (c === 'j' || c === 'n' || c === 'N') this.onEvent({ type: 'switch', dir: 'next' });
+          else if (c === 'j' || c === 'n' || c === 'N')
+            this.onEvent({ type: 'switch', dir: 'next' });
           else {
             // Unrecognized chord: leader consumed, forward this byte only.
             this.fwd.push(b);

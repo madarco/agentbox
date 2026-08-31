@@ -95,10 +95,7 @@ export function systemdUnit(inv: AutostartInvocation): string {
 }
 
 function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** Run a command detached, ignoring failures (the service manager is a nicety). */
@@ -154,7 +151,10 @@ export async function installAutostart(
       note: `To keep the hub running after you log out: sudo loginctl enable-linger ${process.env.USER ?? '$USER'}`,
     };
   }
-  return { path: null, note: `autostart is not supported on ${os} — start the hub manually after a reboot` };
+  return {
+    path: null,
+    note: `autostart is not supported on ${os} — start the hub manually after a reboot`,
+  };
 }
 
 /** Remove the autostart unit and deregister it (best-effort, idempotent). */

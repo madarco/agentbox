@@ -141,11 +141,9 @@ export async function resizeWindow(
  * Empty list when no tmux server is running (exit 1 on the box; we swallow it).
  */
 export async function listSessions(provider: Provider, box: BoxRecord): Promise<string[]> {
-  const res = await provider.exec(
-    box,
-    ['tmux', 'list-sessions', '-F', '#{session_name}'],
-    { user: TMUX_USER },
-  );
+  const res = await provider.exec(box, ['tmux', 'list-sessions', '-F', '#{session_name}'], {
+    user: TMUX_USER,
+  });
   if (res.exitCode !== 0) return [];
   return res.stdout
     .split('\n')

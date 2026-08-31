@@ -9,7 +9,8 @@
  * nothing a user can type.
  */
 import type { AttachOpenIn } from '@agentbox/config';
-import { formatDetachNotice, type BoxRecord } from '@agentbox/sandbox-docker';
+import { type BoxRecord } from '@agentbox/sandbox-docker';
+import { formatDetachNotice } from '@agentbox/agent-claude';
 import { Command } from 'commander';
 import { attachRelayOptions } from '../../control-plane/box-plane.js';
 import { runWrappedAttach } from '../../wrapped-pty/index.js';

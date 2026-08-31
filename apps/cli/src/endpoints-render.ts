@@ -7,10 +7,7 @@ import { hyperlink } from './hyperlink.js';
  * terminal supports it. Returns [] when there's nothing to show so callers can
  * skip the whole block.
  */
-export function renderEndpointLines(
-  endpoints: BoxEndpoints,
-  stream: NodeJS.WriteStream,
-): string[] {
+export function renderEndpointLines(endpoints: BoxEndpoints, stream: NodeJS.WriteStream): string[] {
   if (endpoints.endpoints.length === 0) return [];
 
   const entries: Array<{ name: string; value: string }> = [

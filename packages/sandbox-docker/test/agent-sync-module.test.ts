@@ -1,71 +1,78 @@
-import { describe, expect, it } from 'vitest';
-import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   agentSyncModule,
+  registerAgentSyncModule,
   registeredAgentSyncModules,
   requireAgentSyncModule,
+  type AgentSyncModule,
 } from '../src/sync/agents/module.js';
-import '../src/sync/agents/builtins.js';
 
 /**
- * The registry is what lets this package stop importing agents by name.
+ * The registry contract, tested with stubs rather than the shipped agents.
  *
- * Importing `builtins.js` above is what a consumer does today; when an agent
- * becomes its own package the app registers it instead, and these assertions
- * hold unchanged. That is the point of testing the registry rather than the
- * adapters.
+ * That is not a weakening — it is the point. No agent lives in this package any
+ * more, and it cannot import one (an agent depends on it, so importing back is
+ * the cycle). What this package owns is the CONTRACT; whether the real agents
+ * satisfy it is asserted in `@agentbox/agent-modules`, which can see them all.
  */
+
+function stub(id: string, extra: Partial<AgentSyncModule> = {}): AgentSyncModule {
+  return {
+    id,
+    resolveVolume: ({ isolate, boxId }) => ({
+      volume: isolate ? `agentbox-${id}-${boxId}` : `agentbox-${id}-config`,
+    }),
+    buildMounts: (spec) => ({
+      extraVolumes: [`${spec.volume}:/home/vscode/.${id}`],
+      env: {},
+      volumeName: spec.volume,
+    }),
+    ensureVolume: () => Promise.resolve({ created: false, synced: false }),
+    sessionInfo: () => Promise.resolve({ running: false, sessionName: id, startedAt: null }),
+    ...extra,
+  };
+}
+
 describe('agent sync module registry', () => {
-  it('has the agents still living in this package registered', () => {
-    // Only the ones `builtins.ts` still adapts — claude alone now. The others
-    // register from their own packages, which this one cannot import (that is
-    // the cycle), so the full-set assertion lives in `@agentbox/agent-modules`,
-    // where the wiring actually happens.
-    const ids = registeredAgentSyncModules().map((m) => m.id);
-    expect(ids).toEqual(['claude']);
+  beforeEach(() => {
+    registerAgentSyncModule(stub('alpha'));
+    registerAgentSyncModule(
+      stub('beta', { afterVolumeSync: () => Promise.resolve({ notes: ['did a thing'] }) }),
+    );
   });
 
-  it('resolves a volume through the module, matching the registry name', () => {
-    // Not isolated -> the agent's SHARED volume, which is `spec.dockerVolume`.
-    for (const spec of AGENT_SYNC_SPECS) {
-      const mod = agentSyncModule(spec.id);
-      if (!mod) continue;
-      expect(mod.resolveVolume({ isolate: false, boxId: 'aabbccdd' }).volume).toBe(
-        spec.dockerVolume,
-      );
-    }
+  it('hands back what was registered', () => {
+    expect(registeredAgentSyncModules().map((m) => m.id)).toEqual(
+      expect.arrayContaining(['alpha', 'beta']),
+    );
   });
 
   it('gives an isolated box its own volume, never the shared one', () => {
-    for (const mod of registeredAgentSyncModules()) {
-      const shared = mod.resolveVolume({ isolate: false, boxId: 'aabbccdd' }).volume;
-      const isolated = mod.resolveVolume({ isolate: true, boxId: 'aabbccdd' }).volume;
-      expect(isolated).not.toBe(shared);
-      expect(isolated).toContain('aabbccdd');
-    }
+    const mod = requireAgentSyncModule('alpha');
+    const shared = mod.resolveVolume({ isolate: false, boxId: 'aabbccdd' }).volume;
+    const isolated = mod.resolveVolume({ isolate: true, boxId: 'aabbccdd' }).volume;
+    expect(isolated).not.toBe(shared);
+    expect(isolated).toContain('aabbccdd');
   });
 
   it('builds mounts that name the volume it resolved', () => {
-    for (const mod of registeredAgentSyncModules()) {
-      const choice = mod.resolveVolume({ isolate: false, boxId: 'aabbccdd' });
-      const mounts = mod.buildMounts(choice, {});
-      expect(mounts.volumeName).toBe(choice.volume);
-      expect(mounts.extraVolumes.some((v) => v.startsWith(`${choice.volume}:`))).toBe(true);
-    }
+    const mod = requireAgentSyncModule('alpha');
+    const choice = mod.resolveVolume({ isolate: false, boxId: 'aabbccdd' });
+    expect(mod.buildMounts(choice, {}).volumeName).toBe(choice.volume);
   });
 
-  it('declares the optional hooks only where the agent has one', () => {
-    // claude warms a credential that expires on its own and needs no post-sync
-    // hook. Neither is universal, which is why both are optional rather than
-    // no-op methods every agent has to stub.
-    expect(agentSyncModule('claude')?.warmUpCredentials).toBeTypeOf('function');
-    expect(agentSyncModule('claude')?.afterVolumeSync).toBeUndefined();
+  it('leaves the optional hooks absent for an agent that declares none', () => {
+    // An agent needing neither a post-sync step nor a renewable credential
+    // stubs nothing — which is why both are optional rather than no-op methods.
+    expect(agentSyncModule('alpha')?.afterVolumeSync).toBeUndefined();
+    expect(agentSyncModule('beta')?.afterVolumeSync).toBeTypeOf('function');
+    expect(agentSyncModule('alpha')?.warmUpCredentials).toBeUndefined();
   });
 
   it('answers undefined for an unregistered agent, and throws only when asked to', () => {
     // A box may name an agent this build has no docker behavior for — a listing
-    // must degrade, not crash. `require` is for the call sites that cannot go on.
-    expect(agentSyncModule('example')).toBeUndefined();
-    expect(() => requireAgentSyncModule('example')).toThrow(/no docker sync module/);
+    // must degrade, not crash. `require` is for call sites that cannot go on.
+    expect(agentSyncModule('nobody')).toBeUndefined();
+    expect(() => requireAgentSyncModule('nobody')).toThrow(/no docker sync module/);
   });
 });

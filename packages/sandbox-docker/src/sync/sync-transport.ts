@@ -69,9 +69,14 @@ export function createDockerSyncTransport(init: DockerSyncTransportInit): SyncTr
       // `0:0` for root — omitting it would run as the image's default USER
       // (vscode), which is wrong for a root-owned carry extract.
       const args = ['exec', '-i', '--user', `${uid}:${uid}`, container, ...tarArgs];
-      const r = await execa('docker', args, { input: createReadStream(hostTarPath), reject: false });
+      const r = await execa('docker', args, {
+        input: createReadStream(hostTarPath),
+        reject: false,
+      });
       if (r.exitCode !== 0) {
-        throw new Error(`docker tar extract into ${boxDestDir} failed: ${String(r.stderr).slice(0, 300)}`);
+        throw new Error(
+          `docker tar extract into ${boxDestDir} failed: ${String(r.stderr).slice(0, 300)}`,
+        );
       }
     },
 
@@ -84,7 +89,9 @@ export function createDockerSyncTransport(init: DockerSyncTransportInit): SyncTr
         packArgs.push('-cf', localTar, '.');
         const packed = await execa('tar', packArgs, { reject: false });
         if (packed.exitCode !== 0) {
-          throw new Error(`tar pack of ${hostSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`);
+          throw new Error(
+            `tar pack of ${hostSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`,
+          );
         }
         await transport.applyTarball(localTar, boxDestDir, opts);
       } finally {
@@ -107,13 +114,19 @@ export function createDockerSyncTransport(init: DockerSyncTransportInit): SyncTr
       }
     },
 
-    async pullTree(boxSrcDir: string, hostDestDir: string, opts?: { exclude?: string[] }): Promise<void> {
+    async pullTree(
+      boxSrcDir: string,
+      hostDestDir: string,
+      opts?: { exclude?: string[] },
+    ): Promise<void> {
       const tarArgs = ['exec', container, 'tar', '-C', boxSrcDir];
       for (const ex of opts?.exclude ?? []) tarArgs.push(`--exclude=${ex}`);
       tarArgs.push('-cf', '-', '.');
       const packed = await execa('docker', tarArgs, { encoding: 'buffer', reject: false });
       if (packed.exitCode !== 0) {
-        throw new Error(`docker tar of ${boxSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`);
+        throw new Error(
+          `docker tar of ${boxSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`,
+        );
       }
       await execa('tar', ['-xf', '-', '-C', hostDestDir], {
         input: packed.stdout as Buffer,

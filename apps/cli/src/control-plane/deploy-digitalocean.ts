@@ -1,9 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  type ControlPlaneDeployRecord,
-  type HubDeploySource,
-} from '@agentbox/sandbox-core';
+import { type ControlPlaneDeployRecord, type HubDeploySource } from '@agentbox/sandbox-core';
 import {
   deployControlPlaneToDigitalOcean,
   destroyControlPlaneOnDigitalOcean,
@@ -11,11 +8,7 @@ import {
   updateControlPlaneOnDigitalOcean,
   type ControlPlaneDestroyResult,
 } from '@agentbox/sandbox-digitalocean';
-import {
-  assertReachableRecord,
-  persistDeployRecord,
-  readDeployRecord,
-} from './deploy-hetzner.js';
+import { assertReachableRecord, persistDeployRecord, readDeployRecord } from './deploy-hetzner.js';
 
 /**
  * CLI wrapper for the DigitalOcean control-plane deploy: precheck the token, run
@@ -50,7 +43,9 @@ export interface DigitalOceanDeployOptions {
   onProvisioned?: (info: ControlPlaneDeployRecord) => void;
 }
 
-export async function runDigitalOceanDeploy(opts: DigitalOceanDeployOptions): Promise<{ url: string }> {
+export async function runDigitalOceanDeploy(
+  opts: DigitalOceanDeployOptions,
+): Promise<{ url: string }> {
   if (readDigitalOceanCredStatus().source === 'none') {
     throw new Error('no DIGITALOCEAN_TOKEN configured — run `agentbox digitalocean login` first');
   }
@@ -108,7 +103,9 @@ export interface DigitalOceanUpdateOptions {
  * build. The record is written only on success — a failed update leaves the
  * previous `source` in place, which is what the Droplet is still running.
  */
-export async function runDigitalOceanUpdate(opts: DigitalOceanUpdateOptions): Promise<{ url: string }> {
+export async function runDigitalOceanUpdate(
+  opts: DigitalOceanUpdateOptions,
+): Promise<{ url: string }> {
   if (readDigitalOceanCredStatus().source === 'none') {
     throw new Error('no DIGITALOCEAN_TOKEN configured — run `agentbox digitalocean login` first');
   }

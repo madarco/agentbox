@@ -28,20 +28,16 @@ import {
   detectEngine,
   ensureImage,
   hostBackupHasCredentials,
-  rebuildPluginNativeDeps,
   recordLastAgent,
-  SHARED_CLAUDE_VOLUME,
-  startClaudeSession,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
 import {
-  startOpencodeSession,
-  ensureOpencodeInstalled,
-} from '@agentbox/agent-opencode';
-import {
-  startCodexSession,
-  ensureCodexInstalled,
-} from '@agentbox/agent-codex';
+  rebuildPluginNativeDeps,
+  SHARED_CLAUDE_VOLUME,
+  startClaudeSession,
+} from '@agentbox/agent-claude';
+import { startOpencodeSession, ensureOpencodeInstalled } from '@agentbox/agent-opencode';
+import { startCodexSession, ensureCodexInstalled } from '@agentbox/agent-codex';
 import {
   readJob,
   takeQueueLoginCode,

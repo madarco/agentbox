@@ -24,12 +24,10 @@
  * the one place the access-token check belongs — it asks "is this blob worth
  * refreshing?", not "is this login dead?".
  */
-import { hostClaudeAccessTokenExpired,
-  resolveAgentSpec,
-} from '@agentbox/sandbox-core';
+import { hostClaudeAccessTokenExpired, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { DockerCredentialRefresher } from '@agentbox/sandbox-core';
+import { requireAgentSyncModule } from './sync/agents/module.js';
 import { DEFAULT_BOX_IMAGE } from './image.js';
-import { SHARED_CLAUDE_VOLUME, warmUpClaudeCredentials } from './sync/agents/claude.js';
 import {
   extractCodexCredentials,
   extractOpencodeCredentials,
@@ -45,7 +43,7 @@ export const dockerCredentialRefresh: DockerCredentialRefresher = async (opts) =
   const image = DEFAULT_BOX_IMAGE;
   try {
     const r = await syncClaudeCredentials(
-      { volume: SHARED_CLAUDE_VOLUME },
+      { volume: resolveAgentSpec('claude').dockerVolume },
       { image, isolate: false },
     );
     if (r.direction === 'extracted') {
@@ -108,19 +106,25 @@ export async function renewClaudeCredential(opts: {
   const log = opts.onLog ?? (() => {});
   const image = opts.image ?? DEFAULT_BOX_IMAGE;
   try {
-    await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
-    const warm = await warmUpClaudeCredentials(SHARED_CLAUDE_VOLUME, image, {
+    await syncClaudeCredentials(
+      { volume: resolveAgentSpec('claude').dockerVolume },
+      { image, isolate: false },
+    );
+    // Through the registry: the warm-up is claude's own behavior and lives in
+    // its package now, which this one cannot import.
+    const claude = requireAgentSyncModule('claude');
+    const warm = (await claude.warmUpCredentials?.(resolveAgentSpec('claude').dockerVolume, image, {
       attempts: opts.attempts ?? 2,
-      onProgress: (line) => {
+      onProgress: (line: string) => {
         log(line);
       },
-    });
+    })) ?? { warmed: false, notes: [] };
     if (!warm.warmed) {
       log('claude: saved login did not renew — it may have been rotated away by another box');
       return 'failed';
     }
     const synced = await syncClaudeCredentials(
-      { volume: SHARED_CLAUDE_VOLUME },
+      { volume: resolveAgentSpec('claude').dockerVolume },
       { image, isolate: false },
     );
     return synced.direction === 'extracted' ? 'renewed' : 'unchanged';

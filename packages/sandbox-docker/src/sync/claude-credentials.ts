@@ -1,7 +1,7 @@
+import type { AgentVolumeChoice } from './agents/module.js';
 import { chmod, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
-import type { ClaudeConfigSpec } from './agents/claude.js';
 import { STATE_DIR } from '../state.js';
 
 // The pure credential guards (`isRealAgentCredential`, `hostClaudeAccessTokenExpired`,
@@ -266,7 +266,7 @@ echo "EXTRACTED=$EXTRACTED SEEDED=$SEEDED VOLREAL=$VOL_REAL"
  * throws into a box operation.
  */
 export async function syncClaudeCredentials(
-  spec: ClaudeConfigSpec,
+  spec: AgentVolumeChoice,
   opts: { image: string; isolate: boolean },
 ): Promise<SyncClaudeCredentialsResult> {
   try {

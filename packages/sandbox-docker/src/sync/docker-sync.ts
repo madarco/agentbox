@@ -28,8 +28,6 @@ import type {
 import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { renderCarryEntries } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
-import type { ClaudeConfigSpec } from './agents/claude.js';
-import { ensureClaudeVolume } from './agents/claude.js';
 import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
@@ -47,7 +45,7 @@ export interface DockerSyncHandle {
    */
   image?: string;
   /** Resolved claude config-volume spec (create-path). */
-  claudeSpec?: ClaudeConfigSpec;
+  claudeSpec?: AgentVolumeChoice;
   /** Whether the claude config volume is per-box isolated (gates the credential extract). */
   claudeIsolate?: boolean;
   /** Resolved codex spec, or undefined when codex isn't wanted (host has no ~/.codex + no `agentbox codex`). */
@@ -115,33 +113,20 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
 
       if (handle.claudeSpec) {
         const claudeSpec = handle.claudeSpec;
-        // Still called by name. Claude's ensure reports four extra outcomes and
-        // one of the log lines interpolates `ctx.hostWorkspace`, which the module
-        // contract has no channel for yet. It converts when claude moves into
-        // its package — deliberately last, since it is the daily driver.
-        const claudeEnsured = await ensureClaudeVolume(claudeSpec, {
+        // Through the registry like every other agent now. Claude's ensure
+        // reports more than created/synced — filtered hooks, a coerced install
+        // method, an aliased project key, a pre-trusted workspace — and those
+        // travel as `notes` so the shared contract keeps no field only one agent
+        // can fill. `hostWorkspace` goes in because claude rewrites host-scoped
+        // state as it syncs.
+        const claudeEnsured = await requireAgentSyncModule('claude').ensureVolume(claudeSpec, {
           syncFromHost: true,
           image,
           hostWorkspace: ctx.hostWorkspace,
         });
         if (claudeEnsured.synced) {
           log(`synced ${claudeSpec.volume} from ~/.claude`);
-          if ((claudeEnsured.filteredHookCount ?? 0) > 0) {
-            log(
-              `filtered ${String(claudeEnsured.filteredHookCount)} host-path hook(s) (paths under ~/)`,
-            );
-          }
-          if (claudeEnsured.installMethodFixed) {
-            log('set installMethod=native in synced .claude.json (matches box native install)');
-          }
-          if (claudeEnsured.aliasedProjectKey) {
-            log(
-              `aliased project state for ${ctx.hostWorkspace} -> /workspace in synced .claude.json`,
-            );
-          }
-          if (claudeEnsured.workspaceTrusted) {
-            log('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
-          }
+          for (const note of claudeEnsured.notes ?? []) log(note);
         } else if (claudeEnsured.created) {
           log(`created empty volume ${claudeSpec.volume} (no host ~/.claude to sync)`);
         } else {

@@ -93,9 +93,7 @@ function shellJoin(argv: string[]): string {
  */
 export function composePaneCommand(argv: string[], cwd: string, keepShell?: boolean): string {
   const inner = shellJoin(argv);
-  return keepShell
-    ? `cd ${shellQuote(cwd)} && ${inner}`
-    : `cd ${shellQuote(cwd)} && exec ${inner}`;
+  return keepShell ? `cd ${shellQuote(cwd)} && ${inner}` : `cd ${shellQuote(cwd)} && exec ${inner}`;
 }
 
 export interface SpawnInNewTerminalArgs {

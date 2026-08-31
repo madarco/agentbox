@@ -76,7 +76,16 @@ export function volumeSettingsTarget(volume: string, image: string, label: strin
   return {
     label,
     async exists(rel: string): Promise<boolean> {
-      const r = await run(['run', '--rm', '-v', `${volume}:/dst:ro`, image, 'test', '-e', `/dst/${rel}`]);
+      const r = await run([
+        'run',
+        '--rm',
+        '-v',
+        `${volume}:/dst:ro`,
+        image,
+        'test',
+        '-e',
+        `/dst/${rel}`,
+      ]);
       return r.exitCode === 0;
     },
     async readText(rel: string): Promise<string | null> {
@@ -95,7 +104,8 @@ export function volumeSettingsTarget(volume: string, image: string, label: strin
     },
     async writeText(rel: string, content: string, opts?: { mode?: number }): Promise<void> {
       const parent = posixDirname(rel);
-      const chmod = opts?.mode !== undefined ? ` && chmod ${opts.mode.toString(8)} '/dst/${rel}'` : '';
+      const chmod =
+        opts?.mode !== undefined ? ` && chmod ${opts.mode.toString(8)} '/dst/${rel}'` : '';
       const r = await run(
         [
           'run',

@@ -3,11 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import type { BoxResourceLimits, BoxResourceStats } from '@agentbox/core';
 import { CHECKPOINT_IMAGE_PREFIX, checkpointImageTag } from './checkpoint.js';
-import {
-  inspectContainer,
-  inspectContainerStatus,
-  inspectVolumeMountpoint,
-} from './docker.js';
+import { inspectContainer, inspectContainerStatus, inspectVolumeMountpoint } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
 import type { BoxRecord } from './state.js';
 
@@ -78,11 +74,9 @@ export async function volumeSizeBytes(name: string): Promise<number | null> {
     const sz = await duBytes(live);
     if (sz !== null) return sz;
   }
-  const df = await execa(
-    'docker',
-    ['system', 'df', '-v', '--format', '{{json .Volumes}}'],
-    { reject: false },
-  );
+  const df = await execa('docker', ['system', 'df', '-v', '--format', '{{json .Volumes}}'], {
+    reject: false,
+  });
   if (df.exitCode === 0) {
     try {
       const vols = JSON.parse(df.stdout || '[]') as Array<{ Name?: string; Size?: string }>;
@@ -246,9 +240,7 @@ export async function boxResourceStats(record: BoxRecord): Promise<BoxResourceSt
       record.checkpointImage ? imageBytes(record.checkpointImage) : Promise.resolve(null),
     ]);
   const diskUsedBytes =
-    diskContainer === null && diskDocker === null
-      ? null
-      : (diskContainer ?? 0) + (diskDocker ?? 0);
+    diskContainer === null && diskDocker === null ? null : (diskContainer ?? 0) + (diskDocker ?? 0);
   if (diskUsedBytes === null) {
     warnings.push('disk usage unavailable on this engine');
   }

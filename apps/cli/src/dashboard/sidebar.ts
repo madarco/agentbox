@@ -362,8 +362,7 @@ export function statusLine(
     g: ReadonlyArray<readonly [string, string]>,
   ): { plain: string; styled: string } => ({
     plain: g.map(([k, l]) => `${k}: ${l}`).join(SEP) + ' ',
-    styled:
-      g.map(([k, l]) => `${HINT_KEY}${k}${HINT_TXT}: ${l}`).join(`${HINT_TXT}${SEP}`) + ' ',
+    styled: g.map(([k, l]) => `${HINT_KEY}${k}${HINT_TXT}: ${l}`).join(`${HINT_TXT}${SEP}`) + ' ',
   });
 
   // Hint tier: shortcuts beat the title. Try the requested groups; if the
@@ -396,12 +395,5 @@ export function statusLine(
     BAR_BRAND + brandPrefix + BRAND_BOLD + base + titleSeg + (box ? ' ' : '') + BRAND_NOBOLD;
   const gap = w - leftPlain.length - hints.plain.length;
   // brand block (name + title bold) → base bar → gap → white/gray hints.
-  return (
-    BAR_BASE +
-    leftStyled +
-    BAR_BASE +
-    ' '.repeat(gap) +
-    hints.styled +
-    BAR_RESET
-  );
+  return BAR_BASE + leftStyled + BAR_BASE + ' '.repeat(gap) + hints.styled + BAR_RESET;
 }

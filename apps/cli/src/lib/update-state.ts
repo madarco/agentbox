@@ -73,9 +73,7 @@ export function readUpdateState(): UpdateState {
  * background remote check) don't clobber each other's fields. Pass an
  * explicit `undefined` value to delete a field.
  */
-export function writeUpdateState(
-  patch: Partial<Omit<UpdateState, 'version'>>,
-): UpdateState {
+export function writeUpdateState(patch: Partial<Omit<UpdateState, 'version'>>): UpdateState {
   const state = readUpdateState();
   const merged: UpdateState = { ...state, ...patch, version: STATE_VERSION };
   for (const key of Object.keys(merged) as (keyof UpdateState)[]) {

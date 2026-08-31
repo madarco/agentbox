@@ -11,13 +11,12 @@
  *   - the create-job worker (`_run-queued-job.ts`) uses the queue manifest's
  *     `login` sub-state so the hub API/UI can surface it.
  */
+import { syncClaudeCredentials, volumeClaudeCredentials } from '@agentbox/sandbox-docker';
 import {
   buildClaudeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
-  syncClaudeCredentials,
-  volumeClaudeCredentials,
   warmUpClaudeCredentials,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-claude';
 import { runAgentLogin, type AgentLoginPhase } from './agent-login-run.js';
 import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
 import type { LoginPhase } from './claude-login-session.js';

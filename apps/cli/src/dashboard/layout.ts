@@ -34,11 +34,7 @@ const MIN_RIGHT_H = 4;
  * silently dropped to 0 if reserving it would push the right pane below
  * `MIN_RIGHT_H`, keeping the inner PTY usable on tiny terminals.
  */
-export function computeLayout(
-  cols: number,
-  rows: number,
-  requestedAlertH = 0,
-): DashboardLayout {
+export function computeLayout(cols: number, rows: number, requestedAlertH = 0): DashboardLayout {
   const sidebarW = Math.min(SIDEBAR_WIDTH, Math.max(0, cols - MIN_RIGHT_W - 1));
   const sepX = sidebarW;
   const rightX = sidebarW + 1;

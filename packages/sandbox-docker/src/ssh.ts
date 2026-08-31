@@ -102,7 +102,12 @@ export async function setUpBoxSshd(
   const key = await mintSshKey(sshDir, comment);
   const installed = await installAuthorizedKey(container, key.publicKey);
   if (!installed.ok) {
-    return { sshHostPort: null, identityFile: key.privatePath, up: false, reason: installed.reason };
+    return {
+      sshHostPort: null,
+      identityFile: key.privatePath,
+      up: false,
+      reason: installed.reason,
+    };
   }
   const launch = await launchSshdDaemon(container);
   const sshHostPort = await publishedHostPort(container, SSH_CONTAINER_PORT);

@@ -6,7 +6,6 @@ import {
   allocateShellSessionName,
   buildShellSessionAttachArgv,
   DEFAULT_SHELL_SESSION,
-  formatDetachNotice,
   inspectBox,
   killShellSession,
   listShellSessions,
@@ -20,6 +19,7 @@ import {
   type BoxRecord,
   type ShellSessionSummary,
 } from '@agentbox/sandbox-docker';
+import { formatDetachNotice } from '@agentbox/agent-claude';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import {

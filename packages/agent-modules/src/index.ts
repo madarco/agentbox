@@ -12,11 +12,13 @@
  * `provider/loaders.ts` analogue for agents: a literal table of the things
  * compiled into this build, sitting above everything it registers.
  *
- * Agents still inside `sandbox-docker` register themselves from its
- * `builtins.ts`; each one leaves that file as it becomes a package, and this
- * list grows to replace it.
+ * Every shipped agent is now a package and registers from here; the staging
+ * `builtins.ts` that used to adapt them inside `sandbox-docker` is gone, which
+ * is this phase's own proof — there is no agent implementation left in that
+ * package to adapt.
  */
 
+import { registerClaudeAgent } from '@agentbox/agent-claude';
 import { registerCodexAgent } from '@agentbox/agent-codex';
 import { registerOpencodeAgent } from '@agentbox/agent-opencode';
 
@@ -26,6 +28,7 @@ import { registerOpencodeAgent } from '@agentbox/agent-opencode';
  * and an embedded hub is safe.
  */
 export function registerAllAgentModules(): void {
+  registerClaudeAgent();
   registerCodexAgent();
   registerOpencodeAgent();
 }

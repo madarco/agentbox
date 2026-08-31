@@ -4,13 +4,12 @@
  * Kept apart from `agent-login-specs.ts` (pure, unit-tested) and from
  * `agent-login-run.ts` (the pty loop) so neither has to know about volumes.
  */
+import { syncClaudeCredentials, volumeClaudeCredentials } from '@agentbox/sandbox-docker';
 import {
   buildClaudeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
-  syncClaudeCredentials,
-  volumeClaudeCredentials,
   warmUpClaudeCredentials,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-claude';
 import {
   buildOpencodeLoginRunArgv,
   SHARED_OPENCODE_VOLUME,

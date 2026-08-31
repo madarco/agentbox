@@ -76,6 +76,7 @@
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1"
   },
   "devDependencies": {
+    "@agentbox/agent-claude": "workspace:*",
     "@agentbox/agent-codex": "workspace:*",
     "@agentbox/agent-modules": "workspace:*",
     "@agentbox/agent-opencode": "workspace:*",

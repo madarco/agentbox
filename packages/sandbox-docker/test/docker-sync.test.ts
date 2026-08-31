@@ -19,9 +19,6 @@ const m = vi.hoisted(() => ({
   renderCarryEntries: vi.fn(),
 }));
 
-vi.mock('../src/sync/agents/claude.js', () => ({
-  ensureClaudeVolume: m.ensureClaudeVolume,
-}));
 vi.mock('../src/sync/agents/seed.js', () => ({
   seedAgentDeclaredFiles: m.seedAgentDeclaredFiles,
   seedLabels: m.seedLabels,
@@ -39,7 +36,10 @@ vi.mock('../src/sync/agents/skills.js', () => ({ ensureAgentsVolume: m.ensureAge
  * it no longer has. claude is still module-mocked because its call site is
  * still by name (it converts when claude moves into its package).
  */
-function registerStub(id: string, onEnsure: () => Promise<{ created: boolean; synced: boolean }>) {
+function registerStub(
+  id: string,
+  onEnsure: (...args: never[]) => Promise<{ created: boolean; synced: boolean }>,
+) {
   registerAgentSyncModule({
     id,
     resolveVolume: () => ({ volume: `agentbox-${id}` }),
@@ -216,9 +216,13 @@ describe('makeDockerSync.seedCredentials', () => {
 
 describe('makeDockerSync.seedAgentConfig', () => {
   it('always seeds the claude volume + its declared files', async () => {
+    // Registered rather than module-mocked: claude reaches docker-sync through
+    // the AgentSyncModule registry now, like every other agent.
+    const ensured = vi.fn(() => Promise.resolve({ created: false, synced: false }));
+    registerStub('claude', ensured);
     const sync = makeDockerSync(createHandle);
     await sync.seedAgentConfig(ctx());
-    expect(m.ensureClaudeVolume).toHaveBeenCalledWith(
+    expect(ensured).toHaveBeenCalledWith(
       { volume: 'agentbox-claude-config' },
       { syncFromHost: true, image: 'agentbox/box:dev', hostWorkspace: '/host/ws' },
     );
@@ -228,14 +232,12 @@ describe('makeDockerSync.seedAgentConfig', () => {
       'agentbox/box:dev',
     );
     // No codex/agents/opencode spec ⇒ those tools skipped.
-    expect(m.ensureCodexVolume).not.toHaveBeenCalled();
     expect(m.ensureAgentsVolume).not.toHaveBeenCalled();
-    expect(m.ensureOpencodeVolume).not.toHaveBeenCalled();
   });
 
   it('seeds codex/agents/opencode when their specs are present, in order', async () => {
     const order: string[] = [];
-    m.ensureClaudeVolume.mockImplementation(() => {
+    registerStub('claude', () => {
       order.push('claude');
       return Promise.resolve({ created: false, synced: false });
     });
@@ -281,11 +283,13 @@ describe('AGENTBOX_SYNC_DRYRUN', () => {
     process.env.AGENTBOX_SYNC_DRYRUN = '1';
     try {
       const sync = makeDockerSync(createHandle);
+      const dryRunEnsure = vi.fn(() => Promise.resolve({ created: false, synced: false }));
+      registerStub('claude', dryRunEnsure);
       await sync.seedAgentConfig(ctx());
       await sync.seedCredentials(ctx());
       const res = await sync.applyCarry(ctx(), [] as never);
       // Underlying fns never called; the ops are logged instead.
-      expect(m.ensureClaudeVolume).not.toHaveBeenCalled();
+      expect(dryRunEnsure).not.toHaveBeenCalled();
       expect(m.syncClaudeCredentials).not.toHaveBeenCalled();
       expect(m.copyCarryPathsToBox).not.toHaveBeenCalled();
       expect(res).toEqual({ copied: 0, errors: [], applied: [] });

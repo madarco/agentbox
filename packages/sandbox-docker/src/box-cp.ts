@@ -102,11 +102,9 @@ async function uploadOneToBox(
     boxParent = boxDst.replace(/\/+$/, '') || '/';
     finalName = srcBasename;
   } else {
-    const isDir = await execa(
-      'docker',
-      ['exec', box.container, 'test', '-d', boxDst],
-      { reject: false },
-    );
+    const isDir = await execa('docker', ['exec', box.container, 'test', '-d', boxDst], {
+      reject: false,
+    });
     if (isDir.exitCode === 0) {
       boxParent = boxDst.replace(/\/+$/, '') || '/';
       finalName = srcBasename;
@@ -236,7 +234,17 @@ async function downloadOneFromBox(
   // Stream box `tar` → host `tar -xf -` (see streamTarPipe for why we don't buffer).
   const [packed, extracted] = await streamTarPipe(
     'docker',
-    ['exec', box.container, 'tar', '-C', srcParent, '-cf', '-', ...tarExcludeArgs(exclude), srcBasename],
+    [
+      'exec',
+      box.container,
+      'tar',
+      '-C',
+      srcParent,
+      '-cf',
+      '-',
+      ...tarExcludeArgs(exclude),
+      srcBasename,
+    ],
     'tar',
     ['-xf', '-', '-C', hostParent],
   );
@@ -403,12 +411,24 @@ export async function downloadFromBox(
   for (const [parent, basenames] of groupByParent(boxSrcs, posixDirname, posix.basename)) {
     const [packed, extracted] = await streamTarPipe(
       'docker',
-      ['exec', box.container, 'tar', '-C', parent, '-cf', '-', ...tarExcludeArgs(exclude), ...basenames],
+      [
+        'exec',
+        box.container,
+        'tar',
+        '-C',
+        parent,
+        '-cf',
+        '-',
+        ...tarExcludeArgs(exclude),
+        ...basenames,
+      ],
       'tar',
       ['-xf', '-', '-C', dstAbs],
     );
     if (packed.exitCode !== 0) {
-      throw new Error(`tar pack in box failed for ${parent}: ${asText(packed.stderr).slice(0, 300)}`);
+      throw new Error(
+        `tar pack in box failed for ${parent}: ${asText(packed.stderr).slice(0, 300)}`,
+      );
     }
     if (extracted.exitCode !== 0) {
       throw new Error(`tar extract on host failed: ${asText(extracted.stderr).slice(0, 300)}`);

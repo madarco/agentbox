@@ -9,23 +9,25 @@
  */
 import type { EffectiveConfig, UserConfig } from '@agentbox/config';
 import {
+  ensureImage,
+  hostBackupHasCredentials,
+  imageExists,
+  syncClaudeCredentials,
+  volumeClaudeCredentials,
+  type BoxRecord,
+} from '@agentbox/sandbox-docker';
+import {
   buildClaudeAttachArgv,
   buildClaudeLoginRunArgv,
   ClaudeSessionError,
   claudeSessionInfo,
   ensureClaudeInstalled,
   ensureClaudeVolume,
-  ensureImage,
-  hostBackupHasCredentials,
-  imageExists,
   runInteractiveClaudeLogin,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
-  syncClaudeCredentials,
-  volumeClaudeCredentials,
   warmUpClaudeCredentials,
-  type BoxRecord,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-claude';
 import { confirm, log, spinner } from '../../lib/prompt.js';
 import { resolveClaudeAuth } from '../../auth.js';
 import { claudeLoginBinding } from '../../lib/agent-login-bindings.js';

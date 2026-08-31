@@ -24,8 +24,7 @@ export function parseMemoryToBytes(raw: string): number {
     throw new Error(`invalid --memory value "${raw}"`);
   }
   const unit = (m[2] ?? '').toLowerCase();
-  const factor =
-    unit === 'k' ? 1024 : unit === 'm' ? 1024 ** 2 : unit === 'g' ? 1024 ** 3 : 1;
+  const factor = unit === 'k' ? 1024 : unit === 'm' ? 1024 ** 2 : unit === 'g' ? 1024 ** 3 : 1;
   return Math.floor(n * factor);
 }
 
@@ -43,10 +42,7 @@ export interface LimitFlags {
  * CLI flags. Flags win and carry richer types — `--memory 2g`, fractional
  * `--cpus 1.5` — that the integer-typed config keys can't express.
  */
-export function resolveLimits(
-  box: EffectiveConfig['box'],
-  flags: LimitFlags,
-): ResolvedLimits {
+export function resolveLimits(box: EffectiveConfig['box'], flags: LimitFlags): ResolvedLimits {
   let memoryBytes: number | null = box.memory > 0 ? box.memory * MIB : null;
   if (flags.memory !== undefined && flags.memory !== '') {
     memoryBytes = parseMemoryToBytes(flags.memory);

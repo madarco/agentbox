@@ -57,7 +57,9 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
     replacements,
   });
   if (resolved.errors.length > 0) {
-    const msg = ['carry: refused to proceed:', ...resolved.errors.map((e) => `  - ${e}`)].join('\n');
+    const msg = ['carry: refused to proceed:', ...resolved.errors.map((e) => `  - ${e}`)].join(
+      '\n',
+    );
     throw new Error(msg);
   }
 
@@ -75,7 +77,9 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
 
   if (decision === 'cancel') return { decision: 'cancel' };
   if (decision === 'skip-this-run') {
-    emit(`carry: skipped for this box (${String(resolved.entries.length)} entry/entries not copied)`);
+    emit(
+      `carry: skipped for this box (${String(resolved.entries.length)} entry/entries not copied)`,
+    );
     return { decision: 'skip', entries: [] };
   }
   return { decision: 'approve', entries: resolved.entries };

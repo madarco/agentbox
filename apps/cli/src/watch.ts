@@ -125,7 +125,12 @@ export async function watchRender(
       // refreshes — and re-launches on a cmux workspace switch — without the
       // jarring flicker a clear-then-paint produces.
       process.stdout.write(
-        '\x1b[H' + trimmed.split('\n').map((l) => l + '\x1b[K').join('\n') + '\x1b[J',
+        '\x1b[H' +
+          trimmed
+            .split('\n')
+            .map((l) => l + '\x1b[K')
+            .join('\n') +
+          '\x1b[J',
       );
     } else {
       // 2J clear, 3J drop scrollback, H cursor home.

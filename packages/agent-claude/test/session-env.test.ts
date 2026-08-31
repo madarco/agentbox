@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeSessionEnvFlags } from '../src/sync/agents/claude.js';
+import { claudeSessionEnvFlags } from '../src/docker-sync.js';
 
 /**
  * Regression for the hole Bugbot caught on #327.

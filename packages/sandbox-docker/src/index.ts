@@ -11,7 +11,6 @@ export {
   type AgentVolumeChoice,
   type EnsureAgentVolumeResult,
 } from './sync/agents/module.js';
-export { registerBuiltinAgentSyncModules } from './sync/agents/builtins.js';
 
 // Box plumbing shared by every agent (and by `agentbox shell`, which has no
 // agent at all) — deliberately not sourced from any one agent's module.
@@ -31,40 +30,6 @@ export { createDockerSyncTransport, type DockerSyncTransportInit } from './sync/
 export { stageItemsFromVolume, volumeSettingsTarget } from './sync/settings-propagate.js';
 export { makeDockerSync, type DockerSyncHandle } from './sync/docker-sync.js';
 
-export {
-  attachClaudeSession,
-  formatDetachNotice,
-  buildClaudeAttachArgv,
-  buildDashboardAttachArgv,
-  buildClaudeLoginRunArgv,
-  buildClaudeMounts,
-  CLAUDE_FORWARDED_ENV_KEYS,
-  ClaudeSessionError,
-  ensureClaudeInstalled,
-  type EnsureClaudeInstalledResult,
-  claudeSessionInfo,
-  DEFAULT_CLAUDE_SESSION,
-  ensureClaudeVolume,
-  pullClaudeExtras,
-  rebuildPluginNativeDeps,
-  resolveClaudeVolume,
-  runInteractiveClaudeLogin,
-  scanPluginCacheForRebuild,
-  SHARED_CLAUDE_VOLUME,
-  startClaudeSession,
-  waitForTmuxPaneContent,
-  warmUpClaudeCredentials,
-  type ClaudeConfigSpec,
-  type ClaudeMountResult,
-  type ClaudeSessionInfo,
-  type EnsureClaudeVolumeOptions,
-  type EnsureClaudeVolumeResult,
-  type PullClaudeOptions,
-  type PullClaudeResult,
-  type RebuildPluginNativeDepsResult,
-  type StartClaudeSessionOptions,
-  type WarmUpClaudeResult,
-} from './sync/agents/claude.js';
 export {
   CREDENTIALS_BACKUP_FILE,
   CODEX_CREDENTIALS_BACKUP_FILE,

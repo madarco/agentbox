@@ -125,7 +125,14 @@ async function startCloudflare(opts: StartTunnelOptions): Promise<TunnelHandle> 
   const args = opts.token
     ? ['tunnel', '--no-autoupdate', 'run', '--token', opts.token]
     : // http2, not the default QUIC — UDP/7844 out of a nested/NAT'd box is unreliable.
-      ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', `http://127.0.0.1:${String(opts.port)}`];
+      [
+        'tunnel',
+        '--no-autoupdate',
+        '--protocol',
+        'http2',
+        '--url',
+        `http://127.0.0.1:${String(opts.port)}`,
+      ];
   const fd = openSync(TUNNEL_LOG_FILE, 'a');
   const child = spawn(bin, args, { detached: true, stdio: ['ignore', fd, fd] });
   child.unref();
@@ -142,7 +149,12 @@ async function startCloudflare(opts: StartTunnelOptions): Promise<TunnelHandle> 
     const url = parseTrycloudflareUrl(await readFile(TUNNEL_LOG_FILE, 'utf8').catch(() => ''));
     if (url) {
       log(`tunnel URL: ${url}`);
-      return { kind: 'cloudflare', publicUrl: url, pid: child.pid ?? null, logFile: TUNNEL_LOG_FILE };
+      return {
+        kind: 'cloudflare',
+        publicUrl: url,
+        pid: child.pid ?? null,
+        logFile: TUNNEL_LOG_FILE,
+      };
     }
     await delay(500);
   }
@@ -157,7 +169,9 @@ async function startTailscale(opts: StartTunnelOptions): Promise<TunnelHandle> {
   const log = opts.onLog ?? (() => {});
   const ts = (await onPath('tailscale')) ?? 'tailscale';
   if (!(await onPath('tailscale'))) {
-    throw new Error('tailscale is not installed — install it and `tailscale up` first, then re-run.');
+    throw new Error(
+      'tailscale is not installed — install it and `tailscale up` first, then re-run.',
+    );
   }
   // Funnel the port on 443 (background). Best-effort: a tailnet without HTTPS /
   // Funnel enabled errors here with an actionable message from tailscale itself.
@@ -171,7 +185,8 @@ async function startTailscale(opts: StartTunnelOptions): Promise<TunnelHandle> {
   const { stdout } = await execa(ts, ['status', '--json']);
   const status = JSON.parse(stdout) as { Self?: { DNSName?: string } };
   const dns = (status.Self?.DNSName ?? '').replace(/\.$/, '');
-  if (!dns) throw new Error('could not resolve this node\'s tailscale DNS name from `tailscale status`.');
+  if (!dns)
+    throw new Error("could not resolve this node's tailscale DNS name from `tailscale status`.");
   const url = `https://${dns}`;
   log(`tunnel URL: ${url}`);
   // The funnel is served by the tailscaled daemon, not a child we own — record

@@ -13,10 +13,7 @@ function sanitize(title: string): string {
  * both the window and icon title — the same sequence Claude Code emits. Guarded
  * by `isTTY` so piped / redirected output stays clean.
  */
-export function setTerminalTitle(
-  title: string,
-  stream: NodeJS.WriteStream = process.stdout,
-): void {
+export function setTerminalTitle(title: string, stream: NodeJS.WriteStream = process.stdout): void {
   if (!stream.isTTY) return;
   stream.write(`${ESC}]0;${sanitize(title)}${BEL}`);
 }

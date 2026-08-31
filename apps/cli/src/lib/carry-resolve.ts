@@ -137,7 +137,9 @@ async function resolveOne(item: CarryItem, ctx: OneCtx): Promise<ResolvedCarryEn
           optional: true,
         };
       }
-      throw new Error(`${ctx.where}: host src "${absSrc}" does not exist (use optional: true to skip)`);
+      throw new Error(
+        `${ctx.where}: host src "${absSrc}" does not exist (use optional: true to skip)`,
+      );
     }
     throw err;
   }

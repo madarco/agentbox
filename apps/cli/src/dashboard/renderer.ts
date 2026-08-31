@@ -107,11 +107,7 @@ export interface FrameResult {
  * write to update the right-pane `rect`. Pass `prev = null` to force a full
  * repaint (initial draw / post-resize).
  */
-export function diffFrame(
-  prev: string[] | null,
-  snap: ScreenSnapshot,
-  rect: Rect,
-): FrameResult {
+export function diffFrame(prev: string[] | null, snap: ScreenSnapshot, rect: Rect): FrameResult {
   const h = Math.min(rect.h, snap.rows);
   const rows: string[] = new Array<string>(h);
   let out = '\x1b[?25l'; // hide cursor while painting to avoid streaking

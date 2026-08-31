@@ -48,8 +48,12 @@ function loadLocalControlPlaneEnv(): void {
 }
 
 /** Resolve the project's origin into `owner/repo`, or null if absent/unparseable. */
-export async function resolveOwnerRepo(projectRoot: string): Promise<{ owner: string; repo: string } | null> {
-  const r = await execa('git', ['-C', projectRoot, 'remote', 'get-url', 'origin'], { reject: false });
+export async function resolveOwnerRepo(
+  projectRoot: string,
+): Promise<{ owner: string; repo: string } | null> {
+  const r = await execa('git', ['-C', projectRoot, 'remote', 'get-url', 'origin'], {
+    reject: false,
+  });
   const origin = (r.stdout ?? '').trim();
   if (r.exitCode !== 0 || origin.length === 0) return null;
   try {
@@ -99,7 +103,10 @@ export async function checkRepoInstalled(
 
 /** The GitHub page where the user picks repositories for the App installation. */
 export function addRepoUrl(meta: ControlPlaneMeta | null): string | null {
-  return meta?.installUrl ?? (meta?.slug ? `https://github.com/apps/${meta.slug}/installations/new` : null);
+  return (
+    meta?.installUrl ??
+    (meta?.slug ? `https://github.com/apps/${meta.slug}/installations/new` : null)
+  );
 }
 
 type ReposState = Record<string, { installed?: boolean; promptedAt?: string }>;
@@ -170,7 +177,8 @@ export async function ensureProjectRepoOnControlPlane(args: {
 
   const meta = loadControlPlaneMeta();
   const url = addRepoUrl(meta);
-  const nonInteractive = args.yes === true || process.env.AGENTBOX_PROMPT === 'off' || !process.stdout.isTTY;
+  const nonInteractive =
+    args.yes === true || process.env.AGENTBOX_PROMPT === 'off' || !process.stdout.isTTY;
 
   if (nonInteractive) {
     clog.warn(

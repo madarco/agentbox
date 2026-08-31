@@ -1,5 +1,6 @@
 import { log } from '@clack/prompts';
-import { AmbiguousBoxError, BoxNotFoundError, ClaudeSessionError } from '@agentbox/sandbox-docker';
+import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/sandbox-docker';
+import { ClaudeSessionError } from '@agentbox/agent-claude';
 
 /**
  * Map common lifecycle errors to user-facing messages and the right exit code,

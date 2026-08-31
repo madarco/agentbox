@@ -1,8 +1,8 @@
 {
-  "name": "@agentbox/agent-modules",
+  "name": "@agentbox/agent-claude",
   "version": "0.0.0",
   "private": true,
-  "description": "Registers every built-in agent's behavior \u2014 the one place an app wires agents in",
+  "description": "Claude Code as an AgentBox agent package \u2014 its docker behavior, implementing AgentSyncModule",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,13 +25,13 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/agent-claude": "workspace:*",
-    "@agentbox/agent-codex": "workspace:*",
-    "@agentbox/agent-opencode": "workspace:*",
-    "@agentbox/sandbox-docker": "workspace:*"
+    "@agentbox/config": "workspace:*",
+    "@agentbox/core": "workspace:*",
+    "@agentbox/sandbox-core": "workspace:*",
+    "@agentbox/sandbox-docker": "workspace:*",
+    "execa": "^9.5.2"
   },
   "devDependencies": {
-    "@agentbox/agent-registry": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

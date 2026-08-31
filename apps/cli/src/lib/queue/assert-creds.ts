@@ -1,18 +1,13 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  hostBackupHasCredentials,
-} from '@agentbox/sandbox-docker';
+import { hostBackupHasCredentials } from '@agentbox/sandbox-docker';
 import {
   OPENCODE_FORWARDED_ENV_KEYS,
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
 } from '@agentbox/agent-opencode';
-import {
-  SHARED_CODEX_VOLUME,
-  volumeHasCodexAuth,
-} from '@agentbox/agent-codex';
+import { SHARED_CODEX_VOLUME, volumeHasCodexAuth } from '@agentbox/agent-codex';
 import type { QueueAgentKind } from '@agentbox/relay';
 import { normalizeLastAgent } from '@agentbox/core';
 import { resolveClaudeAuth } from '../../auth.js';
