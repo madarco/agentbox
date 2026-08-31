@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { claudeLoginBinding } from '../src/agents/claude/login-binding.js';
 import { codexLoginBinding } from '@agentbox/agent-codex/cli';
-import { opencodeLoginBinding } from '../src/agents/opencode/login-binding.js';
+import { opencodeLoginBinding } from '@agentbox/agent-opencode/cli';
 import { withLoginDefaults } from '@agentbox/cli-kit';
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
 import { claudeRuntime } from '../src/agents/claude/runtime.js';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
-import { opencodeRuntime } from '../src/agents/opencode/runtime.js';
+import { opencodeRuntime } from '@agentbox/agent-opencode/cli';
 import type { EffectiveConfig } from '@agentbox/config';
 
 const cfg = (claudeOn: boolean, codexOn: boolean): EffectiveConfig =>

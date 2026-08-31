@@ -9,7 +9,7 @@ import {
   OPENCODE_FORWARDED_ENV_KEYS,
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
-} from '@agentbox/agent-opencode';
+} from '../docker-sync.js';
 
 async function fileExists(p: string): Promise<boolean> {
   try {

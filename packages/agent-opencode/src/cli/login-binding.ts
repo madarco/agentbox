@@ -6,7 +6,7 @@ import {
   buildOpencodeLoginRunArgv,
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
-} from '@agentbox/agent-opencode';
+} from '../docker-sync.js';
 import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { OPENCODE_LOGIN_SPEC } from './login.js';
 

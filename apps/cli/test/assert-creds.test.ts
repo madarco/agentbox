@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,10 +48,9 @@ const { assertAgentCredsAvailable, MissingAgentCredsError, ExpiredAgentCredsErro
 // longer knows any agent's name. The mock has to follow the symbol.
 const { claudeAuthAvailable, claudeCredStatus } =
   await import('../src/agents/claude/host-creds.js');
-const { opencodeAuthAvailable } = await import('../src/agents/opencode/host-creds.js');
 const { claudeRuntime } = await import('../src/agents/claude/runtime.js');
 const { codexRuntime } = await import('@agentbox/agent-codex/cli');
-const { opencodeRuntime } = await import('../src/agents/opencode/runtime.js');
+const { opencodeRuntime } = await import('@agentbox/agent-opencode/cli');
 
 /** The agent supplies its own check now, so every assert call carries one. */
 const RUNTIMES: Record<string, { hostCredStatus: (typeof claudeRuntime)['hostCredStatus'] }> = {
@@ -179,49 +178,6 @@ describe('claudeCredStatus', () => {
   });
 });
 
-describe('opencodeAuthAvailable', () => {
-  let homeDir: string;
-  const origHome = process.env['HOME'];
-
-  beforeEach(async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockReset();
-    homeDir = await mkdtemp(join(tmpdir(), 'agentbox-opencode-creds-'));
-    process.env['HOME'] = homeDir;
-  });
-  afterEach(async () => {
-    if (origHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = origHome;
-    await rm(homeDir, { recursive: true, force: true });
-  });
-
-  it('returns true when any forwarded env key is set', async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(false);
-    expect(await opencodeAuthAvailable(IMAGE, { OPENAI_API_KEY: 'sk-test' })).toBe(true);
-    expect(sandboxDockerMock.volumeHasOpencodeAuth).not.toHaveBeenCalled();
-  });
-
-  it('returns true when host auth.json exists', async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(false);
-    await mkdir(join(homeDir, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(join(homeDir, '.local', 'share', 'opencode', 'auth.json'), '{}', 'utf8');
-    expect(await opencodeAuthAvailable(IMAGE, {})).toBe(true);
-  });
-
-  it('falls back to the shared opencode-config volume probe', async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(true);
-    expect(await opencodeAuthAvailable(IMAGE, {})).toBe(true);
-    expect(sandboxDockerMock.volumeHasOpencodeAuth).toHaveBeenCalledWith(
-      'agentbox-opencode-config',
-      IMAGE,
-    );
-  });
-
-  it('returns false when every source is empty', async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(false);
-    expect(await opencodeAuthAvailable(IMAGE, {})).toBe(false);
-  });
-});
-
 describe('assertAgentCredsAvailable dispatcher', () => {
   let homeDir: string;
   const origHome = process.env['HOME'];
@@ -305,14 +261,6 @@ describe('assertAgentCredsAvailable dispatcher', () => {
       expect(e.message).toContain('agentbox codex login');
       expect(e.message).toContain('OPENAI_API_KEY');
     }
-  });
-
-  it('routes opencode through the opencode predicate', async () => {
-    sandboxDockerMock.volumeHasOpencodeAuth.mockResolvedValue(true);
-    await expect(assertFor({ agent: 'opencode', image: IMAGE, env: {} })).resolves.toBeUndefined();
-    // Wrong-agent predicates must not be consulted.
-    expect(sandboxDockerMock.hostBackupHasCredentials).not.toHaveBeenCalled();
-    expect(sandboxDockerMock.volumeHasCodexAuth).not.toHaveBeenCalled();
   });
 });
 

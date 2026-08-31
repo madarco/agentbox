@@ -28,7 +28,7 @@ import {
   runInteractiveOpencodeLogin,
   SHARED_OPENCODE_VOLUME,
   startOpencodeSession,
-} from '@agentbox/agent-opencode';
+} from '../docker-sync.js';
 import { confirm, log, spinner, text } from '@agentbox/cli-kit';
 import { opencodeLoginBinding } from './login-binding.js';
 import { opencodeAuthAvailable } from './host-creds.js';

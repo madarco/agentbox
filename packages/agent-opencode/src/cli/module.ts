@@ -1,4 +1,4 @@
-import { defineAgentModule, type AgentModule } from '../index.js';
+import { defineAgentModule, type AgentModule } from '@agentbox/cli-kit';
 import { OPENCODE_LOGIN_SPEC } from './login.js';
 import { opencodeRuntime } from './runtime.js';
 

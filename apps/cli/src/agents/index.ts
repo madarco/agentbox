@@ -38,7 +38,7 @@ export { defineAgentModule, type AgentModule, type TeleportResolver };
 const AGENT_MODULES: Record<string, () => Promise<{ agentModule: AgentModule }>> = {
   claude: () => import('./claude/index.js'),
   codex: () => import('@agentbox/agent-codex/cli'),
-  opencode: () => import('./opencode/index.js'),
+  opencode: () => import('@agentbox/agent-opencode/cli'),
 };
 
 /** Agent ids with a module in this build. */
