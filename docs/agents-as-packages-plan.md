@@ -709,6 +709,56 @@ After phases 7a and 7b, re-run plus the checks those phases added:
 Not yet run: a real cloud `prepare` (it bakes a snapshot), and the queued `-i`
 runs, which belong with phase 2.
 
+## Phases 7 and 4 — landed, and verified on a real cloud bake
+
+**Phase 7.** `claude-session` -> `agent-session <agent>` (and the socket op),
+safe because it had zero callers — unlike the `<agent>-state` names, which
+seeded hook files in shared volumes invoke. ctl's two duplicate per-agent
+pointer tables collapsed into one, with the on-disk **paths frozen and pinned by
+a test**: the writer is a box's baked ctl, the reader is the host CLI, so a
+rename silently costs every existing box its resume.
+
+Deviation from this plan, recorded because it was a correction: `claude-tui.ts`
+was NOT renamed. It returns Claude Code's own env vars and exists because of
+Claude's renderer, so `agentTuiEnv` would claim a generality it lacks. The real
+leak is `binary === 'claude' ? claudeTuiEnv(...)` in `detached-agent.ts:337` —
+spec data, not a rename. Re-tagged to phase 4.
+
+**Phase 4a — SDK v3, a clean break** (`SUPPORTED_SDK_API_VERSIONS = [3]`). The
+three per-agent stagers are replaced by `stageAllAgentStatic`. A v2 provider
+bakes exactly three agents, so on a host with a fourth it produces a snapshot
+silently missing it — a wrong box, not an absent feature, which is why the older
+majors are refused rather than tolerated.
+
+**Phase 4c — the second hardcoded triple.** `sandbox-cloud`'s own `AGENT_SPECS`
+meant a fourth agent got no credential mount, no static mount and no seed in a
+cloud box. Rows derive from the registry now; staging closures arrive through
+the `AgentCloudModule` seam (claude had no cloud module and now registers one).
+
+**The CI gap that let all of this hide.** `examples/` is outside
+`pnpm-workspace.yaml`, so nothing built, typechecked or tested it — the v3 bump
+could have refused both examples with the suite green, exactly how the agent
+example shipped broken. There is a test now, and it also pins the two halves of
+the version decision that live in different packages (the SDK's
+`SDK_API_VERSION` vs the CLI's supported set), which `pack:test` never covered.
+
+### Verified live on e2b, not just in tests
+
+A real `prepare --provider e2b` (template `o05kawibx9vcmxvgjnk4`) baked clean
+through the new staging path, seeding claude, codex, opencode and `~/.agents`
+into the image — the demo agent correctly absent, since the host has no
+`~/.agentbox-example` to stage. Then a real `agentbox claude --provider e2b` box:
+all four static dirs present, both cloud modules' `afterSeed` hooks ran (codex's
+`AGENTS.override.md`, opencode's model seed), and — the thing 4c changed —
+`~/.agentbox-creds/claude/` mounted 0700 with `.credentials.json` symlinked into
+it and carrying a live refresh token. Box destroyed, zero orphaned sandboxes.
+
+**Still deliberately open:** the stager BODIES stay in `sandbox-core`. Moving
+them touches the most sensitive path in the product (claude never falls back to
+the host credential file; codex warns about the macOS keychain), and mixing that
+behavioural change into the same commit as a mechanical table inversion is how
+credential bugs ship.
+
 ## Files that will NOT change
 
 - `packages/ctl/src/{claude,codex}-scraper.ts` — ctl is baked; it gets its agent
