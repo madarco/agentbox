@@ -126,4 +126,11 @@ describe('socket protocol', () => {
     expect(result.sessionName).toBe(uniqueName);
     expect(result.startedAt).toBeNull();
   });
+
+  it('refuses an agent-session probe with no session name', async () => {
+    // It used to default to claude's session name, so a caller that omitted the
+    // field got a confident answer about a DIFFERENT agent's session. Refusing
+    // is the same posture as the sibling `agent-state` op.
+    await expect(agentSession({ socketPath: sock })).rejects.toThrow(/sessionName/);
+  });
 });

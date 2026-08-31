@@ -6,7 +6,6 @@ import { collectPorts, type StatusReporter } from './status-reporter.js';
 import { probeAgentSession } from './tmux.js';
 import {
   AGENT_ACTIVITY_STATES,
-  DEFAULT_CLAUDE_SESSION_NAME,
   type CtlRequest,
   type CtlResponse,
   type LogEvent,
@@ -150,7 +149,17 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       return;
     }
     case 'agent-session': {
-      const data = await probeAgentSession(req.sessionName ?? DEFAULT_CLAUDE_SESSION_NAME);
+      // Fail-closed, like `agent-state` below. This used to default to claude's
+      // session name, which meant a caller that forgot the field silently got a
+      // probe of a DIFFERENT agent's session and a confident answer about it.
+      // Every real caller passes one (`agent-session.ts` defaults it to the
+      // agent id), so nothing legitimate reaches this branch.
+      if (typeof req.sessionName !== 'string' || req.sessionName.length === 0) {
+        writeLine(sock, { ok: false, error: 'agent-session requires a sessionName' });
+        sock.end();
+        return;
+      }
+      const data = await probeAgentSession(req.sessionName);
       writeLine(sock, { ok: true, data });
       sock.end();
       return;

@@ -245,6 +245,8 @@ export const DEFAULT_LOG_DIR = '/var/log/agentbox';
 // pause/stop/start and is captured by `docker commit` checkpoints) but NOT under
 // /workspace, so markers never show up as untracked git changes.
 export const DEFAULT_STATE_DIR = '/var/lib/agentbox';
-export const DEFAULT_CLAUDE_SESSION_NAME = 'claude';
-export const DEFAULT_CODEX_SESSION_NAME = 'codex';
-export const DEFAULT_OPENCODE_SESSION_NAME = 'opencode';
+// A per-agent constant table used to live here, one `DEFAULT_<AGENT>_SESSION_NAME`
+// each, feeding `BAKED_AGENT_SESSIONS`. The session name IS the agent id for
+// every agent the registry ships, so the table said nothing the id did not — and
+// ctl must not carry a per-agent table anyway: it is baked into the box image and
+// learns its agents from the host over `agents.list`.

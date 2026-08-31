@@ -6,9 +6,6 @@ import { probeAgentSession } from './tmux.js';
 import {
   BOX_STATUS_EVENT,
   BOX_STATUS_SCHEMA,
-  DEFAULT_CLAUDE_SESSION_NAME,
-  DEFAULT_CODEX_SESSION_NAME,
-  DEFAULT_OPENCODE_SESSION_NAME,
   type AgentActivityState,
   type AgentPlanPayload,
   type AgentQuestionPayload,
@@ -33,9 +30,9 @@ export interface WatchedAgentSession {
  * agent added later would otherwise never be probed at all.
  */
 export const BAKED_AGENT_SESSIONS: readonly WatchedAgentSession[] = [
-  { agent: 'claude', sessionName: DEFAULT_CLAUDE_SESSION_NAME },
-  { agent: 'codex', sessionName: DEFAULT_CODEX_SESSION_NAME },
-  { agent: 'opencode', sessionName: DEFAULT_OPENCODE_SESSION_NAME },
+  { agent: 'claude', sessionName: 'claude' },
+  { agent: 'codex', sessionName: 'codex' },
+  { agent: 'opencode', sessionName: 'opencode' },
 ];
 
 interface AgentRuntimeState {

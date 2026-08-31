@@ -56,8 +56,6 @@ const ROOTS = [
 const ALLOWLIST: Record<string, string> = {
   // Phase 2 — the CLI layer. These move into `packages/agent-<id>/` as each
   // agent's CLI surface follows its docker behaviour out of the app.
-  // `apps/cli/src/agents/**` is excluded wholesale below, since the names in an
-  // agent's own folder are already scoped to it.
   //
   // Claude's `~/.claude/projects` path encoding rode into the shared kit with
   // the teleport helpers; it belongs in `packages/agent-claude`.
@@ -96,14 +94,14 @@ const ALLOWLIST: Record<string, string> = {
   // renderer env on the agent's spec as data and delete the
   // `binary === 'claude'` branch in `sandbox-cloud/src/detached-agent.ts:337`.
   'packages/core/src/claude-tui.ts': 'phase 4',
-  'packages/ctl/src/types.ts': 'phase 7',
 };
 
 /**
  * Never checked, and not exemptions — these are correctly agent-named.
  *
- *  - `apps/cli/src/agents/<id>/` is an agent's OWN folder. It is not a package
- *    yet (phase 2), but the names in it are already scoped to their agent.
+ *  - the four `apps/cli/src/agents/<id>/command.ts` shims, and only those. Each
+ *    hands its package's descriptor to `buildAgentCommand`, so exporting
+ *    `claudeCommand` from a claude-named path is correct.
  *  - ctl's scrapers are a ctl-internal table keyed by agent id. ctl is baked
  *    into the box image and must never import an agent package, so this is the
  *    one place the plan says stays.
