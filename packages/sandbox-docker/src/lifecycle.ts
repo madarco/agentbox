@@ -10,22 +10,10 @@ import {
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
-import {
-  claudeSessionInfo,
-  SHARED_CLAUDE_VOLUME,
-  type ClaudeSessionInfo,
-} from './sync/agents/claude.js';
-import {
-  codexSessionInfo,
-  SHARED_CODEX_VOLUME,
-  type CodexSessionInfo,
-} from './sync/agents/codex.js';
+import { claudeSessionInfo, type ClaudeSessionInfo } from './sync/agents/claude.js';
+import { codexSessionInfo, type CodexSessionInfo } from './sync/agents/codex.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
-import {
-  opencodeSessionInfo,
-  SHARED_OPENCODE_VOLUME,
-  type OpencodeSessionInfo,
-} from './sync/agents/opencode.js';
+import { opencodeSessionInfo, type OpencodeSessionInfo } from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
 import {
@@ -67,7 +55,7 @@ import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
 import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
-import { syncAgentboxSshConfig } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
@@ -166,6 +154,31 @@ function agentStatusFields(
     opencodeActivity: agents.opencode?.state,
     opencodeSessionTitle: agents.opencode?.sessionTitle,
   };
+}
+
+/**
+ * A box's PER-BOX agent config volumes — the ones `box.isolate<Agent>Config`
+ * created, which belong to this box alone.
+ *
+ * A volume equal to the agent's shared `dockerVolume` is deliberately excluded:
+ * that one carries the user's identity (auth, skills, plugins) across every box
+ * and is never auto-removed.
+ *
+ * `BoxRecord` still names its three fields one at a time, so the mapping is
+ * spelled out here rather than derived; that field set is generalized in a later
+ * phase. What matters now is that the SHARED name comes from the registry
+ * instead of a second copy in this package.
+ */
+function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
+  const byAgent: Record<string, string | undefined> = {
+    claude: box.claudeConfigVolume,
+    codex: box.codexConfigVolume,
+    opencode: box.opencodeConfigVolume,
+  };
+  return AGENT_SYNC_SPECS.filter((spec) => {
+    const v = byAgent[spec.id];
+    return v !== undefined && v !== spec.dockerVolume;
+  }).map((spec) => ({ agent: spec.id, volume: byAgent[spec.id] }));
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -688,24 +701,17 @@ export async function destroyBox(
   const removedContainer = beforeContainer !== 'missing' && afterContainer === 'missing';
 
   const removedVolumes: string[] = [];
-  // Per-box claude config volumes are box-private — safe to remove. The shared
-  // SHARED_CLAUDE_VOLUME holds user identity (auth, skills, plugins) across
-  // every box, so never auto-remove it; users delete it manually if they want.
-  if (box.claudeConfigVolume && box.claudeConfigVolume !== SHARED_CLAUDE_VOLUME) {
-    await removeVolume(box.claudeConfigVolume);
-    removedVolumes.push(box.claudeConfigVolume);
-  }
-  // Same reasoning for the codex-config volume: per-box variants are private
-  // and removed here; the shared SHARED_CODEX_VOLUME holds the user's Codex
-  // auth across boxes and is never auto-removed.
-  if (box.codexConfigVolume && box.codexConfigVolume !== SHARED_CODEX_VOLUME) {
-    await removeVolume(box.codexConfigVolume);
-    removedVolumes.push(box.codexConfigVolume);
-  }
-  // Same for the opencode-config volume.
-  if (box.opencodeConfigVolume && box.opencodeConfigVolume !== SHARED_OPENCODE_VOLUME) {
-    await removeVolume(box.opencodeConfigVolume);
-    removedVolumes.push(box.opencodeConfigVolume);
+  // A per-box agent config volume is box-private and safe to remove. The SHARED
+  // one holds user identity (auth, skills, plugins) across every box, so it is
+  // never auto-removed — users delete it by hand if they want to.
+  //
+  // Driven off the registry rather than three named constants: the shared name
+  // IS `spec.dockerVolume`, so naming it again here was a second copy that a
+  // fourth agent would silently not be part of.
+  for (const { volume } of boxAgentConfigVolumes(box)) {
+    if (!volume) continue;
+    await removeVolume(volume);
+    removedVolumes.push(volume);
   }
   // Per-box `.vscode-server` and `.cursor-server` volumes. The shared
   // SHARED_*_EXTENSIONS_VOLUMEs are never auto-removed (parallel reasoning to
@@ -880,15 +886,13 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       ...survivingBoxes
         .map((b) => b.dockerVolume)
         .filter((v): v is string => typeof v === 'string'),
-      // The shared claude-config volume holds user identity across every box;
-      // never reap it via prune even if no surviving box currently references it.
-      SHARED_CLAUDE_VOLUME,
-      // The shared codex-config volume — same reasoning (holds Codex auth).
-      SHARED_CODEX_VOLUME,
+      // Every agent's SHARED config volume holds user identity (auth, skills,
+      // plugins) across boxes; never reap one via prune even when no surviving
+      // box references it. From the registry, so a new agent is covered without
+      // an edit here.
+      ...AGENT_SYNC_SPECS.map((spec) => spec.dockerVolume),
       // The shared agents-config volume — holds the cross-agent ~/.agents skills.
       SHARED_AGENTS_VOLUME,
-      // The shared opencode-config volume — same reasoning (holds OpenCode auth).
-      SHARED_OPENCODE_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.
       SHARED_VSCODE_EXTENSIONS_VOLUME,
       SHARED_CURSOR_EXTENSIONS_VOLUME,

@@ -24,7 +24,14 @@ import { createDockerSyncTransport } from '../sync-transport.js';
  * `config.toml` is merge-reconciled, not overwritten) — there is no
  * plugin-native-deps rebuild and no setup-skill seeding here.
  */
-export const SHARED_CODEX_VOLUME = 'agentbox-codex-config';
+/**
+ * The shared codex-config volume, FROM THE REGISTRY.
+ *
+ * It was a second copy of `spec.dockerVolume` — the same string written in
+ * two places, which is how a fourth agent ends up half-wired. Derived now, so
+ * there is one source and no drift test is needed to keep them equal.
+ */
+export const SHARED_CODEX_VOLUME = resolveAgentSpec('codex').dockerVolume;
 export const DEFAULT_CODEX_SESSION = 'codex';
 /** Workspace inside the box, same as for claude. */
 const CONTAINER_CODEX_DIR = '/home/vscode/.codex';

@@ -7,16 +7,18 @@
  */
 
 import { execa } from 'execa';
-import { errSummary, type CheckResult, type ProviderModule } from '@agentbox/sandbox-core';
+import {
+  AGENT_SYNC_SPECS,
+  errSummary,
+  type CheckResult,
+  type ProviderModule,
+} from '@agentbox/sandbox-core';
 import { dockerProvider } from './docker-provider.js';
 import { DEFAULT_BOX_IMAGE, imageInfo } from './image.js';
 import { volumeExists } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
 import { currentDockerBaseFileHashes } from './prepared-state.js';
 import { detectPortless, portlessDoctorRow, portlessServiceStatus } from './portless.js';
-import { SHARED_CLAUDE_VOLUME } from './sync/agents/claude.js';
-import { SHARED_CODEX_VOLUME } from './sync/agents/codex.js';
-import { SHARED_OPENCODE_VOLUME } from './sync/agents/opencode.js';
 
 async function probeVersion(bin: string, args: string[] = ['--version']): Promise<string | null> {
   try {
@@ -64,9 +66,11 @@ export async function dockerChecks(): Promise<CheckResult[]> {
       (err: unknown) => ({ ok: false as const, err }),
     ),
     Promise.all(
-      [SHARED_CLAUDE_VOLUME, SHARED_CODEX_VOLUME, SHARED_OPENCODE_VOLUME].map(async (n) => ({
-        name: n,
-        exists: await volumeExists(n).catch(() => false),
+      // Every agent's shared config volume, from the registry — the doctor row
+      // should report a new agent's volume without an edit here.
+      AGENT_SYNC_SPECS.map(async (spec) => ({
+        name: spec.dockerVolume,
+        exists: await volumeExists(spec.dockerVolume).catch(() => false),
       })),
     ),
     // OrbStack serves per-box .orb.local URLs natively; Portless only matters on

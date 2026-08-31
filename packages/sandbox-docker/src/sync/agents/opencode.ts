@@ -23,7 +23,14 @@ import { createDockerSyncTransport } from '../sync-transport.js';
  * that same volume via the `OPENCODE_CONFIG_DIR` env var (OpenCode-specific, so
  * safe to set box-global — unlike `XDG_DATA_HOME`).
  */
-export const SHARED_OPENCODE_VOLUME = 'agentbox-opencode-config';
+/**
+ * The shared opencode-config volume, FROM THE REGISTRY.
+ *
+ * It was a second copy of `spec.dockerVolume` — the same string written in
+ * two places, which is how a fourth agent ends up half-wired. Derived now, so
+ * there is one source and no drift test is needed to keep them equal.
+ */
+export const SHARED_OPENCODE_VOLUME = resolveAgentSpec('opencode').dockerVolume;
 export const DEFAULT_OPENCODE_SESSION = 'opencode';
 /** Volume mount point inside the box — OpenCode's native data dir. */
 const CONTAINER_OPENCODE_DIR = '/home/vscode/.local/share/opencode';

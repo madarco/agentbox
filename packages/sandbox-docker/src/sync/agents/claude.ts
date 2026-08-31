@@ -13,6 +13,7 @@ import {
   trustWorkspace,
   ensureAgentInstalled,
   AgentInstallError,
+  resolveAgentSpec,
 } from '@agentbox/sandbox-core';
 import {
   claudeInventoryScript,
@@ -31,15 +32,18 @@ import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // (the find-unsyncable-symlinks test) and used internally by the claude stage.
 import { findUnsyncableSymlinks } from '@agentbox/sandbox-core';
 import { createDockerSyncTransport } from '../sync-transport.js';
-import {
-  buildTermSafeTmuxExec,
-  buildTmuxSessionArgs,
-  CONTAINER_USER,
-} from './shared.js';
+import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './shared.js';
 import type { AgentMode } from '@agentbox/core';
 export { findUnsyncableSymlinks };
 
-export const SHARED_CLAUDE_VOLUME = 'agentbox-claude-config';
+/**
+ * The shared claude-config volume, FROM THE REGISTRY.
+ *
+ * It was a second copy of `spec.dockerVolume` — the same string written in
+ * two places, which is how a fourth agent ends up half-wired. Derived now, so
+ * there is one source and no drift test is needed to keep them equal.
+ */
+export const SHARED_CLAUDE_VOLUME = resolveAgentSpec('claude').dockerVolume;
 export const DEFAULT_CLAUDE_SESSION = 'claude';
 const CONTAINER_CLAUDE_DIR = '/home/vscode/.claude';
 /** Workspace is always mounted here inside the box, regardless of host path. */
