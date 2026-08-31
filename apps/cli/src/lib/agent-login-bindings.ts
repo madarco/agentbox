@@ -1,28 +1,18 @@
 /**
- * Binds each agent's login spec to the docker surface it runs against: the
- * `docker run` argv, the post-exit credential check, and any post-success work.
- * Kept apart from `agent-login-specs.ts` (pure, unit-tested) and from
- * `agent-login-run.ts` (the pty loop) so neither has to know about volumes.
+ * What a guided login needs from an agent, and nothing about WHICH agents exist.
+ *
+ * This file used to hold three `<agent>LoginBinding` functions and import each
+ * agent's login spec and docker helpers — a per-agent table in shared code, and
+ * the last import edge pointing from the shared CLI INTO the agents. Each of
+ * those three had exactly one caller: that agent's own runtime, which already
+ * exposes the binding through `AgentRuntime.loginBinding`. So the seam was
+ * already there; the functions were simply on the wrong side of it.
+ *
+ * They live beside their runtimes now (`agents/<id>/login-binding.ts`, moving
+ * into `packages/agent-<id>/` with the rest of the CLI layer). What is left here
+ * is the contract both `guided-login.ts` and the command descriptor refer to by
+ * type only.
  */
-import { syncClaudeCredentials, volumeClaudeCredentials } from '@agentbox/sandbox-docker';
-import {
-  buildClaudeLoginRunArgv,
-  SHARED_CLAUDE_VOLUME,
-  warmUpClaudeCredentials,
-} from '@agentbox/agent-claude';
-import {
-  buildOpencodeLoginRunArgv,
-  SHARED_OPENCODE_VOLUME,
-  volumeHasOpencodeAuth,
-} from '@agentbox/agent-opencode';
-import {
-  buildCodexLoginRunArgv,
-  SHARED_CODEX_VOLUME,
-  volumeHasCodexAuth,
-} from '@agentbox/agent-codex';
-import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
-import { CODEX_LOGIN_SPEC } from '../agents/codex/login.js';
-import { OPENCODE_LOGIN_SPEC } from '../agents/opencode/login.js';
 import type { AgentLoginSpec } from './agent-login-specs.js';
 
 export interface AgentLoginBinding {
@@ -34,61 +24,7 @@ export interface AgentLoginBinding {
   finalize?: () => Promise<{ warmed?: boolean }>;
 }
 
-function withDefaults(spec: AgentLoginSpec, extraArgs: string[]): string[] {
+/** An agent's own defaults apply when the user passed no extra args. */
+export function withLoginDefaults(spec: AgentLoginSpec, extraArgs: string[]): string[] {
   return extraArgs.length > 0 ? extraArgs : spec.defaultArgs;
-}
-
-export function claudeLoginBinding(o: {
-  image: string;
-  volume?: string;
-  extraArgs?: string[];
-  writeLog?: (line: string) => void;
-}): AgentLoginBinding {
-  const volume = o.volume ?? SHARED_CLAUDE_VOLUME;
-  const { image } = o;
-  const extraArgs = withDefaults(CLAUDE_LOGIN_SPEC, o.extraArgs ?? []);
-  return {
-    spec: CLAUDE_LOGIN_SPEC,
-    dockerArgv: buildClaudeLoginRunArgv({ volume, image, extraArgs }),
-    verify: async () => (await volumeClaudeCredentials(volume, image)).hasRefreshToken,
-    // Absorb the fresh-token first-request 400 in a throwaway container before
-    // any box uses these credentials, then mirror them to the host backup.
-    finalize: async () => {
-      const warm = await warmUpClaudeCredentials(volume, image, {
-        onProgress: (l) => o.writeLog?.(l),
-      });
-      await syncClaudeCredentials({ volume }, { image, isolate: false });
-      return { warmed: warm.warmed };
-    },
-  };
-}
-
-export function codexLoginBinding(o: {
-  image: string;
-  volume?: string;
-  extraArgs?: string[];
-}): AgentLoginBinding {
-  const volume = o.volume ?? SHARED_CODEX_VOLUME;
-  const { image } = o;
-  const extraArgs = withDefaults(CODEX_LOGIN_SPEC, o.extraArgs ?? []);
-  return {
-    spec: CODEX_LOGIN_SPEC,
-    dockerArgv: buildCodexLoginRunArgv({ volume, image, extraArgs }),
-    verify: () => volumeHasCodexAuth(volume, image),
-  };
-}
-
-export function opencodeLoginBinding(o: {
-  image: string;
-  volume?: string;
-  extraArgs?: string[];
-}): AgentLoginBinding {
-  const volume = o.volume ?? SHARED_OPENCODE_VOLUME;
-  const { image } = o;
-  const extraArgs = withDefaults(OPENCODE_LOGIN_SPEC, o.extraArgs ?? []);
-  return {
-    spec: OPENCODE_LOGIN_SPEC,
-    dockerArgv: buildOpencodeLoginRunArgv({ volume, image, extraArgs }),
-    verify: () => volumeHasOpencodeAuth(volume, image),
-  };
 }

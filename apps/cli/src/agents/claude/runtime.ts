@@ -30,7 +30,7 @@ import {
 } from '@agentbox/agent-claude';
 import { confirm, log, spinner } from '../../lib/prompt.js';
 import { resolveClaudeAuth } from '../../auth.js';
-import { claudeLoginBinding } from '../../lib/agent-login-bindings.js';
+import { claudeLoginBinding } from './login-binding.js';
 import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { imageProgress } from '../../lib/progress.js';

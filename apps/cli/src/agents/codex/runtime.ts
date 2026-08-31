@@ -30,7 +30,7 @@ import {
 } from '@agentbox/agent-codex';
 import { confirm, log, spinner } from '../../lib/prompt.js';
 import { codexAuthAvailable } from '../../lib/queue/assert-creds.js';
-import { codexLoginBinding } from '../../lib/agent-login-bindings.js';
+import { codexLoginBinding } from './login-binding.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
 import { imageProgress } from '../../lib/progress.js';

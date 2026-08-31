@@ -60,6 +60,8 @@ const ALLOWLIST: Record<string, string> = {
   'apps/cli/src/commands/download-codex.ts': 'phase 2',
   'apps/cli/src/commands/download-opencode.ts': 'phase 2',
   'apps/cli/src/commands/install-codex.ts': 'phase 2',
+  'apps/cli/src/commands/_claude-login-worker.ts': 'phase 2',
+  'apps/cli/src/lib/queue/assert-creds.ts': 'phase 2',
   'apps/cli/src/session-teleport/cwd-encoding.ts': 'phase 2',
   'apps/cli/src/session-teleport/plan.ts': 'phase 2',
 
@@ -75,6 +77,7 @@ const ALLOWLIST: Record<string, string> = {
   'packages/sandbox-cloud/src/sync/claude-json-overlay.ts': 'phase 4',
   'packages/sandbox-docker/src/sync/claude-credentials.ts': 'phase 4',
   'packages/sandbox-docker/src/credential-refresh.ts': 'phase 4',
+  'packages/sandbox-core/src/sync/agent-propagate.ts': 'phase 4',
 
   // Phase 5b — `claudeInstall`. 300 sites across 79 files, reaching the
   // published SDK, the hub's REST schema, on-disk prepared state and a
@@ -86,6 +89,8 @@ const ALLOWLIST: Record<string, string> = {
   'packages/core/src/claude-tui.ts': 'phase 7',
   'packages/ctl/src/types.ts': 'phase 7',
   'packages/ctl/src/session-pointer.ts': 'phase 7',
+  'packages/ctl/src/client.ts': 'phase 7',
+  'packages/ctl/src/commands/claude-session.ts': 'phase 7',
 };
 
 /**
@@ -101,10 +106,19 @@ const NOT_APPLICABLE = [
   'apps/cli/src/agents/',
   'packages/ctl/src/claude-scraper.ts',
   'packages/ctl/src/codex-scraper.ts',
+  // `codexAddUrl` here is the Codex.app `codex://` deep link — the DESKTOP APP,
+  // sitting among herdr, cmux, vscode and finder. Renaming it would be wrong,
+  // which is why this is an exclusion and not an exemption. The union guard in
+  // `no-inline-agent-union.test.ts` carves this same file out for the same
+  // reason.
+  'apps/cli/src/commands/_open-in.ts',
 ];
 
+// Both cases: `stageClaudeStatic` and `claudeLoginBinding` are the same
+// mistake, and the lowercase form is the one that hid — `claudeLoginBinding`
+// sat in the shared CLI until it was looked for by hand.
 const EXPORTED_AGENT_NAME =
-  /^export\s+(?:type\s+|interface\s+|const\s+|let\s+|function\s+|class\s+|abstract\s+class\s+|async\s+function\s+)?[A-Za-z_]*(?:Claude|Codex|Opencode|OpenCode|CLAUDE|CODEX|OPENCODE)/;
+  /^export\s+(?:type\s+|interface\s+|const\s+|let\s+|function\s+|class\s+|abstract\s+class\s+|async\s+function\s+)?[A-Za-z_]*(?:claude|codex|opencode|Claude|Codex|Opencode|OpenCode|CLAUDE|CODEX|OPENCODE)/;
 
 function walk(dir: string, out: string[] = []): string[] {
   let entries;

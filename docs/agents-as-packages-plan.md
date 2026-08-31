@@ -319,13 +319,40 @@ and register from the app instead of `builtins.ts`. Each agent's arm leaves that
 file as it goes, so the exemption in `agent-module-isolation.test.ts` shrinks to
 nothing. Land per file, claude last — it is the daily driver.
 
-**Phase 2 — the CLI layer — BLOCKED, and reordered after 3b.** Measured: the
-per-agent folders import **26 distinct shared CLI modules** (`lib/prompt`,
-`lib/progress`, `pty/pty-backend`, `lib/guided-login`, `session-teleport/*`,
-`wizard.ts`, `provider/registry.ts`, `checkpoint-lookup.ts`, …). Moving them into
-packages needs a CLI-kit extraction first, or an inversion of the app-level ones
-through the existing `AgentCliSpec` ctx seam. That is its own phase, not a file
-move — the original plan assumed this step was mechanical and it is not.
+**Phase 2 — the CLI layer — STARTED; the blocker is smaller than measured.**
+The 26-shared-module count is right but misleading, and re-measuring changed the
+plan:
+
+- **All six heavy imports belong to claude alone** — `commands/prepare` (975
+  lines), `commands/control-plane` (2,729), `wizard.ts`, `provider/registry`,
+  `checkpoint-lookup`, `commands/_errors`, all from
+  `agents/claude/{command,login-command}.ts`. **codex (606 lines) and opencode
+  (371) touch none of them.** They need ten modules, and every one is a near-leaf
+  (0–4 local imports of its own). So those two can move on a modest kit; only
+  claude needs the heavy six inverted, and that is a separate step.
+- **The real blocker was an import edge, not a size.** `lib/agent-login-bindings.ts`
+  imported each agent's login spec and docker helpers — a per-agent table in
+  shared code, pointing from the shared CLI INTO the agents. Nothing could move
+  while that edge existed.
+
+**Done (2a): that edge is gone.** Each `<agent>LoginBinding` had exactly one
+caller — its own runtime, which already exposed it through
+`AgentRuntime.loginBinding` — so the seam was already there and the functions
+were simply on the wrong side of it. They live in
+`agents/<id>/login-binding.ts` now; the shared file keeps the
+`AgentLoginBinding` contract and `withLoginDefaults`, which is all
+`guided-login.ts` and the command descriptor ever used (both by type only).
+
+The `no-agent-named-exports` guard was broadened to catch the **lowercase**
+form in the same pass — `claudeLoginBinding` had sat in the shared CLI unnoticed
+because the guard only matched `Claude`. Six more files came into view, each
+allowlisted against its owning phase, except `commands/_open-in.ts`, which is
+excluded rather than exempted: its `codexAddUrl` is the Codex.app `codex://`
+deep link, and renaming that would be wrong.
+
+**Next (2b):** extract the ten-module kit and move codex + opencode. Then
+claude's heavy six, most likely by inverting them through the existing
+`AgentCliSpec` ctx seam rather than extracting `control-plane.ts`.
 
 **Phase 4 — `sandbox-cloud` — PARTLY DONE (`568cac29`).** `AgentCloudModule` is
 the cloud twin of `AgentSyncModule`; codex's `AGENTS.override` fold and

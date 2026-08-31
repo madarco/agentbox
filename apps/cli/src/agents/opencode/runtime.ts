@@ -31,7 +31,7 @@ import {
 } from '@agentbox/agent-opencode';
 import { confirm, log, spinner, text } from '../../lib/prompt.js';
 import { opencodeAuthAvailable } from '../../lib/queue/assert-creds.js';
-import { opencodeLoginBinding } from '../../lib/agent-login-bindings.js';
+import { opencodeLoginBinding } from './login-binding.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
 import { imageProgress } from '../../lib/progress.js';
