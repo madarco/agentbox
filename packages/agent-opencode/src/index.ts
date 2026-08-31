@@ -5,7 +5,12 @@
  * than importing it.
  */
 
-import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import {
+  extractOpencodeCredentials,
+  registerAgentSyncModule,
+  type AgentSyncModule,
+} from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { seedOpencodeModelState } from './cloud-sync.js';
 import { stageOpencodeCredentialsForUpload } from './host-stage.js';
@@ -23,6 +28,12 @@ export const opencodeSyncModule: AgentSyncModule = {
   buildMounts: (spec, env) => buildOpencodeMounts(spec, env),
   ensureVolume: async (spec, opts) => ensureOpencodeVolume(spec, opts),
   sessionInfo: (container) => opencodeSessionInfo(container),
+  // Extract-only, same as codex: no host bind mount and no expiry field, so the
+  // helper is called unconditionally and reports { copied: false } if there is
+  // no volume to read.
+  refreshHostBackup: async (image) => {
+    await extractOpencodeCredentials(resolveAgentSpec('opencode').dockerVolume, image);
+  },
 };
 
 /**

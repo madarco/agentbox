@@ -18,117 +18,29 @@
  * helper swallows its own failures (no docker, missing volume) and returns a
  * noop result.
  *
- * Gated on `hostClaudeAccessTokenExpired`: when the claude backup's access token
- * is still valid we skip the docker round-trip entirely (`docker run` against
- * the shared volume is ~1-2s and almost always a noop on fresh tokens). That is
- * the one place the access-token check belongs — it asks "is this blob worth
- * refreshing?", not "is this login dead?".
+ * Registry-driven. It used to name three agents in sequence — a claude sync
+ * gated on claude's access-token expiry, then a codex extract, then an opencode
+ * extract — so a fourth agent got no refresh at all and nothing said so. Each
+ * agent now supplies its own step through `AgentSyncModule.refreshHostBackup`,
+ * including the expiry gate that is claude's own business (skipping the ~1-2s
+ * `docker run` when the token is still fresh).
  */
-import { hostClaudeAccessTokenExpired, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { DockerCredentialRefresher } from '@agentbox/sandbox-core';
-import { requireAgentSyncModule } from './sync/agents/module.js';
+import { registeredAgentSyncModules } from './sync/agents/module.js';
 import { DEFAULT_BOX_IMAGE } from './image.js';
-import {
-  extractCodexCredentials,
-  extractOpencodeCredentials,
-  syncClaudeCredentials,
-} from './sync/claude-credentials.js';
 
 export const dockerCredentialRefresh: DockerCredentialRefresher = async (opts) => {
   const log = opts.onLog ?? (() => {});
-  if (!(await hostClaudeAccessTokenExpired())) {
-    return;
-  }
-  log('claude: host credentials backup expired — refreshing from docker shared volume');
   const image = DEFAULT_BOX_IMAGE;
-  try {
-    const r = await syncClaudeCredentials(
-      { volume: resolveAgentSpec('claude').dockerVolume },
-      { image, isolate: false },
-    );
-    if (r.direction === 'extracted') {
-      log('claude: refreshed host credentials backup from docker shared volume');
-    } else if (r.direction === 'noop') {
-      log('claude: no docker shared volume to refresh from (continuing with existing backup)');
+  // Every registered agent, not three by name. Each decides for itself whether
+  // there is anything to do — claude gates on its own token expiry, codex and
+  // opencode are extract-only — and an agent that registers no module (or no
+  // `refreshHostBackup`) is simply skipped rather than silently mishandled.
+  for (const mod of registeredAgentSyncModules()) {
+    try {
+      await mod.refreshHostBackup?.(image, log);
+    } catch {
+      /* best-effort: one agent's refresh must never block another's, or a box start */
     }
-  } catch {
-    /* best-effort — syncClaudeCredentials already swallows internally */
-  }
-  // codex + opencode are extract-only (no docker bind mount of the host's real
-  // ~/.codex into the box like claude has), so always try when the docker
-  // volume exists. Both helpers return { copied: false } on any error.
-  try {
-    await extractCodexCredentials(resolveAgentSpec('codex').dockerVolume, image);
-  } catch {
-    /* best-effort */
-  }
-  try {
-    await extractOpencodeCredentials(resolveAgentSpec('opencode').dockerVolume, image);
-  } catch {
-    /* best-effort */
   }
 };
-
-/** Outcome of {@link renewClaudeCredential}. */
-export type RenewClaudeResult = 'renewed' | 'unchanged' | 'failed';
-
-/**
- * Actively renew the saved claude login through the shared docker volume, and
- * report whether it still works.
- *
- * A credential's health is not readable off disk: `expiresAt` only dates the
- * ~8h access token, and a refresh token that was rotated away by another copy
- * looks perfectly valid until you try it. The only honest test is to use it —
- * so drive the same pair the successful-login path runs in its `finalize`:
- *
- *  1. `syncClaudeCredentials` — converge volume and backup on the newer blob,
- *     so we renew from the freshest copy rather than whichever the volume holds.
- *  2. `warmUpClaudeCredentials` — a headless `claude -p` forces a real OAuth
- *     refresh, minting a fresh access token into the volume.
- *  3. `syncClaudeCredentials` again — extract that fresh blob to the host backup
- *     so the cloud seed (and every later box) gets a live credential.
- *
- * This is what keeps the fleet logged in without nagging: a lapsed access token
- * is renewed silently, and only a genuine failure — `'failed'` — is worth
- * asking the user to sign in again for.
- *
- * `attempts` is deliberately small (2 by default): the login path's 6 exist to
- * outwait the fresh-token first-request 400, but on the create path every extra
- * attempt costs the user 5s + a container start before we can say "dead".
- *
- * Best-effort: any docker failure resolves to `'failed'`, never throws.
- */
-export async function renewClaudeCredential(opts: {
-  image?: string;
-  attempts?: number;
-  onLog?: (msg: string) => void;
-}): Promise<RenewClaudeResult> {
-  const log = opts.onLog ?? (() => {});
-  const image = opts.image ?? DEFAULT_BOX_IMAGE;
-  try {
-    await syncClaudeCredentials(
-      { volume: resolveAgentSpec('claude').dockerVolume },
-      { image, isolate: false },
-    );
-    // Through the registry: the warm-up is claude's own behavior and lives in
-    // its package now, which this one cannot import.
-    const claude = requireAgentSyncModule('claude');
-    const warm = (await claude.warmUpCredentials?.(resolveAgentSpec('claude').dockerVolume, image, {
-      attempts: opts.attempts ?? 2,
-      onProgress: (line: string) => {
-        log(line);
-      },
-    })) ?? { warmed: false, notes: [] };
-    if (!warm.warmed) {
-      log('claude: saved login did not renew — it may have been rotated away by another box');
-      return 'failed';
-    }
-    const synced = await syncClaudeCredentials(
-      { volume: resolveAgentSpec('claude').dockerVolume },
-      { image, isolate: false },
-    );
-    return synced.direction === 'extracted' ? 'renewed' : 'unchanged';
-  } catch {
-    return 'failed';
-  }
-}

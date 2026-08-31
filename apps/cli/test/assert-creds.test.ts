@@ -10,10 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // which `apps/cli/src/auth.ts` reads at load time).
 const sandboxDockerMock = vi.hoisted(() => ({
   hostBackupHasCredentials: vi.fn<() => Promise<boolean>>(),
-  hostClaudeAccessTokenExpired: vi.fn<() => Promise<boolean>>(),
-  hostClaudeLoginDead: vi.fn<() => Promise<boolean>>(),
   imageExists: vi.fn<(image: string) => Promise<boolean>>(),
-  renewClaudeCredential: vi.fn<() => Promise<'renewed' | 'unchanged' | 'failed'>>(),
   volumeHasCodexAuth: vi.fn<(volume: string, image: string) => Promise<boolean>>(),
   volumeHasOpencodeAuth: vi.fn<(volume: string, image: string) => Promise<boolean>>(),
 }));
@@ -23,10 +20,7 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
   return {
     ...actual,
     hostBackupHasCredentials: sandboxDockerMock.hostBackupHasCredentials,
-    hostClaudeAccessTokenExpired: sandboxDockerMock.hostClaudeAccessTokenExpired,
-    hostClaudeLoginDead: sandboxDockerMock.hostClaudeLoginDead,
     imageExists: sandboxDockerMock.imageExists,
-    renewClaudeCredential: sandboxDockerMock.renewClaudeCredential,
   };
 });
 
@@ -46,8 +40,7 @@ const { assertAgentCredsAvailable, MissingAgentCredsError, ExpiredAgentCredsErro
   await import('../src/lib/queue/assert-creds.js');
 // The per-agent checks moved next to their runtimes — the shared helper no
 // longer knows any agent's name. The mock has to follow the symbol.
-const { claudeAuthAvailable, claudeCredStatus } =
-  await import('@agentbox/agent-claude/cli');
+const { claudeAuthAvailable, claudeCredStatus } = await import('@agentbox/agent-claude/cli');
 const { claudeRuntime } = await import('@agentbox/agent-claude/cli');
 const { codexRuntime } = await import('@agentbox/agent-codex/cli');
 const { opencodeRuntime } = await import('@agentbox/agent-opencode/cli');
@@ -58,6 +51,26 @@ const RUNTIMES: Record<string, { hostCredStatus: (typeof claudeRuntime)['hostCre
   codex: codexRuntime,
   opencode: opencodeRuntime,
 };
+// `hostClaudeLoginDead`, `hostClaudeAccessTokenExpired` and
+// `renewClaudeCredential` live in `@agentbox/agent-claude` now — they only mean
+// anything for a claude-oauth blob. They were mockable before only because they
+// crossed a package boundary; inside their own package that stops working, so
+// `resolveClaudeCredHealth` takes them as an explicit `probes` seam and these
+// tests hand it stubs instead of depending on where a symbol is re-exported.
+const probeMock = vi.hoisted(() => ({
+  hostBackupHasCredentials: vi.fn<() => Promise<boolean>>(),
+  accessTokenExpired: vi.fn<() => Promise<boolean>>(),
+  loginDead: vi.fn<() => Promise<boolean>>(),
+  imageExists: vi.fn<(image: string) => Promise<boolean>>(),
+  renew: vi.fn<() => Promise<'renewed' | 'unchanged' | 'failed'>>(),
+}));
+
+function resetProbes(): void {
+  for (const fn of Object.values(probeMock)) fn.mockReset();
+  probeMock.loginDead.mockResolvedValue(false);
+  probeMock.imageExists.mockResolvedValue(true);
+}
+
 function assertFor(input: {
   agent: string;
   image: string;
@@ -66,7 +79,20 @@ function assertFor(input: {
 }) {
   return assertAgentCredsAvailable({
     ...input,
-    hostCredStatus: (o) => RUNTIMES[input.agent]!.hostCredStatus(o),
+    hostCredStatus: async (o) => {
+      if (input.agent !== 'claude-code') return RUNTIMES[input.agent]!.hostCredStatus(o);
+      // Claude's runtime maps its three-way status onto the verdict; mirror that
+      // here so the stubs reach `claudeCredStatus` while the dispatcher still
+      // sees exactly the shape a runtime returns.
+      const status = await claudeCredStatus(o.env, o.isCloud, o.image, probeMock);
+      if (status === 'ok') return { status: 'ok' };
+      if (status === 'missing') return { status: 'missing' };
+      return {
+        status: 'expired',
+        message:
+          'Your saved Claude login can no longer be renewed. Sign in again with `agentbox claude login`, then retry.',
+      };
+    },
   } as Parameters<typeof assertAgentCredsAvailable>[0]);
 }
 
@@ -108,73 +134,67 @@ describe('claudeAuthAvailable', () => {
 });
 
 describe('claudeCredStatus', () => {
-  beforeEach(() => {
-    sandboxDockerMock.hostBackupHasCredentials.mockReset();
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockReset();
-    sandboxDockerMock.hostClaudeLoginDead.mockReset();
-    sandboxDockerMock.imageExists.mockReset();
-    sandboxDockerMock.renewClaudeCredential.mockReset();
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(false);
-    sandboxDockerMock.imageExists.mockResolvedValue(true);
-  });
+  beforeEach(resetProbes);
 
   it('is "missing" when no env and no backup', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('missing');
+    probeMock.hostBackupHasCredentials.mockResolvedValue(false);
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('missing');
   });
 
   it('is "ok" when a host-env token is set (health not consulted)', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
-    expect(await claudeCredStatus({ ANTHROPIC_API_KEY: 'sk-test' }, true, IMAGE)).toBe('ok');
-    expect(sandboxDockerMock.hostClaudeLoginDead).not.toHaveBeenCalled();
+    probeMock.hostBackupHasCredentials.mockResolvedValue(false);
+    probeMock.loginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({ ANTHROPIC_API_KEY: 'sk-test' }, true, IMAGE, probeMock)).toBe(
+      'ok',
+    );
+    expect(probeMock.loginDead).not.toHaveBeenCalled();
   });
 
   it('is "expired" on cloud only when the login can no longer be renewed', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('expired');
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.loginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('expired');
   });
 
   // The false positive this whole change exists for: access tokens live ~8h, so
   // gating on `expiresAt` failed perfectly good jobs every single day.
   it('is "ok" on cloud when a lapsed access token renews', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
-    sandboxDockerMock.renewClaudeCredential.mockResolvedValue('renewed');
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
-    expect(sandboxDockerMock.renewClaudeCredential).toHaveBeenCalled();
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.accessTokenExpired.mockResolvedValue(true);
+    probeMock.renew.mockResolvedValue('renewed');
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('ok');
+    expect(probeMock.renew).toHaveBeenCalled();
   });
 
   it('is "expired" on cloud when the renewal itself fails (rotated away)', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
-    sandboxDockerMock.renewClaudeCredential.mockResolvedValue('failed');
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('expired');
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.accessTokenExpired.mockResolvedValue(true);
+    probeMock.renew.mockResolvedValue('failed');
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('expired');
   });
 
   it('is "ok" on cloud without renewing when the access token is still valid', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(false);
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
-    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.accessTokenExpired.mockResolvedValue(false);
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('ok');
+    expect(probeMock.renew).not.toHaveBeenCalled();
   });
 
   it('is "ok" on cloud when the image is not local — never pull just to answer', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockResolvedValue(true);
-    sandboxDockerMock.imageExists.mockResolvedValue(false);
-    expect(await claudeCredStatus({}, true, IMAGE)).toBe('ok');
-    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.accessTokenExpired.mockResolvedValue(true);
+    probeMock.imageExists.mockResolvedValue(false);
+    expect(await claudeCredStatus({}, true, IMAGE, probeMock)).toBe('ok');
+    expect(probeMock.renew).not.toHaveBeenCalled();
   });
 
   it('is "ok" on docker whatever the token looks like (the box boots from the volume)', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
-    expect(await claudeCredStatus({}, false, IMAGE)).toBe('ok');
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.loginDead.mockResolvedValue(true);
+    expect(await claudeCredStatus({}, false, IMAGE, probeMock)).toBe('ok');
     // No health probe at all when the provider is docker.
-    expect(sandboxDockerMock.hostClaudeLoginDead).not.toHaveBeenCalled();
-    expect(sandboxDockerMock.renewClaudeCredential).not.toHaveBeenCalled();
+    expect(probeMock.loginDead).not.toHaveBeenCalled();
+    expect(probeMock.renew).not.toHaveBeenCalled();
   });
 });
 
@@ -183,13 +203,9 @@ describe('assertAgentCredsAvailable dispatcher', () => {
   const origHome = process.env['HOME'];
 
   beforeEach(async () => {
+    resetProbes();
     sandboxDockerMock.hostBackupHasCredentials.mockReset();
-    sandboxDockerMock.hostClaudeAccessTokenExpired.mockReset();
-    sandboxDockerMock.hostClaudeLoginDead.mockReset();
     sandboxDockerMock.imageExists.mockReset();
-    sandboxDockerMock.renewClaudeCredential.mockReset();
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(false);
-    sandboxDockerMock.imageExists.mockResolvedValue(true);
     sandboxDockerMock.volumeHasCodexAuth.mockReset();
     sandboxDockerMock.volumeHasOpencodeAuth.mockReset();
     homeDir = await mkdtemp(join(tmpdir(), 'agentbox-dispatch-creds-'));
@@ -202,22 +218,22 @@ describe('assertAgentCredsAvailable dispatcher', () => {
   });
 
   it('returns silently when claude has creds', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
     await expect(
       assertFor({ agent: 'claude-code', image: IMAGE, env: {} }),
     ).resolves.toBeUndefined();
   });
 
   it('throws MissingAgentCredsError for claude when no source has creds', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(false);
+    probeMock.hostBackupHasCredentials.mockResolvedValue(false);
     await expect(assertFor({ agent: 'claude-code', image: IMAGE, env: {} })).rejects.toBeInstanceOf(
       MissingAgentCredsError,
     );
   });
 
   it('throws ExpiredAgentCredsError for claude on cloud when the login cannot be renewed', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.loginDead.mockResolvedValue(true);
     try {
       await assertFor({
         agent: 'claude-code',
@@ -237,8 +253,8 @@ describe('assertAgentCredsAvailable dispatcher', () => {
   });
 
   it('does NOT throw for claude on docker when the login looks dead', async () => {
-    sandboxDockerMock.hostBackupHasCredentials.mockResolvedValue(true);
-    sandboxDockerMock.hostClaudeLoginDead.mockResolvedValue(true);
+    probeMock.hostBackupHasCredentials.mockResolvedValue(true);
+    probeMock.loginDead.mockResolvedValue(true);
     await expect(
       assertFor({
         agent: 'claude-code',

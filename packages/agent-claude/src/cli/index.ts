@@ -16,8 +16,14 @@ export { agentModule } from './module.js';
 export { CLAUDE_LOGIN_SPEC, extractOAuthUrl } from './login.js';
 export { claudeLoginBinding } from './login-binding.js';
 export { claudeAuthAvailable, claudeCredStatus } from './host-creds.js';
+export { hostClaudeAccessTokenExpired, hostClaudeLoginDead } from './host-cred-guards.js';
+export { renewClaudeCredential, type RenewClaudeResult } from './credential-renew.js';
 export { resolveClaudeAuth, readAuthFile, AUTH_FILE, type AuthFile } from './auth.js';
-export { resolveClaudeCredHealth } from './cred-health.js';
+export {
+  resolveClaudeCredHealth,
+  type ClaudeCredHealthOptions,
+  type CredHealthProbes,
+} from './cred-health.js';
 export { runClaudeLogin } from './login-run.js';
 export {
   selectLoginMode,

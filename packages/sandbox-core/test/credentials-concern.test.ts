@@ -7,10 +7,8 @@ import { AGENT_SYNC_SPECS } from '../src/sync/registry.js';
 import {
   SEED_MARKER,
   extractCredentials,
-  claudeRefreshExpiresAt,
+  oauthRefreshExpiresAt,
   hostBackupHasCredentials,
-  hostClaudeAccessTokenExpired,
-  hostClaudeLoginDead,
   isRealAgentCredential,
 } from '../src/sync/concerns/credentials.js';
 
@@ -44,102 +42,24 @@ describe('credentials concern — guards', () => {
     });
   });
 
-  describe('hostClaudeAccessTokenExpired', () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = await mkdtemp(join(tmpdir(), 'abx-core-exp-'));
-    });
-    afterEach(async () => {
-      await rm(dir, { recursive: true, force: true });
-    });
-
-    const write = async (obj: unknown) => {
-      const p = join(dir, 'creds.json');
-      await writeFile(p, JSON.stringify(obj));
-      return p;
-    };
-
-    it('true when expiresAt is in the past', async () => {
-      const p = await write({ claudeAiOauth: { refreshToken: 'rt', expiresAt: 1000 } });
-      expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(true);
-    });
-    it('false when expiresAt is in the future', async () => {
-      const p = await write({ claudeAiOauth: { refreshToken: 'rt', expiresAt: 5000 } });
-      expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(false);
-    });
-    it('false when expiresAt is absent (do not nag)', async () => {
-      const p = await write({ claudeAiOauth: { refreshToken: 'rt' } });
-      expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(false);
-    });
-    it('false on a missing/garbage file', async () => {
-      expect(await hostClaudeAccessTokenExpired(join(dir, 'nope.json'), 2000)).toBe(false);
-    });
-  });
-
-  describe('claudeRefreshExpiresAt', () => {
+  describe('oauthRefreshExpiresAt', () => {
     it('reads refreshTokenExpiresAt, null when absent or unparseable', () => {
       expect(
-        claudeRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 42 } })),
+        oauthRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 42 } })),
       ).toBe(42);
-      expect(claudeRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { expiresAt: 42 } }))).toBe(
+      expect(oauthRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { expiresAt: 42 } }))).toBe(
         null,
       );
       expect(
-        claudeRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 'no' } })),
+        oauthRefreshExpiresAt(JSON.stringify({ claudeAiOauth: { refreshTokenExpiresAt: 'no' } })),
       ).toBe(null);
-      expect(claudeRefreshExpiresAt('not json')).toBe(null);
+      expect(oauthRefreshExpiresAt('not json')).toBe(null);
     });
   });
 
   // The distinction this whole gate exists for: a lapsed ACCESS token is a
   // healthy login that renews itself, and reporting it as expired produced a
   // daily false alarm whose "fix" (a login container) rotated the shared token.
-  describe('hostClaudeLoginDead', () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = await mkdtemp(join(tmpdir(), 'abx-core-dead-'));
-    });
-    afterEach(async () => {
-      await rm(dir, { recursive: true, force: true });
-    });
-
-    const write = async (obj: unknown) => {
-      const p = join(dir, 'creds.json');
-      await writeFile(p, JSON.stringify(obj));
-      return p;
-    };
-
-    it('false when the access token lapsed but the refresh token is alive', async () => {
-      const p = await write({
-        claudeAiOauth: { refreshToken: 'rt', expiresAt: 1000, refreshTokenExpiresAt: 9000 },
-      });
-      expect(await hostClaudeLoginDead(p, 2000)).toBe(false);
-      expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(true);
-    });
-    it('true when the refresh token itself has expired', async () => {
-      const p = await write({
-        claudeAiOauth: { refreshToken: 'rt', expiresAt: 5000, refreshTokenExpiresAt: 1000 },
-      });
-      expect(await hostClaudeLoginDead(p, 2000)).toBe(true);
-    });
-    it('true when the refresh token is blank (claude blanks it on a rejected refresh)', async () => {
-      const p = await write({ claudeAiOauth: { refreshToken: '', refreshTokenExpiresAt: 9000 } });
-      expect(await hostClaudeLoginDead(p, 2000)).toBe(true);
-    });
-    it('false when refreshTokenExpiresAt is absent (never declare death on a guess)', async () => {
-      const p = await write({ claudeAiOauth: { refreshToken: 'rt', expiresAt: 1000 } });
-      expect(await hostClaudeLoginDead(p, 2000)).toBe(false);
-    });
-    it('false on a missing file (nothing saved is "missing", not "dead")', async () => {
-      expect(await hostClaudeLoginDead(join(dir, 'nope.json'), 2000)).toBe(false);
-    });
-    it('true on a garbage file that exists', async () => {
-      const p = join(dir, 'creds.json');
-      await writeFile(p, 'not json');
-      expect(await hostClaudeLoginDead(p, 2000)).toBe(true);
-    });
-  });
-
   describe('hostBackupHasCredentials', () => {
     let dir: string;
     let path: string;

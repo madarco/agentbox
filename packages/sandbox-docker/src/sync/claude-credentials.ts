@@ -4,16 +4,18 @@ import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { STATE_DIR } from '../state.js';
 
-// The pure credential guards (`isRealAgentCredential`, `hostClaudeAccessTokenExpired`,
-// `hostClaudeLoginDead`, `hostBackupHasCredentials`) + `CredentialAgentKind` moved to the provider-
-// neutral credentials concern in @agentbox/sandbox-core (the per-agent
-// real-credential shape is now registry data, `credential.realShape`, shared
-// with cloud). Re-exported here so existing docker importers/tests — and the
-// `@agentbox/sandbox-docker` barrel — are untouched.
+// The pure, agent-neutral credential guards moved to the credentials concern in
+// @agentbox/sandbox-core (the per-agent real-credential shape is registry data,
+// `credential.realShape`, shared with cloud). Re-exported here so existing
+// docker importers/tests — and the `@agentbox/sandbox-docker` barrel — are
+// untouched.
+//
+// The two claude-OAUTH guards that used to ride along here
+// (`hostClaudeAccessTokenExpired` / `hostClaudeLoginDead`) went further: they
+// only mean anything for a `claude-oauth` blob, so they live in
+// `@agentbox/agent-claude` now.
 export {
   isRealAgentCredential,
-  hostClaudeAccessTokenExpired,
-  hostClaudeLoginDead,
   hostBackupHasCredentials,
   type CredentialAgentKind,
 } from '@agentbox/sandbox-core';

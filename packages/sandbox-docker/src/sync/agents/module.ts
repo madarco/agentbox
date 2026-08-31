@@ -107,6 +107,21 @@ export interface AgentSyncModule {
     image: string,
     opts?: { attempts?: number; onProgress?: (line: string) => void },
   ): Promise<{ warmed: boolean; notes: string[] }>;
+
+  /**
+   * Bring this agent's HOST credential backup up to date from its docker volume,
+   * before a box starts.
+   *
+   * `dockerCredentialRefresh` used to do this for three agents by name — a
+   * claude sync gated on claude's token expiry, then a codex extract, then an
+   * opencode extract. A fourth agent got no refresh at all, silently, which is
+   * the same gap `assert-creds` and the cloud volume table each had.
+   *
+   * Optional, and best-effort by contract: the caller swallows throws, so an
+   * agent with nothing to refresh omits it and one whose docker volume is
+   * missing simply reports no change.
+   */
+  refreshHostBackup?(image: string, log: (line: string) => void): Promise<void>;
 }
 
 /**

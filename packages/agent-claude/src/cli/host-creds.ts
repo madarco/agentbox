@@ -6,7 +6,7 @@
  */
 import { hostBackupHasCredentials } from '@agentbox/sandbox-docker';
 import { resolveClaudeAuth } from './auth.js';
-import { resolveClaudeCredHealth } from './cred-health.js';
+import { resolveClaudeCredHealth, type ClaudeCredHealthOptions } from './cred-health.js';
 
 /**
  * True when Claude is already authenticated on the host: a forwarded env var
@@ -38,14 +38,20 @@ export async function claudeCredStatus(
   env: NodeJS.ProcessEnv,
   isCloud: boolean,
   image?: string,
+  /** Forwarded to {@link resolveClaudeCredHealth}; see its `probes`. */
+  probes?: ClaudeCredHealthOptions['probes'],
 ): Promise<'ok' | 'missing' | 'expired'> {
   const resolved = await resolveClaudeAuth(env);
   if (resolved.source !== 'none') return 'ok';
-  if (!isCloud) return (await hostBackupHasCredentials()) ? 'ok' : 'missing';
+  if (!isCloud) {
+    const has = probes?.hostBackupHasCredentials ?? hostBackupHasCredentials;
+    return (await has()) ? 'ok' : 'missing';
+  }
   const health = await resolveClaudeCredHealth({
     image: image ?? '',
     // No image to probe with means no renewal; answer off the backup alone.
     ...(image === undefined ? { offlineOnly: true } : {}),
+    ...(probes ? { probes } : {}),
   });
   if (health === 'missing') return 'missing';
   return health === 'dead' ? 'expired' : 'ok';

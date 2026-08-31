@@ -17,13 +17,9 @@
  * both silences the nag and hands the next cloud box a fresh token, which is the
  * other half of why the credential kept dying between sessions.
  */
-import {
-  hostBackupHasCredentials,
-  hostClaudeAccessTokenExpired,
-  hostClaudeLoginDead,
-  imageExists,
-  renewClaudeCredential,
-} from '@agentbox/sandbox-docker';
+import { hostBackupHasCredentials, imageExists } from '@agentbox/sandbox-docker';
+import { hostClaudeAccessTokenExpired, hostClaudeLoginDead } from './host-cred-guards.js';
+import { renewClaudeCredential, type RenewClaudeResult } from './credential-renew.js';
 
 /**
  * `ok` — usable (possibly after a silent renewal). `missing` — nothing saved to
@@ -43,23 +39,52 @@ export interface ClaudeCredHealthOptions {
    * renew it in-box, so there is nothing to warn about.
    */
   offlineOnly?: boolean;
+  /**
+   * The IO this verdict is built from, injectable.
+   *
+   * Every one of these reads a file or starts a container, so a caller that
+   * wants to assert on the DECISION — which combination of "saved?", "dead?",
+   * "lapsed?" and "renewable?" yields which verdict — otherwise has to reach
+   * into another package's internals to do it. They used to be mockable by
+   * accident, because they were imported across a package boundary; they are
+   * this package's own now, so the seam is explicit instead.
+   */
+  probes?: Partial<CredHealthProbes>;
 }
+
+/** The four IO probes {@link resolveClaudeCredHealth} decides from. */
+export interface CredHealthProbes {
+  hostBackupHasCredentials(): Promise<boolean>;
+  loginDead(): Promise<boolean>;
+  accessTokenExpired(): Promise<boolean>;
+  imageExists(image: string): Promise<boolean>;
+  renew(opts: { image: string; onLog?: (msg: string) => void }): Promise<RenewClaudeResult>;
+}
+
+const REAL_PROBES: CredHealthProbes = {
+  hostBackupHasCredentials,
+  loginDead: hostClaudeLoginDead,
+  accessTokenExpired: hostClaudeAccessTokenExpired,
+  imageExists,
+  renew: renewClaudeCredential,
+};
 
 export async function resolveClaudeCredHealth(
   opts: ClaudeCredHealthOptions,
 ): Promise<ClaudeCredHealth> {
-  if (!(await hostBackupHasCredentials())) return 'missing';
-  if (await hostClaudeLoginDead()) return 'dead';
-  if (!(await hostClaudeAccessTokenExpired())) return 'ok';
+  const p: CredHealthProbes = { ...REAL_PROBES, ...opts.probes };
+  if (!(await p.hostBackupHasCredentials())) return 'missing';
+  if (await p.loginDead()) return 'dead';
+  if (!(await p.accessTokenExpired())) return 'ok';
 
   // Stale access token, live refresh token. Renewing needs the image locally;
   // don't trigger an implicit pull just to answer a question, and never nag on
   // a host that simply can't run the probe — the refresh token is alive and the
   // box will renew it itself.
   if (opts.offlineOnly === true) return 'ok';
-  if (!(await imageExists(opts.image))) return 'ok';
+  if (!(await p.imageExists(opts.image))) return 'ok';
 
-  const renewed = await renewClaudeCredential({
+  const renewed = await p.renew({
     image: opts.image,
     ...(opts.onProgress ? { onLog: opts.onProgress } : {}),
   });

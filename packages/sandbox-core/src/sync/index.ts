@@ -137,13 +137,11 @@ export {
 } from './concerns/skills.js';
 export {
   isRealAgentCredential,
-  hostClaudeAccessTokenExpired,
-  hostClaudeLoginDead,
   hostBackupHasCredentials,
   extractCredentials,
   parseCredentialsUpdate,
-  claudeExpiresAt,
-  claudeRefreshExpiresAt,
+  oauthExpiresAt,
+  oauthRefreshExpiresAt,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   readCredentialBackup,

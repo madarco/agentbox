@@ -8,7 +8,13 @@
  * channel the contract grew to accommodate it.
  */
 
-import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import {
+  registerAgentSyncModule,
+  syncClaudeCredentials,
+  type AgentSyncModule,
+} from '@agentbox/sandbox-docker';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { hostClaudeAccessTokenExpired } from './cli/host-cred-guards.js';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { stageClaudeCredentialsForUpload, stageClaudeStaticForUpload } from './host-stage.js';
 import { seedClaudeJsonAtCreate } from './cloud-json-overlay.js';
@@ -59,6 +65,24 @@ export const claudeSyncModule: AgentSyncModule = {
   },
   sessionInfo: (container) => claudeSessionInfo(container),
   // Claude's OAuth token expires on its own; the others' do not.
+  // Gated on claude's OWN access-token expiry: when the backup's token is still
+  // valid the docker round-trip is skipped entirely (~1-2s, and almost always a
+  // noop on a fresh token). That gate asks "is this blob worth refreshing?",
+  // never "is this login dead?" — the two are different questions and conflating
+  // them produced a daily false alarm.
+  refreshHostBackup: async (image, log) => {
+    if (!(await hostClaudeAccessTokenExpired())) return;
+    log('claude: host credentials backup expired — refreshing from docker shared volume');
+    const r = await syncClaudeCredentials(
+      { volume: resolveAgentSpec('claude').dockerVolume },
+      { image, isolate: false },
+    );
+    if (r.direction === 'extracted') {
+      log('claude: refreshed host credentials backup from docker shared volume');
+    } else if (r.direction === 'noop') {
+      log('claude: no docker shared volume to refresh from (continuing with existing backup)');
+    }
+  },
   warmUpCredentials: async (volume, image, opts) => {
     const r = await warmUpClaudeCredentials(volume, image, opts ?? {});
     return { warmed: r.warmed, notes: r.warmed ? ['claude credentials warmed'] : [] };

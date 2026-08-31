@@ -5,7 +5,7 @@
  * snapshot.
  *
  * What lives here is the provider-neutral core of the concern:
- *  - the pure host-side guards (`isRealAgentCredential`, `hostClaudeAccessTokenExpired`,
+ *  - the pure host-side guards (`isRealAgentCredential`,
  *    `hostBackupHasCredentials`) — the "is this blob real / expired?" decisions,
  *    driven by the registry's `credential.realShape` so the per-agent switch has
  *    one home;
@@ -71,65 +71,6 @@ export function isRealAgentCredential(agent: CredentialAgentKind, text: string):
     return typeof rt === 'string' && rt.length > 0;
   }
   return Object.keys(parsed as Record<string, unknown>).length > 0;
-}
-
-/**
- * True iff the claude host backup's *access* token has lapsed
- * (`claudeAiOauth.expiresAt`, ms epoch, < now). Access tokens live ~8h, so this
- * is true of a perfectly healthy login most of the time — it answers "is this
- * blob worth renewing before we hand it to a box?", NOT "is this login dead?".
- * For that, see {@link hostClaudeLoginDead}.
- *
- * A missing `expiresAt` (or unreadable file) → false: we only report a *known*
- * lapse. `now` is injectable for tests. Claude is the only agent with a
- * token-expiry field (codex / opencode auth files carry no comparable one).
- */
-export async function hostClaudeAccessTokenExpired(
-  path: string = CLAUDE_HOST_BACKUP,
-  now: number = Date.now(),
-): Promise<boolean> {
-  try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as {
-      claudeAiOauth?: { expiresAt?: unknown };
-    };
-    const exp = parsed?.claudeAiOauth?.expiresAt;
-    return typeof exp === 'number' && Number.isFinite(exp) && exp < now;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * True iff the saved claude login can no longer be renewed: no usable refresh
- * token at all, or the refresh token's own ~30-day life
- * (`claudeAiOauth.refreshTokenExpiresAt`) has run out.
- *
- * This is the question every "should we ask the user to sign in again?" gate
- * actually wants. Gating those on the access token instead produced a daily
- * false alarm — and accepting that alarm runs a login container that refreshes
- * and ROTATES the shared token before the user types anything, so a cancelled
- * sign-in left every copy of the login (host backup, custody, other boxes)
- * holding a spent token. A merely-lapsed access token renews itself.
- *
- * A missing `refreshTokenExpiresAt` → not dead, matching the "only report a
- * *known* death" convention of {@link hostClaudeAccessTokenExpired}: an older
- * blob that predates the field must not be declared dead on a guess. Note this
- * cannot see a token that was rotated away by another copy — that is only
- * observable by trying to use it.
- */
-export async function hostClaudeLoginDead(
-  path: string = CLAUDE_HOST_BACKUP,
-  now: number = Date.now(),
-): Promise<boolean> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch {
-    return false;
-  }
-  if (!isRealAgentCredential('claude', text)) return true;
-  const exp = claudeRefreshExpiresAt(text);
-  return exp !== null && exp < now;
 }
 
 /**
@@ -235,7 +176,7 @@ export function parseCredentialsUpdate(payload: unknown): CredentialsUpdate | nu
 }
 
 /** `claudeAiOauth.expiresAt` (ms epoch) of a claude blob, or null. */
-export function claudeExpiresAt(text: string): number | null {
+export function oauthExpiresAt(text: string): number | null {
   try {
     const parsed = JSON.parse(text) as { claudeAiOauth?: { expiresAt?: unknown } };
     const exp = parsed?.claudeAiOauth?.expiresAt;
@@ -250,7 +191,7 @@ export function claudeExpiresAt(text: string): number | null {
  * The refresh token's own life (~30 days from the original sign-in) — the field
  * that says whether the login is still renewable, unlike `expiresAt`.
  */
-export function claudeRefreshExpiresAt(text: string): number | null {
+export function oauthRefreshExpiresAt(text: string): number | null {
   try {
     const parsed = JSON.parse(text) as { claudeAiOauth?: { refreshTokenExpiresAt?: unknown } };
     const exp = parsed?.claudeAiOauth?.refreshTokenExpiresAt;
@@ -275,8 +216,8 @@ export function shouldAcceptCredentialUpdate(
   if (existing === null) return { accept: true, reason: 'no existing backup' };
   if (existing === incoming) return { accept: false, reason: 'unchanged' };
   if (resolveAgentSpec(agent).credential.realShape === 'claude-oauth') {
-    const incomingExp = claudeExpiresAt(incoming);
-    const existingExp = claudeExpiresAt(existing);
+    const incomingExp = oauthExpiresAt(incoming);
+    const existingExp = oauthExpiresAt(existing);
     if (incomingExp === null) return { accept: false, reason: 'incoming blob has no expiresAt' };
     if (existingExp !== null && incomingExp <= existingExp) {
       return { accept: false, reason: 'not newer than backup' };

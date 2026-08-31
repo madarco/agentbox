@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  claudeExpiresAt,
+  oauthExpiresAt,
   makeRecordingTransport,
   parseCredentialsUpdate,
   pushCredentialToBox,
@@ -27,13 +27,16 @@ describe('parseCredentialsUpdate', () => {
     });
     expect(update).not.toBeNull();
     expect(update!.agent).toBe('claude');
-    expect(claudeExpiresAt(update!.content)).toBe(123);
+    expect(oauthExpiresAt(update!.content)).toBe(123);
   });
 
   it.each([
     ['unknown agent', { agent: 'gpt', contentBase64: b64('{"a":1}') }],
     ['missing content', { agent: 'codex' }],
-    ['placeholder claude blob', { agent: 'claude', contentBase64: b64('{"claudeAiOauth":{"refreshToken":""}}') }],
+    [
+      'placeholder claude blob',
+      { agent: 'claude', contentBase64: b64('{"claudeAiOauth":{"refreshToken":""}}') },
+    ],
     ['empty json for codex', { agent: 'codex', contentBase64: b64('{}') }],
     ['non-object', 'nope'],
   ])('rejects %s', (_name, payload) => {
@@ -43,9 +46,15 @@ describe('parseCredentialsUpdate', () => {
 
 describe('shouldAcceptCredentialUpdate', () => {
   it('claude: newest expiresAt wins, equal or older rejected', () => {
-    expect(shouldAcceptCredentialUpdate('claude', claudeBlob(200), claudeBlob(100)).accept).toBe(true);
-    expect(shouldAcceptCredentialUpdate('claude', claudeBlob(100), claudeBlob(100, 'other')).accept).toBe(false);
-    expect(shouldAcceptCredentialUpdate('claude', claudeBlob(50), claudeBlob(100)).accept).toBe(false);
+    expect(shouldAcceptCredentialUpdate('claude', claudeBlob(200), claudeBlob(100)).accept).toBe(
+      true,
+    );
+    expect(
+      shouldAcceptCredentialUpdate('claude', claudeBlob(100), claudeBlob(100, 'other')).accept,
+    ).toBe(false);
+    expect(shouldAcceptCredentialUpdate('claude', claudeBlob(50), claudeBlob(100)).accept).toBe(
+      false,
+    );
   });
 
   it('claude: accepts when there is no existing backup or it has no expiresAt', () => {
@@ -71,7 +80,9 @@ describe('shouldAcceptCredentialUpdate', () => {
 
   it('codex/opencode: content change wins, identical is a no-op', () => {
     expect(shouldAcceptCredentialUpdate('codex', '{"t":"new"}', '{"t":"old"}').accept).toBe(true);
-    expect(shouldAcceptCredentialUpdate('codex', '{"t":"same"}', '{"t":"same"}').accept).toBe(false);
+    expect(shouldAcceptCredentialUpdate('codex', '{"t":"same"}', '{"t":"same"}').accept).toBe(
+      false,
+    );
     expect(shouldAcceptCredentialUpdate('opencode', '{"t":"x"}', null).accept).toBe(true);
   });
 });
@@ -107,8 +118,12 @@ describe('pushCredentialToBox', () => {
     const push = t.ops.find((o) => o.op === 'pushFile');
     expect(push!.args['boxDestPath']).toBe('/home/vscode/.claude/.credentials.json');
     const execs = t.ops.filter((o) => o.op === 'exec');
-    expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('mkdir -p'))).toBe(true);
-    expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('chmod 600'))).toBe(true);
+    expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('mkdir -p'))).toBe(
+      true,
+    );
+    expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('chmod 600'))).toBe(
+      true,
+    );
   });
 
   it('fails loudly when the in-box normalize fails', async () => {

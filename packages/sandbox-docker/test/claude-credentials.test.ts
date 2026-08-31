@@ -5,8 +5,6 @@ import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   hostBackupHasCredentials,
-  hostClaudeAccessTokenExpired,
-  hostClaudeLoginDead,
   isRealAgentCredential,
   parseExtractResult,
   parseSyncResult,
@@ -56,52 +54,10 @@ describe('parseVolumeClaudeCredentials', () => {
   });
 });
 
-describe('hostClaudeAccessTokenExpired', () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'abx-exp-'));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  const write = async (obj: unknown) => {
-    const p = join(dir, 'creds.json');
-    await writeFile(p, JSON.stringify(obj));
-    return p;
-  };
-
-  it('true when expiresAt is in the past', async () => {
-    const p = await write({ claudeAiOauth: { refreshToken: 'rt', expiresAt: 1000 } });
-    expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(true);
-  });
-  it('false when expiresAt is in the future', async () => {
-    const p = await write({ claudeAiOauth: { refreshToken: 'rt', expiresAt: 5000 } });
-    expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(false);
-  });
-  it('false when expiresAt is absent (do not nag)', async () => {
-    const p = await write({ claudeAiOauth: { refreshToken: 'rt' } });
-    expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(false);
-  });
-  it('false on a missing/garbage file', async () => {
-    expect(await hostClaudeAccessTokenExpired(join(dir, 'nope.json'), 2000)).toBe(false);
-  });
-
-  // The two predicates must stay distinguishable through the docker re-export:
-  // a lapsed access token is a healthy login, only a spent refresh token is dead.
-  it('is not the same question as hostClaudeLoginDead', async () => {
-    const p = await write({
-      claudeAiOauth: { refreshToken: 'rt', expiresAt: 1000, refreshTokenExpiresAt: 9000 },
-    });
-    expect(await hostClaudeAccessTokenExpired(p, 2000)).toBe(true);
-    expect(await hostClaudeLoginDead(p, 2000)).toBe(false);
-
-    const spent = await write({
-      claudeAiOauth: { refreshToken: 'rt', expiresAt: 5000, refreshTokenExpiresAt: 1000 },
-    });
-    expect(await hostClaudeLoginDead(spent, 2000)).toBe(true);
-  });
-});
+// The `hostClaudeAccessTokenExpired` / `hostClaudeLoginDead` block that sat
+// here tested a re-export. Both guards only mean anything for a `claude-oauth`
+// blob, so they live in `@agentbox/agent-claude` now, and so does their
+// coverage (`packages/agent-claude/test/host-cred-guards.test.ts`).
 
 describe('isRealAgentCredential', () => {
   it('claude requires a non-empty claudeAiOauth.refreshToken', () => {

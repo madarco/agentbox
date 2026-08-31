@@ -10,7 +10,12 @@
  * The CLI re-exports what it needs from here; nothing below this package does.
  */
 
-import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import {
+  extractCodexCredentials,
+  registerAgentSyncModule,
+  type AgentSyncModule,
+} from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { ensureCodexAgentsOverride } from './cloud-sync.js';
 import { stageCodexCredentialsForUpload, stageCodexStaticForUpload } from './host-stage.js';
@@ -31,6 +36,12 @@ export const codexSyncModule: AgentSyncModule = {
   sessionInfo: (container) => codexSessionInfo(container),
   // The AGENTS.override.md box-facts fold. It used to be called by name from
   // `docker-sync.ts`; it is Codex's own post-sync step now.
+  // Extract-only: unlike claude there is no docker bind mount of the host's real
+  // ~/.codex into the box, and codex's auth.json carries no expiry field to gate
+  // on — so always try, and let the helper report no-op when there is no volume.
+  refreshHostBackup: async (image) => {
+    await extractCodexCredentials(resolveAgentSpec('codex').dockerVolume, image);
+  },
   afterVolumeSync: async (volume, image) => {
     const r = await seedCodexAgentsOverride(volume, image);
     return { notes: r.seeded ? ['seeded AGENTS.override.md with box facts'] : [] };
