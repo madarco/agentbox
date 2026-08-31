@@ -1,4 +1,10 @@
 export {
+  AGENT_KINDS,
+  AGENT_KIND_NAMES,
+  isAgentConfigKind,
+  type AgentConfigKind,
+} from './agents.js';
+export {
   BUILT_IN_DEFAULTS,
   KEY_REGISTRY,
   lookupKey,

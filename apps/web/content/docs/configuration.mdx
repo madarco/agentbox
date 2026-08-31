@@ -242,6 +242,10 @@ See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 | `claude.dangerouslySkipPermissions` | bool   | `true`     | launch claude with `--dangerously-skip-permissions` (auto-accept tool use) |
 | `codex.dangerouslySkipPermissions`  | bool   | `true`     | launch codex with `--dangerously-bypass-approvals-and-sandbox`             |
 
+These keys are generated per agent, so every agent AgentBox ships gets the same
+set — `<agent>.sessionName` always, and `<agent>.dangerouslySkipPermissions` only
+where that agent actually has such a launch flag (OpenCode has none).
+
 <Callout title="WHY">
   The permission-skip defaults are on precisely because each box is a throwaway sandbox the agent
   can't escape — that's the whole point of AgentBox. Turn them off per-box with

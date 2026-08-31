@@ -204,10 +204,20 @@ message instead of blocking on a password read nothing will answer.
    missing from either fails `packages/sandbox-core/test/agent-seed.test.ts`.
    There is no per-agent seeding CODE to write: docker seeds into the config
    volume and the cloud path seeds into the live box, both from this one row.
-5. **Config keys**: `<agent>.sessionName` and `box.isolate<Agent>Config` in
-   `packages/config`. Still required: `@agentbox/config` is a zero-internal-dep
-   leaf (`sandbox-core` depends on *it*), so it cannot read `AGENT_SYNC_SPECS` to
-   generate per-agent keys. The command descriptor reaches them through typed
+5. **Config keys**: one row in `AGENT_KINDS` (`packages/config/src/agents.ts`).
+   `<agent>.sessionName`, `<agent>.dangerouslySkipPermissions` (only where the
+   agent has such a flag) and `box.isolate<Agent>Config` are GENERATED from it —
+   key descriptor, default and all — the way `perProviderImageKeys()` generates
+   the per-provider image keys. The row exists because `@agentbox/config` is a
+   zero-internal-dep leaf (`sandbox-core` depends on *it*), so it cannot read
+   `AGENT_SYNC_SPECS`; it is the same copy-not-import arrangement `PROVIDERS`
+   uses, and it is drift-tested against the registry from `apps/cli`, which can
+   see both. Two hand edits remain and cannot be generated: the block on the
+   `UserConfig` / `EffectiveConfig` interfaces (a TypeScript interface cannot be
+   built from a runtime array) and its branch in
+   `packages/config/schema/user-config.schema.json`, which is
+   `additionalProperties: false` — both are caught by the config suite rather
+   than left to discover. The command descriptor reaches the keys through typed
    accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
 6. **Activity reporting**, if the agent should report one: declare
    `caps.activitySource` — a list of `hooks` / `plugin` / `scraper`, empty if it

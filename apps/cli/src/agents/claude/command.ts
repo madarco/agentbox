@@ -203,7 +203,7 @@ const { command, attachWrapped } = buildAgentCommand({
           (wiz.action === 'launch-with-prompt' && Boolean(wiz.initialPrompt)),
         argsTransform: (args) => {
           // --plan: enter plan mode and seed a "resume the plan" turn. Adding
-          // --permission-mode BEFORE applyClaudeSkipPermissions makes the latter
+          // --permission-mode BEFORE the skip-permissions injection makes the latter
           // treat it as a conflict and skip --dangerously-skip-permissions —
           // plan mode wins.
           if (planSessionId) {

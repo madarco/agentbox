@@ -1,45 +1,44 @@
 /**
- * Inject the per-agent "skip permission prompts" flag into a fresh agent
- * launch, driven by `claude.dangerouslySkipPermissions` /
- * `codex.dangerouslySkipPermissions`. A box is an isolated sandbox, so
- * auto-accepting tool use removes friction the box already makes safe — hence
- * the config defaults to on (see BUILT_IN_DEFAULTS in @agentbox/config).
+ * The "skip permission prompts" injection, as a mechanism with no agent in it.
+ *
+ * A box is an isolated sandbox, so auto-accepting tool use removes friction the
+ * box already makes safe — hence the per-agent config key defaults to on (see
+ * BUILT_IN_DEFAULTS in @agentbox/config).
  *
  * Applied at the command layer (where the effective config is resolved) to the
- * arg array that flows to BOTH the docker session start (`startXxxSession`) and
- * the cloud attach (`extraArgs` -> `buildCloudAttachInnerCommand`), so one
+ * arg array that flows to BOTH the docker session start (`start<Agent>Session`)
+ * and the cloud attach (`extraArgs` -> `buildCloudAttachInnerCommand`), so one
  * call covers every provider.
  *
- * If the user already passed a flag that controls the same surface (e.g.
- * `claude -- --permission-mode plan`, `codex -- -a never`), we leave their args
- * untouched — an explicit choice always wins.
+ * WHICH flag, and which user args count as "the user already decided", is data
+ * that belongs to the agent: it lives on that agent's runtime
+ * (`AgentRuntime.skipPermissions`), which is `null` for an agent that has no
+ * such flag at all — OpenCode. Nothing here knows an agent's name, so a new
+ * agent supplies a rule and gets this behavior with no edit to this file.
  */
-import type { EffectiveConfig } from '@agentbox/config';
 
-/** Claude's full permission-bypass flag (auto-accept all tool use). */
-export const CLAUDE_SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions';
+/** One agent's bypass flag and the user args that mean "don't inject". */
+export interface SkipPermissionsRule {
+  /** The flag to prepend. */
+  readonly flag: string;
+  /**
+   * Args that already govern the same surface. Their presence means the user
+   * made an explicit choice, which always wins over the config default.
+   */
+  readonly conflictingArgs: readonly string[];
+}
+
 /**
- * Codex's only "never prompt" flag. It disables codex's own internal sandbox in
- * addition to approval prompts — redundant-but-safe here since the AgentBox box
- * is already the sandbox.
+ * Prepend `rule.flag` unless the user already passed something that governs the
+ * same surface, or the config disabled it.
  */
-export const CODEX_SKIP_PERMISSIONS_FLAG = '--dangerously-bypass-approvals-and-sandbox';
-
-// User args that already govern claude's permission behavior — presence means
-// "the user decided", so we don't inject.
-const CLAUDE_CONFLICTING = new Set([CLAUDE_SKIP_PERMISSIONS_FLAG, '--permission-mode']);
-// Likewise for codex's approval / sandbox surface.
-const CODEX_CONFLICTING = new Set([
-  CODEX_SKIP_PERMISSIONS_FLAG,
-  '--yolo',
-  '--full-auto',
-  '-a',
-  '--ask-for-approval',
-  '-s',
-  '--sandbox',
-]);
-
-function inject(args: string[], flag: string, conflicting: Set<string>): string[] {
+export function applySkipPermissions(
+  args: string[],
+  rule: SkipPermissionsRule,
+  enabled: boolean,
+): string[] {
+  if (!enabled) return args;
+  const conflicting = new Set(rule.conflictingArgs);
   // Match both `--permission-mode plan` and `--permission-mode=plan` — the flag
   // name is everything before the first `=` when the user uses inline syntax.
   const hasConflict = args.some((a) => {
@@ -47,17 +46,5 @@ function inject(args: string[], flag: string, conflicting: Set<string>): string[
     return conflicting.has(eq === -1 ? a : a.slice(0, eq));
   });
   if (hasConflict) return args;
-  return [flag, ...args];
-}
-
-/** Prepend claude's skip-permissions flag when the config enables it. */
-export function applyClaudeSkipPermissions(args: string[], cfg: EffectiveConfig): string[] {
-  if (!cfg.claude.dangerouslySkipPermissions) return args;
-  return inject(args, CLAUDE_SKIP_PERMISSIONS_FLAG, CLAUDE_CONFLICTING);
-}
-
-/** Prepend codex's bypass-approvals flag when the config enables it. */
-export function applyCodexSkipPermissions(args: string[], cfg: EffectiveConfig): string[] {
-  if (!cfg.codex.dangerouslySkipPermissions) return args;
-  return inject(args, CODEX_SKIP_PERMISSIONS_FLAG, CODEX_CONFLICTING);
+  return [rule.flag, ...args];
 }

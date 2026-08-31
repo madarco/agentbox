@@ -351,12 +351,34 @@ to an agent-keyed install variant across its ~35 sites — including the
 `AGENTBOX_CLAUDE_INSTALL` build arg, which is a rename with a bake implication, so
 it lands with a forced re-`prepare` and its own live check.
 
-**Phase 6 — config keys** (the old item 7). `packages/config` generates
-`<agent>.sessionName`, `<agent>.skipPermissions`, `box.isolate<Agent>Config` from
-`BUILTIN_AGENT_KINDS` the way `perProviderImageKeys()` already generates provider
-keys. Adds the missing opencode skip-permissions arm as data. Defaults and the
-JSON schema must be generated too — `writeLeaf` silently no-ops without the branch
-object, and `schema-drift.test.ts` fails on a registry key missing from the schema.
+**Phase 6 — config keys — DONE.** `packages/config/src/agents.ts` holds
+`AGENT_KINDS`, and `<agent>.sessionName`,
+`<agent>.dangerouslySkipPermissions` and `box.isolate<Agent>Config` are generated
+from it — descriptor, default and all — the way `perProviderImageKeys()` already
+generates the provider keys. It is a table in config, not an import: config is a
+zero-internal-dep leaf, the same arrangement `PROVIDERS` uses, drift-tested
+against the registry from `apps/cli` (six checks, both halves mutation-checked).
+
+Two deviations from this plan as written, both deliberate:
+
+- **The opencode skip-permissions arm is not "missing" — OpenCode has no such
+  flag.** The runtime seam already models that as `skipPermissions: null`, and
+  the table's `hasSkipPermissions: false` means no key is generated for it.
+  Generating one for every agent would ship a config key that silently does
+  nothing, which is worse than its absence. The test now asserts the `null` out
+  loud so a deliberate "none" and an unimplemented arm stay distinguishable.
+- **The generalization that did land is the flag DATA.**
+  `lib/skip-permissions.ts` is now mechanism only — `applySkipPermissions(args,
+  rule, enabled)` — with each agent's flag and conflicting args on its own
+  runtime, so the shared module names no agent. That took the two named
+  `apply<Agent>SkipPermissions` exports out of six call sites.
+
+Two things still cannot be generated and are caught rather than documented: the
+block on the `UserConfig`/`EffectiveConfig` interfaces (a TypeScript interface
+cannot be built from a runtime array — the limitation `providers.ts` already
+records) and the branch in `user-config.schema.json`, which is
+`additionalProperties: false`. Both fail the config suite when omitted, which is
+how the demo agent's keys were found missing.
 
 **Phase 7 — the name sweep + the plugin path.** Rename the ~124 name-only sites
 (`BoxStatusClaude`, `ClaudeActivityState`, `ClaudeQuestionPayload`, relay's

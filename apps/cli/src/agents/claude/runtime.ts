@@ -35,10 +35,7 @@ import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { imageProgress } from '../../lib/progress.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
-import {
-  applyClaudeSkipPermissions,
-  CLAUDE_SKIP_PERMISSIONS_FLAG,
-} from '../../lib/skip-permissions.js';
+import { applySkipPermissions, type SkipPermissionsRule } from '../../lib/skip-permissions.js';
 import { clampSpinnerLine } from '../../spinner-line.js';
 import { addClaudeLoginOptions, runClaudeLoginCommand } from './login-command.js';
 import type { AgentRuntime, SignInResult } from '../command/types.js';
@@ -136,6 +133,12 @@ async function runLoginOffer(image: string, hostWorkspace: string): Promise<void
 
 const SKIPPED = 'Skipped sign-in — claude will prompt you to /login inside the box.';
 
+/** Claude's full permission-bypass flag, and the args that mean the user chose. */
+const SKIP_PERMISSIONS_RULE: SkipPermissionsRule = {
+  flag: '--dangerously-skip-permissions',
+  conflictingArgs: ['--dangerously-skip-permissions', '--permission-mode'],
+};
+
 export const claudeRuntime: AgentRuntime = {
   sharedVolume: SHARED_CLAUDE_VOLUME,
   SessionError: ClaudeSessionError,
@@ -177,9 +180,10 @@ export const claudeRuntime: AgentRuntime = {
   },
 
   skipPermissions: {
-    flag: CLAUDE_SKIP_PERMISSIONS_FLAG,
+    flag: SKIP_PERMISSIONS_RULE.flag,
     effect: 'auto-accept tool use',
-    apply: applyClaudeSkipPermissions,
+    apply: (args, cfg) =>
+      applySkipPermissions(args, SKIP_PERMISSIONS_RULE, cfg.claude.dangerouslySkipPermissions),
   },
 
   /**

@@ -8,6 +8,7 @@
  *   cli > workspace > project > global > built-in defaults.
  */
 
+import { AGENT_KINDS, type AgentConfigKind } from './agents.js';
 import { PROVIDERS, PROVIDER_NAMES, perProviderConfigKey, type ProviderKind } from './providers.js';
 
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
@@ -157,6 +158,7 @@ export interface UserConfig {
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
+    isolateExampleConfig?: boolean;
     image?: string;
     /**
      * Per-provider override of `image`. Written by `agentbox prepare
@@ -204,6 +206,9 @@ export interface UserConfig {
     dangerouslySkipPermissions?: boolean;
   };
   opencode?: {
+    sessionName?: string;
+  };
+  example?: {
     sessionName?: string;
   };
   attach?: {
@@ -373,6 +378,7 @@ export interface EffectiveConfig {
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
+    isolateExampleConfig: boolean;
     image: string;
     imageDocker: string;
     imageDaytona: string;
@@ -415,6 +421,9 @@ export interface EffectiveConfig {
     dangerouslySkipPermissions: boolean;
   };
   opencode: {
+    sessionName: string;
+  };
+  example: {
     sessionName: string;
   };
   attach: {
@@ -558,9 +567,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vnc: true,
     autoApproveHostActions: false,
     autoApproveSafeHostActions: true,
-    isolateClaudeConfig: false,
-    isolateCodexConfig: false,
-    isolateOpencodeConfig: false,
+    ...(perAgentIsolateDefaults() as Pick<EffectiveConfig['box'], AgentIsolateKey>),
     image: 'agentbox/box:dev',
     imageDocker: '',
     imageDaytona: '',
@@ -605,17 +612,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   checkpoint: {
     maxLayers: 3,
   },
-  claude: {
-    sessionName: 'claude',
-    dangerouslySkipPermissions: true,
-  },
-  codex: {
-    sessionName: 'codex',
-    dangerouslySkipPermissions: true,
-  },
-  opencode: {
-    sessionName: 'opencode',
-  },
+  // Generated: `writeLeaf` silently no-ops when a branch object is missing, so a
+  // generated KEY_REGISTRY entry without a generated default would validate and
+  // then do nothing.
+  ...(perAgentDefaults() as Pick<EffectiveConfig, AgentBlockKey>),
   attach: {
     openIn: 'split',
     cmuxStatus: true,
@@ -741,6 +741,93 @@ function perProviderSizeKeys(): KeyDescriptor[] {
     advanced: true,
   }));
 }
+/**
+ * The per-agent keys, generated from the `AGENT_KINDS` table.
+ *
+ * These were written out by hand, three entries per agent, which is one of the
+ * places adding an agent meant editing this file. `dangerouslySkipPermissions`
+ * is generated only for agents that HAVE such a flag — OpenCode does not, and a
+ * key that silently does nothing is worse than an absent one.
+ */
+/** The per-agent default branches, from the same table the keys come from. */
+/**
+ * The `EffectiveConfig` keys that are agent blocks, derived from `AGENT_KINDS`
+ * rather than re-typed. Spelling the set out again is what
+ * `no-inline-agent-union.test.ts` exists to catch: it would be a second place to
+ * remember when an agent is added, and the compiler would not connect the two.
+ *
+ * The blocks themselves are still declared by hand above — a TypeScript
+ * interface cannot be generated from a runtime array, the same limitation
+ * `providers.ts` documents for the per-provider image keys.
+ */
+type AgentBlockKey = Extract<keyof EffectiveConfig, (typeof AGENT_KINDS)[number]['id']>;
+
+/** The `box.*` leaves that are per-agent volume-isolation flags, likewise derived. */
+type AgentIsolateKey = Extract<
+  keyof EffectiveConfig['box'],
+  `isolate${Capitalize<(typeof AGENT_KINDS)[number]['id']>}Config`
+>;
+
+function perAgentDefaults(): Record<
+  string,
+  { sessionName: string; dangerouslySkipPermissions?: boolean }
+> {
+  const out: Record<string, { sessionName: string; dangerouslySkipPermissions?: boolean }> = {};
+  for (const agent of AGENT_KINDS) {
+    out[agent.id] = {
+      sessionName: agent.defaultSessionName,
+      ...(agent.hasSkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+    };
+  }
+  return out;
+}
+
+/** `claude` -> `Claude`, for the `box.isolate<Agent>Config` key spelling. */
+function capitalizeAgentId(id: string): string {
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+/**
+ * `box.isolate<Agent>Config` for every agent. These live under `box.` rather
+ * than `<agent>.` because they are a property of the BOX (which volume it
+ * mounts), not of the agent's launch.
+ */
+function perAgentIsolateKeys(): KeyDescriptor[] {
+  // Widened: `as const satisfies` narrows each row to its own literal type, so
+  // an optional field is absent from the rows that omit it.
+  return (AGENT_KINDS as readonly AgentConfigKind[]).map((agent) => ({
+    key: `box.isolate${capitalizeAgentId(agent.id)}Config`,
+    type: 'bool' as const,
+    description:
+      agent.isolateVolumeDesc ?? `Use a per-box ~/.${agent.id} volume instead of the shared one.`,
+  }));
+}
+
+function perAgentIsolateDefaults(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const agent of AGENT_KINDS) out[`isolate${capitalizeAgentId(agent.id)}Config`] = false;
+  return out;
+}
+
+function perAgentKeys(): KeyDescriptor[] {
+  const out: KeyDescriptor[] = [];
+  for (const agent of AGENT_KINDS) {
+    out.push({
+      key: `${agent.id}.sessionName`,
+      type: 'string',
+      description: `tmux session name for \`agentbox ${agent.id}\`.`,
+    });
+    if (agent.hasSkipPermissions) {
+      out.push({
+        key: `${agent.id}.dangerouslySkipPermissions`,
+        type: 'bool',
+        description: agent.skipPermissionsDesc ?? '',
+      });
+    }
+  }
+  return out;
+}
+
 function perProviderImageKeys(): KeyDescriptor[] {
   return PROVIDERS.map((p) => ({
     key: perProviderConfigKey('image', p.name),
@@ -842,21 +929,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       "Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, calls to a granted host tool, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.",
   },
-  {
-    key: 'box.isolateClaudeConfig',
-    type: 'bool',
-    description: 'Use a per-box ~/.claude volume instead of the shared one.',
-  },
-  {
-    key: 'box.isolateCodexConfig',
-    type: 'bool',
-    description: 'Use a per-box ~/.codex volume instead of the shared one.',
-  },
-  {
-    key: 'box.isolateOpencodeConfig',
-    type: 'bool',
-    description: 'Use a per-box OpenCode config/data volume instead of the shared one.',
-  },
+  ...perAgentIsolateKeys(),
   {
     key: 'box.image',
     type: 'string',
@@ -993,33 +1066,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       "Egress lock for new --provider vercel boxes: 'allow-all' (default, unset), 'deny-all', or a comma-separated domain allowlist (e.g. 'github.com,*.npmjs.org') that denies everything else. Vercel-only; ignored by other providers.",
   },
-  {
-    key: 'claude.sessionName',
-    type: 'string',
-    description: 'tmux session name for `agentbox claude`.',
-  },
-  {
-    key: 'claude.dangerouslySkipPermissions',
-    type: 'bool',
-    description:
-      'Launch claude in new boxes with --dangerously-skip-permissions (auto-accept tool use). Safe because boxes are isolated; on by default. Override per-box with --no-dangerously-skip-permissions.',
-  },
-  {
-    key: 'codex.sessionName',
-    type: 'string',
-    description: 'tmux session name for `agentbox codex`.',
-  },
-  {
-    key: 'codex.dangerouslySkipPermissions',
-    type: 'bool',
-    description:
-      'Launch codex in new boxes with --dangerously-bypass-approvals-and-sandbox (never prompt for approval). Safe because boxes are isolated; on by default. Override per-box with --no-dangerously-skip-permissions.',
-  },
-  {
-    key: 'opencode.sessionName',
-    type: 'string',
-    description: 'tmux session name for `agentbox opencode`.',
-  },
+  ...perAgentKeys(),
   {
     key: 'attach.openIn',
     type: 'enum',

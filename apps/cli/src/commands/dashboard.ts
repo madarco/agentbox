@@ -68,7 +68,8 @@ import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
-import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
+import { claudeRuntime } from '../agents/claude/runtime.js';
+import { codexRuntime } from '../agents/codex/runtime.js';
 
 interface DashboardOptions {
   project?: boolean;
@@ -402,7 +403,7 @@ export const dashboardCommand = new Command('dashboard')
         const claudeCfg = await loadEffectiveConfig(box.workspacePath);
         await startClaudeSession({
           container: box.container,
-          claudeArgs: applyClaudeSkipPermissions([], claudeCfg.effective),
+          claudeArgs: claudeRuntime.skipPermissions!.apply([], claudeCfg.effective),
           boxName: box.name,
           claudeTui: claudeCfg.effective.box.claudeTui,
         });
@@ -430,7 +431,7 @@ export const dashboardCommand = new Command('dashboard')
         const codexCfg = await loadEffectiveConfig(box.workspacePath);
         await startCodexSession({
           container: box.container,
-          codexArgs: applyCodexSkipPermissions([], codexCfg.effective),
+          codexArgs: codexRuntime.skipPermissions!.apply([], codexCfg.effective),
         });
         await waitForTmuxPaneContent(box.container, DEFAULT_CODEX_SESSION);
         return {
@@ -524,7 +525,7 @@ export const dashboardCommand = new Command('dashboard')
           await ensureCodexInstalled(ctr, { onProgress });
           await startCodexSession({
             container: ctr,
-            codexArgs: applyCodexSkipPermissions([], cfg.effective),
+            codexArgs: codexRuntime.skipPermissions!.apply([], cfg.effective),
           });
           // Attach only once the agent TUI has drawn — see waitForTmuxPaneContent.
           await waitForTmuxPaneContent(ctr, DEFAULT_CODEX_SESSION);
@@ -556,7 +557,7 @@ export const dashboardCommand = new Command('dashboard')
         await rebuildPluginNativeDeps(ctr, { volume: result.record.claudeConfigVolume });
         await startClaudeSession({
           container: ctr,
-          claudeArgs: applyClaudeSkipPermissions([], cfg.effective),
+          claudeArgs: claudeRuntime.skipPermissions!.apply([], cfg.effective),
           boxName: result.record.name,
           claudeTui: cfg.effective.box.claudeTui,
         });

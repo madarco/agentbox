@@ -59,6 +59,7 @@
         "isolateClaudeConfig": { "type": "boolean" },
         "isolateCodexConfig": { "type": "boolean" },
         "isolateOpencodeConfig": { "type": "boolean" },
+        "isolateExampleConfig": { "type": "boolean" },
         "image": { "type": "string", "minLength": 1 },
         "imageDocker": { "type": "string", "minLength": 1 },
         "imageDaytona": { "type": "string", "minLength": 1 },
@@ -114,6 +115,13 @@
       }
     },
     "opencode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "example": {
       "type": "object",
       "additionalProperties": false,
       "properties": {

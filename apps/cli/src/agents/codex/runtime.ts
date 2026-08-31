@@ -34,10 +34,7 @@ import { codexLoginBinding } from '../../lib/agent-login-bindings.js';
 import { runGuidedLogin } from '../../lib/guided-login.js';
 import { loadPtyBackend } from '../../pty/pty-backend.js';
 import { imageProgress } from '../../lib/progress.js';
-import {
-  applyCodexSkipPermissions,
-  CODEX_SKIP_PERMISSIONS_FLAG,
-} from '../../lib/skip-permissions.js';
+import { applySkipPermissions, type SkipPermissionsRule } from '../../lib/skip-permissions.js';
 import type { AgentRuntime, SignInResult } from '../command/types.js';
 
 /**
@@ -138,6 +135,24 @@ async function cloudCodexCredAvailable(env: NodeJS.ProcessEnv = process.env): Pr
 const SIGN_IN_PROMPT = 'Sign in to Codex? (saved and reused by every box)';
 const SKIPPED = 'Skipped sign-in — codex will prompt you to sign in inside the box.';
 
+/**
+ * Codex's only "never prompt" flag. It disables codex's own internal sandbox in
+ * addition to approval prompts — redundant-but-safe here, since the AgentBox box
+ * is already the sandbox. The rest are the user's own approval/sandbox args.
+ */
+const SKIP_PERMISSIONS_RULE: SkipPermissionsRule = {
+  flag: '--dangerously-bypass-approvals-and-sandbox',
+  conflictingArgs: [
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--yolo',
+    '--full-auto',
+    '-a',
+    '--ask-for-approval',
+    '-s',
+    '--sandbox',
+  ],
+};
+
 export const codexRuntime: AgentRuntime = {
   sharedVolume: SHARED_CODEX_VOLUME,
   SessionError: CodexSessionError,
@@ -166,9 +181,10 @@ export const codexRuntime: AgentRuntime = {
   },
 
   skipPermissions: {
-    flag: CODEX_SKIP_PERMISSIONS_FLAG,
+    flag: SKIP_PERMISSIONS_RULE.flag,
     effect: 'never prompt for approval',
-    apply: applyCodexSkipPermissions,
+    apply: (args, cfg) =>
+      applySkipPermissions(args, SKIP_PERMISSIONS_RULE, cfg.codex.dangerouslySkipPermissions),
   },
 
   async offerDockerLogin({ image, yes }) {

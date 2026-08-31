@@ -55,7 +55,8 @@ import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '../lib/log-file.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
-import { applyClaudeSkipPermissions, applyCodexSkipPermissions } from '../lib/skip-permissions.js';
+import { claudeRuntime } from '../agents/claude/runtime.js';
+import { codexRuntime } from '../agents/codex/runtime.js';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';
 import { autoWriteSshConfig } from '@agentbox/sandbox-core';
@@ -438,7 +439,7 @@ async function runDockerJob(
     log.write(`starting claude session`);
     await startClaudeSession({
       container: result.record.container,
-      claudeArgs: applyClaudeSkipPermissions(promptedArgs, cfg.effective),
+      claudeArgs: claudeRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
       sessionName: cfg.effective.claude.sessionName,
       boxName: result.record.name,
       claudeTui: cfg.effective.box.claudeTui,
@@ -451,7 +452,7 @@ async function runDockerJob(
     log.write(`starting codex session`);
     await startCodexSession({
       container: result.record.container,
-      codexArgs: applyCodexSkipPermissions(promptedArgs, cfg.effective),
+      codexArgs: codexRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
       sessionName: cfg.effective.codex.sessionName,
     });
   } else if (job.agent === 'opencode') {
@@ -652,11 +653,11 @@ async function runCloudJob(
   if (job.agent === 'claude-code') {
     binary = 'claude';
     sessionName = cfg.effective.claude.sessionName;
-    extraArgs = applyClaudeSkipPermissions(promptedArgs, cfg.effective);
+    extraArgs = claudeRuntime.skipPermissions!.apply(promptedArgs, cfg.effective);
   } else if (job.agent === 'codex') {
     binary = 'codex';
     sessionName = cfg.effective.codex.sessionName;
-    extraArgs = applyCodexSkipPermissions(promptedArgs, cfg.effective);
+    extraArgs = codexRuntime.skipPermissions!.apply(promptedArgs, cfg.effective);
   } else if (job.agent === 'opencode') {
     binary = 'opencode';
     sessionName = cfg.effective.opencode.sessionName;
