@@ -199,7 +199,9 @@ async function validateCredentials(creds: Credentials): Promise<ValidationResult
 export async function probeDaytonaAuth(client: {
   list: () => AsyncIterable<unknown>;
 }): Promise<void> {
-  for await (const _sandbox of client.list()) break;
+  const pages = client.list()[Symbol.asyncIterator]();
+  await pages.next();
+  await pages.return?.(undefined);
 }
 
 function snapshotManagedEnv(): Record<ManagedKey, string | undefined> {
