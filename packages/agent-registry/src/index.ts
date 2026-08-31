@@ -1,30 +1,38 @@
 /**
- * The built-in agents, aggregated from the packages that own them.
+ * The built-in agent specs.
  *
- * WHY THIS PACKAGE EXISTS. `sandbox-core` is depended on by every provider, the
- * relay and the hub, so it can never import an agent package — an agent's
- * behavior depends on `sandbox-core` in turn. But the agent DATA has to be
- * readable from down there, and synchronously: the relay answers `agents.list`
- * from it, the hub reads it to report what a host carries, and `sandbox-core`
- * itself drives seeding and staging off it.
+ * WHY A PACKAGE OF ITS OWN, BELOW `sandbox-core`. Every provider, the relay and
+ * the hub depend on `sandbox-core`, and all three need agent DATA synchronously:
+ * the relay answers `agents.list` from it, the hub reports what a host carries,
+ * `sandbox-core` drives seeding and staging off it. So the data has to sit below
+ * all of them.
  *
- * So the data is imported from each agent's `./spec` entry — the one that
- * depends on nothing but the two leaves — and this package sits BELOW
- * `sandbox-core` in the graph. The agent packages' main entries, which hold the
- * behavior, sit above it and are loaded lazily by the CLI. Same shape the
- * providers use: `PROVIDERS` is data in a leaf, `sandbox-<name>` is code loaded
- * from a literal-import table.
+ * WHY THE DATA IS NOT IN THE AGENT PACKAGES. It was, briefly, behind a `./spec`
+ * subpath with leaf-only dependencies — the theory being that entry points would
+ * keep the graph acyclic. They do not: pnpm and turbo resolve per PACKAGE, so the
+ * moment an agent package gains behavior (and therefore depends on
+ * `sandbox-docker`) turbo refuses to build:
  *
- * The import specifiers are LITERAL, for the reason `provider/loaders.ts`
- * documents: the CLI's tsup inlines `@agentbox/*`, which needs esbuild to
- * resolve each one statically. A computed specifier would `MODULE_NOT_FOUND` in
- * the published CLI and never in the dev tree.
+ *   Circular package dependency detected: @agentbox/agent-example,
+ *     @agentbox/agent-registry, @agentbox/sandbox-core, @agentbox/relay,
+ *     @agentbox/ctl, @agentbox/sandbox-docker
+ *
+ * Data and behavior therefore live in separate packages — exactly the provider
+ * split, where `PROVIDERS` is a table in a leaf and `sandbox-<name>` is code
+ * loaded from a literal-import map.
+ *
+ * THIS COSTS COMMUNITY AGENTS NOTHING. A plugin agent lives in the user's
+ * `node_modules`, is loaded through a variable `import()`, and never enters the
+ * workspace graph — structurally exempt from the cycle. It ships its descriptor
+ * inside its own package and `agent add` snapshots it, the way `plugin add`
+ * already does for providers. This table is only the shortcut for the agents
+ * compiled into the CLI.
  */
 
-import { claudeSpec } from '@agentbox/agent-claude/spec';
-import { codexSpec } from '@agentbox/agent-codex/spec';
-import { exampleSpec } from '@agentbox/agent-example/spec';
-import { opencodeSpec } from '@agentbox/agent-opencode/spec';
+import { claudeSpec } from './specs/claude.js';
+import { codexSpec } from './specs/codex.js';
+import { exampleSpec } from './specs/example.js';
+import { opencodeSpec } from './specs/opencode.js';
 import type { AgentId, AgentSyncSpec } from '@agentbox/core';
 
 /**

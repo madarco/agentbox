@@ -1,76 +1,70 @@
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AGENT_SPECS, builtinAgentIds, findAgentSpec, visibleAgentIds } from '../src/index.js';
 
 /**
- * The `./spec` entry of every agent package must stay dependency-free.
+ * This package must stay importable from the BOTTOM of the dependency graph.
  *
- * This package sits BELOW `sandbox-core`, which everything depends on. An agent
- * package's `./spec` is imported from here; its main entry is not, and is free
- * to depend on `sandbox-core`, `sandbox-docker` and the rest. If a spec file
- * ever reaches for one of those, the graph closes into a cycle.
+ * `sandbox-core` depends on it, and everything depends on `sandbox-core`. If a
+ * spec file — or this package's manifest — ever reaches for `sandbox-core`,
+ * `sandbox-docker` or an agent's behavior package, the graph closes and turbo
+ * refuses to build the workspace. That already happened once, when the specs
+ * lived in the agent packages behind a `./spec` subpath: entry points do not
+ * split a node in a package graph.
  *
- * That failure is invisible in the dev tree — pnpm symlinks resolve it happily —
- * and surfaces as a build-order or bundling failure, possibly only in the
- * published CLI. So it is asserted here rather than left to be discovered.
- *
- * The allowlist is the two leaves plus node builtins. Growing it is a design
- * decision, not a fix: whatever you were about to import belongs behind a spec
- * FIELD (data the agent declares) or in the agent's main entry (behavior).
+ * The allowlist is the two dependency-free leaves plus node builtins. Growing it
+ * is a design decision, not a fix: whatever you were about to import belongs
+ * behind a spec FIELD (data the agent declares) or in the agent's behavior
+ * package.
  */
 
-const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const SPECS_DIR = join(PKG_ROOT, 'src', 'specs');
 
 const ALLOWED_PACKAGES = new Set(['@agentbox/core', '@agentbox/config']);
 
-function agentPackageDirs(): string[] {
-  return readdirSync(PACKAGES_DIR)
-    .filter((d) => d.startsWith('agent-') && d !== 'agent-registry')
-    .filter((d) => existsSync(join(PACKAGES_DIR, d, 'src', 'spec.ts')));
+function specFiles(): string[] {
+  return readdirSync(SPECS_DIR).filter((f) => f.endsWith('.ts'));
 }
 
-/** Every module specifier `src/spec.ts` imports. */
-function specImports(pkgDir: string): string[] {
-  const src = readFileSync(join(PACKAGES_DIR, pkgDir, 'src', 'spec.ts'), 'utf8');
+/** Every module specifier a spec file imports. */
+function specImports(file: string): string[] {
+  const src = readFileSync(join(SPECS_DIR, file), 'utf8');
   return [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
 }
 
-describe('agent ./spec entries stay importable from the bottom of the graph', () => {
-  it('finds the agent packages (the scan can silently match nothing)', () => {
-    const dirs = agentPackageDirs();
-    expect(dirs.length).toBeGreaterThanOrEqual(3);
-    for (const id of builtinAgentIds()) expect(dirs).toContain(`agent-${id}`);
+describe('the spec table stays importable from the bottom of the graph', () => {
+  it('has a spec file per registered agent (the scan can silently match nothing)', () => {
+    const files = specFiles();
+    expect(files.length).toBeGreaterThanOrEqual(4);
+    for (const id of builtinAgentIds()) expect(files).toContain(`${id}.ts`);
   });
 
   it('imports only the dependency-free leaves and node builtins', () => {
     const offenders: string[] = [];
-    for (const dir of agentPackageDirs()) {
-      for (const spec of specImports(dir)) {
+    for (const file of specFiles()) {
+      for (const spec of specImports(file)) {
         if (spec.startsWith('node:')) continue;
         if (spec.startsWith('./') || spec.startsWith('../')) continue;
         if (ALLOWED_PACKAGES.has(spec)) continue;
-        offenders.push(`${dir}/src/spec.ts imports ${spec}`);
+        offenders.push(`specs/${file} imports ${spec}`);
       }
     }
     expect(offenders).toEqual([]);
   });
 
   it('declares no dependency beyond those leaves in package.json', () => {
-    // The import scan above misses a transitive pull through a relative file;
-    // the manifest is the backstop.
-    const offenders: string[] = [];
-    for (const dir of agentPackageDirs()) {
-      const pkg = JSON.parse(readFileSync(join(PACKAGES_DIR, dir, 'package.json'), 'utf8')) as {
-        dependencies?: Record<string, string>;
-      };
-      for (const dep of Object.keys(pkg.dependencies ?? {})) {
-        if (dep.startsWith('@agentbox/') && !ALLOWED_PACKAGES.has(dep)) {
-          offenders.push(`${dir} depends on ${dep}`);
-        }
-      }
-    }
+    // The import scan misses a transitive pull through a relative file, and the
+    // manifest is what turbo actually reads to order the build — so this is the
+    // check that would have caught the cycle before it was hit.
+    const pkg = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+    const offenders = Object.keys(pkg.dependencies ?? {}).filter(
+      (dep) => dep.startsWith('@agentbox/') && !ALLOWED_PACKAGES.has(dep),
+    );
     expect(offenders).toEqual([]);
   });
 });
