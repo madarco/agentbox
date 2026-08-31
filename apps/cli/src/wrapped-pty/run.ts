@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { serviceStatusLabel } from './service-status.js';
 import type { AttachOpenIn } from '@agentbox/config';
-import { loadPtyBackend } from '../pty/pty-backend.js';
+import { loadPtyBackend } from '@agentbox/cli-kit';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
 import {
   applyCmuxAgentState,

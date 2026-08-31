@@ -16,7 +16,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
-import { confirm, log } from '../lib/prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 import {
   addPluginRecord,
   deriveDescriptor,

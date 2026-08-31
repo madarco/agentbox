@@ -1,4 +1,4 @@
-import { confirm, log } from '../lib/prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { boxOwningHubIsLocal, withHubClient } from '../control-plane/with-hub.js';
 import type {

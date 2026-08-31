@@ -24,7 +24,7 @@ import type { BoxRecord, CreateBoxOptions } from '@agentbox/sandbox-docker';
 import type { CreateRouting } from '../../control-plane/route-create.js';
 import type { WrappedAttachOptions } from '../../wrapped-pty/index.js';
 import type { Command } from 'commander';
-import type { AgentLoginBinding } from '../../lib/agent-login-bindings.js';
+import type { AgentLoginBinding } from '@agentbox/cli-kit';
 import type { HostCredVerdict } from '../../lib/queue/assert-creds.js';
 import type { ResolvedTeleport } from '../../session-teleport/index.js';
 import type { AgentSyncSpec } from '@agentbox/sandbox-core';

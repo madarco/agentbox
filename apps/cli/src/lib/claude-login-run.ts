@@ -17,7 +17,7 @@ import {
   SHARED_CLAUDE_VOLUME,
   warmUpClaudeCredentials,
 } from '@agentbox/agent-claude';
-import { runAgentLogin, type AgentLoginPhase } from './agent-login-run.js';
+import { runAgentLogin, type AgentLoginPhase } from '@agentbox/cli-kit';
 import { CLAUDE_LOGIN_SPEC } from '../agents/claude/login.js';
 import type { LoginPhase } from './claude-login-session.js';
 

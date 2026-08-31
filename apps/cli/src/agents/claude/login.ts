@@ -9,7 +9,7 @@ import {
   URL_BODY,
   INVALID_CODE,
   type AgentLoginSpec,
-} from '../../lib/agent-login-specs.js';
+} from '@agentbox/cli-kit';
 
 // Match an OAuth approval URL on any current Claude/Anthropic auth host
 // (claude.com/cai/oauth/…, claude.ai, console.anthropic.com) and REQUIRE the

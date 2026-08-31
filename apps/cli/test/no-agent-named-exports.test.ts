@@ -32,6 +32,11 @@ const REPO = join(__dirname, '..', '..', '..');
  * agent's own package is exactly where its name belongs.
  */
 const ROOTS = [
+  // The shared CLI kit is NOT an agent package, despite sitting next to them.
+  // It was briefly called `agent-cli-kit`, which put it inside the
+  // `packages/agent-*` glob this rule exempts — silently making everything in
+  // it invisible. Renamed to `cli-kit` so the exemption means what it says.
+  'packages/cli-kit/src',
   'packages/core/src',
   'packages/config/src',
   'packages/ctl/src',
@@ -49,10 +54,14 @@ const ROOTS = [
  * removes it. Paths are repo-relative.
  */
 const ALLOWLIST: Record<string, string> = {
-  // Phase 2 — the CLI layer. These move into `packages/agent-<id>/` once the
-  // shared CLI kit is extracted (the per-agent folders import 26 distinct
-  // shared CLI modules today, so it is an extraction, not a file move).
-  // `apps/cli/src/agents/**` is excluded wholesale below for the same reason.
+  // Phase 2 — the CLI layer. These move into `packages/agent-<id>/` as each
+  // agent's CLI surface follows its docker behaviour out of the app.
+  // `apps/cli/src/agents/**` is excluded wholesale below, since the names in an
+  // agent's own folder are already scoped to it.
+  //
+  // Claude's `~/.claude/projects` path encoding rode into the shared kit with
+  // the teleport helpers; it belongs in `packages/agent-claude`.
+  'packages/cli-kit/src/cwd-encoding.ts': 'phase 2',
   'apps/cli/src/auth.ts': 'phase 2',
   'apps/cli/src/lib/claude-cred-health.ts': 'phase 2',
   'apps/cli/src/lib/claude-login-run.ts': 'phase 2',
@@ -61,7 +70,6 @@ const ALLOWLIST: Record<string, string> = {
   'apps/cli/src/commands/download-opencode.ts': 'phase 2',
   'apps/cli/src/commands/install-codex.ts': 'phase 2',
   'apps/cli/src/commands/_claude-login-worker.ts': 'phase 2',
-  'apps/cli/src/session-teleport/cwd-encoding.ts': 'phase 2',
   'apps/cli/src/session-teleport/plan.ts': 'phase 2',
 
   // Phase 4 — the `sandbox-core` / `sandbox-cloud` moves. Gated: `host-stage.ts`

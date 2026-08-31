@@ -90,7 +90,7 @@ import {
   resolveTokenLogin,
   resolveTokenScopes,
 } from '../control-plane/host-git-token.js';
-import { openCommandLog } from '../lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 import { AGENTBOX_HUB_SSH_ALIAS, type ControlPlaneDeployRecord } from '@agentbox/sandbox-core';
 import { resolveHubAuthEnv } from '../control-plane/hub-auth-env.js';
 import {

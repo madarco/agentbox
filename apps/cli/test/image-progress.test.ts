@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { imageProgress, isImageDecisionLine } from '../src/lib/progress.js';
+import { imageProgress, isImageDecisionLine } from '@agentbox/cli-kit';
 
 // The point of this filter: the ONE line that explains a ten-minute rebuild must
 // reach the command log, and docker's ~100 per-layer lines must not bury it.

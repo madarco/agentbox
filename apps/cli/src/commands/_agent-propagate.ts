@@ -13,7 +13,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE, volumeSettingsTarget } from '@agentbox/sandbox-docker';
 import { providerForBox } from '../provider/registry.js';
-import { log, select } from '../lib/prompt.js';
+import { log, select } from '@agentbox/cli-kit';
 
 export type PropagateScope = 'project' | 'all' | 'none';
 

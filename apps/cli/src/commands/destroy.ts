@@ -1,4 +1,4 @@
-import { confirm, log } from '../lib/prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 import { execa } from 'execa';
 import { findProjectRoot } from '@agentbox/config';
 import {

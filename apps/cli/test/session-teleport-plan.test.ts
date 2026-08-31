@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BOX_CLAUDE_PLANS_DIR, resolvePlanTeleport } from '../src/session-teleport/plan.js';
-import { TeleportError } from '../src/session-teleport/types.js';
+import { TeleportError } from '@agentbox/cli-kit';
 
 const HOST_CWD = '/Users/marco/Projects/AgentBox/agentbox';
 

@@ -28,13 +28,13 @@ import {
   SHARED_CODEX_VOLUME,
   startCodexSession,
 } from '@agentbox/agent-codex';
-import { confirm, log, spinner } from '../../lib/prompt.js';
+import { confirm, log, spinner } from '@agentbox/cli-kit';
 import { codexLoginBinding } from './login-binding.js';
 import { codexAuthAvailable } from './host-creds.js';
-import { runGuidedLogin } from '../../lib/guided-login.js';
-import { loadPtyBackend } from '../../pty/pty-backend.js';
-import { imageProgress } from '../../lib/progress.js';
-import { applySkipPermissions, type SkipPermissionsRule } from '../../lib/skip-permissions.js';
+import { runGuidedLogin } from '@agentbox/cli-kit';
+import { loadPtyBackend } from '@agentbox/cli-kit';
+import { imageProgress } from '@agentbox/cli-kit';
+import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
 import type { AgentRuntime, SignInResult } from '../command/types.js';
 
 /**

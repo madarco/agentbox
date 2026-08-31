@@ -4,7 +4,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { detectHostTerminal } from '../terminal/host.js';
-import { encodeClaudeProjectsDir } from '../session-teleport/cwd-encoding.js';
+import { encodeClaudeProjectsDir } from '@agentbox/cli-kit';
 import { getRuntimeProviderNames } from '../provider/loaders.js';
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AgentId } from '@agentbox/core';

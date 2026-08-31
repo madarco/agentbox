@@ -29,12 +29,12 @@ import {
   SHARED_OPENCODE_VOLUME,
   startOpencodeSession,
 } from '@agentbox/agent-opencode';
-import { confirm, log, spinner, text } from '../../lib/prompt.js';
+import { confirm, log, spinner, text } from '@agentbox/cli-kit';
 import { opencodeLoginBinding } from './login-binding.js';
 import { opencodeAuthAvailable } from './host-creds.js';
-import { runGuidedLogin } from '../../lib/guided-login.js';
-import { loadPtyBackend } from '../../pty/pty-backend.js';
-import { imageProgress } from '../../lib/progress.js';
+import { runGuidedLogin } from '@agentbox/cli-kit';
+import { loadPtyBackend } from '@agentbox/cli-kit';
+import { imageProgress } from '@agentbox/cli-kit';
 import type { AgentRuntime, SignInResult } from '../command/types.js';
 
 /**

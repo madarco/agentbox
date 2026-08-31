@@ -28,7 +28,7 @@
  * package ships no `plugins/` or `.agents/`).
  */
 
-import { intro, log, note, outro } from '../lib/prompt.js';
+import { intro, log, note, outro } from '@agentbox/cli-kit';
 import { resolveDevRepoRoot } from '../lib/source-checkout.js';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';

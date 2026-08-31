@@ -13,9 +13,9 @@
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
-import { intro, log, outro, spinner } from '../../lib/prompt.js';
+import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { handleLifecycleError } from '../../commands/_errors.js';
-import { imageProgress } from '../../lib/progress.js';
+import { imageProgress } from '@agentbox/cli-kit';
 import type { AgentCliSpec } from './types.js';
 
 export interface LoginOptions {

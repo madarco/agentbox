@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeLoginBinding } from '../src/agents/claude/login-binding.js';
 import { codexLoginBinding } from '../src/agents/codex/login-binding.js';
 import { opencodeLoginBinding } from '../src/agents/opencode/login-binding.js';
-import { withLoginDefaults } from '../src/lib/agent-login-bindings.js';
+import { withLoginDefaults } from '@agentbox/cli-kit';
 
 /**
  * The bindings moved out of `lib/agent-login-bindings.ts` and next to their

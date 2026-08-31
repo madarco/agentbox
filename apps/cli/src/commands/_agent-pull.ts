@@ -1,6 +1,6 @@
 import type { BoxRecord, SyncTransport } from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
-import { log } from '../lib/prompt.js';
+import { log } from '@agentbox/cli-kit';
 
 /**
  * Resolve the `SyncTransport` for a cloud box's settings pull, resuming the

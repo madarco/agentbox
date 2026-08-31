@@ -7,7 +7,7 @@ import { parseGitRemote } from '@agentbox/relay';
 import { resolveSshConfigTarget } from '@agentbox/sandbox-core';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { resolveOriginGitHost } from './git-host.js';
-import { log, select } from './prompt.js';
+import { log, select } from '@agentbox/cli-kit';
 
 /**
  * Host-side gate for `git.pushMode=direct` (`--dangerously-with-credentials`): the box needs

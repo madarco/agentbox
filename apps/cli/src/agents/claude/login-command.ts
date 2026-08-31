@@ -21,7 +21,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
-import { intro, log, outro, spinner } from '../../lib/prompt.js';
+import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
 import {
@@ -35,8 +35,8 @@ import {
   writeLoginState,
   type LoginState,
 } from '../../lib/claude-login-session.js';
-import { imageProgress } from '../../lib/progress.js';
-import { loadPtyBackend } from '../../pty/pty-backend.js';
+import { imageProgress } from '@agentbox/cli-kit';
+import { loadPtyBackend } from '@agentbox/cli-kit';
 import { signInToClaude } from './runtime.js';
 
 function printAwaitingCode(st: LoginState): void {

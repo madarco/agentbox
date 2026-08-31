@@ -24,7 +24,7 @@ import {
   type ResumeMode,
   type TeleportAgent,
   type TeleportLogger,
-} from './types.js';
+} from '@agentbox/cli-kit';
 
 export {
   TeleportError,
@@ -32,7 +32,7 @@ export {
   type ResumeMode,
   type TeleportAgent,
   type TeleportLogger,
-} from './types.js';
+} from '@agentbox/cli-kit';
 
 export interface PrepareTeleportInput {
   agent: TeleportAgent;

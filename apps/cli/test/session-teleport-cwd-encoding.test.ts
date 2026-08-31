@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BOX_WORKSPACE_ENCODED,
   encodeClaudeProjectsDir,
-} from '../src/session-teleport/cwd-encoding.js';
+} from '@agentbox/cli-kit';
 
 describe('encodeClaudeProjectsDir', () => {
   it('encodes a normal Projects path', () => {

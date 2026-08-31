@@ -52,7 +52,7 @@ import { claudeCredStatus } from '../agents/claude/host-creds.js';
 import { runClaudeLogin } from '../lib/claude-login-run.js';
 import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';
-import { openCommandLog } from '../lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { claudeRuntime } from '../agents/claude/runtime.js';

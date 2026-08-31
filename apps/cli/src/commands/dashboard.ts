@@ -62,7 +62,7 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { resolveClaudeAuth } from '../auth.js';
 import { resolveLimits } from '../limits.js';
 import { Compositor, type RightTarget } from '../dashboard/compositor.js';
-import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '../pty/pty-backend.js';
+import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '@agentbox/cli-kit';
 import { restoreAgentSessions } from '../agent-sessions.js';
 import { providerForBox } from '../provider/registry.js';
 import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';

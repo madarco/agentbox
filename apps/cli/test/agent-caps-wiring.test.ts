@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { resolveSessionArgs } from '../src/commands/fork.js';
 import { prepareTeleport } from '../src/session-teleport/index.js';
-import { TeleportError } from '../src/session-teleport/types.js';
+import { TeleportError } from '@agentbox/cli-kit';
 
 /**
  * `caps` is the registry's declaration of what an agent can do. It shipped with

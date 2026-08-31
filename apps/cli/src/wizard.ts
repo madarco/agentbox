@@ -1,4 +1,4 @@
-import { confirm, log, multiselect } from './lib/prompt.js';
+import { confirm, log, multiselect } from '@agentbox/cli-kit';
 import { findProjectRoot, isProviderKind, providerMeta } from '@agentbox/config';
 import type { ProviderName } from '@agentbox/core';
 import { DEFAULT_ENV_PATTERNS, scanHostEnvFiles } from '@agentbox/sandbox-docker';

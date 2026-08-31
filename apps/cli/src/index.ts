@@ -95,7 +95,7 @@ import {
   updateCheckEnabled,
 } from './lib/update-check.js';
 import { readUpdateState, writeUpdateState } from './lib/update-state.js';
-import { confirm } from './lib/prompt.js';
+import { confirm } from '@agentbox/cli-kit';
 import { detectExecutionMethod } from './exec-method.js';
 import { herdrCommand } from './commands/herdr.js';
 import { recoverCommand } from './commands/recover.js';

@@ -13,8 +13,8 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { BOX_WORKSPACE } from './cwd-encoding.js';
-import { TeleportError, type ResolvedTeleport, type TeleportLogger } from './types.js';
+import { BOX_WORKSPACE } from '@agentbox/cli-kit';
+import { TeleportError, type ResolvedTeleport, type TeleportLogger } from '@agentbox/cli-kit';
 
 /** In-box `~/.claude/plans/` directory (vscode user home). */
 export const BOX_CLAUDE_PLANS_DIR = '/home/vscode/.claude/plans';

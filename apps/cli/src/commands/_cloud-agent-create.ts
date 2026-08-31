@@ -19,7 +19,7 @@
 import { toQueueKind, type BoxRecord, type CreateBoxRequest, type Provider } from '@agentbox/core';
 import type { AttachOpenIn } from '@agentbox/config';
 import { log } from '@clack/prompts';
-import { makeProgressReporter } from '../lib/progress.js';
+import { makeProgressReporter } from '@agentbox/cli-kit';
 import { printLaunchRecap } from '../lib/launch-recap.js';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { buildResyncWarning } from '../lib/resync-warning.js';

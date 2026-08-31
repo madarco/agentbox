@@ -15,7 +15,7 @@ import {
   unshareHostFrom,
   type ShareOutcome,
 } from '../control-plane/remote-docker-share.js';
-import { log, spinner } from '../lib/prompt.js';
+import { log, spinner } from '@agentbox/cli-kit';
 
 /**
  * A control box that IS this machine reads the very same

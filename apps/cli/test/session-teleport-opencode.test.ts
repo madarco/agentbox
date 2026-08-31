@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { prepareTeleport } from '../src/session-teleport/index.js';
-import { TeleportError } from '../src/session-teleport/types.js';
+import { TeleportError } from '@agentbox/cli-kit';
 
 /**
  * OpenCode teleport is a v1 stub, and the refusal now comes from the registry

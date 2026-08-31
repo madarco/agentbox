@@ -7,7 +7,7 @@ import {
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
 } from '@agentbox/agent-opencode';
-import { withLoginDefaults, type AgentLoginBinding } from '../../lib/agent-login-bindings.js';
+import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { OPENCODE_LOGIN_SPEC } from './login.js';
 
 export function opencodeLoginBinding(o: {

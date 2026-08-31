@@ -24,7 +24,7 @@ import {
   SUPPORTED_AGENT_API_VERSIONS,
 } from '@agentbox/agent-registry';
 import type { AgentSyncSpec } from '@agentbox/core';
-import { confirm, log } from '../lib/prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 import { resolvePackage } from './plugin.js';
 
 /** Names a plugin may not claim: every built-in id AND every built-in alias. */

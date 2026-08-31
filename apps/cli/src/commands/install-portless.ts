@@ -15,7 +15,7 @@
  * HTTPS proxy needs.
  */
 
-import { confirm, intro, log, note, outro, spinner } from '../lib/prompt.js';
+import { confirm, intro, log, note, outro, spinner } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import {
   detectPortless,

@@ -28,16 +28,16 @@ import {
   startClaudeSession,
   warmUpClaudeCredentials,
 } from '@agentbox/agent-claude';
-import { confirm, log, spinner } from '../../lib/prompt.js';
+import { confirm, log, spinner } from '@agentbox/cli-kit';
 import { resolveClaudeAuth } from '../../auth.js';
 import { claudeLoginBinding } from './login-binding.js';
 import { claudeCredStatus } from './host-creds.js';
 import { resolveClaudeCredHealth } from '../../lib/claude-cred-health.js';
-import { runGuidedLogin } from '../../lib/guided-login.js';
-import { imageProgress } from '../../lib/progress.js';
-import { loadPtyBackend } from '../../pty/pty-backend.js';
-import { applySkipPermissions, type SkipPermissionsRule } from '../../lib/skip-permissions.js';
-import { clampSpinnerLine } from '../../spinner-line.js';
+import { runGuidedLogin } from '@agentbox/cli-kit';
+import { imageProgress } from '@agentbox/cli-kit';
+import { loadPtyBackend } from '@agentbox/cli-kit';
+import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
+import { clampSpinnerLine } from '@agentbox/cli-kit';
 import { addClaudeLoginOptions, runClaudeLoginCommand } from './login-command.js';
 import type { AgentRuntime, SignInResult } from '../command/types.js';
 

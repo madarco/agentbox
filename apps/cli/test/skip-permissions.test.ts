@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySkipPermissions, type SkipPermissionsRule } from '../src/lib/skip-permissions.js';
+import { applySkipPermissions, type SkipPermissionsRule } from '@agentbox/cli-kit';
 import { claudeRuntime } from '../src/agents/claude/runtime.js';
 import { codexRuntime } from '../src/agents/codex/runtime.js';
 import { opencodeRuntime } from '../src/agents/opencode/runtime.js';

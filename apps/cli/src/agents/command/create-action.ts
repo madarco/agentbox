@@ -21,7 +21,7 @@ import {
   detectEngine,
   recordLastAgent,
 } from '@agentbox/sandbox-docker';
-import { intro, log, outro } from '../../lib/prompt.js';
+import { intro, log, outro } from '@agentbox/cli-kit';
 import { reattachRef } from '../../box-ref.js';
 import { warnCheckpointAgentMismatch } from '../../checkpoint-lookup.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../../lib/queue/assert-creds.js';
@@ -55,10 +55,10 @@ import {
   uploadTeleport,
   type ResumeMode,
 } from '../../session-teleport/index.js';
-import { clampSpinnerLine } from '../../spinner-line.js';
-import { makeProgressReporter } from '../../lib/progress.js';
+import { clampSpinnerLine } from '@agentbox/cli-kit';
+import { makeProgressReporter } from '@agentbox/cli-kit';
 import { printLaunchRecap } from '../../lib/launch-recap.js';
-import { openCommandLog } from '../../lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 import { resolveLimits } from '../../limits.js';
 import { maybePromptPortless } from '../../portless-prompt.js';
 import { handleLifecycleError } from '../../commands/_errors.js';

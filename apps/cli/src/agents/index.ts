@@ -30,9 +30,9 @@
 
 import type { AgentId } from '@agentbox/core';
 import { resolveAgentSpec, type AgentSyncSpec } from '@agentbox/sandbox-core';
-import type { AgentLoginSpec } from '../lib/agent-login-specs.js';
+import type { AgentLoginSpec } from '@agentbox/cli-kit';
 import type { AgentRuntime } from './command/types.js';
-import type { ResolvedTeleport, ResumeMode, TeleportLogger } from '../session-teleport/types.js';
+import type { ResolvedTeleport, ResumeMode, TeleportLogger } from '@agentbox/cli-kit';
 
 /** Host-side session resolve for one agent — see `session-teleport/index.ts`. */
 export type TeleportResolver = (input: {

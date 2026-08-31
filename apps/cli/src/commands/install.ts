@@ -18,7 +18,7 @@
  * when `~/.agentbox/setup-complete.json` is absent.
  */
 
-import { confirm, intro, log, note, outro, select, spinner } from '../lib/prompt.js';
+import { confirm, intro, log, note, outro, select, spinner } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import {

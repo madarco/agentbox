@@ -9,7 +9,7 @@ import {
   URL_BODY,
   INVALID_CODE,
   type AgentLoginSpec,
-} from '../../lib/agent-login-specs.js';
+} from '@agentbox/cli-kit';
 
 // `opencode auth login` is a per-provider prompt TREE (clack), not one prompt:
 // most providers ask for an API key, `opencode` prefixes a "create a key at

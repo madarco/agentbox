@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, existsSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openCommandLog } from '../src/lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 
 describe('openCommandLog', () => {
   let home: string;

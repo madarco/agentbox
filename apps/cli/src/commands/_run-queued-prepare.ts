@@ -24,7 +24,7 @@ import {
   setConfigValue,
 } from '@agentbox/config';
 import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
-import { openCommandLog } from '../lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';

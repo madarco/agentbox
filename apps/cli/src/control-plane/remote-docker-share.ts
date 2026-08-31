@@ -23,7 +23,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { quoteShellArg } from '@agentbox/sandbox-cloud';
-import { log } from '../lib/prompt.js';
+import { log } from '@agentbox/cli-kit';
 import {
   mintSshKey,
   resolveSshConfigTarget,

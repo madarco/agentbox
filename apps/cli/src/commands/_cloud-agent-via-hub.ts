@@ -28,7 +28,7 @@ import { HubApiClient } from '../control-plane/hub-api-client.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { pushCreateSeed } from '../control-plane/create-target.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
-import { makeProgressReporter } from '../lib/progress.js';
+import { makeProgressReporter } from '@agentbox/cli-kit';
 import type { AgentId } from '@agentbox/core';
 
 /**

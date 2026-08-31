@@ -1,4 +1,4 @@
-import { confirm, log, spinner } from './lib/prompt.js';
+import { confirm, log, spinner } from '@agentbox/cli-kit';
 import { loadEffectiveConfig, setConfigValue } from '@agentbox/config';
 import {
   detectPortless,

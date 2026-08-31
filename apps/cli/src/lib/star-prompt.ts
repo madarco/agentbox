@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { hostOpenCommand } from '@agentbox/sandbox-core';
-import { confirm, log } from './prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 
 const STATE_VERSION = 1 as const;
 const REPO = 'madarco/agentbox';

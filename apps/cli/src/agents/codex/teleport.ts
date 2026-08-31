@@ -14,13 +14,13 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BOX_WORKSPACE } from '../../session-teleport/cwd-encoding.js';
+import { BOX_WORKSPACE } from '@agentbox/cli-kit';
 import {
   TeleportError,
   type ResolvedTeleport,
   type ResumeMode,
   type TeleportLogger,
-} from '../../session-teleport/types.js';
+} from '@agentbox/cli-kit';
 
 interface CodexResolveOptions {
   hostCwd: string;

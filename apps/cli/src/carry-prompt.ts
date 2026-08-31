@@ -1,4 +1,4 @@
-import { log, select } from './lib/prompt.js';
+import { log, select } from '@agentbox/cli-kit';
 import { fmtBytes } from './fmt.js';
 import type { ResolvedCarryEntry } from './lib/carry-resolve.js';
 

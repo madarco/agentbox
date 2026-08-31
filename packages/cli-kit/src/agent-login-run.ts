@@ -15,7 +15,7 @@
  * PKCE requires the URL-printer and the code-exchanger to be the same process,
  * which is why this holds one live login process for its whole lifetime.
  */
-import { loadPtyBackend } from '../pty/pty-backend.js';
+import { loadPtyBackend } from './pty-backend.js';
 import { stripAnsi, type AgentLoginSpec, type LoginNeed } from './agent-login-specs.js';
 
 const URL_TIMEOUT_MS = 60_000;

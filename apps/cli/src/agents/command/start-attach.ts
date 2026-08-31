@@ -16,7 +16,7 @@ import {
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
-import { intro, log, outro, spinner } from '../../lib/prompt.js';
+import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../../box-ref.js';
 import { agentResumeArgs } from '../../agent-sessions.js';
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
@@ -33,7 +33,7 @@ import {
   type ResolvedTeleport,
   type ResumeMode,
 } from '../../session-teleport/index.js';
-import { clampSpinnerLine } from '../../spinner-line.js';
+import { clampSpinnerLine } from '@agentbox/cli-kit';
 import type { AgentStartOptions } from './options.js';
 import type { AgentCliSpec } from './types.js';
 

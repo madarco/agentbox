@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { confirm, intro, log, outro } from '../lib/prompt.js';
+import { confirm, intro, log, outro } from '@agentbox/cli-kit';
 import { DEFAULT_BOX_IMAGE } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { detectExecutionMethod, type ExecMethod } from '../exec-method.js';

@@ -1,4 +1,4 @@
-import { confirm, log } from '../lib/prompt.js';
+import { confirm, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { inspectBox, pullToHost, startBox, unpauseBox } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';

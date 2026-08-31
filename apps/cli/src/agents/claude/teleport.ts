@@ -18,13 +18,13 @@ import {
   BOX_WORKSPACE,
   BOX_WORKSPACE_ENCODED,
   encodeClaudeProjectsDir,
-} from '../../session-teleport/cwd-encoding.js';
+} from '@agentbox/cli-kit';
 import {
   TeleportError,
   type ResolvedTeleport,
   type ResumeMode,
   type TeleportLogger,
-} from '../../session-teleport/types.js';
+} from '@agentbox/cli-kit';
 
 /** In-box `~/.claude/projects/-workspace/` directory. */
 export const BOX_CLAUDE_PROJECTS_DIR = `/home/vscode/.claude/projects/${BOX_WORKSPACE_ENCODED}`;

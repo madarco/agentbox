@@ -10,7 +10,7 @@
  * host-backup sync. See lib/claude-login-session.ts for the IPC contract.
  */
 import { Command } from 'commander';
-import { openCommandLog } from '../lib/log-file.js';
+import { openCommandLog } from '@agentbox/cli-kit';
 import { runClaudeLogin } from '../lib/claude-login-run.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {

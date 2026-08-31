@@ -19,7 +19,7 @@
  * only handles the user-visible surface.
  */
 import { spinner } from '@clack/prompts';
-import { clampSpinnerLine } from '../spinner-line.js';
+import { clampSpinnerLine } from './spinner-line.js';
 import { logToActiveCommand } from './log-file.js';
 
 export interface ProgressReporter {

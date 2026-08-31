@@ -34,7 +34,7 @@ import {
 import { STABLE_TRAY_TAG, resolveChannel } from './channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { ensurePortlessProxyQuietly, resolvePortlessEnabled } from '../portless-prompt.js';
-import { log } from './prompt.js';
+import { log } from '@agentbox/cli-kit';
 import type { UpdateState } from './update-state.js';
 import { readUpdateState, remoteCheckFresh, writeUpdateState } from './update-state.js';
 

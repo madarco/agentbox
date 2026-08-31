@@ -1,6 +1,6 @@
 import type { Terminal as XtermTerminal } from '@xterm/headless';
 import type { ScreenSnapshot, CellLike, ColorSpec } from './renderer.js';
-import type { IPtyLike, PtySpawn, TerminalCtor } from '../pty/pty-backend.js';
+import type { IPtyLike, PtySpawn, TerminalCtor } from '@agentbox/cli-kit';
 import type { AgentMode } from '@agentbox/core';
 
 // Re-export types so dashboard-internal imports don't have to know about the

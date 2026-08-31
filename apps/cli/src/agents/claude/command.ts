@@ -10,7 +10,7 @@ import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { syncClaudeCredentials } from '@agentbox/sandbox-docker';
 import { rebuildPluginNativeDeps, SHARED_CLAUDE_VOLUME } from '@agentbox/agent-claude';
 import type { Command } from 'commander';
-import { log } from '../../lib/prompt.js';
+import { log } from '@agentbox/cli-kit';
 import { buildAgentCommand } from '../command/factory.js';
 import { evaluateBaseFreshness } from '../../checkpoint-lookup.js';
 import { clipboardCaptureAvailable } from '../../lib/host-clipboard.js';

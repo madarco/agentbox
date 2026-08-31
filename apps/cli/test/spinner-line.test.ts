@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clampSpinnerLine } from '../src/spinner-line.js';
+import { clampSpinnerLine } from '@agentbox/cli-kit';
 
 /**
  * `clampSpinnerLine` is the safety belt around clack's spinner: it

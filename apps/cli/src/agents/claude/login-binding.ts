@@ -10,7 +10,7 @@ import {
   SHARED_CLAUDE_VOLUME,
   warmUpClaudeCredentials,
 } from '@agentbox/agent-claude';
-import { withLoginDefaults, type AgentLoginBinding } from '../../lib/agent-login-bindings.js';
+import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { CLAUDE_LOGIN_SPEC } from './login.js';
 
 export function claudeLoginBinding(o: {

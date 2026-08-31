@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PtySession } from '../src/dashboard/pty-session.js';
-import type { IPtyLike, TerminalCtor } from '../src/pty/pty-backend.js';
+import type { IPtyLike, TerminalCtor } from '@agentbox/cli-kit';
 
 /**
  * The dashboard must type a staged attach command the same way the CLI wrapper

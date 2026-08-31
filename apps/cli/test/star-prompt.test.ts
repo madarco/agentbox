@@ -11,7 +11,7 @@ vi.mock('node:os', async (orig) => {
 });
 
 // Mock the prompt surface so confirm() is scriptable and log is silent.
-vi.mock('../src/lib/prompt.js', () => ({
+vi.mock('@agentbox/cli-kit', () => ({
   confirm: vi.fn(),
   log: { success: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
@@ -21,7 +21,7 @@ vi.mock('@agentbox/sandbox-core', () => ({ hostOpenCommand: () => 'open' }));
 vi.mock('node:child_process', () => ({ spawnSync: vi.fn() }));
 
 const { maybePromptStar } = await import('../src/lib/star-prompt.js');
-const { confirm } = (await import('../src/lib/prompt.js')) as unknown as {
+const { confirm } = (await import('@agentbox/cli-kit')) as unknown as {
   confirm: ReturnType<typeof vi.fn>;
 };
 const { spawnSync } = (await import('node:child_process')) as unknown as {
