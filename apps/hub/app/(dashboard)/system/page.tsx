@@ -549,7 +549,7 @@ function StaleDiff({ p }: { p: ProviderBake }) {
         ) : total === 0 ? (
           <div className="text-[12.5px] text-muted-foreground">
             Every file matches — the difference is in how the fingerprint was folded (e.g. a
-            different <span className="font-mono">box.claudeInstall</span>).
+            different <span className="font-mono">box.agentInstall</span>).
           </div>
         ) : (
           <div className="flex flex-col gap-1 font-mono text-[11px]">

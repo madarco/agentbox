@@ -10,7 +10,7 @@
  */
 
 import {
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   computeContextSha256,
   readPreparedStateRaw,
   writePreparedStateRaw,
@@ -66,13 +66,13 @@ export function writePreparedState(state: PreparedExampleState): void {
  * "can't tell, don't nag".
  */
 export async function currentExampleBaseFingerprintLive(
-  claudeInstall: 'native' | 'npm' = 'native',
+  agentInstall: 'native' | 'npm' = 'native',
 ): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets();
-    return claudeInstallFingerprint(
+    return agentInstallFingerprint(
       await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-      claudeInstall,
+      agentInstall,
     );
   } catch {
     return undefined;

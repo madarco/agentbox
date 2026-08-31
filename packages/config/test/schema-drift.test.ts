@@ -83,8 +83,8 @@ maintenance:
     yaml: 'queue:\n  enabled: true\n  maxConcurrent: 5\n  maxWorking: 3\n  idleGraceSeconds: 20\n',
   },
   { name: 'queue openIn', yaml: 'queue:\n  openIn: split\n' },
-  { name: 'box claudeInstall npm', yaml: 'box:\n  claudeInstall: npm\n' },
-  { name: 'box claudeInstall native', yaml: 'box:\n  claudeInstall: native\n' },
+  { name: 'box agentInstall npm', yaml: 'box:\n  agentInstall: npm\n' },
+  { name: 'box agentInstall native', yaml: 'box:\n  agentInstall: native\n' },
   { name: 'box hetznerLocation', yaml: 'box:\n  hetznerLocation: fsn1\n' },
   { name: 'box digitaloceanProject', yaml: 'box:\n  digitaloceanProject: client-x\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
@@ -142,8 +142,8 @@ const INVALID: Fixture[] = [
     yaml: 'box:\n  digitaloceanProject: 7\n',
   },
   {
-    name: 'box claudeInstall unknown enum value',
-    yaml: 'box:\n  claudeInstall: yarn\n',
+    name: 'box agentInstall unknown enum value',
+    yaml: 'box:\n  agentInstall: yarn\n',
   },
   {
     name: 'maintenance wrong type for int',

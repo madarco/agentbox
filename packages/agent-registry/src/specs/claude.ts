@@ -20,7 +20,7 @@ const CLAUDE_BOX_DIR = `${BOX_HOME}/.claude`;
  * references into claude's config dir.
  *
  * Shared by BOTH of claude's recipes. It used to live only on the native one,
- * which silently cost `box.claudeInstall: npm` — the CDN-403 fallback — its
+ * which silently cost `box.agentInstall: npm` — the CDN-403 fallback — its
  * first-run wizard, because the providers' base scripts no longer copy it
  * either (it moved onto the agent, where it belongs).
  *
@@ -50,7 +50,7 @@ export const claudeSpec: AgentSyncSpec = {
   // and drops the binary at ~/.local/bin/claude, which is what the host's
   // `.claude.json` (installMethod=native) expects. The CDN intermittently 403s
   // cloud egress IPs under load, hence the retries. The npm package is a
-  // BAKE-TIME-only fallback selected by `box.claudeInstall`, not a second recipe.
+  // BAKE-TIME-only fallback selected by `box.agentInstall`, not a second recipe.
   install: {
     recipe: { kind: 'script', url: 'https://claude.ai/install.sh', retries: 3 },
     runAs: 'box-user',
@@ -69,7 +69,7 @@ export const claudeSpec: AgentSyncSpec = {
       SEED_SETUP_SKILL,
     ].join(' && '),
     alternates: {
-      // `box.claudeInstall: npm`. npm-global drops `claude` at Node's prefix
+      // `box.agentInstall: npm`. npm-global drops `claude` at Node's prefix
       // bin; symlink it into ~/.local/bin so the box is indistinguishable
       // from a native install (the host's .claude.json says installMethod
       // native, and the in-box integrity check compares against that).

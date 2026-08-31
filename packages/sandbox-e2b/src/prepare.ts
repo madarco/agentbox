@@ -81,7 +81,7 @@ export interface PrepareE2bOptions {
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
   /** How build-template.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
   /**
    * Agents to build into a DERIVED template on top of the agentless base.
@@ -164,7 +164,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? 'native';
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -174,7 +174,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
   const templateName = templateNameFor(variantKey);
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentInstall, agents });
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The
@@ -275,7 +275,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
       // reaches a box it is installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentInstall);
         progress(`  install ${spec.id}`);
         if (install.packages && install.packages.length > 0) {
           template.runCmd(renderPackageInstall(install.packages), { user: 'root' });
@@ -487,7 +487,7 @@ export const prepareE2bProvider: NonNullable<Provider['prepare']> = (req) =>
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
     size: req.size,
-    claudeInstall: req.claudeInstall,
+    agentInstall: req.agentInstall,
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,
   });

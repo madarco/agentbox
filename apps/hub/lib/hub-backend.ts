@@ -71,7 +71,7 @@ import {
   boxRestartServices,
   boxServicesStatusRaw,
   boxSshDirForProvider,
-  matchClaudeInstallFingerprint,
+  matchAgentInstallFingerprint,
   mutateState,
   readPreparedStateRaw,
   readState,
@@ -882,7 +882,7 @@ const freshnessCache = new Map<string, { at: number; stored: string; live: strin
  */
 async function providerBaseFreshness(
   id: string,
-  claudeInstall?: 'native' | 'npm',
+  agentInstall?: 'native' | 'npm',
 ): Promise<BaseStatus> {
   if (id === 'docker') {
     // Bypasses the cloud-fingerprint freshnessCache: the check is one
@@ -890,7 +890,7 @@ async function providerBaseFreshness(
     // freshness is only computed on the opt-in `?freshness=1` path.
     try {
       const { evaluateDockerBaseFreshness } = await import('@agentbox/sandbox-docker');
-      return await evaluateDockerBaseFreshness({ claudeInstall });
+      return await evaluateDockerBaseFreshness({ agentInstall });
     } catch {
       return { state: 'unknown' };
     }
@@ -906,7 +906,7 @@ async function providerBaseFreshness(
       new FsCustodyStore(),
       id,
       mod.provider,
-      claudeInstall ?? 'native',
+      agentInstall ?? 'native',
       () => {},
     );
   } catch {
@@ -936,21 +936,21 @@ async function providerBaseFreshness(
   }
   // Fresh when the stored fingerprint corresponds to EITHER install mode of the
   // current context; `baseFreshnessFromFingerprints` then sees matching values.
-  const bakedWith = stored && live ? matchClaudeInstallFingerprint(stored, live) : null;
+  const bakedWith = stored && live ? matchAgentInstallFingerprint(stored, live) : null;
   return baseFreshnessFromFingerprints(stored, bakedWith ? stored : live);
 }
 
 /**
  * Enrich the provider list with base-image freshness (`baseStatus`/
- * `baseStaleReason`). Global-scoped `claudeInstall` (staleness is approximate
+ * `baseStaleReason`). Global-scoped `agentInstall` (staleness is approximate
  * nagging; `listProviders` is project-independent) resolved from the global
  * effective config, defaulting to 'native'.
  */
 async function listProvidersWithFreshness(base: ProviderOption[]): Promise<ProviderOption[]> {
-  let claudeInstall: 'native' | 'npm' = 'native';
+  let agentInstall: 'native' | 'npm' = 'native';
   try {
     const cfg = await loadEffectiveConfig(os.homedir());
-    if (cfg.effective.box.claudeInstall === 'npm') claudeInstall = 'npm';
+    if (cfg.effective.box.agentInstall === 'npm') agentInstall = 'npm';
   } catch {
     // keep the default
   }
@@ -967,7 +967,7 @@ async function listProvidersWithFreshness(base: ProviderOption[]): Promise<Provi
       // against ITS build context. Recomputing it here would answer a question
       // about the wrong host — the "adopted-then-nagged" bug, one level up.
       if (p.origin === 'hub') return p;
-      const fresh = await providerBaseFreshness(p.id, claudeInstall);
+      const fresh = await providerBaseFreshness(p.id, agentInstall);
       return {
         ...p,
         hasCredentials: await refineCredStatus(p),
@@ -2414,7 +2414,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const { job } = await enqueuePrepareJob({
             providerName: id,
             force: opts?.force,
-            claudeInstall: opts?.claudeInstall,
+            agentInstall: opts?.agentInstall,
             ...(opts?.agents ? { agents: opts.agents } : {}),
             build: opts?.build,
             size: opts?.size,

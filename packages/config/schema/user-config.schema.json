@@ -49,7 +49,7 @@
         "sizeDigitalocean": { "type": "string", "minLength": 1 },
         "sizeRemoteDocker": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
-        "claudeInstall": { "enum": ["native", "npm"] },
+        "agentInstall": { "enum": ["native", "npm"] },
         "claudeTui": { "enum": ["default", "fullscreen", "auto"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },

@@ -20,7 +20,7 @@
  * box that predates the `prepared` scope answers 400, which is treated like 404.
  */
 import {
-  matchClaudeInstallFingerprint,
+  matchAgentInstallFingerprint,
   readPreparedStateRaw,
   writePreparedStateRaw,
 } from '@agentbox/sandbox-core';
@@ -173,10 +173,10 @@ export async function pullPreparedFromCustody(
     const stored = record.base?.contextSha256;
     if (!stored) return { adopted: false };
     // Fold-tolerant, like the hub's own adoption (`hydratePreparedFromCustody`):
-    // a base baked in the other `box.claudeInstall` mode derives from the same
+    // a base baked in the other `box.agentInstall` mode derives from the same
     // raw context hash, so a strict `!==` refused records the hub would accept —
     // the two sides have to apply one rule or they disagree about what is baked.
-    if (!matchClaudeInstallFingerprint(stored, nativeFingerprint)) {
+    if (!matchAgentInstallFingerprint(stored, nativeFingerprint)) {
       // The other side baked from a different build context — its snapshot is
       // not the base we would bake. Ignore it rather than boot a stale base.
       log(

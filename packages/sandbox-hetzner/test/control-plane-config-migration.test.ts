@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildControlPlaneConfigYaml } from '../src/control-plane-deploy.js';
 
 /**
- * `box.claudeInstall` selects how `prepare` installs Claude Code, and it lives in
+ * `box.agentInstall` selects how `prepare` installs Claude Code, and it lives in
  * the PC's `config.yaml` — a different file from `secrets.env`, so the deploy's
  * provider-secret allowlist never carried it. The control box therefore fell back
  * to the built-in `native`, its fingerprint never matched an `npm`-baked shared
@@ -16,35 +16,35 @@ describe('buildControlPlaneConfigYaml', () => {
   it('returns null when there is nothing to migrate', () => {
     expect(buildControlPlaneConfigYaml('', {})).toBeNull();
     // An undefined value means "at the default" — not something to write.
-    expect(buildControlPlaneConfigYaml('', { 'box.claudeInstall': undefined })).toBeNull();
+    expect(buildControlPlaneConfigYaml('', { 'box.agentInstall': undefined })).toBeNull();
   });
 
   it('writes the key into a VPS that has no config yet', () => {
-    const out = buildControlPlaneConfigYaml('', { 'box.claudeInstall': 'npm' });
-    expect(out).toContain('claudeInstall: npm');
+    const out = buildControlPlaneConfigYaml('', { 'box.agentInstall': 'npm' });
+    expect(out).toContain('agentInstall: npm');
   });
 
   it("keeps the hub's own keys on a redeploy", () => {
     const remote = 'schema: 1\nbox:\n  remoteDockerHost: my-server\n';
-    const out = buildControlPlaneConfigYaml(remote, { 'box.claudeInstall': 'npm' });
+    const out = buildControlPlaneConfigYaml(remote, { 'box.agentInstall': 'npm' });
     expect(out).toContain('remoteDockerHost: my-server');
-    expect(out).toContain('claudeInstall: npm');
+    expect(out).toContain('agentInstall: npm');
   });
 
   it('handles a body with no trailing newline', () => {
     // The deploy reads the remote file via `sshExec`, and execa strips the final
     // newline — so the body handed to the merge legitimately lacks one.
     const out = buildControlPlaneConfigYaml('box:\n  remoteDockerHost: srv\nschema: 1', {
-      'box.claudeInstall': 'npm',
+      'box.agentInstall': 'npm',
     });
     expect(out).toContain('remoteDockerHost: srv');
-    expect(out).toContain('claudeInstall: npm');
+    expect(out).toContain('agentInstall: npm');
   });
 
   it('overwrites a previously migrated value instead of appending', () => {
-    const remote = 'schema: 1\nbox:\n  claudeInstall: npm\n';
-    const out = buildControlPlaneConfigYaml(remote, { 'box.claudeInstall': 'native' });
-    expect(out).toContain('claudeInstall: native');
-    expect(out?.match(/claudeInstall/g)).toHaveLength(1);
+    const remote = 'schema: 1\nbox:\n  agentInstall: npm\n';
+    const out = buildControlPlaneConfigYaml(remote, { 'box.agentInstall': 'native' });
+    expect(out).toContain('agentInstall: native');
+    expect(out?.match(/agentInstall/g)).toHaveLength(1);
   });
 });

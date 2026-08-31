@@ -169,7 +169,7 @@ const { command, attachWrapped } = buildAgentCommand({
       const buildsOnHub = (await ctx.routing()).where === 'hub' && !ctx.preflight.hubIncompatible;
       const baseStatus = buildsOnHub
         ? undefined
-        : await evaluateBaseFreshness(ctx.providerName, ctx.cfg.box.claudeInstall);
+        : await evaluateBaseFreshness(ctx.providerName, ctx.cfg.box.agentInstall);
       const wiz = await maybeRunSetupWizard({
         workspace: opts.workspace,
         yes: !!opts.yes,

@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DaytonaSandboxClass } from '@agentbox/config';
 import {
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   readCliStamp,
@@ -178,19 +178,19 @@ export function resolveDockerContextFilesForDaytona(): ContextFile[] | null {
  * The docker build-context sha for a given install mode — i.e. the tag of the
  * published GHCR box image the linux-vm base boots from.
  *
- * Folded with `claudeInstallFingerprint`, exactly like the docker pull path
- * (`pullOrBuild`): the same context built with `AGENTBOX_CLAUDE_INSTALL=npm` is
+ * Folded with `agentInstallFingerprint`, exactly like the docker pull path
+ * (`pullOrBuild`): the same context built with `AGENTBOX_AGENT_INSTALL=npm` is
  * a different image and carries a different tag. CI publishes both variants
  * (`.github/workflows/box-image.yml` matrixes over the install mode), so an
  * npm-install bake now has a tag to boot from too — it used to have none, which
  * is why the VM path had to refuse npm outright and fall back to a container.
  */
 export async function computeDockerBaseSha(
-  claudeInstall: 'native' | 'npm' = 'native',
+  agentInstall: 'native' | 'npm' = 'native',
 ): Promise<string | null> {
   const files = resolveDockerContextFilesForDaytona();
   if (!files) return null;
-  return claudeInstallFingerprint(await computeContextSha256(files), claudeInstall);
+  return agentInstallFingerprint(await computeContextSha256(files), agentInstall);
 }
 
 export interface DaytonaFingerprint {
@@ -225,14 +225,14 @@ export async function computeDaytonaContextFingerprint(): Promise<DaytonaFingerp
  * `daytona-prepared.json.base.contextSha256`.
  */
 export async function currentDaytonaBaseFingerprintLive(
-  claudeInstall: 'native' | 'npm' = 'native',
+  agentInstall: 'native' | 'npm' = 'native',
 ): Promise<string | undefined> {
   try {
     const fp = await computeDaytonaContextFingerprint();
     if (!fp?.contextSha256) return undefined;
-    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
+    // Fold in agentInstall exactly as `prepare` does — otherwise an npm-baked
     // base never matches the stored (npm-folded) fingerprint.
-    return claudeInstallFingerprint(fp.contextSha256, claudeInstall);
+    return agentInstallFingerprint(fp.contextSha256, agentInstall);
   } catch {
     return undefined;
   }

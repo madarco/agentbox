@@ -105,7 +105,7 @@ export const vercelProvider: Provider = {
   prepare: prepareVercelProvider,
   buildAttach: buildVercelAttach,
   checkpoint: vercelCheckpoint,
-  baseFingerprint: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
+  baseFingerprint: (agentInstall) => currentVercelBaseFingerprintLive(agentInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -115,7 +115,7 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureVercelCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setVercelCredentials,
-  currentBaseFingerprintLive: (claudeInstall) => currentVercelBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: (agentInstall) => currentVercelBaseFingerprintLive(agentInstall),
   currentBaseFileHashes: () => currentVercelBaseFileHashes(),
   doctorChecks,
 };

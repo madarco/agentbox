@@ -184,11 +184,11 @@ export {
 } from './carry-render.js';
 export * from './sync/index.js';
 export {
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
-  matchClaudeInstallFingerprint,
+  matchAgentInstallFingerprint,
   computeContextManifest,
   computeContextSha256,
   diffFileManifests,

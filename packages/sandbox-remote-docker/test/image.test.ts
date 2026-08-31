@@ -32,7 +32,7 @@ describe('remoteBuildArgv', () => {
       '-f',
       '/tmp/ctx/Dockerfile.box',
       '--build-arg',
-      'AGENTBOX_CLAUDE_INSTALL=npm',
+      'AGENTBOX_AGENT_INSTALL=npm',
       '/tmp/ctx',
     ]);
   });

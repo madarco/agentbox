@@ -183,9 +183,9 @@ describe('ensureAgentInstalled — credential seeding', () => {
   });
 });
 
-describe('install modes (box.claudeInstall)', () => {
+describe('install modes (box.agentInstall)', () => {
   it('uses the npm recipe for claude when the npm mode is selected', async () => {
-    // Without an alternate, `box.claudeInstall: npm` would silently install
+    // Without an alternate, `box.agentInstall: npm` would silently install
     // nothing different — the escape hatch for hosts the Claude CDN 403s.
     const t = makeRecordingTransport({ execResult: missingThenOk() });
     await ensureAgentInstalled(t, 'claude', { installMode: 'npm' });

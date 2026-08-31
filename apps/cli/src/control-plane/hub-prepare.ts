@@ -56,7 +56,7 @@ export async function bakeViaHub(args: {
   providerName: string;
   provider: Provider;
   force?: boolean;
-  claudeInstall: 'native' | 'npm';
+  agentInstall: 'native' | 'npm';
   agents?: string[];
   /**
    * Bake INPUTS threaded from the CLI's flags (`--build` / `--size` / `--location`
@@ -88,7 +88,7 @@ export async function bakeViaHub(args: {
       ? await args.client.bakeHost(args.remoteHost)
       : await args.client.prepareProvider(args.providerName, {
           force: args.force,
-          claudeInstall: args.claudeInstall,
+          agentInstall: args.agentInstall,
           ...(args.agents ? { agents: args.agents } : {}),
           build: args.build,
           size: args.size,

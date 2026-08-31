@@ -78,11 +78,11 @@ export interface PrepareDigitalOceanOptions {
   project?: string;
   /**
    * How the bake installs Claude Code: `native` (default) or `npm`. Threaded
-   * into install-box.sh via `AGENTBOX_CLAUDE_INSTALL`. The `npm` escape hatch
+   * into install-box.sh via `AGENTBOX_AGENT_INSTALL`. The `npm` escape hatch
    * is for cloud egress IPs whose CDN the native installer 403s. Bake-time
    * only; part of the context fingerprint (a change re-bakes).
    */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -157,7 +157,7 @@ export async function prepareDigitalOcean(
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? 'native';
   // Fold the Claude install mode into the fingerprint so switching native<->npm
   // re-bakes even though the staged asset files are identical (matches Hetzner).
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
@@ -168,7 +168,7 @@ export async function prepareDigitalOcean(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentInstall, agents });
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');
@@ -358,7 +358,7 @@ export async function prepareDigitalOcean(
       // a runtime-added one are installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentInstall);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
         if (install.packages && install.packages.length > 0)
@@ -392,7 +392,7 @@ export async function prepareDigitalOcean(
         }
       }
     } else {
-      // No AGENTBOX_CLAUDE_INSTALL here any more: the base installs no agents,
+      // No AGENTBOX_AGENT_INSTALL here any more: the base installs no agents,
       // so the mode has nothing to select. It still folds into the fingerprint
       // (above) because the derived bake reads it, and the two tiers share one
       // fingerprint chain.
@@ -623,9 +623,9 @@ export const prepareDigitalOceanProvider: NonNullable<Provider['prepare']> = (re
     // Droplet size for the temp bake VPS (CLI `--size` / `box.sizeDigitalocean`).
     size: req.size,
     // Forward the Claude install mode (native | npm) so the `npm` escape hatch
-    // (box.claudeInstall / --claude-install npm) reaches the bake — the native
+    // (box.agentInstall / --agent-install npm) reaches the bake — the native
     // installer's CDN 403s some datacenter egress IPs. (matches Hetzner.)
-    claudeInstall: req.claudeInstall,
+    agentInstall: req.agentInstall,
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,

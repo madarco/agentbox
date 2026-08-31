@@ -34,7 +34,7 @@ export async function prepareRemoteDocker(
 
   log(`[prepare] ensuring the box image on ${remote.spec}`);
   const res = await ensureRemoteImage(target, {
-    ...(opts.claudeInstall ? { claudeInstall: opts.claudeInstall } : {}),
+    ...(opts.agentInstall ? { agentInstall: opts.agentInstall } : {}),
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
     ...(opts.allowPull !== undefined ? { allowPull: opts.allowPull } : {}),
     ...(opts.force ? { force: true } : {}),

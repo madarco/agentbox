@@ -359,15 +359,15 @@ async function checkOneTool(grant: ToolGrant): Promise<CheckResult> {
   return { label: grant.name, status: 'ok', detail };
 }
 
-// `box.claudeInstall` folds into the base-image fingerprint, so freshness must
+// `box.agentInstall` folds into the base-image fingerprint, so freshness must
 // compare against the variant the user would actually bake with. Resolve it once
 // per doctor run (memoized) from the effective config at cwd; default 'native'.
-let claudeInstallOnce: Promise<'native' | 'npm'> | undefined;
+let agentInstallOnce: Promise<'native' | 'npm'> | undefined;
 function resolveClaudeInstall(): Promise<'native' | 'npm'> {
-  claudeInstallOnce ??= loadEffectiveConfig(process.cwd())
-    .then((cfg): 'native' | 'npm' => (cfg.effective.box.claudeInstall === 'npm' ? 'npm' : 'native'))
+  agentInstallOnce ??= loadEffectiveConfig(process.cwd())
+    .then((cfg): 'native' | 'npm' => (cfg.effective.box.agentInstall === 'npm' ? 'npm' : 'native'))
     .catch((): 'native' | 'npm' => 'native');
-  return claudeInstallOnce;
+  return agentInstallOnce;
 }
 
 /**

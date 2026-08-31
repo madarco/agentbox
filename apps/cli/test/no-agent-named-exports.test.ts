@@ -84,8 +84,6 @@ const ALLOWLIST: Record<string, string> = {
   // Phase 5b — `claudeInstall`. 300 sites across 79 files, reaching the
   // published SDK, the hub's REST schema, on-disk prepared state and a
   // Dockerfile build arg.
-  'packages/config/src/types.ts': 'phase 5b',
-  'packages/sandbox-core/src/prepared-state.ts': 'phase 5b',
 
   // Phase 7 — the remaining renames.
   // Re-tagged from phase 7 after reading it: this is NOT a name-only alias.
@@ -123,6 +121,26 @@ const NOT_APPLICABLE = [
 // Both cases: `stageClaudeStatic` and `claudeLoginBinding` are the same
 // mistake, and the lowercase form is the one that hid — `claudeLoginBinding`
 // sat in the shared CLI until it was looked for by hand.
+/**
+ * Files whose agent-named export is CORRECT and will not be renamed, with the
+ * reason. Separate from ALLOWLIST on purpose: that list is temporary
+ * exemptions, and its "names the owning phase" assertion exists so entries
+ * cannot quietly become permanent. A justified permanent exception is a
+ * different thing and should not be able to hide in the temporary list.
+ *
+ * Checked the same way: an entry here that no longer has an agent-named export
+ * is stale and fails.
+ */
+const CORRECTLY_NAMED: Record<string, string> = {
+  // `ClaudeTuiMode` / `box.claudeTui` selects CLAUDE CODE's terminal renderer,
+  // through Claude's own env vars. The name is accurate, the same way
+  // `codex.dangerouslySkipPermissions` names codex because that flag is
+  // codex's — per-agent config keys are agent-named by design (`AGENT_KINDS`).
+  // What phase 5b removed was `claudeInstall`, which was never claude-specific
+  // in mechanism, only in name.
+  'packages/config/src/types.ts': "selects Claude Code's own renderer",
+};
+
 const EXPORTED_AGENT_NAME =
   /^export\s+(?:type\s+|interface\s+|const\s+|let\s+|function\s+|class\s+|abstract\s+class\s+|async\s+function\s+)?[A-Za-z_]*(?:claude|codex|opencode|Claude|Codex|Opencode|OpenCode|CLAUDE|CODEX|OPENCODE)/;
 
@@ -165,7 +183,7 @@ describe('no agent-named exports outside an agent package', () => {
   });
 
   it('introduces no new one', () => {
-    const unlisted = offendingFiles().filter((f) => !(f in ALLOWLIST));
+    const unlisted = offendingFiles().filter((f) => !(f in ALLOWLIST) && !(f in CORRECTLY_NAMED));
     // If you are here: name the export for its ROLE, and put the agent-specific
     // part on the agent's spec row or in `packages/agent-<id>/`. Adding a line
     // to ALLOWLIST is for a file the refactor has not reached, not for new code.
@@ -174,10 +192,21 @@ describe('no agent-named exports outside an agent package', () => {
 
   it('keeps no stale exemption — the list can only shrink', () => {
     const offenders = new Set(offendingFiles());
-    const stale = Object.keys(ALLOWLIST).filter((f) => !offenders.has(f));
+    const stale = [...Object.keys(ALLOWLIST), ...Object.keys(CORRECTLY_NAMED)].filter(
+      (f) => !offenders.has(f),
+    );
     // A file that no longer exports an agent-named symbol must leave the list,
     // or the exemption outlives the problem and the guard quietly weakens.
     expect(stale).toEqual([]);
+  });
+
+  it('gives every permanent exception a reason, not a phase', () => {
+    for (const [file, why] of Object.entries(CORRECTLY_NAMED)) {
+      expect(why.length, file).toBeGreaterThan(10);
+      // A phase-shaped reason means it belongs in ALLOWLIST instead, where the
+      // shrinking discipline applies.
+      expect(why, file).not.toMatch(/^phase /);
+    }
   });
 
   it('names the owning phase for every exemption', () => {

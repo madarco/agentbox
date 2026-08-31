@@ -90,7 +90,7 @@ export interface PrepareHetznerOptions {
   /** Repo root for the dev fallback (defaults to `process.cwd()` walk). */
   repoRoot?: string;
   /** How the claude recipe installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -145,7 +145,7 @@ export async function prepareHetzner(
   // Fingerprint = hash of every asset we scp into the prepare VPS. Keyed on
   // logical name (stable across staged-vs-monorepo layouts) so two CLIs with
   // the same staged tree produce the same hash.
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? 'native';
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -154,7 +154,7 @@ export async function prepareHetzner(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentInstall, agents });
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');
@@ -308,7 +308,7 @@ export async function prepareHetzner(
       // runtime-added one are installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentInstall);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
         if (install.packages && install.packages.length > 0)
@@ -342,7 +342,7 @@ export async function prepareHetzner(
         }
       }
     } else {
-      // No AGENTBOX_CLAUDE_INSTALL here any more: the base installs no agents,
+      // No AGENTBOX_AGENT_INSTALL here any more: the base installs no agents,
       // so the mode has nothing to select. It still folds into the fingerprint
       // (below) because the derived bake reads it, and the two tiers share one
       // fingerprint chain.
@@ -593,9 +593,9 @@ export const prepareHetznerProvider: NonNullable<Provider['prepare']> = (req) =>
     onLog: req.onLog,
     // Forward the Claude install mode (native | npm). Without this the Hetzner
     // bake always ran the native `curl install.sh`, whose CDN 403s datacenter
-    // egress IPs — the `npm` escape hatch (box.claudeInstall / --claude-install
+    // egress IPs — the `npm` escape hatch (box.agentInstall / --agent-install
     // npm) never reached the bake. (matches prepareVercelProvider.)
-    claudeInstall: req.claudeInstall,
+    agentInstall: req.agentInstall,
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
   });

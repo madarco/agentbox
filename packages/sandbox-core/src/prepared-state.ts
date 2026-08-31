@@ -210,13 +210,13 @@ export function shortFingerprint(sha: string): string {
 
 /**
  * Fold the Claude install method into a base context fingerprint so switching
- * `box.claudeInstall` native↔npm forces a re-bake. `native` returns the base
+ * `box.agentInstall` native↔npm forces a re-bake. `native` returns the base
  * hash unchanged — existing native snapshots keep their fingerprint and never
  * spuriously rebuild; only `npm` derives a distinct hash.
  */
-export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'): string {
+export function agentInstallFingerprint(baseSha: string, mode: 'native' | 'npm'): string {
   if (mode === 'native') return baseSha;
-  return createHash('sha256').update(`${baseSha}\0claude-install=npm`).digest('hex');
+  return createHash('sha256').update(`${baseSha}\0agent-install=npm`).digest('hex');
 }
 
 /** Normalize an agent set so ordering and duplicates can't change the hash. */
@@ -234,20 +234,20 @@ export function agentSetArg(agents: readonly string[] | undefined): string {
  * built from the same context but carrying different agents (or a different
  * Claude install method) are distinct cache identities.
  *
- * Generalises {@link claudeInstallFingerprint}, which stays as-is because it is
+ * Generalises {@link agentInstallFingerprint}, which stays as-is because it is
  * exported from the published provider SDK. The empty variant — native install,
  * no agents — is the identity fold, so the plain base keeps the raw context
  * hash and a provider that never passes a variant is unaffected.
  */
 export function variantFingerprint(
   baseSha: string,
-  variant: { claudeInstall?: 'native' | 'npm'; agents?: readonly string[] } = {},
+  variant: { agentInstall?: 'native' | 'npm'; agents?: readonly string[] } = {},
 ): string {
   const agents = agentSetArg(variant.agents);
-  const npm = variant.claudeInstall === 'npm';
+  const npm = variant.agentInstall === 'npm';
   if (!npm && agents === '') return baseSha;
   const parts: string[] = [];
-  if (npm) parts.push('claude-install=npm');
+  if (npm) parts.push('agent-install=npm');
   if (agents !== '') parts.push(`agents=${agents}`);
   return createHash('sha256')
     .update(`${baseSha}\0${parts.join('\0')}`)
@@ -269,15 +269,15 @@ export function variantFingerprint(
  * installer vs npm) and are functionally equivalent, so adopting one is right;
  * rejecting it means failing every create instead.
  *
- * Keep this next to {@link claudeInstallFingerprint} — it encodes the same
+ * Keep this next to {@link agentInstallFingerprint} — it encodes the same
  * native-is-identity invariant, and splitting them invites one to drift.
  */
-export function matchClaudeInstallFingerprint(
+export function matchAgentInstallFingerprint(
   stored: string,
   nativeFingerprint: string,
 ): 'native' | 'npm' | null {
   if (stored === nativeFingerprint) return 'native';
-  if (stored === claudeInstallFingerprint(nativeFingerprint, 'npm')) return 'npm';
+  if (stored === agentInstallFingerprint(nativeFingerprint, 'npm')) return 'npm';
   return null;
 }
 

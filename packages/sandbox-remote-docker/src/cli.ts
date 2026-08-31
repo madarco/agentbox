@@ -116,13 +116,13 @@ export const remoteDockerCommand = new Command('remote-docker')
             try {
               if (!(await bakeRegisteredHost(alias))) {
                 const cfg = await loadEffectiveConfig(process.cwd());
-                const claudeInstall = cfg.effective.box.claudeInstall;
+                const agentInstall = cfg.effective.box.agentInstall;
                 const bs = p.spinner();
                 bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
                 try {
                   await prepareRemoteDocker({
                     host: alias,
-                    ...(claudeInstall ? { claudeInstall } : {}),
+                    ...(agentInstall ? { agentInstall } : {}),
                     onLog: (line) => bs.message(line.slice(0, 80)),
                   });
                   bs.stop(`box image ready on ${alias}`);

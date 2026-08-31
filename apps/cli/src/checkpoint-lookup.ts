@@ -237,7 +237,7 @@ export type { BaseStatus };
  */
 export async function evaluateBaseFreshness(
   provider: ProviderName,
-  claudeInstall?: 'native' | 'npm',
+  agentInstall?: 'native' | 'npm',
 ): Promise<BaseStatus> {
   if (provider === 'docker') {
     // Docker used to be hardcoded `fresh` here, on the grounds that it self-heals
@@ -246,11 +246,11 @@ export async function evaluateBaseFreshness(
     // sit unmentioned until the next create surprised you with a multi-minute
     // build. Report the real state, the same one the hub/app show.
     const { evaluateDockerBaseFreshness } = await import('@agentbox/sandbox-docker');
-    return await evaluateDockerBaseFreshness({ claudeInstall });
+    return await evaluateDockerBaseFreshness({ agentInstall });
   }
   const stored = currentCloudBaseFingerprint(provider);
   if (!stored) return { state: 'unprepared' };
-  const current = await currentCloudBaseFingerprintLive(provider, claudeInstall).catch(
+  const current = await currentCloudBaseFingerprintLive(provider, agentInstall).catch(
     () => undefined,
   );
   return baseFreshnessFromFingerprints(stored, current);

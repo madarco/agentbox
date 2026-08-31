@@ -164,12 +164,12 @@ export function buildDaytonaSeedCommands(
  */
 export function buildDaytonaAgentCommands(
   agents: readonly string[],
-  claudeInstall?: 'native' | 'npm',
+  agentInstall?: 'native' | 'npm',
 ): string[] {
   const cmds: string[] = [];
   for (const id of agents) {
     const spec = resolveAgentSpec(id);
-    const install = resolveAgentInstall(spec.install, claudeInstall);
+    const install = resolveAgentInstall(spec.install, agentInstall);
     if (install.packages && install.packages.length > 0) {
       cmds.push('USER root', `RUN ${renderPackageInstall(install.packages)}`);
     }
@@ -200,7 +200,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // deterministically and (b) detect cache hits against the recorded
   // prepared state. Computed before staging so an early `null` (partial
   // dev rebuild) doesn't waste a tar staging cycle.
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? 'native';
 
   // Bake-time resources. A `--size` / `box.sizeDaytona` like `4-8-20` sets the
   // snapshot's baked CPU/memory/disk (Daytona rejects resources on the create
@@ -233,7 +233,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     ? {
         ...rawFingerprint,
         contextSha256: variantFingerprint(rawFingerprint.contextSha256, {
-          claudeInstall,
+          agentInstall,
           agents,
         }),
       }
@@ -343,7 +343,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       baseSnapshot: baseEntry!.imageRef,
       snapshotName,
       agents,
-      claudeInstall,
+      agentInstall,
       onLog: log,
     });
     if (fingerprint) {
@@ -377,7 +377,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // `buildDaytonaAgentCommands`) — there is no `Image.fromSnapshot` to boot the
   // base from, so the builder's layer cache is what makes it cheap instead.
   if (!derived && sandboxClass === 'linux-vm') {
-    const dockerBaseSha = await computeDockerBaseSha(claudeInstall);
+    const dockerBaseSha = await computeDockerBaseSha(agentInstall);
     if (!dockerBaseSha) {
       throw new Error(
         'could not fingerprint the docker build context, which names the published box image ' +
@@ -479,11 +479,11 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // and appended `.env()`/`.runCommands()` land *after* the base Dockerfile's
   // Claude RUN (too late, and a native 403 would already have failed the build).
   // So for npm mode we build from a sibling temp Dockerfile with the
-  // `AGENTBOX_CLAUDE_INSTALL` ARG default flipped to `npm`. It must live in the
+  // `AGENTBOX_AGENT_INSTALL` ARG default flipped to `npm`. It must live in the
   // original's directory so the Dockerfile's relative COPY sources still resolve.
   let tempDockerfile: string | null = null;
   const dockerfilePath =
-    claudeInstall === 'npm'
+    agentInstall === 'npm'
       ? (tempDockerfile = writeNpmDockerfile(ctx.dockerfile))
       : ctx.dockerfile;
 
@@ -516,7 +516,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
     if (derived) {
-      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, claudeInstall));
+      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, agentInstall));
     }
 
     // Region: a container snapshot registers wherever the client points (the
@@ -581,7 +581,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 }
 
 /**
- * Write a sibling copy of `Dockerfile.box` with the `AGENTBOX_CLAUDE_INSTALL`
+ * Write a sibling copy of `Dockerfile.box` with the `AGENTBOX_AGENT_INSTALL`
  * ARG default flipped from `native` to `npm`, and return its path. A sibling
  * (same directory) keeps the Dockerfile's relative COPY sources resolvable.
  * Throws if the ARG line isn't found (Dockerfile drifted from this expectation).
@@ -589,12 +589,12 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 function writeNpmDockerfile(originalPath: string): string {
   const original = readFileSync(originalPath, 'utf8');
   const flipped = original.replace(
-    'ARG AGENTBOX_CLAUDE_INSTALL=native',
-    'ARG AGENTBOX_CLAUDE_INSTALL=npm',
+    'ARG AGENTBOX_AGENT_INSTALL=native',
+    'ARG AGENTBOX_AGENT_INSTALL=npm',
   );
   if (flipped === original) {
     throw new Error(
-      `could not enable npm Claude install for Daytona: 'ARG AGENTBOX_CLAUDE_INSTALL=native' ` +
+      `could not enable npm Claude install for Daytona: 'ARG AGENTBOX_AGENT_INSTALL=native' ` +
         `not found in ${originalPath}. The Dockerfile.box drifted from the expected shape.`,
     );
   }

@@ -71,7 +71,7 @@ export interface PrepareVercelOptions {
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
   /** How provision.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -125,7 +125,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? 'native';
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -134,7 +134,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentInstall, agents });
 
   const existing = readPreparedState();
   // A derived bake boots the agentless base, so that has to exist first.
@@ -212,30 +212,30 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
     // one are installed identically.
     for (const id of agents) {
       const spec = resolveAgentSpec(id);
-      const agentInstall = resolveAgentInstall(spec.install, claudeInstall);
+      const resolved = resolveAgentInstall(spec.install, agentInstall);
       progress(`installing ${spec.id} into the derived snapshot`);
       const steps: string[] = [];
-      if (agentInstall.packages && agentInstall.packages.length > 0) {
+      if (resolved.packages && resolved.packages.length > 0) {
         // Vercel is Amazon Linux 2023, so this renders dnf, not apt-get. An
         // optional prerequisite (codex's bubblewrap) must not fail the bake --
         // the agent works without it, just degraded.
-        const pkgLine = renderPackageInstall(agentInstall.packages);
+        const pkgLine = renderPackageInstall(resolved.packages);
         steps.push(
-          agentInstall.packagesOptional
+          resolved.packagesOptional
             ? `{ ${pkgLine} } || echo "prepare-vercel: optional prerequisites for ${spec.id} unavailable; continuing"`
             : pkgLine,
         );
       }
-      const recipe = renderInstallRecipe(agentInstall.recipe);
+      const recipe = renderInstallRecipe(resolved.recipe);
       // `runAs: 'box-user'` is load-bearing: the native installers write into
       // the INVOKING user's ~/.local/bin, so running them as root would put the
       // binary in /root and the box user would never see it.
       steps.push(
-        agentInstall.runAs === 'box-user'
+        resolved.runAs === 'box-user'
           ? `sudo -u ${BOX_USER} -H bash -lc ${shellSingleQuote(recipe)}`
           : recipe,
       );
-      if (agentInstall.postInstall) steps.push(agentInstall.postInstall);
+      if (resolved.postInstall) steps.push(resolved.postInstall);
       steps.push(
         `sudo -u ${BOX_USER} -H bash -lc 'command -v ${spec.binary} >/dev/null' || ` +
           `{ echo "prepare-vercel: ${spec.id} not on PATH after install" >&2; exit 71; }`,
@@ -254,7 +254,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
       }
     }
   } else {
-    // No AGENTBOX_CLAUDE_INSTALL any more: the base installs no agents, so the
+    // No AGENTBOX_AGENT_INSTALL any more: the base installs no agents, so the
     // mode has nothing to select. It still folds into the fingerprint (above)
     // because the derived bake reads it, and the two tiers share one chain.
     progress('running provision.sh (this takes a few minutes)');
@@ -437,7 +437,7 @@ export const prepareVercelProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
-    claudeInstall: req.claudeInstall,
+    agentInstall: req.agentInstall,
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,

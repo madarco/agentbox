@@ -20,7 +20,7 @@
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import {
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   computeContextSha256,
   readCliStamp,
   stageAllAgentStatic,
@@ -47,7 +47,7 @@ export interface PrepareExampleOptions {
   /** vCPUs for the builder sandbox (default 4 for a fast bake). */
   vcpus?: number;
   /** How provision.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
 }
 
@@ -68,10 +68,10 @@ export async function prepareExample(
   const progress = (s: string) => log(`prepare-example: ${s}`);
 
   const assets = resolveRuntimeAssets();
-  const claudeInstall = opts.claudeInstall ?? 'native';
-  const contextSha = claudeInstallFingerprint(
+  const agentInstall = opts.agentInstall ?? 'native';
+  const contextSha = agentInstallFingerprint(
     await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-    claudeInstall,
+    agentInstall,
   );
 
   // Skip-fast: existing base snapshot still on Vercel + matching fingerprint.
@@ -120,7 +120,7 @@ export async function prepareExample(
   progress('running provision.sh (this takes a few minutes)');
   const install = await sb.runCommand({
     cmd: SHELL,
-    args: ['-lc', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-provision.sh 2>&1`],
+    args: ['-lc', `AGENTBOX_AGENT_INSTALL=${agentInstall} bash /tmp/agentbox-provision.sh 2>&1`],
     sudo: true,
     stdout: lineSink((l) => log(`[provision] ${l}`)),
     stderr: lineSink((l) => log(`[provision] ${l}`)),
@@ -250,6 +250,6 @@ export const prepareExampleProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
-    claudeInstall: req.claudeInstall,
+    agentInstall: req.agentInstall,
     onLog: req.onLog,
   });

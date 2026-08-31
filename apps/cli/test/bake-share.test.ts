@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
+import { agentInstallFingerprint } from '@agentbox/sandbox-core';
 import {
   buildRebakeNote,
   buildShareFailedNote,
@@ -65,7 +65,7 @@ describe('hasCredentialChanges (change-detection predicate)', () => {
 describe('classifyBakeShare', () => {
   const CLI_VERSION = '0.27.1';
   const nativeFp = 'a'.repeat(64);
-  const npmFp = claudeInstallFingerprint(nativeFp, 'npm');
+  const npmFp = agentInstallFingerprint(nativeFp, 'npm');
   // A shared base: matches this CLI, same-version hub, upload succeeded.
   const shared = {
     provider: 'hetzner',
@@ -198,10 +198,10 @@ describe('localBakeBlocksAdoption', () => {
   });
 
   it('blocks an npm-fold local bake too — the probe is always the native hash', () => {
-    // A `box.claudeInstall=npm` machine stores the FOLDED fingerprint. A strict
+    // A `box.agentInstall=npm` machine stores the FOLDED fingerprint. A strict
     // compare called its perfectly current base a miss, so a prepare that found
     // nothing in custody re-baked a base it already had, every time.
-    expect(localBakeBlocksAdoption(rec(claudeInstallFingerprint(LIVE, 'npm')), LIVE)).toBe(true);
+    expect(localBakeBlocksAdoption(rec(agentInstallFingerprint(LIVE, 'npm')), LIVE)).toBe(true);
   });
 
   // The bug this replaced: an outdated record used to block adoption outright,

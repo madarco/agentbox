@@ -95,15 +95,15 @@ export const remoteDockerProvider: Provider = {
   sshTarget: resolveBoxSshTarget,
   checkpoint: remoteDockerCheckpoint,
   prepare: prepareRemoteDocker,
-  baseFingerprint: async (claudeInstall) => (await currentContextSha(claudeInstall)) ?? undefined,
+  baseFingerprint: async (agentInstall) => (await currentContextSha(agentInstall)) ?? undefined,
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
 export const providerModule: ProviderModule = {
   provider: remoteDockerProvider,
   backend: remoteDockerBackend,
-  currentBaseFingerprintLive: async (claudeInstall) =>
-    (await currentContextSha(claudeInstall)) ?? undefined,
+  currentBaseFingerprintLive: async (agentInstall) =>
+    (await currentContextSha(agentInstall)) ?? undefined,
   doctorChecks,
 };
 

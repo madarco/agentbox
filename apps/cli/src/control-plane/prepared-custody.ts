@@ -62,7 +62,7 @@ export async function pinAdoptedBase(
  *
  * The fingerprint is always probed in NATIVE mode: that is the raw context hash
  * the npm fold derives from, so one probe matches a record baked in either
- * `box.claudeInstall` mode (`matchClaudeInstallFingerprint`).
+ * `box.agentInstall` mode (`matchAgentInstallFingerprint`).
  *
  * Best-effort: any failure (no control box, offline, no fingerprint) simply
  * means we bake normally.

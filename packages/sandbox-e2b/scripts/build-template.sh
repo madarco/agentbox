@@ -307,7 +307,7 @@ done_ "agent-browser (global npm)"
 # paths, and the template could never shrink to the workload.
 #
 # The per-agent home + credential dirs are NOT created here either; they belong
-# to the agent and live on its `install.postInstall`. AGENTBOX_CLAUDE_INSTALL is
+# to the agent and live on its `install.postInstall`. AGENTBOX_AGENT_INSTALL is
 # still honoured -- it selects the RECIPE, not whether to install -- and reaches
 # the recipe via the derived build.
 

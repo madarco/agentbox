@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 // host credential-backup paths, so a bare stub breaks the registry import.
 vi.mock('@agentbox/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agentbox/config')>()),
-  loadEffectiveConfig: async () => ({ effective: { box: { claudeInstall: 'npm' } } }),
+  loadEffectiveConfig: async () => ({ effective: { box: { agentInstall: 'npm' } } }),
 }));
 
 const { makeRecordingTransport } = await import('../src/sync/recording-transport.js');
@@ -30,7 +30,7 @@ function missingThenOk() {
 }
 
 describe('ensureAgentInstalled — install mode defaults from config', () => {
-  it("uses claude's npm recipe when box.claudeInstall is npm and no mode is passed", async () => {
+  it("uses claude's npm recipe when box.agentInstall is npm and no mode is passed", async () => {
     // The runtime callers (claude start, the dashboard agent switch, the cloud
     // attach paths) thread no mode. Without this default, a host that set npm
     // BECAUSE the native CDN 403s would hit that CDN anyway when adding claude
@@ -57,7 +57,7 @@ describe('ensureAgentInstalled — install mode defaults from config', () => {
 describe('both claude recipes seed the first-run wizard skill', () => {
   // The `/agentbox-setup` skill moved off the providers' base scripts and onto
   // claude's install recipe. It first landed only on the NATIVE one, which
-  // silently cost `box.claudeInstall: npm` — the CDN-403 fallback, i.e. exactly
+  // silently cost `box.agentInstall: npm` — the CDN-403 fallback, i.e. exactly
   // the hosts that already had a bad day — its first-run wizard.
   const SKILL = 'skills/agentbox-setup/SKILL.md';
 

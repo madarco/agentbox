@@ -20,7 +20,7 @@ import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
 import type { AgentInstallRecipe } from '@agentbox/core';
 
 /**
- * `box.claudeInstall`, or undefined when the config can't be read.
+ * `box.agentInstall`, or undefined when the config can't be read.
  *
  * Lazy import + swallow: an install must not fail because a config layer is
  * unreadable, and `resolveAgentInstall` treats undefined as "default recipe".
@@ -30,7 +30,7 @@ async function resolveConfiguredClaudeInstall(): Promise<string | undefined> {
   try {
     const { loadEffectiveConfig } = await import('@agentbox/config');
     const cfg = await loadEffectiveConfig(process.cwd());
-    return cfg.effective.box.claudeInstall;
+    return cfg.effective.box.agentInstall;
   } catch {
     return undefined;
   }
@@ -151,7 +151,7 @@ export async function ensureAgentInstalled(
   if (probe.exitCode === 0) return { installed: false };
 
   opts.onProgress?.(`installing ${spec.id} (absent from this box image)`);
-  // `box.claudeInstall: npm` picks claude's npm alternate; every other agent has
+  // `box.agentInstall: npm` picks claude's npm alternate; every other agent has
   // none and falls through to its default recipe.
   //
   // Default it from config rather than requiring every caller to pass it: the

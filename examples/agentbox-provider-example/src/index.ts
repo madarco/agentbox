@@ -176,7 +176,7 @@ export const providerModule: ProviderModule = {
   descriptor: exampleDescriptor,
   ensureCredentials: ensureExampleCredentials,
   readCredStatus: readCredStatusSummary,
-  currentBaseFingerprintLive: (claudeInstall) => currentExampleBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: (agentInstall) => currentExampleBaseFingerprintLive(agentInstall),
   doctorChecks,
 };
 

@@ -535,7 +535,7 @@ CLI, not the raw commits.
   the installed build was compared against the **stable** release's checksum.
 - `agentbox self-update` no longer reinstalls an older published version when the
   running build is already newer than anything on the registry.
-- A control box now uses a base image you baked with `box.claudeInstall: npm`.
+- A control box now uses a base image you baked with `box.agentInstall: npm`.
   That setting is folded into the bake fingerprint but lives in `config.yaml`, so
   it never reached the control box — which defaulted to `native`, rejected the
   shared bake, and failed every cloud create with "run `agentbox prepare` first".
@@ -695,7 +695,7 @@ CLI, not the raw commits.
 
 ### Fixed
 
-- `box.claudeInstall: npm` now pulls the prebuilt box image instead of building
+- `box.agentInstall: npm` now pulls the prebuilt box image instead of building
   it locally every time. The pull was hard-disabled for npm mode, from back when
   only the native image was published — most visible as the throwaway container
   behind `claude` sign-in baking from scratch. 0.25.0 started publishing the npm
@@ -724,7 +724,7 @@ CLI, not the raw commits.
   The host enforces this: Daytona's own idle timer is reset by any request to the
   sandbox — including AgentBox's own polling — so it never fired, and idle boxes
   billed indefinitely.
-- The box image is published for `box.claudeInstall: npm` too, so npm-mode users
+- The box image is published for `box.agentInstall: npm` too, so npm-mode users
   get a pull hit instead of a silent local image build — and can use `linux-vm`
   boxes, which can only boot from a published image.
 
@@ -1174,7 +1174,7 @@ CLI, not the raw commits.
   setup|worker|set-url|unset-url|status|add` — a GitHub-App setup flow, a
   Git-backed Vercel deploy, and a durable box-create worker that leases
   GitHub-App tokens to push on the box's behalf.
-- **`box.claudeInstall`** config key — install Claude via npm at image-bake time
+- **`box.agentInstall`** config key — install Claude via npm at image-bake time
   (a fallback when the native installer CDN 403s a cloud egress IP).
 - **`git.pushMode`** config key — choose whether a box's `git push` goes through
   the host relay or a GitHub-App lease.

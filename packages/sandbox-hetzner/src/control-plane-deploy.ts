@@ -154,7 +154,7 @@ export function filterProviderSecrets(body: string): string {
 /**
  * Config keys migrated to the control box's own `config.yaml`.
  *
- * Only `box.claudeInstall` so far, and it earns its place: it selects how
+ * Only `box.agentInstall` so far, and it earns its place: it selects how
  * `prepare` installs Claude Code, and `npm` exists specifically because the
  * native installer intermittently Cloudflare-403s datacenter egress IPs — which
  * is exactly what a control box has. Without migrating it, a control box that
@@ -163,7 +163,7 @@ export function filterProviderSecrets(body: string): string {
  * Deliberately NOT the whole config: most keys are host-specific (paths,
  * terminal integration) and would be wrong or meaningless on the VPS.
  */
-const MIGRATED_CONFIG_KEYS = ['box.claudeInstall'] as const;
+const MIGRATED_CONFIG_KEYS = ['box.agentInstall'] as const;
 
 /**
  * The control box's config, with the migrated keys merged into whatever is
@@ -200,7 +200,7 @@ async function collectMigratedConfig(): Promise<Partial<Record<string, unknown>>
   try {
     const cfg = await loadEffectiveConfig(homedir());
     const out: Record<string, unknown> = {};
-    if (cfg.effective.box.claudeInstall === 'npm') out['box.claudeInstall'] = 'npm';
+    if (cfg.effective.box.agentInstall === 'npm') out['box.agentInstall'] = 'npm';
     return out;
   } catch {
     return {};

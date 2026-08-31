@@ -63,7 +63,7 @@ function providerSpecLeaves(
  * file that isn't on this machine can merge into it.
  *
  * That is the reason this exists separately from {@link setConfigValue}: the
- * hetzner control-plane deploy has to write `box.claudeInstall` into the VPS's
+ * hetzner control-plane deploy has to write `box.agentInstall` into the VPS's
  * config, which the hub *also* writes itself (`box.remoteDockerHost`). Uploading
  * a freshly-generated file would silently drop the hub's own keys on every
  * redeploy, so the deploy reads the remote body, merges here, and uploads.

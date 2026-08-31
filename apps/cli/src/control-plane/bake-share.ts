@@ -4,7 +4,7 @@
  *
  * The control box adopts a shared `prepared/<provider>.json` only when its
  * `base.contextSha256` equals the fingerprint the hub computes for the same
- * provider (`hydratePreparedFromCustody` → `matchClaudeInstallFingerprint`). A
+ * provider (`hydratePreparedFromCustody` → `matchAgentInstallFingerprint`). A
  * push always succeeds if the box is reachable, so a plain "shared it" is not
  * the whole truth: a record from a different build context is uploaded and then
  * silently ignored, and the hub re-bakes. Callers need to say so.
@@ -17,7 +17,7 @@
  * Everything here is pure (fingerprints/versions in, verdict out) so it is unit
  * testable without a hub or the filesystem.
  */
-import { matchClaudeInstallFingerprint } from '@agentbox/sandbox-core';
+import { matchAgentInstallFingerprint } from '@agentbox/sandbox-core';
 import type { PushDecision } from './custody-client.js';
 
 /**
@@ -50,7 +50,7 @@ export function isShareablePreparedProvider(provider: string): boolean {
  *
  * `nativeFingerprint` is the raw context hash, and the match is fold-tolerant —
  * the SAME rule the pull and the hub's hydration apply. A strict compare here
- * would call an `box.claudeInstall=npm` machine's perfectly current base a
+ * would call an `box.agentInstall=npm` machine's perfectly current base a
  * miss (it stores the folded hash), so a `prepare` that found nothing in
  * custody would re-bake a base it already had, every time.
  */
@@ -59,7 +59,7 @@ export function localBakeBlocksAdoption(
   nativeFingerprint: string,
 ): boolean {
   const stored = local?.base?.contextSha256;
-  return !!stored && matchClaudeInstallFingerprint(stored, nativeFingerprint) !== null;
+  return !!stored && matchAgentInstallFingerprint(stored, nativeFingerprint) !== null;
 }
 
 /**
@@ -146,7 +146,7 @@ export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
   }
   if (
     cliNativeFingerprint &&
-    !matchClaudeInstallFingerprint(storedFingerprint, cliNativeFingerprint)
+    !matchAgentInstallFingerprint(storedFingerprint, cliNativeFingerprint)
   ) {
     return {
       provider,

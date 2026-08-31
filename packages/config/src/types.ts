@@ -21,7 +21,7 @@ export type { ProviderKind };
  * (Anthropic's installer, the default) or `npm` (`@anthropic-ai/claude-code`) —
  * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
  */
-export type ClaudeInstallMethod = 'native' | 'npm';
+export type AgentInstallMethod = 'native' | 'npm';
 
 /**
  * Which terminal renderer Claude Code uses inside a box.
@@ -147,7 +147,7 @@ export interface UserConfig {
      * only (read by `agentbox prepare`, not `create`); `npm` is a fallback for
      * cloud egress IPs the native installer's CDN 403s.
      */
-    claudeInstall?: ClaudeInstallMethod;
+    agentInstall?: AgentInstallMethod;
     /** Terminal renderer Claude Code uses inside the box. */
     claudeTui?: ClaudeTuiMode;
     withEnv?: boolean;
@@ -368,7 +368,7 @@ export interface EffectiveConfig {
     sizeDigitalocean: string;
     sizeRemoteDocker: string;
     withPlaywright: boolean;
-    claudeInstall: ClaudeInstallMethod;
+    agentInstall: AgentInstallMethod;
     claudeTui: ClaudeTuiMode;
     withEnv: boolean;
     resyncOnStart: boolean;
@@ -560,7 +560,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeDigitalocean: '',
     sizeRemoteDocker: '',
     withPlaywright: false,
-    claudeInstall: 'native',
+    agentInstall: 'native',
     claudeTui: 'default',
     withEnv: false,
     resyncOnStart: true,
@@ -887,7 +887,7 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Install @playwright/cli@latest in the box at create time.',
   },
   {
-    key: 'box.claudeInstall',
+    key: 'box.agentInstall',
     type: 'enum',
     enumValues: ['native', 'npm'] as const,
     description:

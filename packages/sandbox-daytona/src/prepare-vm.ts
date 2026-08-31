@@ -259,8 +259,8 @@ export interface VmVariantBakeOptions {
   snapshotName: string;
   /** Agents to install, normalized and sorted. */
   agents: readonly string[];
-  /** `box.claudeInstall` — selects claude's recipe, not whether to install. */
-  claudeInstall?: 'native' | 'npm';
+  /** `box.agentInstall` — selects claude's recipe, not whether to install. */
+  agentInstall?: 'native' | 'npm';
   onLog?: (line: string) => void;
 }
 
@@ -289,7 +289,7 @@ export async function bakeDaytonaVmVariant(
   try {
     for (const id of opts.agents) {
       const spec = resolveAgentSpec(id);
-      const install = resolveAgentInstall(spec.install, opts.claudeInstall);
+      const install = resolveAgentInstall(spec.install, opts.agentInstall);
       log(`installing ${spec.id} into the derived snapshot…`);
       const steps: string[] = [];
       if (install.packages && install.packages.length > 0) {

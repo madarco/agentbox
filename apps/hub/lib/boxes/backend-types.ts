@@ -433,7 +433,7 @@ export interface HubBackend {
     id: string,
     opts?: {
       force?: boolean;
-      claudeInstall?: 'native' | 'npm';
+      agentInstall?: 'native' | 'npm';
       /** Agents to bake into the base. Omitted/empty = agentless. */
       agents?: string[];
       build?: boolean;

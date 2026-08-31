@@ -270,7 +270,7 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
 
 export function parseProviderPrepare(body: unknown): Parsed<{
   force?: boolean;
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   agents?: string[];
   build?: boolean;
   size?: string;
@@ -280,11 +280,11 @@ export function parseProviderPrepare(body: unknown): Parsed<{
   // An empty/absent body is valid (bake with defaults).
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { force, claudeInstall, agents, build, size, location, name } = body;
+  const { force, agentInstall, agents, build, size, location, name } = body;
   const fb = optionalBool(force, 'force');
   if (!fb.ok) return fb;
-  if (claudeInstall !== undefined && claudeInstall !== 'native' && claudeInstall !== 'npm') {
-    return { ok: false, message: "claudeInstall must be 'native' or 'npm'" };
+  if (agentInstall !== undefined && agentInstall !== 'native' && agentInstall !== 'npm') {
+    return { ok: false, message: "agentInstall must be 'native' or 'npm'" };
   }
   const ag = optionalStringArray(agents, 'agents');
   if (!ag.ok) return ag;
@@ -310,7 +310,7 @@ export function parseProviderPrepare(body: unknown): Parsed<{
     ok: true,
     value: {
       force: fb.value,
-      claudeInstall: claudeInstall as 'native' | 'npm' | undefined,
+      agentInstall: agentInstall as 'native' | 'npm' | undefined,
       agents: ag.value,
       build: bb.value,
       size: sz.value,

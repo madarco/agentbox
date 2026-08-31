@@ -204,7 +204,7 @@ export interface AgentInstall {
   /**
    * Alternate ways to install the same agent, keyed by mode.
    *
-   * Only `npm` is used today: `box.claudeInstall: npm` is the documented escape
+   * Only `npm` is used today: `box.agentInstall: npm` is the documented escape
    * hatch for hosts whose egress IP the Claude CDN 403s. Without this the mode
    * would silently do nothing now that the install lives here rather than in a
    * Dockerfile branch.

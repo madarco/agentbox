@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   computeContextManifest,
   computeContextSha256,
   diffFileManifests,
   DOCKER_CONTEXT_FILE_MAP,
-  matchClaudeInstallFingerprint,
+  matchAgentInstallFingerprint,
   preparedStatePathFor,
   readPreparedStateRaw,
   resolveContextFilesFrom,
@@ -22,36 +22,36 @@ import {
  * A prepared record stores only the FOLDED fingerprint, never the install mode
  * that produced it, so the mode can only be recovered by trying both. This is
  * what lets a control box (which defaults to `native`, because the PC's
- * `box.claudeInstall` never travels to it) use a bake a PC made with `npm`
+ * `box.agentInstall` never travels to it) use a bake a PC made with `npm`
  * instead of failing every create with "run `agentbox prepare` first".
  */
-describe('matchClaudeInstallFingerprint', () => {
+describe('matchAgentInstallFingerprint', () => {
   const NATIVE = 'a'.repeat(64); // stands in for a raw context sha
 
   it('recognises a native bake (the identity fold)', () => {
-    expect(matchClaudeInstallFingerprint(NATIVE, NATIVE)).toBe('native');
+    expect(matchAgentInstallFingerprint(NATIVE, NATIVE)).toBe('native');
   });
 
   it('recognises an npm bake against the native fingerprint', () => {
-    const npm = claudeInstallFingerprint(NATIVE, 'npm');
+    const npm = agentInstallFingerprint(NATIVE, 'npm');
     expect(npm).not.toBe(NATIVE); // the fold must actually distinguish them
-    expect(matchClaudeInstallFingerprint(npm, NATIVE)).toBe('npm');
+    expect(matchAgentInstallFingerprint(npm, NATIVE)).toBe('npm');
   });
 
   it('refuses a fingerprint from a genuinely different build context', () => {
     const otherContext = 'b'.repeat(64);
-    expect(matchClaudeInstallFingerprint(otherContext, NATIVE)).toBeNull();
+    expect(matchAgentInstallFingerprint(otherContext, NATIVE)).toBeNull();
     // ...including that context's npm fold — a different base is still different.
     expect(
-      matchClaudeInstallFingerprint(claudeInstallFingerprint(otherContext, 'npm'), NATIVE),
+      matchAgentInstallFingerprint(agentInstallFingerprint(otherContext, 'npm'), NATIVE),
     ).toBeNull();
   });
 
-  it('stays in step with claudeInstallFingerprint for both modes', () => {
+  it('stays in step with agentInstallFingerprint for both modes', () => {
     // Pinning the pair together is the point: if the fold changes and the match
     // doesn't, every shared bake silently stops being adoptable.
     for (const mode of ['native', 'npm'] as const) {
-      expect(matchClaudeInstallFingerprint(claudeInstallFingerprint(NATIVE, mode), NATIVE)).toBe(
+      expect(matchAgentInstallFingerprint(agentInstallFingerprint(NATIVE, mode), NATIVE)).toBe(
         mode,
       );
     }
@@ -334,12 +334,12 @@ describe('variantFingerprint', () => {
     // agentless base, must keep the raw context hash.
     expect(variantFingerprint(BASE)).toBe(BASE);
     expect(variantFingerprint(BASE, {})).toBe(BASE);
-    expect(variantFingerprint(BASE, { claudeInstall: 'native', agents: [] })).toBe(BASE);
+    expect(variantFingerprint(BASE, { agentInstall: 'native', agents: [] })).toBe(BASE);
   });
 
-  it('agrees with claudeInstallFingerprint on the install-mode axis', () => {
-    expect(variantFingerprint(BASE, { claudeInstall: 'npm' })).toBe(
-      claudeInstallFingerprint(BASE, 'npm'),
+  it('agrees with agentInstallFingerprint on the install-mode axis', () => {
+    expect(variantFingerprint(BASE, { agentInstall: 'npm' })).toBe(
+      agentInstallFingerprint(BASE, 'npm'),
     );
   });
 
@@ -358,9 +358,9 @@ describe('variantFingerprint', () => {
   });
 
   it('composes the two axes', () => {
-    const both = variantFingerprint(BASE, { claudeInstall: 'npm', agents: ['claude'] });
+    const both = variantFingerprint(BASE, { agentInstall: 'npm', agents: ['claude'] });
     expect(both).not.toBe(variantFingerprint(BASE, { agents: ['claude'] }));
-    expect(both).not.toBe(claudeInstallFingerprint(BASE, 'npm'));
+    expect(both).not.toBe(agentInstallFingerprint(BASE, 'npm'));
   });
 
   it('agentSetArg renders the build-arg value', () => {

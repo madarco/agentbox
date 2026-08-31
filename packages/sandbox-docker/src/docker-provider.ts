@@ -21,7 +21,7 @@ import type {
   ResyncResult,
   SyncTransport,
 } from '@agentbox/core';
-import { claudeInstallFingerprint, makeSyncContext } from '@agentbox/sandbox-core';
+import { agentInstallFingerprint, makeSyncContext } from '@agentbox/sandbox-core';
 import { makeDockerSync } from './sync/docker-sync.js';
 import { createDockerSyncTransport } from './sync/sync-transport.js';
 import { createBox, type CreateBoxOptions } from './create.js';
@@ -244,14 +244,14 @@ export const dockerProvider: Provider = {
     // build-context fingerprint matches the recorded one. `--force`
     // overrides both checks.
     const ref = DEFAULT_BOX_IMAGE;
-    const claudeInstall = opts.claudeInstall ?? 'native';
+    const agentInstall = opts.agentInstall ?? 'native';
     const rawFingerprint = await computeDockerContextFingerprint();
     // Fold the install mode into the sha so native↔npm are distinct cache
     // identities (`native` leaves the hash unchanged).
     const fingerprint = rawFingerprint
       ? {
           ...rawFingerprint,
-          contextSha256: claudeInstallFingerprint(rawFingerprint.contextSha256, claudeInstall),
+          contextSha256: agentInstallFingerprint(rawFingerprint.contextSha256, agentInstall),
         }
       : null;
     const prepared = readPreparedDockerState();
@@ -276,12 +276,12 @@ export const dockerProvider: Provider = {
     // npm mode pulls like any other: CI publishes both install variants, and the
     // fingerprint is folded with the mode, so the pull asks for the npm image's
     // own tag. An unpublished tag still falls back to a local build.
-    const npm = claudeInstall === 'npm';
+    const npm = agentInstall === 'npm';
     const { source } = await pullOrBuild(ref, fingerprint, {
       onProgress: opts.onLog,
       allowPull: opts.force ? false : opts.allowPull,
       registry: opts.registry,
-      buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : undefined,
+      buildArgs: npm ? { AGENTBOX_AGENT_INSTALL: 'npm' } : undefined,
     });
     if (fingerprint) {
       opts.onLog?.(

@@ -55,7 +55,7 @@ interface PrepareOptions {
   force?: boolean;
   yes?: boolean;
   status?: boolean;
-  claudeInstall?: string;
+  agentInstall?: string;
   agents?: string;
   build?: boolean;
   name?: string;
@@ -580,9 +580,9 @@ export interface RunPrepareOptions {
   suppressStatus?: boolean;
   /**
    * How the bake installs Claude Code (`native` | `npm`). CLI override of the
-   * `box.claudeInstall` config key; falls back to the effective config.
+   * `box.agentInstall` config key; falls back to the effective config.
    */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /** Agents to bake into the base. Omitted = agentless. */
   agents?: string[];
   /**
@@ -706,7 +706,7 @@ async function runPrepareViaHub(args: {
   providerName: string;
   provider: Provider;
   force?: boolean;
-  claudeInstall: 'native' | 'npm';
+  agentInstall: 'native' | 'npm';
   agents?: string[];
   build?: boolean;
   size?: string;
@@ -744,7 +744,7 @@ async function runPrepareViaHub(args: {
     providerName: args.providerName,
     provider: args.provider,
     force: args.force,
-    claudeInstall: args.claudeInstall,
+    agentInstall: args.agentInstall,
     ...(args.agents ? { agents: args.agents } : {}),
     build: args.build,
     size: args.size,
@@ -861,7 +861,7 @@ export async function runPrepare(
   // through only when the user set the corresponding flag; the hub worker fills
   // any that are absent from ITS effective config (size/region/sandbox class),
   // so one route body serves every bake shape (plan Step 1).
-  const claudeInstall = opts.claudeInstall ?? cfg?.effective.box.claudeInstall ?? 'native';
+  const agentInstall = opts.agentInstall ?? cfg?.effective.box.agentInstall ?? 'native';
   // remote-docker: the `docker:<host>` spec first, else the configured default.
   const host =
     providerName === 'remote-docker'
@@ -872,7 +872,7 @@ export async function runPrepare(
     providerName,
     provider,
     force: opts.force,
-    claudeInstall,
+    agentInstall,
     ...(opts.agents ? { agents: opts.agents } : {}),
     build: opts.build,
     size: opts.size,
@@ -909,7 +909,7 @@ export const prepareCommand = new Command('prepare')
   .option('-y, --yes', 'skip confirmation prompts (cost / time warnings)')
   .option('--status', 'show status without preparing anything')
   .option(
-    '--claude-install <mode>',
+    '--agent-install <mode>',
     'install Claude Code into the base image via the native installer (default) or npm (native | npm)',
   )
   .option(
@@ -931,13 +931,13 @@ export const prepareCommand = new Command('prepare')
       return;
     }
 
-    let claudeInstall: 'native' | 'npm' | undefined;
-    if (opts.claudeInstall !== undefined) {
-      if (opts.claudeInstall !== 'native' && opts.claudeInstall !== 'npm') {
-        process.stderr.write('error: --claude-install must be one of: native, npm\n');
+    let agentInstall: 'native' | 'npm' | undefined;
+    if (opts.agentInstall !== undefined) {
+      if (opts.agentInstall !== 'native' && opts.agentInstall !== 'npm') {
+        process.stderr.write('error: --agent-install must be one of: native, npm\n');
         process.exit(1);
       }
-      claudeInstall = opts.claudeInstall;
+      agentInstall = opts.agentInstall;
     }
 
     let agents: string[] | undefined;
@@ -965,7 +965,7 @@ export const prepareCommand = new Command('prepare')
     await runPrepare(providerName, {
       force: opts.force,
       yes: opts.yes,
-      claudeInstall,
+      agentInstall,
       agents,
       build: opts.build,
       size: opts.size,

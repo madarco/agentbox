@@ -369,11 +369,11 @@ export interface PrepareOptions {
   /**
    * How the bake installs Claude Code: `native` (Anthropic's installer, the
    * default) or `npm` (`@anthropic-ai/claude-code`). Threaded into each
-   * provider's install script (`AGENTBOX_CLAUDE_INSTALL` env) or Dockerfile
+   * provider's install script (`AGENTBOX_AGENT_INSTALL` env) or Dockerfile
    * build-arg. An opt-in fallback for cloud egress IPs whose CDN the native
-   * installer 403s. Bake-time only — resolved from `box.claudeInstall`.
+   * installer 403s. Bake-time only — resolved from `box.agentInstall`.
    */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /**
    * Agents to bake into the base image / snapshot. Empty or omitted = an
    * agentless base; anything missing is added later, either as a derived layer
@@ -633,10 +633,10 @@ export interface Provider {
    * without `pnpm -w build`); callers degrade to "don't nag" rather than
    * flag a false stale.
    *
-   * `claudeInstall` MUST match the mode the base was baked with (from
-   * `box.claudeInstall`), because `prepare` folds it into the stored
-   * fingerprint via `claudeInstallFingerprint`. Omitting it makes an
+   * `agentInstall` MUST match the mode the base was baked with (from
+   * `box.agentInstall`), because `prepare` folds it into the stored
+   * fingerprint via `agentInstallFingerprint`. Omitting it makes an
    * npm-baked base always read as stale.
    */
-  baseFingerprint?(claudeInstall?: 'native' | 'npm'): Promise<string | undefined>;
+  baseFingerprint?(agentInstall?: 'native' | 'npm'): Promise<string | undefined>;
 }

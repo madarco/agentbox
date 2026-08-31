@@ -811,7 +811,7 @@ export function buildOpenApi(): Record<string, unknown> {
                   type: 'object',
                   properties: {
                     force: { type: 'boolean' },
-                    claudeInstall: { type: 'string', enum: ['native', 'npm'] },
+                    agentInstall: { type: 'string', enum: ['native', 'npm'] },
                     agents: {
                       type: 'array',
                       items: { type: 'string', enum: ['claude', 'codex', 'opencode'] },

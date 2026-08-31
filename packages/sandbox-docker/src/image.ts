@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   BOX_IMAGE_REGISTRY,
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   registryRefForSha,
   type FileManifest,
   variantFingerprint,
@@ -30,7 +30,7 @@ export const DEFAULT_BOX_IMAGE = 'agentbox/box:dev';
 const BOX_USER = 'vscode';
 
 /**
- * Resolve the effective `box.claudeInstall` for the current project. Docker
+ * Resolve the effective `box.agentInstall` for the current project. Docker
  * builds its image lazily at create time, so every `ensureImage` path must
  * agree on the mode or a native rebuild would clobber an npm-baked image (and
  * vice-versa). Lazy-imported to keep the module load cheap; falls back to
@@ -40,7 +40,7 @@ async function resolveClaudeInstallMode(): Promise<'native' | 'npm'> {
   try {
     const { loadEffectiveConfig } = await import('@agentbox/config');
     const cfg = await loadEffectiveConfig(process.cwd());
-    return cfg.effective.box.claudeInstall;
+    return cfg.effective.box.agentInstall;
   } catch {
     return 'native';
   }
@@ -192,7 +192,7 @@ export interface BuildImageOptions {
   ref?: string;
   dockerfile?: string;
   contextDir?: string;
-  /** `--build-arg K=V` pairs forwarded to `docker build` (e.g. AGENTBOX_CLAUDE_INSTALL). */
+  /** `--build-arg K=V` pairs forwarded to `docker build` (e.g. AGENTBOX_AGENT_INSTALL). */
   buildArgs?: Record<string, string>;
   onProgress?: (line: string) => void;
 }
@@ -344,9 +344,9 @@ export interface EnsureImageOptions {
   /**
    * How Claude Code is installed into the image. Folded into the build-context
    * fingerprint so a mode switch rebuilds (and an npm image isn't clobbered by
-   * a native rebuild). Defaults to the resolved `box.claudeInstall`.
+   * a native rebuild). Defaults to the resolved `box.agentInstall`.
    */
-  claudeInstall?: 'native' | 'npm';
+  agentInstall?: 'native' | 'npm';
   /**
    * Agents to bake into the image. Folded into the fingerprint AND passed as
    * the `AGENTBOX_AGENTS` build arg, so `agentbox claude` and `agentbox codex`
@@ -385,7 +385,7 @@ export async function buildDerivedAgentImage(opts: {
   baseRef: string;
   derivedRef: string;
   agents: readonly string[];
-  /** `box.claudeInstall` — selects an agent's alternate recipe when it has one. */
+  /** `box.agentInstall` — selects an agent's alternate recipe when it has one. */
   installMode?: string;
   onProgress?: (line: string) => void;
 }): Promise<void> {
@@ -444,7 +444,7 @@ export async function ensureImage(
     await import('./prepared-state.js');
   const { writePreparedDockerState } = await import('./prepared-state.js');
 
-  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const agentInstall = opts.agentInstall ?? (await resolveClaudeInstallMode());
   const agents = normalizeAgentSet(opts.agents);
   const baseRef = ref;
   const rawFingerprint = await computeDockerContextFingerprint({ contextDir: opts.contextDir });
@@ -460,7 +460,7 @@ export async function ensureImage(
   // Always the SAME image whatever agents were asked for, so every variant
   // shares its layers and CI publishes exactly one of them.
   const baseSha = rawFingerprint
-    ? variantFingerprint(rawFingerprint.contextSha256, { claudeInstall })
+    ? variantFingerprint(rawFingerprint.contextSha256, { agentInstall })
     : null;
   const baseFingerprint =
     rawFingerprint && baseSha ? { ...rawFingerprint, contextSha256: baseSha } : null;
@@ -480,7 +480,7 @@ export async function ensureImage(
     reason = 'image present (fingerprint skipped)';
   } else if (!(await upToDate(baseRef, baseSha!, ''))) {
     opts.onProgress?.(`[image] ${baseRef}: base image out of date or missing`);
-    const npm = claudeInstall === 'npm';
+    const npm = agentInstall === 'npm';
     const { source } = await pullOrBuild(baseRef, baseFingerprint, {
       onProgress: opts.onProgress,
       dockerfile: opts.dockerfile,
@@ -491,7 +491,7 @@ export async function ensureImage(
       allowPull: opts.allowPull,
       registry: opts.registry,
       variant: '',
-      buildArgs: npm ? { AGENTBOX_CLAUDE_INSTALL: 'npm' } : {},
+      buildArgs: npm ? { AGENTBOX_AGENT_INSTALL: 'npm' } : {},
     });
     baseBuilt = source === 'built';
     reason = 'base image rebuilt';
@@ -508,7 +508,7 @@ export async function ensureImage(
   const variantKey = agentSetArg(agents);
   const derivedRef = variantImageRef(baseRef, agents);
   const derivedSha = baseFingerprint
-    ? variantFingerprint(rawFingerprint!.contextSha256, { claudeInstall, agents })
+    ? variantFingerprint(rawFingerprint!.contextSha256, { agentInstall, agents })
     : null;
 
   if (derivedSha && (await upToDate(derivedRef, derivedSha, variantKey)) && !baseBuilt) {
@@ -519,7 +519,7 @@ export async function ensureImage(
     baseRef,
     derivedRef,
     agents,
-    installMode: claudeInstall,
+    installMode: agentInstall,
     onProgress: opts.onProgress,
   });
   if (derivedSha) {
@@ -581,7 +581,7 @@ export function classifyDockerBaseFreshness(input: {
  * context files. Never builds, pulls, or writes the prepared stamp.
  */
 export async function evaluateDockerBaseFreshness(
-  opts: { ref?: string; claudeInstall?: 'native' | 'npm'; contextDir?: string } = {},
+  opts: { ref?: string; agentInstall?: 'native' | 'npm'; contextDir?: string } = {},
 ): Promise<DockerBaseFreshness> {
   // Lazy import for the same circular-init reason as in ensureImage above.
   const { computeDockerContextFingerprint, readPreparedDockerState, preparedShaFor } =
@@ -589,11 +589,11 @@ export async function evaluateDockerBaseFreshness(
   const ref = opts.ref ?? DEFAULT_BOX_IMAGE;
   const imagePresent = await imageExists(ref);
   if (!imagePresent) return { state: 'unprepared' };
-  const claudeInstall = opts.claudeInstall ?? (await resolveClaudeInstallMode());
+  const agentInstall = opts.agentInstall ?? (await resolveClaudeInstallMode());
   const raw = await computeDockerContextFingerprint({ contextDir: opts.contextDir });
   return classifyDockerBaseFreshness({
     imagePresent,
-    fingerprint: raw ? claudeInstallFingerprint(raw.contextSha256, claudeInstall) : null,
+    fingerprint: raw ? agentInstallFingerprint(raw.contextSha256, agentInstall) : null,
     // The agentless base's OWN record. `base` is the most-recently-prepared
     // image, which after any `agentbox <agent>` bake is a variant — comparing
     // against it would nag `stale` for a base that is perfectly current.

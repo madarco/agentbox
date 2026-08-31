@@ -25,7 +25,7 @@ const cloudProvider = createCloudProvider(digitaloceanBackend, {
 export const digitaloceanProvider: Provider = {
   ...cloudProvider,
   prepare: prepareDigitalOceanProvider,
-  baseFingerprint: (claudeInstall) => currentDigitalOceanBaseFingerprintLive(claudeInstall),
+  baseFingerprint: (agentInstall) => currentDigitalOceanBaseFingerprintLive(agentInstall),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -35,8 +35,8 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureDigitalOceanCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setDigitalOceanCredentials,
-  currentBaseFingerprintLive: (claudeInstall) =>
-    currentDigitalOceanBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: (agentInstall) =>
+    currentDigitalOceanBaseFingerprintLive(agentInstall),
   currentBaseFileHashes: () => currentDigitalOceanBaseFileHashes(),
   doctorChecks,
 };

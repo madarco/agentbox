@@ -7,7 +7,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** Keys removed in a rename. Surfaced with a migration hint instead of a bare "unknown key". */
-const RENAMED_KEYS: ReadonlyMap<string, string> = new Map([['box.snapshot', 'box.hostSnapshot']]);
+const RENAMED_KEYS: ReadonlyMap<string, string> = new Map([
+  ['box.snapshot', 'box.hostSnapshot'],
+  // The install-method selector was never claude-specific in mechanism — it
+  // picks whichever agent has `install.alternates` for that mode — only in
+  // name. A hard error rather than a silent alias: a stale key would otherwise
+  // leave the user believing they had pinned the npm installer.
+  ['box.claudeInstall', 'box.agentInstall'],
+]);
 
 export interface ParseOptions {
   /**

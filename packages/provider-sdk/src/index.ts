@@ -112,7 +112,7 @@ export {
   resolveContextFilesFrom,
   readCliStamp,
   shortFingerprint,
-  claudeInstallFingerprint,
+  agentInstallFingerprint,
   readPreparedStateRaw,
   writePreparedStateRaw,
   preparedStatePathFor,
@@ -138,7 +138,7 @@ export {
 //   - `normalizeAgentSet` + `agentSetArg` to build the variant key (`''` is the
 //     agentless base). Order-insensitive, so ['codex','claude'] and
 //     ['claude','codex'] resolve to the same artifact.
-//   - `variantFingerprint` instead of `claudeInstallFingerprint` — it folds the
+//   - `variantFingerprint` instead of `agentInstallFingerprint` — it folds the
 //     agent set into the hash, and is the IDENTITY for the empty set, so
 //     existing base records stay valid.
 //   - `resolveAgentSpec` + `resolveAgentInstall` + `renderInstallRecipe` +
