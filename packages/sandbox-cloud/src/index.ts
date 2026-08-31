@@ -201,3 +201,9 @@ export {
   seedAgentDeclaredFilesViaTransport,
   seedDeclaredFilesForLaunch,
 } from './sync/agent-seed.js';
+
+// The registry-driven staging dispatch. It moved out of `sandbox-core` when the
+// per-agent stagers moved into their own packages — it reads the
+// `AgentCloudModule` registry, which only exists here.
+export { stageAllAgentStatic } from './sync/agent-static-all.js';
+export type { AgentStaticStage } from '@agentbox/sandbox-core';

@@ -180,7 +180,7 @@ export { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
 // snapshot, with nothing failing. `stageAllAgentStatic` returns one entry per
 // agent the host actually knows about, plus the shared `~/.agents` skills tree,
 // each with the `extractDir` to unpack it at.
-export { stageAllAgentStatic, type AgentStaticStage } from '@agentbox/sandbox-core';
+export { stageAllAgentStatic, type AgentStaticStage } from '@agentbox/sandbox-cloud';
 export { stageAgentsStaticForUpload, type StageResult } from '@agentbox/sandbox-cloud';
 
 // ---- cloud checkpoint authoring (for id-addressed-snapshot providers) ----

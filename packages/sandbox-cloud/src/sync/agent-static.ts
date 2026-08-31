@@ -19,7 +19,8 @@
  * baked snapshot doesn't.
  */
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { stageAllAgentStatic, type AgentStaticStage } from '@agentbox/sandbox-core';
+import type { AgentStaticStage } from '@agentbox/sandbox-core';
+import { stageAllAgentStatic } from './agent-static-all.js';
 
 /** Box-side staging path for a kind's tarball. */
 function remoteTarFor(kind: AgentStaticStage['kind']): string {

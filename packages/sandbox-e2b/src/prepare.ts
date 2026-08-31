@@ -37,7 +37,6 @@ import type { Provider } from '@agentbox/core';
 import {
   computeContextManifest,
   readCliStamp,
-  stageAllAgentStatic,
   type AgentStaticStage,
   variantFingerprint,
   normalizeAgentSet,
@@ -47,6 +46,7 @@ import {
   renderInstallRecipe,
   renderPackageInstall,
 } from '@agentbox/sandbox-core';
+import { stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { ensureE2bCredentials } from './credentials.js';
 import { resolveApiKey, Template } from './sdk.js';
 import {

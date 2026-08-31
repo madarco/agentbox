@@ -37,9 +37,8 @@ import {
   resolveAgentInstall,
   resolveAgentSpec,
   variantFingerprint,
-  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import { type StageResult } from '@agentbox/sandbox-cloud';
+import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureDigitalOceanCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';

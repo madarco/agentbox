@@ -42,9 +42,8 @@ import {
   resolveAgentInstall,
   renderInstallRecipe,
   renderPackageInstall,
-  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import { type StageResult } from '@agentbox/sandbox-cloud';
+import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { ensureHetznerCredentials } from './credentials.js';
 import { detectEgressIp } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';

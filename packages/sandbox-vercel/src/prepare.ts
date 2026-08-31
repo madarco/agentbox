@@ -37,9 +37,8 @@ import {
   resolveAgentInstall,
   resolveAgentSpec,
   variantFingerprint,
-  stageAllAgentStatic,
 } from '@agentbox/sandbox-core';
-import { type StageResult } from '@agentbox/sandbox-cloud';
+import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { ensureVercelCredentials } from './credentials.js';
 import {
   ensureFreshCredentials,

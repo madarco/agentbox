@@ -38,7 +38,7 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './claude-hooks-filter.js';
-import { AGENT_SYNC_SPECS, resolveAgentSpec } from './registry.js';
+import { resolveAgentSpec } from './registry.js';
 import { sanitizeCodexConfigForBox } from './codex-config.js';
 import type { AgentId, AgentPathMap } from '@agentbox/core';
 
@@ -731,7 +731,8 @@ export async function stageOpencodeStateForUpload(
 
 /** Box-side dir each tool's static tarball extracts into. Provider-neutral —
  *  the same target on every backend (docker model). */
-const AGENTS_STATIC_BOX_DIR = '/home/vscode/.agents';
+/** Extract root for the shared `~/.agents` skills tree. */
+export const AGENTS_STATIC_BOX_DIR = '/home/vscode/.agents';
 
 export interface AgentStaticStage {
   kind: AgentId | 'agents';
@@ -748,66 +749,3 @@ export interface AgentStaticStage {
  * copy of the producer→dir mapping. The caller must `staged.cleanup()` each
  * result after the build has picked the tarball up.
  */
-/**
- * Agents whose static staging needs more than a copy of their declared paths.
- * Everything else is served by the generic `stageAgentStaticForUpload`, which
- * is the point: an agent added tomorrow reaches every cloud provider's snapshot
- * from its registry row, with no entry here.
- */
-const DEDICATED_STATIC_STAGERS: Record<
-  string,
-  (opts: { hostWorkspace?: string; hostHome?: string }) => Promise<StageResult>
-> = {
-  // Filters host-path hooks, forces the native install method, aliases the host
-  // workspace onto /workspace, marks it trusted.
-  claude: (opts) => stageClaudeStaticForUpload(opts),
-  // Sanitizes config.toml's host-only paths, purges orphan marketplace caches.
-  codex: (opts) => stageCodexStaticForUpload({ hostHome: opts.hostHome }),
-};
-
-export async function stageAllAgentStatic(
-  opts: {
-    hostWorkspace?: string;
-    /**
-     * Which agents to stage. Absent = all, the historical behaviour.
-     *
-     * `~/.agents` is never filtered: it is the shared skills tree, not an
-     * agent's auth or config, and every agent reads it.
-     *
-     * Staging is a PREPARE-time concern — this bakes host config into the
-     * snapshot — which is why the selection has to reach `PrepareOptions` and
-     * not only `create`.
-     */
-    agents?: readonly string[];
-    /**
-     * Defaults to `homedir()`. Threaded through every stager so a test can
-     * point the whole thing at a fixture home instead of the developer's own —
-     * without it, the only way to exercise this is to rsync a real `~/.claude`.
-     */
-    hostHome?: string;
-  } = {},
-): Promise<AgentStaticStage[]> {
-  const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
-  const specs = AGENT_SYNC_SPECS.filter((spec) => !wanted || wanted.has(spec.id));
-
-  const staged = await Promise.all(
-    specs.map(async (spec) => {
-      const dedicated = DEDICATED_STATIC_STAGERS[spec.id];
-      const result = dedicated
-        ? await dedicated({ hostWorkspace: opts.hostWorkspace, hostHome: opts.hostHome })
-        : await stageAgentStaticForUpload(spec.id, { hostHome: opts.hostHome });
-      // `staticPaths[0].boxDir` is the extract root for every source of an
-      // agent: the relocations inside the tarball are relative to it.
-      const extractDir = spec.staticPaths[0]?.boxDir;
-      return extractDir ? { kind: spec.id, extractDir, staged: result } : null;
-    }),
-  );
-
-  const out: AgentStaticStage[] = staged.filter((s): s is AgentStaticStage => s !== null);
-  out.push({
-    kind: 'agents',
-    extractDir: AGENTS_STATIC_BOX_DIR,
-    staged: await stageAgentsStaticForUpload({ hostHome: opts.hostHome }),
-  });
-  return out;
-}

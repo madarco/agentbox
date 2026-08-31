@@ -28,7 +28,6 @@ import type { PrepareOptions, PrepareResult } from '@agentbox/core';
 import { providerWarning } from '@agentbox/core';
 import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
-  stageAllAgentStatic,
   type AgentStaticStage,
   variantFingerprint,
   normalizeAgentSet,
@@ -38,6 +37,7 @@ import {
   renderInstallRecipe,
   renderPackageInstall,
 } from '@agentbox/sandbox-core';
+import { stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import {
   DAYTONA_DEFAULT_RESOURCES,
   isResourceLimitError,
