@@ -230,41 +230,47 @@ export const daemonCommand = new Command('daemon')
     toolLinks.start();
 
     if (process.env.AGENTBOX_CREDENTIAL_SYNC !== '0') {
-      // Start on the BAKED list immediately, then upgrade. Never await the fetch:
-      // on a cloud box `agents.list` is parked on the in-sandbox relay's
-      // HostActionQueue, which has no timeout and only expires entries when the
-      // host's poller drains it — so with the host off (a resumed independent
-      // box) the await never returns. That cost the box its credential fan-out
-      // entirely, and left SIGTERM/SIGINT unregistered so it could not even shut
-      // down cleanly. `toolLinks.start()` above already has this shape.
+      // Start on the BAKED list immediately, then upgrade (below). Never await
+      // the fetch: on a cloud box `agents.list` is parked on the in-sandbox
+      // relay's HostActionQueue, which has no timeout and only expires entries
+      // when the host's poller drains it — so with the host off (a resumed
+      // independent box) the await never returns. That cost the box its
+      // credential fan-out entirely, and left SIGTERM/SIGINT unregistered so it
+      // could not even shut down cleanly. `toolLinks.start()` has this shape too.
       credentialsWatcher = new CredentialsWatcher({ relay: sup.relayClient });
       credentialsWatcher.start();
-
-      // Ask the host which files to watch rather than trusting the list compiled
-      // into this binary: ctl is baked into the image, so a box built before an
-      // agent existed would otherwise never watch it — and a plugin agent, which
-      // can never be baked, would be invisible forever. Any failure leaves the
-      // watcher on the baked list it is already running.
-      //
-      // Fired AFTER the forwarder is listening, like `toolLinks.start()`:
-      // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
-      // ECONNREFUSED on a fresh box.
-      const watcher = credentialsWatcher;
-      void fetchWatchList().then((watch) => {
-        if (watch.source === 'host') {
-          watcher.setFiles(watch.files);
-          // Same answer, second consumer: which agents to probe for activity.
-          // The reporter is already running on its baked list, so this only ever
-          // upgrades it — an agent added after this image was baked starts being
-          // probed without a re-bake.
-          reporter.setSessions(watch.sessions);
-          return;
-        }
-        process.stderr.write(
-          `agentbox-ctl: agents.list ${watch.source === 'timeout' ? 'timed out' : 'unavailable'}; keeping the baked watch list\n`,
-        );
-      });
     }
+
+    // Ask the host which files to watch and which agents to probe, rather than
+    // trusting the lists compiled into this binary: ctl is baked into the image,
+    // so a box built before an agent existed would otherwise never see it — and
+    // a plugin agent, which can never be baked, would be invisible forever. Any
+    // failure leaves both consumers on the baked lists they already run on.
+    //
+    // OUTSIDE the credential-sync gate, even though one of its two consumers is
+    // the credential watcher. It used to be inside, so a box created with
+    // `--no-credential-sync` never upgraded its agent PROBE list either — a
+    // fourth agent's session was then invisible in `agentbox list` on that box,
+    // for a reason that had nothing to do with credentials.
+    //
+    // Fired AFTER the forwarder is listening, like `toolLinks.start()`:
+    // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
+    // ECONNREFUSED on a fresh box.
+    const watcher = credentialsWatcher;
+    void fetchWatchList().then((watch) => {
+      if (watch.source === 'host') {
+        watcher?.setFiles(watch.files);
+        // Same answer, second consumer: which agents to probe for activity. The
+        // reporter is already running on its baked list, so this only ever
+        // upgrades it — an agent added after this image was baked starts being
+        // probed without a re-bake.
+        reporter.setSessions(watch.sessions);
+        return;
+      }
+      process.stderr.write(
+        `agentbox-ctl: agents.list ${watch.source === 'timeout' ? 'timed out' : 'unavailable'}; keeping the baked watch list\n`,
+      );
+    });
 
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);

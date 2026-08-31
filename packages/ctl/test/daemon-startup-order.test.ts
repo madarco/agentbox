@@ -44,4 +44,30 @@ describe('daemon startup order', () => {
     expect(src).not.toMatch(/await\s+fetchWatchList\(/);
     expect(src).toMatch(/void\s+fetchWatchList\(/);
   });
+
+  it('fetches the watch list OUTSIDE the credential-sync gate', () => {
+    // The fetch serves two consumers — the credential watcher and the agent
+    // PROBE list — and only one of them is about credentials. It used to sit
+    // inside `if (AGENTBOX_CREDENTIAL_SYNC !== '0')`, so a box created with
+    // `--no-credential-sync` also never upgraded which agents it probes: a
+    // fourth agent's tmux session was invisible in `agentbox list` on that box.
+    //
+    // Source-level, like the ordering checks above: the failure is silent (the
+    // reporter just keeps its baked list), so nothing observable breaks.
+    const gateAt = src.indexOf("AGENTBOX_CREDENTIAL_SYNC !== '0'");
+    const fetchAt = src.indexOf('fetchWatchList(');
+    expect(gateAt, 'the credential-sync gate must still exist').toBeGreaterThan(-1);
+    expect(fetchAt).toBeGreaterThan(gateAt);
+
+    // The gate's block must CLOSE before the fetch — i.e. the fetch is not
+    // nested inside it. Counting braces between the two is enough: a fetch
+    // still inside the block never returns to depth 0.
+    const between = src.slice(gateAt, fetchAt);
+    let depth = 0;
+    for (const ch of between) {
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+    }
+    expect(depth, 'fetchWatchList must not be nested inside the gate').toBe(0);
+  });
 });
