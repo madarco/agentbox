@@ -578,6 +578,31 @@ Run live, on this branch, docker + the real host home:
   `~/.agentbox-example` on the host the demo agent stages too — from its
   registry row alone.
 
+After phases 7a and 7b, re-run plus the checks those phases added:
+
+- **A packed install, not the dev tree** — `npm pack` into a clean prefix. This
+  caught a real break: `@agentbox/agent-registry` had gone into `dependencies`,
+  where it was the only `workspace:*` entry, and `npm pack` does not rewrite
+  those, so the published tarball refused to install
+  (`EUNSUPPORTEDPROTOCOL`). The dev tree resolves workspace links and never sees
+  it. Fixed (it is a devDependency like its eight siblings), and the packed CLI
+  then ran `agent list`, `config list` and the whole `agent add` → `list` →
+  `remove` cycle.
+- **A community agent package, end to end** — two files, no `@agentbox/*`
+  import. After `agent add` it resolves by id and alias, satisfies
+  `isRuntimeAgent`, and `stageAllAgentStatic` dispatches it into every cloud
+  provider's snapshot. Shadowing a built-in, a package exporting no spec, and a
+  corrupt registry are each refused with a message rather than a stack trace.
+- **The docker create path, after the loop replaced the three branches** — a
+  real box came up, claude's volume synced under the derived label, its ensure
+  notes came through the generic path, its declared seeds were placed, and
+  `~/.claude` + `~/.agents` were correct inside the container.
+- **`agentbox dashboard` through the PTY harness** — phase 7a renamed types in
+  its sidebar and footer, so it was driven live: the sidebar shows the box at
+  `○ idle`, the footer reads `agentbox ▸ <box> (idle) — ✳ Claude Code`, and the
+  attached agent is running with bypass permissions on (the skip-permissions
+  rule that moved onto claude's runtime).
+
 Not yet run: a real cloud `prepare` (it bakes a snapshot), and the queued `-i`
 runs, which belong with phase 2.
 
