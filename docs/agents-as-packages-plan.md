@@ -567,6 +567,19 @@ uses. A doc example that has rotted proves the opposite of what it claims, so th
 test mutation-checks three ways: claiming a built-in alias, dropping a required
 spec field, and declaring a module for an agent the package did not register.
 
+Bugbot found two real bugs in the first version of that example, and the second
+mattered more than the file: `install: { kind: 'none' }` is not an
+`AgentInstall`, and `agentSpecProblem` only checked that the field was PRESENT —
+so `agent add` accepted it and the failure surfaced at bake time, reading
+`recipe.kind` off undefined, where the package author is long gone. Validation
+now checks the SHAPE of everything load-bearing: the recipe kind and its
+per-kind required field, `runAs` (an installer that drops a binary in the
+invoking user's `~/.local/bin` puts it in /root when run as root),
+`credential.hostBackup` being an absolute path (the fan-out WRITES there, so an
+empty one drops a temp file in the process cwd and loses the login), and each
+`staticPaths` entry. Every built-in spec still passes; both halves
+mutation-checked.
+
 ## What adding an agent costs today — measured, after phase 3b
 
 | step | needed? |

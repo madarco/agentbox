@@ -38,7 +38,21 @@ export const agentSpec = {
   /** tmux session name inside the box. */
   sessionName: 'example-agent',
   binary: 'bash',
-  install: { kind: 'none' },
+  /**
+   * HOW the agent gets into a box. `recipe` is the union — `npm`, `script`
+   * (fetch-then-run, never `curl | bash`, so a blocked download fails the chain)
+   * or `exec` for anything else. `runAs` is not a detail: an installer that
+   * drops a binary in the invoking user's `~/.local/bin` must run as the box
+   * user, while `npm install -g` needs root.
+   *
+   * This agent's binary is `bash`, which is already there, so the recipe is an
+   * honest no-op and `postInstall` just creates the dirs it expects.
+   */
+  install: {
+    recipe: { kind: 'exec', script: 'true' },
+    runAs: 'root',
+    postInstall: `install -d -o vscode -g vscode ${BOX_DIR}`,
+  },
   /** Shared docker volume holding this agent's static config. */
   dockerVolume: 'agentbox-example-agent-config',
   /**
@@ -47,10 +61,17 @@ export const agentSpec = {
    * them is what gets this agent into every baked snapshot.
    */
   staticPaths: [{ hostHomeRel: ['.agentbox-example-agent'], boxDir: BOX_DIR }],
+  /**
+   * Where this agent's login lives — in the box, and in the host backup that
+   * carries it between boxes. `hostBackup` must be a real absolute path under
+   * `~/.agentbox`: the credential fan-out WRITES there when a box logs in, so
+   * an empty string would drop a temp file in whatever directory the CLI
+   * happened to be run from and lose the login.
+   */
   credential: {
     boxRelPath: 'auth.json',
     boxAbsPath: `${BOX_DIR}/auth.json`,
-    hostBackup: '',
+    hostBackup: `${process.env.HOME ?? ''}/.agentbox/example-agent-credentials.json`,
     cloudMountPath: '/home/vscode/.agentbox-creds/example-agent',
     cloudSubpath: 'auth.json',
     realShape: 'nonempty-json',

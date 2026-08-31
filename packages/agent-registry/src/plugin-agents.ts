@@ -83,6 +83,79 @@ const REQUIRED_SPEC_FIELDS = [
   'caps',
 ] as const;
 
+const RECIPE_KINDS = ['npm', 'script', 'exec'] as const;
+const RUN_AS = ['root', 'box-user'] as const;
+
+/**
+ * The fields whose SHAPE — not just presence — is worth checking.
+ *
+ * Presence alone is not enough, and that is not hypothetical: an `install` of
+ * `{ kind: 'none' }` passed a presence check and then threw at bake time, where
+ * the author is long gone and the message is about `recipe.kind` being
+ * undefined. The whole point of validating at `agent add` is to fail at the one
+ * moment someone can still fix the package, so anything with a load-bearing
+ * shape gets checked here.
+ */
+function installProblem(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return '`install` must be an object';
+  const install = raw as Record<string, unknown>;
+  const recipe = install.recipe as Record<string, unknown> | undefined;
+  if (recipe === undefined || typeof recipe !== 'object' || recipe === null) {
+    return '`install.recipe` is required (`{ kind: "npm" | "script" | "exec", … }`)';
+  }
+  const kind = recipe.kind;
+  if (typeof kind !== 'string' || !(RECIPE_KINDS as readonly string[]).includes(kind)) {
+    return `\`install.recipe.kind\` must be one of ${RECIPE_KINDS.join(', ')}`;
+  }
+  if (kind === 'npm' && typeof recipe.package !== 'string') {
+    return '`install.recipe.package` is required for the npm recipe';
+  }
+  if (kind === 'script' && typeof recipe.url !== 'string') {
+    return '`install.recipe.url` is required for the script recipe';
+  }
+  if (kind === 'exec' && typeof recipe.script !== 'string') {
+    return '`install.recipe.script` is required for the exec recipe';
+  }
+  // Not cosmetic: an installer that drops a binary in the INVOKING user's
+  // ~/.local/bin puts it in /root when run as root, and the box user never
+  // sees it.
+  if (typeof install.runAs !== 'string' || !(RUN_AS as readonly string[]).includes(install.runAs)) {
+    return `\`install.runAs\` must be one of ${RUN_AS.join(', ')}`;
+  }
+  return null;
+}
+
+function credentialProblem(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return '`credential` must be an object';
+  const cred = raw as Record<string, unknown>;
+  if (typeof cred.boxAbsPath !== 'string' || cred.boxAbsPath.length === 0) {
+    return '`credential.boxAbsPath` must be a non-empty in-box path';
+  }
+  // The credential fan-out WRITES here when a box logs in. An empty or relative
+  // path drops a temp file in whatever directory the CLI was run from and loses
+  // the login silently.
+  if (typeof cred.hostBackup !== 'string' || !cred.hostBackup.startsWith('/')) {
+    return '`credential.hostBackup` must be an absolute host path (the fan-out writes to it)';
+  }
+  return null;
+}
+
+function staticPathsProblem(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return '`staticPaths` must be an array';
+  for (const [i, entry] of raw.entries()) {
+    if (entry === null || typeof entry !== 'object')
+      return `\`staticPaths[${i}]\` must be an object`;
+    const path = entry as Record<string, unknown>;
+    if (!Array.isArray(path.hostHomeRel)) {
+      return `\`staticPaths[${i}].hostHomeRel\` must be an array of path segments`;
+    }
+    if (typeof path.boxDir !== 'string' || !path.boxDir.startsWith('/')) {
+      return `\`staticPaths[${i}].boxDir\` must be an absolute in-box path`;
+    }
+  }
+  return null;
+}
+
 /** Why a spec was rejected, or null when it is usable. */
 export function agentSpecProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return 'not an object';
@@ -91,7 +164,11 @@ export function agentSpecProblem(raw: unknown): string | null {
   if (missing.length > 0) return `missing required field(s): ${missing.join(', ')}`;
   if (typeof spec.id !== 'string' || spec.id.length === 0) return '`id` must be a non-empty string';
   if (!Array.isArray(spec.aliases)) return '`aliases` must be an array';
-  if (!Array.isArray(spec.staticPaths)) return '`staticPaths` must be an array';
+  const shape =
+    installProblem(spec.install) ??
+    credentialProblem(spec.credential) ??
+    staticPathsProblem(spec.staticPaths);
+  if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to
   // `agentbox-ctl` over `agents.list` as JSON. Catching it here keeps that
   // guarantee true for plugin agents too.

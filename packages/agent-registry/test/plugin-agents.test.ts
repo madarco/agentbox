@@ -103,6 +103,50 @@ describe('agentSpecProblem', () => {
     expect(problem).toContain('credential');
   });
 
+  it('rejects a structurally wrong `install`, not merely a missing one', () => {
+    // The exact shape that slipped through a presence-only check and then threw
+    // at bake time, where the author is long gone.
+    expect(agentSpecProblem({ ...exampleSpec, install: { kind: 'none' } })).toMatch(
+      /install\.recipe/,
+    );
+    expect(
+      agentSpecProblem({ ...exampleSpec, install: { recipe: { kind: 'nope' }, runAs: 'root' } }),
+    ).toMatch(/recipe\.kind/);
+    expect(
+      agentSpecProblem({ ...exampleSpec, install: { recipe: { kind: 'npm' }, runAs: 'root' } }),
+    ).toMatch(/recipe\.package/);
+    // `runAs` decides whether the binary lands where the box user can see it.
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        install: { recipe: { kind: 'exec', script: 'true' } },
+      }),
+    ).toMatch(/runAs/);
+  });
+
+  it('rejects a credential backup path the fan-out cannot write to', () => {
+    // An empty or relative path drops a temp file in the process cwd and loses
+    // the login, silently.
+    for (const hostBackup of ['', 'relative/path.json']) {
+      expect(
+        agentSpecProblem({
+          ...exampleSpec,
+          credential: { ...exampleSpec.credential, hostBackup },
+        }),
+        hostBackup || '(empty)',
+      ).toMatch(/hostBackup/);
+    }
+  });
+
+  it('rejects a staticPaths entry that cannot be staged', () => {
+    expect(
+      agentSpecProblem({ ...exampleSpec, staticPaths: [{ hostHomeRel: '.x', boxDir: '/b' }] }),
+    ).toMatch(/hostHomeRel/);
+    expect(
+      agentSpecProblem({ ...exampleSpec, staticPaths: [{ hostHomeRel: ['.x'], boxDir: 'rel' }] }),
+    ).toMatch(/boxDir/);
+  });
+
   it('rejects a non-object and an empty id', () => {
     expect(agentSpecProblem('claude')).toBe('not an object');
     expect(agentSpecProblem({ ...exampleSpec, id: '' })).toMatch(/non-empty string/);
