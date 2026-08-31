@@ -18,8 +18,13 @@
  * derives from the class rather than defaulting to a constant — otherwise the
  * default class and the default region would contradict each other.
  *
- * A user who needs a specific region (EU data residency, latency) sets
- * `box.daytonaClass=container` and gets the old behavior.
+ * `container` is the DEFAULT because `us-east-1` is a dedicated region Daytona
+ * hands out by invitation: an account without it cannot bake a VM base at all,
+ * and the failure lands as a bare `DaytonaNotFoundError` mid-bake. A default
+ * that most accounts cannot use is not a default. Container also builds its
+ * base from the Dockerfile, so it needs no published box image — the one thing
+ * the VM path cannot do without. Users WITH a VM region set
+ * `box.daytonaClass=linux-vm` and get true pause/resume and a ~1 min bake.
  */
 import type { EffectiveConfig } from './types.js';
 
@@ -29,18 +34,19 @@ export type DaytonaSandboxClass = 'linux-vm' | 'container';
 export const DAYTONA_VM_REGION = 'us-east-1';
 
 export function resolveDaytonaClass(cfg: EffectiveConfig): DaytonaSandboxClass {
-  // Anything that isn't an explicit `container` resolves to the default rather
+  // Anything that isn't an explicit `linux-vm` resolves to the default rather
   // than being forwarded to the SDK — Daytona also has `windows`/`android`
-  // classes we don't support, and a typo shouldn't reach the API.
-  return cfg.box.daytonaClass === 'container' ? 'container' : 'linux-vm';
+  // classes we don't support, and a typo shouldn't reach the API. Falling back
+  // to `container` also means a typo degrades to the class every account can
+  // run, not the one most cannot.
+  return cfg.box.daytonaClass === 'linux-vm' ? 'linux-vm' : 'container';
 }
 
 /**
  * The region to create in. An explicit `box.daytonaRegion` always wins (so a
  * user can follow Daytona to a second VM region the day one appears, without
- * waiting on a release). Empty derives from the class; for `container` we
- * return '' and let the SDK use the account default, preserving today's
- * behavior for existing users byte-for-byte.
+ * waiting on a release). Empty derives from the class; for `container` — the
+ * default — we return '' and let the SDK use the account default.
  */
 export function resolveDaytonaRegion(cfg: EffectiveConfig): string {
   // `?? ''` rather than trusting the type: callers can hand us a config that

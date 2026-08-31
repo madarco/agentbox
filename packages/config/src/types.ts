@@ -580,7 +580,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pidsLimit: 0,
     disk: '',
     bundleDepth: undefined,
-    daytonaClass: 'linux-vm',
+    daytonaClass: 'container',
     // Empty = derive from the class: linux-vm implies us-east-1 (the only
     // region with VM runners), container keeps Daytona's own default.
     daytonaRegion: '',
@@ -912,13 +912,13 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.daytonaClass',
     type: 'string',
     description:
-      'Daytona sandbox class for new --provider daytona boxes: `linux-vm` (default) or `container`. `linux-vm` gives real pause/resume (CPU + memory frozen, running processes survive) and a much faster base bake, but runs only in `us-east-1` — the sole region with VM runners. Choose `container` to stay in a shared region (e.g. `eu`). Changing this needs a re-bake: `agentbox prepare --provider daytona --force`. Daytona-only.',
+      'Daytona sandbox class for new --provider daytona boxes: `container` (default) or `linux-vm`. `linux-vm` gives real pause/resume (CPU + memory frozen, running processes survive) and a much faster base bake, but runs only in `us-east-1` — a *dedicated* region Daytona enables per organization, so most accounts cannot bake one at all. Set it when your org has a VM region. `container` builds its base from the Dockerfile (no published image needed) and runs in the shared regions (`us`, `eu`). Changing this needs a re-bake: `agentbox prepare --provider daytona --force`. Daytona-only.',
   },
   {
     key: 'box.daytonaRegion',
     type: 'string',
     description:
-      'Daytona region new --provider daytona boxes are created in (e.g. `us`, `eu`, `us-east-1`). Empty (the default) derives it from `box.daytonaClass`: `linux-vm` implies `us-east-1`, `container` uses the account default. Only `us-east-1` has linux-vm runners, so pairing `linux-vm` with another region fails at create. Daytona-only.',
+      'Daytona region new --provider daytona boxes are created in (e.g. `us`, `eu`, `us-east-1`). Empty (the default) derives it from `box.daytonaClass`: `container` (the default class) uses the account default, `linux-vm` implies `us-east-1`. Only `us-east-1` has linux-vm runners, so pairing `linux-vm` with another region fails at create. Daytona-only.',
   },
   {
     key: 'box.daytonaTimeoutMs',

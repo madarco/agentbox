@@ -411,11 +411,23 @@ export const daytonaBackend: CloudBackend = {
         const bakedClass = bootingPreparedBase ? (bootedExtras?.class ?? 'container') : undefined;
         const sandboxClass = bakedClass ?? req.sandboxClass;
         if (bakedClass && req.sandboxClass && bakedClass !== req.sandboxClass) {
+          // Direction matters. Getting a container when a VM was asked for is a
+          // downgrade — no pause/resume — and a re-bake is the fix. Getting a VM
+          // when `container` was asked for is not: `container` is the DEFAULT,
+          // so this is mostly an existing linux-vm base outliving the default
+          // flip, and telling that user to re-bake would talk them out of the
+          // better box. Say what they have and what it costs (the VM base pins
+          // them to us-east-1), and leave the re-bake to someone who wants it.
+          const common =
+            `daytona: base '${baseRef ?? ''}' was baked as '${bakedClass}', so this box will be a ` +
+            `'${bakedClass}' one (box.daytonaClass asks for '${req.sandboxClass}').`;
           req.onLog?.(
             providerWarning(
-              `daytona: base '${baseRef ?? ''}' was baked as '${bakedClass}', so this box will be a ` +
-                `'${bakedClass}' one (box.daytonaClass asks for '${req.sandboxClass}'). ` +
-                `Re-bake with \`agentbox prepare --provider daytona --force\` to change it.`,
+              bakedClass === 'container'
+                ? `${common} No pause/resume. Re-bake with ` +
+                    `\`agentbox prepare --provider daytona --force\` to change it.`
+                : `${common} That is the class with pause/resume, so nothing is lost — but a ` +
+                    `linux-vm base runs only in us-east-1. Re-bake to move it to a shared region.`,
             ),
           );
         }

@@ -24,10 +24,10 @@ The `<box>` argument is optional — it defaults to the only box in the current 
   Pausing is the right move when juggling boxes in parallel — see [Background & parallel
   runs](/docs/background-and-parallel). A paused box keeps its full RAM working set, so resuming is
   instant but it still consumes memory. `stop` a box you won't touch for a while. On
-  [Daytona](/docs/daytona), what `pause` does depends on the sandbox class: a `linux-vm` box (the
-  default) is frozen with its memory intact, so even running processes survive the resume; a
-  `container` box is archived to cold storage instead — no quota while archived, but the first
-  resume is slower and nothing running survives.
+  [Daytona](/docs/daytona), what `pause` does depends on the sandbox class: a `container` box (the
+  default) is archived to cold storage — no quota while archived, but the first resume is slower and
+  nothing running survives; a `linux-vm` box, available to orgs Daytona has authorized for VM
+  sandboxes, is frozen with its memory intact, so even running processes survive the resume.
 </Callout>
 
 ## Stop & start

@@ -12,26 +12,28 @@ function cfg(box: Partial<EffectiveConfig['box']>): EffectiveConfig {
 }
 
 describe('resolveDaytonaClass', () => {
-  it('defaults to linux-vm', () => {
-    expect(resolveDaytonaClass(cfg({}))).toBe('linux-vm');
+  // `us-east-1` — the only region with VM runners — is dedicated and handed out
+  // by invitation, so a linux-vm default is one most accounts cannot bake at all.
+  it('defaults to container, the class every account can run', () => {
+    expect(resolveDaytonaClass(cfg({}))).toBe('container');
   });
 
-  it('honors an explicit container choice', () => {
-    expect(resolveDaytonaClass(cfg({ daytonaClass: 'container' }))).toBe('container');
+  it('honors an explicit linux-vm choice', () => {
+    expect(resolveDaytonaClass(cfg({ daytonaClass: 'linux-vm' }))).toBe('linux-vm');
   });
 
-  it('treats any other value as linux-vm rather than passing junk to the SDK', () => {
-    expect(resolveDaytonaClass(cfg({ daytonaClass: 'windows' }))).toBe('linux-vm');
+  it('degrades any other value to container rather than passing junk to the SDK', () => {
+    expect(resolveDaytonaClass(cfg({ daytonaClass: 'windows' }))).toBe('container');
   });
 });
 
 describe('resolveDaytonaRegion', () => {
   it('derives us-east-1 for linux-vm — the only region with VM runners', () => {
-    expect(resolveDaytonaRegion(cfg({}))).toBe(DAYTONA_VM_REGION);
+    expect(resolveDaytonaRegion(cfg({ daytonaClass: 'linux-vm' }))).toBe(DAYTONA_VM_REGION);
   });
 
-  it('leaves container boxes on the account default region (unchanged behavior)', () => {
-    expect(resolveDaytonaRegion(cfg({ daytonaClass: 'container' }))).toBe('');
+  it('leaves the default (container) on the account default region', () => {
+    expect(resolveDaytonaRegion(cfg({}))).toBe('');
   });
 
   it('lets an explicit region win over the class-derived one', () => {
@@ -40,10 +42,14 @@ describe('resolveDaytonaRegion', () => {
   });
 
   it('lets an explicit region win for container too', () => {
-    expect(resolveDaytonaRegion(cfg({ daytonaClass: 'container', daytonaRegion: 'eu' }))).toBe('eu');
+    expect(resolveDaytonaRegion(cfg({ daytonaClass: 'container', daytonaRegion: 'eu' }))).toBe(
+      'eu',
+    );
   });
 
   it('ignores whitespace-only region', () => {
-    expect(resolveDaytonaRegion(cfg({ daytonaRegion: '   ' }))).toBe(DAYTONA_VM_REGION);
+    expect(resolveDaytonaRegion(cfg({ daytonaClass: 'linux-vm', daytonaRegion: '   ' }))).toBe(
+      DAYTONA_VM_REGION,
+    );
   });
 });

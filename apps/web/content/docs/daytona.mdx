@@ -3,27 +3,27 @@ title: Daytona
 description: Run your agents in a managed Daytona cloud sandbox seeded from your host repo
 ---
 
-<Callout type="warn" title="Your Daytona org has to be authorized for VM sandboxes">
-  Daytona runs VM sandboxes (`linux-vm`, the default here) only in a **dedicated** region —
-  `us-east-1` — and dedicated regions are **not generally available**. Daytona has to enable one for
-  your organization. Creating a new org or adding credit does **not** grant it, and the shared
-  regions (`us`, `eu`) have no VM runners at all.
+Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo.
 
-Check what your account actually has before you start:
+A Daytona box is a **container** by default. If your organization is authorized for VM sandboxes, `box.daytonaClass: linux-vm` upgrades it to a real Linux VM — and then `agentbox pause` genuinely freezes the box, CPU _and memory_, so a long build or a running agent picks up exactly where it left off on `unpause`. No other AgentBox provider preserves running processes across a pause.
+
+<Callout type="warn" title="VM sandboxes need an authorized Daytona org">
+  Daytona runs VM sandboxes only in a **dedicated** region — `us-east-1` — and dedicated regions are
+  **not generally available**. Daytona has to enable one for your organization; creating a new org
+  or adding credit does **not** grant it, and the shared regions (`us`, `eu`) have no VM runners at
+  all. That is why `container` is the default: it works on every account.
+
+Check what yours has before setting `box.daytonaClass: linux-vm`:
 
 ```bash
 curl -H "Authorization: Bearer $DAYTONA_API_KEY" https://app.daytona.io/api/regions
 ```
 
-If the list has no region with `"regionType": "dedicated"`, `agentbox prepare --provider daytona`
-will fail with `your Daytona organization has no 'us-east-1' region` — ask Daytona to authorize your
-org, or use another provider ([hetzner](/docs/hetzner), [vercel](/docs/vercel), [e2b](/docs/e2b)).
+If the list has no region with `"regionType": "dedicated"`, a `linux-vm` bake fails with `your
+Daytona organization has no 'us-east-1' region` — ask Daytona to authorize your org, or stay on
+`container`.
 
 </Callout>
-
-Run your agents in a managed Daytona cloud sandbox (default **2 vCPU / 4 GB RAM / 8 GB disk**) when the work outgrows your laptop or a teammate needs to attach — no local Docker needed. Each box is a remote Daytona sandbox you drive with the same `agentbox` commands as a local box, seeded from your host repo.
-
-By default a Daytona box is a **Linux VM**, which means `agentbox pause` genuinely freezes it — CPU _and memory_ — so a long build or a running agent picks up exactly where it left off on `unpause`. No other AgentBox provider preserves running processes across a pause.
 
 Switch per box with `--provider daytona`, or pin it project-wide with `box.provider: daytona` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [local-docker](/docs/local-docker), [hetzner](/docs/hetzner), [vercel](/docs/vercel), and [e2b](/docs/e2b).
 
@@ -31,18 +31,19 @@ Switch per box with `--provider daytona`, or pin it project-wide with `box.provi
 
 Daytona offers two sandbox classes. `box.daytonaClass` selects one; changing it needs a re-bake (`agentbox prepare --provider daytona --force`), because the class is baked into the snapshot and a snapshot of one class can't create a box of the other.
 
-|                    | `linux-vm` _(default)_                                                 | `container`                    |
-| ------------------ | ---------------------------------------------------------------------- | ------------------------------ |
-| `agentbox pause`   | **freezes CPU + memory** — running processes and tmux sessions survive | cold storage (filesystem only) |
-| Base bake          | ~1 min                                                                 | ~7 min                         |
-| Checkpoint capture | ~2 s                                                                   | ~2 s                           |
-| Region             | **`us-east-1` only**                                                   | any (`us`, `eu`, …)            |
+|                    | `container` _(default)_        | `linux-vm`                                                             |
+| ------------------ | ------------------------------ | ---------------------------------------------------------------------- |
+| Availability       | every account                  | **authorized orgs only** (dedicated region)                            |
+| `agentbox pause`   | cold storage (filesystem only) | **freezes CPU + memory** — running processes and tmux sessions survive |
+| Base bake          | ~7 min, from the Dockerfile    | ~1 min, from a published image                                         |
+| Checkpoint capture | ~2 s                           | ~2 s                                                                   |
+| Region             | any (`us`, `eu`, …)            | **`us-east-1` only**                                                   |
 
 <Callout type="warn" title="THE TRADEOFF">
   Daytona runs VM sandboxes in **`us-east-1` only** — it's the sole region with VM runners. Choosing
-  `linux-vm` therefore pins your boxes to US-East. If you need EU data residency or lower EU
-  latency, set `box.daytonaClass: container` and you keep today's behavior (and your choice of
-  region via `box.daytonaRegion`).
+  `linux-vm` therefore pins your boxes to US-East, and needs an org Daytona has authorized. If you
+  need EU data residency or lower EU latency, stay on `container` and pick a region with
+  `box.daytonaRegion`.
 </Callout>
 
 ## Idle boxes pause themselves
@@ -86,11 +87,13 @@ agentbox daytona claude
 Unlike Docker, Daytona does **not** auto-build the box image on first `create`. Run `agentbox prepare --provider daytona` once per org: it builds a **base snapshot** server-side (runtime + your agent static config — plugins, skills, settings, Codex/OpenCode config) and pins it into project config as `box.image`, so later creates boot in seconds.
 
 ```bash
-# one-off — bakes the base snapshot (~1 min for linux-vm, ~7 min for container)
+# one-off — bakes the base snapshot (~7 min for container, ~1 min for linux-vm)
 agentbox prepare --provider daytona
 ```
 
-A `linux-vm` base is baked from the prebuilt box image AgentBox publishes, so it's fast — Daytona can only build a VM snapshot from a published image, never from a Dockerfile. Two cases have no published image to boot, and both fall back to a `container` snapshot with a warning rather than failing:
+The default `container` base is built from the Dockerfile, so it needs nothing published and works on any account.
+
+A `linux-vm` base is instead baked from the prebuilt box image AgentBox publishes, which is why it's fast — Daytona can only build a VM snapshot from a published image, never from a Dockerfile. Two cases have no published image to boot, and both fall back to a `container` snapshot with a warning rather than failing:
 
 - **`box.claudeInstall: npm`** — only the default (native) image is published.
 - **A locally modified `Dockerfile.box`** — i.e. you're developing on the AgentBox repo itself. Point `box.daytonaVmBaseImage` at an image you've published to bake a VM anyway. It's also the knob for a private registry mirror.

@@ -258,27 +258,39 @@ users who go through `install` skip both the error and the nudge.
 
 ## 2. The Daytona shape
 
-### 2.0 Sandbox class: `linux-vm` (default) vs `container`
+### 2.0 Sandbox class: `container` (default) vs `linux-vm`
 
 Daytona has two sandbox **classes**, and they are not interchangeable — the class
 is a property of the *snapshot*, and a snapshot of one class cannot create a
 sandbox of the other. `box.daytonaClass` picks it; changing it forces a re-bake.
 
-|                                | `linux-vm` (default)                                     | `container`                          |
-| ------------------------------ | -------------------------------------------------------- | ------------------------------------ |
-| `agentbox pause` / `unpause`   | **real VM freeze** — CPU *and memory*; running processes and tmux sessions survive | archive (cold storage, filesystem only) |
-| Archive                        | not supported (rejected)                                  | yes — this is what pause maps to     |
-| Checkpoints                    | cold snapshot (~2 s capture)                              | cold snapshot                        |
-| Base bake                      | ~1 min (boots a prebuilt registry image)                  | ~7 min (Dockerfile build)            |
-| Region                         | **`us-east-1` only**                                      | any (`us`, `eu`, …)                  |
-| Volume mounts                  | **silently ignored** (see 2.2)                            | supported                            |
+|                                | `container` (default)                | `linux-vm`                                                |
+| ------------------------------ | ------------------------------------ | --------------------------------------------------------- |
+| Availability                   | every account                        | **authorized orgs only** (dedicated region)               |
+| `agentbox pause` / `unpause`   | archive (cold storage, filesystem only) | **real VM freeze** — CPU *and memory*; running processes and tmux sessions survive |
+| Archive                        | yes — this is what pause maps to     | not supported (rejected)                                  |
+| Checkpoints                    | cold snapshot                        | cold snapshot (~2 s capture)                              |
+| Base bake                      | ~7 min (Dockerfile build)            | ~1 min (boots a prebuilt registry image)                  |
+| Region                         | any (`us`, `eu`, …)                  | **`us-east-1` only**                                      |
+| Volume mounts                  | supported                            | **silently ignored** (see 2.2)                            |
 
-**The region lock is the tradeoff.** Only `us-east-1` has linux-vm runners; asking
-for a VM anywhere else fails at create with *"No runners are configured in region
-'<r>' for sandbox class 'linux-vm'"*. So `box.daytonaRegion` defaults to empty and
-is *derived* from the class — `linux-vm` ⇒ `us-east-1`, `container` ⇒ the account
-default — rather than to a constant that would contradict the default class. If you
-need EU data residency or lower EU latency, set `box.daytonaClass=container`.
+**Why `container` is the default.** `us-east-1` is a *dedicated* region Daytona
+enables per organization, by invitation — creating an org or adding credit does
+not grant it, and the shared `us`/`eu` regions have no VM runners at all. An
+account without one cannot bake a VM base, so a `linux-vm` default was a default
+most users could not use, failing mid-bake with a bare `DaytonaNotFoundError`
+(see `isRegionNotFound` / `vmRegionUnavailableMessage`). Container also builds
+from the Dockerfile, so it needs no published box image — the one thing the VM
+path cannot do without. `resolveDaytonaClass` therefore treats anything that
+isn't an explicit `linux-vm` as `container`, so a typo degrades to the class that
+always works.
+
+**The region lock is the linux-vm tradeoff.** Only `us-east-1` has linux-vm
+runners; asking for a VM anywhere else fails at create with *"No runners are
+configured in region '<r>' for sandbox class 'linux-vm'"*. So `box.daytonaRegion`
+defaults to empty and is *derived* from the class — `container` ⇒ the account
+default, `linux-vm` ⇒ `us-east-1` — rather than to a constant that would
+contradict the class.
 
 Only two calls are region-sensitive: `snapshot.create` (takes `regionId`) and
 `Daytona.create` (takes its region from the **client target**, not a param — the
