@@ -327,10 +327,22 @@ packages needs a CLI-kit extraction first, or an inversion of the app-level ones
 through the existing `AgentCliSpec` ctx seam. That is its own phase, not a file
 move — the original plan assumed this step was mechanical and it is not.
 
-**Phase 4 — `sandbox-core` + `sandbox-cloud`.** `claude-pull`, `codex-config`,
-`claude-hooks-filter`, `claude-json-overlay`, `codex-agents-override`,
-`host-stage.ts` (the biggest single per-agent file). The pull strategy becomes
-spec-driven (open since #338).
+**Phase 4 — `sandbox-cloud` — PARTLY DONE (`568cac29`).** `AgentCloudModule` is
+the cloud twin of `AgentSyncModule`; codex's `AGENTS.override` fold and
+opencode's model-state seed moved into their packages. A separate interface, not
+a field on the docker one, because its methods take `CloudBackend`/`CloudHandle`
+and the cloud layer depends on the docker layer.
+
+*Worth remembering:* replacing the two named calls with the loop silently dropped
+opencode's seed until its module was registered — the existing order test caught
+it. Without that assertion a cloud box would have booted on the wrong model with
+nothing failing.
+
+**Still open in phase 4:** claude's `seedClaudeJsonAtCreate` (runs after the
+declared files and needs `hostWorkspace`, so joining the loop moves it in the
+sequence — verify against a real cloud box first), and the `sandbox-core` side:
+`claude-pull`, `codex-config`, `claude-hooks-filter`, `host-stage.ts`. The pull
+strategy becoming spec-driven is open since #338.
 
 **Phase 5 — the cloud providers + `claudeInstall`.** Add `assets:` to the spec so
 `sandbox-{hetzner,vercel,digitalocean,daytona}` iterate instead of hardcoding
