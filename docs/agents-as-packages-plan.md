@@ -348,6 +348,25 @@ snapshotting and a version gate, mirroring `plugin.ts` / `plugin-registry.ts`.
 **Measure the fourth agent again here** and record the final number in
 `docs/agents.md` — that count is the deliverable, not a vague "it's a package now".
 
+## Smoke test — run 2026-08-31, all green
+
+Against the branch tip, after the phases above:
+
+- **Packed install, not the dev tree** — `npm pack` into a clean prefix;
+  `agentbox claude|codex|opencode --help` all resolve. This is the check that
+  catches the literal-specifier rule, which only fails in the published bundle.
+- **All three agents live on docker** — created concurrently, each mounted the
+  right registry-resolved config volume (`agentbox-<id>-config`), each reported
+  through the keyed status map under its own id, `agentbox agent state` answered
+  per box, all destroyed clean.
+- **The registry path drove real work** — a codex box synced from `~/.codex` and
+  its `afterVolumeSync` hook wrote `AGENTS.override.md` into the box, both
+  through `AgentSyncModule` rather than a named import.
+- **The canary reaches a live box** — `example` appears in the `agents.list`
+  descriptor with its session name and empty `activitySource`, with no ctl change.
+- Full CI: plugin-skill, lint, build, hub standalone, cloud-backends, typecheck,
+  and the suite (1,417 CLI tests among them).
+
 ## Files that will NOT change
 
 - `packages/ctl/src/{claude,codex}-scraper.ts` — ctl is baked; it gets its agent
