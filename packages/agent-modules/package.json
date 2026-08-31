@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@agentbox/agent-codex": "workspace:*",
+    "@agentbox/agent-opencode": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*"
   },
   "devDependencies": {

@@ -17,12 +17,12 @@ import '../src/sync/agents/builtins.js';
  */
 describe('agent sync module registry', () => {
   it('has the agents still living in this package registered', () => {
-    // Only the ones `builtins.ts` still adapts. codex registers from
-    // `@agentbox/agent-codex` now, and this package cannot import it (that is
-    // the cycle) — so the full-set assertion lives in `@agentbox/agent-modules`,
-    // which is where the wiring actually happens.
+    // Only the ones `builtins.ts` still adapts — claude alone now. The others
+    // register from their own packages, which this one cannot import (that is
+    // the cycle), so the full-set assertion lives in `@agentbox/agent-modules`,
+    // where the wiring actually happens.
     const ids = registeredAgentSyncModules().map((m) => m.id);
-    expect(ids).toEqual(['claude', 'opencode']);
+    expect(ids).toEqual(['claude']);
   });
 
   it('resolves a volume through the module, matching the registry name', () => {
@@ -55,12 +55,11 @@ describe('agent sync module registry', () => {
   });
 
   it('declares the optional hooks only where the agent has one', () => {
-    // claude warms a credential that expires on its own; opencode needs neither
+    // claude warms a credential that expires on its own and needs no post-sync
     // hook. Neither is universal, which is why both are optional rather than
     // no-op methods every agent has to stub.
-    expect(agentSyncModule('opencode')?.afterVolumeSync).toBeUndefined();
     expect(agentSyncModule('claude')?.warmUpCredentials).toBeTypeOf('function');
-    expect(agentSyncModule('opencode')?.warmUpCredentials).toBeUndefined();
+    expect(agentSyncModule('claude')?.afterVolumeSync).toBeUndefined();
   });
 
   it('answers undefined for an unregistered agent, and throws only when asked to', () => {

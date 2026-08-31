@@ -13,10 +13,8 @@ import {
   buildShellSessionAttachArgv,
   claudeSessionInfo,
   createBox,
-  DEFAULT_OPENCODE_SESSION,
   destroyBox,
   ensureBoxBrowser,
-  ensureOpencodeInstalled,
   listBoxes,
   relayPort,
   pauseBox,
@@ -26,7 +24,6 @@ import {
   shellSessionInfo,
   startBox,
   startClaudeSession,
-  startOpencodeSession,
   startShellSession,
   stopBox,
   syncClaudeCredentials,
@@ -35,6 +32,11 @@ import {
   type ListedBox,
   ensureClaudeInstalled,
 } from '@agentbox/sandbox-docker';
+import {
+  DEFAULT_OPENCODE_SESSION,
+  ensureOpencodeInstalled,
+  startOpencodeSession,
+} from '@agentbox/agent-opencode';
 import {
   DEFAULT_CODEX_SESSION,
   ensureCodexInstalled,

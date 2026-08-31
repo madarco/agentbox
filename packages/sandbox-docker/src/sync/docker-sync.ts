@@ -34,7 +34,6 @@ import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
-import type { OpencodeConfigSpec } from './agents/opencode.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 
@@ -56,7 +55,7 @@ export interface DockerSyncHandle {
   /** Resolved agents (~/.agents) spec, or undefined when the host has no ~/.agents. */
   agentsSpec?: AgentsConfigSpec;
   /** Resolved opencode spec, or undefined when opencode isn't wanted. */
-  opencodeSpec?: OpencodeConfigSpec;
+  opencodeSpec?: AgentVolumeChoice;
 }
 
 /**

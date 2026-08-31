@@ -12,21 +12,23 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { EffectiveConfig, UserConfig } from '@agentbox/config';
 import {
-  buildOpencodeAttachArgv,
-  buildOpencodeLoginRunArgv,
   ensureImage,
-  ensureOpencodeInstalled,
-  ensureOpencodeVolume,
   extractOpencodeCredentials,
   OPENCODE_CREDENTIALS_BACKUP_FILE,
+  type BoxRecord,
+} from '@agentbox/sandbox-docker';
+import {
+  buildOpencodeAttachArgv,
+  buildOpencodeLoginRunArgv,
+  ensureOpencodeInstalled,
+  ensureOpencodeVolume,
   OPENCODE_FORWARDED_ENV_KEYS,
   OpencodeSessionError,
   opencodeSessionInfo,
   runInteractiveOpencodeLogin,
   SHARED_OPENCODE_VOLUME,
   startOpencodeSession,
-  type BoxRecord,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-opencode';
 import { confirm, log, spinner, text } from '../../lib/prompt.js';
 import { opencodeAuthAvailable } from '../../lib/queue/assert-creds.js';
 import { opencodeLoginBinding } from '../../lib/agent-login-bindings.js';

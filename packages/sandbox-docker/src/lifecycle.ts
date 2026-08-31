@@ -12,7 +12,6 @@ import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@
 import type { BoxStatus } from '@agentbox/ctl';
 import type { ClaudeSessionInfo } from './sync/agents/claude.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
-import type { OpencodeSessionInfo } from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
 import { bindWorktrees, removeInBoxWorktree, resyncWorkspaceFromHost } from './sync/in-box-git.js';
 import {
@@ -112,7 +111,7 @@ export interface ListedBox extends BoxRecord {
   /** Live probe of the Codex tmux session; null when the box isn't running. */
   codexSession: AgentSessionInfo | null;
   /** Live probe of the OpenCode tmux session; null when the box isn't running. */
-  opencodeSession: OpencodeSessionInfo | null;
+  opencodeSession: AgentSessionInfo | null;
 }
 
 /**
@@ -577,7 +576,7 @@ export interface InspectedBox {
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'codex' session. */
   codexSession: AgentSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'opencode' session. */
-  opencodeSession: OpencodeSessionInfo | null;
+  opencodeSession: AgentSessionInfo | null;
   /** Live shell tmux sessions; `[]` when the container isn't running. */
   shellSessions: ShellSessionSummary[];
   /** Persisted status snapshot (services/tasks/ports/claude); null when none. */
@@ -608,7 +607,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
 
   let claudeSession: ClaudeSessionInfo | null = null;
   let codexSession: AgentSessionInfo | null = null;
-  let opencodeSession: OpencodeSessionInfo | null = null;
+  let opencodeSession: AgentSessionInfo | null = null;
   let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
     try {

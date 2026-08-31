@@ -6,7 +6,7 @@ import {
   DEFAULT_OPENCODE_SESSION,
   resolveOpencodeVolume,
   SHARED_OPENCODE_VOLUME,
-} from '../src/sync/agents/opencode.js';
+} from '../src/docker-sync.js';
 
 describe('resolveOpencodeVolume', () => {
   it('returns the shared volume name when isolate is false', () => {

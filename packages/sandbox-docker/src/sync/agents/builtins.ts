@@ -2,7 +2,7 @@
  * The three shipped agents, adapted to {@link AgentSyncModule} and registered.
  *
  * A STAGING POST, not the destination. Each adapter wraps functions that still
- * live in this package (codex has already left — see `@agentbox/agent-codex`); as an agent moves into `packages/agent-<id>`, its arm
+ * live in this package (codex and opencode have already left — see `@agentbox/agent-<id>`); as an agent moves into `packages/agent-<id>`, its arm
  * here goes away and the app registers the package's module instead. The
  * interface and every call site are converted first so that move is a file move
  * rather than a rewrite — and so the conversion is provable on its own, before
@@ -20,12 +20,6 @@ import {
   resolveClaudeVolume,
   warmUpClaudeCredentials,
 } from './claude.js';
-import {
-  buildOpencodeMounts,
-  ensureOpencodeVolume,
-  opencodeSessionInfo,
-  resolveOpencodeVolume,
-} from './opencode.js';
 import { registerAgentSyncModule, type AgentSyncModule } from './module.js';
 
 const claudeSyncModule: AgentSyncModule = {
@@ -58,18 +52,9 @@ function claudeNotes(r: Awaited<ReturnType<typeof ensureClaudeVolume>>): string[
   return notes;
 }
 
-const opencodeSyncModule: AgentSyncModule = {
-  id: 'opencode',
-  resolveVolume: (opts) => resolveOpencodeVolume(opts),
-  buildMounts: (spec, env) => buildOpencodeMounts(spec, env),
-  ensureVolume: async (spec, opts) => ensureOpencodeVolume(spec, opts),
-  sessionInfo: (container) => opencodeSessionInfo(container),
-};
-
 /** Register the shipped three. Idempotent; safe to call more than once. */
 export function registerBuiltinAgentSyncModules(): void {
   registerAgentSyncModule(claudeSyncModule);
-  registerAgentSyncModule(opencodeSyncModule);
 }
 
 // Registered on import. `sandbox-docker` has always had these three compiled in,

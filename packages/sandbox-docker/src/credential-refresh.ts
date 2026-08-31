@@ -30,7 +30,6 @@ import { hostClaudeAccessTokenExpired,
 import type { DockerCredentialRefresher } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE } from './image.js';
 import { SHARED_CLAUDE_VOLUME, warmUpClaudeCredentials } from './sync/agents/claude.js';
-import { SHARED_OPENCODE_VOLUME } from './sync/agents/opencode.js';
 import {
   extractCodexCredentials,
   extractOpencodeCredentials,
@@ -66,7 +65,7 @@ export const dockerCredentialRefresh: DockerCredentialRefresher = async (opts) =
     /* best-effort */
   }
   try {
-    await extractOpencodeCredentials(SHARED_OPENCODE_VOLUME, image);
+    await extractOpencodeCredentials(resolveAgentSpec('opencode').dockerVolume, image);
   } catch {
     /* best-effort */
   }

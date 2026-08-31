@@ -78,6 +78,7 @@
   "devDependencies": {
     "@agentbox/agent-codex": "workspace:*",
     "@agentbox/agent-modules": "workspace:*",
+    "@agentbox/agent-opencode": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",

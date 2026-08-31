@@ -32,10 +32,12 @@ import {
   recordLastAgent,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
-  startOpencodeSession,
-  ensureOpencodeInstalled,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
+import {
+  startOpencodeSession,
+  ensureOpencodeInstalled,
+} from '@agentbox/agent-opencode';
 import {
   startCodexSession,
   ensureCodexInstalled,

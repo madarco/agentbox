@@ -6,14 +6,16 @@
  */
 import {
   buildClaudeLoginRunArgv,
-  buildOpencodeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
-  SHARED_OPENCODE_VOLUME,
   syncClaudeCredentials,
   volumeClaudeCredentials,
-  volumeHasOpencodeAuth,
   warmUpClaudeCredentials,
 } from '@agentbox/sandbox-docker';
+import {
+  buildOpencodeLoginRunArgv,
+  SHARED_OPENCODE_VOLUME,
+  volumeHasOpencodeAuth,
+} from '@agentbox/agent-opencode';
 import {
   buildCodexLoginRunArgv,
   SHARED_CODEX_VOLUME,

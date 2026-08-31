@@ -27,7 +27,6 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
     hostClaudeLoginDead: sandboxDockerMock.hostClaudeLoginDead,
     imageExists: sandboxDockerMock.imageExists,
     renewClaudeCredential: sandboxDockerMock.renewClaudeCredential,
-    volumeHasOpencodeAuth: sandboxDockerMock.volumeHasOpencodeAuth,
   };
 });
 
@@ -36,6 +35,11 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
 vi.mock('@agentbox/agent-codex', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agentbox/agent-codex')>()),
   volumeHasCodexAuth: sandboxDockerMock.volumeHasCodexAuth,
+}));
+
+vi.mock('@agentbox/agent-opencode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/agent-opencode')>()),
+  volumeHasOpencodeAuth: sandboxDockerMock.volumeHasOpencodeAuth,
 }));
 
 const {

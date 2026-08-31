@@ -3,7 +3,14 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './shared.js';
+import {
+  buildTermSafeTmuxExec,
+  buildTmuxSessionArgs,
+  CONTAINER_USER,
+  ensureVolume,
+  volumeExists,
+  createDockerSyncTransport,
+} from '@agentbox/sandbox-docker';
 import {
   OPENCODE_PULL_CONFIG_ITEMS,
   OPENCODE_PULL_DATA_ITEMS,
@@ -11,8 +18,6 @@ import {
   resolveAgentSpec,
   AgentInstallError,
 } from '@agentbox/sandbox-core';
-import { ensureVolume, volumeExists } from '../../docker.js';
-import { createDockerSyncTransport } from '../sync-transport.js';
 
 /**
  * OpenCode support mirrors the Codex support in `codex.ts`. The one structural

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { buildOpencodeMounts } from '@agentbox/sandbox-docker';
+import { buildOpencodeMounts } from '@agentbox/agent-opencode';
 import { buildCloudBoxRunEnv } from '../src/sync/agent-credentials.js';
 
 /**

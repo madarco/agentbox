@@ -3,10 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   hostBackupHasCredentials,
+} from '@agentbox/sandbox-docker';
+import {
   OPENCODE_FORWARDED_ENV_KEYS,
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-opencode';
 import {
   SHARED_CODEX_VOLUME,
   volumeHasCodexAuth,

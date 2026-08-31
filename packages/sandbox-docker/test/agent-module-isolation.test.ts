@@ -25,11 +25,11 @@ const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 's
 /**
  * Module basenames that are one agent's implementation, not shared plumbing.
  *
- * This list SHRINKS: codex has left for `@agentbox/agent-codex`, and each
- * remaining agent follows. When it is empty this whole file goes, because there
+ * This list SHRINKS: codex and opencode have left for their own packages, and
+ * claude follows. When it is empty this whole file goes, because there
  * will be no agent implementation left in this package to isolate.
  */
-const AGENT_MODULES = ['claude', 'opencode'];
+const AGENT_MODULES = ['claude'];
 
 /**
  * `builtins.ts` is the one file allowed to import every agent: it is the

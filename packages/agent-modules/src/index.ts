@@ -18,6 +18,7 @@
  */
 
 import { registerCodexAgent } from '@agentbox/agent-codex';
+import { registerOpencodeAgent } from '@agentbox/agent-opencode';
 
 /**
  * Register every agent this build ships. Idempotent — registering twice
@@ -26,4 +27,5 @@ import { registerCodexAgent } from '@agentbox/agent-codex';
  */
 export function registerAllAgentModules(): void {
   registerCodexAgent();
+  registerOpencodeAgent();
 }

@@ -2,11 +2,13 @@ import { confirm, log } from '../lib/prompt.js';
 import { Command } from 'commander';
 import {
   DEFAULT_BOX_IMAGE,
+  stageItemsFromVolume,
+} from '@agentbox/sandbox-docker';
+import {
   pullOpencodeConfig,
   resolveOpencodeVolume,
   SHARED_OPENCODE_VOLUME,
-  stageItemsFromVolume,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-opencode';
 import {
   agentBoxConfigDir,
   opencodeStagedItems,
