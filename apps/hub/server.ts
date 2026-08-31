@@ -22,6 +22,7 @@ import {
   type CustodyStore,
 } from '@agentbox/relay/control-plane';
 import { setCloudBackendLoader, startRelayDaemon } from '@agentbox/relay/daemon';
+import { registerAllAgentModules } from '@agentbox/agent-modules';
 import {
   controlPlaneDeployPath,
   readPreparedStateRaw,
@@ -146,6 +147,11 @@ async function main(): Promise<void> {
   // startRelayDaemon: the keepalive loop memoizes a failed resolve per backend
   // name for the life of the process.
   setCloudBackendLoader(cloudBackendLoader);
+  // The hub creates docker boxes too (its own provider importer pulls
+  // @agentbox/sandbox-docker in), and `sandbox-docker` receives agents rather
+  // than importing them — so it needs the same one-call wiring the CLI does.
+  // Without it a hub-driven create dies on `requireAgentSyncModule`.
+  registerAllAgentModules();
 
   const hostReachTimeoutFromConfig = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.relay.hostReachTimeoutMs)

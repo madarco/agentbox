@@ -24,11 +24,12 @@
  * the one place the access-token check belongs — it asks "is this blob worth
  * refreshing?", not "is this login dead?".
  */
-import { hostClaudeAccessTokenExpired } from '@agentbox/sandbox-core';
+import { hostClaudeAccessTokenExpired,
+  resolveAgentSpec,
+} from '@agentbox/sandbox-core';
 import type { DockerCredentialRefresher } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE } from './image.js';
 import { SHARED_CLAUDE_VOLUME, warmUpClaudeCredentials } from './sync/agents/claude.js';
-import { SHARED_CODEX_VOLUME } from './sync/agents/codex.js';
 import { SHARED_OPENCODE_VOLUME } from './sync/agents/opencode.js';
 import {
   extractCodexCredentials,
@@ -60,7 +61,7 @@ export const dockerCredentialRefresh: DockerCredentialRefresher = async (opts) =
   // ~/.codex into the box like claude has), so always try when the docker
   // volume exists. Both helpers return { copied: false } on any error.
   try {
-    await extractCodexCredentials(SHARED_CODEX_VOLUME, image);
+    await extractCodexCredentials(resolveAgentSpec('codex').dockerVolume, image);
   } catch {
     /* best-effort */
   }

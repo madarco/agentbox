@@ -2,7 +2,7 @@
  * The three shipped agents, adapted to {@link AgentSyncModule} and registered.
  *
  * A STAGING POST, not the destination. Each adapter wraps functions that still
- * live in this package; as an agent moves into `packages/agent-<id>`, its arm
+ * live in this package (codex has already left — see `@agentbox/agent-codex`); as an agent moves into `packages/agent-<id>`, its arm
  * here goes away and the app registers the package's module instead. The
  * interface and every call site are converted first so that move is a file move
  * rather than a rewrite — and so the conversion is provable on its own, before
@@ -20,13 +20,6 @@ import {
   resolveClaudeVolume,
   warmUpClaudeCredentials,
 } from './claude.js';
-import {
-  buildCodexMounts,
-  codexSessionInfo,
-  ensureCodexVolume,
-  resolveCodexVolume,
-  seedCodexAgentsOverride,
-} from './codex.js';
 import {
   buildOpencodeMounts,
   ensureOpencodeVolume,
@@ -65,18 +58,6 @@ function claudeNotes(r: Awaited<ReturnType<typeof ensureClaudeVolume>>): string[
   return notes;
 }
 
-const codexSyncModule: AgentSyncModule = {
-  id: 'codex',
-  resolveVolume: (opts) => resolveCodexVolume(opts),
-  buildMounts: (spec, env) => buildCodexMounts(spec, env),
-  ensureVolume: async (spec, opts) => ensureCodexVolume(spec, opts),
-  sessionInfo: (container) => codexSessionInfo(container),
-  afterVolumeSync: async (volume, image) => {
-    const r = await seedCodexAgentsOverride(volume, image);
-    return { notes: r.seeded ? ['seeded AGENTS.override.md with box facts'] : [] };
-  },
-};
-
 const opencodeSyncModule: AgentSyncModule = {
   id: 'opencode',
   resolveVolume: (opts) => resolveOpencodeVolume(opts),
@@ -88,7 +69,6 @@ const opencodeSyncModule: AgentSyncModule = {
 /** Register the shipped three. Idempotent; safe to call more than once. */
 export function registerBuiltinAgentSyncModules(): void {
   registerAgentSyncModule(claudeSyncModule);
-  registerAgentSyncModule(codexSyncModule);
   registerAgentSyncModule(opencodeSyncModule);
 }
 

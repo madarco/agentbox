@@ -26,12 +26,14 @@ import { loadEffectiveConfig, unsetConfigValue } from '@agentbox/config';
 import {
   DEFAULT_BOX_IMAGE,
   SHARED_CLAUDE_VOLUME,
-  SHARED_CODEX_VOLUME,
   SHARED_OPENCODE_VOLUME,
   imageInfo,
   volumeExists,
   type ImageInfo,
 } from '@agentbox/sandbox-docker';
+import {
+  SHARED_CODEX_VOLUME,
+} from '@agentbox/agent-codex';
 import { Command } from 'commander';
 import { parseProviderWarning, UserFacingError } from '@agentbox/core';
 import type { Provider } from '@agentbox/core';

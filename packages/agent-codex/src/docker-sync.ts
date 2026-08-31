@@ -3,7 +3,14 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { buildTermSafeTmuxExec, buildTmuxSessionArgs, CONTAINER_USER } from './shared.js';
+import {
+  buildTermSafeTmuxExec,
+  buildTmuxSessionArgs,
+  CONTAINER_USER,
+  ensureVolume,
+  volumeExists,
+  createDockerSyncTransport,
+} from '@agentbox/sandbox-docker';
 import {
   CODEX_PULL_ITEMS,
   sanitizeCodexConfigForBox,
@@ -13,8 +20,6 @@ import {
   AgentInstallError,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
-import { ensureVolume, volumeExists } from '../../docker.js';
-import { createDockerSyncTransport } from '../sync-transport.js';
 
 /**
  * Codex support mirrors the Claude support in `claude.ts`, trimmed for what

@@ -32,12 +32,14 @@ import {
   recordLastAgent,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
-  startCodexSession,
   startOpencodeSession,
-  ensureCodexInstalled,
   ensureOpencodeInstalled,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
+import {
+  startCodexSession,
+  ensureCodexInstalled,
+} from '@agentbox/agent-codex';
 import {
   readJob,
   takeQueueLoginCode,

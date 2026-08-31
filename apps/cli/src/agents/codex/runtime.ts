@@ -12,20 +12,22 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { EffectiveConfig, UserConfig } from '@agentbox/config';
 import {
+  CODEX_CREDENTIALS_BACKUP_FILE,
+  ensureImage,
+  extractCodexCredentials,
+  type BoxRecord,
+} from '@agentbox/sandbox-docker';
+import {
   buildCodexAttachArgv,
   buildCodexLoginRunArgv,
-  CODEX_CREDENTIALS_BACKUP_FILE,
   CodexSessionError,
   codexSessionInfo,
   ensureCodexInstalled,
   ensureCodexVolume,
-  ensureImage,
-  extractCodexCredentials,
   runInteractiveCodexLogin,
   SHARED_CODEX_VOLUME,
   startCodexSession,
-  type BoxRecord,
-} from '@agentbox/sandbox-docker';
+} from '@agentbox/agent-codex';
 import { confirm, log, spinner } from '../../lib/prompt.js';
 import { codexAuthAvailable } from '../../lib/queue/assert-creds.js';
 import { codexLoginBinding } from '../../lib/agent-login-bindings.js';

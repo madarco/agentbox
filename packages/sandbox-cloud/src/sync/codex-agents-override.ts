@@ -1,8 +1,10 @@
+// NOTE: this file is Codex behavior sitting in the shared cloud layer, and the
+// import below says so out loud — it now reaches into `@agentbox/agent-codex`
+// because that is where the script builders moved. The file itself moves into
+// that package in the sandbox-cloud phase, at which point this dependency goes
+// away rather than being made permanent.
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import {
-  buildCodexAgentsOverrideScript,
-  CODEX_OVERRIDE_WROTE_MARKER,
-} from '@agentbox/sandbox-docker';
+import { buildCodexAgentsOverrideScript, CODEX_OVERRIDE_WROTE_MARKER } from '@agentbox/agent-codex';
 
 /** CODEX_HOME is `/home/vscode/.codex` on every provider (the box user is `vscode`). */
 const BOX_CODEX_HOME = '/home/vscode/.codex';

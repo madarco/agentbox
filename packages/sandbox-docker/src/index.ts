@@ -87,36 +87,6 @@ export {
   type VolumeClaudeCredentials,
 } from './sync/claude-credentials.js';
 export {
-  BOX_SYSTEM_PROMPT_PATH,
-  buildCodexAgentsOverrideScript,
-  CODEX_OVERRIDE_WROTE_MARKER,
-  buildCodexAttachArgv,
-  buildCodexLoginRunArgv,
-  buildCodexMounts,
-  CODEX_FORWARDED_ENV_KEYS,
-  CodexSessionError,
-  codexSessionInfo,
-  DEFAULT_CODEX_SESSION,
-  ensureCodexInstalled,
-  ensureCodexVolume,
-  pullCodexConfig,
-  resolveCodexVolume,
-  runInteractiveCodexLogin,
-  seedCodexAgentsOverride,
-  SHARED_CODEX_VOLUME,
-  startCodexSession,
-  volumeHasCodexAuth,
-  type CodexConfigSpec,
-  type CodexMountResult,
-  type CodexSessionInfo,
-  type EnsureCodexInstalledResult,
-  type EnsureCodexVolumeOptions,
-  type EnsureCodexVolumeResult,
-  type PullCodexOptions,
-  type PullCodexResult,
-  type StartCodexSessionOptions,
-} from './sync/agents/codex.js';
-export {
   buildAgentsMounts,
   ensureAgentsVolume,
   resolveAgentsVolume,
@@ -215,7 +185,7 @@ export {
   type PreparedDockerState,
   type ResolvedFingerprint,
 } from './prepared-state.js';
-export { volumeExists } from './docker.js';
+export { ensureVolume, volumeExists } from './docker.js';
 export {
   clearRelayNotice,
   DEFAULT_RELAY_PORT,

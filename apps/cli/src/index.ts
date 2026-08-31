@@ -34,6 +34,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 }
 
 import { Command } from 'commander';
+import { registerAllAgentModules } from '@agentbox/agent-modules';
 import { applyEngineOverrideAtStartup } from './engine-override.js';
 import { applyRelayPortAtStartup } from './relay-port-override.js';
 import { applyHostReachEnvAtStartup } from './host-reach-env.js';
@@ -170,6 +171,12 @@ setHubDockerContext(BUILD_CONTEXT_DIR);
 // volumes before seeding (Step 12): the docker `docker run` lives here, behind the
 // `@agentbox/sandbox-core` seam, so the cloud package never imports docker.
 setDockerCredentialRefresh(dockerCredentialRefresh);
+
+// Wire in every agent's behavior before anything can create or inspect a box.
+// `sandbox-docker` receives agents rather than importing them, so an app that
+// skips this gets `requireAgentSyncModule`'s throw at create time — which is why
+// it is one call here rather than a registration scattered per command.
+registerAllAgentModules();
 
 const program = new Command();
 

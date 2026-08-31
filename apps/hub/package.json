@@ -2,7 +2,7 @@
   "name": "@agentbox/hub",
   "version": "0.0.0",
   "private": true,
-  "description": "AgentBox hub — the Web UI + relay core as a Next.js app (localhost, hetzner, or Vercel)",
+  "description": "AgentBox hub \u2014 the Web UI + relay core as a Next.js app (localhost, hetzner, or Vercel)",
   "type": "module",
   "scripts": {
     "dev": "next dev",
@@ -20,6 +20,7 @@
     "node": ">=22.5"
   },
   "dependencies": {
+    "@agentbox/agent-modules": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/ctl": "workspace:*",

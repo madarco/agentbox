@@ -7,7 +7,7 @@ import {
   DEFAULT_CODEX_SESSION,
   resolveCodexVolume,
   SHARED_CODEX_VOLUME,
-} from '../src/sync/agents/codex.js';
+} from '../src/docker-sync.js';
 
 describe('resolveCodexVolume', () => {
   it('returns the shared volume name when isolate is false', () => {

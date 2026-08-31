@@ -30,9 +30,8 @@ import { renderCarryEntries } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
 import type { ClaudeConfigSpec } from './agents/claude.js';
 import { ensureClaudeVolume } from './agents/claude.js';
-import { requireAgentSyncModule } from './agents/module.js';
+import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.js';
 import { syncClaudeCredentials } from './claude-credentials.js';
-import type { CodexConfigSpec } from './agents/codex.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
 import type { OpencodeConfigSpec } from './agents/opencode.js';
@@ -53,7 +52,7 @@ export interface DockerSyncHandle {
   /** Whether the claude config volume is per-box isolated (gates the credential extract). */
   claudeIsolate?: boolean;
   /** Resolved codex spec, or undefined when codex isn't wanted (host has no ~/.codex + no `agentbox codex`). */
-  codexSpec?: CodexConfigSpec;
+  codexSpec?: AgentVolumeChoice;
   /** Resolved agents (~/.agents) spec, or undefined when the host has no ~/.agents. */
   agentsSpec?: AgentsConfigSpec;
   /** Resolved opencode spec, or undefined when opencode isn't wanted. */

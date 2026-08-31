@@ -27,10 +27,16 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
     hostClaudeLoginDead: sandboxDockerMock.hostClaudeLoginDead,
     imageExists: sandboxDockerMock.imageExists,
     renewClaudeCredential: sandboxDockerMock.renewClaudeCredential,
-    volumeHasCodexAuth: sandboxDockerMock.volumeHasCodexAuth,
     volumeHasOpencodeAuth: sandboxDockerMock.volumeHasOpencodeAuth,
   };
 });
+
+// codex's volume probe moved with codex into `@agentbox/agent-codex`; the mock
+// has to follow the symbol, not the package it used to be re-exported from.
+vi.mock('@agentbox/agent-codex', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@agentbox/agent-codex')>()),
+  volumeHasCodexAuth: sandboxDockerMock.volumeHasCodexAuth,
+}));
 
 const {
   assertAgentCredsAvailable,

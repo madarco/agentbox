@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import {
   hostBackupHasCredentials,
   OPENCODE_FORWARDED_ENV_KEYS,
-  SHARED_CODEX_VOLUME,
   SHARED_OPENCODE_VOLUME,
-  volumeHasCodexAuth,
   volumeHasOpencodeAuth,
 } from '@agentbox/sandbox-docker';
+import {
+  SHARED_CODEX_VOLUME,
+  volumeHasCodexAuth,
+} from '@agentbox/agent-codex';
 import type { QueueAgentKind } from '@agentbox/relay';
 import { normalizeLastAgent } from '@agentbox/core';
 import { resolveClaudeAuth } from '../../auth.js';

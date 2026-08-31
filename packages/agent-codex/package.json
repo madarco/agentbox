@@ -1,8 +1,8 @@
 {
-  "name": "@agentbox/sandbox-cloud",
+  "name": "@agentbox/agent-codex",
   "version": "0.0.0",
   "private": true,
-  "description": "Cloud-common provider scaffolding: composes a full Provider from a thin CloudBackend",
+  "description": "Codex as an AgentBox agent package \u2014 its docker behavior, implementing AgentSyncModule",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,19 +19,17 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "lint": "eslint src test",
-    "test": "vitest run",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentbox/agent-codex": "workspace:*",
     "@agentbox/config": "workspace:*",
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
-    "execa": "^9.5.2",
-    "yaml": "^2.6.1"
+    "execa": "^9.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

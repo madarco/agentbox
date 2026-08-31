@@ -11,7 +11,6 @@ import {
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
 import type { ClaudeSessionInfo } from './sync/agents/claude.js';
-import type { CodexSessionInfo } from './sync/agents/codex.js';
 import { SHARED_AGENTS_VOLUME } from './sync/agents/skills.js';
 import type { OpencodeSessionInfo } from './sync/agents/opencode.js';
 import { listShellSessions, type ShellSessionSummary } from './shell-session.js';
@@ -111,7 +110,7 @@ export interface ListedBox extends BoxRecord {
   /** Live shell tmux sessions; `[]` for non-running boxes (can't `docker exec`). */
   shellSessions: ShellSessionSummary[];
   /** Live probe of the Codex tmux session; null when the box isn't running. */
-  codexSession: CodexSessionInfo | null;
+  codexSession: AgentSessionInfo | null;
   /** Live probe of the OpenCode tmux session; null when the box isn't running. */
   opencodeSession: OpencodeSessionInfo | null;
 }
@@ -576,7 +575,7 @@ export interface InspectedBox {
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'claude' session. */
   claudeSession: ClaudeSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'codex' session. */
-  codexSession: CodexSessionInfo | null;
+  codexSession: AgentSessionInfo | null;
   /** Null when the container isn't running; otherwise best-effort probe of the tmux 'opencode' session. */
   opencodeSession: OpencodeSessionInfo | null;
   /** Live shell tmux sessions; `[]` when the container isn't running. */
@@ -608,7 +607,7 @@ export async function inspectBox(idOrName: string): Promise<InspectedBox> {
   const dockerJson = await inspectContainer(record.container);
 
   let claudeSession: ClaudeSessionInfo | null = null;
-  let codexSession: CodexSessionInfo | null = null;
+  let codexSession: AgentSessionInfo | null = null;
   let opencodeSession: OpencodeSessionInfo | null = null;
   let shellSessions: ShellSessionSummary[] = [];
   if (state === 'running') {
