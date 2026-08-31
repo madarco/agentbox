@@ -218,11 +218,7 @@ export interface AgentRuntime {
      * nothing back — so injecting them is what lets this action live in the
      * agent's own package instead of the app.
      */
-    run(
-      args: string[],
-      opts: Record<string, unknown>,
-      host: AgentLoginHost,
-    ): Promise<void>;
+    run(args: string[], opts: Record<string, unknown>, host: AgentLoginHost): Promise<void>;
   };
   /**
    * Whether `agentbox <agent>` probes for the binary on a freshly created box.
@@ -272,6 +268,86 @@ export interface AgentCommandText {
 }
 
 /** What the create body has already resolved when a hook runs. */
+/**
+ * App capabilities an agent's hooks can ask for.
+ *
+ * These are things the CLI *application* owns — the setup wizard, base-image
+ * freshness and re-bake, host clipboard capture, plan-file staging. An agent
+ * package cannot import them: it sits BELOW `apps/cli` in the graph, so
+ * reaching for them directly would make `apps/cli -> agent package -> apps/cli`.
+ *
+ * So they are passed in. That is the whole reason this interface exists, and it
+ * is what let claude's command descriptor move into `@agentbox/agent-claude`
+ * alongside the other three. Nothing here is claude-specific: any agent that
+ * wants a setup wizard or image paste gets the same seam.
+ */
+export interface AgentHostServices {
+  /**
+   * Run the first-run setup wizard, and act on its answer.
+   *
+   * Deliberately one call rather than three. The caller used to resolve the
+   * create route, decide whether this machine's base was even relevant, grade
+   * its freshness, run the wizard, and re-bake on `rebuildBase` — five steps of
+   * pure app policy that had nothing to do with the agent asking for them. All
+   * of it is on this side of the seam now; the agent passes the one thing only
+   * it knows and reads plain data back.
+   */
+  setupWizard(req: AgentSetupWizardRequest): Promise<AgentSetupWizardOutcome>;
+  /**
+   * Stage a host file for upload into the box as an agent "plan" — resolved on
+   * the host so a bad path fails before the user pays for a box. Throws on a
+   * missing file; the message is already user-facing.
+   */
+  resolvePlanFile(req: AgentPlanFileRequest): Promise<ResolvedTeleport>;
+  /** Host clipboard / image upload, for an agent whose TUI accepts pasted images. */
+  clipboard: AgentClipboardServices;
+  /** One-time nudge to install the host skill. Safe to call unconditionally. */
+  showInstallHint(): void;
+}
+
+export interface AgentSetupWizardRequest {
+  /**
+   * False when the user named a checkpoint explicitly (`--snapshot`). A default
+   * that turned out to be stale or dead may be discarded; an explicit one never is.
+   */
+  checkpointFromDefault: boolean;
+}
+
+/**
+ * The wizard's answer, as an agent sees it. A subset of the app's own outcome:
+ * `rebuildBase` is absent on purpose — the re-bake already happened behind
+ * {@link AgentHostServices.setupWizard}.
+ */
+export interface AgentSetupWizardOutcome {
+  action: 'proceed' | 'switch-to-claude' | 'launch-with-prompt';
+  /** The opening turn the user typed, when `action` is `launch-with-prompt`. */
+  initialPrompt?: string;
+  /** Host files picked in the env-import multiselect, relative to the workspace. */
+  envFilesToImport?: string[];
+  /** The resolved default checkpoint must not be used — stale, or its artifact is gone. */
+  discardCheckpoint?: boolean;
+}
+
+export interface AgentPlanFileRequest {
+  /** Host path, `~` allowed. */
+  path: string;
+  hostCwd: string;
+  log: (line: string) => void;
+}
+
+export interface AgentClipboardServices {
+  /**
+   * Whether this host can capture a clipboard image at all (macOS, or a Linux
+   * desktop with xclip/wl-paste). When false the agent should leave Ctrl+V
+   * alone rather than intercept it for a guaranteed-empty paste.
+   */
+  available(): Promise<boolean>;
+  /** Paste the host clipboard image into the box. */
+  pasteImage(box: BoxRecord): Promise<'pasted' | 'no-image' | 'error'>;
+  /** Upload a host image file into the box; resolves to the in-box path, or null. */
+  pasteImageFile(box: BoxRecord, hostPath: string): Promise<string | null>;
+}
+
 export interface AgentCreateContext {
   opts: Record<string, unknown>;
   /**
@@ -291,6 +367,8 @@ export interface AgentCreateContext {
   writeLog(line: string): void;
   /** Close the command log and exit — hooks that refuse must not leak the fd. */
   fail(message: string, code?: number): never;
+  /** App capabilities a hook may need; see {@link AgentHostServices}. */
+  host: AgentHostServices;
 }
 
 /**
@@ -378,8 +456,15 @@ export interface AgentCommandHooks {
     box: BoxRecord,
     o: { volume: string; message: (line: string) => void },
   ): Promise<HookOutput | void>;
-  /** Extra wrapped-attach wiring (claude's clipboard paste handlers). */
-  attachExtras?(box: BoxRecord): Promise<AttachExtras>;
+  /**
+   * Extra wrapped-attach wiring (claude's clipboard paste handlers).
+   *
+   * Takes the clipboard services alone, not the full {@link AgentHostServices}:
+   * attach runs outside a create, so there is no route, checkpoint or wizard to
+   * hand it. Passing a bag whose other members would throw would be a lie about
+   * what is available here.
+   */
+  attachExtras?(box: BoxRecord, clipboard: AgentClipboardServices): Promise<AttachExtras>;
   /** Last word on the built command — extra options, extra subcommands. */
   extendCommand?(cmd: Command, subcommands: AgentSubcommands): void;
 }

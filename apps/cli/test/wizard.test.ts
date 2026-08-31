@@ -29,7 +29,7 @@ describe('maybeRunSetupWizard — create→claude autolaunch handoff', () => {
     const outcome = await maybeRunSetupWizard({
       workspace: process.cwd(),
       yes: false,
-      command: 'claude',
+      command: 'agent',
     });
     expect(outcome.action).toBe('launch-with-prompt');
     expect(outcome.discardCheckpoint).toBe(true);

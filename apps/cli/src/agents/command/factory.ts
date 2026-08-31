@@ -25,6 +25,7 @@ import {
   type AgentCreateOptions,
 } from './options.js';
 import type { AgentCliSpec, AgentSubcommands, AttachWrapped } from '@agentbox/cli-kit';
+import { hostClipboard } from './host-services.js';
 
 /** What an agent declares; the factory fills in `attachWrapped`. */
 export type AgentCliSpecInput = Omit<AgentCliSpec, 'attachWrapped'>;
@@ -41,7 +42,7 @@ function buildAttachWrapped(a: AgentCliSpec): AttachWrapped {
     onError?: (msg: string) => void,
     openIn?: AttachOpenIn,
   ): Promise<never> {
-    const extras = (await a.hooks?.attachExtras?.(box)) ?? {};
+    const extras = (await a.hooks?.attachExtras?.(box, hostClipboard)) ?? {};
     const code = await runWrappedAttach({
       container: box.container,
       dockerArgv: a.runtime.buildAttachArgv(box.container, sessionName),

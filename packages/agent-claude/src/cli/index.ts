@@ -11,6 +11,7 @@
  * hook contract for every agent.
  */
 export { claudeRuntime } from './runtime.js';
+export { claudeCliSpec } from './cli-spec.js';
 export { agentModule } from './module.js';
 export { CLAUDE_LOGIN_SPEC, extractOAuthUrl } from './login.js';
 export { claudeLoginBinding } from './login-binding.js';

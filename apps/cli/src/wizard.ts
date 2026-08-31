@@ -92,7 +92,13 @@ export interface WizardOutcome {
 interface WizardArgs {
   workspace: string;
   yes: boolean;
-  command: 'create' | 'claude';
+  /**
+   * Which pass is asking: the outer `agentbox create` wizard, or an agent
+   * command's own pass. It was spelled `'claude'` when claude was the only
+   * agent that ran a wizard — the distinction was never about claude, and any
+   * agent can reach this through `AgentHostServices.setupWizard` now.
+   */
+  command: 'create' | 'agent';
   /**
    * Resolved checkpoint ref this box will start from (explicit `--snapshot`
    * or the project's `box.defaultCheckpoint`), if any. Classified via
@@ -179,7 +185,7 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
   // WIZARD_ENV_FILES_ENV and flow through so claude's action handler can pass
   // them to createBox.
   if (process.env[WIZARD_AUTOLAUNCH_ENV] === '1') {
-    if (args.command !== 'claude') return { action: 'proceed' };
+    if (args.command !== 'agent') return { action: 'proceed' };
     const envFiles = parseEnvFilesFromEnv(process.env[WIZARD_ENV_FILES_ENV]);
     const proj = await findProjectRoot(args.workspace);
     // The outer `agentbox create` pass already prompted and the user chose to
@@ -439,7 +445,7 @@ function nonInteractiveOutcome(
   if (usableAsIs || proj.hasAgentboxYaml) {
     return { action: 'proceed', envFilesToImport, discardCheckpoint };
   }
-  if (args.command === 'claude') {
+  if (args.command === 'agent') {
     return {
       action: 'launch-with-prompt',
       initialPrompt: buildSetupInitialPrompt(proj.root, proj.hasAgentboxYaml),

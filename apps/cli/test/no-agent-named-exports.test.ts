@@ -109,7 +109,21 @@ const ALLOWLIST: Record<string, string> = {
  *    one place the plan says stays.
  */
 const NOT_APPLICABLE = [
-  'apps/cli/src/agents/',
+  // The four per-agent command files, and ONLY those. Each is a shim that
+  // imports its package's descriptor and hands it to `buildAgentCommand`, so
+  // `claudeCommand` / `codexCommand` / … are exported from a path that names the
+  // agent — correct, and unavoidable while the two dispatch tables need literal,
+  // statically-resolvable import specifiers.
+  //
+  // This used to exclude the whole of `apps/cli/src/agents/`, which meant the
+  // guard never looked at claude's 289-line descriptor sitting there. Narrowed
+  // once that descriptor moved into `@agentbox/agent-claude`: everything else
+  // under `agents/` — the create/attach pipeline, the two tables — is now
+  // measured like any other shared code.
+  'apps/cli/src/agents/claude/command.ts',
+  'apps/cli/src/agents/codex/command.ts',
+  'apps/cli/src/agents/opencode/command.ts',
+  'apps/cli/src/agents/example/command.ts',
   'packages/ctl/src/claude-scraper.ts',
   'packages/ctl/src/codex-scraper.ts',
   // `codexAddUrl` here is the Codex.app `codex://` deep link — the DESKTOP APP,

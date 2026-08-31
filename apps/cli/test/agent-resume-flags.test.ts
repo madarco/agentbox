@@ -20,6 +20,30 @@ import type { AgentCreateOptions } from '../src/agents/command/options.js';
 /** `ctx.fail` normally `process.exit`s; here it throws so we can assert on it. */
 class Failed extends Error {}
 
+/**
+ * A host-services bag whose every member throws.
+ *
+ * These tests only exercise resume-flag parsing, which must not reach the setup
+ * wizard, a re-bake or the clipboard. A stub that returned plausible values
+ * would let such a call slip through silently; this one turns it into a failure
+ * naming the member that was touched.
+ */
+function unreachableHost(): AgentCreateContext['host'] {
+  const nope = (member: string) => (): never => {
+    throw new Error(`host.${member} must not be reached by a resume-flag test`);
+  };
+  return {
+    setupWizard: nope('setupWizard'),
+    resolvePlanFile: nope('resolvePlanFile'),
+    showInstallHint: nope('showInstallHint'),
+    clipboard: {
+      available: nope('clipboard.available'),
+      pasteImage: nope('clipboard.pasteImage'),
+      pasteImageFile: nope('clipboard.pasteImageFile'),
+    },
+  };
+}
+
 function fakeCtx(spec: AgentCliSpec, overrides: Partial<AgentCreateContext> = {}) {
   const fail = vi.fn((message: string) => {
     throw new Failed(message);
@@ -33,6 +57,7 @@ function fakeCtx(spec: AgentCliSpec, overrides: Partial<AgentCreateContext> = {}
     writeLog: () => {},
     fail: fail as unknown as AgentCreateContext['fail'],
     routing: async () => ({ where: 'local' as const }),
+    host: unreachableHost(),
     ...overrides,
   } satisfies AgentCreateContext;
   void spec;

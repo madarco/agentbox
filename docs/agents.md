@@ -178,18 +178,26 @@ message instead of blocking on a password read nothing will answer.
    place to work (see step 4).
    Keep it JSON-serializable — no closures — so the descriptor can later be
    shipped into a box whose `agentbox-ctl` was baked before the agent existed.
-2. **Add the agent's folder** under `apps/cli/src/agents/<id>/` and its arm in
-   the `AGENT_MODULES` table (`apps/cli/src/agents/index.ts`) — the guided-login
-   detector, and a session-teleport resolver if the agent declares
-   `caps.teleport: 'full'`. Keep the `import()` specifier LITERAL; a computed one
-   is not bundled and `MODULE_NOT_FOUND`s in the published CLI only.
+2. **Add the agent's package** — `packages/agent-<id>/`, with its CLI surface
+   under `src/cli/` — and its arm in the `AGENT_MODULES` table
+   (`apps/cli/src/agents/index.ts`): the guided-login detector, and a
+   session-teleport resolver if the agent declares `caps.teleport: 'full'`. Keep
+   the `import()` specifier LITERAL; a computed one is not bundled and
+   `MODULE_NOT_FOUND`s in the published CLI only.
    *No identity union to open* — `AgentId` is an open `string`, so step 1 is what
    makes the agent real to every consumer that reads the registry.
-3. **Add the CLI command** — a descriptor, not a clone. In the same
-   `apps/cli/src/agents/<id>/` folder: `runtime.ts` (the docker bindings and the
-   agent's own login code) and `command.ts` (`buildAgentCommand({...})` with the
-   help strings that are genuinely yours), plus one arm in
-   `apps/cli/src/agents/commands.ts`. `index.ts`, `attach.ts`,
+3. **Add the CLI command** — a descriptor, not a clone. In the package's
+   `src/cli/`: `runtime.ts` (the docker bindings and the agent's own login code)
+   and `cli-spec.ts` (an `AgentCliSpec` with the help strings that are genuinely
+   yours). The app side is a ~15-line shim at `apps/cli/src/agents/<id>/command.ts`
+   that hands your spec to `buildAgentCommand`, plus one arm in
+   `apps/cli/src/agents/commands.ts`. The shim exists only because the two
+   dispatch tables need literal, statically-resolvable specifiers — the factory's
+   closure is the whole create/attach pipeline, which does not belong in a package.
+   If a hook of yours needs something the APP owns (the setup wizard, a re-bake,
+   the host clipboard), take it from `ctx.host` / the `clipboard` argument rather
+   than importing it: a package that imports `apps/cli` closes a cycle.
+   `index.ts`, `attach.ts`,
    `agent-sessions.ts`, `fork.ts` and `argv-prefix.ts` all read the tables, so
    there is nothing to register in any of them.
    *Nothing per-agent left in `list.ts`:* it iterates the box's agent status map,
@@ -494,7 +502,8 @@ count suggested: normalised against codex it added exactly **four** options
 the headless-login machinery and the `--plan` / plugin-rebuild blocks woven
 through a body that was otherwise the same.
 
-They are now one factory (`apps/cli/src/agents/command/`) and three descriptors:
+They are now one factory (`apps/cli/src/agents/command/`) and one descriptor per
+agent, each living in its own package:
 
 | file | holds |
 | --- | --- |
@@ -502,8 +511,15 @@ They are now one factory (`apps/cli/src/agents/command/`) and three descriptors:
 | `agents/command/create-action.ts` | the create body: `-i` queue path, gates, hub route, cloud delegate, docker create |
 | `agents/command/start-attach.ts` | `<agent> start` / `<agent> attach` |
 | `agents/command/login.ts` | the default `<agent> login` |
-| `agents/<id>/runtime.ts` | the agent's docker bindings + its own login code |
-| `agents/<id>/command.ts` | the descriptor: help strings that genuinely differ, plus hooks |
+| `agents/command/host-services.ts` | the app capabilities hooks reach through `ctx.host` |
+| `packages/agent-<id>/src/cli/runtime.ts` | the agent's docker bindings + its own login code |
+| `packages/agent-<id>/src/cli/cli-spec.ts` | the descriptor: help strings that genuinely differ, plus hooks |
+| `agents/<id>/command.ts` | a ~15-line shim: literal import of the spec, into the factory |
+
+Claude's descriptor was the last to move, and the reason it lagged is worth
+keeping: it is the only agent with `hooks`, and those hooks called UP into the
+app. `AgentHostServices` inverted them — the agent asks, the app supplies — which
+also made the setup wizard reachable by any agent instead of just claude.
 
 Two tables, both with literal specifiers, both under `agents/`: the lazy
 `AGENT_MODULES` (`index.ts`) for spec/login/teleport/runtime, and the eager

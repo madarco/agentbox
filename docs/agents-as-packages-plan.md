@@ -369,9 +369,37 @@ That emptied `assert-creds.ts` of agent names, and the stale-exemption half of
 the `no-agent-named-exports` guard fired on the next run demanding its removal —
 the allowlist is 27 files, down from 29.
 
-**Next (2b, part 2):** extract the remaining nine-module kit and move codex +
-opencode. Then claude's heavy six, most likely by inverting them through the
-existing `AgentCliSpec` ctx seam rather than extracting `control-plane.ts`.
+**Done (2b, part 2 + 2d):** the kit is `@agentbox/cli-kit`, and codex, opencode
+and the demo agent each ship their own `AgentCliSpec`.
+
+**Done (2c): claude's descriptor moved, and the six heavy imports were inverted
+rather than extracted.** `control-plane.ts` never had to move.
+
+The descriptor could not follow codex's and opencode's while its hooks reached UP
+into the app — `runPrepare`, `maybeRunSetupWizard`, `evaluateBaseFreshness`,
+`providerForBox`, the two paste helpers. An agent package sits below `apps/cli`,
+so importing them would have closed an `apps/cli -> package -> apps/cli` cycle.
+They are passed IN now, through `AgentHostServices` on the create context and a
+`clipboard` argument to `attachExtras`.
+
+Two things fell out of doing it properly:
+
+- **Three of the six collapsed into one.** claude never *read* `baseStatus` — it
+  graded the base, decided whether a hub route made that grading irrelevant, ran
+  the wizard, and re-baked on `rebuildBase`, all to forward a value it never
+  inspected. That is app policy end to end, so it lives behind a single
+  `host.setupWizard()` and the agent passes only what it knows
+  (`checkpointFromDefault`). `buildPromptArgs` needed no seam at all: it is a
+  one-line wrapper over `resolveAgentLauncher`, which agent packages already have.
+- **The wizard's `command: 'create' | 'claude'` discriminant was never about
+  claude** — it distinguished the outer `agentbox create` pass from an agent's
+  own. Spelled `'agent'` now, so any agent reaching `host.setupWizard` gets the
+  real behavior instead of the `!== 'claude'` early return.
+
+`apps/cli/src/agents/` is now the pipeline plus four ~15-line shims. The guard's
+blanket `apps/cli/src/agents/` exclusion — which had meant claude's 289-line
+descriptor was never measured — is narrowed to those four files, so everything
+else in the folder is checked like any other shared code.
 
 **Phase 4 — `sandbox-cloud` — PARTLY DONE (`568cac29`).** `AgentCloudModule` is
 the cloud twin of `AgentSyncModule`; codex's `AGENTS.override` fold and

@@ -65,6 +65,7 @@ import { handleLifecycleError } from '../../commands/_errors.js';
 import { isolateOptionKey, type AgentCreateOptions } from './options.js';
 import { RESUME_SEED } from '@agentbox/cli-kit';
 import type { AgentCliSpec, AgentCreateContext, AgentPreflight } from '@agentbox/cli-kit';
+import { makeHostServices } from './host-services.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {
@@ -223,6 +224,20 @@ export async function runAgentCreate(
       urlFlag: opts.url,
     }));
 
+  // Read through getters, not values: the body resolves both AFTER this bag is
+  // built (`checkpointRef` below, `preflight` on the next line), and a hook only
+  // ever calls into it later — from `beforeCreate`, by which point both are set.
+  const late: { checkpointRef?: string; preflight?: AgentPreflight } = {};
+  const host = makeHostServices({
+    workspace: opts.workspace,
+    providerName,
+    cfg,
+    yes: !!opts.yes,
+    routing,
+    checkpointRef: () => late.checkpointRef,
+    hubIncompatible: () => Boolean(late.preflight?.hubIncompatible),
+  });
+
   const ctx: AgentCreateContext = {
     opts: opts as unknown as Record<string, unknown>,
     workspace: opts.workspace,
@@ -232,12 +247,14 @@ export async function runAgentCreate(
     writeLog: (line) => cmdLog.write(line),
     fail,
     routing,
+    host,
   };
 
   // Host state resolved BEFORE any box work, so a missing session id or a bad
   // --plan path fails fast and the user doesn't pay for a doomed box.
   const base = await resolveResumeSeed(a, ctx, opts);
   const preflight: AgentPreflight = a.hooks?.preflight ? await a.hooks.preflight(ctx, base) : base;
+  late.preflight = preflight;
 
   // Docker off under a remote hub (Step 12): a docker box built here can't run
   // with the laptop off, so it's refused under a control box unless hub.mode=local.
@@ -495,6 +512,7 @@ export async function runAgentCreate(
   // Whatever the agent wants to do between "config resolved" and "box built" —
   // claude's setup wizard, which can re-bake a stale base, discard a dead
   // checkpoint, and seed the first turn.
+  late.checkpointRef = checkpointRef;
   const adjust = (await a.hooks?.beforeCreate?.({ ...ctx, checkpointRef, preflight })) ?? {};
   if (adjust.done) {
     cmdLog.close();

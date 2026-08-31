@@ -39,11 +39,7 @@ export {
   type TerminalCtor,
 } from './pty-backend.js';
 export { clampSpinnerLine } from './spinner-line.js';
-export {
-  BOX_WORKSPACE,
-  BOX_WORKSPACE_ENCODED,
-  encodeClaudeProjectsDir,
-} from './cwd-encoding.js';
+export { BOX_WORKSPACE, BOX_WORKSPACE_ENCODED, encodeClaudeProjectsDir } from './cwd-encoding.js';
 export {
   TeleportError,
   type TeleportAgent,
@@ -103,6 +99,11 @@ export type {
   AgentPreflight,
   AgentCreateAdjust,
   AgentBeforeCreateContext,
+  AgentHostServices,
+  AgentSetupWizardRequest,
+  AgentSetupWizardOutcome,
+  AgentPlanFileRequest,
+  AgentClipboardServices,
   AgentCommandHooks,
   HookOutput,
   AgentSubcommands,
@@ -112,8 +113,4 @@ export type {
 } from './agent-contract.js';
 export { RESUME_SEED } from './agent-contract.js';
 
-export {
-  defineAgentModule,
-  type AgentModule,
-  type TeleportResolver,
-} from './agent-module.js';
+export { defineAgentModule, type AgentModule, type TeleportResolver } from './agent-module.js';
