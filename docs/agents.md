@@ -54,7 +54,14 @@ byte-identical in layout; no provision script installs an agent any more.
 - **`postInstall`** owns the agent's home + credential dirs (`~/.claude`,
   `~/.codex`, `~/.agentbox-creds/<agent>/` and the symlinks that pivot each
   agent's credential path into a mounted volume). It lives here, not in the
-  Dockerfile, so every install site produces the same layout.
+  Dockerfile, so every install site produces the same layout. Use
+  `agentDirPrelude()` for the first two steps rather than writing them by hand:
+  **`~/.agentbox-creds` is a MOUNT at runtime, not a directory the recipe owns.**
+  On Daytona it is virtiofs — `drwxrwxrwx root root`, and `chown`/`chmod` there
+  return EPERM *even for root*. A recipe that folds it into `install -d -o
+  vscode` works at bake time, when nothing is mounted yet, and fails every
+  runtime install. The helper does `install -d` for the agent's own dirs,
+  `mkdir -p` for its subdir of the mount, and a best-effort chown of the mount.
 - **`alternates`** are other ways to install the same agent, keyed by the value
   of the setting named in `alternatesFrom`. Only claude declares one:
   `claude.install: npm` is the escape hatch for hosts whose egress IP the Claude

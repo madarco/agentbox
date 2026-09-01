@@ -13,6 +13,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Adding an agent to a live cloud box no longer fails on Daytona.** An agent's
+  post-install claimed ownership of `~/.agentbox-creds`, which at runtime is the
+  mounted credentials volume — virtiofs on Daytona, where `chown` fails even for
+  root. It now creates its subdir without asserting ownership.
 - **Codex boxes no longer receive your host's Codex databases.** Codex writes six
   SQLite databases under `~/.codex`; the exclude list named two families, so
   `goals_*`, `memories_*` and `queue_*` — nine files with their `-wal`/`-shm` —
