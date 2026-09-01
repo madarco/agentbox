@@ -54,9 +54,11 @@ const ROOTS = [
  * removes it. Paths are repo-relative.
  */
 const ALLOWLIST: Record<string, string> = {
-  // Phase 4 — the `sandbox-core` / `sandbox-cloud` moves. Gated: `host-stage.ts`
-  // imports the first two, and ITS exports are published SDK surface, so the
-  // move is an SDK_API_VERSION bump rather than a refactor.
+  // Phase 4 — the `sandbox-core` moves. The gate this used to name ("host-stage
+  // imports the first two, and ITS exports are published SDK surface") was
+  // checked and is false: `host-stage.ts` imports none of them, and the SDK
+  // exports none of these symbols — it never imports `@agentbox/sandbox-docker`
+  // at all. What actually blocks each one is in docs/agents-remaining-work.md.
   'packages/sandbox-core/src/sync/agent-pull.ts': 'phase 4',
   'packages/sandbox-core/src/sync/agents/claude/paths.ts': 'phase 4',
   'packages/sandbox-core/src/claude-app-config.ts': 'phase 4',
