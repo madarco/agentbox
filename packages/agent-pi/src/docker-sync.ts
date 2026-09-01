@@ -206,13 +206,19 @@ export interface StartPiSessionOptions {
 /**
  * Start a detached tmux session running the Pi TUI inside the container.
  *
- * `launchFlags` (`-a`) are NOT prepended here — the shared launch path applies
- * them from the registry for every agent, on docker and on every cloud. Adding
- * them again would pass `-a` twice.
+ * `launchFlags` (`-a`) are prepended HERE, from the registry row.
+ *
+ * There is no shared docker launch path that applies them: the generic one
+ * lives in `sandbox-cloud`'s `detached-agent.ts` and covers the CLOUD
+ * providers only, so on docker each agent's own starter must do it (codex's
+ * does, for its hook-trust flags). Omitting them made `agentbox pi` on docker
+ * launch bare, so a repo carrying a `.pi/` dir blocked on Pi's project-trust
+ * prompt -- which nothing on the host can answer.
  */
 export async function startPiSession(opts: StartPiSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_PI_SESSION;
-  const cmd = [PI_SPEC.binary, ...opts.piArgs].map(shQuote).join(' ');
+  const flags = PI_SPEC.launchFlags ?? [];
+  const cmd = [PI_SPEC.binary, ...flags, ...opts.piArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
   for (const [k, v] of Object.entries(PI_BOX_RUN_ENV)) envFlags.push('-e', `${k}=${v}`);

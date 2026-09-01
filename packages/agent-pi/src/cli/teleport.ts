@@ -107,7 +107,7 @@ export async function resolvePiTeleport(opts: PiResolveOptions): Promise<Resolve
 
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-teleport-pi-'));
   const stagedFile = join(stage, picked.fileName);
-  await rewritePiSession(picked.hostPath, stagedFile, opts.hostCwd);
+  await rewritePiSession(picked.hostPath, stagedFile);
   opts.log?.(`teleport: pi session ${picked.uuid} staged for upload`);
 
   return {
@@ -187,7 +187,7 @@ async function peekPiHeader(
  * other line is the conversation and is written back byte-for-byte — rewriting
  * inside a transcript would silently edit what the user (or the model) said.
  */
-async function rewritePiSession(src: string, dst: string, hostCwd: string): Promise<void> {
+async function rewritePiSession(src: string, dst: string): Promise<void> {
   const raw = await readFile(src, 'utf8');
   const lines = raw.split('\n');
   const out: string[] = [];
@@ -207,7 +207,14 @@ async function rewritePiSession(src: string, dst: string, hostCwd: string): Prom
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const obj = parsed as { type?: unknown; cwd?: unknown };
       if (obj.type === 'session') {
-        if (typeof obj.cwd === 'string') obj.cwd = rewriteHostPath(obj.cwd, hostCwd);
+        // UNCONDITIONAL, not a prefix rewrite. The box's working directory is
+        // `/workspace` whatever directory the session was recorded in, and
+        // `--resume <id>` explicitly allows picking a session from ELSEWHERE
+        // (we warn and continue). A `hostCwd`-anchored replacement silently
+        // does nothing for exactly that case, so the teleported session landed
+        // in the box still pointing at a host path that does not exist there --
+        // while the log claimed it had been rewritten.
+        if (typeof obj.cwd === 'string') obj.cwd = BOX_WORKSPACE;
         out.push(JSON.stringify(obj));
         headerDone = true;
         continue;
@@ -216,15 +223,4 @@ async function rewritePiSession(src: string, dst: string, hostCwd: string): Prom
     out.push(line);
   }
   await writeFile(dst, out.join('\n'), 'utf8');
-}
-
-/**
- * Replace a value that IS hostCwd (or sits under `hostCwd/`) with the box
- * workspace, preserving the suffix. The trailing-'/' boundary stops a sibling
- * dir (`…/repo-2`) from matching `…/repo`.
- */
-function rewriteHostPath(s: string, hostCwd: string): string {
-  if (s === hostCwd) return BOX_WORKSPACE;
-  if (s.startsWith(hostCwd + '/')) return BOX_WORKSPACE + s.slice(hostCwd.length);
-  return s;
 }

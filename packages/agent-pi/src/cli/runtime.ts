@@ -24,7 +24,6 @@ import {
 import { ensureImage, extractVolumeAuthToBackup, type BoxRecord } from '@agentbox/sandbox-docker';
 import { agentConfigVolume } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -41,6 +40,7 @@ import {
 } from '../docker-sync.js';
 import { piLoginBinding } from './login-binding.js';
 import { piAuthAvailable } from './host-creds.js';
+import { piAuthFileHasProviders } from '../auth-shape.js';
 
 const PI_SPEC = resolveAgentSpec('pi');
 
@@ -100,13 +100,13 @@ async function cloudPiCredAvailable(env: NodeJS.ProcessEnv = process.env): Promi
   for (const k of PI_FORWARDED_ENV_KEYS) {
     if ((env[k] ?? '').length > 0) return true;
   }
+  // Shape, not existence. `access` here would report every host that has ever
+  // launched Pi as signed in, because Pi writes `{}` on first run -- the
+  // sign-in offer would then never appear and the box would be seeded with an
+  // empty credential. `piAuthAvailable` already had this rule; these two paths
+  // did not, which is the inconsistency Bugbot caught.
   for (const p of [PI_SPEC.credential.hostBackup, join(homedir(), '.pi', 'agent', 'auth.json')]) {
-    try {
-      await access(p);
-      return true;
-    } catch {
-      /* not present */
-    }
+    if (await piAuthFileHasProviders(p)) return true;
   }
   return false;
 }

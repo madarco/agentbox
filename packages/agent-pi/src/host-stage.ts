@@ -11,11 +11,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   emptyResult,
-  pathExists,
   stageAgentStaticForUpload,
   stageSingleFileTarball,
   type StageResult,
 } from '@agentbox/sandbox-core';
+import { piAuthFileHasProviders } from './auth-shape.js';
 
 export interface StagePiOptions {
   hostHome?: string;
@@ -38,11 +38,13 @@ export async function stagePiCredentialsForUpload(opts: StagePiOptions = {}): Pr
   const hostHome = opts.hostHome ?? homedir();
   // Derived from hostHome so the path tracks the active home and tests stay
   // hermetic; production matches the spec's `credential.hostBackup`.
+  // Shape, not existence: staging Pi's first-run `{}` would seed every cloud
+  // box with an empty credential that looks present and authenticates nothing.
   const cloudBackup = join(hostHome, '.agentbox', 'pi-credentials.json');
-  if (await pathExists(cloudBackup)) {
+  if (await piAuthFileHasProviders(cloudBackup)) {
     return stageSingleFileTarball('pi-creds', cloudBackup, 'auth.json');
   }
   const hostAuth = join(hostHome, '.pi', 'agent', 'auth.json');
-  if (!(await pathExists(hostAuth))) return emptyResult();
+  if (!(await piAuthFileHasProviders(hostAuth))) return emptyResult();
   return stageSingleFileTarball('pi-creds', hostAuth, 'auth.json');
 }
