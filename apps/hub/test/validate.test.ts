@@ -89,6 +89,22 @@ describe('parseCreateBox', () => {
   it('rejects an unknown agent', () => {
     expect(parseCreateBox({ projectId: 'p', agent: 'gpt' }).ok).toBe(false);
   });
+
+  // GET /api/v1/agents offers whatever the registry knows, plugin agents
+  // included, so the create path has to accept the same set — otherwise the API
+  // advertises a choice it then refuses. The route supplies the live ids; the
+  // default keeps the compiled-in behaviour for callers that can't reach the
+  // registry (the hosted plane).
+  it('accepts an agent outside the built-ins when the caller allows it', () => {
+    expect(parseCreateBox({ projectId: 'p', agent: 'acme-agent' }).ok).toBe(false);
+    const r = parseCreateBox({ projectId: 'p', agent: 'acme-agent' }, ['acme-agent', 'none']);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.agent).toBe('acme-agent');
+  });
+
+  it('rejects a built-in that the caller left out of the accept-list', () => {
+    expect(parseCreateBox({ projectId: 'p', agent: 'claude' }, ['pi', 'none']).ok).toBe(false);
+  });
 });
 
 describe('parseCheckpointCreate', () => {

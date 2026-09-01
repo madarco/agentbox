@@ -26,6 +26,8 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { AGENT_LABELS } from './agent-catalog';
+
 export type CarriedKind = 'skills' | 'config' | 'identity';
 
 export interface CarriedEntry {
@@ -79,13 +81,6 @@ function realChildDirs(p: string): string[] {
     return [];
   }
 }
-
-const AGENT_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  opencode: 'OpenCode',
-  pi: 'Pi',
-};
 
 /** Human label for a `~`-relative path, e.g. `.local/share/opencode` → `~/.local/share/opencode`. */
 function tildePath(rel: readonly string[]): string {

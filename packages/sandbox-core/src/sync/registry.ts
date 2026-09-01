@@ -14,7 +14,7 @@
  * loaded from a literal-import map.
  */
 
-import { AGENT_SPECS } from '@agentbox/agent-registry';
+import { AGENT_SPECS, visibleAgentSpecs } from '@agentbox/agent-registry';
 import type { AgentId, AgentSettings, AgentSyncSpec } from '@agentbox/core';
 
 export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = AGENT_SPECS;
@@ -35,6 +35,15 @@ export function findAgentSpec(name: string): AgentSyncSpec | undefined {
 export function agentIds(): AgentId[] {
   return AGENT_SYNC_SPECS.map((s) => s.id);
 }
+
+/**
+ * The agents a HUMAN should be offered — pickers, the install wizard, the bake
+ * list. Re-exported from the aggregator (where the filter lives) so surfaces
+ * that already reach for the registry through `@agentbox/sandbox-core` don't
+ * have to take a second dependency to ask the one question that matters to a
+ * picker: which of these is this build willing to advertise.
+ */
+export { visibleAgentSpecs };
 
 /**
  * True for any agent this build knows about, by canonical id or alias.

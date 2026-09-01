@@ -33,6 +33,10 @@ export function buildOpenApi(): Record<string, unknown> {
         name: 'Providers',
         description: 'Sandbox providers: status, credentials, base-image bake.',
       },
+      {
+        name: 'Agents',
+        description: 'Coding agents this hub can start, and host setup for each.',
+      },
       { name: 'Hosts', description: 'Remote-docker host aliases (name -> SSH connection).' },
       { name: 'Approvals', description: 'Pending host-action approvals.' },
       { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
@@ -697,6 +701,39 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '401': errorResponse,
             '404': errorResponse,
+          },
+        },
+      },
+      '/agents': {
+        get: {
+          tags: ['Agents'],
+          summary: 'List coding agents',
+          description:
+            'The agents a picker should offer, from the agent registry (so an agent registered ' +
+            'with `agentbox agent add` is included). `installed` reports whether THIS machine ' +
+            "holds the agent's config directory or an AgentBox-saved login for it; it is a " +
+            'hint for what to offer first, not a gate — an agent installs on demand inside a ' +
+            'box. Omitted when the hub cannot answer for a host (the hosted plane), which ' +
+            'clients read as unknown rather than as false.',
+          responses: {
+            '200': {
+              description: 'Agents',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      agents: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Agent' },
+                      },
+                    },
+                    required: ['agents'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
           },
         },
       },
@@ -2081,6 +2118,25 @@ export function buildOpenApi(): Record<string, unknown> {
             },
           },
           required: ['projectId', 'agent'],
+        },
+        Agent: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description:
+                'Canonical agent id, as accepted by `agent` on POST /boxes. Open-ended: the ' +
+                'built-ins are claude | codex | opencode | pi, plus whatever is registered.',
+            },
+            label: { type: 'string', description: 'Display name; falls back to the id.' },
+            installed: {
+              type: 'boolean',
+              description:
+                "This machine holds the agent's config dir or a saved AgentBox login. Absent " +
+                'when the hub has no host to answer for.',
+            },
+          },
+          required: ['id', 'label'],
         },
         Provider: {
           type: 'object',

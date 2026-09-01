@@ -18,6 +18,7 @@ export {
   AGENT_SYNC_SPECS,
   resolveAgentSpec,
   agentIds,
+  visibleAgentSpecs,
   isRuntimeAgent,
   agentTuiEnv,
   findAgentSpec,

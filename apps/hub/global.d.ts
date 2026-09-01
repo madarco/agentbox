@@ -149,6 +149,10 @@ declare global {
           kind: 'skills' | 'config' | 'identity';
           skills?: string[];
         }[];
+        // The agents a picker should offer, and whether this machine is set up
+        // for each (host config dir or a saved AgentBox login). Registry-driven,
+        // so it includes agents registered by `agentbox agent add`.
+        agents(): { id: string; label: string; installed: boolean }[];
         // Box-image resolution facts: which published tag this host asks for and
         // what it last stamped. The things a "why didn't it pull the prebuilt
         // image?" investigation otherwise reconstructs by hand.

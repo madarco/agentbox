@@ -6,7 +6,12 @@ import type { CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
 // 'none' = create the box without starting an agent (like `agentbox create`).
-const AGENTS = ['claude', 'codex', 'opencode', 'pi', 'none'] as const;
+// The agents built into this release, and the DEFAULT accept-list — callers that
+// can reach the registry (the route, via the `__AGENTBOX_HUB_SYSTEM` seam) pass
+// their own so an agent registered by `agentbox agent add` is creatable too.
+// Hardcoded for the same reason PROVIDERS below is: importing @agentbox/* here
+// would pull it into the Next bundle.
+export const AGENTS = ['claude', 'codex', 'opencode', 'pi', 'none'] as const;
 /**
  * Agents that can be baked into a base. `AGENTS` includes the sentinel `none`,
  * which is a create-time "no agent" marker, not something installable — an
@@ -35,7 +40,16 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
+/**
+ * `allowedAgents` is the accept-list for the `agent` field. It defaults to the
+ * built-ins so this stays a pure, import-free function (and so the plane path,
+ * which has no registry, keeps today's behaviour); the boxes route passes the
+ * live registry ids, which is what lets a plugin agent be created at all.
+ */
+export function parseCreateBox(
+  body: unknown,
+  allowedAgents: readonly string[] = AGENTS,
+): Parsed<CreateBoxInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { projectId, repoUrl, agent, provider, name, prompt, fromBranch, setupWizard } = body;
   const { agentArgs, startAgent, foreground, opts } = body;
@@ -59,10 +73,10 @@ export function parseCreateBox(body: unknown): Parsed<CreateBoxInput> {
   if (repoUrl !== undefined && typeof repoUrl !== 'string') {
     return { ok: false, message: 'repoUrl must be a string' };
   }
-  if (typeof agent !== 'string' || !(AGENTS as readonly string[]).includes(agent)) {
+  if (typeof agent !== 'string' || !allowedAgents.includes(agent)) {
     return {
       ok: false,
-      message: `agent must be one of ${AGENTS.join(', ')}`,
+      message: `agent must be one of ${allowedAgents.join(', ')}`,
       details: { got: agent },
     };
   }

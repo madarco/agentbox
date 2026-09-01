@@ -30,11 +30,13 @@ import {
   type ControlPlaneDeployRecord,
   type PreparedBaseSnapshot,
   AGENT_SYNC_SPECS,
+  visibleAgentSpecs,
   BOX_IMAGE_REGISTRY,
   registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
 import { collectHostCarried } from './lib/host-carried';
+import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
 import { cloudBackendLoader } from './lib/provider-importers';
 import { PEER_LOOPBACK_HEADER, isLoopbackAddress } from './lib/peer';
@@ -285,6 +287,10 @@ async function main(): Promise<void> {
       }
     },
     hostCarried: () => collectHostCarried(AGENT_SYNC_SPECS),
+    // The agent picker's catalog. `visibleAgentSpecs()` (not AGENT_SYNC_SPECS)
+    // because this one is asked on a human's behalf: it drops the `example`
+    // canary that exists only to exercise the registry seam.
+    agents: () => collectAgentCatalog(visibleAgentSpecs()),
     boxImage() {
       // The facts an "why didn't it pull the prebuilt image?" investigation
       // needs, and which otherwise have to be reconstructed by hand from
