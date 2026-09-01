@@ -183,6 +183,7 @@ export {
   type CarryBoxContext,
 } from './carry-render.js';
 export * from './sync/index.js';
+export * from './sync/agent-pull-module.js';
 export {
   variantFingerprint,
   bakeSettingsFingerprintInput,

@@ -11,12 +11,7 @@ import {
   volumeExists,
   createDockerSyncTransport,
 } from '@agentbox/sandbox-docker';
-import {
-  CODEX_PULL_ITEMS,
-  ensureAgentInstalled,
-  AgentInstallError,
-  resolveAgentSpec,
-} from '@agentbox/sandbox-core';
+import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { agentPushExcludes } from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
@@ -756,97 +751,4 @@ export async function codexSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
-}
-
-export interface PullCodexResult {
-  /** Volume items copied to the host (or, in dry-run, that would be copied). */
-  newItems: string[];
-}
-
-export interface PullCodexOptions {
-  /** Image for the throwaway helper container; use the box's image. */
-  image: string;
-  /** When true, compute the delta but write nothing. */
-  dryRun?: boolean;
-}
-
-/**
- * Reverse of {@link ensureCodexVolume}: pull box-side codex config/auth from
- * the codex-config volume back to the host's `~/.codex`. Additive only — an
- * item already present on the host is never overwritten. The box need not be
- * running (we read the *volume* via a throwaway helper container).
- */
-export async function pullCodexConfig(
-  spec: CodexConfigSpec,
-  opts: PullCodexOptions,
-): Promise<PullCodexResult> {
-  const hostCodex = join(homedir(), '.codex');
-
-  const inv = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/src:ro`,
-      opts.image,
-      'sh',
-      '-c',
-      `for f in ${CODEX_PULL_ITEMS.join(' ')}; do [ -e "/src/$f" ] && echo "$f"; done; true`,
-    ],
-    { reject: false },
-  );
-  if (inv.exitCode !== 0) {
-    throw new CodexSessionError(
-      `failed to read codex-config volume ${spec.volume}: ${(inv.stderr ?? '').toString().trim() || `exit ${String(inv.exitCode)}`}`,
-    );
-  }
-
-  const present = new Set(
-    (inv.stdout ?? '')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-  const newItems: string[] = [];
-  for (const item of CODEX_PULL_ITEMS) {
-    if (!present.has(item)) continue;
-    if (await pathExists(join(hostCodex, item))) continue; // additive — never overwrite
-    newItems.push(item);
-  }
-
-  if (opts.dryRun || newItems.length === 0) return { newItems };
-
-  // Copy each new item from the volume into the host ~/.codex. `--user 0` so
-  // root can read uid-1000 files; chown the result back to the host user so
-  // the host's own `codex` can read/write a freshly created ~/.codex.
-  const uid = process.getuid?.() ?? 0;
-  const gid = process.getgid?.() ?? 0;
-  const cmds = newItems.map((it) => `cp -a '/src/${it}' '/dst/${it}'`);
-  const apply = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/src:ro`,
-      '-v',
-      `${hostCodex}:/dst`,
-      opts.image,
-      'sh',
-      '-c',
-      `mkdir -p /dst && ${cmds.join(' && ')} && chown -R ${String(uid)}:${String(gid)} /dst`,
-    ],
-    { reject: false },
-  );
-  if (apply.exitCode !== 0) {
-    throw new CodexSessionError(
-      `failed to copy codex config from ${spec.volume}: ${(apply.stderr ?? '').toString().trim() || `exit ${String(apply.exitCode)}`}`,
-    );
-  }
-  return { newItems };
 }

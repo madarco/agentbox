@@ -18,7 +18,7 @@
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { SyncTransport } from '@agentbox/core';
+import type { AgentSyncSpec, SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import type { AgentId } from '@agentbox/core';
 import {
@@ -384,77 +384,85 @@ async function pullFlatEntry(
 }
 
 /**
- * Pull box-side codex config/auth from a live box over a `SyncTransport`
- * (cloud counterpart of sandbox-docker's `pullCodexConfig`). Additive only.
+ * Resolve one pull group to its box dir and host dir, per the rule
+ * `AgentPullSpec` documents: `data` is `staticPaths[0]`, any other group is
+ * that dir plus the entry whose `relocToSubpath` matches. `pull.roots` overrides
+ * for a root that exists ONLY in the pull direction.
  */
-export async function pullCodexConfigViaTransport(
-  t: SyncTransport,
-  opts: { boxDir?: string; hostHome?: string; dryRun?: boolean } = {},
-): Promise<{ newItems: string[] }> {
-  const boxDir = opts.boxDir ?? CODEX_BOX_CONFIG_DIR;
-  const hostCodex = join(opts.hostHome ?? homedir(), '.codex');
-  const script = flatInventoryScript({ codex: { dir: boxDir, items: CODEX_PULL_ITEMS } });
-  const inv = await t.exec(['sh', '-c', script]);
-  if (inv.exitCode !== 0) {
-    throw new Error(
-      `failed to inventory ${boxDir} in the box: ${inv.stderr.trim() || `exit ${String(inv.exitCode)}`}`,
-    );
+function pullRootFor(
+  spec: AgentSyncSpec,
+  group: string,
+  hostHome: string,
+): { boxDir: string; hostDir: string } | null {
+  const declared = spec.pull?.roots?.find((r) => r.group === group);
+  if (declared) {
+    return { boxDir: declared.boxDir, hostDir: join(hostHome, ...declared.hostHomeRel) };
   }
-  const entries: FlatInventoryEntry[] = [];
-  for (const entry of parseFlatInventory(inv.stdout)) {
-    if (await pathExists(join(hostCodex, entry.name))) continue; // additive
-    entries.push(entry);
+  const base = spec.staticPaths[0];
+  if (!base) return null;
+  if (group === 'data') {
+    return { boxDir: base.boxDir, hostDir: join(hostHome, ...base.hostHomeRel) };
   }
-  const newItems = entries.map((e) => e.name);
-  if (opts.dryRun || entries.length === 0) return { newItems };
-
-  for (const entry of entries) {
-    await pullFlatEntry(t, entry, `${boxDir}/${entry.name}`, join(hostCodex, entry.name));
-  }
-  return { newItems };
+  const reloc = spec.staticPaths.find((p) => p.relocToSubpath === group);
+  if (!reloc) return null;
+  return { boxDir: `${base.boxDir}/${group}`, hostDir: join(hostHome, ...reloc.hostHomeRel) };
 }
 
 /**
- * Pull box-side OpenCode config/auth from a live box over a `SyncTransport`
- * (cloud counterpart of sandbox-docker's `pullOpencodeConfig`). Additive only;
- * `auth.json` lands in the host `~/.local/share/opencode`, config items in
- * `~/.config/opencode`.
+ * The DEFAULT box->host pull: flat items under one or more declared roots.
+ *
+ * Driven entirely by `AgentPullSpec.items` + the group rule above, so an agent
+ * whose config is a flat set of files needs no pull code — declaring the row is
+ * the whole job. This replaced the codex and opencode functions, which were the
+ * same body differing only in the group->root mapping the spec already
+ * described.
+ *
+ * Additive: an item the host already has is never overwritten, so a pull can
+ * only ever add. `pullFlatEntry` restores `auth.json`'s 0600.
  */
-export async function pullOpencodeConfigViaTransport(
+export async function pullFlatConfigViaTransport(
+  agent: AgentId,
   t: SyncTransport,
-  opts: { boxDir?: string; hostHome?: string; dryRun?: boolean } = {},
+  opts: { hostHome?: string; dryRun?: boolean } = {},
 ): Promise<{ newItems: string[] }> {
-  const boxDir = opts.boxDir ?? OPENCODE_BOX_DATA_DIR;
+  const spec = resolveAgentSpec(agent);
   const hostHome = opts.hostHome ?? homedir();
-  const hostBases = {
-    data: join(hostHome, '.local', 'share', 'opencode'),
-    config: join(hostHome, '.config', 'opencode'),
-  } as const;
-  const script = flatInventoryScript({
-    data: { dir: boxDir, items: OPENCODE_PULL_DATA_ITEMS },
-    config: { dir: `${boxDir}/config`, items: OPENCODE_PULL_CONFIG_ITEMS },
-  });
-  const inv = await t.exec(['sh', '-c', script]);
+  const groups: Record<string, { dir: string; items: readonly string[] }> = {};
+  const roots: Record<string, { boxDir: string; hostDir: string }> = {};
+  for (const item of spec.pull?.items ?? []) {
+    const root = pullRootFor(spec, item.group, hostHome);
+    if (!root) continue;
+    roots[item.group] = root;
+    groups[item.group] = { dir: root.boxDir, items: item.names };
+  }
+  if (Object.keys(groups).length === 0) return { newItems: [] };
+
+  const inv = await t.exec(['sh', '-c', flatInventoryScript(groups)]);
   if (inv.exitCode !== 0) {
     throw new Error(
-      `failed to inventory ${boxDir} in the box: ${inv.stderr.trim() || `exit ${String(inv.exitCode)}`}`,
+      `failed to inventory ${spec.id} config in the box: ${inv.stderr.trim() || `exit ${String(inv.exitCode)}`}`,
     );
   }
-  const entries: Array<FlatInventoryEntry & { label: string }> = [];
-  for (const entry of parseFlatInventory(inv.stdout)) {
-    if (entry.group !== 'data' && entry.group !== 'config') continue;
-    const hostBase = hostBases[entry.group as keyof typeof hostBases];
-    if (await pathExists(join(hostBase, entry.name))) continue; // additive
-    entries.push({ ...entry, label: entry.group === 'data' ? entry.name : `config/${entry.name}` });
-  }
-  const newItems = entries.map((e) => e.label);
-  if (opts.dryRun || entries.length === 0) return { newItems };
 
-  for (const entry of entries) {
-    const boxPath =
-      entry.group === 'data' ? `${boxDir}/${entry.name}` : `${boxDir}/config/${entry.name}`;
-    const hostPath = join(hostBases[entry.group as keyof typeof hostBases], entry.name);
-    await pullFlatEntry(t, entry, boxPath, hostPath);
+  // The default group's items keep their bare name; any other group is labelled
+  // `<group>/<name>` so the two cannot collide in the report.
+  const defaultGroup = spec.pull?.items?.[0]?.group;
+  const pending: Array<{ entry: FlatInventoryEntry; label: string; box: string; host: string }> =
+    [];
+  for (const entry of parseFlatInventory(inv.stdout)) {
+    const root = roots[entry.group];
+    if (!root) continue;
+    const host = join(root.hostDir, entry.name);
+    if (await pathExists(host)) continue; // additive
+    pending.push({
+      entry,
+      label: entry.group === defaultGroup ? entry.name : `${entry.group}/${entry.name}`,
+      box: `${root.boxDir}/${entry.name}`,
+      host,
+    });
   }
+  const newItems = pending.map((p) => p.label);
+  if (opts.dryRun || pending.length === 0) return { newItems };
+  for (const p of pending) await pullFlatEntry(t, p.entry, p.box, p.host);
   return { newItems };
 }

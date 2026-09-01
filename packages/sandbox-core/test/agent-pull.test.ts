@@ -10,8 +10,7 @@ import {
   parseClaudeInventory,
   parseFlatInventory,
   pullClaudeExtrasViaTransport,
-  pullCodexConfigViaTransport,
-  pullOpencodeConfigViaTransport,
+  pullFlatConfigViaTransport,
   type RecordingSyncTransport,
 } from '../src/index.js';
 
@@ -172,16 +171,16 @@ describe('flat inventory (codex/opencode)', () => {
   });
 
   it('parse keeps only well-formed lines', () => {
-    expect(
-      parseFlatInventory('codex FILE auth.json\ncodex DIR prompts\nnoise\nx y z w\n'),
-    ).toEqual([
-      { group: 'codex', kind: 'file', name: 'auth.json' },
-      { group: 'codex', kind: 'dir', name: 'prompts' },
-    ]);
+    expect(parseFlatInventory('codex FILE auth.json\ncodex DIR prompts\nnoise\nx y z w\n')).toEqual(
+      [
+        { group: 'codex', kind: 'file', name: 'auth.json' },
+        { group: 'codex', kind: 'dir', name: 'prompts' },
+      ],
+    );
   });
 });
 
-describe('pullCodexConfigViaTransport', () => {
+describe('pullFlatConfigViaTransport — codex (one root)', () => {
   let home: string;
 
   beforeEach(async () => {
@@ -194,10 +193,12 @@ describe('pullCodexConfigViaTransport', () => {
   it('skips items already on the host (additive)', async () => {
     await mkdir(join(home, '.codex'), { recursive: true });
     await writeFile(join(home, '.codex', 'config.toml'), 'host');
-    const stdout = 'codex FILE config.toml\ncodex FILE auth.json\ncodex DIR prompts';
+    // The group is the one the SPEC declares (`data`), not a per-agent literal —
+    // that is what the generic derives the box dir and host dir from.
+    const stdout = 'data FILE config.toml\ndata FILE auth.json\ndata DIR prompts';
     const t = makeRecordingTransport({ execResult: () => ({ exitCode: 0, stdout, stderr: '' }) });
     materializePullFile(t);
-    const result = await pullCodexConfigViaTransport(t, { hostHome: home });
+    const result = await pullFlatConfigViaTransport('codex', t, { hostHome: home });
     expect(result.newItems).toEqual(['auth.json', 'prompts']);
     expect(t.ops.filter((o) => o.op === 'pullFile')).toHaveLength(1);
     expect(t.ops.filter((o) => o.op === 'pullTree')).toHaveLength(1);
@@ -205,7 +206,14 @@ describe('pullCodexConfigViaTransport', () => {
   });
 });
 
-describe('pullOpencodeConfigViaTransport', () => {
+/**
+ * The two functions this replaced were the same body differing only in the
+ * group->root mapping, which `AgentPullSpec` already documented: `data` is
+ * `staticPaths[0]`, any other group is that dir plus the entry whose
+ * `relocToSubpath` matches. Opencode is the two-root case, so it is what proves
+ * the derivation rather than a hardcoded pair.
+ */
+describe('pullFlatConfigViaTransport — opencode (two roots, derived)', () => {
   let home: string;
 
   beforeEach(async () => {
@@ -219,7 +227,7 @@ describe('pullOpencodeConfigViaTransport', () => {
     const stdout = 'data FILE auth.json\nconfig DIR skills';
     const t = makeRecordingTransport({ execResult: () => ({ exitCode: 0, stdout, stderr: '' }) });
     materializePullFile(t);
-    const result = await pullOpencodeConfigViaTransport(t, { hostHome: home });
+    const result = await pullFlatConfigViaTransport('opencode', t, { hostHome: home });
     expect(result.newItems).toEqual(['auth.json', 'config/skills']);
     const file = t.ops.find((o) => o.op === 'pullFile');
     expect(file!.args['boxSrcPath']).toBe('/home/vscode/.local/share/opencode/auth.json');
@@ -227,5 +235,39 @@ describe('pullOpencodeConfigViaTransport', () => {
     const tree = t.ops.find((o) => o.op === 'pullTree');
     expect(tree!.args['boxSrcDir']).toBe('/home/vscode/.local/share/opencode/config/skills');
     expect(tree!.args['hostDestDir']).toBe(join(home, '.config', 'opencode', 'skills'));
+  });
+});
+
+describe('the pull default covers an agent with only a registry row', () => {
+  /**
+   * The point of the hook having a data-driven default: a new agent declares
+   * `pull.items` and gets a working `agentbox download` with no code. `example`
+   * is the canary — it has a spec row and no pull implementation anywhere.
+   */
+  it('pulls the demo agent from its declaration alone', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'agent-pull-example-'));
+    try {
+      const t = makeRecordingTransport({
+        execResult: () => ({ exitCode: 0, stdout: 'data FILE auth.json', stderr: '' }),
+      });
+      materializePullFile(t);
+      const result = await pullFlatConfigViaTransport('example', t, { hostHome: home });
+      expect(result.newItems).toEqual(['auth.json']);
+      // ...into the host dir its own staticPaths row names.
+      expect(await readFile(join(home, '.agentbox-example', 'auth.json'), 'utf8')).toBeTypeOf(
+        'string',
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op for an agent that declares no pull items', async () => {
+    const t = makeRecordingTransport({
+      execResult: () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    });
+    // Never runs an inventory at all — nothing to ask about.
+    expect(await pullFlatConfigViaTransport('claude', t, {})).toEqual({ newItems: [] });
+    expect(t.ops.filter((o) => o.op === 'exec')).toHaveLength(0);
   });
 });

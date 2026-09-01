@@ -14,6 +14,7 @@ import {
   type AgentSyncModule,
 } from '@agentbox/sandbox-docker';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { registerAgentPullModule, pullClaudeExtrasViaTransport } from '@agentbox/sandbox-core';
 import { hostClaudeAccessTokenExpired } from './cli/host-cred-guards.js';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { stageClaudeCredentialsForUpload, stageClaudeStaticForUpload } from './host-stage.js';
@@ -119,6 +120,22 @@ export const claudeCloudModule: AgentCloudModule = {
 
 /** Register Claude on both layers. Called by `@agentbox/agent-modules`. */
 export function registerClaudeAgent(): void {
+  // Claude's pull is genuinely not the flat default: it walks category CHILDREN
+  // (`skills`/`agents`/`commands`), a 2-level plugin cache, and merges two JSON
+  // registries with a container->host path rewrite. Everything else uses
+  // `pullFlatConfigViaTransport`, which is driven by the spec row alone.
+  registerAgentPullModule({
+    id: 'claude',
+    pull: async (t, opts) => {
+      // Claude's own result is richer (`{category,name}` items plus the merged
+      // registries) and `agentbox download claude` renders that directly. The
+      // hook's contract is the common minimum, so a GENERIC caller — the
+      // registry-driven download for an agent with no bespoke command — gets
+      // comparable labels from every agent.
+      const res = await pullClaudeExtrasViaTransport(t, opts);
+      return { newItems: res.newItems.map((i) => `${i.category}/${i.name}`) };
+    },
+  });
   registerAgentSyncModule(claudeSyncModule);
   registerAgentCloudModule(claudeCloudModule);
 }

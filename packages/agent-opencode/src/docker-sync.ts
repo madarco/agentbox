@@ -12,13 +12,7 @@ import {
   volumeExists,
   createDockerSyncTransport,
 } from '@agentbox/sandbox-docker';
-import {
-  OPENCODE_PULL_CONFIG_ITEMS,
-  OPENCODE_PULL_DATA_ITEMS,
-  ensureAgentInstalled,
-  resolveAgentSpec,
-  AgentInstallError,
-} from '@agentbox/sandbox-core';
+import { ensureAgentInstalled, resolveAgentSpec, AgentInstallError } from '@agentbox/sandbox-core';
 
 /**
  * OpenCode support mirrors the Codex support in `codex.ts`. The one structural
@@ -481,111 +475,4 @@ export async function opencodeSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
-}
-
-export interface PullOpencodeResult {
-  /** Volume items copied to the host (or, in dry-run, that would be copied). */
-  newItems: string[];
-}
-
-export interface PullOpencodeOptions {
-  /** Image for the throwaway helper container; use the box's image. */
-  image: string;
-  /** When true, compute the delta but write nothing. */
-  dryRun?: boolean;
-}
-
-/**
- * Reverse of {@link ensureOpencodeVolume}: pull box-side OpenCode config/auth
- * from the volume back to the host. Additive only — an item already present on
- * the host is never overwritten. The box need not be running (we read the
- * *volume* via a throwaway helper container). `auth.json` lands in the host's
- * `~/.local/share/opencode`; config items in `~/.config/opencode`.
- */
-export async function pullOpencodeConfig(
-  spec: OpencodeConfigSpec,
-  opts: PullOpencodeOptions,
-): Promise<PullOpencodeResult> {
-  const hostData = join(homedir(), '.local', 'share', 'opencode');
-  const hostConfig = join(homedir(), '.config', 'opencode');
-
-  // Inventory: data items at the volume root, config items under `config/`.
-  const inv = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/src:ro`,
-      opts.image,
-      'sh',
-      '-c',
-      `for f in ${OPENCODE_PULL_DATA_ITEMS.join(' ')}; do [ -e "/src/$f" ] && echo "data $f"; done;` +
-        ` for f in ${OPENCODE_PULL_CONFIG_ITEMS.join(' ')}; do [ -e "/src/config/$f" ] && echo "config $f"; done;` +
-        ' true',
-    ],
-    { reject: false },
-  );
-  if (inv.exitCode !== 0) {
-    throw new OpencodeSessionError(
-      `failed to read opencode-config volume ${spec.volume}: ${(inv.stderr ?? '').toString().trim() || `exit ${String(inv.exitCode)}`}`,
-    );
-  }
-
-  // Volume items not already on the host (additive — never overwrite).
-  const newItems: Array<{ label: string; src: string; hostDst: 'data' | 'config'; name: string }> =
-    [];
-  for (const line of (inv.stdout ?? '').split('\n')) {
-    const [group, name] = line.trim().split(/\s+/, 2);
-    if (!name || (group !== 'data' && group !== 'config')) continue;
-    const hostBase = group === 'data' ? hostData : hostConfig;
-    if (await pathExists(join(hostBase, name))) continue;
-    newItems.push({
-      label: group === 'data' ? name : `config/${name}`,
-      src: group === 'data' ? `/src/${name}` : `/src/config/${name}`,
-      hostDst: group,
-      name,
-    });
-  }
-
-  if (opts.dryRun || newItems.length === 0) {
-    return { newItems: newItems.map((i) => i.label) };
-  }
-
-  // Copy each new item from the volume into the matching host dir. `--user 0`
-  // so root can read uid-1000 files; chown the result back to the host user.
-  const uid = process.getuid?.() ?? 0;
-  const gid = process.getgid?.() ?? 0;
-  const cmds = newItems.map(
-    (i) => `cp -a '${i.src}' '${i.hostDst === 'data' ? '/dst-data' : '/dst-config'}/${i.name}'`,
-  );
-  const apply = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/src:ro`,
-      '-v',
-      `${hostData}:/dst-data`,
-      '-v',
-      `${hostConfig}:/dst-config`,
-      opts.image,
-      'sh',
-      '-c',
-      `mkdir -p /dst-data /dst-config && ${cmds.join(' && ')}` +
-        ` && chown -R ${String(uid)}:${String(gid)} /dst-data /dst-config`,
-    ],
-    { reject: false },
-  );
-  if (apply.exitCode !== 0) {
-    throw new OpencodeSessionError(
-      `failed to copy opencode config from ${spec.volume}: ${(apply.stderr ?? '').toString().trim() || `exit ${String(apply.exitCode)}`}`,
-    );
-  }
-  return { newItems: newItems.map((i) => i.label) };
 }

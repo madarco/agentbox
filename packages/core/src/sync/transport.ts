@@ -60,6 +60,12 @@ export interface VolumeHostSource {
   /** Sub-path under the volume mount to land this source at (''=root). */
   destSubpath: string;
   exclude?: string[];
+  /**
+   * rsync `--include` carve-ins. Emitted BEFORE the excludes — rsync filter
+   * rules are first-match-wins — to re-include a subtree of an otherwise
+   * excluded dir (codex's `.tmp/marketplaces/` out of the excluded `.tmp`).
+   */
+  include?: string[];
   /** rsync `--update` (newest-wins) — e.g. opencode `model.json`. */
   update?: boolean;
   /**

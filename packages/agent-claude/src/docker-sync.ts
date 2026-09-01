@@ -19,14 +19,7 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './hooks-filter.js';
-import {
-  claudeInventoryScript,
-  computeClaudePullPlan,
-  parseClaudeInventory,
-  referencedPluginVersionKeys,
-  writeClaudeMergedRegistries,
-} from '@agentbox/sandbox-core';
-import type { PullClaudeResult } from '@agentbox/sandbox-core';
+import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
 export type { PullClaudeResult } from '@agentbox/sandbox-core';
 import { detectEngine, orbstackVolumePath } from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
@@ -1318,107 +1311,4 @@ export async function claudeSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
-}
-
-export interface PullClaudeOptions {
-  /** Image for the throwaway helper container; use the box's image to avoid extra pulls. */
-  image: string;
-  /** When true, compute the delta but write nothing. */
-  dryRun?: boolean;
-}
-
-/**
- * Reverse of {@link ensureClaudeVolume}: pull box-installed Claude extensions
- * (skills/agents/commands dirs + plugins) from the claude-config volume back to
- * the host's `~/.claude`. Additive only — an item already present on the host
- * is never overwritten. The box need not be running; we read the *volume* via a
- * throwaway helper container (the exact mirror of the forward sync), so this
- * also works while the box is stopped.
- *
- * The inventory/delta/registry-merge logic is the shared core in
- * `@agentbox/sandbox-core` (`agent-pull.ts`) — the same plan drives the
- * cloud transport pull. Only the container-based inventory run and the
- * rsync-out step are docker-specific here.
- */
-export async function pullClaudeExtras(
-  spec: ClaudeConfigSpec,
-  opts: PullClaudeOptions,
-): Promise<PullClaudeResult> {
-  const hostClaude = join(homedir(), '.claude');
-
-  // Inventory pass: enumerate the volume's contents via a read-only helper
-  // container. `--user 0` so root can read files claude wrote as uid 1000.
-  const inv = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/src:ro`,
-      opts.image,
-      'sh',
-      '-c',
-      claudeInventoryScript('/src'),
-    ],
-    { reject: false },
-  );
-  if (inv.exitCode !== 0) {
-    throw new ClaudeSessionError(
-      `failed to read claude-config volume ${spec.volume}: ${(inv.stderr ?? '').toString().trim() || `exit ${String(inv.exitCode)}`}`,
-    );
-  }
-
-  // Delta + registry merges are computed host-side (the host ~/.claude is
-  // directly accessible — only the volume needed a container).
-  const inventory = parseClaudeInventory((inv.stdout ?? '').toString());
-  const plan = await computeClaudePullPlan(inventory);
-  const { newItems, mergedRegistries } = plan;
-  const sourceRegistries = inventory.registries;
-
-  if (opts.dryRun || (newItems.length === 0 && mergedRegistries.length === 0)) {
-    return { newItems, mergedRegistries, sourceRegistries };
-  }
-
-  // Apply pass: rsync each new item dir from the volume into the host
-  // ~/.claude bind mount. --ignore-existing is belt-and-suspenders (the
-  // host-side delta is the real guard); --exclude=node_modules because the
-  // box carries linux/amd64 binaries useless on the darwin host (claude/host
-  // rebuilds lazily, same rationale as the forward sync's exclude).
-  if (plan.copyRels.length > 0) {
-    const cmds = plan.copyRels.map((rel) => {
-      const dest = `/dst/${rel}`;
-      const parent = dest.slice(0, dest.lastIndexOf('/'));
-      return `mkdir -p '${parent}' && rsync -a --ignore-existing --exclude=node_modules '/src/${rel}/' '${dest}/'`;
-    });
-    const apply = await execa(
-      'docker',
-      [
-        'run',
-        '--rm',
-        '--user',
-        '0',
-        '-v',
-        `${spec.volume}:/src:ro`,
-        '-v',
-        `${hostClaude}:/dst`,
-        opts.image,
-        'sh',
-        '-c',
-        cmds.join(' && '),
-      ],
-      { reject: false },
-    );
-    if (apply.exitCode !== 0) {
-      throw new ClaudeSessionError(
-        `failed to copy extensions from ${spec.volume}: ${(apply.stderr ?? '').toString().trim() || `exit ${String(apply.exitCode)}`}`,
-      );
-    }
-  }
-
-  // Registry JSONs are written host-side — only when the merge added keys.
-  await writeClaudeMergedRegistries(plan);
-
-  return { newItems, mergedRegistries, sourceRegistries };
 }

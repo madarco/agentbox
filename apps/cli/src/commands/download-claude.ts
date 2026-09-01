@@ -1,20 +1,13 @@
 import { confirm, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
-import { DEFAULT_BOX_IMAGE, stageItemsFromVolume } from '@agentbox/sandbox-docker';
-import {
-  pullClaudeExtras,
-  resolveClaudeVolume,
-  SHARED_CLAUDE_VOLUME,
-} from '@agentbox/agent-claude';
 import {
   agentBoxConfigDir,
   pullClaudeExtrasViaTransport,
   stageItemsViaTransport,
   type PullClaudeResult,
 } from '@agentbox/sandbox-core';
-import type { SyncTransport } from '@agentbox/core';
 import { resolveBoxOrExit } from '../box-ref.js';
-import { cloudTransportForPull } from './_agent-pull.js';
+import { pullTransportForBox } from './_agent-pull-transport.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
 import { claudeStagedItems } from '@agentbox/agent-claude';
@@ -49,29 +42,12 @@ export const downloadClaudeCommand = new Command('claude')
       const scopeFlag = parsePropagateFlag(opts.propagate);
       const box = await resolveBoxOrExit(idOrName);
 
-      let pull: (dryRun: boolean) => Promise<PullClaudeResult>;
-      let transport: SyncTransport | undefined;
-      let volume: string | undefined;
-      let image = box.image || DEFAULT_BOX_IMAGE;
-      if ((box.provider ?? 'docker') !== 'docker') {
-        // Cloud: read the live box FS over the provider's SyncTransport.
-        transport = await cloudTransportForPull(box);
-        const t = transport;
-        pull = (dryRun) => pullClaudeExtrasViaTransport(t, { dryRun });
-      } else {
-        // Docker: we read the claude-config *volume*, not the container, so the
-        // box can be stopped — no unpause/start dance (unlike `download`).
-        volume =
-          box.claudeConfigVolume ?? resolveClaudeVolume({ isolate: false, boxId: box.id }).volume;
-        if (volume === SHARED_CLAUDE_VOLUME) {
-          log.warn(
-            `Reading the shared ${SHARED_CLAUDE_VOLUME} volume — it aggregates Claude extensions installed in ANY box, not just ${box.name}.`,
-          );
-        }
-        image = box.image || DEFAULT_BOX_IMAGE;
-        const v = volume;
-        pull = (dryRun) => pullClaudeExtras({ volume: v }, { image, dryRun });
-      }
+      // One transport either way: a cloud box's provider transport, or the
+      // agent's docker config VOLUME mounted at its box path (so the box can be
+      // stopped — no unpause/start dance).
+      const { transport } = await pullTransportForBox(box, 'claude');
+      const pull = (dryRun: boolean): Promise<PullClaudeResult> =>
+        pullClaudeExtrasViaTransport(transport, { dryRun });
 
       const preview = await pull(true);
 
@@ -120,9 +96,7 @@ export const downloadClaudeCommand = new Command('claude')
         items,
         sourceRegistries: preview.sourceRegistries,
         stage: (stagingDir) =>
-          transport
-            ? stageItemsViaTransport(transport, agentBoxConfigDir('claude'), items, stagingDir)
-            : stageItemsFromVolume(volume!, image, items, stagingDir),
+          stageItemsViaTransport(transport, agentBoxConfigDir('claude'), items, stagingDir),
         scopeFlag,
         yes: opts.yes,
       });
