@@ -3,6 +3,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState, ResyncResult } from '@agentbox/core';
 import {
+  agentConfigVolume,
   AmbiguousBoxError,
   BoxNotFoundError,
   buildNoVncUrl,
@@ -180,16 +181,23 @@ async function agentSession(id: string, container: string): Promise<AgentSession
   return mod.sessionInfo(container);
 }
 
+/**
+ * The box's ISOLATED per-agent volumes — the ones `destroy` must remove.
+ *
+ * Filters out each agent's shared `dockerVolume`, which outlives the box. The
+ * lookup is `agentConfigVolume` rather than a three-row table, so an agent
+ * outside the built-in three has its per-box volume cleaned up instead of
+ * leaking (and, before the volume map, being invisible here entirely).
+ */
 function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
-  const byAgent: Record<string, string | undefined> = {
-    claude: box.claudeConfigVolume,
-    codex: box.codexConfigVolume,
-    opencode: box.opencodeConfigVolume,
-  };
-  return AGENT_SYNC_SPECS.filter((spec) => {
-    const v = byAgent[spec.id];
-    return v !== undefined && v !== spec.dockerVolume;
-  }).map((spec) => ({ agent: spec.id, volume: byAgent[spec.id] }));
+  return AGENT_SYNC_SPECS.map((spec) => ({
+    agent: spec.id,
+    volume: agentConfigVolume(box, spec.id),
+  })).filter((e) => e.volume !== undefined && e.volume !== agentSpecById(e.agent)?.dockerVolume);
+}
+
+function agentSpecById(id: string): { dockerVolume: string } | undefined {
+  return AGENT_SYNC_SPECS.find((s) => s.id === id);
 }
 
 export async function listBoxes(): Promise<ListedBox[]> {
@@ -880,15 +888,14 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       // below.
     ]);
     const expectedVolumes = new Set<string>([
-      ...survivingBoxes
-        .map((b) => b.claudeConfigVolume)
-        .filter((v): v is string => typeof v === 'string'),
-      ...survivingBoxes
-        .map((b) => b.codexConfigVolume)
-        .filter((v): v is string => typeof v === 'string'),
-      ...survivingBoxes
-        .map((b) => b.opencodeConfigVolume)
-        .filter((v): v is string => typeof v === 'string'),
+      // Every agent's volume, not three by name: an isolated volume missing
+      // from this set is deleted as an orphan, so a fourth or plugin agent's
+      // per-box config store would be pruned out from under a live box.
+      ...survivingBoxes.flatMap((b) =>
+        AGENT_SYNC_SPECS.map((spec) => agentConfigVolume(b, spec.id)).filter(
+          (v): v is string => typeof v === 'string',
+        ),
+      ),
       ...survivingBoxes
         .map((b) => b.vscodeServerVolume)
         .filter((v): v is string => typeof v === 'string'),

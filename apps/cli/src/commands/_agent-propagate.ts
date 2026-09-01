@@ -1,5 +1,6 @@
 import type { AgentId, StagedItem, StagedSettings } from '@agentbox/sandbox-core';
 import type { BoxRecord } from '@agentbox/core';
+import { agentConfigVolume } from '@agentbox/core';
 import {
   agentBoxConfigDir,
   makeStagingDir,
@@ -21,17 +22,6 @@ export function parsePropagateFlag(value: string | undefined): PropagateScope | 
   if (value === undefined) return undefined;
   if (value === 'project' || value === 'all' || value === 'none') return value;
   throw new Error(`invalid --propagate value '${value}' (expected project|all|none)`);
-}
-
-function isolatedVolumeOf(box: BoxRecord, agent: AgentId): string | undefined {
-  switch (agent) {
-    case 'claude':
-      return box.claudeConfigVolume;
-    case 'codex':
-      return box.codexConfigVolume;
-    default:
-      return box.opencodeConfigVolume;
-  }
 }
 
 function summarize(result: PropagateTargetResult): string {
@@ -98,7 +88,7 @@ export async function runPropagateStep(opts: {
 
   const excludeVolume =
     (sourceBox.provider ?? 'docker') === 'docker'
-      ? (isolatedVolumeOf(sourceBox, agent) ?? resolveAgentSpec(agent).dockerVolume)
+      ? (agentConfigVolume(sourceBox, agent) ?? resolveAgentSpec(agent).dockerVolume)
       : undefined;
   const plan = planPropagateTargets(boxes, {
     agent,

@@ -9,24 +9,13 @@ import {
   type AgentId,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE, volumeSettingsTarget } from '@agentbox/sandbox-docker';
-import type { BoxRecord } from '@agentbox/core';
+import { agentConfigVolume } from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface PropagateOpts {
   agent: string;
   sourceBox?: string;
-}
-
-function isolatedVolumeOf(box: BoxRecord, agent: AgentId): string | undefined {
-  switch (agent) {
-    case 'claude':
-      return box.claudeConfigVolume;
-    case 'codex':
-      return box.codexConfigVolume;
-    default:
-      return box.opencodeConfigVolume;
-  }
 }
 
 /**
@@ -64,7 +53,7 @@ const propagateCommand = new Command('propagate')
       // to its own FS. Excluding the source volume skips a guaranteed no-op.
       const excludeVolume =
         sourceBox && (sourceBox.provider ?? 'docker') === 'docker'
-          ? (isolatedVolumeOf(sourceBox, agent) ?? spec.dockerVolume)
+          ? (agentConfigVolume(sourceBox, agent) ?? spec.dockerVolume)
           : undefined;
       const plan = planPropagateTargets(state.boxes, {
         agent,

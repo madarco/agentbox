@@ -186,6 +186,43 @@ describe('pruneBoxes', () => {
     expect(result.removedVolumes).toEqual(['agentbox-orphan-vol']);
   });
 
+  /**
+   * The hazard item 1 has to close: prune's allowlist was three named fields, so
+   * an isolated volume belonging to any other agent was not "expected" and got
+   * reaped as an orphan — out from under a live box.
+   */
+  it('with --all, protects an isolated volume for an agent outside the named three', async () => {
+    vi.doMock('../src/docker.js', async () => {
+      const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');
+      return {
+        ...actual,
+        inspectContainerStatus: vi.fn(async () => 'running'),
+        listAgentboxContainers: vi.fn(async () => ['agentbox-live']),
+        listAgentboxVolumes: vi.fn(async () => [
+          'agentbox-example-config-11111111',
+          'agentbox-orphan-vol',
+        ]),
+        removeContainer: vi.fn(async () => undefined),
+        removeVolume: vi.fn(async () => undefined),
+        removeImage: vi.fn(async () => true),
+      };
+    });
+
+    await seed({
+      version: 1,
+      boxes: [
+        {
+          ...mkBox('11111111', 'agentbox-live'),
+          agentConfigVolumes: { example: 'agentbox-example-config-11111111' },
+        },
+      ],
+    });
+
+    const { pruneBoxes } = await import('../src/lifecycle.js');
+    const result = await pruneBoxes({ all: true, dryRun: true });
+    expect(result.removedVolumes).toEqual(['agentbox-orphan-vol']);
+  });
+
   it('with --all, reaps unreferenced checkpoint images', async () => {
     vi.doMock('../src/docker.js', async () => {
       const actual = await vi.importActual<typeof import('../src/docker.js')>('../src/docker.js');

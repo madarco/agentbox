@@ -54,6 +54,7 @@ export {
   type ClaudePullPlan,
   type PullClaudeResult,
   type FlatInventoryEntry,
+  agentBoxDir,
 } from './agent-pull.js';
 export {
   buildAgentDescriptors,

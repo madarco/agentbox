@@ -77,6 +77,72 @@ describe('planPropagateTargets', () => {
       },
     ]);
   });
+
+  /**
+   * The bug this pins: the volume lookup was a `switch` whose `default:` arm
+   * returned `box.opencodeConfigVolume`, so an agent outside the named two had
+   * its credentials fanned into OPENCODE's store. Nothing failed — the two
+   * tests above pass either way, because they only ever ask about claude and
+   * codex, which the switch named.
+   */
+  it("never answers another agent's volume for an agent it does not name", () => {
+    const isolated = [
+      {
+        id: 'x',
+        name: 'docker-x',
+        provider: 'docker',
+        projectRoot: '/p1',
+        agentConfigVolumes: {
+          example: 'agentbox-example-config-x',
+          opencode: 'agentbox-opencode-config-x',
+        },
+      },
+    ];
+    const plan = planPropagateTargets(isolated, {
+      agent: 'example',
+      sourceBoxId: 's',
+      scope: 'all',
+    });
+    expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-example-config-x']);
+  });
+
+  it('falls back to the legacy named fields for a box recorded before the map', () => {
+    // `agentConfigVolumes` is additive: a box created by an older CLI carries
+    // only the three flat fields, and must keep resolving.
+    const legacy = [
+      {
+        id: 'y',
+        name: 'docker-y',
+        provider: 'docker',
+        projectRoot: '/p1',
+        opencodeConfigVolume: 'agentbox-opencode-config-y',
+      },
+    ];
+    const plan = planPropagateTargets(legacy, {
+      agent: 'opencode',
+      sourceBoxId: 's',
+      scope: 'all',
+    });
+    expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-opencode-config-y']);
+  });
+});
+
+describe('agentBoxConfigDir', () => {
+  /**
+   * Same `default:` bug, other half: this returned OPENCODE's box dir for any
+   * agent it did not name, so a fourth agent's staged config was written under
+   * `~/.local/share/opencode` inside the box.
+   */
+  it('derives every agent`s box dir from the registry', async () => {
+    const { agentBoxConfigDir } = await import('../src/index.js');
+    const { AGENT_SYNC_SPECS } = await import('../src/index.js');
+    for (const spec of AGENT_SYNC_SPECS) {
+      expect(agentBoxConfigDir(spec.id)).toBe(spec.staticPaths[0]?.boxDir);
+    }
+    // Explicit: the demo agent is neither claude nor codex, and must not be
+    // told its config lives in opencode's directory.
+    expect(agentBoxConfigDir('example')).toBe('/home/vscode/.agentbox-example');
+  });
 });
 
 /** In-memory SettingsTarget: `files` maps rel → text (dirs tracked as rels). */

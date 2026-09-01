@@ -271,6 +271,7 @@ function projectDockerFields(box: BoxRecord): DockerBoxFields {
     claudeConfigVolume: box.claudeConfigVolume,
     codexConfigVolume: box.codexConfigVolume,
     opencodeConfigVolume: box.opencodeConfigVolume,
+    agentConfigVolumes: box.agentConfigVolumes,
     vscodeServerVolume: box.vscodeServerVolume,
     cursorServerVolume: box.cursorServerVolume,
     vncHostPort: box.vncHostPort,

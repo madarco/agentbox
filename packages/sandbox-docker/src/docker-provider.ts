@@ -51,6 +51,8 @@ export interface DockerCreateOptions {
   claudeConfig?: { isolate: boolean };
   codexConfig?: { isolate: boolean };
   opencodeConfig?: { isolate: boolean };
+  /** Per-agent config-volume options for agents outside the named three. */
+  agentConfig?: Record<string, { isolate?: boolean }>;
   claudeEnv?: Record<string, string>;
 }
 
@@ -80,6 +82,7 @@ export const dockerProvider: Provider = {
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,
       opencodeConfig: po.opencodeConfig,
+      agentConfig: po.agentConfig,
       withPlaywright: req.withPlaywright,
       withEnv: req.withEnv,
       envFilesToImport: req.envFilesToImport,

@@ -190,6 +190,16 @@ export interface CreateBoxOptions {
    */
   opencodeConfig?: { isolate: boolean };
   /**
+   * Per-agent config-volume options, keyed by agent id — the generic form of
+   * the three named fields above, which stay for their existing callers and
+   * win when both are given.
+   *
+   * This is what lets an agent outside the built-in three isolate its config:
+   * `box.isolate<Agent>Config` is generated for EVERY agent in `AGENT_KINDS`,
+   * so the key already existed for the demo agent and had nowhere to go.
+   */
+  agentConfig?: Record<string, { isolate?: boolean }>;
+  /**
    * When true, run `npm install -g @playwright/cli@latest` inside the box after
    * `/workspace` is seeded. agent-browser is always installed in the image;
    * this flag adds the Playwright CLI on top for boxes that need it.
@@ -671,10 +681,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // `--isolate-<agent>-config` is per-agent on the options object; an agent with
   // no such flag simply never isolates.
   const isolateFor = (agent: string): boolean => {
-    if (agent === 'claude') return opts.claudeConfig?.isolate ?? false;
-    if (agent === 'codex') return opts.codexConfig?.isolate ?? false;
-    if (agent === 'opencode') return opts.opencodeConfig?.isolate ?? false;
-    return false;
+    // The three named options win; `agentConfig` carries every other agent's.
+    // This used to `return false` for anything but the three, so a fourth or
+    // plugin agent could never isolate no matter what its config key said.
+    if (agent === 'claude' && opts.claudeConfig) return opts.claudeConfig.isolate;
+    if (agent === 'codex' && opts.codexConfig) return opts.codexConfig.isolate;
+    if (agent === 'opencode' && opts.opencodeConfig) return opts.opencodeConfig.isolate;
+    return opts.agentConfig?.[agent]?.isolate ?? false;
   };
   const hostHasAnyStaticPath = async (spec: AgentSyncSpec): Promise<boolean> => {
     for (const path of spec.staticPaths) {
@@ -737,6 +750,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     agentMounts.push(requireAgentSyncModule(agent).buildMounts(choice, process.env));
     configVolumes[agent] = choice.volume;
   }
+  // The three named fields are a DERIVED mirror of the map for older readers;
+  // `agentConfigVolumes` is what a fourth or plugin agent lands in. This used to
+  // narrow the map to these three and discard the rest, which is why every
+  // consumer downstream had to guess with a `default:` arm.
   const claudeConfigVolume = configVolumes['claude'];
   const codexConfigVolume = configVolumes['codex'];
   const opencodeConfigVolume = configVolumes['opencode'];
@@ -935,6 +952,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     codexConfigVolume,
     agentsConfigVolume,
     opencodeConfigVolume,
+    agentConfigVolumes: configVolumes,
     vscodeServerVolume: vscodeServerVolumeName(id),
     cursorServerVolume: cursorServerVolumeName(id),
     relayToken: relayUp ? relayToken : undefined,

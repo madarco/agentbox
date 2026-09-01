@@ -20,7 +20,7 @@ export type {
   SshTargetRecord,
   StateFile,
 } from './box-record.js';
-export { dockerField } from './box-record.js';
+export { dockerField, agentConfigVolume } from './box-record.js';
 export type { BoxEndpoint, BoxEndpoints } from './endpoints.js';
 export { buildNoVncUrl, NOVNC_PORT } from './vnc.js';
 export type {

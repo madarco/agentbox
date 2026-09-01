@@ -38,6 +38,21 @@ export interface DockerBoxFields {
   agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. */
   opencodeConfigVolume?: string;
+  /**
+   * Every agent's docker config volume, keyed by agent id.
+   *
+   * The three named fields above are a DERIVED mirror of this map, kept because
+   * a box created by an older CLI has only them — read through
+   * {@link agentConfigVolume}, never directly. The map is what makes a fourth or
+   * plugin agent representable: `create` already resolves a volume for every
+   * registered agent and used to discard all but three, which is why the
+   * per-agent tables that consumed those fields answered opencode's volume for
+   * anything they did not name.
+   *
+   * `agentsConfigVolume` is deliberately NOT in here: it is the shared
+   * `~/.agents` skills volume, not an agent's.
+   */
+  agentConfigVolumes?: Record<string, string>;
   /** Per-box volume holding `.vscode-server`. */
   vscodeServerVolume?: string;
   /** Per-box volume holding `.cursor-server`. */
@@ -329,6 +344,8 @@ export interface BoxRecord {
   agentsConfigVolume?: string;
   /** Docker volume mounted at /home/vscode/.local/share/opencode. Docker only. */
   opencodeConfigVolume?: string;
+  /** Every agent's docker config volume, keyed by agent id. Docker only. */
+  agentConfigVolumes?: Record<string, string>;
   /** Per-box volume holding `.vscode-server`. Docker only. */
   vscodeServerVolume?: string;
   /** Per-box volume holding `.cursor-server`. Docker only. */
@@ -477,6 +494,25 @@ export function dockerField<K extends keyof DockerBoxFields>(
   return (box as unknown as Record<string, unknown>)[key as string] as
     | DockerBoxFields[K]
     | undefined;
+}
+
+/**
+ * One agent's docker config volume, or undefined when the box has none for it.
+ *
+ * Prefers the keyed map and falls back to the three legacy named fields, so a
+ * box recorded before the map existed keeps answering. Every consumer goes
+ * through here: the per-agent `switch` statements this replaced had a `default:`
+ * arm returning opencode's volume, which silently handed a fourth agent
+ * someone else's credentials store.
+ */
+export function agentConfigVolume(box: BoxRecord, agent: string): string | undefined {
+  const map = dockerField(box, 'agentConfigVolumes');
+  const fromMap = map?.[agent];
+  if (fromMap !== undefined) return fromMap;
+  if (agent === 'claude') return dockerField(box, 'claudeConfigVolume');
+  if (agent === 'codex') return dockerField(box, 'codexConfigVolume');
+  if (agent === 'opencode') return dockerField(box, 'opencodeConfigVolume');
+  return undefined;
 }
 
 export interface StateFile {

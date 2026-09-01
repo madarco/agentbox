@@ -20,15 +20,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { SyncTransport } from '@agentbox/core';
+import type { BoxRecord, SyncTransport } from '@agentbox/core';
 import type { AgentId } from '@agentbox/core';
+import { agentConfigVolume } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import { mergeInstalledPlugins, mergeKnownMarketplaces } from './claude-pull.js';
-import {
-  CLAUDE_BOX_CONFIG_DIR,
-  CODEX_BOX_CONFIG_DIR,
-  OPENCODE_BOX_DATA_DIR,
-} from './agent-pull.js';
+import { agentBoxDir } from './agent-pull.js';
 
 /** One staged settings item, in the volume-style relative layout. */
 export interface StagedItem {
@@ -49,16 +46,16 @@ export interface StagedSettings {
   sourceRegistries?: Record<string, unknown>;
 }
 
-/** The box-side config root the staged rels apply under, per agent. */
+/**
+ * The box-side config root the staged rels apply under, per agent.
+ *
+ * Derived from the registry (`staticPaths[0].boxDir`). It used to be a switch
+ * whose `default:` arm returned opencode's dir, so every agent but the named
+ * two — including the demo agent and any plugin agent — was told its config
+ * lived under `~/.local/share/opencode`.
+ */
 export function agentBoxConfigDir(agent: AgentId): string {
-  switch (agent) {
-    case 'claude':
-      return CLAUDE_BOX_CONFIG_DIR;
-    case 'codex':
-      return CODEX_BOX_CONFIG_DIR;
-    default:
-      return OPENCODE_BOX_DATA_DIR;
-  }
+  return agentBoxDir(agent);
 }
 
 // The three `<agent>StagedItems` mappers lived here — a per-agent table in a
@@ -232,6 +229,8 @@ export interface PropagateBoxLike {
   claudeConfigVolume?: string;
   codexConfigVolume?: string;
   opencodeConfigVolume?: string;
+  /** Every agent's config volume, keyed by id. The three above are its mirror. */
+  agentConfigVolumes?: Record<string, string>;
   /** Agents the box was created for. Absent = created before per-agent selection. */
   agents?: string[];
 }
@@ -247,15 +246,16 @@ export interface PropagatePlan<B extends PropagateBoxLike> {
   cloudBoxes: B[];
 }
 
+/**
+ * The box's docker config volume for `agent`, or undefined when it has none.
+ *
+ * `agentConfigVolume` reads the keyed map and falls back to the three legacy
+ * named fields. This was a switch with a `default:` arm returning opencode's
+ * volume, which would have fanned a fourth agent's credentials into opencode's
+ * store.
+ */
 function isolatedVolumeOf(box: PropagateBoxLike, agent: AgentId): string | undefined {
-  switch (agent) {
-    case 'claude':
-      return box.claudeConfigVolume;
-    case 'codex':
-      return box.codexConfigVolume;
-    default:
-      return box.opencodeConfigVolume;
-  }
+  return agentConfigVolume(box as BoxRecord, agent);
 }
 
 /**
