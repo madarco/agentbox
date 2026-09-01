@@ -20,6 +20,7 @@ export {
   agentIds,
   isRuntimeAgent,
   agentTuiEnv,
+  findAgentSpec,
 } from './registry.js';
 export {
   mergeInstalledPlugins,
@@ -104,6 +105,7 @@ export {
   AgentInstallError,
   renderInstallRecipe,
   renderPackageInstall,
+  renderAgentSettingEnv,
   type EnsureAgentInstalledResult,
 } from './concerns/install.js';
 export {

@@ -24,6 +24,8 @@ import { homedir } from 'node:os';
 import { dirname, resolve as pathResolve } from 'node:path';
 
 import type { ProviderKind } from '@agentbox/config';
+import type { AgentSettings } from '@agentbox/core';
+import { findAgentSpec } from './sync/registry.js';
 
 /**
  * Providers that bake a `~/.agentbox/<provider>-prepared.json` artifact. The
@@ -208,17 +210,6 @@ export function shortFingerprint(sha: string): string {
   return sha.slice(0, 12);
 }
 
-/**
- * Fold the Claude install method into a base context fingerprint so switching
- * `box.claudeInstall` native↔npm forces a re-bake. `native` returns the base
- * hash unchanged — existing native snapshots keep their fingerprint and never
- * spuriously rebuild; only `npm` derives a distinct hash.
- */
-export function claudeInstallFingerprint(baseSha: string, mode: 'native' | 'npm'): string {
-  if (mode === 'native') return baseSha;
-  return createHash('sha256').update(`${baseSha}\0claude-install=npm`).digest('hex');
-}
-
 /** Normalize an agent set so ordering and duplicates can't change the hash. */
 export function normalizeAgentSet(agents: readonly string[] | undefined): string[] {
   return [...new Set((agents ?? []).map((a) => a.trim()).filter((a) => a.length > 0))].sort();
@@ -229,56 +220,60 @@ export function agentSetArg(agents: readonly string[] | undefined): string {
   return normalizeAgentSet(agents).join(',');
 }
 
+/** Every agent's declared settings, keyed by agent id. */
+export type AgentSettingsMap = Readonly<Record<string, AgentSettings>>;
+
+/**
+ * The settings entries that change what a BAKE produces, canonicalised as
+ * sorted `<agent>.<key>=<value>` strings.
+ *
+ * Two filters, both load-bearing. Only settings the agent declared
+ * `affectsBake` count — claude's `tui` rides the launch env, and folding it
+ * would re-bake a whole image for a renderer flip. And a value equal to its
+ * declared default is dropped, so **a default-configured bake keeps the raw
+ * context hash**: without that, adding a setting to any agent would invalidate
+ * every existing artifact on every provider.
+ *
+ * An agent the registry doesn't know (a plugin removed after its box was baked)
+ * contributes nothing rather than throwing — a fingerprint must not be able to
+ * fail a create.
+ */
+export function bakeSettingsFingerprintInput(settings?: AgentSettingsMap): string[] {
+  if (!settings) return [];
+  const out: string[] = [];
+  for (const [agentId, values] of Object.entries(settings)) {
+    const spec = findAgentSpec(agentId);
+    for (const declared of spec?.settings ?? []) {
+      if (!declared.affectsBake) continue;
+      const value = values[declared.key];
+      if (value === undefined || value === declared.default) continue;
+      out.push(`${agentId}.${declared.key}=${String(value)}`);
+    }
+  }
+  return out.sort();
+}
+
 /**
  * Fold a base image's build variant into its context fingerprint, so two images
  * built from the same context but carrying different agents (or a different
- * Claude install method) are distinct cache identities.
+ * value for a bake-affecting agent setting) are distinct cache identities.
  *
- * Generalises {@link claudeInstallFingerprint}, which stays as-is because it is
- * exported from the published provider SDK. The empty variant — native install,
- * no agents — is the identity fold, so the plain base keeps the raw context
- * hash and a provider that never passes a variant is unaffected.
+ * The empty variant — no agents, every setting at its default — is the identity
+ * fold, so the plain base keeps the raw context hash and a provider that never
+ * passes a variant is unaffected.
  */
 export function variantFingerprint(
   baseSha: string,
-  variant: { claudeInstall?: 'native' | 'npm'; agents?: readonly string[] } = {},
+  variant: { agents?: readonly string[]; agentSettings?: AgentSettingsMap } = {},
 ): string {
   const agents = agentSetArg(variant.agents);
-  const npm = variant.claudeInstall === 'npm';
-  if (!npm && agents === '') return baseSha;
-  const parts: string[] = [];
-  if (npm) parts.push('claude-install=npm');
+  const settings = bakeSettingsFingerprintInput(variant.agentSettings);
+  if (settings.length === 0 && agents === '') return baseSha;
+  const parts: string[] = [...settings];
   if (agents !== '') parts.push(`agents=${agents}`);
   return createHash('sha256')
     .update(`${baseSha}\0${parts.join('\0')}`)
     .digest('hex');
-}
-
-/**
- * Which install mode `stored` was baked with, given the raw (native) fingerprint
- * this machine computes for the same build context — or null when it matches
- * neither, i.e. the bake really is from a different context.
- *
- * Needed because a prepared record stores only the FOLDED fingerprint, never the
- * mode itself, and the fold is one-way: the mode can only be inferred by trying
- * both. There are exactly two, and `native` is the identity fold, so one context
- * hash yields both candidates — no second hashing pass.
- *
- * This is what lets a control box use a bake shared by a PC set to the other
- * mode. The two bases differ only in how Claude Code was installed (Anthropic's
- * installer vs npm) and are functionally equivalent, so adopting one is right;
- * rejecting it means failing every create instead.
- *
- * Keep this next to {@link claudeInstallFingerprint} — it encodes the same
- * native-is-identity invariant, and splitting them invites one to drift.
- */
-export function matchClaudeInstallFingerprint(
-  stored: string,
-  nativeFingerprint: string,
-): 'native' | 'npm' | null {
-  if (stored === nativeFingerprint) return 'native';
-  if (stored === claudeInstallFingerprint(nativeFingerprint, 'npm')) return 'npm';
-  return null;
 }
 
 /**

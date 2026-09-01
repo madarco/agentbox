@@ -42,6 +42,8 @@ import {
   renderPackageInstall,
   renderInstallRecipe,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
@@ -259,8 +261,8 @@ export interface VmVariantBakeOptions {
   snapshotName: string;
   /** Agents to install, normalized and sorted. */
   agents: readonly string[];
-  /** `box.claudeInstall` — selects claude's recipe, not whether to install. */
-  claudeInstall?: 'native' | 'npm';
+  /** Each agent's declared settings — selects its recipe, not whether to install. */
+  agentSettings?: AgentSettingsMap;
   onLog?: (line: string) => void;
 }
 
@@ -289,20 +291,21 @@ export async function bakeDaytonaVmVariant(
   try {
     for (const id of opts.agents) {
       const spec = resolveAgentSpec(id);
-      const install = resolveAgentInstall(spec.install, opts.claudeInstall);
+      const install = resolveAgentInstall(spec.install, opts.agentSettings?.[spec.id]);
       log(`installing ${spec.id} into the derived snapshot…`);
       const steps: string[] = [];
       if (install.packages && install.packages.length > 0) {
         steps.push(`sudo sh -c ${shellSingleQuote(renderPackageInstall(install.packages))}`);
       }
-      const recipe = renderInstallRecipe(install.recipe);
+      const settingEnv = renderAgentSettingEnv(opts.agentSettings?.[spec.id]);
+      const recipe = settingEnv + renderInstallRecipe(install.recipe);
       // `runAs: 'box-user'` is load-bearing: the native installers write into
       // the INVOKING user's ~/.local/bin, so as root the binary lands in /root
       // and the box user never sees it. `exec` already runs as the box user, so
       // a box-user recipe needs no pivot — only a root one does.
       steps.push(install.runAs === 'root' ? `sudo sh -c ${shellSingleQuote(recipe)}` : recipe);
       if (install.postInstall) {
-        steps.push(`sudo sh -c ${shellSingleQuote(install.postInstall)}`);
+        steps.push(`sudo sh -c ${shellSingleQuote(settingEnv + install.postInstall)}`);
       }
       // Prove it landed on the BOX USER's PATH. An installer that exits 0
       // without producing a usable binary is a real failure mode, and finding

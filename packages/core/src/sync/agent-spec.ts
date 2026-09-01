@@ -202,23 +202,84 @@ export interface AgentInstall {
   /** Shell run after the recipe succeeds (dirs, symlinks, ownership). Runs as root. */
   postInstall?: string;
   /**
-   * Alternate ways to install the same agent, keyed by mode.
+   * Alternate ways to install the same agent, keyed by the value of the setting
+   * named in {@link alternatesFrom}.
    *
-   * Only `npm` is used today: `box.claudeInstall: npm` is the documented escape
-   * hatch for hosts whose egress IP the Claude CDN 403s. Without this the mode
-   * would silently do nothing now that the install lives here rather than in a
-   * Dockerfile branch.
+   * Claude is the only declarer: `claude.install: npm` is the documented escape
+   * hatch for hosts whose egress IP the Claude CDN 403s. Without this the
+   * setting would silently do nothing now that the install lives here rather
+   * than in a Dockerfile branch.
    */
-  alternates?: Record<string, Omit<AgentInstall, 'alternates'>>;
+  alternates?: Record<string, Omit<AgentInstall, 'alternates' | 'alternatesFrom'>>;
+  /**
+   * Which of the agent's declared {@link AgentSyncSpec.settings} selects
+   * {@link alternates}. Present iff `alternates` is.
+   *
+   * Named explicitly rather than by a reserved key so a drift test can assert
+   * the setting exists and is an enum whose values cover the map's keys — a
+   * naming convention cannot be checked.
+   */
+  alternatesFrom?: string;
 }
 
-/** Pick the install for `mode`, falling back to the default recipe. */
+/**
+ * Pick the install for this agent's resolved settings, falling back to the
+ * default recipe.
+ *
+ * Generic on purpose: which setting selects an alternate is the AGENT's
+ * declaration (`alternatesFrom`), so nothing here knows what `install` means.
+ */
 export function resolveAgentInstall(
   install: AgentInstall,
-  mode?: string,
-): Omit<AgentInstall, 'alternates'> {
-  const alt = mode ? install.alternates?.[mode] : undefined;
+  settings?: AgentSettings,
+): Omit<AgentInstall, 'alternates' | 'alternatesFrom'> {
+  const key = install.alternatesFrom;
+  const chosen = key ? settings?.[key] : undefined;
+  const alt = typeof chosen === 'string' ? install.alternates?.[chosen] : undefined;
   return alt ?? install;
+}
+
+/**
+ * One agent's resolved settings — its own config block with the declared
+ * defaults applied. Opaque to everything but the agent that declared them.
+ */
+export type AgentSettings = Readonly<Record<string, string | boolean>>;
+
+/**
+ * A setting an agent declares for itself.
+ *
+ * WHY THIS IS NOT A ROLE-NAMED FIELD. `claude.install` and `claude.tui` really
+ * are Claude-specific — one picks between Anthropic's installer and the npm
+ * package, the other picks between Claude Code's two renderers. Generalising
+ * their NAMES would be a lie; what generalises is the MECHANISM: an agent
+ * declares its settings, config generates the keys, every call site carries an
+ * opaque bag, and the agent's own recipe / `postInstall` / launch env is the
+ * only thing that knows what they mean.
+ *
+ * Pure JSON like the rest of the spec, so a setting survives `agentbox agent
+ * add`'s snapshot into `~/.agentbox/agents.json` and a community agent gets
+ * real `agentbox config set` keys with no change to this repo.
+ */
+export interface AgentSettingSpec {
+  /** Leaf key under the agent's own config block: `claude.install`. */
+  key: string;
+  type: 'string' | 'bool' | 'enum';
+  /** Required when `type` is `enum`; the accepted values. */
+  enumValues?: readonly string[];
+  /** Applied when the user set nothing. Also what the fingerprint fold treats as absent. */
+  default: string | boolean;
+  /** Shown by `agentbox config list` and the docs table. */
+  description: string;
+  /** Hide from the default `config list` view, like the per-provider keys. */
+  advanced?: boolean;
+  /**
+   * This setting changes what a BAKE produces, so it folds into
+   * `variantFingerprint` and two values are two artifacts.
+   *
+   * Runtime-only settings must NOT set it — claude's `tui` rides the launch
+   * env, and folding it would re-bake a whole base image for a renderer flip.
+   */
+  affectsBake?: boolean;
 }
 
 export interface AgentSyncSpec {
@@ -294,10 +355,32 @@ export interface AgentSyncSpec {
    * whatever a box's settings volume carries. Reported upstream behaviour, not
    * an AgentBox bug — `agentbox shell` is clean, and so is `/tui default`.
    *
-   * Callers write these into the box env file, not just onto the agent's launch
-   * argv, so a `claude` started by hand from `agentbox shell` renders the same.
+   * Forwarded on the launch itself (`docker exec -e`, the cloud inner command),
+   * NOT written to `/etc/agentbox/box.env`: tmux runs the binary directly rather
+   * than through a login shell, so it would never source that file, and a
+   * container's `docker run` env is immutable — a box created before the setting
+   * existed would keep the old renderer forever.
    */
   tuiEnv?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /**
+   * Which of {@link settings} selects {@link tuiEnv}'s mode. Present iff
+   * `tuiEnv` is — see {@link AgentInstall.alternatesFrom} for why the binding is
+   * explicit rather than a reserved key name.
+   */
+  tuiEnvFrom?: string;
+  /**
+   * Settings this agent declares for itself. `@agentbox/config` generates a
+   * `<id>.<key>` config key from each one, for a built-in and for an
+   * `agentbox agent add`-installed package alike.
+   *
+   * The resolved values reach the agent three ways, all of them opaque to
+   * shared code: `alternatesFrom` picks an install recipe, `tuiEnvFrom` picks a
+   * launch env, and every value is exported as
+   * `AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>` before the agent's own `recipe`
+   * and `postInstall` run — which is the escape hatch for a setting nothing in
+   * this repo was written to understand.
+   */
+  settings?: readonly AgentSettingSpec[];
   caps: AgentCapabilities;
   /**
    * Box->host (`agentbox download <agent>`) descriptor.

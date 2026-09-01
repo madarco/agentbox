@@ -12,8 +12,8 @@
  * that resolves the provider from the box + handles the resume-fallback.
  */
 import { spawn } from 'node:child_process';
-import type { BoxRecord, Provider } from '@agentbox/core';
-import { loadEffectiveConfig, type ClaudeTuiMode } from '@agentbox/config';
+import type { AgentSettings, BoxRecord, Provider } from '@agentbox/core';
+import { agentSettingsFor } from '@agentbox/config';
 import { agentTuiEnv, isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
 
@@ -295,16 +295,13 @@ async function tmuxSessionExists(
  * the `Provider` it already holds. Returns the possibly-started box record.
  */
 /**
- * `box.claudeTui` for a box's project, defaulting to the schema default when
- * the config can't be read (a moved workspace, the hub worker's ephemeral
- * checkout). A renderer preference must never fail a session start.
+ * The agent's declared settings for a box's project. `agentSettingsFor` already
+ * degrades to the declared defaults when the config can't be read (a moved
+ * workspace, the hub worker's ephemeral checkout) — a renderer preference must
+ * never fail a session start.
  */
-async function resolveBoxClaudeTui(box: BoxRecord): Promise<ClaudeTuiMode> {
-  try {
-    return (await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui;
-  } catch {
-    return 'default';
-  }
+async function resolveBoxAgentSettings(box: BoxRecord, agent: string): Promise<AgentSettings> {
+  return agentSettingsFor(agent, box.workspacePath);
 }
 
 export async function startDetachedCloudAgent(
@@ -334,7 +331,7 @@ export async function startDetachedCloudAgent(
   const command = buildCloudAttachInnerCommand(
     binary,
     extraArgs,
-    agentTuiEnv(binary, await resolveBoxClaudeTui(box)),
+    agentTuiEnv(binary, await resolveBoxAgentSettings(box, binary)),
   );
   const attempts = Math.max(1, args.startRetry?.attempts ?? DEFAULT_START_ATTEMPTS);
   const backoffMs = args.startRetry?.backoffMs ?? DEFAULT_START_BACKOFF_MS;

@@ -184,11 +184,11 @@ export {
 } from './carry-render.js';
 export * from './sync/index.js';
 export {
-  claudeInstallFingerprint,
   variantFingerprint,
+  bakeSettingsFingerprintInput,
+  type AgentSettingsMap,
   normalizeAgentSet,
   agentSetArg,
-  matchClaudeInstallFingerprint,
   computeContextManifest,
   computeContextSha256,
   diffFileManifests,

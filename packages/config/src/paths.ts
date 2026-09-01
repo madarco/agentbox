@@ -7,6 +7,16 @@ import type { ConfigScope } from './types.js';
 export const STATE_DIR = join(homedir(), '.agentbox');
 export const GLOBAL_CONFIG_FILE = join(STATE_DIR, 'config.yaml');
 export const PROJECTS_DIR = join(STATE_DIR, 'projects');
+/**
+ * Where `agentbox agent add` snapshots an installed agent package's descriptor.
+ *
+ * The path lives HERE, in the zero-internal-dep leaf, rather than in
+ * `@agentbox/agent-registry` where the reader lives: config generates a
+ * `<agent>.<setting>` key for a plugin agent's declared settings, and it cannot
+ * import the registry (the registry imports config). The registry re-exports
+ * this constant so there is still exactly one spelling of the path.
+ */
+export const AGENTS_FILE = join(STATE_DIR, 'agents.json');
 export const WORKSPACE_CONFIG_BASENAME = 'agentbox.yaml';
 
 export interface ProjectRoot {
@@ -67,9 +77,7 @@ async function fileExists(p: string): Promise<boolean> {
  * preserved — macOS APFS is case-preserving and so is the user's intent.
  */
 export function hashProjectPath(absPath: string): string {
-  const normalised = absPath.length > 1 && absPath.endsWith('/')
-    ? absPath.slice(0, -1)
-    : absPath;
+  const normalised = absPath.length > 1 && absPath.endsWith('/') ? absPath.slice(0, -1) : absPath;
   return createHash('sha1').update(normalised).digest('hex').slice(0, 16);
 }
 

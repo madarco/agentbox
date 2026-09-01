@@ -17,20 +17,20 @@ import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
 import { resolveAgentInstall } from '@agentbox/core';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
-import type { AgentInstallRecipe } from '@agentbox/core';
+import type { AgentInstallRecipe, AgentSettings } from '@agentbox/core';
 
 /**
- * `box.claudeInstall`, or undefined when the config can't be read.
+ * This agent's declared settings, or {} when the config can't be read.
  *
- * Lazy import + swallow: an install must not fail because a config layer is
- * unreadable, and `resolveAgentInstall` treats undefined as "default recipe".
- * Mirrors `resolveClaudeInstallMode` in @agentbox/sandbox-docker.
+ * Lazy import so `@agentbox/config` stays off this module's static graph, and
+ * `agentSettingsFor` already swallows: an install must not fail because a
+ * config layer is unreadable, and every consumer treats an absent setting as
+ * "the declared default".
  */
-async function resolveConfiguredClaudeInstall(): Promise<string | undefined> {
+async function resolveConfiguredSettings(agent: string): Promise<AgentSettings | undefined> {
   try {
-    const { loadEffectiveConfig } = await import('@agentbox/config');
-    const cfg = await loadEffectiveConfig(process.cwd());
-    return cfg.effective.box.claudeInstall;
+    const { agentSettingsFor } = await import('@agentbox/config');
+    return await agentSettingsFor(agent);
   } catch {
     return undefined;
   }
@@ -60,10 +60,57 @@ export interface EnsureAgentInstalledResult {
  *
  * `sudo -n` (never prompt) so a box without a sudo grant fails fast with a
  * usable message instead of blocking on a password read that nothing answers.
+ *
+ * THE SCRIPT RIDES AS A POSITIONAL PARAMETER, never interpolated into a quoted
+ * string. It used to be embedded as `sudo -n sh -c "<script with \" escaped>"`,
+ * which made the two branches expand at DIFFERENT times: everything `$`-shaped
+ * in the sudo branch — `$(command -v claude)`, and any variable the script sets
+ * for itself — was substituted by the OUTER shell, as the box user, before sudo
+ * ran. So a `postInstall` reading a variable its own prefix exported saw it
+ * empty on every cloud provider and correct on docker. Passing it as `$1` means
+ * the inner shell does the expansion in both branches, and no escaping is
+ * involved at all.
  */
 function asRootScript(script: string): string[] {
-  const quoted = script.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  return ['sh', '-c', `if [ "$(id -u)" = 0 ]; then ${script}; else sudo -n sh -c "${quoted}"; fi`];
+  return [
+    'sh',
+    '-c',
+    'if [ "$(id -u)" = 0 ]; then sh -c "$1"; else sudo -n sh -c "$1"; fi',
+    'agentbox-install',
+    script,
+  ];
+}
+
+/**
+ * `KEY=value` exports for an agent's resolved settings, as one shell prefix.
+ *
+ * The generic escape hatch. `alternatesFrom` and `tuiEnvFrom` cover the two
+ * things AgentBox itself knows how to do with a setting; this covers everything
+ * else, because an agent that arrives as an npm package can put arbitrary logic
+ * in its own `postInstall` and needs its settings there. Nothing in this repo
+ * has to learn what the setting means.
+ *
+ * Prefixed to the recipe AND the post-install so both see them — they are two
+ * `exec` calls, not one shell. Values are single-quoted with the standard
+ * `'\''` escape: a setting's value is user-supplied config.
+ */
+export function renderAgentSettingEnv(settings?: AgentSettings): string {
+  const entries = Object.entries(settings ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
+  if (entries.length === 0) return '';
+  const assignments = entries.map(([key, value]) => `${settingEnvName(key)}=${shQuote(value)}`);
+  // `export`, not a bare assignment: the recipe spawns processes (npm, an
+  // installer script) and a shell variable would not reach them.
+  return `export ${assignments.join(' ')}; `;
+}
+
+/** `install` -> `AGENTBOX_AGENT_SETTING_INSTALL`. */
+export function settingEnvName(key: string): string {
+  return `AGENTBOX_AGENT_SETTING_${key.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`;
+}
+
+/** Single-quote for sh. A setting's value is user-supplied config. */
+function shQuote(value: string | boolean): string {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
 /** Render one recipe to a shell snippet. Shared with the docker derived-layer builder. */
@@ -144,23 +191,24 @@ async function installPackages(
 export async function ensureAgentInstalled(
   transport: SyncTransport,
   agent: string,
-  opts: { onProgress?: (line: string) => void; installMode?: string } = {},
+  opts: { onProgress?: (line: string) => void; settings?: AgentSettings } = {},
 ): Promise<EnsureAgentInstalledResult> {
   const spec = resolveAgentSpec(agent);
   const probe = await transport.exec(['sh', '-c', `command -v ${spec.binary}`]);
   if (probe.exitCode === 0) return { installed: false };
 
   opts.onProgress?.(`installing ${spec.id} (absent from this box image)`);
-  // `box.claudeInstall: npm` picks claude's npm alternate; every other agent has
-  // none and falls through to its default recipe.
+  // The agent's own settings pick an alternate recipe when it declared one
+  // (`claude.install: npm`); an agent that declared none falls through to its
+  // default recipe.
   //
-  // Default it from config rather than requiring every caller to pass it: the
-  // bake path threads a mode explicitly, but the runtime callers (claude start,
-  // the dashboard's agent switch, the cloud attach paths) do not — and a host
-  // that set npm BECAUSE the native CDN 403s would otherwise hit that same CDN
-  // when adding claude to an existing box.
-  const installMode = opts.installMode ?? (await resolveConfiguredClaudeInstall());
-  const install = resolveAgentInstall(spec.install, installMode);
+  // Default them from config rather than requiring every caller to pass them:
+  // the bake path threads settings explicitly, but the runtime callers (claude
+  // start, the dashboard's agent switch, the cloud attach paths) do not — and a
+  // host that set npm BECAUSE the native CDN 403s would otherwise hit that same
+  // CDN when adding claude to an existing box.
+  const settings = opts.settings ?? (await resolveConfiguredSettings(spec.id));
+  const install = resolveAgentInstall(spec.install, settings);
 
   if (install.packages && install.packages.length > 0) {
     const pkgs = await installPackages(transport, install.packages);
@@ -182,7 +230,8 @@ export async function ensureAgentInstalled(
     }
   }
 
-  const script = renderInstallRecipe(install.recipe);
+  const settingEnv = renderAgentSettingEnv(settings);
+  const script = settingEnv + renderInstallRecipe(install.recipe);
   // `box-user` recipes must NOT be escalated: Claude's native installer writes
   // to the invoking user's ~/.local/bin, so running it as root would install
   // into /root and leave the box user with no `claude` on PATH.
@@ -198,7 +247,9 @@ export async function ensureAgentInstalled(
   }
 
   if (install.postInstall) {
-    const post = await transport.exec(asRootScript(install.postInstall), { user: 'root' });
+    const post = await transport.exec(asRootScript(settingEnv + install.postInstall), {
+      user: 'root',
+    });
     if (post.exitCode !== 0) {
       throw new AgentInstallError(
         `${spec.id}: post-install step failed (exit ${String(post.exitCode)}).\n${`${post.stdout}\n${post.stderr}`.trim().slice(-600)}`,

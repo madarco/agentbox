@@ -19,6 +19,8 @@ export type {
   AgentPathMap,
   AgentPullSpec,
   AgentSeedSpec,
+  AgentSettings,
+  AgentSettingSpec,
   AgentSyncSpec,
   AgentWatchSpec,
 } from './agent-spec.js';

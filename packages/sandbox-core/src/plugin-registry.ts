@@ -39,7 +39,16 @@ export const PLUGINS_FILE = join(homedir(), '.agentbox', 'plugins.json');
 // silently lacks it. Loading such a plugin would produce wrong boxes rather
 // than a missing feature, which is worse than refusing it. A v2 plugin is
 // refused at `plugin add` and skipped at load with a message naming the version.
-export const SUPPORTED_SDK_API_VERSIONS: readonly number[] = [3];
+//
+// v4: agent settings. `PrepareOptions.claudeInstall` is replaced by the generic
+// `agentSettings` map, `resolveAgentInstall` takes that agent's settings rather
+// than a mode string, `Provider.baseFingerprint` takes no arguments (an
+// agentless base folds no agent setting), and `claudeInstallFingerprint` is
+// gone. A CLEAN BREAK for the same reason v3 was: a v3 provider silently drops
+// every agent setting, so on a host that set `claude.install: npm` it bakes a
+// base with the recipe the user chose specifically because it fails there — a
+// wrong artifact rather than a missing feature.
+export const SUPPORTED_SDK_API_VERSIONS: readonly number[] = [4];
 
 export function isSupportedApiVersion(v: number): boolean {
   return SUPPORTED_SDK_API_VERSIONS.includes(v);

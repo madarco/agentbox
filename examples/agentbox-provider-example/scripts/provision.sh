@@ -326,10 +326,11 @@ npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "provision.sh: one or more agent npm installs failed (continuing)"
 done_ "agent CLIs (codex + opencode + agent-browser, global npm)"
 
-# AGENTBOX_CLAUDE_INSTALL selects how Claude Code is installed (default
-# `native`). `npm` is an opt-in fallback for hosts whose egress IP the native
-# installer's CDN 403s — see `box.claudeInstall`.
-if [ "${AGENTBOX_CLAUDE_INSTALL:-native}" = "npm" ]; then
+# AGENTBOX_AGENT_SETTING_INSTALL is claude's `claude.install` setting, exported
+# into this script by `renderAgentSettingEnv`. `npm` is an opt-in fallback for
+# hosts whose egress IP the native installer's CDN 403s. Any setting an agent
+# declares arrives the same way, as AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>.
+if [ "${AGENTBOX_AGENT_SETTING_INSTALL:-native}" = "npm" ]; then
   step "Claude Code (npm: @anthropic-ai/claude-code)"
   # npm-global drops `claude` at Node's prefix bin, not the
   # /home/vscode/.local/bin/claude the rest of AgentBox hardcodes. Symlink it

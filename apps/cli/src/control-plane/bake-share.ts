@@ -17,7 +17,6 @@
  * Everything here is pure (fingerprints/versions in, verdict out) so it is unit
  * testable without a hub or the filesystem.
  */
-import { matchClaudeInstallFingerprint } from '@agentbox/sandbox-core';
 import type { PushDecision } from './custody-client.js';
 
 /**
@@ -48,18 +47,17 @@ export function isShareablePreparedProvider(provider: string): boolean {
  * something *worse* isn't a risk: the pull only writes when custody's
  * fingerprint equals ours.)
  *
- * `nativeFingerprint` is the raw context hash, and the match is fold-tolerant —
- * the SAME rule the pull and the hub's hydration apply. A strict compare here
- * would call an `box.claudeInstall=npm` machine's perfectly current base a
- * miss (it stores the folded hash), so a `prepare` that found nothing in
- * custody would re-bake a base it already had, every time.
+ * `nativeFingerprint` is the raw context hash, and a plain equality is the
+ * SAME rule the pull and the hub's hydration apply. It used to be fold-tolerant
+ * because the base's fingerprint carried the Claude install mode; the AGENTLESS
+ * base folds no agent setting, so there is one hash on every machine.
  */
 export function localBakeBlocksAdoption(
   local: { base?: { contextSha256?: string } } | null,
   nativeFingerprint: string,
 ): boolean {
   const stored = local?.base?.contextSha256;
-  return !!stored && matchClaudeInstallFingerprint(stored, nativeFingerprint) !== null;
+  return !!stored && stored === nativeFingerprint;
 }
 
 /**
@@ -144,10 +142,7 @@ export function classifyBakeShare(input: BakeShareInput): BakeShareResult {
       reason: `could not upload the ${provider} bake record to the control box`,
     };
   }
-  if (
-    cliNativeFingerprint &&
-    !matchClaudeInstallFingerprint(storedFingerprint, cliNativeFingerprint)
-  ) {
+  if (cliNativeFingerprint && storedFingerprint !== cliNativeFingerprint) {
     return {
       provider,
       status: 'mismatch',

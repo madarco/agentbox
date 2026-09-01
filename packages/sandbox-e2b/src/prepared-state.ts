@@ -20,7 +20,6 @@
  */
 
 import {
-  claudeInstallFingerprint,
   computeContextManifest,
   computeContextSha256,
   readPreparedStateRaw,
@@ -130,17 +129,12 @@ export function updatePreparedState(mutate: (s: PreparedE2bState) => void): void
  * hash to the one `prepare` writes — both go through the same
  * `resolveRuntimeAssets` + `computeContextSha256` chain.
  */
-export async function currentE2bBaseFingerprintLive(
-  claudeInstall: 'native' | 'npm' = 'native',
-): Promise<string | undefined> {
+export async function currentE2bBaseFingerprintLive(): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
-    // base never matches the stored (npm-folded) fingerprint.
-    return claudeInstallFingerprint(
-      await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-      claudeInstall,
-    );
+    // The AGENTLESS base: no agent setting folds in, because it installs no
+    // agent. Per-agent artifacts get their own `variantFingerprint`.
+    return await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath })));
   } catch {
     return undefined;
   }

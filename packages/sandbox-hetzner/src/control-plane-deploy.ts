@@ -21,7 +21,8 @@
 import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadEffectiveConfig, mergeConfigYaml } from '@agentbox/config';
+import { allAgentSettings, loadEffectiveConfig, mergeConfigYaml } from '@agentbox/config';
+import { bakeSettingsFingerprintInput } from '@agentbox/sandbox-core';
 import type { HubDeploySource } from '@agentbox/sandbox-core';
 import { makeHetznerClient, type HetznerClient, type HetznerServer } from './client.js';
 import { controlPlaneCloudInit } from './cloud-init.js';
@@ -152,20 +153,6 @@ export function filterProviderSecrets(body: string): string {
 }
 
 /**
- * Config keys migrated to the control box's own `config.yaml`.
- *
- * Only `box.claudeInstall` so far, and it earns its place: it selects how
- * `prepare` installs Claude Code, and `npm` exists specifically because the
- * native installer intermittently Cloudflare-403s datacenter egress IPs — which
- * is exactly what a control box has. Without migrating it, a control box that
- * bakes its own base picks the mode most likely to fail there.
- *
- * Deliberately NOT the whole config: most keys are host-specific (paths,
- * terminal integration) and would be wrong or meaningless on the VPS.
- */
-const MIGRATED_CONFIG_KEYS = ['box.claudeInstall'] as const;
-
-/**
  * The control box's config, with the migrated keys merged into whatever is
  * already there. Returns null when there is nothing to change.
  *
@@ -175,11 +162,11 @@ const MIGRATED_CONFIG_KEYS = ['box.claudeInstall'] as const;
  */
 export function buildControlPlaneConfigYaml(
   remoteBody: string,
-  values: Partial<Record<(typeof MIGRATED_CONFIG_KEYS)[number], unknown>>,
+  values: Record<string, unknown>,
 ): string | null {
   let body = remoteBody;
   let changed = false;
-  for (const key of MIGRATED_CONFIG_KEYS) {
+  for (const key of Object.keys(values).sort()) {
     const value = values[key];
     if (value === undefined) continue;
     body = mergeConfigYaml(body, key, value);
@@ -189,18 +176,35 @@ export function buildControlPlaneConfigYaml(
 }
 
 /**
- * The PC's global effective values for the migrated keys. Global (not the cwd
- * project's) because the control box is project-independent, and because the hub
- * itself reads global when deciding what to bake — keeping the two symmetric.
+ * The PC's global config values worth migrating to the control box.
  *
- * A key already at its default is omitted: nothing to migrate, and no reason to
- * create a config file on the VPS that wasn't there.
+ * Exactly the BAKE-AFFECTING agent settings that are not at their default —
+ * the same rule the variant fingerprint uses, deliberately, so the two can't
+ * disagree about what makes one bake differ from another.
+ *
+ * `claude.install` is why this exists: `npm` is the escape hatch for hosts
+ * whose egress IP the native installer's CDN 403s, which is exactly what a
+ * control box has. Without migrating it, a control box that bakes its own base
+ * picks the mode most likely to fail there. Deriving the list instead of
+ * hardcoding that one key means a future agent's bake setting migrates too,
+ * with no edit here.
+ *
+ * Deliberately NOT the whole config: most keys are host-specific (paths,
+ * terminal integration) and would be wrong or meaningless on the VPS. And a
+ * setting already at its default is omitted — nothing to migrate, and no reason
+ * to create a config file on the VPS that wasn't there.
+ *
+ * Global (not the cwd project's) because the control box is project-independent,
+ * and because the hub itself reads global when deciding what to bake.
  */
-async function collectMigratedConfig(): Promise<Partial<Record<string, unknown>>> {
+async function collectMigratedConfig(): Promise<Record<string, unknown>> {
   try {
     const cfg = await loadEffectiveConfig(homedir());
     const out: Record<string, unknown> = {};
-    if (cfg.effective.box.claudeInstall === 'npm') out['box.claudeInstall'] = 'npm';
+    for (const entry of bakeSettingsFingerprintInput(allAgentSettings(cfg.effective))) {
+      const eq = entry.indexOf('=');
+      out[entry.slice(0, eq)] = entry.slice(eq + 1);
+    }
     return out;
   } catch {
     return {};

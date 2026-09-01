@@ -433,7 +433,8 @@ export interface HubBackend {
     id: string,
     opts?: {
       force?: boolean;
-      claudeInstall?: 'native' | 'npm';
+      /** Each agent's declared settings, keyed by agent id. */
+      agentSettings?: Readonly<Record<string, Readonly<Record<string, string | boolean>>>>;
       /** Agents to bake into the base. Omitted/empty = agentless. */
       agents?: string[];
       build?: boolean;

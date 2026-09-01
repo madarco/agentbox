@@ -54,12 +54,6 @@ const ROOTS = [
  * removes it. Paths are repo-relative.
  */
 const ALLOWLIST: Record<string, string> = {
-  // Phase 2 — the CLI layer. These move into `packages/agent-<id>/` as each
-  // agent's CLI surface follows its docker behaviour out of the app.
-  //
-  // Claude's `~/.claude/projects` path encoding rode into the shared kit with
-  // the teleport helpers; it belongs in `packages/agent-claude`.
-
   // Phase 4 — the `sandbox-core` / `sandbox-cloud` moves. Gated: `host-stage.ts`
   // imports the first two, and ITS exports are published SDK surface, so the
   // move is an SDK_API_VERSION bump rather than a refactor.
@@ -67,12 +61,6 @@ const ALLOWLIST: Record<string, string> = {
   'packages/sandbox-core/src/sync/agents/claude/paths.ts': 'phase 4',
   'packages/sandbox-core/src/claude-app-config.ts': 'phase 4',
   'packages/sandbox-docker/src/sync/claude-credentials.ts': 'phase 4',
-
-  // Phase 5b — `claudeInstall`. 300 sites across 79 files, reaching the
-  // published SDK, the hub's REST schema, on-disk prepared state and a
-  // Dockerfile build arg.
-  'packages/config/src/types.ts': 'phase 5b',
-  'packages/sandbox-core/src/prepared-state.ts': 'phase 5b',
 };
 
 /**

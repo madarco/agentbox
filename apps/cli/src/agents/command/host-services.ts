@@ -74,9 +74,7 @@ export function makeHostServices(init: HostServicesInit): AgentHostServices {
       // never touches the result — is pure waste, and it is exactly what a PC
       // sees whenever the control box has re-baked and the PC hasn't.
       const buildsOnHub = (await init.routing()).where === 'hub' && !init.hubIncompatible();
-      const baseStatus = buildsOnHub
-        ? undefined
-        : await evaluateBaseFreshness(init.providerName, init.cfg.box.claudeInstall);
+      const baseStatus = buildsOnHub ? undefined : await evaluateBaseFreshness(init.providerName);
 
       const wiz = await maybeRunSetupWizard({
         workspace: init.workspace,

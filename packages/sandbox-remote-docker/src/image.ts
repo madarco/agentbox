@@ -31,19 +31,19 @@ import {
   registryRefForSha,
 } from '@agentbox/sandbox-docker';
 import {
-  claudeInstallFingerprint,
+  variantFingerprint,
   sshDestination,
   sshOptArgs,
+  type AgentSettingsMap,
   type SshTargetArgs,
 } from '@agentbox/sandbox-core';
 import { dockerOnRemote, loginShell } from './remote-docker.js';
 
-export type ClaudeInstall = 'native' | 'npm';
-
 export interface EnsureRemoteImageOptions {
   /** Pin an explicit image ref on the remote (`box.imageRemoteDocker`); skips the ensure. */
   imageRef?: string;
-  claudeInstall?: ClaudeInstall;
+  /** Every agent's declared settings; the bake-affecting ones fold into the ref. */
+  agentSettings?: AgentSettingsMap;
   /** Registry to pull from. Empty string disables the pull and forces a build. */
   registry?: string;
   /** Force the build path even on a registry hit (`--build`). */
@@ -67,17 +67,15 @@ export function remoteImageRef(contextSha256: string): string {
 
 /**
  * Resolve the fingerprint of the build context this CLI would bake, folding in
- * the Claude install mode exactly as the docker provider does (so an npm-baked
- * image and a native-baked one are different refs, not the same ref with
- * different contents). Null when the context can't be resolved — a dev tree
- * without `pnpm -w build`.
+ * the bake-affecting agent settings exactly as the docker provider does (so an
+ * image baked with a non-default setting and one baked without are different
+ * refs, not the same ref with different contents). Null when the context can't
+ * be resolved — a dev tree without `pnpm -w build`.
  */
-export async function currentContextSha(claudeInstall?: ClaudeInstall): Promise<string | null> {
+export async function currentContextSha(agentSettings?: AgentSettingsMap): Promise<string | null> {
   const fp = await computeDockerContextFingerprint({});
   if (!fp) return null;
-  return claudeInstall
-    ? claudeInstallFingerprint(fp.contextSha256, claudeInstall)
-    : fp.contextSha256;
+  return variantFingerprint(fp.contextSha256, { agentSettings });
 }
 
 /**
@@ -104,7 +102,7 @@ export async function ensureRemoteImage(
     return { ref, source: 'pinned' };
   }
 
-  const sha = await currentContextSha(opts.claudeInstall);
+  const sha = await currentContextSha(opts.agentSettings);
   if (!sha) {
     throw new Error(
       'remote-docker: cannot resolve the box build context (a dev tree needs `pnpm -w build` first)',
@@ -159,15 +157,8 @@ export function stageContextCommand(remoteDir: string): string {
  * a login shell that cwd is the remote user's home, so a relative name fails
  * with `failed to read dockerfile: open Dockerfile.box: no such file`.
  */
-export function remoteBuildArgv(
-  ref: string,
-  remoteDir: string,
-  claudeInstall?: ClaudeInstall,
-): string[] {
-  const argv = ['build', '-t', ref, '-f', `${remoteDir}/Dockerfile.box`];
-  if (claudeInstall) argv.push('--build-arg', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall}`);
-  argv.push(remoteDir);
-  return argv;
+export function remoteBuildArgv(ref: string, remoteDir: string): string[] {
+  return ['build', '-t', ref, '-f', `${remoteDir}/Dockerfile.box`, remoteDir];
 }
 
 /** Remove a staged context, whatever the build did. */
@@ -230,7 +221,7 @@ async function buildOnRemote(
       );
     }
 
-    const buildArgs = remoteBuildArgv(ref, remoteDir, opts.claudeInstall);
+    const buildArgs = remoteBuildArgv(ref, remoteDir);
 
     log(`[image] building ${ref} on the remote`);
     const res = await dockerOnRemote(target, buildArgs, {

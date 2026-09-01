@@ -5,7 +5,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { parseUserConfig } from '../src/parse.js';
-import { KEY_REGISTRY } from '../src/types.js';
+import { BUILTIN_KEY_REGISTRY } from '../src/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaPath = resolve(here, '..', 'schema', 'user-config.schema.json');
@@ -83,8 +83,9 @@ maintenance:
     yaml: 'queue:\n  enabled: true\n  maxConcurrent: 5\n  maxWorking: 3\n  idleGraceSeconds: 20\n',
   },
   { name: 'queue openIn', yaml: 'queue:\n  openIn: split\n' },
-  { name: 'box claudeInstall npm', yaml: 'box:\n  claudeInstall: npm\n' },
-  { name: 'box claudeInstall native', yaml: 'box:\n  claudeInstall: native\n' },
+  { name: 'claude install npm', yaml: 'claude:\n  install: npm\n' },
+  { name: 'claude install native', yaml: 'claude:\n  install: native\n' },
+  { name: 'claude tui fullscreen', yaml: 'claude:\n  tui: fullscreen\n' },
   { name: 'box hetznerLocation', yaml: 'box:\n  hetznerLocation: fsn1\n' },
   { name: 'box digitaloceanProject', yaml: 'box:\n  digitaloceanProject: client-x\n' },
   { name: 'maintenance only', yaml: 'maintenance:\n  pruneProjectConfigs: true\n' },
@@ -142,8 +143,16 @@ const INVALID: Fixture[] = [
     yaml: 'box:\n  digitaloceanProject: 7\n',
   },
   {
-    name: 'box claudeInstall unknown enum value',
-    yaml: 'box:\n  claudeInstall: yarn\n',
+    name: 'claude install unknown enum value',
+    yaml: 'claude:\n  install: yarn\n',
+  },
+  {
+    name: 'renamed key box.claudeInstall',
+    yaml: 'box:\n  claudeInstall: npm\n',
+  },
+  {
+    name: 'renamed key box.claudeTui',
+    yaml: 'box:\n  claudeTui: fullscreen\n',
   },
   {
     name: 'maintenance wrong type for int',
@@ -215,7 +224,13 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
    * key gets a red squiggle in their editor. Check every registered key
    * exhaustively so the two can't drift again.
    */
-  describe('every KEY_REGISTRY key exists in the JSON schema', () => {
+  /**
+   * BUILT-INS only. `KEY_REGISTRY` also carries the settings declared by agents
+   * installed with `agentbox agent add`, which are a property of one machine's
+   * install set — the shipped schema must describe what this BUILD knows, or it
+   * would flag a key on any machine but the one that generated it.
+   */
+  describe('every built-in key exists in the JSON schema', () => {
     const node = (key: string): Record<string, unknown> | null => {
       let cur = schema;
       for (const part of key.split('.')) {
@@ -228,11 +243,11 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
     };
 
     it('has no missing keys', () => {
-      const missing = KEY_REGISTRY.map((d) => d.key).filter((k) => node(k) === null);
+      const missing = BUILTIN_KEY_REGISTRY.map((d) => d.key).filter((k) => node(k) === null);
       expect(missing).toEqual([]);
     });
 
-    for (const desc of KEY_REGISTRY.filter((d) => d.type === 'enum')) {
+    for (const desc of BUILTIN_KEY_REGISTRY.filter((d) => d.type === 'enum')) {
       it(`${desc.key} enum matches the registry`, () => {
         // A drifted enum is worse than a missing key: the editor rejects a value
         // the parser accepts, with no hint as to which side is wrong.

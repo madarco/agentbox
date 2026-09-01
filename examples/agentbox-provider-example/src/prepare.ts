@@ -20,7 +20,9 @@
 import { readFile } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import {
-  claudeInstallFingerprint,
+  variantFingerprint,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   computeContextSha256,
   readCliStamp,
   stageAllAgentStatic,
@@ -46,8 +48,13 @@ export interface PrepareExampleOptions {
   force?: boolean;
   /** vCPUs for the builder sandbox (default 4 for a fast bake). */
   vcpus?: number;
-  /** How provision.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  /**
+   * Every agent's declared settings, keyed by agent id. This provider bakes
+   * Claude into its BASE, so `claude.install` genuinely changes what the base
+   * contains — hence the `variantFingerprint` fold below. AgentBox's own
+   * providers bake an agentless base and fold nothing.
+   */
+  agentSettings?: AgentSettingsMap;
   onLog?: (line: string) => void;
 }
 
@@ -68,10 +75,10 @@ export async function prepareExample(
   const progress = (s: string) => log(`prepare-example: ${s}`);
 
   const assets = resolveRuntimeAssets();
-  const claudeInstall = opts.claudeInstall ?? 'native';
-  const contextSha = claudeInstallFingerprint(
+  const agentSettings = opts.agentSettings ?? {};
+  const contextSha = variantFingerprint(
     await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-    claudeInstall,
+    { agentSettings },
   );
 
   // Skip-fast: existing base snapshot still on Vercel + matching fingerprint.
@@ -120,13 +127,21 @@ export async function prepareExample(
   progress('running provision.sh (this takes a few minutes)');
   const install = await sb.runCommand({
     cmd: SHELL,
-    args: ['-lc', `AGENTBOX_CLAUDE_INSTALL=${claudeInstall} bash /tmp/agentbox-provision.sh 2>&1`],
+    // The agent's own settings, as `AGENTBOX_AGENT_SETTING_*` env. This is the
+    // generic escape hatch: AgentBox never learns what a setting means, the
+    // script that consumes it does.
+    args: [
+      '-lc',
+      `${renderAgentSettingEnv(agentSettings['claude'])}bash /tmp/agentbox-provision.sh 2>&1`,
+    ],
     sudo: true,
     stdout: lineSink((l) => log(`[provision] ${l}`)),
     stderr: lineSink((l) => log(`[provision] ${l}`)),
   });
   if (install.exitCode !== 0) {
-    throw new Error(`provision.sh failed on the builder sandbox (exit ${String(install.exitCode)})`);
+    throw new Error(
+      `provision.sh failed on the builder sandbox (exit ${String(install.exitCode)})`,
+    );
   }
   progress('provision.sh complete');
 
@@ -250,6 +265,6 @@ export const prepareExampleProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
-    claudeInstall: req.claudeInstall,
+    ...(req.agentSettings ? { agentSettings: req.agentSettings } : {}),
     onLog: req.onLog,
   });

@@ -157,7 +157,7 @@ export const e2bProvider: Provider = {
   prepare: prepareE2bProvider,
   buildAttach: buildE2bAttach,
   checkpoint: e2bCheckpoint,
-  baseFingerprint: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
+  baseFingerprint: () => currentE2bBaseFingerprintLive(),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -167,7 +167,7 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureE2bCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: (fields) => Promise.resolve(setE2bCredentials(fields)),
-  currentBaseFingerprintLive: (claudeInstall) => currentE2bBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: () => currentE2bBaseFingerprintLive(),
   currentBaseFileHashes: () => currentE2bBaseFileHashes(),
   sizeIgnoredReason,
   doctorChecks,

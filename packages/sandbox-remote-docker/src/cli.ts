@@ -13,7 +13,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import * as p from '@clack/prompts';
-import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import {
+  allAgentSettings,
+  loadEffectiveConfig,
+  setConfigValue,
+  unsetConfigValue,
+} from '@agentbox/config';
 import { statusBadge, type CheckResult } from '@agentbox/sandbox-core';
 import { probeRemoteEngine } from './remote-docker.js';
 import { prepareRemoteDocker } from './prepare.js';
@@ -116,13 +121,13 @@ export const remoteDockerCommand = new Command('remote-docker')
             try {
               if (!(await bakeRegisteredHost(alias))) {
                 const cfg = await loadEffectiveConfig(process.cwd());
-                const claudeInstall = cfg.effective.box.claudeInstall;
+                const agentSettings = allAgentSettings(cfg.effective);
                 const bs = p.spinner();
                 bs.start(`baking the box image on ${alias} (first time can take a few minutes)`);
                 try {
                   await prepareRemoteDocker({
                     host: alias,
-                    ...(claudeInstall ? { claudeInstall } : {}),
+                    agentSettings,
                     onLog: (line) => bs.message(line.slice(0, 80)),
                   });
                   bs.stop(`box image ready on ${alias}`);

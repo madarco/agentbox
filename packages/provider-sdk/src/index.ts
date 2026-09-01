@@ -19,7 +19,7 @@
  * supported range includes this major (see `agentbox plugin add`). Bump on any
  * breaking change to `Provider` / `CloudBackend` / `ProviderModule`.
  */
-export const SDK_API_VERSION = 3;
+export const SDK_API_VERSION = 4;
 
 // ---- core provider contract (types) ----
 export type {
@@ -112,7 +112,6 @@ export {
   resolveContextFilesFrom,
   readCliStamp,
   shortFingerprint,
-  claudeInstallFingerprint,
   readPreparedStateRaw,
   writePreparedStateRaw,
   preparedStatePathFor,
@@ -138,29 +137,48 @@ export {
 //   - `normalizeAgentSet` + `agentSetArg` to build the variant key (`''` is the
 //     agentless base). Order-insensitive, so ['codex','claude'] and
 //     ['claude','codex'] resolve to the same artifact.
-//   - `variantFingerprint` instead of `claudeInstallFingerprint` — it folds the
-//     agent set into the hash, and is the IDENTITY for the empty set, so
-//     existing base records stay valid.
+//   - `variantFingerprint` to hash a variant — it folds the agent set AND any
+//     bake-affecting agent setting, and is the IDENTITY for the empty set, so
+//     existing base records stay valid. The AGENTLESS base is the raw context
+//     hash: it installs no agent, so no agent setting can change it.
 //   - `resolveAgentSpec` + `resolveAgentInstall` + `renderInstallRecipe` +
-//     `renderPackageInstall` to render an agent's install into your bake. These
-//     are the same data the built-in providers and the runtime installer use,
-//     so a baked agent and a runtime-added one end up identical.
+//     `renderPackageInstall` + `renderAgentSettingEnv` to render an agent's
+//     install into your bake. These are the same data the built-in providers
+//     and the runtime installer use, so a baked agent and a runtime-added one
+//     end up identical.
+//
+// `PrepareOptions.agentSettings` carries every agent's declared settings
+// (`AgentSyncSpec.settings`, resolved from the `<agent>.*` config keys).
+// `resolveAgentInstall` reads the agent's own `alternatesFrom` out of it, and
+// `renderAgentSettingEnv` turns it into the `AGENTBOX_AGENT_SETTING_*` exports
+// the agent's recipe and `postInstall` can branch on — so an agent can ship a
+// setting your provider has never heard of and it still reaches the bake.
 //
 // `renderPackageInstall` dispatches on the package manager the box actually has
 // (apt-get | dnf | microdnf) rather than assuming Debian — Vercel's sandboxes
 // are Amazon Linux, where `apt-get` exits 127.
 export {
   variantFingerprint,
+  bakeSettingsFingerprintInput,
   normalizeAgentSet,
   agentSetArg,
   resolveAgentSpec,
   resolveAgentInstall,
   renderInstallRecipe,
   renderPackageInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
 } from '@agentbox/sandbox-core';
 
 // ---- config access ----
-export { loadEffectiveConfig, findProjectRoot, type EffectiveConfig } from '@agentbox/config';
+export {
+  loadEffectiveConfig,
+  findProjectRoot,
+  agentSettings,
+  allAgentSettings,
+  agentSettingsFor,
+  type EffectiveConfig,
+} from '@agentbox/config';
 
 // ---- interactive attach helpers (build a cloud box's `buildAttach` argv) ----
 // A provider with no SSH (like vercel/e2b) overrides `buildAttach` and drives

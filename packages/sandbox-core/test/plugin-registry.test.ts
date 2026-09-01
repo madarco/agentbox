@@ -92,15 +92,18 @@ describe('plugin registry', () => {
     expect(readFileSync(path, 'utf8')).toContain('hand-edited');
   });
 
-  it('api-version gate accepts v3 and refuses everything older', () => {
-    // v3 is a deliberate CLEAN break, not an additive bump. A v2 provider
-    // stages a hardcoded three agents, so on a host with a fourth it bakes a
-    // base that silently lacks it — wrong boxes rather than a missing feature,
-    // which is why the older majors are refused instead of tolerated.
-    expect(isSupportedApiVersion(3)).toBe(true);
+  it('api-version gate accepts v4 and refuses everything older', () => {
+    // Both bumps are deliberate CLEAN breaks, not additive ones. A v2 provider
+    // stages a hardcoded three agents; a v3 provider silently drops every agent
+    // setting, so on a host that set `claude.install: npm` it bakes with the
+    // recipe the user chose specifically because it fails there. Wrong boxes
+    // rather than a missing feature, which is why older majors are refused
+    // instead of tolerated.
+    expect(isSupportedApiVersion(4)).toBe(true);
+    expect(isSupportedApiVersion(3)).toBe(false);
     expect(isSupportedApiVersion(2)).toBe(false);
     expect(isSupportedApiVersion(1)).toBe(false);
     expect(isSupportedApiVersion(999)).toBe(false);
-    expect(SUPPORTED_SDK_API_VERSIONS).toEqual([3]);
+    expect(SUPPORTED_SDK_API_VERSIONS).toEqual([4]);
   });
 });

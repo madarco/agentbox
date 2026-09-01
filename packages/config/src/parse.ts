@@ -7,7 +7,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** Keys removed in a rename. Surfaced with a migration hint instead of a bare "unknown key". */
-const RENAMED_KEYS: ReadonlyMap<string, string> = new Map([['box.snapshot', 'box.hostSnapshot']]);
+const RENAMED_KEYS: ReadonlyMap<string, string> = new Map([
+  ['box.snapshot', 'box.hostSnapshot'],
+  // Moved under the agent's own block when settings became a declared,
+  // per-agent mechanism. Kept CLAUDE-named because they are Claude-specific;
+  // what generalised is the plumbing, not the name.
+  ['box.claudeInstall', 'claude.install'],
+  ['box.claudeTui', 'claude.tui'],
+]);
 
 export interface ParseOptions {
   /**
@@ -310,6 +317,24 @@ export function coerceFromString(key: string, raw: string): unknown {
       }
       return raw;
   }
+}
+
+/**
+ * The error for a key that isn't in the registry — naming the new spelling when
+ * the key was RENAMED rather than removed.
+ *
+ * Shared with `write.ts` so `agentbox config set box.claudeInstall npm` says the
+ * same thing as loading a config file that contains it. A bare "unknown key"
+ * there was the whole failure mode a rename is supposed to avoid: the user is
+ * told the key doesn't exist, not where it went.
+ */
+export function unknownKeyError(key: string): UserConfigError {
+  const renamedTo = RENAMED_KEYS.get(key);
+  return new UserConfigError(
+    renamedTo
+      ? `${key} was renamed to ${renamedTo} — use ${renamedTo} instead`
+      : `unknown key "${key}"`,
+  );
 }
 
 function lookupKeyOrThrow(key: string): KeyDescriptor {

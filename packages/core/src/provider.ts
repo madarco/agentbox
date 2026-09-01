@@ -14,6 +14,7 @@ import type { BoxResourceStats } from './types.js';
 import type { SyncTransport } from './sync/transport.js';
 import type { ProviderSync } from './sync/provider-sync.js';
 import type { AgentId } from './sync/agent-kind.js';
+import type { AgentSettings } from './sync/agent-spec.js';
 
 /** Coarse lifecycle state, identical across providers. */
 export type BoxRuntimeState = 'running' | 'paused' | 'stopped' | 'missing';
@@ -367,13 +368,20 @@ export interface PrepareOptions {
    */
   registry?: string;
   /**
-   * How the bake installs Claude Code: `native` (Anthropic's installer, the
-   * default) or `npm` (`@anthropic-ai/claude-code`). Threaded into each
-   * provider's install script (`AGENTBOX_CLAUDE_INSTALL` env) or Dockerfile
-   * build-arg. An opt-in fallback for cloud egress IPs whose CDN the native
-   * installer 403s. Bake-time only — resolved from `box.claudeInstall`.
+   * Every agent's declared settings, keyed by agent id — resolved from the
+   * `<agent>.*` config blocks. Opaque here on purpose: which keys exist and
+   * what they select is the AGENT's declaration (`AgentSyncSpec.settings`), so
+   * a provider carries the bag rather than knowing anything about it.
+   *
+   * A bake reads them two ways: `resolveAgentInstall` picks an alternate recipe
+   * (`claude.install: npm`, the fallback for egress IPs whose CDN the native
+   * installer 403s), and each value is exported as
+   * `AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>` into the agent's own install
+   * shell. Only settings declared `affectsBake` fold into the derived
+   * artifact's fingerprint — the AGENTLESS base never folds them, because it
+   * installs no agent.
    */
-  claudeInstall?: 'native' | 'npm';
+  agentSettings?: Readonly<Record<string, AgentSettings>>;
   /**
    * Agents to bake into the base image / snapshot. Empty or omitted = an
    * agentless base; anything missing is added later, either as a derived layer
@@ -633,10 +641,9 @@ export interface Provider {
    * without `pnpm -w build`); callers degrade to "don't nag" rather than
    * flag a false stale.
    *
-   * `claudeInstall` MUST match the mode the base was baked with (from
-   * `box.claudeInstall`), because `prepare` folds it into the stored
-   * fingerprint via `claudeInstallFingerprint`. Omitting it makes an
-   * npm-baked base always read as stale.
+   * Takes no arguments: this is the AGENTLESS base, which installs no agent,
+   * so no agent setting can change what it contains. Per-agent artifacts are
+   * addressed by their own variant fingerprint instead.
    */
-  baseFingerprint?(claudeInstall?: 'native' | 'npm'): Promise<string | undefined>;
+  baseFingerprint?(): Promise<string | undefined>;
 }

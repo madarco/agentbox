@@ -191,8 +191,8 @@ export interface QueueJobLogin {
 export interface QueueJobPrepare {
   /** Rebuild even if the base image/snapshot already exists. */
   force?: boolean;
-  /** Bake-time Claude install method (falls back to the effective config). */
-  claudeInstall?: 'native' | 'npm';
+  /** Each agent's declared settings (falls back to the effective config). */
+  agentSettings?: Readonly<Record<string, Readonly<Record<string, string | boolean>>>>;
   /** Agents to bake into the base. Omitted/empty = agentless. */
   agents?: string[];
   /** Force a local docker build instead of pulling the registry base (`--build`). */
@@ -400,8 +400,8 @@ export interface EnqueuePrepareJobInput {
   providerName: string;
   /** Rebuild even if the base already exists. */
   force?: boolean;
-  /** Bake-time Claude install method (else the effective config decides). */
-  claudeInstall?: 'native' | 'npm';
+  /** Each agent's declared settings (else the effective config decides). */
+  agentSettings?: Readonly<Record<string, Readonly<Record<string, string | boolean>>>>;
   /** Agents to bake into the base. */
   agents?: string[];
   /** Force a local docker build instead of pulling the registry base (`--build`). */
@@ -428,7 +428,7 @@ export async function enqueuePrepareJob(input: EnqueuePrepareJobInput): Promise<
   const id = randomBytes(9).toString('hex');
   const prepare: QueueJobPrepare = {
     ...(input.force ? { force: true } : {}),
-    ...(input.claudeInstall ? { claudeInstall: input.claudeInstall } : {}),
+    ...(input.agentSettings ? { agentSettings: input.agentSettings } : {}),
     ...(input.agents ? { agents: input.agents } : {}),
     ...(input.build ? { build: true } : {}),
     ...(input.size ? { size: input.size } : {}),

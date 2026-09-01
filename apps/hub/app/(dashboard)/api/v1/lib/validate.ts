@@ -270,7 +270,7 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
 
 export function parseProviderPrepare(body: unknown): Parsed<{
   force?: boolean;
-  claudeInstall?: 'native' | 'npm';
+  agentSettings?: Record<string, Record<string, string | boolean>>;
   agents?: string[];
   build?: boolean;
   size?: string;
@@ -280,12 +280,11 @@ export function parseProviderPrepare(body: unknown): Parsed<{
   // An empty/absent body is valid (bake with defaults).
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { force, claudeInstall, agents, build, size, location, name } = body;
+  const { force, agentSettings, agents, build, size, location, name } = body;
   const fb = optionalBool(force, 'force');
   if (!fb.ok) return fb;
-  if (claudeInstall !== undefined && claudeInstall !== 'native' && claudeInstall !== 'npm') {
-    return { ok: false, message: "claudeInstall must be 'native' or 'npm'" };
-  }
+  const settings = optionalAgentSettings(agentSettings);
+  if (!settings.ok) return settings;
   const ag = optionalStringArray(agents, 'agents');
   if (!ag.ok) return ag;
   // Reject an unknown agent rather than baking a base that silently lacks it.
@@ -310,7 +309,7 @@ export function parseProviderPrepare(body: unknown): Parsed<{
     ok: true,
     value: {
       force: fb.value,
-      claudeInstall: claudeInstall as 'native' | 'npm' | undefined,
+      agentSettings: settings.value,
       agents: ag.value,
       build: bb.value,
       size: sz.value,
@@ -477,6 +476,37 @@ function optionalStringArray(v: unknown, field: string): Parsed<string[] | undef
       return { ok: false, message: `${field} must be an array of strings` };
   }
   return { ok: true, value: v.length > 0 ? (v as string[]) : undefined };
+}
+
+/**
+ * `agentSettings` — `{ "<agent>": { "<key>": string|boolean } }`.
+ *
+ * Shape-checked, not value-checked: which settings an agent declares is a
+ * RUNTIME fact (a hub may carry an agent package this caller does not, and vice
+ * versa), so rejecting an unrecognised key here would make the API refuse a
+ * perfectly valid bake. The bake itself resolves each value through the agent's
+ * own declaration, where an unknown key is simply not consumed.
+ */
+function optionalAgentSettings(
+  v: unknown,
+): Parsed<Record<string, Record<string, string | boolean>> | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  const bad = {
+    ok: false as const,
+    message: 'agentSettings must be an object of {agent: {key: string|boolean}}',
+  };
+  if (!isObject(v)) return bad;
+  const out: Record<string, Record<string, string | boolean>> = {};
+  for (const [agent, values] of Object.entries(v)) {
+    if (!isObject(values)) return bad;
+    const block: Record<string, string | boolean> = {};
+    for (const [key, value] of Object.entries(values)) {
+      if (typeof value !== 'string' && typeof value !== 'boolean') return bad;
+      block[key] = value;
+    }
+    out[agent] = block;
+  }
+  return { ok: true, value: Object.keys(out).length > 0 ? out : undefined };
 }
 
 export function parseGitCheckout(body: unknown): Parsed<{ branch: string; args?: string[] }> {

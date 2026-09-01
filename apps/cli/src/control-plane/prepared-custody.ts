@@ -60,9 +60,9 @@ export async function pinAdoptedBase(
  * build context as ours. Returns true when adopted — the caller then skips the
  * bake entirely.
  *
- * The fingerprint is always probed in NATIVE mode: that is the raw context hash
- * the npm fold derives from, so one probe matches a record baked in either
- * `box.claudeInstall` mode (`matchClaudeInstallFingerprint`).
+ * There is one fingerprint to probe: the AGENTLESS base folds no agent setting,
+ * so every machine computes the same hash for the same build context whatever
+ * its `claude.install` is.
  *
  * Best-effort: any failure (no control box, offline, no fingerprint) simply
  * means we bake normally.
@@ -76,7 +76,7 @@ async function adoptPreparedBase(args: {
   try {
     const target = await resolveCustodyTarget(undefined, { quiet: true });
     if (!target) return false;
-    const fingerprint = await args.provider.baseFingerprint?.('native');
+    const fingerprint = await args.provider.baseFingerprint?.();
     if (!fingerprint) return false;
     // A local record only rules adoption out when it is CURRENT (see
     // `localBakeBlocksAdoption` for why "any record at all" was wrong).

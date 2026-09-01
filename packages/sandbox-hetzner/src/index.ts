@@ -16,7 +16,8 @@ import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
 import { prepareHetznerProvider } from './prepare.js';
-import { currentHetznerBaseFingerprintLive,
+import {
+  currentHetznerBaseFingerprintLive,
   currentHetznerBaseFileHashes,
 } from './prepared-state.js';
 import { ensureHetznerCredentials, setHetznerCredentials } from './credentials.js';
@@ -29,7 +30,7 @@ const cloudProvider = createCloudProvider(hetznerBackend, {
 export const hetznerProvider: Provider = {
   ...cloudProvider,
   prepare: prepareHetznerProvider,
-  baseFingerprint: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
+  baseFingerprint: () => currentHetznerBaseFingerprintLive(),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -39,7 +40,7 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureHetznerCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setHetznerCredentials,
-  currentBaseFingerprintLive: (claudeInstall) => currentHetznerBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: () => currentHetznerBaseFingerprintLive(),
   currentBaseFileHashes: () => currentHetznerBaseFileHashes(),
   doctorChecks,
 };
@@ -62,7 +63,15 @@ export {
   type PrepareHetznerOptions,
   type PrepareHetznerResult,
 } from './prepare.js';
-export { generateBoxCloudInit, generatePrepareCloudInit, generateDerivedPrepareCloudInit, controlPlaneCloudInit, type BoxCloudInitOptions, type PrepareCloudInitOptions, type ControlPlaneCloudInitOptions } from './cloud-init.js';
+export {
+  generateBoxCloudInit,
+  generatePrepareCloudInit,
+  generateDerivedPrepareCloudInit,
+  controlPlaneCloudInit,
+  type BoxCloudInitOptions,
+  type PrepareCloudInitOptions,
+  type ControlPlaneCloudInitOptions,
+} from './cloud-init.js';
 export {
   applyControlPlaneConfig,
   deployControlPlaneToHetzner,
@@ -125,11 +134,7 @@ export {
   type HetznerServerType,
   type HetznerSshKey,
 } from './client.js';
-export {
-  validateServerChoice,
-  mapHetznerProvisionError,
-  type ServerChoice,
-} from './preflight.js';
+export { validateServerChoice, mapHetznerProvisionError, type ServerChoice } from './preflight.js';
 export { detectEgressIp, type DetectEgressIpOptions } from './egress-ip.js';
 export {
   createPerBoxFirewall,

@@ -13,7 +13,6 @@
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  claudeInstallFingerprint,
   DOCKER_CONTEXT_FILE_MAP,
   resolveContextFilesFrom,
   computeContextSha256,
@@ -31,17 +30,8 @@ if (!files) {
   );
   process.exit(1);
 }
-// `--claude-install npm` prints the fingerprint of the NPM image variant.
-// The install mode is part of the image's identity — the same context built with
-// `AGENTBOX_CLAUDE_INSTALL=npm` is a different image — and the CLI asks for the
-// folded sha (`claudeInstallFingerprint` in pullOrBuild). CI must publish under
-// that same tag or npm-mode users never get a pull hit. `native` is the identity.
-const modeIdx = process.argv.indexOf('--claude-install');
-const mode = modeIdx === -1 ? 'native' : process.argv[modeIdx + 1];
-if (mode !== 'native' && mode !== 'npm') {
-  process.stderr.write(`error: --claude-install must be 'native' or 'npm' (got '${mode}')\n`);
-  process.exit(1);
-}
-
+// One sha, no variants. The published base is AGENTLESS, so no agent setting
+// can change what it contains — this used to fold the Claude install mode and
+// CI published two byte-identical images under two tags.
 const sha = await computeContextSha256(files);
-process.stdout.write(claudeInstallFingerprint(sha, mode) + '\n');
+process.stdout.write(sha + '\n');

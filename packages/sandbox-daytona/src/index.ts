@@ -25,7 +25,7 @@ export const daytonaProvider: Provider = {
   // sandbox stopped, which kills the in-box daemons, so the capture has to
   // reconnect the box afterwards. See `makeDaytonaCheckpoint`.
   checkpoint: makeDaytonaCheckpoint(cloudProvider),
-  baseFingerprint: (claudeInstall) => currentDaytonaBaseFingerprintLive(claudeInstall),
+  baseFingerprint: () => currentDaytonaBaseFingerprintLive(),
 };
 
 /** Uniform surface the CLI provider loader resolves this package through. */
@@ -35,7 +35,7 @@ export const providerModule: ProviderModule = {
   ensureCredentials: ensureDaytonaCredentials,
   readCredStatus: readCredStatusSummary,
   setCredentials: setDaytonaCredentials,
-  currentBaseFingerprintLive: (claudeInstall) => currentDaytonaBaseFingerprintLive(claudeInstall),
+  currentBaseFingerprintLive: () => currentDaytonaBaseFingerprintLive(),
   sizeIgnoredReason,
   doctorChecks,
 };

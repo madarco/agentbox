@@ -2478,7 +2478,7 @@ async function listHubBoxesForDestroy(record: ControlPlaneDeployRecord): Promise
  */
 async function cliNativeFingerprint(provider: string): Promise<string | undefined> {
   try {
-    return await (await loadProviderModule(provider)).provider.baseFingerprint?.('native');
+    return await (await loadProviderModule(provider)).provider.baseFingerprint?.();
   } catch {
     return undefined;
   }

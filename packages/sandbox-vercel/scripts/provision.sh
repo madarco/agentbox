@@ -351,9 +351,9 @@ done_ "agent-browser (global npm)"
 #
 # The per-agent home + credential dirs are NOT created here either; they belong
 # to the agent and live on its `install.postInstall`, so whichever path adds the
-# agent produces the same layout. AGENTBOX_CLAUDE_INSTALL is still honoured --
-# it selects the RECIPE, not whether to install -- and reaches the recipe via
-# the derived bake.
+# agent produces the same layout. An agent's own settings (claude.install, say)
+# are still honoured -- they select the RECIPE, not whether to install -- and
+# reach it via the derived bake, as AGENTBOX_AGENT_SETTING_* env.
 
 step "Chrome runtime libs (dnf)"
 # agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH

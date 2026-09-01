@@ -307,9 +307,9 @@ done_ "agent-browser (global npm)"
 # paths, and the template could never shrink to the workload.
 #
 # The per-agent home + credential dirs are NOT created here either; they belong
-# to the agent and live on its `install.postInstall`. AGENTBOX_CLAUDE_INSTALL is
-# still honoured -- it selects the RECIPE, not whether to install -- and reaches
-# the recipe via the derived build.
+# to the agent and live on its `install.postInstall`. An agent's own settings
+# (claude.install, say) are still honoured -- they select the RECIPE, not whether
+# to install -- and reach it via the derived build, as AGENTBOX_AGENT_SETTING_*.
 
 step "Chrome runtime libs (apt)"
 # agent-browser launches Chromium at AGENT_BROWSER_EXECUTABLE_PATH

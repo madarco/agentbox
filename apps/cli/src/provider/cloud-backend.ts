@@ -24,9 +24,8 @@ export async function cloudBackendForProvider(
  */
 export async function currentCloudBaseFingerprintLive(
   provider: ProviderName,
-  claudeInstall?: 'native' | 'npm',
 ): Promise<string | undefined> {
   if (!isProviderKind(provider)) return undefined;
   const mod = await loadProviderModule(provider);
-  return mod.currentBaseFingerprintLive?.(claudeInstall);
+  return mod.currentBaseFingerprintLive?.();
 }

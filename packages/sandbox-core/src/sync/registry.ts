@@ -15,7 +15,7 @@
  */
 
 import { AGENT_SPECS } from '@agentbox/agent-registry';
-import type { AgentId, AgentSyncSpec } from '@agentbox/core';
+import type { AgentId, AgentSettings, AgentSyncSpec } from '@agentbox/core';
 
 export const AGENT_SYNC_SPECS: readonly AgentSyncSpec[] = AGENT_SPECS;
 
@@ -24,6 +24,11 @@ export function resolveAgentSpec(name: string): AgentSyncSpec {
   const spec = AGENT_SYNC_SPECS.find((s) => s.id === name || s.aliases.includes(name));
   if (!spec) throw new Error(`no agent sync spec for '${name}'`);
   return spec;
+}
+
+/** Resolve by id or alias, or undefined — for callers that must not throw. */
+export function findAgentSpec(name: string): AgentSyncSpec | undefined {
+  return AGENT_SYNC_SPECS.find((s) => s.id === name || s.aliases.includes(name));
 }
 
 /** The canonical ids, in registry order. */
@@ -45,18 +50,22 @@ export function isRuntimeAgent(name: string): boolean {
 }
 
 /**
- * The env that pins `binary`'s in-box terminal renderer for `mode`.
+ * The env that pins `binary`'s in-box terminal renderer, for the agent's own
+ * resolved settings.
  *
- * The generic counterpart of `agentLaunchFlags`: reads `AgentSyncSpec.tuiEnv`,
- * and answers `{}` for an agent that declares none. Replaces the
- * `binary === 'claude'` branches the cloud launch sites used to carry — claude
- * is still the only agent with an entry, but that is now a fact about the
- * registry rather than about the code.
+ * The generic counterpart of `agentLaunchFlags`: reads `AgentSyncSpec.tuiEnv`
+ * through the `tuiEnvFrom` setting the agent declared, and answers `{}` for an
+ * agent that declares neither. Replaces the `binary === 'claude'` branches the
+ * cloud launch sites used to carry — claude is still the only agent with an
+ * entry, but that is now a fact about the registry rather than about the code.
  *
- * Guarded on `isRuntimeAgent`, like `agentLaunchFlags`: the binary here is an
- * open string and an unknown one must not throw.
+ * `binary` is an open string here and an unknown one must not throw.
  */
-export function agentTuiEnv(binary: string, mode: string): Record<string, string> {
-  if (!isRuntimeAgent(binary)) return {};
-  return { ...(resolveAgentSpec(binary).tuiEnv?.[mode] ?? {}) };
+export function agentTuiEnv(binary: string, settings?: AgentSettings): Record<string, string> {
+  const spec = findAgentSpec(binary);
+  if (!spec?.tuiEnv || !spec.tuiEnvFrom) return {};
+  const declared = spec.settings?.find((s) => s.key === spec.tuiEnvFrom);
+  const mode = settings?.[spec.tuiEnvFrom] ?? declared?.default;
+  if (typeof mode !== 'string') return {};
+  return { ...(spec.tuiEnv[mode] ?? {}) };
 }

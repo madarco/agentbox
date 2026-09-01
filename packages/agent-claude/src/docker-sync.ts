@@ -4,7 +4,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
-import { loadEffectiveConfig, type ClaudeTuiMode } from '@agentbox/config';
+import { agentSettingsFor } from '@agentbox/config';
+import type { AgentSettings } from '@agentbox/core';
 import {
   agentTuiEnv,
   ensureAgentInstalled,
@@ -900,24 +901,18 @@ export async function ensureClaudeInstalled(
 }
 
 /**
- * `box.claudeTui`, from the caller or the effective config. Falls back to the
- * schema default when the config can't be read — a renderer preference must
- * never be able to stop a session starting.
+ * Claude's settings, from the caller or the effective config.
+ *
+ * `agentSettingsFor` reads the BOX's workspace, not `process.cwd()`: the queue
+ * worker runs from the state dir and takes the workspace from the job manifest,
+ * and `agentbox config set` writes `--project` by default. It also never throws
+ * — a renderer preference must not be able to stop a session starting.
  */
-async function resolveClaudeTui(
-  explicit: ClaudeTuiMode | undefined,
+async function resolveClaudeSettings(
+  explicit: AgentSettings | undefined,
   workspacePath: string | undefined,
-): Promise<ClaudeTuiMode> {
-  if (explicit) return explicit;
-  try {
-    // The box's workspace, NOT `process.cwd()`: the queue worker runs from the
-    // state dir and takes the workspace from the job manifest, and `agentbox
-    // config set` writes `--project` by default — so a cwd-based load would
-    // read globals and miss the project's own setting.
-    return (await loadEffectiveConfig(workspacePath ?? process.cwd())).effective.box.claudeTui;
-  } catch {
-    return 'default';
-  }
+): Promise<AgentSettings> {
+  return explicit ?? (await agentSettingsFor('claude', workspacePath));
 }
 
 /**
@@ -927,10 +922,10 @@ async function resolveClaudeTui(
  * runs `claude` directly, not through a login shell, so it never sources that
  * file. The container's own environment only carries what was baked in at
  * `docker run` time, and that is immutable — so a box created before the
- * setting existed, or one whose `box.claudeTui` has since changed, would keep
- * the old renderer forever. Same reasoning as {@link CLAUDE_FORWARDED_ENV_KEYS}.
+ * setting existed, or one whose `claude.tui` has since changed, would keep the
+ * old renderer forever. Same reasoning as {@link CLAUDE_FORWARDED_ENV_KEYS}.
  */
-export function claudeSessionEnvFlags(tui: ClaudeTuiMode, env: NodeJS.ProcessEnv): string[] {
+export function claudeSessionEnvFlags(settings: AgentSettings, env: NodeJS.ProcessEnv): string[] {
   const flags: string[] = ['-e', `TERM=${env['TERM'] ?? 'xterm-256color'}`];
   for (const k of FORWARDED_ENV_KEYS) {
     const v = env[k];
@@ -942,7 +937,7 @@ export function claudeSessionEnvFlags(tui: ClaudeTuiMode, env: NodeJS.ProcessEnv
   // `auto` could never get back to Claude's own choice. Blank the one we don't
   // want — empty is falsy to Claude's check, and an explicit empty value
   // overrides whatever the container has.
-  const wanted = agentTuiEnv('claude', tui);
+  const wanted = agentTuiEnv('claude', settings);
   for (const k of ['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', 'CLAUDE_CODE_NO_FLICKER'] as const) {
     flags.push('-e', `${k}=${wanted[k] ?? ''}`);
   }
@@ -954,11 +949,11 @@ export interface StartClaudeSessionOptions {
   claudeArgs: string[];
   sessionName?: string;
   /**
-   * Terminal renderer for this session (`box.claudeTui`). Omitted → resolved
-   * from the effective config here.
+   * Claude's declared settings for this session (`claude.tui` is the one that
+   * matters here). Omitted → resolved from the effective config here.
    */
-  claudeTui?: ClaudeTuiMode;
-  /** Box workspace, for resolving `box.claudeTui` from the project's config. */
+  agentSettings?: AgentSettings;
+  /** Box workspace, for resolving `claude.*` from the project's config. */
   workspacePath?: string;
   /** Previously fed into the in-tmux status bar; now unused (the outer UI
    *  shows the name). Kept for back-compat — callers may still pass it. */
@@ -994,7 +989,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
   const sessionName = opts.sessionName ?? DEFAULT_CLAUDE_SESSION;
   const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
   const envFlags = claudeSessionEnvFlags(
-    await resolveClaudeTui(opts.claudeTui, opts.workspacePath),
+    await resolveClaudeSettings(opts.agentSettings, opts.workspacePath),
     process.env,
   );
   const result = await execa(

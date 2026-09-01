@@ -5,6 +5,7 @@ import {
   loadEffectiveConfig,
   listProjectsConfigured,
   lookupKey,
+  unknownKeyError,
   setConfigValue,
   unsetConfigValue,
   UserConfigError,
@@ -120,7 +121,8 @@ const getCommand = new Command('get')
   .option('--json', 'machine-readable output')
   .action(async (key: string, opts: GetOptions) => {
     const desc = lookupKey(key);
-    if (!desc) fail(`unknown key "${key}"`);
+    // Names the new spelling when the key was renamed rather than removed.
+    if (!desc) fail(unknownKeyError(key).message);
 
     try {
       const loaded = await loadEffectiveConfig(process.cwd());

@@ -186,7 +186,11 @@ export const codexRuntime: AgentRuntime = {
     flag: SKIP_PERMISSIONS_RULE.flag,
     effect: 'never prompt for approval',
     apply: (args, cfg) =>
-      applySkipPermissions(args, SKIP_PERMISSIONS_RULE, cfg.codex.dangerouslySkipPermissions),
+      applySkipPermissions(
+        args,
+        SKIP_PERMISSIONS_RULE,
+        cfg.codex.dangerouslySkipPermissions !== false,
+      ),
   },
 
   async offerDockerLogin({ image, yes }) {

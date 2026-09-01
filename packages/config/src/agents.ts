@@ -39,6 +39,30 @@ export interface AgentConfigKind {
    * dotfolder — OpenCode's is not, hence the override.
    */
   readonly isolateVolumeDesc?: string;
+  /**
+   * Settings this agent declares for itself, mirroring
+   * `AgentSyncSpec.settings`. Each generates a `<id>.<key>` config key.
+   *
+   * Mirrored rather than imported for the reason this whole table exists, and
+   * drift-tested from `apps/cli` against the registry. An agent installed from
+   * an npm package contributes its settings at runtime instead — see
+   * `agent-plugins.ts` — so this array only ever covers the built-ins.
+   */
+  readonly settings?: readonly AgentConfigSetting[];
+}
+
+/**
+ * One declared agent setting, as far as CONFIG is concerned. The registry's
+ * `AgentSettingSpec` carries one more field (`affectsBake`) that only the
+ * fingerprint fold cares about; everything here is what generating a key needs.
+ */
+export interface AgentConfigSetting {
+  readonly key: string;
+  readonly type: 'string' | 'bool' | 'enum';
+  readonly enumValues?: readonly string[];
+  readonly default: string | boolean;
+  readonly description: string;
+  readonly advanced?: boolean;
 }
 
 export const AGENT_KINDS = [
@@ -48,6 +72,24 @@ export const AGENT_KINDS = [
     hasSkipPermissions: true,
     skipPermissionsDesc:
       'Launch claude in new boxes with --dangerously-skip-permissions (auto-accept tool use). On by default: a box is already an isolated sandbox, so the prompt only slows the agent down. Set false to be asked.',
+    settings: [
+      {
+        key: 'install',
+        type: 'enum',
+        enumValues: ['native', 'npm'],
+        default: 'native',
+        description:
+          "How Claude Code is installed into a box image: `native` runs Anthropic's installer (the recommended path), `npm` installs @anthropic-ai/claude-code. Use `npm` on hosts whose egress IP the native CDN 403s. Bake-time - changing it re-derives the agent layer.",
+      },
+      {
+        key: 'tui',
+        type: 'enum',
+        enumValues: ['default', 'fullscreen', 'auto'],
+        default: 'default',
+        description:
+          "Terminal renderer Claude Code uses inside a box. Claude's `fullscreen` renderer repaints differentially and leaves stale characters in the blank areas of the screen over a network transport - visible while scrolling, cleared only by resizing the terminal. Boxes pin the classic renderer; set `fullscreen` to opt back in, or `auto` to let Claude decide. Rides the launch, so it takes effect on the agent's next start.",
+      },
+    ],
   },
   {
     id: 'codex',

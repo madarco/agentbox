@@ -235,10 +235,7 @@ export type { BaseStatus };
  * has changed. The compare itself lives in `baseFreshnessFromFingerprints`
  * (sandbox-cloud) so the hub reports the identical state + reason string.
  */
-export async function evaluateBaseFreshness(
-  provider: ProviderName,
-  claudeInstall?: 'native' | 'npm',
-): Promise<BaseStatus> {
+export async function evaluateBaseFreshness(provider: ProviderName): Promise<BaseStatus> {
   if (provider === 'docker') {
     // Docker used to be hardcoded `fresh` here, on the grounds that it self-heals
     // via `ensureImage`. It does — but only at create time, and `self-update` no
@@ -246,12 +243,10 @@ export async function evaluateBaseFreshness(
     // sit unmentioned until the next create surprised you with a multi-minute
     // build. Report the real state, the same one the hub/app show.
     const { evaluateDockerBaseFreshness } = await import('@agentbox/sandbox-docker');
-    return await evaluateDockerBaseFreshness({ claudeInstall });
+    return await evaluateDockerBaseFreshness();
   }
   const stored = currentCloudBaseFingerprint(provider);
   if (!stored) return { state: 'unprepared' };
-  const current = await currentCloudBaseFingerprintLive(provider, claudeInstall).catch(
-    () => undefined,
-  );
+  const current = await currentCloudBaseFingerprintLive(provider).catch(() => undefined);
   return baseFreshnessFromFingerprints(stored, current);
 }

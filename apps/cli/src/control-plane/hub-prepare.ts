@@ -18,6 +18,7 @@
  */
 import { pullPreparedFromCustody } from '@agentbox/sandbox-cloud';
 import type { Provider } from '@agentbox/core';
+import type { AgentSettingsMap } from '@agentbox/sandbox-core';
 import { HubApiError, type HubApiClient } from './hub-api-client.js';
 import { pinAdoptedBase } from './prepared-custody.js';
 
@@ -56,7 +57,7 @@ export async function bakeViaHub(args: {
   providerName: string;
   provider: Provider;
   force?: boolean;
-  claudeInstall: 'native' | 'npm';
+  agentSettings: AgentSettingsMap;
   agents?: string[];
   /**
    * Bake INPUTS threaded from the CLI's flags (`--build` / `--size` / `--location`
@@ -88,7 +89,7 @@ export async function bakeViaHub(args: {
       ? await args.client.bakeHost(args.remoteHost)
       : await args.client.prepareProvider(args.providerName, {
           force: args.force,
-          claudeInstall: args.claudeInstall,
+          agentSettings: args.agentSettings,
           ...(args.agents ? { agents: args.agents } : {}),
           build: args.build,
           size: args.size,
@@ -173,7 +174,7 @@ export async function bakeViaHub(args: {
       detail: 'no control-box admin token, so its bake record could not be read back',
     };
   }
-  const fingerprint = await Promise.resolve(args.provider.baseFingerprint?.('native')).catch(
+  const fingerprint = await Promise.resolve(args.provider.baseFingerprint?.()).catch(
     () => undefined,
   );
   const res = await pullPreparedFromCustody(args.providerName, fingerprint, {

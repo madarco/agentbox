@@ -41,18 +41,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        # How Claude Code is installed into the image. This is part of the
-        # image's IDENTITY, not a build detail: the same context built with
-        # `AGENTBOX_CLAUDE_INSTALL=npm` is a different image, and the CLI asks
-        # for a correspondingly different tag (`claudeInstallFingerprint` in
-        # pullOrBuild). Publishing only `native` meant `box.claudeInstall: npm`
-        # users never got a pull hit — a wasted local build on docker, and on
-        # daytona no VM at all, since a linux-vm base can ONLY boot from a
-        # published image. So: publish both.
-        claude-install: [native, npm]
+    # ONE image per build context. This used to matrix over the Claude install
+    # mode, because the base forked on it; the base is AGENTLESS and installs no
+    # agent, so both builds were byte-identical under two tags. An agent's
+    # install setting reaches the DERIVED layer instead.
     env:
       IMAGE: ghcr.io/madarco/agentbox/box
     steps:
@@ -80,21 +72,20 @@ jobs:
           # image built from unreleased code.
           RELEASE_REF: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
         run: |
-          SHA="$(node apps/cli/scripts/print-box-context-sha.mjs --claude-install ${{ matrix.claude-install }})"
+          SHA="$(node apps/cli/scripts/print-box-context-sha.mjs)"
           VERSION="$(node -p "require('./apps/cli/package.json').version")"
           echo "sha=${SHA:0:16}" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release_ref=$RELEASE_REF" >> "$GITHUB_OUTPUT"
-          echo "box context fingerprint (${{ matrix.claude-install }}): $SHA (tag sha-${SHA:0:16}), cli $VERSION, release-ref $RELEASE_REF"
-          # The fingerprint tag is the one the CLI resolves, and every variant gets
-          # one. `latest` and the version tag name the DEFAULT image, so only the
-          # native build on a release ref may claim them — letting the npm build
-          # move `latest` would hand every default user an npm-installed Claude,
-          # and letting a nightly move it would ship unreleased code as stable.
+          echo "box context fingerprint: $SHA (tag sha-${SHA:0:16}), cli $VERSION, release-ref $RELEASE_REF"
+          # The fingerprint tag is the one the CLI resolves. `latest` and the
+          # version tag name the stable image, so only a release ref may claim
+          # them — letting a nightly move `latest` would ship unreleased code as
+          # stable.
           {
             echo "tags<<TAGS_EOF"
             echo "$IMAGE:sha-${SHA:0:16}"
-            if [ "${{ matrix.claude-install }}" = "native" ] && [ "$RELEASE_REF" = "true" ]; then
+            if [ "$RELEASE_REF" = "true" ]; then
               echo "$IMAGE:$VERSION"
               echo "$IMAGE:latest"
             fi
@@ -133,17 +124,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          build-args: |
-            AGENTBOX_CLAUDE_INSTALL=${{ matrix.claude-install }}
           tags: ${{ steps.tags.outputs.tags }}
 
       # The image already exists, but `latest` / the version tag may still point
       # at older content (e.g. a release commit that didn't touch the context).
       # imagetools re-points the tags at the existing manifest — no rebuild, and
-      # it preserves the multi-arch index. Native + release-ref only: those two
-      # tags name the default stable image (see the tag list above).
+      # it preserves the multi-arch index. Release-ref only: those two tags name
+      # the stable image (see the tag list above).
       - name: Re-point version and latest at the existing image
-        if: steps.probe.outputs.exists == 'true' && matrix.claude-install == 'native' && steps.tags.outputs.release_ref == 'true'
+        if: steps.probe.outputs.exists == 'true' && steps.tags.outputs.release_ref == 'true'
         run: |
           docker buildx imagetools create \
             -t "$IMAGE:${{ steps.tags.outputs.version }}" \

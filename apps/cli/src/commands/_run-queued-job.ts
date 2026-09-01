@@ -21,6 +21,7 @@ import {
   resolveDefaultCheckpoint,
   type UserConfig,
   resolveBoxImage,
+  agentSettings,
 } from '@agentbox/config';
 import {
   createBox,
@@ -442,7 +443,7 @@ async function runDockerJob(
       claudeArgs: claudeRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
       sessionName: cfg.effective.claude.sessionName,
       boxName: result.record.name,
-      claudeTui: cfg.effective.box.claudeTui,
+      agentSettings: agentSettings(cfg.effective, 'claude'),
     });
   } else if (job.agent === 'codex') {
     log.write(`checking codex`);

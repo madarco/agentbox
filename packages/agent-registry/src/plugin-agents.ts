@@ -23,11 +23,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { AGENTS_FILE } from '@agentbox/config';
 import type { AgentSyncSpec } from '@agentbox/core';
 
-export const AGENTS_FILE = join(homedir(), '.agentbox', 'agents.json');
+/**
+ * Re-exported, not declared: the path also has to be reachable from
+ * `@agentbox/config`, which generates a config key per declared agent setting
+ * and cannot import this package (it is the leaf this one depends on). One
+ * spelling, in the leaf.
+ */
+export { AGENTS_FILE };
 
 /** Agent-plugin API versions this build accepts. */
 export const SUPPORTED_AGENT_API_VERSIONS: readonly number[] = [1];

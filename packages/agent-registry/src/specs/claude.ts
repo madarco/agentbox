@@ -50,10 +50,11 @@ export const claudeSpec: AgentSyncSpec = {
   // and drops the binary at ~/.local/bin/claude, which is what the host's
   // `.claude.json` (installMethod=native) expects. The CDN intermittently 403s
   // cloud egress IPs under load, hence the retries. The npm package is a
-  // BAKE-TIME-only fallback selected by `box.claudeInstall`, not a second recipe.
+  // BAKE-TIME-only fallback selected by `claude.install`, not a second recipe.
   install: {
     recipe: { kind: 'script', url: 'https://claude.ai/install.sh', retries: 3 },
     runAs: 'box-user',
+    alternatesFrom: 'install',
     // ~/.claude must exist and be box-user-owned BEFORE the named config
     // volume mounts over it: docker seeds an empty volume's permissions from
     // the mount point, so without this the volume comes up root-owned and
@@ -69,7 +70,7 @@ export const claudeSpec: AgentSyncSpec = {
       SEED_SETUP_SKILL,
     ].join(' && '),
     alternates: {
-      // `box.claudeInstall: npm`. npm-global drops `claude` at Node's prefix
+      // `claude.install: npm`. npm-global drops `claude` at Node's prefix
       // bin; symlink it into ~/.local/bin so the box is indistinguishable
       // from a native install (the host's .claude.json says installMethod
       // native, and the in-box integrity check compares against that).
@@ -146,6 +147,37 @@ export const claudeSpec: AgentSyncSpec = {
     fullscreen: { CLAUDE_CODE_NO_FLICKER: '1' },
     auto: {},
   },
+  tuiEnvFrom: 'tui',
+  // Claude's own settings. These stay CLAUDE-named because they genuinely are:
+  // one picks between Anthropic's installer and the npm package, the other
+  // between Claude Code's two renderers. What is generic is the mechanism —
+  // config generates `claude.install` / `claude.tui` from these rows, and the
+  // values reach this spec's `alternates` / `tuiEnv` and the install shell's
+  // `AGENTBOX_AGENT_SETTING_*` env without any shared code knowing what they
+  // mean.
+  settings: [
+    {
+      key: 'install',
+      type: 'enum',
+      enumValues: ['native', 'npm'],
+      default: 'native',
+      description:
+        "How Claude Code is installed into a box image: `native` runs Anthropic's installer (the recommended path), `npm` installs @anthropic-ai/claude-code. Use `npm` on hosts whose egress IP the native CDN 403s. Bake-time - changing it re-derives the agent layer.",
+      // Two values are two derived agent artifacts. The AGENTLESS base is
+      // unaffected: it installs no agent, so it must not fork on this.
+      affectsBake: true,
+    },
+    {
+      key: 'tui',
+      type: 'enum',
+      enumValues: ['default', 'fullscreen', 'auto'],
+      default: 'default',
+      description:
+        "Terminal renderer Claude Code uses inside a box. Claude's `fullscreen` renderer repaints differentially and leaves stale characters in the blank areas of the screen over a network transport - visible while scrolling, cleared only by resizing the terminal. Boxes pin the classic renderer; set `fullscreen` to opt back in, or `auto` to let Claude decide. Rides the launch, so it takes effect on the agent's next start.",
+      // Deliberately NOT affectsBake: it is launch env, and folding it would
+      // re-bake a whole base image for a renderer flip.
+    },
+  ],
   // The box-ONLY wizard skill: deliberately never written to the host's
   // ~/.claude. Claude also gets it at install time via SEED_SETUP_SKILL, but
   // the docker config volume mounts OVER ~/.claude, so it has to be re-placed

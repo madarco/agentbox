@@ -12,7 +12,7 @@ import {
 import type { AgentId, BoxRecord } from '@agentbox/core';
 import { agentTuiEnv, resolveAgentSpec } from '@agentbox/sandbox-core';
 import type { AttachOpenIn } from '@agentbox/config';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { agentSettingsFor } from '@agentbox/config';
 import { agentResumeArgs } from '../agent-sessions.js';
 
 // Re-exported so existing importers (dashboard, unit tests) keep their paths; the
@@ -160,10 +160,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   const command = buildCloudAttachInnerCommand(
     args.binary,
     extraArgs,
-    agentTuiEnv(
-      args.binary,
-      (await loadEffectiveConfig(box.workspacePath)).effective.box.claudeTui,
-    ),
+    agentTuiEnv(args.binary, await agentSettingsFor(args.binary, box.workspacePath)),
   );
   // Every cloud provider honours `attach.openIn`.
   //

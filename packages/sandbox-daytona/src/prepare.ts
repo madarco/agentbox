@@ -20,9 +20,9 @@
  * https://www.daytona.io/docs/en/snapshots/
  */
 
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { Image } from '@daytona/sdk';
 import type { PrepareOptions, PrepareResult } from '@agentbox/core';
 import { providerWarning } from '@agentbox/core';
@@ -34,6 +34,8 @@ import {
   agentSetArg,
   resolveAgentSpec,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   renderInstallRecipe,
   renderPackageInstall,
 } from '@agentbox/sandbox-core';
@@ -164,21 +166,22 @@ export function buildDaytonaSeedCommands(
  */
 export function buildDaytonaAgentCommands(
   agents: readonly string[],
-  claudeInstall?: 'native' | 'npm',
+  agentSettings: AgentSettingsMap = {},
 ): string[] {
   const cmds: string[] = [];
   for (const id of agents) {
     const spec = resolveAgentSpec(id);
-    const install = resolveAgentInstall(spec.install, claudeInstall);
+    const install = resolveAgentInstall(spec.install, agentSettings[spec.id]);
     if (install.packages && install.packages.length > 0) {
       cmds.push('USER root', `RUN ${renderPackageInstall(install.packages)}`);
     }
-    const recipe = renderInstallRecipe(install.recipe);
+    const settingEnv = renderAgentSettingEnv(agentSettings[spec.id]);
+    const recipe = settingEnv + renderInstallRecipe(install.recipe);
     // `runAs: 'box-user'` is load-bearing: the native installers write into the
     // INVOKING user's ~/.local/bin, so a root RUN puts the binary in /root and
     // the box user never sees it.
     cmds.push(install.runAs === 'box-user' ? 'USER vscode' : 'USER root', `RUN ${recipe}`);
-    if (install.postInstall) cmds.push('USER root', `RUN ${install.postInstall}`);
+    if (install.postInstall) cmds.push('USER root', `RUN ${settingEnv}${install.postInstall}`);
     // Prove it landed on the BOX USER's PATH — an installer that exits 0
     // without a usable binary is a real failure mode, and a build failure here
     // beats a box that attaches to a session that died instantly.
@@ -200,7 +203,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // deterministically and (b) detect cache hits against the recorded
   // prepared state. Computed before staging so an early `null` (partial
   // dev rebuild) doesn't waste a tar staging cycle.
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentSettings = opts.agentSettings ?? {};
 
   // Bake-time resources. A `--size` / `box.sizeDaytona` like `4-8-20` sets the
   // snapshot's baked CPU/memory/disk (Daytona rejects resources on the create
@@ -223,9 +226,8 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   let sandboxClass: DaytonaSandboxClass =
     opts.sandboxClass === 'container' ? 'container' : 'linux-vm';
   const rawFingerprint = await computeDaytonaContextFingerprint();
-  // Fold the install mode into the sha so native↔npm are distinct cache
-  // identities (`native` leaves the hash unchanged) — the snapshot name and the
-  // prepared-state match both derive from it.
+  // Fold the variant into the sha — the snapshot name and the prepared-state
+  // match both derive from it.
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
@@ -233,7 +235,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     ? {
         ...rawFingerprint,
         contextSha256: variantFingerprint(rawFingerprint.contextSha256, {
-          claudeInstall,
+          agentSettings,
           agents,
         }),
       }
@@ -343,7 +345,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
       baseSnapshot: baseEntry!.imageRef,
       snapshotName,
       agents,
-      claudeInstall,
+      agentSettings,
       onLog: log,
     });
     if (fingerprint) {
@@ -377,7 +379,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   // `buildDaytonaAgentCommands`) — there is no `Image.fromSnapshot` to boot the
   // base from, so the builder's layer cache is what makes it cheap instead.
   if (!derived && sandboxClass === 'linux-vm') {
-    const dockerBaseSha = await computeDockerBaseSha(claudeInstall);
+    const dockerBaseSha = await computeDockerBaseSha();
     if (!dockerBaseSha) {
       throw new Error(
         'could not fingerprint the docker build context, which names the published box image ' +
@@ -475,18 +477,6 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     for (const w of s.staged.warnings) log(w);
   }
 
-  // The Daytona SDK's `Image.fromDockerfile` takes only a path — no build args —
-  // and appended `.env()`/`.runCommands()` land *after* the base Dockerfile's
-  // Claude RUN (too late, and a native 403 would already have failed the build).
-  // So for npm mode we build from a sibling temp Dockerfile with the
-  // `AGENTBOX_CLAUDE_INSTALL` ARG default flipped to `npm`. It must live in the
-  // original's directory so the Dockerfile's relative COPY sources still resolve.
-  let tempDockerfile: string | null = null;
-  const dockerfilePath =
-    claudeInstall === 'npm'
-      ? (tempDockerfile = writeNpmDockerfile(ctx.dockerfile))
-      : ctx.dockerfile;
-
   // Seed build-context dir: the daytona CLAUDE.md + each staged tarball are
   // copied here under RELATIVE names so the appended `COPY <name>` sources map
   // to relative archive entries the Daytona builder actually reconstructs.
@@ -498,7 +488,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     // Dockerfile.box, so an in-box checkout of an LFS repo smudges real content.
     // No daytona-specific overlay step is needed; the host-side object seeding
     // lives in sandbox-cloud's workspace-seed (seedCloneLfsObjects).
-    let image: Image = Image.fromDockerfile(dockerfilePath);
+    let image: Image = Image.fromDockerfile(ctx.dockerfile);
 
     seedContextDir = mkdtempSync(join(tmpdir(), 'agentbox-daytona-seed-'));
     // Overlay the daytona-specific /etc/claude-code/CLAUDE.md on top of the
@@ -516,7 +506,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
 
     image = image.dockerfileCommands(buildDaytonaSeedCommands(usable), seedContextDir);
     if (derived) {
-      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, claudeInstall));
+      image = image.dockerfileCommands(buildDaytonaAgentCommands(agents, agentSettings));
     }
 
     // Region: a container snapshot registers wherever the client points (the
@@ -575,32 +565,8 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
     return { snapshotName: snapshot.name ?? snapshotName };
   } finally {
     await Promise.all(stages.map((s) => s.staged.cleanup()));
-    if (tempDockerfile) rmSync(tempDockerfile, { force: true });
     if (seedContextDir) rmSync(seedContextDir, { recursive: true, force: true });
   }
-}
-
-/**
- * Write a sibling copy of `Dockerfile.box` with the `AGENTBOX_CLAUDE_INSTALL`
- * ARG default flipped from `native` to `npm`, and return its path. A sibling
- * (same directory) keeps the Dockerfile's relative COPY sources resolvable.
- * Throws if the ARG line isn't found (Dockerfile drifted from this expectation).
- */
-function writeNpmDockerfile(originalPath: string): string {
-  const original = readFileSync(originalPath, 'utf8');
-  const flipped = original.replace(
-    'ARG AGENTBOX_CLAUDE_INSTALL=native',
-    'ARG AGENTBOX_CLAUDE_INSTALL=npm',
-  );
-  if (flipped === original) {
-    throw new Error(
-      `could not enable npm Claude install for Daytona: 'ARG AGENTBOX_CLAUDE_INSTALL=native' ` +
-        `not found in ${originalPath}. The Dockerfile.box drifted from the expected shape.`,
-    );
-  }
-  const target = join(dirname(originalPath), '.agentbox-claude-npm.Dockerfile');
-  writeFileSync(target, flipped);
-  return target;
 }
 
 /** `cpu-memory-disk` key for a resource triple, the form `extras.size` uses. */

@@ -19,11 +19,7 @@
  * alternative is a multi-minute bake, so it needs no TTL or caching; a control
  * box that predates the `prepared` scope answers 400, which is treated like 404.
  */
-import {
-  matchClaudeInstallFingerprint,
-  readPreparedStateRaw,
-  writePreparedStateRaw,
-} from '@agentbox/sandbox-core';
+import { readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
 import type { PreparedProviderKind } from '@agentbox/sandbox-core';
 import { deadlineFetch, hostReachable } from './reachability.js';
 
@@ -87,13 +83,17 @@ export async function pushPreparedToCustody(
       }),
     });
     if (!res.ok) {
-      log(`prepared: could not share the ${provider} bake with the control box (${String(res.status)})`);
+      log(
+        `prepared: could not share the ${provider} bake with the control box (${String(res.status)})`,
+      );
       return false;
     }
     log(`prepared: shared the ${provider} bake with the control box`);
     return true;
   } catch (err) {
-    log(`prepared: could not share the ${provider} bake (${err instanceof Error ? err.message : String(err)})`);
+    log(
+      `prepared: could not share the ${provider} bake (${err instanceof Error ? err.message : String(err)})`,
+    );
     return false;
   }
 }
@@ -172,11 +172,11 @@ export async function pullPreparedFromCustody(
     const record = JSON.parse(Buffer.from(body.data, 'base64').toString('utf8')) as PreparedRecord;
     const stored = record.base?.contextSha256;
     if (!stored) return { adopted: false };
-    // Fold-tolerant, like the hub's own adoption (`hydratePreparedFromCustody`):
-    // a base baked in the other `box.claudeInstall` mode derives from the same
-    // raw context hash, so a strict `!==` refused records the hub would accept —
-    // the two sides have to apply one rule or they disagree about what is baked.
-    if (!matchClaudeInstallFingerprint(stored, nativeFingerprint)) {
+    // A plain equality now that the AGENTLESS base no longer folds any agent
+    // setting into its fingerprint: the two sides bake the same base from the
+    // same context whatever their `claude.install` is, so there is one hash to
+    // compare rather than a set of candidates to try.
+    if (stored !== nativeFingerprint) {
       // The other side baked from a different build context — its snapshot is
       // not the base we would bake. Ignore it rather than boot a stale base.
       log(
@@ -185,7 +185,9 @@ export async function pullPreparedFromCustody(
       return { adopted: false, mismatch: { stored, current: nativeFingerprint } };
     }
     writePreparedStateRaw(provider, record);
-    log(`prepared: adopted the control box's ${provider} base (build context matches — no re-bake needed)`);
+    log(
+      `prepared: adopted the control box's ${provider} base (build context matches — no re-bake needed)`,
+    );
     return { adopted: true, record };
   } catch {
     // Offline / unparseable / unreachable: fall through to a normal bake.

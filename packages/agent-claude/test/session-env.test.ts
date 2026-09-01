@@ -4,13 +4,13 @@ import { claudeSessionEnvFlags } from '../src/docker-sync.js';
 /**
  * Regression for the hole Bugbot caught on #327.
  *
- * The renderer pin (`box.claudeTui`) was written only into
+ * The renderer pin (`claude.tui`) was written only into
  * /etc/agentbox/box.env. But the docker path starts the agent with
  * `docker exec … tmux new-session -d -s claude 'claude …'` — `claude` is the
  * tmux command directly, NOT `bash -lc`, so nothing ever sources box.env. The
  * session would have inherited only the container environment baked at
  * `docker run` time, which is immutable: an existing box could never pick the
- * setting up, and changing `box.claudeTui` could not reach a running box's
+ * setting up, and changing `claude.tui` could not reach a running box's
  * agent. (`agentbox shell` looked fine, because that IS a login shell — so the
  * failure was invisible from the place you would naturally check.)
  *
@@ -22,12 +22,12 @@ const pairs = (flags: string[]): string[] =>
 
 describe('claudeSessionEnvFlags', () => {
   it('forwards the classic-renderer pin so tmux does not need a login shell', () => {
-    const got = pairs(claudeSessionEnvFlags('default', { TERM: 'xterm-256color' }));
+    const got = pairs(claudeSessionEnvFlags({ tui: 'default' }, { TERM: 'xterm-256color' }));
     expect(got).toContain('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1');
   });
 
   it('forwards the fullscreen opt-in instead when asked', () => {
-    const got = pairs(claudeSessionEnvFlags('fullscreen', {}));
+    const got = pairs(claudeSessionEnvFlags({ tui: 'fullscreen' }, {}));
     expect(got).toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
 
@@ -39,16 +39,16 @@ describe('claudeSessionEnvFlags', () => {
    * doesn't want (empty is falsy to Claude's check).
    */
   it('blanks the opposite variable rather than leaving it to the container env', () => {
-    expect(pairs(claudeSessionEnvFlags('default', {}))).toEqual(
+    expect(pairs(claudeSessionEnvFlags({ tui: 'default' }, {}))).toEqual(
       expect.arrayContaining(['CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1', 'CLAUDE_CODE_NO_FLICKER=']),
     );
-    expect(pairs(claudeSessionEnvFlags('fullscreen', {}))).toEqual(
+    expect(pairs(claudeSessionEnvFlags({ tui: 'fullscreen' }, {}))).toEqual(
       expect.arrayContaining(['CLAUDE_CODE_NO_FLICKER=1', 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=']),
     );
   });
 
   it('blanks both for `auto`, so a stale container value cannot win', () => {
-    const got = pairs(claudeSessionEnvFlags('auto', {}));
+    const got = pairs(claudeSessionEnvFlags({ tui: 'auto' }, {}));
     expect(got).toContain('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=');
     expect(got).toContain('CLAUDE_CODE_NO_FLICKER=');
     expect(got).not.toContain('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1');
@@ -57,12 +57,15 @@ describe('claudeSessionEnvFlags', () => {
 
   it('still forwards TERM and the model/auth keys', () => {
     const got = pairs(
-      claudeSessionEnvFlags('default', {
-        TERM: 'xterm-ghostty',
-        ANTHROPIC_MODEL: 'claude-opus-5',
-        CLAUDE_EFFORT: 'high',
-        ANTHROPIC_API_KEY: '',
-      }),
+      claudeSessionEnvFlags(
+        { tui: 'default' },
+        {
+          TERM: 'xterm-ghostty',
+          ANTHROPIC_MODEL: 'claude-opus-5',
+          CLAUDE_EFFORT: 'high',
+          ANTHROPIC_API_KEY: '',
+        },
+      ),
     );
     expect(got).toContain('TERM=xterm-ghostty');
     expect(got).toContain('ANTHROPIC_MODEL=claude-opus-5');
@@ -72,11 +75,11 @@ describe('claudeSessionEnvFlags', () => {
   });
 
   it('defaults TERM when the host has none', () => {
-    expect(pairs(claudeSessionEnvFlags('auto', {}))).toContain('TERM=xterm-256color');
+    expect(pairs(claudeSessionEnvFlags({ tui: 'auto' }, {}))).toContain('TERM=xterm-256color');
   });
 
   it('emits well-formed `-e KEY=VALUE` pairs', () => {
-    const flags = claudeSessionEnvFlags('default', { TERM: 'xterm' });
+    const flags = claudeSessionEnvFlags({ tui: 'default' }, { TERM: 'xterm' });
     expect(flags.length % 2).toBe(0);
     for (let i = 0; i < flags.length; i += 2) {
       expect(flags[i]).toBe('-e');

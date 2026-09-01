@@ -16,7 +16,7 @@ import { readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig, parseProviderSpec } from '@agentbox/config';
+import { parseProviderSpec } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -315,10 +315,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // Likewise the base image: the deploy seeds `prepared/<provider>.json`
       // into custody, but the provider's baked-or-not gate only reads local
       // prepared-state — so without this a fresh control box refuses to create.
-      const claudeInstall =
-        (await loadEffectiveConfig(workspacePath).catch(() => null))?.effective.box.claudeInstall ??
-        'native';
-      await hydratePreparedFromCustody(custody, providerName, mod.provider, claudeInstall, log);
+      await hydratePreparedFromCustody(custody, providerName, mod.provider, log);
       // `workspacePath` is the per-job clone deleted on the way out, so leaving
       // the provider to derive a default name from it produces
       // `agentbox-hub-worker-<uuid>-<id>` — a box named after a directory that no

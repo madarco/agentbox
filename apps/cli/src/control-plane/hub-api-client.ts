@@ -590,7 +590,7 @@ export class HubApiClient {
     id: string,
     body: {
       force?: boolean;
-      claudeInstall?: 'native' | 'npm';
+      agentSettings?: Readonly<Record<string, Readonly<Record<string, string | boolean>>>>;
       agents?: string[];
       build?: boolean;
       size?: string;

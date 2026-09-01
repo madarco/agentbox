@@ -90,7 +90,7 @@ export interface ProviderModule {
    * CURRENT build-context fingerprint of the provider's base image/snapshot,
    * for staleness nagging. Absent for docker (its base self-heals).
    */
-  currentBaseFingerprintLive?: (claudeInstall?: 'native' | 'npm') => Promise<string | undefined>;
+  currentBaseFingerprintLive?: () => Promise<string | undefined>;
   /**
    * Per-file digests behind that fingerprint (relpath → sha256), so a `stale`
    * verdict can be explained rather than only asserted. Diffed against the

@@ -359,17 +359,6 @@ async function checkOneTool(grant: ToolGrant): Promise<CheckResult> {
   return { label: grant.name, status: 'ok', detail };
 }
 
-// `box.claudeInstall` folds into the base-image fingerprint, so freshness must
-// compare against the variant the user would actually bake with. Resolve it once
-// per doctor run (memoized) from the effective config at cwd; default 'native'.
-let claudeInstallOnce: Promise<'native' | 'npm'> | undefined;
-function resolveClaudeInstall(): Promise<'native' | 'npm'> {
-  claudeInstallOnce ??= loadEffectiveConfig(process.cwd())
-    .then((cfg): 'native' | 'npm' => (cfg.effective.box.claudeInstall === 'npm' ? 'npm' : 'native'))
-    .catch((): 'native' | 'npm' => 'native');
-  return claudeInstallOnce;
-}
-
 /**
  * A "base freshness" row for every baked provider, docker included — warns when
  * the baked image/snapshot's build-context fingerprint no longer matches the
@@ -381,7 +370,7 @@ function resolveClaudeInstall(): Promise<'native' | 'npm'> {
  * so it honours this module's offline-safe contract.
  */
 async function baseFreshnessRow(name: ProviderName): Promise<CheckResult | null> {
-  const status = await evaluateBaseFreshness(name, await resolveClaudeInstall()).catch(() => null);
+  const status = await evaluateBaseFreshness(name).catch(() => null);
   if (!status) return null;
   switch (status.state) {
     case 'stale':

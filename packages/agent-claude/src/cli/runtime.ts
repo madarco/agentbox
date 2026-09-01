@@ -194,7 +194,11 @@ export const claudeRuntime: AgentRuntime = {
     flag: SKIP_PERMISSIONS_RULE.flag,
     effect: 'auto-accept tool use',
     apply: (args, cfg) =>
-      applySkipPermissions(args, SKIP_PERMISSIONS_RULE, cfg.claude.dangerouslySkipPermissions),
+      applySkipPermissions(
+        args,
+        SKIP_PERMISSIONS_RULE,
+        cfg.claude.dangerouslySkipPermissions !== false,
+      ),
   },
 
   /**

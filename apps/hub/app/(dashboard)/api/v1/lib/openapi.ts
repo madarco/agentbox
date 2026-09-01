@@ -298,7 +298,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "Mint the box's noVNC viewer URL",
           description:
-            'A ready-to-open noVNC URL (autoconnect, password in the query). Cloud boxes get a freshly SIGNED preview URL on port 6080 that expires — which is why the Box payload\'s `vncUrl` is null for daytona/vercel/e2b and this must be called at click time. Docker/hetzner boxes return their stable Portless/OrbStack/loopback URL. Read-only: refused with 409 when the box is not running, has VNC disabled, or has no recorded password. Pair with POST /boxes/{id}/screen to point the in-box browser at the web app first.',
+            "A ready-to-open noVNC URL (autoconnect, password in the query). Cloud boxes get a freshly SIGNED preview URL on port 6080 that expires — which is why the Box payload's `vncUrl` is null for daytona/vercel/e2b and this must be called at click time. Docker/hetzner boxes return their stable Portless/OrbStack/loopback URL. Read-only: refused with 409 when the box is not running, has VNC disabled, or has no recorded password. Pair with POST /boxes/{id}/screen to point the in-box browser at the web app first.",
           parameters: [
             { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
             {
@@ -312,7 +312,8 @@ export function buildOpenApi(): Record<string, unknown> {
               name: 'loopback',
               in: 'query',
               required: false,
-              description: 'Docker only: prefer the 127.0.0.1 host-port URL over OrbStack/Portless.',
+              description:
+                'Docker only: prefer the 127.0.0.1 host-port URL over OrbStack/Portless.',
               schema: { type: 'string', enum: ['1'] },
             },
           ],
@@ -811,7 +812,15 @@ export function buildOpenApi(): Record<string, unknown> {
                   type: 'object',
                   properties: {
                     force: { type: 'boolean' },
-                    claudeInstall: { type: 'string', enum: ['native', 'npm'] },
+                    agentSettings: {
+                      type: 'object',
+                      additionalProperties: {
+                        type: 'object',
+                        additionalProperties: { type: ['string', 'boolean'] },
+                      },
+                      description:
+                        'Per-agent settings for the bake, keyed by agent id (e.g. {"claude":{"install":"npm"}}). Which keys an agent declares is runtime data - see `agentbox config list`.',
+                    },
                     agents: {
                       type: 'array',
                       items: { type: 'string', enum: ['claude', 'codex', 'opencode'] },

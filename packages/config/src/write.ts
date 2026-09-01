@@ -9,7 +9,7 @@ import {
   projectConfigFile,
   projectMetaFile,
 } from './paths.js';
-import { coerceFromString, parseUserConfig } from './parse.js';
+import { coerceFromString, parseUserConfig, unknownKeyError } from './parse.js';
 import { parseProviderSpec } from './provider-spec.js';
 import { withFileLock } from './file-lock.js';
 import { type ConfigScope, lookupKey, type UserConfig, UserConfigError } from './types.js';
@@ -63,7 +63,7 @@ function providerSpecLeaves(
  * file that isn't on this machine can merge into it.
  *
  * That is the reason this exists separately from {@link setConfigValue}: the
- * hetzner control-plane deploy has to write `box.claudeInstall` into the VPS's
+ * hetzner control-plane deploy has to write `claude.install` into the VPS's
  * config, which the hub *also* writes itself (`box.remoteDockerHost`). Uploading
  * a freshly-generated file would silently drop the hub's own keys on every
  * redeploy, so the deploy reads the remote body, merges here, and uploads.
@@ -73,7 +73,7 @@ function providerSpecLeaves(
  */
 export function mergeConfigYaml(body: string, key: string, value: unknown): string {
   if (!lookupKey(key)) {
-    throw new UserConfigError(`unknown key "${key}"`);
+    throw unknownKeyError(key);
   }
   const doc = parseDocBody(body, '<config.yaml>');
   for (const leaf of providerSpecLeaves(key, value)) setLeaf(doc, leaf.key, leaf.value);
@@ -101,7 +101,7 @@ export async function setConfigValue(
   opts: SetOptions = {},
 ): Promise<WriteResult> {
   if (!lookupKey(key)) {
-    throw new UserConfigError(`unknown key "${key}"`);
+    throw unknownKeyError(key);
   }
 
   const coerced = opts.raw && typeof value === 'string' ? coerceFromString(key, value) : value;
@@ -140,7 +140,7 @@ export async function unsetConfigValue(
   cwd: string,
 ): Promise<{ path: string; existed: boolean }> {
   if (!lookupKey(key)) {
-    throw new UserConfigError(`unknown key "${key}"`);
+    throw unknownKeyError(key);
   }
   const path = await configPathFor(scope, cwd);
   const existed = await withFileLock(path, async () => {

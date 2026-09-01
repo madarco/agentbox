@@ -16,8 +16,7 @@ const {
   pushPreparedToCustody,
   writePreparedToCustodyStore,
 } = await import('../src/prepared-sync.js');
-const { claudeInstallFingerprint, readPreparedStateRaw, writePreparedStateRaw } =
-  await import('@agentbox/sandbox-core');
+const { readPreparedStateRaw, writePreparedStateRaw } = await import('@agentbox/sandbox-core');
 
 afterEach(async () => {
   await resetTempAgentboxHome();
@@ -104,19 +103,6 @@ describe('pullPreparedFromCustody', () => {
     expect(res.adopted).toBe(true);
     // Written locally, so the provider's own ensure-base gate now passes.
     expect(readPreparedStateRaw('hetzner')).toMatchObject({ base: { imageRef: 99 } });
-  });
-
-  it('adopts a record baked in the OTHER claudeInstall mode', async () => {
-    // The npm fold derives from the raw (native) context hash, so a box baked
-    // with `box.claudeInstall=npm` is the same base built a different way. The
-    // hub adopts across the fold; a strict compare here refused what the hub
-    // would take, and the two sides disagreed about what was baked.
-    const npmFold = claudeInstallFingerprint(FINGERPRINT, 'npm');
-    const { fetchImpl } = fakeCustody({ 'prepared/hetzner.json': record(npmFold, 'snap-npm') });
-    const res = await pullPreparedFromCustody('hetzner', FINGERPRINT, target(fetchImpl));
-    expect(res.adopted).toBe(true);
-    expect(res.record).toMatchObject({ base: { imageRef: 'snap-npm' } });
-    expect(readPreparedStateRaw('hetzner')).toMatchObject({ base: { imageRef: 'snap-npm' } });
   });
 
   it('ignores a record baked from a different build context', async () => {

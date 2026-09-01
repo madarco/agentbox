@@ -22,6 +22,7 @@ import {
   resolveDaytonaClass,
   resolvePrepareLocation,
   setConfigValue,
+  allAgentSettings,
 } from '@agentbox/config';
 import { readJob, writeJob, type QueueJob } from '@agentbox/relay';
 import { openCommandLog } from '@agentbox/cli-kit';
@@ -89,7 +90,7 @@ async function runPrepareJob(job: QueueJob, log: ReturnType<typeof openCommandLo
   // MUST have it (a VM snapshot can only boot from a published image).
   const registry =
     providerName === 'docker' || providerName === 'daytona' ? eff?.box.imageRegistry : undefined;
-  const claudeInstall = job.prepare?.claudeInstall ?? eff?.box.claudeInstall ?? 'native';
+  const agentSettings = job.prepare?.agentSettings ?? (eff ? allAgentSettings(eff) : {});
   // Bake INPUTS: the CLI's per-invocation flags (on job.prepare) win; when a flag
   // is absent they fall back to the hub's effective config, so a `box.sizeDaytona`
   // / `box.daytonaClass` / `box.hetznerLocation` / `box.digitaloceanRegion` pin
@@ -140,7 +141,7 @@ async function runPrepareJob(job: QueueJob, log: ReturnType<typeof openCommandLo
     force: job.prepare?.force,
     allowPull,
     registry,
-    claudeInstall,
+    agentSettings,
     ...(job.prepare?.agents ? { agents: job.prepare.agents } : {}),
     size,
     location,

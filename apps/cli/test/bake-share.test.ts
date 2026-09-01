@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { claudeInstallFingerprint } from '@agentbox/sandbox-core';
 import {
   buildRebakeNote,
   buildShareFailedNote,
@@ -65,7 +64,6 @@ describe('hasCredentialChanges (change-detection predicate)', () => {
 describe('classifyBakeShare', () => {
   const CLI_VERSION = '0.27.1';
   const nativeFp = 'a'.repeat(64);
-  const npmFp = claudeInstallFingerprint(nativeFp, 'npm');
   // A shared base: matches this CLI, same-version hub, upload succeeded.
   const shared = {
     provider: 'hetzner',
@@ -90,12 +88,6 @@ describe('classifyBakeShare', () => {
 
   it('matches a native-baked record against a same-version hub', () => {
     expect(classifyBakeShare(shared)).toEqual({ provider: 'hetzner', status: 'match' });
-  });
-
-  it('matches an npm-baked record (either install mode is accepted)', () => {
-    expect(classifyBakeShare({ ...shared, provider: 'e2b', storedFingerprint: npmFp }).status).toBe(
-      'match',
-    );
   });
 
   it('flags a record stale vs this CLI build context (different fingerprint)', () => {
@@ -197,12 +189,10 @@ describe('localBakeBlocksAdoption', () => {
     expect(localBakeBlocksAdoption(rec(LIVE), LIVE)).toBe(true);
   });
 
-  it('blocks an npm-fold local bake too — the probe is always the native hash', () => {
-    // A `box.claudeInstall=npm` machine stores the FOLDED fingerprint. A strict
-    // compare called its perfectly current base a miss, so a prepare that found
-    // nothing in custody re-baked a base it already had, every time.
-    expect(localBakeBlocksAdoption(rec(claudeInstallFingerprint(LIVE, 'npm')), LIVE)).toBe(true);
-  });
+  // This used to have to accept an `npm`-folded hash too, because the base
+  // forked on the Claude install mode. The AGENTLESS base folds no agent
+  // setting, so every machine computes the same hash for the same context and a
+  // plain equality is the whole rule.
 
   // The bug this replaced: an outdated record used to block adoption outright,
   // so the machine that most needed the shared base could never take it.

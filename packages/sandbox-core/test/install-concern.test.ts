@@ -183,12 +183,12 @@ describe('ensureAgentInstalled — credential seeding', () => {
   });
 });
 
-describe('install modes (box.claudeInstall)', () => {
+describe('install alternates (claude.install)', () => {
   it('uses the npm recipe for claude when the npm mode is selected', async () => {
-    // Without an alternate, `box.claudeInstall: npm` would silently install
+    // Without an alternate, `claude.install: npm` would silently install
     // nothing different — the escape hatch for hosts the Claude CDN 403s.
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'claude', { installMode: 'npm' });
+    await ensureAgentInstalled(t, 'claude', { settings: { install: 'npm' } });
     const cmds = execs(t).map((c) => c.join(' '));
     expect(cmds.some((c) => c.includes('npm install -g @anthropic-ai/claude-code'))).toBe(true);
     expect(cmds.some((c) => c.includes('claude.ai/install.sh'))).toBe(false);
@@ -198,7 +198,7 @@ describe('install modes (box.claudeInstall)', () => {
 
   it('falls back to the default recipe for an agent with no alternate', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'codex', { installMode: 'npm' });
+    await ensureAgentInstalled(t, 'codex', { settings: { install: 'npm' } });
     expect(
       execs(t)
         .map((c) => c.join(' '))
@@ -208,11 +208,55 @@ describe('install modes (box.claudeInstall)', () => {
 
   it('uses the native installer when the mode is explicitly native', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'claude', { installMode: 'native' });
+    await ensureAgentInstalled(t, 'claude', { settings: { install: 'native' } });
     expect(
       execs(t)
         .map((c) => c.join(' '))
         .some((c) => c.includes('claude.ai/install.sh')),
     ).toBe(true);
+  });
+});
+
+describe('agent settings reach the install shell as env', () => {
+  // The generic escape hatch. `alternatesFrom` and `tuiEnvFrom` cover what
+  // AgentBox itself knows how to do with a setting; an agent installed from an
+  // npm package can put arbitrary logic in its own `postInstall`, and needs its
+  // settings there. Nothing in this repo learns what the setting means.
+  it('exports every declared setting for the recipe AND the post-install', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude', { settings: { install: 'npm', tui: 'fullscreen' } });
+    const cmds = execs(t).map((c) => c.join(' '));
+    const recipe = cmds.find((c) => c.includes('npm install -g @anthropic-ai/claude-code'));
+    const post = cmds.find((c) => c.includes('skills/agentbox-setup'));
+    for (const cmd of [recipe, post]) {
+      expect(cmd).toContain("AGENTBOX_AGENT_SETTING_INSTALL='npm'");
+      expect(cmd).toContain("AGENTBOX_AGENT_SETTING_TUI='fullscreen'");
+    }
+  });
+
+  it('rides the root wrapper as a positional parameter, not interpolated', async () => {
+    // The bug this pins: the wrapper used to embed the script inside
+    // `sudo -n sh -c "<script>"`, so every `$`-shaped thing in it — including a
+    // variable the script's own prefix exported — was expanded by the OUTER
+    // shell before sudo ran. Docker (already root, no sudo branch) saw the right
+    // values and every cloud provider saw empty ones. Verified live in the box
+    // image across all three shapes.
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'claude', { settings: { install: 'npm' } });
+    const root = execs(t).find((c) => c.join(' ').includes('id -u'));
+    expect(root?.[2]).toBe('if [ "$(id -u)" = 0 ]; then sh -c "$1"; else sudo -n sh -c "$1"; fi');
+    // The payload is its own argv element, so nothing needed escaping.
+    expect(root?.at(-1)).toContain("AGENTBOX_AGENT_SETTING_INSTALL='npm'");
+    expect(root?.[2]).not.toContain('AGENTBOX_AGENT_SETTING_');
+  });
+
+  it('emits nothing for an agent with no settings', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'codex');
+    expect(
+      execs(t)
+        .map((c) => c.join(' '))
+        .join('\n'),
+    ).not.toContain('AGENTBOX_AGENT_SETTING_');
   });
 });

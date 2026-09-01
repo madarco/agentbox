@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 // host credential-backup paths, so a bare stub breaks the registry import.
 vi.mock('@agentbox/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agentbox/config')>()),
-  loadEffectiveConfig: async () => ({ effective: { box: { claudeInstall: 'npm' } } }),
+  agentSettingsFor: async () => ({ install: 'npm' }),
 }));
 
 const { makeRecordingTransport } = await import('../src/sync/recording-transport.js');
@@ -30,9 +30,9 @@ function missingThenOk() {
 }
 
 describe('ensureAgentInstalled — install mode defaults from config', () => {
-  it("uses claude's npm recipe when box.claudeInstall is npm and no mode is passed", async () => {
+  it("uses claude's npm recipe when claude.install is npm and no settings are passed", async () => {
     // The runtime callers (claude start, the dashboard agent switch, the cloud
-    // attach paths) thread no mode. Without this default, a host that set npm
+    // attach paths) thread no settings. Without this default, a host that set npm
     // BECAUSE the native CDN 403s would hit that CDN anyway when adding claude
     // to an existing box — a fresh box would work and an existing one wouldn't.
     const t = makeRecordingTransport({ execResult: missingThenOk() });
@@ -44,9 +44,9 @@ describe('ensureAgentInstalled — install mode defaults from config', () => {
     expect(cmds.some((c) => c.includes('claude.ai/install.sh'))).toBe(false);
   });
 
-  it('an explicit mode still wins over the config', async () => {
+  it('explicit settings still win over the config', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'claude', { installMode: 'native' });
+    await ensureAgentInstalled(t, 'claude', { settings: { install: 'native' } });
     const cmds = t.ops
       .filter((o) => o.op === 'exec')
       .map((o) => (o.args.cmd as string[]).join(' '));
@@ -57,21 +57,21 @@ describe('ensureAgentInstalled — install mode defaults from config', () => {
 describe('both claude recipes seed the first-run wizard skill', () => {
   // The `/agentbox-setup` skill moved off the providers' base scripts and onto
   // claude's install recipe. It first landed only on the NATIVE one, which
-  // silently cost `box.claudeInstall: npm` — the CDN-403 fallback, i.e. exactly
+  // silently cost `claude.install: npm` — the CDN-403 fallback, i.e. exactly
   // the hosts that already had a bad day — its first-run wizard.
   const SKILL = 'skills/agentbox-setup/SKILL.md';
 
   it('the native recipe copies it', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
     const { resolveAgentInstall } = await import('@agentbox/core');
-    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, { install: 'native' });
     expect(install.postInstall).toContain(SKILL);
   });
 
   it('the npm alternate copies it too', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
     const { resolveAgentInstall } = await import('@agentbox/core');
-    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, { install: 'npm' });
     // ...and it really is the npm recipe, not a silent fall-through to native.
     expect(JSON.stringify(install.recipe)).toContain('@anthropic-ai/claude-code');
     expect(install.postInstall).toContain(SKILL);
@@ -92,14 +92,14 @@ describe('the wizard skill seeds a box-user-owned skills/ directory', () => {
   it('the native recipe creates skills/ with its own install -d', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
     const { resolveAgentInstall } = await import('@agentbox/core');
-    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'native');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, { install: 'native' });
     expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
   });
 
   it('the npm alternate does too', async () => {
     const { resolveAgentSpec } = await import('../src/sync/registry.js');
     const { resolveAgentInstall } = await import('@agentbox/core');
-    const install = resolveAgentInstall(resolveAgentSpec('claude').install, 'npm');
+    const install = resolveAgentInstall(resolveAgentSpec('claude').install, { install: 'npm' });
     expect(ownsSkillsDir(install.postInstall ?? '')).toBe(true);
   });
 });

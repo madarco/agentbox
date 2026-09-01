@@ -40,6 +40,8 @@ import {
   agentSetArg,
   resolveAgentSpec,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   renderInstallRecipe,
   renderPackageInstall,
 } from '@agentbox/sandbox-core';
@@ -89,8 +91,12 @@ export interface PrepareHetznerOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to `process.cwd()` walk). */
   repoRoot?: string;
-  /** How the claude recipe installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  /**
+   * Every agent's declared settings (`AgentSyncSpec.settings`), keyed by agent
+   * id. Selects an alternate install recipe where the agent declared one, and
+   * is exported into its install shell as `AGENTBOX_AGENT_SETTING_*`.
+   */
+  agentSettings?: AgentSettingsMap;
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -145,7 +151,7 @@ export async function prepareHetzner(
   // Fingerprint = hash of every asset we scp into the prepare VPS. Keyed on
   // logical name (stable across staged-vs-monorepo layouts) so two CLIs with
   // the same staged tree produce the same hash.
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentSettings = opts.agentSettings ?? {};
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -154,7 +160,7 @@ export async function prepareHetzner(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');
@@ -308,12 +314,13 @@ export async function prepareHetzner(
       // runtime-added one are installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentSettings[spec.id]);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
         if (install.packages && install.packages.length > 0)
           steps.push(renderPackageInstall(install.packages));
-        const recipe = renderInstallRecipe(install.recipe);
+        const settingEnv = renderAgentSettingEnv(agentSettings[spec.id]);
+        const recipe = settingEnv + renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
         // the INVOKING user's ~/.local/bin, so running them as root would put
         // the binary in /root and the box user would never see it.
@@ -322,7 +329,7 @@ export async function prepareHetzner(
             ? `sudo -u vscode -H bash -lc ${shellSingleQuote(recipe)}`
             : recipe,
         );
-        if (install.postInstall) steps.push(install.postInstall);
+        if (install.postInstall) steps.push(settingEnv + install.postInstall);
         steps.push(
           `sudo -u vscode -H bash -lc 'command -v ${spec.binary} >/dev/null' || ` +
             `{ echo "prepare-hetzner: ${spec.id} not on PATH after install" >&2; exit 71; }`,
@@ -591,11 +598,11 @@ export const prepareHetznerProvider: NonNullable<Provider['prepare']> = (req) =>
     // by the CLI from `--location` / `box.hetznerLocation`.
     location: req.location,
     onLog: req.onLog,
-    // Forward the Claude install mode (native | npm). Without this the Hetzner
-    // bake always ran the native `curl install.sh`, whose CDN 403s datacenter
-    // egress IPs — the `npm` escape hatch (box.claudeInstall / --claude-install
-    // npm) never reached the bake. (matches prepareVercelProvider.)
-    claudeInstall: req.claudeInstall,
+    // Forward each agent's declared settings. Without this the Hetzner bake
+    // always ran claude's native `curl install.sh`, whose CDN 403s datacenter
+    // egress IPs — the `npm` escape hatch (`claude.install`) never reached the
+    // bake. (matches prepareVercelProvider.)
+    ...(req.agentSettings ? { agentSettings: req.agentSettings } : {}),
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
   });

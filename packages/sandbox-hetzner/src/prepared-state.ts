@@ -19,7 +19,6 @@
  */
 
 import {
-  claudeInstallFingerprint,
   computeContextManifest,
   computeContextSha256,
   preparedStatePathFor,
@@ -202,17 +201,12 @@ export function updatePreparedState(mutate: (s: PreparedHetznerState) => void): 
  * hash to the one `prepare` writes — both go through the same
  * `resolveRuntimeAssets` + `computeContextSha256` chain.
  */
-export async function currentHetznerBaseFingerprintLive(
-  claudeInstall: 'native' | 'npm' = 'native',
-): Promise<string | undefined> {
+export async function currentHetznerBaseFingerprintLive(): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
-    // Fold in claudeInstall exactly as `prepare` does — otherwise an npm-baked
-    // base never matches the stored (npm-folded) fingerprint.
-    return claudeInstallFingerprint(
-      await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-      claudeInstall,
-    );
+    // The AGENTLESS base: no agent setting folds in, because it installs no
+    // agent. Per-agent artifacts get their own `variantFingerprint`.
+    return await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath })));
   } catch {
     return undefined;
   }

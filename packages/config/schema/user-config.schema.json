@@ -49,8 +49,6 @@
         "sizeDigitalocean": { "type": "string", "minLength": 1 },
         "sizeRemoteDocker": { "type": "string", "minLength": 1 },
         "withPlaywright": { "type": "boolean" },
-        "claudeInstall": { "enum": ["native", "npm"] },
-        "claudeTui": { "enum": ["default", "fullscreen", "auto"] },
         "withEnv": { "type": "boolean" },
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
@@ -103,7 +101,9 @@
       "additionalProperties": false,
       "properties": {
         "sessionName": { "type": "string", "minLength": 1 },
-        "dangerouslySkipPermissions": { "type": "boolean" }
+        "dangerouslySkipPermissions": { "type": "boolean" },
+        "install": { "enum": ["native", "npm"] },
+        "tui": { "enum": ["default", "fullscreen", "auto"] }
       }
     },
     "codex": {

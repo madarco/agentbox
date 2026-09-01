@@ -10,7 +10,9 @@
  */
 
 import {
-  claudeInstallFingerprint,
+  variantFingerprint,
+  allAgentSettings,
+  loadEffectiveConfig,
   computeContextSha256,
   readPreparedStateRaw,
   writePreparedStateRaw,
@@ -65,14 +67,17 @@ export function writePreparedState(state: PreparedExampleState): void {
  * through the CLI, so the shared-runtime dir is unknown) so the CLI degrades to
  * "can't tell, don't nag".
  */
-export async function currentExampleBaseFingerprintLive(
-  claudeInstall: 'native' | 'npm' = 'native',
-): Promise<string | undefined> {
+export async function currentExampleBaseFingerprintLive(): Promise<string | undefined> {
   try {
     const assets = resolveRuntimeAssets();
-    return claudeInstallFingerprint(
+    // Reads the config itself: the contract takes no arguments because
+    // AgentBox's own bases are agentless and fold nothing, while THIS provider
+    // bakes Claude into its base and so must fold `claude.install` the same way
+    // its `prepare` does — or an npm-baked base always reads as stale.
+    const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+    return variantFingerprint(
       await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath }))),
-      claudeInstall,
+      { agentSettings: cfg ? allAgentSettings(cfg.effective) : {} },
     );
   } catch {
     return undefined;

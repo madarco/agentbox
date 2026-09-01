@@ -7,6 +7,7 @@ import {
   loadEffectiveConfig,
   resolveBoxImage,
   resolveDefaultCheckpoint,
+  agentSettings,
 } from '@agentbox/config';
 import {
   buildShellSessionAttachArgv,
@@ -405,7 +406,7 @@ export const dashboardCommand = new Command('dashboard')
           container: box.container,
           claudeArgs: claudeRuntime.skipPermissions!.apply([], claudeCfg.effective),
           boxName: box.name,
-          claudeTui: claudeCfg.effective.box.claudeTui,
+          agentSettings: agentSettings(claudeCfg.effective, 'claude'),
         });
         const info = await claudeSessionInfo(box.container);
         // Attach only once the agent TUI has drawn — see waitForTmuxPaneContent.
@@ -559,7 +560,7 @@ export const dashboardCommand = new Command('dashboard')
           container: ctr,
           claudeArgs: claudeRuntime.skipPermissions!.apply([], cfg.effective),
           boxName: result.record.name,
-          claudeTui: cfg.effective.box.claudeTui,
+          agentSettings: agentSettings(cfg.effective, 'claude'),
         });
         const info = await claudeSessionInfo(ctr);
         await waitForTmuxPaneContent(ctr, info.sessionName);

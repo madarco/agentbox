@@ -8,7 +8,8 @@
  *   cli > workspace > project > global > built-in defaults.
  */
 
-import { AGENT_KINDS, type AgentConfigKind } from './agents.js';
+import { AGENT_KINDS, type AgentConfigKind, type AgentConfigSetting } from './agents.js';
+import { pluginAgentSettings } from './agent-plugins.js';
 import { PROVIDERS, PROVIDER_NAMES, perProviderConfigKey, type ProviderKind } from './providers.js';
 
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
@@ -17,24 +18,34 @@ export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. Defined in `providers.ts` (the single source of truth) and re-exported here for back-compat. */
 export type { ProviderKind };
 /**
- * How the base image/snapshot installs Claude Code at bake time. `native`
- * (Anthropic's installer, the default) or `npm` (`@anthropic-ai/claude-code`) —
- * an opt-in fallback for cloud egress IPs whose CDN the native installer 403s.
+ * One agent's resolved settings — its own config block with the declared
+ * defaults applied. See `AgentSettingSpec` in `@agentbox/core`: the keys are
+ * whatever the AGENT declared, so this layer never knows what they mean.
  */
-export type ClaudeInstallMethod = 'native' | 'npm';
+export type AgentSettings = Readonly<Record<string, string | boolean>>;
 
 /**
- * Which terminal renderer Claude Code uses inside a box.
+ * One agent's config block, as the user may write it.
  *
- * Claude Code's `fullscreen` renderer (alternate screen + virtualised
- * scrollback) repaints differentially: it skips cells it believes are already
- * blank. Over a network transport that assumption breaks down and stale
- * characters are left in the blank regions, visible on scroll and cleared only
- * by a full repaint (resizing the terminal). `default` is the classic renderer
- * and does not have the problem, so boxes use it unless told otherwise.
- * `auto` leaves the choice to Claude Code.
+ * The index signature is what makes an agent's own settings addressable without
+ * a hand edit here: `claude.install`, `claude.tui` and whatever an installed
+ * agent package declares all land under it. It is not a hole in validation —
+ * the parser rejects any leaf absent from `KEY_REGISTRY`, which is generated
+ * from the declarations. Named leaves stay spelled out because they exist for
+ * EVERY agent and callers read them directly.
  */
-export type ClaudeTuiMode = 'default' | 'fullscreen' | 'auto';
+export interface AgentConfigBlock {
+  sessionName?: string;
+  dangerouslySkipPermissions?: boolean;
+  [setting: string]: string | boolean | undefined;
+}
+
+/** The same block after defaults are applied. */
+export interface EffectiveAgentBlock {
+  sessionName: string;
+  dangerouslySkipPermissions?: boolean;
+  [setting: string]: string | boolean | undefined;
+}
 /**
  * How a box's `git push` reaches GitHub:
  * - `relay` — the box asks the host relay to push with the HOST's credentials
@@ -142,14 +153,6 @@ export interface UserConfig {
     sizeDigitalocean?: string;
     sizeRemoteDocker?: string;
     withPlaywright?: boolean;
-    /**
-     * How the base image/snapshot installs Claude Code at bake time. Bake-time
-     * only (read by `agentbox prepare`, not `create`); `npm` is a fallback for
-     * cloud egress IPs the native installer's CDN 403s.
-     */
-    claudeInstall?: ClaudeInstallMethod;
-    /** Terminal renderer Claude Code uses inside the box. */
-    claudeTui?: ClaudeTuiMode;
     withEnv?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
@@ -197,20 +200,10 @@ export interface UserConfig {
   checkpoint?: {
     maxLayers?: number;
   };
-  claude?: {
-    sessionName?: string;
-    dangerouslySkipPermissions?: boolean;
-  };
-  codex?: {
-    sessionName?: string;
-    dangerouslySkipPermissions?: boolean;
-  };
-  opencode?: {
-    sessionName?: string;
-  };
-  example?: {
-    sessionName?: string;
-  };
+  claude?: AgentConfigBlock;
+  codex?: AgentConfigBlock;
+  opencode?: AgentConfigBlock;
+  example?: AgentConfigBlock;
   attach?: {
     openIn?: AttachOpenIn;
     cmuxStatus?: boolean;
@@ -368,8 +361,6 @@ export interface EffectiveConfig {
     sizeDigitalocean: string;
     sizeRemoteDocker: string;
     withPlaywright: boolean;
-    claudeInstall: ClaudeInstallMethod;
-    claudeTui: ClaudeTuiMode;
     withEnv: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
@@ -412,20 +403,10 @@ export interface EffectiveConfig {
   checkpoint: {
     maxLayers: number;
   };
-  claude: {
-    sessionName: string;
-    dangerouslySkipPermissions: boolean;
-  };
-  codex: {
-    sessionName: string;
-    dangerouslySkipPermissions: boolean;
-  };
-  opencode: {
-    sessionName: string;
-  };
-  example: {
-    sessionName: string;
-  };
+  claude: EffectiveAgentBlock;
+  codex: EffectiveAgentBlock;
+  opencode: EffectiveAgentBlock;
+  example: EffectiveAgentBlock;
   attach: {
     openIn: AttachOpenIn;
     cmuxStatus: boolean;
@@ -560,8 +541,6 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeDigitalocean: '',
     sizeRemoteDocker: '',
     withPlaywright: false,
-    claudeInstall: 'native',
-    claudeTui: 'default',
     withEnv: false,
     resyncOnStart: true,
     vnc: true,
@@ -768,18 +747,40 @@ type AgentIsolateKey = Extract<
   `isolate${Capitalize<(typeof AGENT_KINDS)[number]['id']>}Config`
 >;
 
-function perAgentDefaults(): Record<
-  string,
-  { sessionName: string; dangerouslySkipPermissions?: boolean }
-> {
-  const out: Record<string, { sessionName: string; dangerouslySkipPermissions?: boolean }> = {};
-  for (const agent of AGENT_KINDS) {
+function perAgentDefaults(): Record<string, EffectiveAgentBlock> {
+  const out: Record<string, EffectiveAgentBlock> = {};
+  // Widened: `as const satisfies` narrows each row to its own literal type, so
+  // an optional field is absent from the rows that omit it.
+  for (const agent of AGENT_KINDS as readonly AgentConfigKind[]) {
+    const settings: Record<string, string | boolean> = {};
+    for (const setting of agent.settings ?? []) settings[setting.key] = setting.default;
     out[agent.id] = {
       sessionName: agent.defaultSessionName,
       ...(agent.hasSkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+      ...settings,
     };
   }
+  // An installed agent package's block exists only if it declared settings —
+  // `sessionName` and the isolate flag are generated from `AGENT_KINDS`, which a
+  // plugin agent is absent from. Its own spec row carries the session name.
+  for (const plugin of pluginAgentSettings()) {
+    if (out[plugin.id]) continue;
+    const settings: Record<string, string | boolean> = {};
+    for (const setting of plugin.settings) settings[setting.key] = setting.default;
+    out[plugin.id] = { sessionName: plugin.id, ...settings };
+  }
   return out;
+}
+
+/** The `<agent>.<key>` descriptors one agent's declared settings generate. */
+function agentSettingKeys(id: string, settings: readonly AgentConfigSetting[]): KeyDescriptor[] {
+  return settings.map((setting) => ({
+    key: `${id}.${setting.key}`,
+    type: setting.type,
+    ...(setting.enumValues ? { enumValues: setting.enumValues } : {}),
+    ...(setting.advanced ? { advanced: true } : {}),
+    description: setting.description,
+  }));
 }
 
 /** `claude` -> `Claude`, for the `box.isolate<Agent>Config` key spelling. */
@@ -811,7 +812,7 @@ function perAgentIsolateDefaults(): Record<string, boolean> {
 
 function perAgentKeys(): KeyDescriptor[] {
   const out: KeyDescriptor[] = [];
-  for (const agent of AGENT_KINDS) {
+  for (const agent of AGENT_KINDS as readonly AgentConfigKind[]) {
     out.push({
       key: `${agent.id}.sessionName`,
       type: 'string',
@@ -824,8 +825,23 @@ function perAgentKeys(): KeyDescriptor[] {
         description: agent.skipPermissionsDesc ?? '',
       });
     }
+    out.push(...agentSettingKeys(agent.id, agent.settings ?? []));
   }
   return out;
+}
+
+/**
+ * The settings keys contributed by agents installed from an npm package.
+ *
+ * Kept OUT of {@link BUILTIN_KEY_REGISTRY} so the JSON schema — which is
+ * `additionalProperties: false` and shipped with the package — stays a
+ * description of what this build knows, not of one machine's install set.
+ */
+function installedAgentKeys(): KeyDescriptor[] {
+  const builtin = new Set<string>(AGENT_KINDS.map((a) => a.id));
+  return pluginAgentSettings()
+    .filter((p) => !builtin.has(p.id))
+    .flatMap((p) => agentSettingKeys(p.id, p.settings));
 }
 
 function perProviderImageKeys(): KeyDescriptor[] {
@@ -844,7 +860,7 @@ function perProviderImageKeys(): KeyDescriptor[] {
  * and the JSON schema). Per-provider `box.{image,size,defaultCheckpoint}<P>`
  * keys are generated from the `PROVIDERS` table (see `providers.ts`).
  */
-export const KEY_REGISTRY: readonly KeyDescriptor[] = [
+export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'box.provider',
     type: 'enum',
@@ -885,20 +901,6 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.withPlaywright',
     type: 'bool',
     description: 'Install @playwright/cli@latest in the box at create time.',
-  },
-  {
-    key: 'box.claudeInstall',
-    type: 'enum',
-    enumValues: ['native', 'npm'] as const,
-    description:
-      "How `agentbox prepare` installs Claude Code into the base image/snapshot: `native` (Anthropic's installer, the default) or `npm` (@anthropic-ai/claude-code). A fallback for cloud egress IPs the native installer's CDN 403s. Bake-time only — change it, then re-run `agentbox prepare --provider <name>`.",
-  },
-  {
-    key: 'box.claudeTui',
-    type: 'enum',
-    enumValues: ['default', 'fullscreen', 'auto'] as const,
-    description:
-      "Terminal renderer Claude Code uses inside a box: `default` (the classic renderer, the AgentBox default), `fullscreen` (Claude's alternate-screen renderer), or `auto` (let Claude decide). Boxes default to `default` because the fullscreen renderer's differential repaint leaves stale characters behind over a network transport — visible while scrolling, and cleared only by resizing the terminal. Applied via /etc/agentbox/box.env, so it takes effect on the next box start.",
   },
   {
     key: 'box.withEnv',
@@ -1312,6 +1314,21 @@ export const KEY_REGISTRY: readonly KeyDescriptor[] = [
     description:
       'Whether a box may ask the host for access to a new host CLI (`agentbox-ctl tool request <bin>`). True (default) raises a host approval prompt naming the box, the binary and the reason; false refuses the request outright so boxes can only use tools already granted.',
   },
+];
+
+/**
+ * Every addressable key: the built-ins above plus the settings declared by
+ * agents installed with `agentbox agent add`.
+ *
+ * Resolved once at module load, exactly like `AGENT_SPECS` and for the same
+ * reason: this is read as a constant in dozens of places, and an agent
+ * appearing halfway through a command would be worse than one that appears on
+ * the next. Every CLI invocation is a fresh process, so "the next command" is
+ * immediately; the long-lived hosts (relay, hub) pick it up on restart.
+ */
+export const KEY_REGISTRY: readonly KeyDescriptor[] = [
+  ...BUILTIN_KEY_REGISTRY,
+  ...installedAgentKeys(),
 ];
 
 const REGISTRY_BY_KEY = new Map<string, KeyDescriptor>(KEY_REGISTRY.map((d) => [d.key, d]));

@@ -3,9 +3,14 @@ export {
   AGENT_KIND_NAMES,
   isAgentConfigKind,
   type AgentConfigKind,
+  type AgentConfigSetting,
 } from './agents.js';
+export { pluginAgentSettings, type PluginAgentSettings } from './agent-plugins.js';
+export { unknownKeyError } from './parse.js';
+export { agentSettings, allAgentSettings, agentSettingsFor } from './agent-settings.js';
 export {
   BUILT_IN_DEFAULTS,
+  BUILTIN_KEY_REGISTRY,
   KEY_REGISTRY,
   lookupKey,
   UserConfigError,
@@ -14,8 +19,10 @@ export {
   type ConfigLayer,
   type ConfigScope,
   type ConfigSource,
+  type AgentConfigBlock,
+  type AgentSettings,
+  type EffectiveAgentBlock,
   type EffectiveConfig,
-  type ClaudeTuiMode,
   type EngineKind,
   type GitPushMode,
   type HubGitAuthMode,
@@ -57,6 +64,7 @@ export {
 } from './parse.js';
 
 export {
+  AGENTS_FILE,
   configPathFor,
   findProjectRoot,
   GLOBAL_CONFIG_FILE,

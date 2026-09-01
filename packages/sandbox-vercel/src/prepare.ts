@@ -35,6 +35,8 @@ import {
   renderInstallRecipe,
   renderPackageInstall,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   resolveAgentSpec,
   variantFingerprint,
 } from '@agentbox/sandbox-core';
@@ -70,8 +72,12 @@ export interface PrepareVercelOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
-  /** How provision.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  /**
+   * Every agent's declared settings (`AgentSyncSpec.settings`), keyed by agent
+   * id. Selects an alternate install recipe where the agent declared one, and
+   * is exported into its install shell as `AGENTBOX_AGENT_SETTING_*`.
+   */
+  agentSettings?: AgentSettingsMap;
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -125,7 +131,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentSettings = opts.agentSettings ?? {};
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -134,7 +140,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
 
   const existing = readPreparedState();
   // A derived bake boots the agentless base, so that has to exist first.
@@ -212,7 +218,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
     // one are installed identically.
     for (const id of agents) {
       const spec = resolveAgentSpec(id);
-      const agentInstall = resolveAgentInstall(spec.install, claudeInstall);
+      const agentInstall = resolveAgentInstall(spec.install, agentSettings[spec.id]);
       progress(`installing ${spec.id} into the derived snapshot`);
       const steps: string[] = [];
       if (agentInstall.packages && agentInstall.packages.length > 0) {
@@ -226,7 +232,8 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
             : pkgLine,
         );
       }
-      const recipe = renderInstallRecipe(agentInstall.recipe);
+      const settingEnv = renderAgentSettingEnv(agentSettings[spec.id]);
+      const recipe = settingEnv + renderInstallRecipe(agentInstall.recipe);
       // `runAs: 'box-user'` is load-bearing: the native installers write into
       // the INVOKING user's ~/.local/bin, so running them as root would put the
       // binary in /root and the box user would never see it.
@@ -235,7 +242,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
           ? `sudo -u ${BOX_USER} -H bash -lc ${shellSingleQuote(recipe)}`
           : recipe,
       );
-      if (agentInstall.postInstall) steps.push(agentInstall.postInstall);
+      if (agentInstall.postInstall) steps.push(settingEnv + agentInstall.postInstall);
       steps.push(
         `sudo -u ${BOX_USER} -H bash -lc 'command -v ${spec.binary} >/dev/null' || ` +
           `{ echo "prepare-vercel: ${spec.id} not on PATH after install" >&2; exit 71; }`,
@@ -437,7 +444,7 @@ export const prepareVercelProvider: NonNullable<Provider['prepare']> = (req) =>
     name: req.name,
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
-    claudeInstall: req.claudeInstall,
+    ...(req.agentSettings ? { agentSettings: req.agentSettings } : {}),
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,

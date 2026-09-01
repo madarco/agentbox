@@ -43,6 +43,8 @@ import {
   agentSetArg,
   resolveAgentSpec,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   renderInstallRecipe,
   renderPackageInstall,
 } from '@agentbox/sandbox-core';
@@ -80,8 +82,12 @@ export interface PrepareE2bOptions {
   cliRuntimeRoot?: string;
   /** Repo root for the dev fallback (defaults to a cwd-walk). */
   repoRoot?: string;
-  /** How build-template.sh installs Claude Code (`native` default | `npm`). */
-  claudeInstall?: 'native' | 'npm';
+  /**
+   * Every agent's declared settings (`AgentSyncSpec.settings`), keyed by agent
+   * id. Selects an alternate install recipe where the agent declared one, and
+   * is exported into its install shell as `AGENTBOX_AGENT_SETTING_*`.
+   */
+  agentSettings?: AgentSettingsMap;
   onLog?: (line: string) => void;
   /**
    * Agents to build into a DERIVED template on top of the agentless base.
@@ -164,7 +170,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
+  const agentSettings = opts.agentSettings ?? {};
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -174,7 +180,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
   const templateName = templateNameFor(variantKey);
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The
@@ -275,12 +281,13 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
       // reaches a box it is installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentSettings[spec.id]);
         progress(`  install ${spec.id}`);
         if (install.packages && install.packages.length > 0) {
           template.runCmd(renderPackageInstall(install.packages), { user: 'root' });
         }
-        const recipe = renderInstallRecipe(install.recipe);
+        const settingEnv = renderAgentSettingEnv(agentSettings[spec.id]);
+        const recipe = settingEnv + renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
         // the INVOKING user's ~/.local/bin, so as root the binary lands in
         // /root and the box user never sees it. E2B's runCmd takes a `user`,
@@ -292,7 +299,8 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
             : recipe,
           { user: 'root' },
         );
-        if (install.postInstall) template.runCmd(install.postInstall, { user: 'root' });
+        if (install.postInstall)
+          template.runCmd(settingEnv + install.postInstall, { user: 'root' });
       }
     } else {
       for (const a of assets) {
@@ -487,7 +495,7 @@ export const prepareE2bProvider: NonNullable<Provider['prepare']> = (req) =>
     hostWorkspace: req.hostWorkspace ?? process.cwd(),
     force: req.force,
     size: req.size,
-    claudeInstall: req.claudeInstall,
+    ...(req.agentSettings ? { agentSettings: req.agentSettings } : {}),
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,
   });

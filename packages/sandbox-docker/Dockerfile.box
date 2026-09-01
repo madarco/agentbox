@@ -200,19 +200,12 @@ RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/
 # published image per agent set instead of one.
 # ---------------------------------------------------------------------------
 
-# Claude Code. AGENTBOX_CLAUDE_INSTALL selects the method (default `native`,
-# Anthropic's installer — the recommended path per code.claude.com/docs/en/setup).
-# `npm` is an opt-in fallback (`box.claudeInstall`) for hosts whose egress IP the
-# native CDN 403s.
-#
-# NOTE: this image is the AGENTLESS base and installs no agent. Agents are added
-# as a thin derived layer (`buildDerivedAgentImage`, FROM this image) or into a
-# live box (`ensureAgentInstalled`), both driven by the install recipes on
-# AGENT_SYNC_SPECS. A full variant build here would diverge at the ARG and
-# duplicate every later layer — Playwright, Chromium, VNC — per agent.
-# AGENTBOX_CLAUDE_INSTALL is kept because it selects the RECIPE, not whether to
-# install: the cloud provision scripts still read it at bake time.
-ARG AGENTBOX_CLAUDE_INSTALL=native
+# There is no per-agent build arg here, and there must not be one. An agent's
+# settings (`claude.install: npm`, the fallback for hosts whose egress IP the
+# native CDN 403s) select an INSTALL RECIPE, and this image runs none — so a
+# build arg for one would fork the shared base and the published GHCR tag
+# without changing a byte. The settings reach the derived layer instead, via
+# `renderAgentSettingEnv` / `AGENTBOX_AGENT_SETTING_*`.
 
 # Browser support for in-box agents: Vercel's agent-browser drives Chrome via
 # CDP. Two things have to happen here:

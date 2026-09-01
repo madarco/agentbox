@@ -35,6 +35,8 @@ import {
   renderPackageInstall,
   renderInstallRecipe,
   resolveAgentInstall,
+  renderAgentSettingEnv,
+  type AgentSettingsMap,
   resolveAgentSpec,
   variantFingerprint,
 } from '@agentbox/sandbox-core';
@@ -77,12 +79,12 @@ export interface PrepareDigitalOceanOptions {
    */
   project?: string;
   /**
-   * How the bake installs Claude Code: `native` (default) or `npm`. Threaded
-   * into install-box.sh via `AGENTBOX_CLAUDE_INSTALL`. The `npm` escape hatch
-   * is for cloud egress IPs whose CDN the native installer 403s. Bake-time
-   * only; part of the context fingerprint (a change re-bakes).
+/**
+   * Every agent's declared settings (`AgentSyncSpec.settings`), keyed by agent
+   * id. Selects an alternate install recipe where the agent declared one, and
+   * is exported into its install shell as `AGENTBOX_AGENT_SETTING_*`.
    */
-  claudeInstall?: 'native' | 'npm';
+  agentSettings?: AgentSettingsMap;
   /**
    * Agents to bake in. Empty/omitted bakes the AGENTLESS base.
    *
@@ -157,9 +159,7 @@ export async function prepareDigitalOcean(
     cliRuntimeRoot: opts.cliRuntimeRoot ?? findStagedCliRuntimeRoot(),
     repoRoot: opts.repoRoot,
   });
-  const claudeInstall = opts.claudeInstall ?? 'native';
-  // Fold the Claude install mode into the fingerprint so switching native<->npm
-  // re-bakes even though the staged asset files are identical (matches Hetzner).
+  const agentSettings = opts.agentSettings ?? {};
   // Keep the per-file digests, not just the fold: a later `stale` verdict can
   // then name the files that changed instead of only reporting a moved hash.
   const contextManifest = await computeContextManifest(
@@ -168,7 +168,7 @@ export async function prepareDigitalOcean(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { claudeInstall, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');
@@ -358,12 +358,13 @@ export async function prepareDigitalOcean(
       // a runtime-added one are installed identically.
       for (const id of agents) {
         const spec = resolveAgentSpec(id);
-        const install = resolveAgentInstall(spec.install, claudeInstall);
+        const install = resolveAgentInstall(spec.install, agentSettings[spec.id]);
         progress(`installing ${spec.id} into the derived snapshot`);
         const steps: string[] = [];
         if (install.packages && install.packages.length > 0)
           steps.push(renderPackageInstall(install.packages));
-        const recipe = renderInstallRecipe(install.recipe);
+        const settingEnv = renderAgentSettingEnv(agentSettings[spec.id]);
+        const recipe = settingEnv + renderInstallRecipe(install.recipe);
         // `runAs: 'box-user'` is load-bearing: the native installers write into
         // the INVOKING user's ~/.local/bin, so running them as root would put
         // the binary in /root and the box user would never see it.
@@ -372,7 +373,7 @@ export async function prepareDigitalOcean(
             ? `sudo -u vscode -H bash -lc ${shellSingleQuote(recipe)}`
             : recipe,
         );
-        if (install.postInstall) steps.push(install.postInstall);
+        if (install.postInstall) steps.push(settingEnv + install.postInstall);
         steps.push(
           `sudo -u vscode -H bash -lc 'command -v ${spec.binary} >/dev/null' || ` +
             `{ echo "prepare-digitalocean: ${spec.id} not on PATH after install" >&2; exit 71; }`,
@@ -622,10 +623,10 @@ export const prepareDigitalOceanProvider: NonNullable<Provider['prepare']> = (re
     region: req.location,
     // Droplet size for the temp bake VPS (CLI `--size` / `box.sizeDigitalocean`).
     size: req.size,
-    // Forward the Claude install mode (native | npm) so the `npm` escape hatch
-    // (box.claudeInstall / --claude-install npm) reaches the bake — the native
-    // installer's CDN 403s some datacenter egress IPs. (matches Hetzner.)
-    claudeInstall: req.claudeInstall,
+    // Forward each agent's declared settings so an escape hatch like
+    // `claude.install: npm` reaches the bake — the native installer's CDN 403s
+    // some datacenter egress IPs. (matches Hetzner.)
+    ...(req.agentSettings ? { agentSettings: req.agentSettings } : {}),
     // Empty/absent bakes the agentless base; a set bakes a derived snapshot.
     ...(req.agents ? { agents: req.agents } : {}),
     onLog: req.onLog,

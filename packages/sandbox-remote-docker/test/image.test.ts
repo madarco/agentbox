@@ -24,17 +24,11 @@ describe('remoteBuildArgv', () => {
     expect(argv).not.toContain('-');
   });
 
-  it('folds the claude install mode in as a build arg', () => {
-    expect(remoteBuildArgv('r', '/tmp/ctx', 'npm')).toEqual([
-      'build',
-      '-t',
-      'r',
-      '-f',
-      '/tmp/ctx/Dockerfile.box',
-      '--build-arg',
-      'AGENTBOX_CLAUDE_INSTALL=npm',
-      '/tmp/ctx',
-    ]);
+  it('passes no build args — the base is agentless', () => {
+    // There used to be an `AGENTBOX_CLAUDE_INSTALL` arg here. The base installs
+    // no agent, so it changed nothing; an agent's settings reach the DERIVED
+    // layer instead.
+    expect(remoteBuildArgv('r', '/tmp/ctx')).not.toContain('--build-arg');
   });
 });
 
