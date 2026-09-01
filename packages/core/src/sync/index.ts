@@ -32,6 +32,7 @@ export {
   BOX_USER,
   BOX_HOME,
   BOX_CREDS_DIR,
+  agentDirPrelude,
   SETUP_GUIDE_PATH,
 } from './agent-spec.js';
 export type {

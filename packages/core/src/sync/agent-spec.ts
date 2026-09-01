@@ -568,5 +568,30 @@ export const BOX_USER = 'vscode';
 export const BOX_HOME = '/home/vscode';
 /** Where a cloud credential volume mounts, pivoted into each agent's real path. */
 export const BOX_CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
+
+/**
+ * The `postInstall` prelude every agent needs: its own config dir owned by the
+ * box user, and its subdir of the credentials mount.
+ *
+ * `BOX_CREDS_DIR` IS NOT A NORMAL DIRECTORY AT RUNTIME. On the cloud providers
+ * it is where the shared credentials volume mounts, and on Daytona that mount
+ * is virtiofs: it presents `drwxrwxrwx root root` and rejects `chown`/`chmod`
+ * with EPERM *even for root*. So the ownership of anything under it is
+ * best-effort — the box user can already write it, and the mount ignores the
+ * bits either way.
+ *
+ * Recipes used to fold both dirs into one `install -d -o vscode -g vscode`,
+ * which chmods and chowns what it creates. That worked at BAKE time (no volume
+ * mounted yet) and failed every runtime install on Daytona with
+ * `cannot change owner and permissions of '…/.agentbox-creds/<agent>'`, so an
+ * agent missing from a snapshot could never be installed into a live box.
+ */
+export function agentDirPrelude(agentDirs: readonly string[], credsSubdir: string): string[] {
+  return [
+    `install -d -o ${BOX_USER} -g ${BOX_USER} ${agentDirs.join(' ')}`,
+    `mkdir -p ${BOX_CREDS_DIR}/${credsSubdir}`,
+    `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR} 2>/dev/null || true`,
+  ];
+}
 /** Baked into every provider's base image; the source for the wizard skill. */
 export const SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';

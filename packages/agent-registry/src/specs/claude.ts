@@ -10,7 +10,13 @@
 
 import { join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
-import { BOX_USER, BOX_HOME, BOX_CREDS_DIR, SETUP_GUIDE_PATH } from '@agentbox/core';
+import {
+  BOX_USER,
+  BOX_HOME,
+  BOX_CREDS_DIR,
+  SETUP_GUIDE_PATH,
+  agentDirPrelude,
+} from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 
 const CLAUDE_BOX_DIR = `${BOX_HOME}/.claude`;
@@ -62,10 +68,9 @@ export const claudeSpec: AgentSyncSpec = {
     // build time — `_claude.json` materialises when the volume is seeded, and
     // `.credentials.json` resolves once the cloud credential volume mounts.
     postInstall: [
-      `install -d -o ${BOX_USER} -g ${BOX_USER} ${CLAUDE_BOX_DIR} ${BOX_CREDS_DIR}/claude`,
+      ...agentDirPrelude([CLAUDE_BOX_DIR], 'claude'),
       `ln -sfn ${CLAUDE_BOX_DIR}/_claude.json ${BOX_HOME}/.claude.json`,
       `ln -sfn ${BOX_CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
-      `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR}`,
       `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
       SEED_SETUP_SKILL,
     ].join(' && '),
@@ -78,11 +83,10 @@ export const claudeSpec: AgentSyncSpec = {
         recipe: { kind: 'npm', package: '@anthropic-ai/claude-code' },
         runAs: 'root',
         postInstall: [
-          `install -d -o ${BOX_USER} -g ${BOX_USER} ${BOX_HOME}/.local/bin ${CLAUDE_BOX_DIR} ${BOX_CREDS_DIR}/claude`,
+          ...agentDirPrelude([`${BOX_HOME}/.local/bin`, CLAUDE_BOX_DIR], 'claude'),
           `ln -sf "$(command -v claude)" ${BOX_HOME}/.local/bin/claude`,
           `ln -sfn ${CLAUDE_BOX_DIR}/_claude.json ${BOX_HOME}/.claude.json`,
           `ln -sfn ${BOX_CREDS_DIR}/claude/.credentials.json ${CLAUDE_BOX_DIR}/.credentials.json`,
-          `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR}`,
           `chown -h ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.local/bin/claude ${BOX_HOME}/.claude.json ${CLAUDE_BOX_DIR}/.credentials.json`,
           SEED_SETUP_SKILL,
         ].join(' && '),

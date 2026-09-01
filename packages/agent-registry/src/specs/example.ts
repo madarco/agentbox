@@ -20,7 +20,7 @@
  * Imports only the two dependency-free leaves; see `spec-purity.test.ts`.
  */
 
-import { BOX_HOME, BOX_CREDS_DIR, BOX_USER } from '@agentbox/core';
+import { BOX_HOME, BOX_CREDS_DIR, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 import { join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
@@ -40,9 +40,7 @@ export const exampleSpec: AgentSyncSpec = {
     // install, and `true` is the honest no-op.
     recipe: { kind: 'exec', script: 'true' },
     runAs: 'root',
-    postInstall: [
-      `install -d -o ${BOX_USER} -g ${BOX_USER} ${EXAMPLE_BOX_DIR} ${BOX_CREDS_DIR}/example`,
-    ].join(' && '),
+    postInstall: [...agentDirPrelude([EXAMPLE_BOX_DIR], 'example')].join(' && '),
   },
   dockerVolume: 'agentbox-example-config',
   staticPaths: [

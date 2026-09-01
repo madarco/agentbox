@@ -10,7 +10,7 @@
 
 import { join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
-import { BOX_USER, BOX_HOME, BOX_CREDS_DIR } from '@agentbox/core';
+import { BOX_USER, BOX_HOME, BOX_CREDS_DIR, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 
 const OPENCODE_BOX_DIR = `${BOX_HOME}/.local/share/opencode`;
@@ -26,9 +26,9 @@ export const opencodeSpec: AgentSyncSpec = {
     recipe: { kind: 'npm', package: 'opencode-ai' },
     runAs: 'root',
     postInstall: [
-      `install -d -o ${BOX_USER} -g ${BOX_USER} ${OPENCODE_BOX_DIR} ${BOX_CREDS_DIR}/opencode`,
+      ...agentDirPrelude([OPENCODE_BOX_DIR], 'opencode'),
       `ln -sfn ${BOX_CREDS_DIR}/opencode/auth.json ${OPENCODE_BOX_DIR}/auth.json`,
-      `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR} ${BOX_HOME}/.local`,
+      `chown -R ${BOX_USER}:${BOX_USER} ${BOX_HOME}/.local`,
       `chown -h ${BOX_USER}:${BOX_USER} ${OPENCODE_BOX_DIR}/auth.json`,
     ].join(' && '),
   },

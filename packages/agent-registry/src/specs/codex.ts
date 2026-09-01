@@ -10,7 +10,7 @@
 
 import { join } from 'node:path';
 import { STATE_DIR } from '@agentbox/config';
-import { BOX_USER, BOX_HOME, BOX_CREDS_DIR } from '@agentbox/core';
+import { BOX_USER, BOX_HOME, BOX_CREDS_DIR, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 
 const CODEX_BOX_DIR = `${BOX_HOME}/.codex`;
@@ -33,9 +33,8 @@ export const codexSpec: AgentSyncSpec = {
     packages: ['bubblewrap'],
     packagesOptional: true,
     postInstall: [
-      `install -d -o ${BOX_USER} -g ${BOX_USER} ${CODEX_BOX_DIR} ${BOX_CREDS_DIR}/codex`,
+      ...agentDirPrelude([CODEX_BOX_DIR], 'codex'),
       `ln -sfn ${BOX_CREDS_DIR}/codex/auth.json ${CODEX_BOX_DIR}/auth.json`,
-      `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR}`,
       `chown -h ${BOX_USER}:${BOX_USER} ${CODEX_BOX_DIR}/auth.json`,
     ].join(' && '),
   },
