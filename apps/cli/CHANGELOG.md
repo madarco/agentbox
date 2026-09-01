@@ -17,6 +17,8 @@ CLI, not the raw commits.
   display `:1` with a bottom dock carrying a Terminal button, a Browser button,
   and one icon per open window, so windows can finally be raised, moved and
   switched. Always on with VNC; rebuild the image or re-`prepare` to get it.
+- **The desktop dock blends into the wallpaper.** It paints the wallpaper's own
+  paper colour instead of a dark strip, so it reads as free-floating icons.
 - **Starting a browser shows its progress on the desktop.** A launch now opens a
   progress window (and a dock entry) that closes itself when the browser is up,
   instead of leaving an empty desktop while the first launch fetches Chromium.

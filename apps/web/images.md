@@ -16,7 +16,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | Image | Used by (doc figures) | Status | Phase |
 |-------|------------------------|--------|-------|
 | `web-app.png` | web-apps-and-tunnels | done (2026-06-02, wrapped in a browser chrome showing the web.localhost address bar) | A |
-| `novnc-desktop.png` | access-your-box, browser-and-screen | **stale** — predates the JWM window manager + bottom dock; recapture so the dock is visible (last done 2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
+| `novnc-desktop.png` | access-your-box, browser-and-screen | **stale** — predates the JWM window manager + bottom dock; recapture so the dock is visible (it now paints the wallpaper's own #f5f3f0, so it reads as free-floating icons, not a dark strip) (last done 2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
 | `hub-dashboard.png` | hub (hero) | done (2026-07-12, headless capture of the hub at 2x zoom) | A |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |

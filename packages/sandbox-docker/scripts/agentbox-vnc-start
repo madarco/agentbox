@@ -364,7 +364,7 @@ write_jwmrc() {
   if [[ -s "$DESKTOP_ASSET_DIR/wallpaper.png" ]]; then
     background="<Background type=\"scale\">$DESKTOP_ASSET_DIR/wallpaper.png</Background>"
   else
-    background="<Background type=\"solid\">#f4f3ef</Background>"
+    background="<Background type=\"solid\">#f5f3f0</Background>"
   fi
 
   # Emitted only when it exists: JWM warns on a missing include, and this file
@@ -407,20 +407,33 @@ write_jwmrc() {
     <TaskList labeled="false" maxwidth="48"/>
   </Tray>
 
+  <!-- The dock paints the wallpaper's own paper colour (#f5f3f0 is palette entry
+       0 of the PNG below, and the strip it sits on is flat paper), so it reads
+       as free-floating icons rather than a slab across the desktop. Matching the
+       colour is the only way to get that look: JWM ships no compositor, so its
+       Opacity is inert unless a picom/xcompmgr is added -- which on a software
+       VNC framebuffer buys repaint churn and nothing else. The window-hover and
+       active tints are the wallpaper's own next two greys, so the dock stays in
+       the same palette as everything behind it. -->
   <TrayStyle decorations="flat">
     <Font>Sans-9</Font>
-    <Background>#1c1c1e</Background>
-    <Foreground>#e8e8ed</Foreground>
-    <Opacity>0.88</Opacity>
+    <Background>#f5f3f0</Background>
+    <Foreground>#1d1e20</Foreground>
+    <!-- Paper, not a colour: JWM draws the tray edge in the outline colour even
+         at border="0", and a 240px rectangle on the wallpaper is exactly the
+         slab this style exists to get rid of. -->
+    <Outline>#f5f3f0</Outline>
   </TrayStyle>
 
   <TaskListStyle>
     <Font>Sans-9</Font>
-    <Background>#1c1c1e</Background>
-    <Foreground>#e8e8ed</Foreground>
+    <Background>#f5f3f0</Background>
+    <Foreground>#1d1e20</Foreground>
+    <Outline>#f5f3f0</Outline>
     <Active>
-      <Background>#3a3a3d</Background>
-      <Foreground>#ffffff</Foreground>
+      <Background>#e1e0df</Background>
+      <Foreground>#111213</Foreground>
+      <Outline>#e1e0df</Outline>
     </Active>
   </TaskListStyle>
 
