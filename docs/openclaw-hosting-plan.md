@@ -3,10 +3,10 @@
 Status: **not started**. This is the durable plan doc; update the phase status lines as work
 lands. One session per phase.
 
-> **Depends on [`agent-catalog-plan.md`](./agent-catalog-plan.md).** OpenClaw is the first
-> agent that must NOT be hand-baked into `Dockerfile.box`. It becomes a catalog entry with
-> an `npm` install recipe, installed on demand and optionally baked into a base *variant* —
-> see Phase 1 below.
+> **The agent catalog it depends on now exists** — see [`agents.md`](./agents.md). OpenClaw
+> is the first agent that must NOT be hand-baked into `Dockerfile.box`. It is an
+> `AGENT_SYNC_SPECS` row with an `npm` install recipe, installed on demand — see Phase 1
+> below.
 
 ---
 
@@ -118,7 +118,7 @@ Validate the load-bearing assumptions by hand inside an existing docker box
 ## Phase 1 — bake + register the agent kind (docker)
 
 **Install — via the catalog, not a Dockerfile `RUN`.** Per
-[`agent-catalog-plan.md`](./agent-catalog-plan.md), OpenClaw is a catalog entry:
+[`agents.md`](./agents.md) → "Adding a new agent", OpenClaw is one registry row:
 
 ```ts
 install: {

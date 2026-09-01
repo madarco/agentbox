@@ -46,7 +46,7 @@ a file; its code is reached through a *variable* `import()` of the entry path
 recorded at add time. That is what makes a plugin agent structurally exempt from
 the package cycle that forces AgentBox's own agents to keep data
 (`packages/agent-registry`) and behaviour (`packages/agent-<id>`) in separate
-packages — see [`docs/agents-as-packages-plan.md`](../../docs/agents-as-packages-plan.md).
+packages — see [`docs/agents.md`](../../docs/agents.md).
 
 ## What you cannot do
 

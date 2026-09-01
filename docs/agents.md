@@ -2,9 +2,9 @@
 
 How a coding agent gets into a box, and why a box carries only one.
 
-This is the steady-state reference — the shape the agent layer has today. The
-work plan that got us here (and what is still outstanding) lives in
-[`agent-catalog-plan.md`](./agent-catalog-plan.md).
+This is the steady-state reference — the shape the agent layer has today. What
+is still outstanding lives in
+[`agents-remaining-work.md`](./agents-remaining-work.md).
 
 ---
 
@@ -249,9 +249,9 @@ message instead of blocking on a password read nothing will answer.
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
 
-Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change
-(see the backlog below). See the seam analysis in
-[`agent-catalog-plan.md`](./agent-catalog-plan.md), and the backlog below.
+Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change —
+see the backlog below, and
+[`agents-remaining-work.md`](./agents-remaining-work.md) for what is still open.
 
 ### What a new agent actually costs, measured
 

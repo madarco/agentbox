@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
  *
  * ALLOWLIST, and why it is shaped this way. Every entry is a file the refactor
  * has not reached yet, annotated with the phase that owns it (see
- * `docs/agents-as-packages-plan.md`). A guard that ships with open-ended
+ * `docs/agents-remaining-work.md`). A guard that ships with open-ended
  * exemptions trains people to add one more, so the list is checked BOTH ways:
  * an unlisted offender fails, and a listed file that no longer offends fails
  * too. It can only shrink, and when it is empty the rule holds repo-wide with
