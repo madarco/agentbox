@@ -1,3 +1,4 @@
+import { agentPushExcludes } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -35,6 +36,21 @@ import {
  * two places, which is how a fourth agent ends up half-wired. Derived now, so
  * there is one source and no drift test is needed to keep them equal.
  */
+/**
+ * `--exclude` flags for the opencode data tree, rendered from the registry.
+ *
+ * This used to be a hardcoded string that had drifted from the spec: it named
+ * `opencode.db`/`-shm`/`-wal` one by one (now covered generically) and omitted
+ * `snapshot`, so the docker volume received host-only snapshots the cloud
+ * snapshot dropped.
+ */
+const OPENCODE_SPEC = resolveAgentSpec('opencode');
+function dataVolumeExcludeFlags(): string {
+  const path = OPENCODE_SPEC.staticPaths[0];
+  const derived = path ? agentPushExcludes(OPENCODE_SPEC, path, 'volume') : [];
+  return derived.map((p) => `--exclude=${p}`).join(' ');
+}
+
 export const SHARED_OPENCODE_VOLUME = resolveAgentSpec('opencode').dockerVolume;
 export const DEFAULT_OPENCODE_SESSION = 'opencode';
 /** Volume mount point inside the box — OpenCode's native data dir. */
@@ -148,15 +164,12 @@ export async function ensureOpencodeVolume(
     if (hasState) args.push('-v', `${hostState}:/src-state:ro`);
     const steps: string[] = [];
     if (hasData) {
-      // Exclude the SQLite session store (`opencode.db*`), logs, cloned repos
-      // and host binaries — large / box-irrelevant. `auth.json` (when present)
-      // and small json carry over.
-      steps.push(
-        'rsync -a --exclude=storage --exclude=log --exclude=project --exclude=cache' +
-          ' --exclude=bin --exclude=repos --exclude=config' +
-          ' --exclude=opencode.db --exclude=opencode.db-shm --exclude=opencode.db-wal' +
-          ' /src-data/ /dst/',
-      );
+      // Excludes come from the registry via `agentPushExcludes` — the same list
+      // the cloud stager renders, so the two cannot drift (this hardcoded copy
+      // was missing `snapshot`). `'volume'`, not `'snapshot'`: the volume is
+      // this box's credential store, so `auth.json` must land in it. The SQLite
+      // session store is dropped by the shared live-database deny.
+      steps.push(`rsync -a ${dataVolumeExcludeFlags()} /src-data/ /dst/`);
     }
     if (hasConfig) {
       steps.push('mkdir -p /dst/config && rsync -a /src-config/ /dst/config/');

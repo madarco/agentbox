@@ -64,6 +64,69 @@ export interface AgentPathMap {
    * `.tmp/marketplaces/` out of the excluded `.tmp`).
    */
   include?: string[];
+  /**
+   * Opt out of {@link LIVE_DATABASE_EXCLUDES} for this source.
+   *
+   * Only for a source whose databases are genuinely static content. Nothing
+   * declares it today, and a new declarer should say why: copying a live SQLite
+   * file is not a copy of the database (see the constant's note).
+   */
+  allowDatabases?: boolean;
+}
+
+/**
+ * Files that are a live database's on-disk representation, never safe to copy.
+ *
+ * A running agent keeps its data in a write-ahead log, so the main file alone is
+ * stale or empty and the triple copied together is a torn read. Measured on a
+ * real box: codex's `state_5.sqlite` was 4 KB with a 1.79 MB `-wal`.
+ *
+ * Applied to EVERY agent's push rather than enumerated per agent, because that
+ * enumeration is what went stale: codex's list named `state_*` and `logs_*`, and
+ * three later databases (`goals_1`, `memories_1`, `queue_1` — plus their
+ * `-wal`/`-shm`) shipped into every box, carrying cross-project thread goals and
+ * extracted memories with them. Verified identical under `tar --exclude` and
+ * `rsync --exclude`, matching at any depth and sparing names like `notes.dbg`.
+ *
+ * An agent that needs a database IN the box gets it from the agent itself, which
+ * rebuilds these from real state — never from a byte-copy of the host's.
+ */
+export const LIVE_DATABASE_EXCLUDES: readonly string[] = ['*.sqlite*', '*.db', '*.db-*'];
+
+/**
+ * Where a push is going. The difference is the CREDENTIAL file, and it is not a
+ * per-agent quirk:
+ *
+ *  - `'snapshot'` — a cloud provider's baked base, SHARED by every box made from
+ *    it. The credential must not be in there; it ships per-box afterwards.
+ *  - `'volume'` — the box's own docker config volume, which IS its credential
+ *    store. Excluding it there would leave the agent logged out.
+ */
+export type AgentPushTarget = 'snapshot' | 'volume';
+
+/**
+ * Every `--exclude` pattern one static source contributes, for one target.
+ *
+ * One function so the two transports cannot drift — and they had: each agent's
+ * excludes existed as spec data AND again as a hardcoded rsync string, with the
+ * docker copy missing `snapshot` for opencode and five host-identity files
+ * (`installation_id`, `version.json`, …) for codex.
+ *
+ * The credential file is DERIVED from `spec.credential.boxRelPath` rather than
+ * listed, which is why the specs no longer name it: it is the one entry whose
+ * correct value differs by target, and deriving it is what makes a single list
+ * safe for both.
+ */
+export function agentPushExcludes(
+  spec: AgentSyncSpec,
+  path: AgentPathMap,
+  target: AgentPushTarget,
+): string[] {
+  return [
+    ...(path.allowDatabases ? [] : LIVE_DATABASE_EXCLUDES),
+    ...(path.exclude ?? []),
+    ...(target === 'snapshot' ? [spec.credential.boxRelPath] : []),
+  ];
 }
 
 /** Where this tool's login credential lives on the box, on the host backup, and in the cloud volume. */

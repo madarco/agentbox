@@ -94,14 +94,16 @@ export const claudeSpec: AgentSyncSpec = {
     {
       hostHomeRel: ['.claude'],
       boxDir: CLAUDE_BOX_DIR,
-      // Static-stage excludes (single source of truth; consumed by
-      // `host-stage.ts:stageClaudeStaticForUpload`). `node_modules` drops
-      // host-platform binaries; `.credentials.json` ships separately; the
-      // rest is per-machine runtime/history state the in-box claude
-      // regenerates (`workflows` is seeded per-box at create time, not baked).
+      // Push excludes (single source of truth; consumed by
+      // `agentPushExcludes`). `node_modules` drops host-platform binaries; the
+      // rest is per-machine runtime/history state the in-box claude regenerates
+      // (`workflows` is seeded per-box at create time, not baked).
+      //
+      // The credential file is NOT listed: `agentPushExcludes` derives it from
+      // `credential.boxRelPath`, because whether to exclude it differs by target
+      // (out of a shared snapshot, into the box's own volume).
       exclude: [
         'node_modules',
-        '.credentials.json',
         'projects',
         'workflows',
         'sessions',

@@ -17,6 +17,7 @@ import {
   AgentInstallError,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
+import { agentPushExcludes } from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
   sanitizeCodexConfigForBox,
@@ -38,6 +39,44 @@ import {
  * two places, which is how a fourth agent ends up half-wired. Derived now, so
  * there is one source and no drift test is needed to keep them equal.
  */
+/**
+ * The codex spec's static source — the ONE list both push transports render.
+ *
+ * The docker volume used to carry its own hardcoded copy of these flags, and
+ * the two had drifted: the volume was still receiving `installation_id`,
+ * `version.json`, `.codex-global-state.json(.bak)` and `.personality_migration`
+ * (host-identity files the snapshot drops), while codex's newer databases —
+ * `goals_*`, `memories_*`, `queue_*` and their `-wal`/`-shm` — were excluded by
+ * neither, and shipped live into every box.
+ */
+const CODEX_SPEC = resolveAgentSpec('codex');
+const CODEX_SPEC_PATH = CODEX_SPEC.staticPaths[0];
+
+/** `--include` carve-ins, emitted BEFORE the excludes (first-match-wins). */
+export function volumeIncludeFlags(path: typeof CODEX_SPEC_PATH): string {
+  return (path?.include ?? []).map((p) => `--include=${p}`).join(' ');
+}
+
+/**
+ * `--exclude` flags for the box's own volume. `'volume'`, not `'snapshot'`:
+ * the volume IS this box's credential store, so `auth.json` must land in it.
+ * `/config.toml` is docker-only — `reconcileVolumeCodexConfig` writes it.
+ */
+export function volumeExcludeFlags(): string {
+  const derived = CODEX_SPEC_PATH ? agentPushExcludes(CODEX_SPEC, CODEX_SPEC_PATH, 'volume') : [];
+  return ['/config.toml', ...derived].map((p) => `--exclude=${p}`).join(' ');
+}
+
+/**
+ * Purge what an OLDER sync already copied in. Same list as the excludes, minus
+ * the anchored/carve-in patterns that are not removable paths.
+ */
+export function volumePurgeCommand(): string {
+  const derived = CODEX_SPEC_PATH ? agentPushExcludes(CODEX_SPEC, CODEX_SPEC_PATH, 'volume') : [];
+  const paths = derived.filter((p) => p !== '.tmp' && !p.startsWith('/')).map((p) => `/dst/${p}`);
+  return `rm -rf ${paths.join(' ')}`;
+}
+
 export const SHARED_CODEX_VOLUME = resolveAgentSpec('codex').dockerVolume;
 export const DEFAULT_CODEX_SESSION = 'codex';
 /** Workspace inside the box, same as for claude. */
@@ -269,21 +308,10 @@ export async function ensureCodexVolume(
       // the regenerable caches (`tmp`, `cache`, `vendor_imports`, `sqlite`,
       // `models_cache.json`). Without these the shared volume balloons to
       // ~1.5 GB and every create's rsync crawls.
-      'rsync -a --include=/.tmp/ --include=/.tmp/marketplaces/*** --exclude=/.tmp/*' +
-        ' --exclude=sessions --exclude=log --exclude=history.jsonl --exclude=hooks.json' +
-        ' --exclude=/config.toml' +
+      `rsync -a ${volumeIncludeFlags(CODEX_SPEC_PATH)} ${volumeExcludeFlags()}` +
         skillsExclude +
-        ' --exclude=state_*.sqlite* --exclude=logs_*.sqlite* --exclude=session_index.jsonl' +
-        ' --exclude=external_agent_session_imports.json --exclude=shell_snapshots' +
-        ' --exclude=packages --exclude=plugins/.plugin-appserver --exclude=computer-use' +
-        ' --exclude=archived_sessions --exclude=.tmp --exclude=tmp --exclude=cache' +
-        ' --exclude=vendor_imports --exclude=sqlite --exclude=models_cache.json' +
         ' /src/ /dst/' +
-        ' && rm -rf /dst/state_*.sqlite* /dst/logs_*.sqlite* /dst/session_index.jsonl' +
-        ' /dst/external_agent_session_imports.json /dst/shell_snapshots' +
-        ' /dst/packages /dst/plugins/.plugin-appserver /dst/computer-use' +
-        ' /dst/archived_sessions /dst/tmp /dst/cache' +
-        ' /dst/vendor_imports /dst/sqlite /dst/models_cache.json' +
+        ` && ${volumePurgeCommand()}` +
         ' && { [ -d /dst/.tmp ] && find /dst/.tmp -mindepth 1 -maxdepth 1 ! -name marketplaces -exec rm -rf {} + || true; }' +
         skillsPurge +
         ' && chown -R 1000:1000 /dst',

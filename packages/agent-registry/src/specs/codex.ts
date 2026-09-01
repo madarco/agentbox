@@ -44,9 +44,11 @@ export const codexSpec: AgentSyncSpec = {
     {
       hostHomeRel: ['.codex'],
       boxDir: CODEX_BOX_DIR,
-      // Static-stage excludes (single source of truth; consumed by
-      // `host-stage.ts:stageCodexStaticForUpload`). `auth.json` ships
-      // separately; `state_*.sqlite*` is the resume-cwd index (rebuilt in-box);
+      // Push excludes (single source of truth; consumed by
+      // `agentPushExcludes`, which also derives the credential file and applies
+      // LIVE_DATABASE_EXCLUDES — so the `*.sqlite*` families no longer need
+      // naming here, and cannot go stale again as codex adds databases).
+      // `state_*.sqlite*` is the resume-cwd index (rebuilt in-box);
       // `packages`/`plugins/.plugin-appserver`/`computer-use` are heavy
       // macOS-only artifacts; the rest is host-only session/log/cache state.
       //
@@ -61,14 +63,13 @@ export const codexSpec: AgentSyncSpec = {
       // elsewhere in the tree.
       include: ['/.tmp/', '/.tmp/marketplaces/***'],
       exclude: [
-        'auth.json',
         'sessions',
         'log',
         'history.jsonl',
         'hooks.json',
-        'state_*.sqlite*',
-        'logs_*.sqlite*',
         'external_agent_session_imports.json',
+        // The DIRECTORY, not a database pattern: `LIVE_DATABASE_EXCLUDES`
+        // matches file names, so dropping this would still ship the empty dir.
         'sqlite',
         'cache',
         'vendor_imports',

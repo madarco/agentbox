@@ -18,6 +18,7 @@ export type {
   AgentInstallRecipe,
   AgentPathMap,
   AgentPullSpec,
+  AgentPushTarget,
   AgentSeedSpec,
   AgentSettings,
   AgentSettingSpec,
@@ -25,6 +26,8 @@ export type {
   AgentWatchSpec,
 } from './agent-spec.js';
 export {
+  agentPushExcludes,
+  LIVE_DATABASE_EXCLUDES,
   resolveAgentInstall,
   BOX_USER,
   BOX_HOME,

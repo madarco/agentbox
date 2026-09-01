@@ -40,23 +40,10 @@ export const opencodeSpec: AgentSyncSpec = {
     {
       hostHomeRel: ['.local', 'share', 'opencode'],
       boxDir: OPENCODE_BOX_DIR,
-      // Static-stage excludes for the data tree (single source of truth;
-      // consumed by `host-stage.ts:stageOpencodeStaticForUpload`). `auth.json`
-      // ships separately; the rest is host-only runtime state.
-      exclude: [
-        'auth.json',
-        'storage',
-        'log',
-        'project',
-        'cache',
-        'bin',
-        'repos',
-        'snapshot',
-        'config',
-        'opencode.db',
-        'opencode.db-shm',
-        'opencode.db-wal',
-      ],
+      // Push excludes for the data tree (single source of truth; consumed by
+      // `agentPushExcludes`, which also derives the credential file and the
+      // live-database deny). The rest is host-only runtime state.
+      exclude: ['storage', 'log', 'project', 'cache', 'bin', 'repos', 'snapshot', 'config'],
     },
     { hostHomeRel: ['.config', 'opencode'], boxDir: OPENCODE_BOX_DIR, relocToSubpath: 'config' },
     {

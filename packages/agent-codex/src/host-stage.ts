@@ -1,3 +1,4 @@
+import { agentPushExcludes } from '@agentbox/core';
 /**
  * Codex's host-side staging — the part that is more than a copy.
  *
@@ -42,7 +43,11 @@ export interface StageCodexOptions {
 // rollouts, so seeding it would trap a teleported session at the host cwd);
 // `packages`/`plugins/.plugin-appserver`/`computer-use` are heavy macOS-only
 // artifacts that balloon the staged tarball (~800 MB → ~0.5 MB).
-const CODEX_STATIC_EXCLUDES = resolveAgentSpec('codex').staticPaths[0]?.exclude ?? [];
+const CODEX_STATIC_EXCLUDES = ((): readonly string[] => {
+  const spec = resolveAgentSpec('codex');
+  const path = spec.staticPaths[0];
+  return path ? agentPushExcludes(spec, path, 'snapshot') : [];
+})();
 // `--include` carve-ins (the `.tmp/marketplaces/` snapshots) — must be emitted
 // before the excludes; see the registry's codex spec for the rationale.
 const CODEX_STATIC_INCLUDES = resolveAgentSpec('codex').staticPaths[0]?.include ?? [];
@@ -173,7 +178,6 @@ export async function stageCodexStaticForUpload(
 }
 
 // ---------- agents (shared ~/.agents skills) ----------
-
 
 /**
  * Tarball with **only** `auth.json`. Prefers the cloud backup

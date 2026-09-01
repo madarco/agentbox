@@ -34,6 +34,7 @@ import { basename, join, relative } from 'node:path';
 import { execa } from 'execa';
 import { resolveAgentSpec } from './registry.js';
 import type { AgentId, AgentPathMap } from '@agentbox/core';
+import { agentPushExcludes } from '@agentbox/core';
 
 /**
  * Portable host backup of the claude OAuth creds — the single source of truth is
@@ -202,7 +203,9 @@ export async function stageAgentStaticForUpload(
         '-L',
         ...broken.map((r) => `--exclude=/${r}`),
         ...(path.include ?? []).map((pat) => `--include=${pat}`),
-        ...(path.exclude ?? []).map((pat) => `--exclude=${pat}`),
+        // One list for both transports. `agentPushExcludes` adds the
+        // live-database deny and, for a SHARED snapshot, the credential file.
+        ...agentPushExcludes(spec, path, 'snapshot').map((pat) => `--exclude=${pat}`),
         `${hostPath}/`,
         `${dest}/`,
       ]);

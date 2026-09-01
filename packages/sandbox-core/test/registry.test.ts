@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { agentPushExcludes, LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, agentIds, resolveAgentSpec } from '../src/sync/registry.js';
 
 describe('agent sync registry', () => {
@@ -60,13 +61,25 @@ describe('agent sync registry', () => {
     expect(oc.caps.teleportStubReason).toContain('opencode.db');
   });
 
-  it('is the single source of truth for the static-stage excludes', () => {
-    // These arrays are consumed verbatim by `host-stage.ts`'s stage producers
-    // (mapped to `rsync --exclude=<pattern>`). Locking them here keeps the
-    // registry authoritative — the producers no longer hold their own copies.
-    expect(resolveAgentSpec('claude').staticPaths[0]?.exclude).toEqual([
+  it('is the single source of truth for the push excludes', () => {
+    // The producers consume `agentPushExcludes(spec, path, target)`, not the raw
+    // array, so that is what this locks — it is what actually reaches rsync.
+    //
+    // Two entries are DERIVED rather than listed, which is the point: the
+    // credential file (excluded from a shared snapshot, kept for the box's own
+    // volume) and the live-database deny. Codex's `state_*.sqlite*` /
+    // `logs_*.sqlite*` / `sqlite` used to be named here and are now covered
+    // generically — that hand-enumeration is exactly what went stale when codex
+    // added `goals_*`, `memories_*` and `queue_*`.
+    const pushExcludes = (id: string, target: 'snapshot' | 'volume'): string[] => {
+      const spec = resolveAgentSpec(id);
+      const path = spec.staticPaths[0];
+      return path ? agentPushExcludes(spec, path, target) : [];
+    };
+
+    expect(pushExcludes('claude', 'snapshot')).toEqual([
+      ...LIVE_DATABASE_EXCLUDES,
       'node_modules',
-      '.credentials.json',
       'projects',
       'workflows',
       'sessions',
@@ -85,15 +98,14 @@ describe('agent sync registry', () => {
       'debug',
       'mcp-needs-auth-cache.json',
       'stats-cache.json',
+      '.credentials.json',
     ]);
-    expect(resolveAgentSpec('codex').staticPaths[0]?.exclude).toEqual([
-      'auth.json',
+    expect(pushExcludes('codex', 'snapshot')).toEqual([
+      ...LIVE_DATABASE_EXCLUDES,
       'sessions',
       'log',
       'history.jsonl',
       'hooks.json',
-      'state_*.sqlite*',
-      'logs_*.sqlite*',
       'external_agent_session_imports.json',
       'sqlite',
       'cache',
@@ -113,7 +125,40 @@ describe('agent sync registry', () => {
       'plugins/.plugin-appserver',
       'computer-use',
       'archived_sessions',
+      'auth.json',
     ]);
+
+    // The credential file is the one entry that differs by target: out of a
+    // SHARED snapshot, into the box's OWN volume (which is its login store).
+    for (const id of ['claude', 'codex', 'opencode']) {
+      const cred = resolveAgentSpec(id).credential.boxRelPath;
+      expect(pushExcludes(id, 'snapshot')).toContain(cred);
+      expect(pushExcludes(id, 'volume')).not.toContain(cred);
+    }
+
+    // Every agent gets the database deny, including one the built-ins don't name.
+    for (const spec of AGENT_SYNC_SPECS) {
+      const path = spec.staticPaths[0];
+      if (!path) continue;
+      expect(agentPushExcludes(spec, path, 'volume')).toEqual(
+        expect.arrayContaining([...LIVE_DATABASE_EXCLUDES]),
+      );
+    }
+  });
+
+  it('names no database pattern by hand — the deny covers them', () => {
+    // The regression guard for the leak: an agent listing its own `*.sqlite`
+    // family is the enumeration that goes stale as that agent adds databases.
+    for (const spec of AGENT_SYNC_SPECS) {
+      for (const path of spec.staticPaths) {
+        for (const pattern of path.exclude ?? []) {
+          expect(pattern).not.toMatch(/\.(sqlite|db)\b/);
+        }
+      }
+    }
+  });
+
+  it('keeps the codex carve-in', () => {
     // The `.tmp/marketplaces` carve-in: emitted before the excludes
     // (first-match-wins) so git-marketplace snapshots reach the box while the
     // rest of `.tmp` (desktop-app payloads) stays out.
@@ -121,9 +166,10 @@ describe('agent sync registry', () => {
       '/.tmp/',
       '/.tmp/marketplaces/***',
     ]);
-    // opencode data tree — auth.json ships separately, snapshot is host-only.
+    // opencode data tree. `auth.json` and the `opencode.db` triple are gone
+    // from the list — both are derived now — and `snapshot` is the entry the
+    // docker copy of this list had been missing.
     expect(resolveAgentSpec('opencode').staticPaths[0]?.exclude).toEqual([
-      'auth.json',
       'storage',
       'log',
       'project',
@@ -132,9 +178,6 @@ describe('agent sync registry', () => {
       'repos',
       'snapshot',
       'config',
-      'opencode.db',
-      'opencode.db-shm',
-      'opencode.db-wal',
     ]);
   });
 

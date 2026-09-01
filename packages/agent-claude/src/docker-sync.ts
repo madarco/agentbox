@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
 import { agentSettingsFor } from '@agentbox/config';
 import type { AgentSettings } from '@agentbox/core';
+import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
 import {
   agentTuiEnv,
   ensureAgentInstalled,
@@ -314,7 +315,17 @@ export async function ensureClaudeVolume(
     // volume. We re-add only the current project's memory below, rekeyed to
     // -workspace. (Box-written -workspace sessions stay put — rsync has no
     // --delete; session-teleport still uploads its single jsonl directly.)
-    const rsyncExcludes = ['--exclude=node_modules', '--exclude=/projects'];
+    // Deliberately NOT the registry's full list: claude's spec excludes are
+    // snapshot-direction hygiene and include ~20 entries this volume genuinely
+    // wants (`.credentials.json` above all — on docker the volume IS the login
+    // store). Converging them needs an entry-by-entry decision and a live login
+    // smoke; see docs/agents.md. The live-database deny is safe to apply now and
+    // costs nothing: claude stores no databases today.
+    const rsyncExcludes = [
+      '--exclude=node_modules',
+      '--exclude=/projects',
+      ...LIVE_DATABASE_EXCLUDES.map((p) => `--exclude=${p}`),
+    ];
     for (const rel of brokenSymlinks) rsyncExcludes.push(`--exclude=/${rel}`);
     const rsyncFlags = `-a --copy-unsafe-links ${rsyncExcludes.join(' ')}`;
     // Rekey the host project's memory/ -> /dst/projects/-workspace/memory.

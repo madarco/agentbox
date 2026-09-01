@@ -1,3 +1,4 @@
+import { agentPushExcludes } from '@agentbox/core';
 /**
  * Claude's host-side staging — the part that is more than a copy.
  *
@@ -53,10 +54,16 @@ export interface StageClaudeOptions {
   hostWorkspace?: string;
 }
 
-// Static-stage rsync excludes are registry data (single source of truth,
-// drift-guarded by the registry test). Bare patterns, mapped to `--exclude=`
-// at the rsync call; per-run broken-symlink excludes are appended there.
-const CLAUDE_STATIC_EXCLUDES = resolveAgentSpec('claude').staticPaths[0]?.exclude ?? [];
+// Snapshot-push rsync excludes, from `agentPushExcludes` so this stager and the
+// generic one apply the same list — including the live-database deny and the
+// credential file, which is derived rather than named in the spec. Bare
+// patterns, mapped to `--exclude=` at the rsync call; per-run broken-symlink
+// excludes are appended there.
+const CLAUDE_STATIC_EXCLUDES = ((): readonly string[] => {
+  const spec = resolveAgentSpec('claude');
+  const path = spec.staticPaths[0];
+  return path ? agentPushExcludes(spec, path, 'snapshot') : [];
+})();
 
 /**
  * Build the in-box `_claude.json` from the host's `~/.claude.json` (or a
