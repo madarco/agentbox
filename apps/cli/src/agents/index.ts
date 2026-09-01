@@ -64,3 +64,16 @@ export async function loadAgentModule(id: AgentId): Promise<AgentModule> {
   return (await importer()).agentModule;
 }
 
+/**
+ * Like {@link loadAgentModule}, but null for an agent this build has no module
+ * for instead of throwing.
+ *
+ * The registry is open — `agentbox agent add <pkg>` puts a spec in it whose CLI
+ * module this build does not carry. Anything that walks the registry rather than
+ * a caller-named agent has to tolerate that: a plugin agent declaring
+ * `caps.resume` used to throw here from inside `restoreAgentSessions`, outside
+ * its per-agent try/catch, and took the whole box start/unpause down with it.
+ */
+export async function loadAgentModuleOrNull(id: AgentId): Promise<AgentModule | null> {
+  return AGENT_MODULES[id] ? await loadAgentModule(id) : null;
+}

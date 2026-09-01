@@ -146,12 +146,15 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   }
   // Attaching to a box that just came back up (a stop / cloud idle-timeout
   // resume): if the user passed no args of their own and the box has a resumable
-  // claude/codex session, launch resuming it (claude --resume <id> / codex resume
-  // --last) so the attach reopens the conversation instead of starting fresh. The
-  // box is running now (provider.start above), so the probe can reach it. Opencode
-  // has no resume support — skipped.
+  // session, launch resuming it (claude --resume <id> / codex resume --last) so
+  // the attach reopens the conversation instead of starting fresh. The box is
+  // running now (provider.start above), so the probe can reach it.
+  //
+  // The gate is `caps.resume`, the same declaration the detached-start path
+  // below uses. It was a literal `claude || codex` here, so a later resumable
+  // agent came back from a stop with a fresh session instead of its conversation.
   let extraArgs = args.extraArgs;
-  if ((!extraArgs || extraArgs.length === 0) && (args.mode === 'claude' || args.mode === 'codex')) {
+  if ((!extraArgs || extraArgs.length === 0) && resolveAgentSpec(args.mode).caps.resume) {
     const resume = await agentResumeArgs(provider, box, args.mode);
     if (resume) extraArgs = resume;
   }

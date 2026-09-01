@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
 import {
@@ -225,5 +226,26 @@ describe('verifyDetachedSession', () => {
       verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 30, pollMs: 1 }),
     ).resolves.toBeUndefined();
     expect(calls).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The attach-time resume gate. It was a literal `mode === 'claude' || mode ===
+ * 'codex'`, so a later resumable agent came back from a stop or a cloud idle
+ * timeout with a FRESH session instead of its conversation — while the detached
+ * start path in the same file already gated on `caps.resume`. One declaration,
+ * both paths.
+ */
+describe('the resume gate is caps.resume, not a name list', () => {
+  it('agrees with the registry for every agent, including a fourth', () => {
+    const src = readFileSync(new URL('../src/commands/_cloud-attach.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/args\.mode === 'claude' \|\| args\.mode === 'codex'/);
+    expect(src).toContain('resolveAgentSpec(args.mode).caps.resume');
+  });
+
+  it('and the registry still says which agents those are', () => {
+    expect(resolveAgentSpec('claude').caps.resume).toBe(true);
+    expect(resolveAgentSpec('codex').caps.resume).toBe(true);
+    expect(resolveAgentSpec('opencode').caps.resume).toBe(false);
   });
 });

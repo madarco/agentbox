@@ -17,7 +17,7 @@
  * both silences the nag and hands the next cloud box a fresh token, which is the
  * other half of why the credential kept dying between sessions.
  */
-import { hostBackupHasCredentials, imageExists } from '@agentbox/sandbox-docker';
+import { hostBackupHasCredentials, imageExists, variantImageRef } from '@agentbox/sandbox-docker';
 import { hostClaudeAccessTokenExpired, hostClaudeLoginDead } from './host-cred-guards.js';
 import { renewClaudeCredential, type RenewClaudeResult } from './credential-renew.js';
 
@@ -81,11 +81,19 @@ export async function resolveClaudeCredHealth(
   // don't trigger an implicit pull just to answer a question, and never nag on
   // a host that simply can't run the probe — the refresh token is alive and the
   // box will renew it itself.
+  //
+  // THE PROBE RUNS `claude -p`, so it needs claude's DERIVED layer: the base
+  // image has been agentless since one-agent-per-box, and callers hand us a
+  // base ref (`box.image` / `DEFAULT_BOX_IMAGE`). Renewing in the base makes
+  // every attempt fail, which reads as `dead` — nagging the user to sign in
+  // again over a perfectly live credential. `variantImageRef` is pure, so the
+  // `imageExists` gate keeps its meaning: no variant built locally, no probe.
   if (opts.offlineOnly === true) return 'ok';
-  if (!(await p.imageExists(opts.image))) return 'ok';
+  const probeImage = variantImageRef(opts.image, ['claude']);
+  if (!(await p.imageExists(probeImage))) return 'ok';
 
   const renewed = await p.renew({
-    image: opts.image,
+    image: probeImage,
     ...(opts.onProgress ? { onLog: opts.onProgress } : {}),
   });
   return renewed === 'failed' ? 'dead' : 'ok';

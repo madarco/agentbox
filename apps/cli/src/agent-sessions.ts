@@ -20,7 +20,7 @@
 import { loadEffectiveConfig } from '@agentbox/config';
 import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
 import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { loadAgentModule } from './agents/index.js';
+import { loadAgentModule, loadAgentModuleOrNull } from './agents/index.js';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
 
 /**
@@ -82,9 +82,11 @@ export async function agentResumeArgs(
   kind: AgentId,
 ): Promise<string[] | null> {
   if (!resolveAgentSpec(kind).caps.resume) return null;
-  const { runtime } = await loadAgentModule(kind);
-  if (!runtime.resume) return null;
-  return runtime.resume.resumeArgs((script) => execRead(provider, box, script));
+  // Null, not a throw: `resumableAgents()` walks the OPEN registry, so `kind`
+  // can be a package this build has no CLI module for.
+  const mod = await loadAgentModuleOrNull(kind);
+  if (!mod?.runtime.resume) return null;
+  return mod.runtime.resume.resumeArgs((script) => execRead(provider, box, script));
 }
 
 export interface RestoreOptions {
@@ -151,8 +153,12 @@ export async function restoreAgentSessions(
   const cfg = await loadEffectiveConfig(box.workspacePath).catch(() => null);
   const isDocker = (box.provider ?? 'docker') === 'docker';
   const sessionNameFor = async (kind: AgentId): Promise<string> => {
-    const { runtime } = await loadAgentModule(kind);
-    return cfg ? runtime.sessionNameOf(cfg.effective) : resolveAgentSpec(kind).sessionName;
+    const mod = await loadAgentModuleOrNull(kind);
+    // The registry's own `sessionName` is the answer for an agent with no
+    // module in this build — the same fallback as having no config to read.
+    return cfg && mod
+      ? mod.runtime.sessionNameOf(cfg.effective)
+      : resolveAgentSpec(kind).sessionName;
   };
 
   // Resume one resumable agent from its in-box pointer. Returns true if it
@@ -160,6 +166,7 @@ export async function restoreAgentSessions(
   const tryResume = async (kind: AgentId, sessionName: string): Promise<boolean> => {
     const resume = await agentResumeArgs(provider, box, kind);
     if (!resume) return false;
+    // Non-null resume args mean the module loaded above.
     const { runtime } = await loadAgentModule(kind);
     const args =
       cfg && runtime.skipPermissions
