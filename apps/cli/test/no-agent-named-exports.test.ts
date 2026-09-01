@@ -90,6 +90,7 @@ const NOT_APPLICABLE = [
   'apps/cli/src/agents/claude/command.ts',
   'apps/cli/src/agents/codex/command.ts',
   'apps/cli/src/agents/opencode/command.ts',
+  'apps/cli/src/agents/pi/command.ts',
   'apps/cli/src/agents/example/command.ts',
   'packages/ctl/src/claude-scraper.ts',
   'packages/ctl/src/codex-scraper.ts',
@@ -101,11 +102,45 @@ const NOT_APPLICABLE = [
   'apps/cli/src/commands/_open-in.ts',
 ];
 
-// Both cases: `stageClaudeStatic` and `claudeLoginBinding` are the same
-// mistake, and the lowercase form is the one that hid — `claudeLoginBinding`
-// sat in the shared CLI until it was looked for by hand.
-const EXPORTED_AGENT_NAME =
-  /^export\s+(?:type\s+|interface\s+|const\s+|let\s+|function\s+|class\s+|abstract\s+class\s+|async\s+function\s+)?[A-Za-z_]*(?:claude|codex|opencode|Claude|Codex|Opencode|OpenCode|CLAUDE|CODEX|OPENCODE)/;
+const DECL =
+  '(?:type\\s+|interface\\s+|const\\s+|let\\s+|function\\s+|class\\s+|abstract\\s+class\\s+|async\\s+function\\s+)?';
+
+/**
+ * A long agent name anywhere in the exported identifier.
+ *
+ * Both cases: `stageClaudeStatic` and `claudeLoginBinding` are the same
+ * mistake, and the lowercase form is the one that hid — `claudeLoginBinding`
+ * sat in the shared CLI until it was looked for by hand. A free `[A-Za-z_]*`
+ * prefix is safe here because these names are long enough not to occur inside
+ * ordinary words.
+ */
+const LONG_AGENT_NAME =
+  '[A-Za-z_]*(?:claude|codex|opencode|Claude|Codex|Opencode|OpenCode|CLAUDE|CODEX|OPENCODE)';
+
+/**
+ * `pi`, which is TWO LETTERS and therefore cannot use the free-prefix rule.
+ *
+ * Measured, not guessed: adding a bare `pi|Pi|PI` alternative to the pattern
+ * above matches 60 innocent exports across the checked roots — `ping`,
+ * `pickFreePort`, `pickPrimaryAgent`, `SPINNER_FRAMES`, `ApiErrorCode`,
+ * `portIsOccupied` — and a guard that cries wolf 60 times is a guard someone
+ * deletes. So Pi matches only at a real identifier boundary:
+ *
+ *   - `pi` starting the name and followed by a capital: `piCommand`, `piRuntime`
+ *     (`ping`, `pickFreePort` do not follow it with a capital).
+ *   - a capital `Pi` segment followed by another capital or the end of the
+ *     identifier: `attachPiWrapped`, `PiSessionError` (`Api` has a lowercase
+ *     `p`, `mapPiece` continues lowercase).
+ *   - an underscore-delimited `PI` segment: `PI_LOGIN_SPEC` (`SPINNER_FRAMES`
+ *     and `SUPPORTED_SDK_API_VERSIONS` have no `PI` segment of their own).
+ *
+ * The three cases below are pinned by `rejects innocent two-letter collisions`.
+ */
+const PI_AGENT_NAME = '(?:pi(?=[A-Z])|[A-Za-z_]*Pi(?=[A-Z]|\\b)|(?:[A-Z]+_)*PI(?=_|\\b))';
+
+const EXPORTED_AGENT_NAME = new RegExp(
+  `^export\\s+${DECL}(?:${LONG_AGENT_NAME}|${PI_AGENT_NAME})`,
+);
 
 function walk(dir: string, out: string[] = []): string[] {
   let entries;
@@ -158,6 +193,44 @@ function offendingFiles(): string[] {
 }
 
 describe('no agent-named exports outside an agent package', () => {
+  it('matches the agent-named exports it is meant to catch', () => {
+    for (const line of [
+      'export function stageClaudeStatic(): void {',
+      'export const claudeLoginBinding = 1;',
+      'export const codexAddUrl = 2;',
+      'export async function ensureOpencodeInstalled() {}',
+      'export const piCommand = command;',
+      'export const attachPiWrapped = attachWrapped;',
+      'export class PiSessionError extends Error {}',
+      'export const PI_LOGIN_SPEC = spec;',
+      'export function resolvePiTeleport() {}',
+    ]) {
+      expect(EXPORTED_AGENT_NAME.test(line), line).toBe(true);
+    }
+  });
+
+  it('rejects innocent two-letter collisions', () => {
+    // `pi` is two letters, so it cannot use the free `[A-Za-z_]*` prefix the
+    // long names do. Measured: a bare `pi|Pi|PI` alternative matches 60 real
+    // exports across the checked roots. These are the shapes that broke, kept
+    // here so a future simplification of the pattern fails loudly instead of
+    // turning the guard into noise everyone learns to ignore.
+    for (const line of [
+      "export async function ping(opts: ConnectOptions): Promise<'pong'> {",
+      'export async function pickFreePort(): Promise<number> {',
+      'export function pickPrimaryAgent(',
+      'export function portIsOccupied(timeoutMs: number): Promise<boolean> {',
+      'export function occupiesWorkingSlot(e: WorkingSlotEntry): boolean {',
+      "export const SPINNER_FRAMES = ['x'] as const;",
+      'export type ApiErrorCode =',
+      'export const SUPPORTED_SDK_API_VERSIONS: readonly number[] = [4];',
+      'export interface CustodyApiTarget {',
+      'export function mergeApiBoxes(',
+    ]) {
+      expect(EXPORTED_AGENT_NAME.test(line), line).toBe(false);
+    }
+  });
+
   it('has source to scan (the walk itself can silently find nothing)', () => {
     expect(ROOTS.flatMap((r) => walk(join(REPO, r))).length).toBeGreaterThan(200);
   });

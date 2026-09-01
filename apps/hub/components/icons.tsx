@@ -111,6 +111,9 @@ export const Icons = {
   claude: mk(['M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13']),
   codex,
   opencode: mk(['M9 8l-4 4 4 4', 'M15 8l4 4-4 4', 'M13 6l-2 12']),
+  // A pi glyph: the top bar plus two legs, the right one flicking out the way
+  // the letterform does.
+  pi: mk(['M5 8h14', 'M9.5 8v10', 'M15 8v7.5a2.5 2.5 0 0 0 2.5 2.5']),
   github,
 } satisfies Record<string, Icon>;
 
@@ -136,5 +139,6 @@ export const AGENTS: { id: AgentMode; label: string; icon: Icon }[] = [
   { id: 'claude', label: 'Claude Code', icon: Icons.claude },
   { id: 'codex', label: 'Codex', icon: Icons.codex },
   { id: 'opencode', label: 'OpenCode', icon: Icons.opencode },
+  { id: 'pi', label: 'Pi', icon: Icons.pi },
   { id: 'shell', label: 'Shell', icon: Icons.terminal },
 ];

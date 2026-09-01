@@ -161,6 +161,7 @@ export interface UserConfig {
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
+    isolatePiConfig?: boolean;
     isolateExampleConfig?: boolean;
     image?: string;
     /**
@@ -203,6 +204,7 @@ export interface UserConfig {
   claude?: AgentConfigBlock;
   codex?: AgentConfigBlock;
   opencode?: AgentConfigBlock;
+  pi?: AgentConfigBlock;
   example?: AgentConfigBlock;
   attach?: {
     openIn?: AttachOpenIn;
@@ -369,6 +371,7 @@ export interface EffectiveConfig {
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
+    isolatePiConfig: boolean;
     isolateExampleConfig: boolean;
     image: string;
     imageDocker: string;
@@ -406,6 +409,7 @@ export interface EffectiveConfig {
   claude: EffectiveAgentBlock;
   codex: EffectiveAgentBlock;
   opencode: EffectiveAgentBlock;
+  pi: EffectiveAgentBlock;
   example: EffectiveAgentBlock;
   attach: {
     openIn: AttachOpenIn;

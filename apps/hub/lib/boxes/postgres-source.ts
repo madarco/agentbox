@@ -144,7 +144,9 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     image: r.image,
     webPort: r.webPort,
     lastAgent:
-      r.agent === 'claude' || r.agent === 'codex' || r.agent === 'opencode' ? r.agent : undefined,
+      r.agent === 'claude' || r.agent === 'codex' || r.agent === 'opencode' || r.agent === 'pi'
+        ? r.agent
+        : undefined,
     topology: 'control-plane',
   };
 }

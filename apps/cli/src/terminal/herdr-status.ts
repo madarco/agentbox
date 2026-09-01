@@ -37,6 +37,7 @@ const AGENT_LABEL: Record<Exclude<HerdrAgentMode, 'shell'>, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 /**

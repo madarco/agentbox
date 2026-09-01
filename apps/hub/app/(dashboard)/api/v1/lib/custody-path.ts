@@ -11,7 +11,7 @@
 // Lives in `lib/` so the JSON and blob custody routes share ONE copy: two routes
 // each carrying their own would be two places to forget.
 const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared'];
-const AGENT_IDS = ['claude', 'codex', 'opencode'];
+const AGENT_IDS = ['claude', 'codex', 'opencode', 'pi'];
 const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 const MAX_SEGMENTS = 6;
 const MAX_PATH_LENGTH = 256;

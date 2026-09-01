@@ -1,4 +1,6 @@
 import { log } from '@clack/prompts';
+import { agentConfigVolume } from '@agentbox/core';
+import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import {
   inspectBox,
   projectCheckpointImageBytes,
@@ -49,6 +51,7 @@ async function renderText(i: InspectedBox): Promise<string> {
     `codex activity ${renderCodexActivity(i)}`,
     `opencode cfg  ${i.record.opencodeConfigVolume ?? '(none)'}`,
     `opencode sess ${renderOpencodeSession(i)}`,
+    ...renderOtherAgents(i),
     `shells        ${renderShells(i)}`,
     `persisted     ${renderPersisted(i)}`,
     `playwright    ${i.record.withPlaywright ? 'yes' : 'no'}`,
@@ -78,6 +81,30 @@ async function renderText(i: InspectedBox): Promise<string> {
     lines.push(...renderPersistedSections(i.persistedStatus));
   }
   return lines.join('\n');
+}
+
+/**
+ * One row per agent WITHOUT a hand-written block above.
+ *
+ * The three rows above read `InspectedBox`'s legacy named session fields, which
+ * exist only for claude/codex/opencode. Rather than grow a fourth set of named
+ * fields through `inspectBox` for every agent added, anything else is rendered
+ * generically off the keyed maps — which also covers an agent installed by
+ * `agentbox agent add`, that can never have a named field at all.
+ */
+function renderOtherAgents(i: InspectedBox): string[] {
+  const legacy = new Set(['claude', 'codex', 'opencode']);
+  const out: string[] = [];
+  for (const spec of AGENT_SYNC_SPECS) {
+    if (legacy.has(spec.id) || spec.hidden) continue;
+    const volume = agentConfigVolume(i.record, spec.id) ?? '(none)';
+    const entry = i.persistedStatus?.agents?.[spec.id];
+    const activity = entry
+      ? `${entry.state}${entry.sessionTitle ? ` — ${entry.sessionTitle}` : ''}`
+      : '(none)';
+    out.push(`${spec.id.padEnd(8)} cfg  ${volume}`, `${spec.id.padEnd(8)} act  ${activity}`);
+  }
+  return out;
 }
 
 function renderCheckpoint(i: InspectedBox, sizeBytes: number | null): string {

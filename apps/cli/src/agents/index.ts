@@ -39,6 +39,7 @@ const AGENT_MODULES: Record<string, () => Promise<{ agentModule: AgentModule }>>
   claude: () => import('@agentbox/agent-claude/cli'),
   codex: () => import('@agentbox/agent-codex/cli'),
   opencode: () => import('@agentbox/agent-opencode/cli'),
+  pi: () => import('@agentbox/agent-pi/cli'),
   example: () => import('@agentbox/agent-example/cli'),
 };
 

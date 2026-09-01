@@ -9,7 +9,7 @@ import { listSessions } from './tmux.js';
 // Mirrors the DEFAULT_*_SESSION constants in `@agentbox/sandbox-docker`. Kept
 // inline so this module has no dep on the docker package (it runs against
 // any provider).
-const AGENT_SESSION_PRIORITY = ['claude', 'codex', 'opencode'] as const;
+const AGENT_SESSION_PRIORITY = ['claude', 'codex', 'opencode', 'pi'] as const;
 
 export interface ResolvedSession {
   name: string;

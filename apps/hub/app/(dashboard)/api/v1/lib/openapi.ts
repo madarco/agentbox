@@ -823,7 +823,7 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     agents: {
                       type: 'array',
-                      items: { type: 'string', enum: ['claude', 'codex', 'opencode'] },
+                      items: { type: 'string', enum: ['claude', 'codex', 'opencode', 'pi'] },
                       description:
                         'Agents to bake into the base. Omitted/empty bakes an agentless base.',
                     },
@@ -1747,7 +1747,7 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             lastAgent: {
               type: 'string',
-              enum: ['claude', 'codex', 'opencode'],
+              enum: ['claude', 'codex', 'opencode', 'pi'],
               description: 'The agent the box was created for.',
             },
             topology: {
@@ -2053,7 +2053,7 @@ export function buildOpenApi(): Record<string, unknown> {
           type: 'object',
           properties: {
             projectId: { type: 'string' },
-            agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'none'] },
+            agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'pi', 'none'] },
             provider: {
               type: 'string',
               enum: [

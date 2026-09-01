@@ -6,13 +6,13 @@ import type { CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
 // 'none' = create the box without starting an agent (like `agentbox create`).
-const AGENTS = ['claude', 'codex', 'opencode', 'none'] as const;
+const AGENTS = ['claude', 'codex', 'opencode', 'pi', 'none'] as const;
 /**
  * Agents that can be baked into a base. `AGENTS` includes the sentinel `none`,
  * which is a create-time "no agent" marker, not something installable — an
  * agentless base is an empty `agents` list, not `['none']`.
  */
-const BAKEABLE_AGENTS = ['claude', 'codex', 'opencode'] as const;
+const BAKEABLE_AGENTS = ['claude', 'codex', 'opencode', 'pi'] as const;
 // Sandbox providers (mirrors @agentbox/config PROVIDER_NAMES; hardcoded to keep
 // that package out of the Next bundle, like AGENTS above). The backend enforces
 // that the chosen provider is actually configured on the host.

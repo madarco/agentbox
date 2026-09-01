@@ -66,6 +66,7 @@ const contextFiles = [
   'packages/sandbox-docker/scripts/claude-managed-settings.json',
   'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
   'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
+  'packages/sandbox-docker/scripts/pi-agentbox-extension.js',
 ];
 
 let missing = 0;
@@ -139,6 +140,7 @@ const hetznerFiles = [
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of hetznerFiles) {
@@ -165,6 +167,7 @@ const sharedFiles = [
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of sharedFiles) {
@@ -190,6 +193,7 @@ const digitaloceanFiles = [
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of digitaloceanFiles) {

@@ -105,6 +105,7 @@ export interface CompositorDeps {
   startClaude: (boxId: string) => Promise<RightTarget>;
   startCodex: (boxId: string) => Promise<RightTarget>;
   startOpencode: (boxId: string) => Promise<RightTarget>;
+  startPi: (boxId: string) => Promise<RightTarget>;
   /** Open an interactive shell in the box, resolve to attach. */
   openShell: (boxId: string) => Promise<RightTarget>;
   /** Create a new box (config defaults). When `agent` is set, also start that
@@ -755,6 +756,10 @@ export class Compositor {
         void this.chooseAction('opencode');
         return;
       }
+      if (b === 0x70) {
+        void this.chooseAction('pi');
+        return;
+      }
       if (b === 0x73) {
         void this.chooseAction('shell');
         return;
@@ -772,11 +777,13 @@ export class Compositor {
     const label =
       which === 'shell'
         ? 'shell'
-        : which === 'opencode'
-          ? 'OpenCode'
-          : which === 'codex'
-            ? 'Codex'
-            : 'Claude';
+        : which === 'pi'
+          ? 'Pi'
+          : which === 'opencode'
+            ? 'OpenCode'
+            : which === 'codex'
+              ? 'Codex'
+              : 'Claude';
     this.placeholder = ['', which === 'shell' ? '  Opening shell…' : `  Starting ${label}…`];
     this.prevRows = null;
     this.drawChrome();
@@ -787,9 +794,11 @@ export class Compositor {
           ? await this.deps.openShell(id)
           : which === 'codex'
             ? await this.deps.startCodex(id)
-            : which === 'opencode'
-              ? await this.deps.startOpencode(id)
-              : await this.deps.startClaude(id);
+            : which === 'pi'
+              ? await this.deps.startPi(id)
+              : which === 'opencode'
+                ? await this.deps.startOpencode(id)
+                : await this.deps.startClaude(id);
       if (this.selectedId !== id || this.tornDown) return; // switched away
       this.applyTarget(target);
     } catch (err) {
@@ -1044,6 +1053,10 @@ export class Compositor {
       }
       if (b === 0x6f) {
         void this.chooseCreate('opencode');
+        return;
+      }
+      if (b === 0x70) {
+        void this.chooseCreate('pi');
         return;
       }
       if (b === 0x6e) {

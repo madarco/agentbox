@@ -51,7 +51,7 @@ export type AgentMode = AgentId | 'shell';
  * This list exists only for the two things a dependency-free leaf can still do
  * honestly: normalize a persisted record and translate a wire spelling.
  */
-export const BUILTIN_AGENT_KINDS: readonly AgentId[] = ['claude', 'codex', 'opencode'];
+export const BUILTIN_AGENT_KINDS: readonly AgentId[] = ['claude', 'codex', 'opencode', 'pi'];
 
 /** Wire spellings that map onto a different canonical id. */
 const WIRE_ALIASES: Readonly<Record<string, AgentId>> = { 'claude-code': 'claude' };

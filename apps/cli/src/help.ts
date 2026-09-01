@@ -16,7 +16,7 @@ export interface HelpGroup {
 export const HELP_GROUPS: HelpGroup[] = [
   {
     title: 'Create & run',
-    commands: ['create', 'attach', 'fork', 'claude', 'codex', 'opencode'],
+    commands: ['create', 'attach', 'fork', 'claude', 'codex', 'opencode', 'pi'],
   },
   {
     title: 'Access',
@@ -70,6 +70,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   claude: 'Create a box and launch Claude Code (detachable tmux session)',
   codex: 'Create a box and launch OpenAI Codex (detachable tmux session)',
   opencode: 'Create a box and launch OpenCode (detachable tmux session)',
+  pi: 'Create a box and launch Pi (detachable tmux session)',
   fork: 'Fork the current host agent session into a new box and resume it there',
   attach: 'Attach to the running agent tmux session in a box',
   url: "Open a box's web app URL in the browser",
@@ -219,7 +220,7 @@ export const COMPACT_HELP: CompactGroup[] = [
     title: 'Run an agent',
     rows: [
       {
-        commands: ['claude', 'codex', 'opencode'],
+        commands: ['claude', 'codex', 'opencode', 'pi'],
         description: 'Start the agent in a new isolated box',
       },
     ],

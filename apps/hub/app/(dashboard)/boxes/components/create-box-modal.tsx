@@ -367,6 +367,7 @@ function CreateBoxModal({
                 <option value="claude">Claude</option>
                 <option value="codex">Codex</option>
                 <option value="opencode">OpenCode</option>
+                <option value="pi">Pi</option>
                 <option value="none">Empty — just create the box</option>
               </Select>
             </Field>

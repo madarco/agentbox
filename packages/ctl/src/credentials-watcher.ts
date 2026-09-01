@@ -54,6 +54,7 @@ export const WATCHED_CREDENTIALS: readonly WatchedCredential[] = [
     path: '/home/vscode/.local/share/opencode/auth.json',
     shape: 'nonempty-json',
   },
+  { agent: 'pi', path: '/home/vscode/.pi/agent/auth.json', shape: 'nonempty-json' },
 ];
 
 /** Mirror of the sandbox-core `isRealAgentCredential` shapes (drift-tested). */

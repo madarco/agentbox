@@ -104,6 +104,16 @@ export const AGENT_KINDS = [
     hasSkipPermissions: false,
     isolateVolumeDesc: 'Use a per-box OpenCode config/data volume instead of the shared one.',
   },
+  {
+    id: 'pi',
+    defaultSessionName: 'pi',
+    // Pi has no permission prompts AT ALL -- by design it runs with full
+    // permissions and its own docs recommend a container -- so there is no
+    // bypass flag, and generating the key would create one that does nothing.
+    hasSkipPermissions: false,
+    isolateVolumeDesc:
+      'Use a per-box Pi config/data volume (~/.pi/agent) instead of the shared one.',
+  },
   // The hidden demo agent (see `@agentbox/agent-example`). Present so the
   // generated keys cover it too — an agent absent from this table would be the
   // one thing still needing a hand edit.

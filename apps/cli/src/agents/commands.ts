@@ -23,6 +23,7 @@ import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { claudeCommand, attachClaudeWrapped } from './claude/command.js';
 import { codexCommand, attachCodexWrapped } from './codex/command.js';
 import { opencodeCommand, attachOpencodeWrapped } from './opencode/command.js';
+import { piCommand, attachPiWrapped } from './pi/command.js';
 import { exampleCommand, attachExampleWrapped } from './example/command.js';
 
 /**
@@ -46,6 +47,7 @@ const AGENT_COMMANDS: Record<string, AgentCommandEntry> = {
   claude: { command: claudeCommand, attachWrapped: attachClaudeWrapped },
   codex: { command: codexCommand, attachWrapped: attachCodexWrapped },
   opencode: { command: opencodeCommand, attachWrapped: attachOpencodeWrapped },
+  pi: { command: piCommand, attachWrapped: attachPiWrapped },
   example: { command: exampleCommand, attachWrapped: attachExampleWrapped },
 };
 

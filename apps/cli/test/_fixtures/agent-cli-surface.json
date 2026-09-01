@@ -1304,5 +1304,424 @@
         "subcommands": []
       }
     ]
+  },
+  "pi": {
+    "name": "pi",
+    "aliases": [],
+    "description": "Create a sandboxed box and launch Pi in a detachable tmux session",
+    "arguments": [
+      {
+        "name": "pi-args",
+        "description": "extra args passed to pi inside the box; place after `--`, e.g. `agentbox pi -- --model anthropic/claude-sonnet-4-5`",
+        "required": false,
+        "variadic": true,
+        "defaultValue": null
+      }
+    ],
+    "options": [
+      {
+        "flags": "-w, --workspace <path>",
+        "description": "host workspace to mount",
+        "defaultValue": "<cwd>",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-n, --name <name>",
+        "description": "friendly box name (default: <workspace-basename>-<id>)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--host-snapshot",
+        "description": "APFS-clone the host workspace into a per-box scratch dir before seeding /workspace (stabilizes the tar-pipe source)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-host-snapshot",
+        "description": "tar-pipe directly from the live host workspace at create time",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--snapshot <ref>",
+        "description": "start from a project checkpoint (see `agentbox checkpoint`); overrides box.defaultCheckpoint",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--image <ref>",
+        "description": "override the box image",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-y, --yes",
+        "description": "skip prompts, accept defaults",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry-yes",
+        "description": "auto-approve agentbox.yaml's `carry:` block (also AGENTBOX_CARRY_YES=1). Required for non-TTY use of `-y` when carry: is non-empty.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry <mode>",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
+        "defaultValue": "ask",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--dangerously-with-credentials",
+        "description": "copy a git credential INTO the box so it can push with your PC off. You'll be asked at an interactive prompt to choose 'token' (HTTPS, unsigned commits, smallest exposure) or your 'ssh' private key (signs commits, riskiest). DANGEROUS: the credential lives in the box and its snapshots. Requires a real terminal (no non-interactive / CI path). Cloud only. Sets git.pushMode=direct.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--isolate-pi-config",
+        "description": "use a per-box Pi volume instead of the shared agentbox-pi-config",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-playwright",
+        "description": "also install @playwright/cli@latest globally inside the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--with-env",
+        "description": "copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-vnc",
+        "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--no-resync",
+        "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--shared-docker-cache",
+        "description": "use the shared 'agentbox-docker-cache' volume for in-box docker images (preserved on destroy; only one box can run at a time when set)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--portless",
+        "description": "map the box web app to https://<name>.localhost via the Portless proxy (Docker Desktop)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-portless",
+        "description": "do not register a Portless alias for this box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--session-name <name>",
+        "description": "tmux session name (default from config; built-in: pi)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--memory <size>",
+        "description": "memory ceiling (e.g. 512m, 2g); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--cpus <n>",
+        "description": "CPU count cap (fractional ok, e.g. 1.5); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--pids-limit <n>",
+        "description": "max process count (PIDs cgroup); unset = unlimited",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--disk <size>",
+        "description": "best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--provider <name>",
+        "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--from-branch <ref>",
+        "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-b, --use-branch <name>",
+        "description": "reuse an existing branch directly instead of forking agentbox/<box-name>. Commits/pushes flow straight to it. Docker fails if the host already has it checked out. Mutually exclusive with --from-branch.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--via-hub",
+        "description": "force building this cloud box on the control box (then adopt + attach here). When a control box is configured this is already the default for foreground cloud runs (cloud.viaHub). Ignored for docker.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--local",
+        "description": "force building the box on this machine even when a control box is configured (the opposite of --via-hub).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--url <url>",
+        "description": "control-box URL for the hub route (default: relay.controlPlaneUrl)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-v, --verbose",
+        "description": "bypass the spinner and stream raw provider output to stderr. The same content always lands in ~/.agentbox/logs/pi.log.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--attach-in <mode>",
+        "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--inline",
+        "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-d, --no-attach",
+        "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "-i, --initial-prompt <text>",
+        "description": "seed the pi session with this initial user turn and run in background (no attach). Jobs go through the host-wide queue (queue.maxConcurrent).",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-running <n>",
+        "description": "per-invocation override of queue.maxConcurrent; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--max-working <n>",
+        "description": "per-invocation override of queue.maxWorking; only honored when `-i` is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-c, --continue",
+        "description": "continue the host's most recent Pi session for this directory in the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--resume <id>",
+        "description": "teleport a specific host Pi session (uuid, or a unique prefix) into the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Attach to a Pi tmux session in a box, starting one if none is running (auto-unpause/start; never re-syncs config — use `pi start` for that)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: pi)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "start",
+        "aliases": [],
+        "description": "Start a Pi tmux session in an already-existing box (auto-unpause/start). If a session is already running, just attach.",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          },
+          {
+            "name": "pi-args",
+            "description": "extra args passed to pi when starting a new session; ignored if a session is already running. Place after `--`, e.g. `agentbox pi start 1 -- --model anthropic/claude-sonnet-4-5`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--session-name <name>",
+            "description": "tmux session name (default from config; built-in: pi)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--no-sync-config",
+            "description": "skip rsyncing the host's Pi config into the box's volume before starting (faster; use existing in-box state)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-d, --no-attach",
+            "description": "create the box and start the agent session, but do not attach (background mode); prints the box ref and exits 0. Re-attach later with `agentbox <agent> attach <box>`.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": true
+          },
+          {
+            "flags": "-c, --continue",
+            "description": "continue the host's most recent Pi session for this directory",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--resume <id>",
+            "description": "teleport a specific host Pi session (uuid, or a unique prefix)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "login",
+        "aliases": [],
+        "description": "Sign in to Pi for use in sandboxes. Pi has no non-interactive login: this launches Pi's own TUI in a throwaway container against the shared pi-config volume, where you run `/login`, pick a provider, then `/exit`. The captured auth.json is reused by every later box.",
+        "arguments": [
+          {
+            "name": "args",
+            "description": "extra args forwarded to `pi`; place after `--`",
+            "required": false,
+            "variadic": true,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--interactive",
+            "description": "attach your terminal to Pi's TUI (the only sign-in Pi has)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      }
+    ]
   }
 }

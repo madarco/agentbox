@@ -385,6 +385,10 @@ export const DOCKER_CONTEXT_FILE_MAP: Record<string, { staged: string; dev: stri
     staged: 'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
     dev: 'scripts/opencode-agentbox-plugin.js',
   },
+  'scripts/pi-agentbox-extension.js': {
+    staged: 'packages/sandbox-docker/scripts/pi-agentbox-extension.js',
+    dev: 'scripts/pi-agentbox-extension.js',
+  },
 };
 
 /**

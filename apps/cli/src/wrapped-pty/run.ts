@@ -203,7 +203,7 @@ function buildAgentboxAttachArgv(
   mode: WrappedAttachOptions['mode'],
   boxName: string,
 ): string[] | null {
-  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode') return null;
+  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode' && mode !== 'pi') return null;
   return [mode, 'attach', boxName, '--attach-in', 'same'];
 }
 

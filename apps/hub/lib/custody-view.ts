@@ -108,6 +108,7 @@ export const CUSTODY_AGENT_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
+  pi: 'Pi',
 };
 
 export interface AgentCredSummary {

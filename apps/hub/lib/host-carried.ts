@@ -84,6 +84,7 @@ const AGENT_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
+  pi: 'Pi',
 };
 
 /** Human label for a `~`-relative path, e.g. `.local/share/opencode` → `~/.local/share/opencode`. */

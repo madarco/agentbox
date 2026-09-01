@@ -13,6 +13,7 @@ vi.mock('@agentbox/config', async (importOriginal) => ({
       claude: { sessionName: 'claude' },
       codex: { sessionName: 'codex' },
       opencode: { sessionName: 'opencode' },
+      pi: { sessionName: 'pi' },
     },
   })),
 }));

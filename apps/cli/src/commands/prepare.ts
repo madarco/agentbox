@@ -894,7 +894,7 @@ export async function runPrepare(
  * AGENT_SYNC_SPECS so the CLI's arg parsing doesn't pull the sync registry into
  * its startup path; the drift is guarded by a test.
  */
-const PREPARE_AGENTS = ['claude', 'codex', 'opencode'];
+const PREPARE_AGENTS = ['claude', 'codex', 'opencode', 'pi'];
 
 export const prepareCommand = new Command('prepare')
   .description(
@@ -921,7 +921,7 @@ export const prepareCommand = new Command('prepare')
   )
   .option(
     '--agents <list>',
-    'comma-separated agents to bake into the base (claude,codex,opencode). Default: none — agents are added as a derived layer or on demand.',
+    'comma-separated agents to bake into the base (claude,codex,opencode,pi). Default: none — agents are added as a derived layer or on demand.',
   )
   .option(
     '--location <name>',

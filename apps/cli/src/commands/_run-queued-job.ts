@@ -38,6 +38,7 @@ import {
   startClaudeSession,
 } from '@agentbox/agent-claude';
 import { startOpencodeSession, ensureOpencodeInstalled } from '@agentbox/agent-opencode';
+import { startPiSession, ensurePiInstalled } from '@agentbox/agent-pi';
 import { startCodexSession, ensureCodexInstalled } from '@agentbox/agent-codex';
 import {
   readJob,
@@ -466,6 +467,20 @@ async function runDockerJob(
       container: result.record.container,
       opencodeArgs: promptedArgs,
       sessionName: cfg.effective.opencode.sessionName,
+    });
+  } else if (job.agent === 'pi') {
+    log.write(`checking pi`);
+    await ensurePiInstalled(result.record.container, {
+      onProgress: (line) => log.write(line),
+    });
+    log.write(`starting pi session`);
+    await startPiSession({
+      container: result.record.container,
+      // No `skipPermissions.apply`: Pi has no bypass flag because it has no
+      // permission prompts, so `piRuntime.skipPermissions` is null and the
+      // prompted args go through untouched.
+      piArgs: promptedArgs,
+      sessionName: cfg.effective.pi.sessionName,
     });
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);

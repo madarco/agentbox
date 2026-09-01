@@ -396,6 +396,15 @@ RUN chmod 0644 /usr/local/share/agentbox/codex-hooks.json
 COPY packages/sandbox-docker/scripts/opencode-agentbox-plugin.js /usr/local/share/agentbox/opencode-agentbox-plugin.js
 RUN chmod 0644 /usr/local/share/agentbox/opencode-agentbox-plugin.js
 
+# Pi activity-reporting extension. Pi ships no hooks system either -- its only
+# extension surface is a JS/TS module auto-loaded from ~/.pi/agent/extensions/.
+# The extension subscribes to Pi's event bus and shells the generic
+# `agentbox-ctl agent-state pi <state>` on each lifecycle transition. Staged in
+# the image; copied into Pi's config volume from its registry row's `seeds`
+# entry at create/start time.
+COPY packages/sandbox-docker/scripts/pi-agentbox-extension.js /usr/local/share/agentbox/pi-agentbox-extension.js
+RUN chmod 0644 /usr/local/share/agentbox/pi-agentbox-extension.js
+
 # /etc/agentbox/ holds runtime-injected box.env (written by `agentbox create`
 # via docker exec). Pre-created here so the writable layer starts with the
 # right perms; the file itself appears at create time.

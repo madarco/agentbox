@@ -204,7 +204,9 @@ async function applySeedFromCustody(
  * created, it just registers without an agent hint.
  */
 function normalizeCreateAgent(agent: string | undefined): AgentId | undefined {
-  return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;
+  return agent === 'claude' || agent === 'codex' || agent === 'opencode' || agent === 'pi'
+    ? agent
+    : undefined;
 }
 
 export interface HubWorkerHandle {

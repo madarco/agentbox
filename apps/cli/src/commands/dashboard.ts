@@ -1,4 +1,4 @@
-import { LEGACY_AGENT_STATUS_KEYS } from '@agentbox/core';
+import { agentConfigVolume, LEGACY_AGENT_STATUS_KEYS } from '@agentbox/core';
 import { spawn } from 'node:child_process';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
@@ -40,6 +40,11 @@ import {
   ensureOpencodeInstalled,
   startOpencodeSession,
 } from '@agentbox/agent-opencode';
+import {
+  DEFAULT_PI_SESSION,
+  ensurePiInstalled,
+  startPiSession,
+} from '@agentbox/agent-pi';
 import {
   DEFAULT_CODEX_SESSION,
   ensureCodexInstalled,
@@ -459,6 +464,27 @@ export const dashboardCommand = new Command('dashboard')
         };
       };
 
+      const startPi = async (boxId: string): Promise<RightTarget> => {
+        const box = await findBox(boxId);
+        if (isCloudBox(box)) {
+          return buildCloudAttachTarget(await loadBoxRecord(boxId), 'pi');
+        }
+        await ensurePiInstalled(box.container);
+        const piVolume = agentConfigVolume(box, 'pi');
+        // Seeds Pi's activity extension, so a box built from a snapshot that
+        // predates it still reports working/idle.
+        if (piVolume) await seedAgentDeclaredFiles('pi', piVolume, box.image);
+        // No `skipPermissions.apply`: Pi has no bypass flag (no prompts).
+        await startPiSession({ container: box.container, piArgs: [] });
+        await waitForTmuxPaneContent(box.container, DEFAULT_PI_SESSION);
+        return {
+          kind: 'attach',
+          command: 'docker',
+          args: buildDashboardAttachArgv(box.container, DEFAULT_PI_SESSION),
+          mode: 'pi',
+        };
+      };
+
       const openShell = async (boxId: string): Promise<RightTarget> => {
         const box = await findBox(boxId);
         if (isCloudBox(box)) {
@@ -511,6 +537,11 @@ export const dashboardCommand = new Command('dashboard')
           ...(agent === 'opencode'
             ? { opencodeConfig: { isolate: cfg.effective.box.isolateOpencodeConfig } }
             : {}),
+          // Through the GENERIC per-agent option rather than a named field:
+          // `agentConfig` is what an agent outside the built-in three uses.
+          ...(agent === 'pi'
+            ? { agentConfig: { pi: { isolate: cfg.effective.box.isolatePiConfig } } }
+            : {}),
           withPlaywright:
             cfg.effective.box.withPlaywright || cfg.effective.browser.default !== 'agent-browser',
           withEnv: cfg.effective.box.withEnv,
@@ -551,6 +582,20 @@ export const dashboardCommand = new Command('dashboard')
               command: 'docker',
               args: buildDashboardAttachArgv(ctr, DEFAULT_OPENCODE_SESSION),
               mode: 'opencode',
+            },
+          };
+        }
+        if (agent === 'pi') {
+          await ensurePiInstalled(ctr, { onProgress });
+          await startPiSession({ container: ctr, piArgs: [] });
+          await waitForTmuxPaneContent(ctr, DEFAULT_PI_SESSION);
+          return {
+            boxId: result.record.id,
+            attach: {
+              kind: 'attach',
+              command: 'docker',
+              args: buildDashboardAttachArgv(ctr, DEFAULT_PI_SESSION),
+              mode: 'pi',
             },
           };
         }
@@ -789,6 +834,7 @@ export const dashboardCommand = new Command('dashboard')
           startClaude,
           startCodex,
           startOpencode,
+          startPi,
           openShell,
           createNewBox,
           resumeBox,

@@ -28,7 +28,11 @@ vi.mock('@agentbox/sandbox-core', async (importOriginal) => {
 vi.mock('@agentbox/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agentbox/config')>()),
   loadEffectiveConfig: vi.fn(async () => ({
-    effective: { claude: { sessionName: 'claude' }, codex: { sessionName: 'codex' } },
+    effective: {
+      claude: { sessionName: 'claude' },
+      codex: { sessionName: 'codex' },
+      pi: { sessionName: 'pi' },
+    },
   })),
 }));
 

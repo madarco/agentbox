@@ -115,6 +115,9 @@ importers:
       '@agentbox/agent-opencode':
         specifier: workspace:*
         version: link:../../packages/agent-opencode
+      '@agentbox/agent-pi':
+        specifier: workspace:*
+        version: link:../../packages/agent-pi
       '@agentbox/agent-registry':
         specifier: workspace:*
         version: link:../../packages/agent-registry
@@ -465,6 +468,9 @@ importers:
       '@agentbox/agent-opencode':
         specifier: workspace:*
         version: link:../agent-opencode
+      '@agentbox/agent-pi':
+        specifier: workspace:*
+        version: link:../agent-pi
       '@agentbox/agent-registry':
         specifier: workspace:*
         version: link:../agent-registry
@@ -486,6 +492,43 @@ importers:
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
   packages/agent-opencode:
+    dependencies:
+      '@agentbox/cli-kit':
+        specifier: workspace:*
+        version: link:../cli-kit
+      '@agentbox/config':
+        specifier: workspace:*
+        version: link:../config
+      '@agentbox/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbox/sandbox-cloud':
+        specifier: workspace:*
+        version: link:../sandbox-cloud
+      '@agentbox/sandbox-core':
+        specifier: workspace:*
+        version: link:../sandbox-core
+      '@agentbox/sandbox-docker':
+        specifier: workspace:*
+        version: link:../sandbox-docker
+      execa:
+        specifier: ^9.5.2
+        version: 9.6.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
+
+  packages/agent-pi:
     dependencies:
       '@agentbox/cli-kit':
         specifier: workspace:*

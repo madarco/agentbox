@@ -110,8 +110,16 @@ import { HubApiClient, HubApiError, type HubApiJob } from '../control-plane/hub-
 import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+/**
+ * Valid `--agent` values, FROM THE REGISTRY rather than a literal tuple.
+ *
+ * The three hardcoded copies this replaces silently rejected every agent added
+ * after them — including one installed by `agentbox agent add`, which can never
+ * be in a compiled-in list.
+ */
+const CREDENTIAL_AGENT_IDS = (): string[] => AGENT_SYNC_SPECS.map((a) => a.id);
 import { handleLifecycleError } from './_errors.js';
-import type { AgentId } from '@agentbox/core';
+import { isAgentKind, type AgentId } from '@agentbox/core';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
 const PEM_PATH = join(CP_DIR, 'github-app.pem');
@@ -978,8 +986,10 @@ const workerSub = new Command('worker')
             name,
             projectRoot: workspacePath,
             // Registered on the plane so an adopting PC relaunches the right agent.
-            agent:
-              agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined,
+            // `isAgentKind` rather than three `===`: it is the leaf's own
+            // answer for "an agent this build ships", so a fourth agent is
+            // registered instead of silently dropped to undefined.
+            agent: isAgentKind(agent) ? agent : undefined,
             onLog,
           });
           return { id: created.record.id };
@@ -1334,7 +1344,7 @@ const credentialsPushSub = new Command('push')
     'Push host agent-credential backups (claude/codex/opencode) to the control box custody store',
   )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--agent <id>', 'push only one agent: claude | codex | opencode')
+  .option('--agent <id>', 'push only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)')
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
     try {
@@ -1344,8 +1354,10 @@ const credentialsPushSub = new Command('push')
         return;
       }
       const only = opts.agent as AgentId | undefined;
-      if (opts.agent && !['claude', 'codex', 'opencode'].includes(opts.agent)) {
-        log.error(`unknown --agent "${opts.agent}" (expected claude | codex | opencode)`);
+      if (opts.agent && !CREDENTIAL_AGENT_IDS().includes(opts.agent)) {
+        log.error(
+          `unknown --agent "${opts.agent}" (expected ${CREDENTIAL_AGENT_IDS().join(' | ')})`,
+        );
         process.exitCode = 1;
         return;
       }
@@ -1360,7 +1372,7 @@ const credentialsPushSub = new Command('push')
 const credentialsPullSub = new Command('pull')
   .description('Pull agent-credential backups from the control box custody store into ~/.agentbox')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--agent <id>', 'pull only one agent: claude | codex | opencode')
+  .option('--agent <id>', 'pull only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)')
   .action(async (opts: { url?: string; agent?: string }) => {
     try {
       const target = await resolveCustodyApiTarget(opts.url);
@@ -1368,8 +1380,10 @@ const credentialsPullSub = new Command('pull')
         process.exitCode = 1;
         return;
       }
-      if (opts.agent && !['claude', 'codex', 'opencode'].includes(opts.agent)) {
-        log.error(`unknown --agent "${opts.agent}" (expected claude | codex | opencode)`);
+      if (opts.agent && !CREDENTIAL_AGENT_IDS().includes(opts.agent)) {
+        log.error(
+          `unknown --agent "${opts.agent}" (expected ${CREDENTIAL_AGENT_IDS().join(' | ')})`,
+        );
         process.exitCode = 1;
         return;
       }

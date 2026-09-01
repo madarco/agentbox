@@ -33,6 +33,7 @@ export const BAKED_AGENT_SESSIONS: readonly WatchedAgentSession[] = [
   { agent: 'claude', sessionName: 'claude' },
   { agent: 'codex', sessionName: 'codex' },
   { agent: 'opencode', sessionName: 'opencode' },
+  { agent: 'pi', sessionName: 'pi' },
 ];
 
 interface AgentRuntimeState {

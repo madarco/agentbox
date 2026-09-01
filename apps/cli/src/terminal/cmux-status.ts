@@ -38,6 +38,7 @@ const AGENT_LABEL: Record<Exclude<CmuxAgentMode, 'shell'>, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 /**

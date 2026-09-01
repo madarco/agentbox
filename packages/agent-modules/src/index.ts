@@ -22,6 +22,7 @@ import { registerClaudeAgent } from '@agentbox/agent-claude';
 import { registerCodexAgent } from '@agentbox/agent-codex';
 import { registerExampleAgent } from '@agentbox/agent-example';
 import { registerOpencodeAgent } from '@agentbox/agent-opencode';
+import { registerPiAgent } from '@agentbox/agent-pi';
 
 /**
  * Register every agent this build ships. Idempotent — registering twice
@@ -32,6 +33,7 @@ export function registerAllAgentModules(): void {
   registerClaudeAgent();
   registerCodexAgent();
   registerOpencodeAgent();
+  registerPiAgent();
   // Hidden from users, real to the machinery — see @agentbox/agent-example.
   registerExampleAgent();
 }
