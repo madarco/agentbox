@@ -263,6 +263,25 @@ export interface BakeDiff {
   removed?: string[];
 }
 
+/**
+ * One agent the hub can start (`GET /api/v1/agents`).
+ *
+ * Read this INSTEAD of hardcoding agent names: the hub builds it from the agent
+ * registry, so an agent installed with `agentbox agent add` appears with no UI
+ * change — the same rule {@link ProviderOption} carries for community providers.
+ */
+export interface AgentOption {
+  id: string;
+  label: string;
+  /**
+   * Whether this machine holds the agent's config dir or a saved AgentBox login.
+   * A hint for what to offer first, NOT a gate — an agent installs on demand in
+   * the box. Absent means the hub has no host to answer for (the hosted plane),
+   * which is unknown rather than false.
+   */
+  installed?: boolean;
+}
+
 export interface HubState {
   user: User;
   github: GithubState;

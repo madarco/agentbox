@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { createBoxAction, listBranchesAction } from '@/lib/boxes/actions';
 import type { CreateBoxInput } from '@/lib/boxes/backend-types';
 import { useStore } from '@/lib/boxes/store';
-import type { Project, ProviderOption } from '@/lib/boxes/types';
+import type { AgentOption, Project, ProviderOption } from '@/lib/boxes/types';
 import { cn } from '@/lib/utils';
 import { JobLogStream, type JobLoginState } from './job-log-stream';
 
@@ -29,6 +29,17 @@ type Agent = CreateBoxInput['agent'];
 // Docker is always available; used when the server sent no provider list (the
 // hosted/Postgres path, where host readiness isn't known).
 const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
+
+// The agents built into this release, rendered until GET /api/v1/agents answers
+// (and if it can't). The endpoint is the authority — it also carries agents
+// registered with `agentbox agent add`, which no list here can name — so this is
+// only what to paint before it lands.
+const BUILTIN_AGENTS: AgentOption[] = [
+  { id: 'claude', label: 'Claude' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'pi', label: 'Pi' },
+];
 
 // Button + modal to create a box. Pass `project` to lock it (project page /
 // per-project row); pass `projects` for a picker (no fixed project).
@@ -82,6 +93,10 @@ function CreateBoxModal({
   const [pending, startTransition] = useTransition();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const [agent, setAgent] = useState<Agent>('claude');
+  // The agent catalog (GET /api/v1/agents). Null until it lands — the built-ins
+  // paint meanwhile so the form doesn't flash an empty picker.
+  const [fetchedAgents, setFetchedAgents] = useState<AgentOption[] | null>(null);
+  const agents = fetchedAgents ?? BUILTIN_AGENTS;
   // May hold a bare provider id or a `docker:<alias>` remote-docker host spec.
   const [provider, setProvider] = useState<string>('docker');
   const [name, setName] = useState('');
@@ -121,13 +136,46 @@ function CreateBoxModal({
         if (cancelled) return;
         const list = j.providers ?? [];
         setFetchedProviders(list);
-        const map: Record<string, Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'jobId'>> = {};
+        const map: Record<
+          string,
+          Pick<ProviderOption, 'baseStatus' | 'baseStaleReason' | 'jobId'>
+        > = {};
         for (const p of list) {
-          map[p.id] = { baseStatus: p.baseStatus, baseStaleReason: p.baseStaleReason, jobId: p.jobId };
+          map[p.id] = {
+            baseStatus: p.baseStatus,
+            baseStaleReason: p.baseStaleReason,
+            jobId: p.jobId,
+          };
         }
         setFreshness(map);
       } catch {
         // Best-effort: without freshness the create simply bakes inline (docker self-heals).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The agent list, from the registry rather than a table here — that is what
+  // lets an `agentbox agent add` plugin agent be chosen at all. A hub older than
+  // the endpoint 404s and the built-ins stand.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/v1/agents', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const j = (await res.json()) as { agents?: AgentOption[] };
+        if (cancelled || !j.agents?.length) return;
+        setFetchedAgents(j.agents);
+        // Keep the selection valid: 'claude' is only a guess until the catalog
+        // arrives, and a host can run a build that doesn't ship it.
+        setAgent((cur) =>
+          cur === 'none' || j.agents!.some((a) => a.id === cur) ? cur : j.agents![0]!.id,
+        );
+      } catch {
+        // Best-effort: the built-in list still lets the user create a box.
       }
     })();
     return () => {
@@ -188,7 +236,11 @@ function CreateBoxModal({
       // Docker auto-bakes (its base self-heals — same rule as the CLI); a
       // stale CLOUD base gets the CLI wizard's rebuild-vs-use-existing choice.
       // An in-flight bake is never re-asked — the create just waits on it.
-      if (providerId !== 'docker' && providerFreshness?.baseStatus === 'stale' && !providerFreshness.jobId) {
+      if (
+        providerId !== 'docker' &&
+        providerFreshness?.baseStatus === 'stale' &&
+        !providerFreshness.jobId
+      ) {
         setStaleChoice(true);
         return;
       }
@@ -217,9 +269,10 @@ function CreateBoxModal({
           // fingerprint still triggers the rebuild.
           body: JSON.stringify({}),
         });
-        const j = (await res.json().catch(() => null)) as
-          | { jobId?: string; error?: { message?: string } }
-          | null;
+        const j = (await res.json().catch(() => null)) as {
+          jobId?: string;
+          error?: { message?: string };
+        } | null;
         if (!res.ok || !j?.jobId) {
           setError(j?.error?.message ?? `base image build request failed (${res.status})`);
           return;
@@ -244,7 +297,9 @@ function CreateBoxModal({
         // branch selected bases the box on the host's literal HEAD (like `agentbox create` with no
         // --from-branch) and skips a redundant fetch. Uncommitted + untracked files carry over either way.
         fromBranch:
-          fromBranch.trim() && fromBranch.trim() !== selected?.currentBranch ? fromBranch.trim() : undefined,
+          fromBranch.trim() && fromBranch.trim() !== selected?.currentBranch
+            ? fromBranch.trim()
+            : undefined,
         setupWizard: agent !== 'none' && runSetup,
       });
       if (!res.ok) {
@@ -265,7 +320,9 @@ function CreateBoxModal({
         </DialogIcon>
         <div>
           <DialogTitle>{!jobId && bakeJobId ? 'Building base image' : 'Create box'}</DialogTitle>
-          <DialogDescription>{selected ? selected.name : 'Start a box in a project'}</DialogDescription>
+          <DialogDescription>
+            {selected ? selected.name : 'Start a box in a project'}
+          </DialogDescription>
         </div>
         {/* Live job state next to the close button: pulsating while working, a pill when settled. */}
         {jobId || bakeJobId ? (
@@ -287,8 +344,8 @@ function CreateBoxModal({
           // which swaps this for the create job's stream above.
           <>
             <p className="font-mono text-xs text-muted-foreground">
-              Building the {providerOption?.label ?? providerId} base image — one-time, can take several
-              minutes. The box is created automatically when it finishes.
+              Building the {providerOption?.label ?? providerId} base image — one-time, can take
+              several minutes. The box is created automatically when it finishes.
             </p>
             <JobLogStream
               jobId={bakeJobId}
@@ -305,7 +362,9 @@ function CreateBoxModal({
             {!project ? (
               <Field label="Project">
                 <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                  {projects.length === 0 ? <option value="">No projects — add one first</option> : null}
+                  {projects.length === 0 ? (
+                    <option value="">No projects — add one first</option>
+                  ) : null}
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -324,7 +383,11 @@ function CreateBoxModal({
                     // way to drive it. The CLI routes such creates to the
                     // control box; from here, its own UI is the place.
                     disabled={!p.configured || p.origin === 'hub'}
-                    title={p.origin === 'hub' ? `Create these on the control box${p.hubUrl ? ` (${p.hubUrl})` : ''}` : p.reason}
+                    title={
+                      p.origin === 'hub'
+                        ? `Create these on the control box${p.hubUrl ? ` (${p.hubUrl})` : ''}`
+                        : p.reason
+                    }
                     value={p.id}
                   >
                     {p.label}
@@ -364,10 +427,14 @@ function CreateBoxModal({
             ) : null}
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
-                <option value="opencode">OpenCode</option>
-                <option value="pi">Pi</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {/* Flag an agent this machine has no config or saved login for.
+                        Still selectable — the box installs it on demand — but say
+                        so, since it will start out asking the user to sign in. */}
+                    {a.installed === false ? `${a.label} — not set up on this host` : a.label}
+                  </option>
+                ))}
                 <option value="none">Empty — just create the box</option>
               </Select>
             </Field>
@@ -383,18 +450,20 @@ function CreateBoxModal({
                   className="mt-0.5 h-4 w-4 flex-none accent-primary"
                 />
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-secondary-foreground">Run setup wizard</span>
+                  <span className="text-xs font-medium text-secondary-foreground">
+                    Run setup wizard
+                  </span>
                   <span className="font-mono text-xs text-muted-foreground">
-                    This project has no agentbox.yaml — the agent explores the repo and proposes one on its first
-                    turn.
+                    This project has no agentbox.yaml — the agent explores the repo and proposes one
+                    on its first turn.
                   </span>
                 </span>
               </label>
             ) : null}
             {agent === 'none' ? (
               <p className="font-mono text-xs text-muted-foreground">
-                The box is created and left running with no agent — attach later from a terminal or SSH
-                (<span className="text-secondary-foreground">agentbox shell</span>).
+                The box is created and left running with no agent — attach later from a terminal or
+                SSH (<span className="text-secondary-foreground">agentbox shell</span>).
               </p>
             ) : null}
             {/* Advanced: base branch + initial prompt, collapsed to keep the form lean. */}
@@ -404,7 +473,9 @@ function CreateBoxModal({
                 onClick={() => setShowAdvanced((v) => !v)}
                 className="flex cursor-pointer items-center gap-1.5 self-start text-xs font-medium text-secondary-foreground transition-colors hover:text-foreground"
               >
-                <Icons.chevR className={cn('size-3.5 transition-transform', showAdvanced && 'rotate-90')} />
+                <Icons.chevR
+                  className={cn('size-3.5 transition-transform', showAdvanced && 'rotate-90')}
+                />
                 Advanced
               </button>
               {showAdvanced ? (
@@ -516,7 +587,13 @@ function CreateBoxModal({
 // A terminal job status always wins; only while the job is still running does a
 // pending Claude re-login take over the pill (amber "Login required"), since the
 // create is blocked on it.
-function JobStatusBadge({ status, loginPhase }: { status: string; loginPhase?: JobLoginState['phase'] | null }) {
+function JobStatusBadge({
+  status,
+  loginPhase,
+}: {
+  status: string;
+  loginPhase?: JobLoginState['phase'] | null;
+}) {
   if (status === 'done') {
     return (
       <Badge className="badge-run">
