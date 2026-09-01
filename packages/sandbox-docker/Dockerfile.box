@@ -256,20 +256,27 @@ RUN npm install -g portless
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium
 
 # VNC: Xvnc (TigerVNC, X server + RFB in one binary), noVNC (HTML5 client),
-# websockify (the WS<->RFB proxy noVNC needs). No window manager: a Chromium
-# launched with DISPLAY=:1 fills the screen, and agents drive tabs through the
-# browser itself. Adding a WM would cost another ~10MB and complicate the
-# lifecycle for no win.
+# websockify (the WS<->RFB proxy noVNC needs).
 #
-# autocutsel: with no WM, nothing owns the X11 CLIPBOARD/PRIMARY selections, so
-# the text noVNC delivers via RFB cut-text isn't reliably served back to
-# Chromium on Ctrl+V. autocutsel (one daemon per selection, started by
-# agentbox-vnc-start) keeps both selections populated and in sync. xclip is
-# kept alongside it purely for debugging the clipboard round-trip.
+# jwm + xterm: a window manager and a terminal to launch from the dock. JWM is
+# the whole desktop -- WM plus a configurable tray, one small binary, one XML
+# config that agentbox-vnc-start generates at start time. Without a WM nothing
+# could raise, move or switch windows, and nothing published the EWMH
+# _NET_CLIENT_LIST a dock needs to show what is running: a second GUI app just
+# stacked over the first with no way back. jwm + xterm cost ~17MB and 13
+# packages here (the X libs are already present for Chromium); on AL2023 JWM has
+# no package and is built from source in the vercel bake.
+#
+# autocutsel: JWM manages windows but does not own the X11 CLIPBOARD/PRIMARY
+# selections, so the text noVNC delivers via RFB cut-text still isn't reliably
+# served back to Chromium on Ctrl+V. autocutsel (one daemon per selection,
+# started by agentbox-vnc-start) keeps both selections populated and in sync.
+# xclip is kept alongside it purely for debugging the clipboard round-trip.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tigervnc-standalone-server tigervnc-common tigervnc-tools \
         novnc websockify \
+        jwm xterm \
         autocutsel xclip \
     && rm -rf /var/lib/apt/lists/*
 

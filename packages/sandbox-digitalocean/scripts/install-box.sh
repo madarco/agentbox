@@ -340,14 +340,19 @@ done_ "allow unprivileged user namespaces (sysctl drop-in)"
 
 # === END EARLY BAKE ===
 
-step "VNC stack (TigerVNC + noVNC + websockify + autocutsel)"
+step "VNC stack (TigerVNC + noVNC + websockify + JWM + autocutsel)"
+# jwm + xterm mirror Dockerfile.box: JWM is the window manager *and* the bottom
+# dock (agentbox-vnc-start generates its config), and xterm is what the dock's
+# Terminal button launches. Without a WM nothing publishes the EWMH
+# _NET_CLIENT_LIST the dock reads, and stacked windows are unreachable.
 apt-get install -y --no-install-recommends \
   tigervnc-standalone-server tigervnc-common tigervnc-tools \
   novnc websockify \
+  jwm xterm \
   autocutsel xclip
 mkdir -p /home/vscode/.vnc
 chown -R vscode:vscode /home/vscode/.vnc
-done_ "VNC stack (TigerVNC + noVNC + websockify + autocutsel)"
+done_ "VNC stack (TigerVNC + noVNC + websockify + JWM + autocutsel)"
 
 step "Chrome runtime libs"
 apt-get install -y --no-install-recommends \

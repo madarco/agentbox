@@ -327,12 +327,16 @@ PROFILE
 chmod 0644 /etc/profile.d/agentbox.sh
 done_ "login-shell shim (/etc/profile.d/agentbox.sh)"
 
-step "VNC stack (TigerVNC + websockify + noVNC)"
+step "VNC stack (TigerVNC + websockify + noVNC + JWM)"
 # Best-effort: VNC is a convenience (agentbox screen). A package that isn't in
 # the Debian repos shouldn't fail the whole bake.
+#
+# jwm is the window manager *and* the bottom dock (agentbox-vnc-start generates
+# its config); xterm is what the dock's Terminal button launches. Both are in
+# the Debian 12 repos, so this matches Dockerfile.box's apt line.
 apt-get install -y -q --no-install-recommends \
-  tigervnc-standalone-server xterm 2>&1 | tail -3 || \
-  echo "build-template.sh: tigervnc install failed (VNC may be unavailable)"
+  tigervnc-standalone-server xterm jwm 2>&1 | tail -3 || \
+  echo "build-template.sh: tigervnc/jwm install failed (VNC may be degraded)"
 # Install websockify into a per-user venv (PEP 668 forbids system pip on
 # Debian 12). The venv goes under /usr/local/share so agentbox-vnc-start can
 # find it regardless of the launching user.
@@ -347,7 +351,7 @@ if [ ! -d /usr/local/share/novnc ]; then
     echo "build-template.sh: noVNC clone failed (VNC may be unavailable)"
 fi
 sudo -u vscode -H mkdir -p /home/vscode/.vnc
-done_ "VNC stack (TigerVNC + websockify + noVNC)"
+done_ "VNC stack (TigerVNC + websockify + noVNC + JWM)"
 
 step "agent-browser (global npm)"
 # agent-browser is box runtime, not an agent -- it stays in the base.

@@ -46,6 +46,8 @@ Every box runs a noVNC desktop. `agentbox screen <box>` opens that viewer in you
 agentbox screen mybox
 ```
 
+The desktop has a window manager and a small **icon dock** along the bottom: a Terminal button, a Browser button, and one icon per open window. Click an icon to raise that window, drag titlebars to move them, `Alt+Tab` to cycle. Nothing to enable — it's part of the desktop whenever VNC is on. The Browser button opens a browser of your own, separate from the agent's, so clicking it never navigates the page the agent is working on.
+
 `screen` is distinct from [`agentbox url`](/docs/web-apps-and-tunnels): `url` opens the box's web _app_; `screen` opens the _desktop_ viewer. See [CLI commands](/docs/cli) for all flags (`--print`, `--loopback`, `--ttl`).
 
 Opt out at create time with `--no-vnc`:
@@ -63,7 +65,7 @@ agentbox create --no-vnc
 
 <Figure
   src="/screenshots/novnc-desktop.png"
-  caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown."
+  caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown above the dock."
 />
 
 This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL. The desktop is reachable from every surface — the `(VNC)` link in `agentbox ls`, the tray's **Open VNC**, and the hub UI — not just `agentbox screen`.
@@ -79,7 +81,7 @@ This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [ver
 
 ## Screen sharing
 
-`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed Chromium _inside_ the box pointed at the box's own web app — so you see the app rendered in the VNC desktop, not a blank X screen.
+`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed Chromium _inside_ the box pointed at the box's own web app — so you land on the running app rather than an empty desktop.
 
 It's idempotent: if a browser session is already active (the agent is mid-task), `screen` leaves it untouched and never navigates the agent's page away.
 

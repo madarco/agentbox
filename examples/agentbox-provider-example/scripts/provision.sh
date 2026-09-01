@@ -321,6 +321,38 @@ rm -rf /tmp/autocutsel
 command -v autocutsel >/dev/null || { echo "provision.sh: autocutsel build failed"; exit 1; }
 done_ "X11 clipboard tools (xclip + autocutsel, built from source)"
 
+step "window manager + dock (JWM 2.4.6, built from source)"
+# JWM is not in the AL2023 repos (nor is any other lightweight WM or dock --
+# tint2, plank, wbar and cairo-dock are all absent, and the only WMs packaged
+# are the heavy GNOME ones). Building it keeps the desktop identical to the
+# apt-based providers instead of degrading here: JWM is both the window manager
+# and the bottom dock, configured by ~/.jwmrc which agentbox-vnc-start writes.
+#
+# The X headers from the clipboard step above are reused; only the few JWM
+# needs on top are added. --disable-cairo/--disable-rsvg drop SVG icon support
+# (and a GTK-shaped dependency tree) -- the icons that matter are the xterm XPM
+# and the PNGs apps publish through _NET_WM_ICON, both still supported.
+#
+# Best-effort, unlike xclip/autocutsel above: the dock is a UX layer, and
+# agentbox-vnc-start's `command -v jwm` guard already degrades to the old bare
+# desktop. A transient GitHub fetch must not fail a whole bake.
+dnf install -y -q --allowerasing \
+  libXext-devel libXinerama-devel libXpm-devel libXft-devel libpng-devel xz \
+  2>&1 | tail -3 || echo "provision.sh: JWM build deps failed (dock unavailable)"
+if curl -fsSL -o /tmp/jwm.tar.xz \
+     https://github.com/joewing/jwm/releases/download/v2.4.6/jwm-2.4.6.tar.xz; then
+  ( set -e
+    cd /tmp && tar xf jwm.tar.xz && cd jwm-2.4.6
+    ./configure --prefix=/usr/local --disable-cairo --disable-rsvg
+    make && make install
+  ) >/dev/null 2>&1 || echo "provision.sh: JWM build failed (dock unavailable)"
+else
+  echo "provision.sh: JWM download failed (dock unavailable)"
+fi
+rm -rf /tmp/jwm.tar.xz /tmp/jwm-2.4.6
+command -v jwm >/dev/null || echo "provision.sh: jwm not installed; the VNC desktop will have no window manager"
+done_ "window manager + dock (JWM 2.4.6, built from source)"
+
 step "agent CLIs (codex + opencode + agent-browser, global npm)"
 npm install -g @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
   echo "provision.sh: one or more agent npm installs failed (continuing)"

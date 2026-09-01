@@ -72,6 +72,8 @@ agentbox screen mybox
 agentbox screen mybox --print
 ```
 
+The desktop has a window manager and an icon dock along the bottom — a Terminal button, a Browser button, and one icon per open window, so you can switch between windows or open a shell without leaving the viewer.
+
 The CLI isn't the only way in — the same desktop is one click away from the `(VNC)` link in `agentbox ls`, the menu-bar app's **Open VNC**, and the hub UI's Access card, on every provider.
 
 This is distinct from `agentbox url`: `url` opens the web app, while `screen` opens the desktop. A box created with `--no-vnc` has no screen. The shared `--loopback` / `--ttl` flags are in [CLI commands](/docs/cli).
@@ -80,7 +82,7 @@ This is distinct from `agentbox url`: `url` opens the web app, while `screen` op
 
 <Figure
   src="/screenshots/novnc-desktop.png"
-  caption="noVNC view of a box's desktop, with the in-box Chromium open."
+  caption="noVNC view of a box's desktop: the in-box Chromium above the icon dock."
 />
 
 The deeper VNC and agent-browser story lives in [Browser and screen](/docs/browser-and-screen).

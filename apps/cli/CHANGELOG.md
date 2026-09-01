@@ -11,6 +11,13 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Added
+
+- **The VNC desktop has a window manager and an icon dock.** JWM now runs on
+  display `:1` with a bottom dock carrying a Terminal button, a Browser button,
+  and one icon per open window, so windows can finally be raised, moved and
+  switched. Always on with VNC; rebuild the image or re-`prepare` to get it.
+
 ### Fixed
 
 - **`agentbox git pull` works again.** It merged an unconditional `origin/HEAD`,

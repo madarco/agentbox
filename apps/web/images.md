@@ -16,7 +16,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | Image | Used by (doc figures) | Status | Phase |
 |-------|------------------------|--------|-------|
 | `web-app.png` | web-apps-and-tunnels | done (2026-06-02, wrapped in a browser chrome showing the web.localhost address bar) | A |
-| `novnc-desktop.png` | access-your-box, browser-and-screen | done (2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
+| `novnc-desktop.png` | access-your-box, browser-and-screen | **stale** — predates the JWM window manager + bottom dock; recapture so the dock is visible (last done 2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
 | `hub-dashboard.png` | hub (hero) | done (2026-07-12, headless capture of the hub at 2x zoom) | A |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
@@ -243,7 +243,12 @@ playwright-cli --session=b screenshot   # raw page -> /tmp/webapp-inner.png
 > label, the address `host`, and the inner image change.
 
 **`novnc-desktop.png`** → access-your-box, browser-and-screen. The box desktop with
-the in-box Chromium showing the box's web app.
+the in-box Chromium showing the box's web app, above the JWM icon dock.
+
+> The desktop now runs a window manager whose dock reserves the bottom 48px of the
+> 1280x800 screen, so the maximized Chromium is 1280x752 and the dock strip sits
+> below it. Re-check the crop numbers below against the actual capture — the shot
+> should include the dock, since that is half of what the figure is showing.
 
 **Capture this LAST**, on the **`web`** box, once "improve the home page" has
 finished — so the desktop shows the new landing page. `agentbox screen` both prints

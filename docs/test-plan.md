@@ -740,6 +740,11 @@ EOF`
   - **Run:** `screen smoke --print --loopback`.
   - **Signal:** URL host is `127.0.0.1:<ephemeral>`.
 
+- [ ] **SCREEN-003** the desktop has a window manager and a dock.
+  - **Providers:** [all]
+  - **Run:** `agentbox shell smoke -- bash -lc 'pgrep -x jwm && DISPLAY=:1 xprop -root _NET_WORKAREA'` (xprop is not in the image; `pgrep` alone is the machine-checkable half).
+  - **Signal:** `jwm` has a pid, and `_NET_WORKAREA` is `0, 0, 1280, 752` — the 48px dock strut is reserved, which only happens if JWM parsed the generated `~/.jwmrc`. On a provider whose base image predates JWM this degrades silently (no pid), so the check doubles as a "was this box baked after the dock landed" probe.
+
 ---
 
 ### agentbox self-update
