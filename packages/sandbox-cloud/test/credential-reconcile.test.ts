@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeRecordingTransport } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, makeRecordingTransport } from '@agentbox/sandbox-core';
 import { reconcileAgentCredentialsViaTransport } from '../src/index.js';
 
 const claudeBlob = (expiresAt: number, refresh = 'r') =>
@@ -12,17 +12,27 @@ const CLAUDE_BOX_PATH = '/home/vscode/.claude/.credentials.json';
 
 describe('reconcileAgentCredentialsViaTransport', () => {
   let dir: string;
-  // The concrete files this fixture creates — not an agent-id type. Keeping the
-  // keys literal is what lets `backups.claude` stay a plain `string`.
-  let backups: { claude: string; codex: string; opencode: string };
+  // The three this fixture ASSERTS on stay declared `string` so they need no
+  // `!`; every other registered agent is filled in from the registry below,
+  // purely so none of them can fall through to the real home.
+  let backups: Record<string, string> & { claude: string; codex: string; opencode: string };
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'reconcile-'));
+    // EVERY registered agent gets a temp backup path, not just the three this
+    // fixture asserts on. `reconcileAgentCredentialsViaTransport` walks the
+    // whole registry, so an agent missing from this map falls back to the real
+    // `~/.agentbox/<id>-credentials.json` and the test starts depending on the
+    // developer's actual logins — which is exactly how it broke: a real
+    // `pi-credentials.json` on the host produced an extra `pushFile`.
     backups = {
       claude: join(dir, 'claude-credentials.json'),
       codex: join(dir, 'codex-credentials.json'),
       opencode: join(dir, 'opencode-credentials.json'),
     };
+    for (const spec of AGENT_SYNC_SPECS) {
+      backups[spec.id] ??= join(dir, `${spec.id}-credentials.json`);
+    }
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });

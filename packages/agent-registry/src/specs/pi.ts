@@ -119,21 +119,18 @@ export const piSpec: AgentSyncSpec = {
   // host's per-cwd session tree would mix `/workspace` sessions into the
   // project's history.
   pull: {
+    // Leaf FILES only. A directory whose children are the unit belongs in
+    // `categories`, not here: the pull is additive and skips anything the host
+    // already has, so listing `skills` flat would make every box-created skill
+    // unpullable the moment the host had a `skills/` dir of its own.
     items: [
       {
         group: 'data',
-        names: [
-          'auth.json',
-          'settings.json',
-          'AGENTS.md',
-          'SYSTEM.md',
-          'APPEND_SYSTEM.md',
-          'extensions',
-          'skills',
-          'prompts',
-          'themes',
-        ],
+        names: ['auth.json', 'settings.json', 'AGENTS.md', 'SYSTEM.md', 'APPEND_SYSTEM.md'],
       },
     ],
+    // Directories of independent, individually-addable items — the same shape
+    // as claude's skills/agents/commands.
+    categories: ['extensions', 'skills', 'prompts', 'themes'],
   },
 };

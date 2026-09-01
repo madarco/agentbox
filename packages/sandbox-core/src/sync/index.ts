@@ -41,6 +41,7 @@ export {
   pullClaudeExtrasViaTransport,
   pullFlatConfigViaTransport,
   flatInventoryScript,
+  categoryInventoryScript,
   parseFlatInventory,
   CLAUDE_PULL_DIR_CATEGORIES,
   CODEX_PULL_ITEMS,

@@ -341,6 +341,33 @@ export function flatInventoryScript(
   return parts.join(' ');
 }
 
+/**
+ * Inventory the CHILDREN of each declared category dir.
+ *
+ * `AgentPullSpec.categories` names directories whose children are the unit
+ * (Pi's `skills`/`extensions`/`prompts`/`themes`, claude's
+ * `skills`/`agents`/`commands`). Listing the category itself as a flat item is
+ * WRONG for these: the pull is additive and skips anything the host already
+ * has, so one pre-existing `skills/` dir on the host would make every
+ * box-created skill permanently unpullable.
+ *
+ * Emits the same `<group> <KIND> <name>` lines `flatInventoryScript` does, with
+ * the category as the group and the child's basename as the name.
+ */
+export function categoryInventoryScript(categories: Record<string, { dir: string }>): string {
+  const parts: string[] = [];
+  for (const [group, { dir }] of Object.entries(categories)) {
+    parts.push(
+      `if [ -d "${dir}" ]; then for f in "${dir}"/*; do` +
+        ` [ -e "$f" ] || continue; n=$(basename "$f");` +
+        ` if [ -d "$f" ]; then echo "${group} DIR $n"; else echo "${group} FILE $n"; fi;` +
+        ` done; fi;`,
+    );
+  }
+  parts.push('true');
+  return parts.join(' ');
+}
+
 export interface FlatInventoryEntry {
   group: string;
   kind: 'file' | 'dir';
@@ -435,9 +462,32 @@ export async function pullFlatConfigViaTransport(
     roots[item.group] = root;
     groups[item.group] = { dir: root.boxDir, items: item.names };
   }
-  if (Object.keys(groups).length === 0) return { newItems: [] };
+  // Categories hang off the DEFAULT root and are addressed as `<cat>/<child>`.
+  // An agent that declares none is completely unaffected by this block.
+  const categories: Record<string, { dir: string }> = {};
+  const defaultRoot = pullRootFor(spec, spec.pull?.items?.[0]?.group ?? 'data', hostHome);
+  for (const cat of spec.pull?.categories ?? []) {
+    if (!defaultRoot) break;
+    roots[cat] = {
+      boxDir: `${defaultRoot.boxDir}/${cat}`,
+      hostDir: join(defaultRoot.hostDir, cat),
+    };
+    categories[cat] = { dir: `${defaultRoot.boxDir}/${cat}` };
+  }
 
-  const inv = await t.exec(['sh', '-c', flatInventoryScript(groups)]);
+  if (Object.keys(groups).length === 0 && Object.keys(categories).length === 0) {
+    return { newItems: [] };
+  }
+
+  const script = [
+    Object.keys(groups).length > 0 ? flatInventoryScript(groups) : '',
+    Object.keys(categories).length > 0 ? categoryInventoryScript(categories) : '',
+  ]
+    .filter((p) => p.length > 0)
+    // `; ` and not ' ': each builder ends with a bare `true`, so a plain space
+    // splices it onto the next segment's `if` and sh dies on "then unexpected".
+    .join('; ');
+  const inv = await t.exec(['sh', '-c', script]);
   if (inv.exitCode !== 0) {
     throw new Error(
       `failed to inventory ${spec.id} config in the box: ${inv.stderr.trim() || `exit ${String(inv.exitCode)}`}`,
@@ -449,14 +499,26 @@ export async function pullFlatConfigViaTransport(
   const defaultGroup = spec.pull?.items?.[0]?.group;
   const pending: Array<{ entry: FlatInventoryEntry; label: string; box: string; host: string }> =
     [];
+  // Agentbox-OWNED files never travel to the host. `seeds` already declares
+  // them (`destRel`, relative to the same root the pull walks), so this needs
+  // no new field and no naming convention: Pi's activity extension is seeded
+  // into `extensions/agentbox-state.js` and would otherwise be offered back as
+  // if the user had written it, installing our extension into their real Pi.
+  const seeded = new Set((spec.seeds ?? []).map((s) => s.destRel));
+
   for (const entry of parseFlatInventory(inv.stdout)) {
     const root = roots[entry.group];
     if (!root) continue;
+    const rel = entry.group in categories ? `${entry.group}/${entry.name}` : entry.name;
+    if (seeded.has(rel)) continue;
     const host = join(root.hostDir, entry.name);
     if (await pathExists(host)) continue; // additive
     pending.push({
       entry,
-      label: entry.group === defaultGroup ? entry.name : `${entry.group}/${entry.name}`,
+      label:
+        entry.group === defaultGroup && !(entry.group in categories)
+          ? entry.name
+          : `${entry.group}/${entry.name}`,
       box: `${root.boxDir}/${entry.name}`,
       host,
     });

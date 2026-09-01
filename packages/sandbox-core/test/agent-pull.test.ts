@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  categoryInventoryScript,
   claudeInventoryScript,
   computeClaudePullPlan,
   flatInventoryScript,
@@ -11,6 +12,7 @@ import {
   parseFlatInventory,
   pullClaudeExtrasViaTransport,
   pullFlatConfigViaTransport,
+  resolveAgentSpec,
   type RecordingSyncTransport,
 } from '../src/index.js';
 
@@ -262,12 +264,35 @@ describe('the pull default covers an agent with only a registry row', () => {
     }
   });
 
-  it('is a no-op for an agent that declares no pull items', async () => {
+  it('inventories declared CATEGORIES even for an agent with no flat items', async () => {
+    // Claude declares `categories` and no `items`. This used to assert the
+    // default did nothing at all for it; the default now covers the category
+    // shape too, which is what lets an agent whose config is directories of
+    // independent items (pi's skills/extensions/prompts/themes) get a working
+    // `download` from data alone.
+    //
+    // Production is unaffected either way: claude registers its own
+    // `AgentPullModule` (category children PLUS a JSON registry merge and a
+    // container->host path rewrite), so `agentPull('claude', …)` never reaches
+    // this function. The call here is direct.
     const t = makeRecordingTransport({
       execResult: () => ({ exitCode: 0, stdout: '', stderr: '' }),
     });
-    // Never runs an inventory at all — nothing to ask about.
     expect(await pullFlatConfigViaTransport('claude', t, {})).toEqual({ newItems: [] });
-    expect(t.ops.filter((o) => o.op === 'exec')).toHaveLength(0);
+    const execs = t.ops.filter((o) => o.op === 'exec');
+    expect(execs).toHaveLength(1);
+    // Exactly the declared categories, and nothing that looks like a flat list.
+    const script = JSON.stringify(execs[0]);
+    for (const cat of resolveAgentSpec('claude').pull?.categories ?? []) {
+      expect(script).toContain(`/${cat}`);
+    }
+  });
+
+  it('runs no inventory when the agent declares neither items nor categories', async () => {
+    // The early return is the guard against a pointless `exec` round-trip into
+    // the box. No built-in has an empty `pull`, so this drives the condition
+    // through the script builders it gates: both empty means no script.
+    expect(flatInventoryScript({})).toBe('true');
+    expect(categoryInventoryScript({})).toBe('true');
   });
 });
