@@ -88,14 +88,73 @@ apt-get install -y -q --no-install-recommends \
   autocutsel
 done_ "apt base packages"
 
-step "node sanity"
-# E2B base ships node 20; just confirm it's on PATH.
+step "node >= 22"
+# E2B's `e2bdev/base` ships node 20, which is OLDER than every other provider's
+# base (docker/hetzner/digitalocean all install nodesource setup_24.x, vercel's
+# AL2023 image carries node 24). That gap is not cosmetic: an agent whose
+# package declares `engines: node >= 22` still `npm install -g`s cleanly on
+# node 20 -- npm only WARNS on an engines mismatch -- and then dies at launch.
+# Pi is the first agent to hit it: it uses `fs.globSync` (node 22+), so the box
+# came up "ready" with the binary on PATH and the tmux session exited instantly
+# with `SyntaxError: ... does not provide an export named 'globSync'`.
+#
+# So bring E2B in line with the others rather than teaching each agent to cope:
+# the box's node is a property of the BASE, and a per-agent workaround would
+# have to be repeated by every future agent (and by community ones, which
+# cannot patch this script at all).
 if ! command -v node >/dev/null 2>&1; then
   echo "build-template.sh: node not found on the E2B base template — unexpected" >&2
   exit 65
 fi
+NODE_MAJOR_NOW="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+echo "base node: $(node --version 2>/dev/null || echo none) (major ${NODE_MAJOR_NOW})"
+if [ "${NODE_MAJOR_NOW}" -lt 22 ]; then
+  # Replace node IN PLACE under /usr/local, the same way e2bdev/base installed
+  # it -- do NOT layer nodesource on top. The base ships node as a standalone
+  # binary at /usr/local/bin/node with npm at /usr/local/lib/node_modules, and
+  # /usr/local/bin precedes /usr/bin on PATH: `apt-get install nodejs` puts
+  # node 24 at /usr/bin/node, `node` still resolves to the old v20, and the
+  # bake fails its own check having "succeeded" at installing. (Measured: the
+  # first attempt did exactly that.) Extracting the official tarball over
+  # /usr/local keeps ONE installation and one npm prefix, so the globals this
+  # script installs later (playwright, corepack shims) still resolve.
+  case "$(uname -m)" in
+    x86_64) NODE_ARCH=x64 ;;
+    aarch64 | arm64) NODE_ARCH=arm64 ;;
+    *) echo "build-template.sh: unsupported arch $(uname -m) for node upgrade" >&2; exit 65 ;;
+  esac
+  NODE_TARBALL="$(curl -fsSL https://nodejs.org/dist/latest-v24.x/ \
+    | grep -oE "node-v24\.[0-9.]+-linux-${NODE_ARCH}\.tar\.gz" | head -1)"
+  if [ -z "${NODE_TARBALL}" ]; then
+    echo "build-template.sh: could not resolve a node 24 tarball for ${NODE_ARCH}" >&2
+    exit 65
+  fi
+  echo "upgrading node ${NODE_MAJOR_NOW} -> ${NODE_TARBALL}"
+  # Delete the OLD npm/corepack trees first. `tar -C /usr/local` overwrites the
+  # files it carries but never removes ones only the old version had, so
+  # extracting on top merges two npm releases into one directory and the result
+  # dies with `Class extends value undefined is not a constructor or null` on
+  # the next `npm install -g` -- which is how this failed the second time:
+  # node itself was fine (v24.20.0) and every later npm step broke.
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/include/node
+  curl -fsSL "https://nodejs.org/dist/latest-v24.x/${NODE_TARBALL}" \
+    | tar -xz -C /usr/local --strip-components=1 --no-same-owner
+  hash -r
+  # Prove the pairing before anything depends on it.
+  npm --version >/dev/null 2>&1 || {
+    echo "build-template.sh: npm is broken after the node upgrade" >&2
+    exit 65
+  }
+fi
 node --version
-done_ "node sanity"
+# Fail the BAKE rather than ship a template whose agents crash at launch.
+NODE_MAJOR_NOW="$(node -p 'process.versions.node.split(".")[0]')"
+if [ "${NODE_MAJOR_NOW}" -lt 22 ]; then
+  echo "build-template.sh: node ${NODE_MAJOR_NOW} is below the required 22" >&2
+  exit 65
+fi
+done_ "node >= 22"
 
 step "vscode user + sudoers"
 # Don't force a uid: the E2B base template's `code` group/user holds 1000,

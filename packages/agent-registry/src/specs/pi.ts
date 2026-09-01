@@ -30,6 +30,22 @@ export const piSpec: AgentSyncSpec = {
     recipe: { kind: 'npm', package: '@earendil-works/pi-coding-agent' },
     runAs: 'root',
     postInstall: [
+      // Fail the INSTALL, not the launch, on too old a Node.
+      //
+      // Pi's package declares `engines: node >= 22.19.0` and uses `fs.globSync`
+      // (node 22+), but `npm install -g` only WARNS on an engines mismatch. So
+      // on a node-20 box the install "succeeds", `command -v pi` passes, the
+      // box reports ready, and the tmux session dies instantly with
+      // `SyntaxError: ... does not provide an export named 'globSync'` -- which
+      // surfaces as "agent exited immediately after launch" with no cause.
+      // Cost a full e2b create to diagnose; every provider's base is node 24
+      // except E2B's, whose upstream `e2bdev/base` ships node 20.
+      //
+      // A community provider can hit this too and cannot patch our bake
+      // scripts, so the check belongs on the agent that has the requirement.
+      'if [ "$(node -p \'process.versions.node.split(".")[0]\' 2>/dev/null || echo 0)" -lt 22 ]; then ' +
+        'echo "agentbox: pi needs Node >= 22.19, but this box has $(node --version 2>/dev/null || echo none). ' +
+        'Re-bake this provider\'s base (agentbox prepare --provider <name>) to get a newer Node." >&2; exit 65; fi',
       // BOTH dirs, not just the leaf: GNU `install -d -o u -g g a/b` applies the
       // ownership to the FINAL component only, so passing the nested path alone
       // leaves `~/.pi` root-owned and the later static-config stage (which runs
