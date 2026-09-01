@@ -11,6 +11,27 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex boxes no longer receive your host's Codex databases.** Codex writes six
+  SQLite databases under `~/.codex`; the exclude list named two families, so
+  `goals_*`, `memories_*` and `queue_*` — nine files with their `-wal`/`-shm` —
+  were copied live into every box, carrying cross-project thread goals and
+  extracted memories. Every agent's push now denies live database files
+  generically rather than by name.
+- Each agent's excludes were maintained in two places that had drifted: codex
+  boxes were also getting host-identity files (`installation_id`, `version.json`)
+  and opencode boxes a `snapshot/` dir, none of which the cloud path shipped.
+  Both transports now render one list.
+- `agentbox download <agent>` preserves `auth.json`'s `0600` on docker boxes; the
+  docker path used a `cp -a` that dropped it.
+- Credential fan-out ordering is per-agent data instead of Claude's OAuth JSON
+  hardcoded behind generic-looking names, so an agent with its own expiry field
+  is no longer silently downgraded to last-writer-wins.
+- Config volumes, cleanup and `agentbox prune` handle an agent outside the
+  built-in three; they previously fell back to OpenCode's volume, and
+  `box.isolate<Agent>Config` now works for every agent rather than three.
+
 ### Changed
 
 - **`box.claudeInstall` and `box.claudeTui` are now `claude.install` and

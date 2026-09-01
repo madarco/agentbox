@@ -54,23 +54,65 @@ smaller than the ~320 sites suggested:
 Cost paid: `SDK_API_VERSION` 3 → 4 (clean break), and one re-`prepare` per
 provider, since removing the ARG line moves the build-context sha.
 
-## 2. Claude's four files in the shared packages (4 allowlist entries) — blocked
+## 2. Claude's four files in the shared packages (4 allowlist entries)
 
 `sandbox-core/src/sync/agent-pull.ts`, `sandbox-core/src/sync/agents/claude/paths.ts`,
 `sandbox-core/src/claude-app-config.ts`, `sandbox-docker/src/sync/claude-credentials.ts`.
 
-`agent-pull.ts` is unblocked — 17 exports, just large, and it is the same work as
-agents.md backlog item 1 (collapse the three pull strategies). Do them together.
+**The blocker this used to name is gone, and it was never real.** The note said
+"one decision first: does the hub load agent modules? Today it loads none." It
+does — `apps/hub/server.ts` calls `registerAllAgentModules()` and
+`registerInstalledAgentModules()`, added 2026-08-31, one day before that
+sentence was written. The hub is a single process (Next runs in-process, routes
+reach the backend through `globalThis`), so one registration covers create, the
+worker and every route. It was added for exactly the failure the note feared:
+"without it a hub-driven create dies on `requireAgentSyncModule`".
 
-The other three need **one decision first: does the hub load agent modules?**
-Today it loads none. `sandbox-core/src/ssh-config.ts` calls
-`pruneOrphanClaudeSshConfigs` directly so that the hub and dashboard paths prune
-Claude desktop's stale `sshConfigs` too; the hub reaches it through
-`syncAgentboxSshConfig` / `autoWriteSshConfig` (`apps/hub/lib/hub-backend.ts`).
-Invert that onto a registration seam and the hook is simply never registered in
-the hub — the prune stops, silently, with every test green. That is the failure
-mode this whole refactor exists to prevent, so the seam is not the answer until
-the hub either loads agent modules or the prune moves behind an API the hub calls.
+The second stated blocker is also stale: the allowlist comment claims
+`host-stage.ts` imports two of these and its exports are published SDK surface.
+`host-stage.ts` imports none of them, and the SDK exports none of these symbols
+— it never imports `@agentbox/sandbox-docker` at all.
+
+**The real risk is different, and it has a known answer.** A registration seam is
+silently absent when unregistered: if claude's module stopped registering the
+ssh-config prune, it would stop with every test green. That is a property of
+seams, not of the hub — and the codebase already has both answers.
+`requireAgentSyncModule` throws by design ("an unpopulated registry otherwise
+reads as 'this box has no agents', which is a silent wrong answer"), and
+`agent-module-table.test.ts` asserts a teleport resolver exists **iff**
+`caps.teleport === 'full'`. Declare the capability, assert it in a coverage test,
+and absence becomes a test failure.
+
+**What actually blocks each file now:**
+
+- `agent-pull.ts` — unblocked and partly done: the pull is one implementation
+  plus a per-agent hook (see agents.md backlog 1). What remains is moving
+  claude's ~240-line half into `packages/agent-claude`.
+- `agents/claude/paths.ts` — the one REAL structural constraint.
+  `sync/concerns/dynamic.ts` needs it and lives in `sandbox-core`, while
+  `agent-claude` sits above (it depends on `sandbox-docker`). Fixing it means
+  inverting dynamic-sync onto declared data, which is worth doing anyway: that
+  concern is fully claude-coupled today (`BOX_WORKFLOWS_DIR` is
+  `/home/vscode/.claude/workflows`, `DynamicSyncSetName` is a closed
+  `'workflows' | 'memory'`) with **zero agent-named exports**, so the guard
+  cannot see it.
+- `claude-app-config.ts` — arguably misfiled as an exemption. It writes the
+  Claude **desktop app's** `~/.claude/settings.json` for `agentbox open --in
+  claude`, beside cmux/herdr/iTerm2/Finder — and its exact codex counterpart,
+  `codexAddUrl`, is already a NOT_APPLICABLE *exclusion* reasoned as "the DESKTOP
+  APP … renaming it would be wrong". The counter-argument is that the same file
+  is claude-the-agent's real settings. One call makes it a move rather than a
+  reclassification: `ssh-config.ts`'s prune.
+- `claude-credentials.ts` — the most friction and the least urgency. `SYNC_SCRIPT`
+  hardcodes claude's OAuth JSON, a test string-rewrites it, and
+  `docker-sync.test.ts` mocks it by file path. agents.md §3 already warns this is
+  where credential bugs ship.
+
+**The guard undercounts.** It is a name check, so three more fully
+claude-coupled files pass it: `sync/concerns/dynamic.ts`,
+`sync/concerns/credentials.ts` (fixed — see agents.md backlog 8) and
+`sync/claude-pull.ts` (199 lines, claude paths and categories, a filename that
+says claude and not one export that does).
 
 ## 3. The stager bodies stay in `sandbox-core` — deliberate
 

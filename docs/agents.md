@@ -159,6 +159,54 @@ correct on docker.
 
 ---
 
+## Moving an agent's files: one implementation, two directions
+
+**Push** (host -> box) and **pull** (box -> host) each used to have two
+implementations per agent — a `SyncTransport` one for cloud and a hand-rolled
+`docker run -v` one for docker — and they had drifted in both directions.
+
+`SyncTransport` has two docker modes now, sharing one body:
+
+| mode | reaches the box by | used for |
+|---|---|---|
+| container | `docker exec` / `docker cp` | a running box |
+| volume | a throwaway helper with the config volume mounted **at its box path** | a stopped box (the pull) |
+
+Mounting at the box path is the load-bearing detail: a caller passes
+box-absolute paths and neither mode rewrites them, which is what lets one body
+serve both. Take the path from the registry (`staticPaths[0].boxDir`), never a
+literal.
+
+Two things the modes must differ on, both found by round-tripping a real volume
+rather than by reading:
+
+- **Who extracts.** A helper container's volume dirs are root-owned, so a
+  `--user 1000` tar extract fails outright. Volume mode extracts as root and
+  chowns after, exactly as the hand-rolled containers did.
+- **AppleDouble sidecars.** macOS `tar` writes a `._name` file per entry unless
+  `COPYFILE_DISABLE=1` is set; they land in the box as garbage and made a
+  one-entry push fail.
+
+### Excludes are one list per agent
+
+`agentPushExcludes(spec, path, target)` renders both transports' `--exclude`
+flags from `staticPaths[].exclude`. Two entries are DERIVED, and that is what
+makes a single list safe for both:
+
+- **The credential file**, from `credential.boxRelPath`. Out of a `'snapshot'`
+  (shared by every box made from it); INTO a `'volume'`, which is that box's own
+  login store. All three agents listed it and all three meant the same thing.
+- **`LIVE_DATABASE_EXCLUDES`** (`*.sqlite*`, `*.db`, `*.db-*`), for every agent,
+  with an `allowDatabases` opt-out nothing declares. Hand-enumerating these is
+  what went stale: codex's list named `state_*` and `logs_*`, and three later
+  databases shipped live into every box.
+
+Claude's docker volume is deliberately NOT converged on its spec list: those
+excludes are snapshot hygiene and include ~20 entries the volume wants,
+`.credentials.json` above all. It gets the database deny only.
+
+---
+
 ## One agent per box
 
 `agentbox claude` produces a box containing **claude and nothing else** — its
@@ -178,6 +226,27 @@ un-migrated caller keeps working.
 
 The shared `~/.agents` skills volume is still mounted for every box: it is
 agent-neutral and carries no auth.
+
+### Which volume is whose
+
+`BoxRecord.agentConfigVolumes` is a map keyed by agent id, read through
+`agentConfigVolume(box, agent)` — which falls back to the three legacy
+`<agent>ConfigVolume` fields for a box recorded before the map, and returns
+`undefined` for an agent the box has none for.
+
+Everything goes through that accessor: the propagate/credential fan-out targets,
+`destroy`'s volume cleanup and `prune`'s keep-set. They were five hardcoded
+tables whose `default:` arm returned **opencode's** volume, so a fourth or plugin
+agent's credentials fanned into opencode's store — and `create` had the right map
+all along, then narrowed it to three consts and discarded the rest.
+
+`isolateFor` reads a generic `agentConfig` create option, so
+`box.isolate<Agent>Config` — generated for every agent in `AGENT_KINDS` and inert
+until now — actually works. `prune` had to move in the same change: an isolated
+volume missing from its keep-set is deleted as an orphan while the box is alive.
+
+`agentsConfigVolume` is not in the map — it is the shared `~/.agents` skills
+volume, not an agent's.
 
 ---
 
@@ -541,15 +610,34 @@ forgotten silently.
 opencode's `update: true` state root must never be pulled at all — newest-wins is
 the opposite of pull's additive rule. The test pins that exclusion.
 
-**Still open:** the three `download-<agent>.ts` commands remain separate
-(~120 lines each), and `pullClaudeExtrasViaTransport` /
-`pullCodexConfigViaTransport` / `pullOpencodeConfigViaTransport` are still three
-functions rather than one driven by the strategy in the spec. Codex and opencode
-are the same function differing only in group/root/items; claude is a genuinely
-different shape (category children + a JSON registry merge with a path rewrite),
-so collapsing them needs the two strategies implemented, not just declared.
-The docker-side pull also hand-rolls its own inventory shell, so it can still
-drift from the transport path even though both now share the item lists.
+Also fixed: the pull is now **one implementation and a per-agent hook**.
+`pullFlatConfigViaTransport` is the DEFAULT — it derives box dir, host dir and
+items from `AgentPullSpec` plus the group rule that field already documented, so
+an agent declaring a row gets a working `download` with no code (pinned against
+the `example` canary). The codex and opencode functions were that body twice,
+differing only in that mapping. Claude registers an `AgentPullModule` because its
+pull genuinely differs — category children plus a JSON registry merge with a
+container->host path rewrite.
+
+The docker-side duplicate is gone too. It existed because the pull must work
+against a STOPPED box and `SyncTransport` needed a running container;
+`createDockerVolumeSyncTransport` mounts the config volume at its box path, so
+box-absolute paths resolve identically and `download-<agent>.ts` has no
+`box.provider` branch left. Two bugs fell out of the collapse: codex and opencode
+each had their own inventory shell dialect, and codex's `cp -a` dropped the
+`chmod 0600` the shared path applies to `auth.json`.
+
+**Deliberately not collapsed further.** An agent's state is not always a file
+tree — codex keeps five SQLite databases and opencode one, and a database cannot
+be copied: the data lives in the write-ahead log, so the main file alone is stale
+(measured: codex's `state_5.sqlite` was 4 KB against a 1.79 MB `-wal`, and a
+byte-copy of it reports "no such table"). That is why the pull is a hook with a
+default rather than one generic function. `pullSqliteSnapshot` is the supported
+way to pull a database — SQLite's online-backup API through the box's `python3`
+or Node 24's `node:sqlite`, both already in the image, so it needs no re-bake.
+
+**Still open:** the three `download-<agent>.ts` commands remain separate files
+(~90 lines each) rather than one registry-driven command.
 
 ### 2. ctl carried a second copy of the credential paths, frozen at bake — **done**
 
@@ -809,6 +897,41 @@ seed, then launch") was re-derived at each call site. It is now stated once, on
 `startDetachedCloudAgent` after its own `provider.start` — so the control box's
 create worker gets it too, not just the CLI.
 
+
+### 8. The credential rule was claude's JSON inlined behind role names — **done**
+
+`shouldAcceptCredentialUpdate` dispatched on data but its branch hardcoded
+`claudeAiOauth.expiresAt`, and `oauthExpiresAt` / `oauthRefreshExpiresAt` were
+role-NAMED with no dispatch at all — invisible to the naming guard. Any agent
+that is not claude got `null` and fell through to last-writer-wins, which for a
+ROTATING refresh token accepts a dead blob: the refresh rotates the token, so an
+older copy logs out every box holding the newer one.
+
+`credential.freshness.jsonPath` carries the rule now. Claude declares
+`['claudeAiOauth','expiresAt']`; an agent declaring nothing keeps
+last-writer-wins.
+
+**Data, not a module hook — and the reason is not the hub.** `agentbox-relay` is
+a separately spawned process bundled from `@agentbox/relay` alone (deps: config,
+core, sandbox-core) and never calls `registerAllAgentModules()`, yet it is what
+runs `CredentialsFanout`. A hook there would have silently reintroduced the very
+bug being fixed. The relay already reads the registry synchronously.
+
+Two things deliberately unchanged, both load-bearing:
+
+- **`freshness` stays off the `agents.list` descriptor.** ctl never orders blobs
+  — it shape-validates and posts — so this is host-side in the same category as
+  `hostBackup`, which the descriptor already strips.
+- **`realShape` stays a frozen two-value union.** Widening it is the one change
+  that is NOT safe: ctl drops a watch whose shape it does not recognise
+  (`agent-registry.ts`), and an empty list makes it fall back to the list baked
+  into its image — which a plugin agent can never be in, so the result is no
+  credential watch at all. `agentbox agent add` now refuses an unknown
+  `realShape` for exactly that reason, where there is a person to tell.
+
+The docker sync script is the rule's second implementation, in `jq`, in a
+container that has only `jq`. Its path is rendered from the same spec entry and
+pinned by a drift test in both directions.
 
 ### 7. Activity status was five named fields, and OpenCode's was dropped — **done**
 

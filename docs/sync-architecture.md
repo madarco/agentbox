@@ -103,8 +103,24 @@ scaffolding). Sync-relevant members are **optional** and feature-detected:
 
 ### `SyncTransport` — the byte-mover
 `core/src/sync/transport.ts`. The single mechanism seam a concern drives for
-host↔box moves. Implementations: `DockerSyncTransport` (docker CLI),
-`CloudSyncTransport` (wraps any `CloudBackend`), `RecordingSyncTransport` (tests).
+host↔box moves. Implementations: `DockerSyncTransport` (docker CLI, in two
+modes — see below), `CloudSyncTransport` (wraps any `CloudBackend`),
+`RecordingSyncTransport` (tests).
+
+**Docker has two modes over one body.** Container mode reaches a RUNNING box with
+`docker exec`/`docker cp`. Volume mode runs a throwaway helper with a config
+volume bind-mounted **at its box path**, so the box need not exist — which is
+what `agentbox download <agent>` needs, and why each agent used to hand-roll its
+own `docker run -v` block instead of using the transport at all. Mounting at the
+box path is the load-bearing part: a caller passes box-absolute paths and neither
+mode rewrites them, so one implementation serves both. Take that path from the
+registry (`staticPaths[0].boxDir`), never a literal.
+
+The two differ in exactly two places, both learned by round-tripping a real
+volume: volume mode extracts tar as ROOT and chowns after (a helper's volume dirs
+are root-owned, so a `--user 1000` extract fails), and host-side tar packs set
+`COPYFILE_DISABLE=1` or macOS ships an AppleDouble `._` sidecar per entry into
+the box.
 
 ```
 caps: TransportCaps
