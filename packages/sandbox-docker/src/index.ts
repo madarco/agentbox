@@ -350,6 +350,7 @@ export {
 } from './ssh.js';
 export {
   browserSessionActive,
+  desktopOpenCommand,
   ensureBoxBrowser,
   ensureBoxBrowserShowingApp,
   type BoxBrowserAppResult,

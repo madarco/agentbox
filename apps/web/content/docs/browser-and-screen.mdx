@@ -48,6 +48,8 @@ agentbox screen mybox
 
 The desktop has a window manager, the AgentBox wallpaper, and a small **icon dock** along the bottom: a Terminal button, a Browser button, and one icon per open window. Click an icon to raise that window, drag titlebars to move them, `Alt+Tab` to cycle. Nothing to enable — it's part of the desktop whenever VNC is on. The Browser button opens a browser of your own, separate from the agent's, so clicking it never navigates the page the agent is working on.
 
+Starting a browser is not instant — the first one in a box downloads its Chromium — so a launch puts a small **progress window** on the desktop (and an entry in the dock) that counts the seconds and closes itself once the browser is up. A launch that fails leaves that window open with the error in it. The same window appears when `agentbox screen` or the hub opens a box's browser for you, so an empty desktop always tells you whether something is on its way.
+
 `screen` is distinct from [`agentbox url`](/docs/web-apps-and-tunnels): `url` opens the box's web _app_; `screen` opens the _desktop_ viewer. See [CLI commands](/docs/cli) for all flags (`--print`, `--loopback`, `--ttl`).
 
 Opt out at create time with `--no-vnc`:
@@ -71,12 +73,11 @@ agentbox create --no-vnc
 This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL. The desktop is reachable from every surface — the `(VNC)` link in `agentbox ls`, the tray's **Open VNC**, and the hub UI — not just `agentbox screen`.
 
 <Callout type="info">
-  On daytona, vercel and e2b the viewer URL is **minted per click** rather than
-  stored: those providers' signed preview URLs expire (an hour by default), so a
-  URL printed into a box listing would be dead by the time you clicked it. The
-  hub mints a fresh one on demand (`GET /api/v1/boxes/{id}/vnc`), which is why
-  the box payload's `vncUrl` is `null` for them while `vncEnabled` is `true`.
-  Docker and hetzner boxes have a stable Portless URL and carry it directly.
+  On daytona, vercel and e2b the viewer URL is **minted per click** rather than stored: those
+  providers' signed preview URLs expire (an hour by default), so a URL printed into a box listing
+  would be dead by the time you clicked it. The hub mints a fresh one on demand (`GET /api/v1/boxes/
+  {id}/vnc`), which is why the box payload's `vncUrl` is `null` for them while `vncEnabled` is
+  `true`. Docker and hetzner boxes have a stable Portless URL and carry it directly.
 </Callout>
 
 ## Screen sharing

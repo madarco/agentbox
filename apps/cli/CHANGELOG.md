@@ -17,8 +17,15 @@ CLI, not the raw commits.
   display `:1` with a bottom dock carrying a Terminal button, a Browser button,
   and one icon per open window, so windows can finally be raised, moved and
   switched. Always on with VNC; rebuild the image or re-`prepare` to get it.
+- **Starting a browser shows its progress on the desktop.** A launch now opens a
+  progress window (and a dock entry) that closes itself when the browser is up,
+  instead of leaving an empty desktop while the first launch fetches Chromium.
 
 ### Fixed
+
+- **A comment could hang the whole VNC desktop.** The generated `~/.jwmrc` is
+  written from an unquoted heredoc, so backticks in its comments ran as
+  commands; a blocking one left the box with no window manager and no noVNC.
 
 - **`agentbox git pull` works again.** It merged an unconditional `origin/HEAD`,
   a ref `git clone` writes and a bind-mounted worktree therefore never has, so

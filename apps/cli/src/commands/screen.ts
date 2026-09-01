@@ -53,8 +53,8 @@ async function dockerBrowserPrep(box: BoxRecord): Promise<void> {
   if (br.up && !br.alreadyRunning) {
     log.info(
       br.target !== 'about:blank'
-        ? `opened ${br.target} in the in-box browser (visible in the VNC view)`
-        : 'started in-box browser',
+        ? `opening ${br.target} in the in-box browser (the VNC view shows its progress)`
+        : 'starting the in-box browser (the VNC view shows its progress)',
     );
   } else if (br.alreadyRunning) {
     log.info('in-box browser already running; left it untouched');

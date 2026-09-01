@@ -32,6 +32,10 @@ export function browserSessionActive(stdout: string, exitCode: number): boolean 
  *
  * Best-effort, mirroring {@link import('./vnc.js').launchVncDaemon} — the
  * caller warns on failure but never aborts (the noVNC client still connects).
+ * On the launcher path (see {@link desktopOpenCommand}) `up` means the launch
+ * is under way, not that a page is on screen yet: the browser appears on the
+ * desktop behind the launcher's own progress window, which is also where a
+ * failed launch reports itself.
  * `DISPLAY=:1` + `AGENT_BROWSER_EXECUTABLE_PATH` are image-baked env so the
  * exec inherits them; runs as `vscode` like the other in-box launches.
  *
@@ -40,6 +44,42 @@ export function browserSessionActive(stdout: string, exitCode: number): boolean 
  * `AGENT_BROWSER_ARGS` env (set at create, see `portlessBrowserEnv`) carries
  * the `--host-resolver-rules` that makes that work.
  */
+/** Local helper — sandbox-cloud's `quoteShellArg` would be a cross-package import. */
+function shellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Path of the in-box browser launcher that `agentbox-vnc-start` writes on every
+ * VNC start (it wraps `agent-browser open` in an xterm progress window, which
+ * doubles as the desktop dock's loading indicator while the first launch
+ * downloads Chromium). `$HOME` is expanded in the box: the box user's home
+ * differs per base image.
+ */
+const DESKTOP_LAUNCHER = '"$HOME/.local/share/agentbox/desktop/open-browser"';
+
+/**
+ * The shell command that opens the box's browser at `target`, preferring the
+ * desktop launcher.
+ *
+ * The launcher branch is backgrounded on purpose: it lives as long as the
+ * launch does (its progress window is the whole point), and a first launch —
+ * a ~150MB Playwright Chromium download — outruns any exec timeout the caller
+ * would be willing to wait on. It reports its own failures on the desktop, in
+ * the window that showed the progress.
+ *
+ * The fallback branch (a box whose VNC never started, or an image baked before
+ * the launcher existed) stays in the foreground, so its exit code still reaches
+ * the caller the way it always did.
+ */
+export function desktopOpenCommand(target: string): string {
+  const url = shellQuote(target);
+  return (
+    `if [ -x ${DESKTOP_LAUNCHER} ]; then nohup ${DESKTOP_LAUNCHER} ${url} >/dev/null 2>&1 & exit 0; fi; ` +
+    `exec agent-browser open --headed ${url}`
+  );
+}
+
 export async function ensureBoxBrowser(
   container: string,
   timeoutMs = 8000,
@@ -53,7 +93,7 @@ export async function ensureBoxBrowser(
     return { up: true, alreadyRunning: true };
   }
 
-  const open = await execInBox(container, ['agent-browser', 'open', '--headed', targetUrl], {
+  const open = await execInBox(container, ['bash', '-lc', desktopOpenCommand(targetUrl)], {
     user: 'vscode',
     timeoutMs,
   });

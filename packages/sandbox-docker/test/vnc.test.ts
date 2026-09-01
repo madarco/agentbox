@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildVncUrls, generateVncPassword, VNC_CONTAINER_PORT } from '../src/vnc.js';
 
@@ -72,5 +74,62 @@ describe('buildVncUrls', () => {
     // on BoxRecord and could be hand-edited; guard against future breakage.
     const urls = buildVncUrls({ ...enabledRecord, vncPassword: 'a&b=c d' }, 'orbstack');
     expect(urls.orbUrl).toContain('password=a%26b%3Dc%20d');
+  });
+});
+
+describe('agentbox-vnc-start ~/.jwmrc generation', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('../scripts/agentbox-vnc-start', import.meta.url)),
+    'utf8',
+  );
+  const jwmrc = script.slice(
+    script.indexOf('cat > "$HOME/.jwmrc" <<JWMRC'),
+    script.indexOf('\nJWMRC\n'),
+  );
+
+  it('has a body to check', () => {
+    expect(jwmrc).toContain('<Tray valign="bottom"');
+    expect(jwmrc).toContain('$browser_button');
+  });
+
+  it('never command-substitutes inside the config body', () => {
+    // The delimiter is unquoted so the config can interpolate the paths probed
+    // on the box, which means a backtick or $(...) anywhere in the body — an
+    // XML comment included — is a command bash runs at VNC start. One that
+    // blocks (a comment once held `xterm -name agentbox-launch`) hangs the
+    // heredoc, and with it Xvnc's whole startup: no window manager, no
+    // websockify, no desktop.
+    expect(jwmrc).not.toContain('`');
+    expect(jwmrc).not.toContain('$(');
+  });
+
+  it('writes the desktop launcher from a quoted heredoc', () => {
+    // The launcher is bash of its own, full of $vars and $(...) that must reach
+    // the file intact.
+    expect(script).toContain(`cat > "$DESKTOP_LAUNCHER" <<'LAUNCHER'`);
+  });
+});
+
+describe('agentbox-vnc-start desktop launcher', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('../scripts/agentbox-vnc-start', import.meta.url)),
+    'utf8',
+  );
+  const launcher = script.slice(
+    script.indexOf(`cat > "$DESKTOP_LAUNCHER" <<'LAUNCHER'`),
+    script.indexOf('\nLAUNCHER\n'),
+  );
+
+  it('takes a per-session lock so two launches cannot race', () => {
+    expect(launcher).toContain('flock -n 9');
+  });
+
+  it('closes the lock fd on every agent-browser call', () => {
+    // The browser is a daemon that outlives the launcher: inheriting fd 9 keeps
+    // the lock held for as long as the daemon lives, and every later launch then
+    // finds it taken and exits silently — a dock button that stops working.
+    const calls = launcher.match(/agent-browser --session "\$session" open --headed[^\n]*/g);
+    expect(calls).toHaveLength(2);
+    for (const call of calls ?? []) expect(call).toContain('9>&-');
   });
 });
