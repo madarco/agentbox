@@ -78,12 +78,54 @@ done
 # The config is generated here rather than shipped as its own file so it rides
 # the one script every provider already installs, and so the icon paths can be
 # probed on the box instead of hardcoded per base OS.
-first_existing() {
-  local _c
-  for _c in "$@"; do
-    if [[ -e "$_c" ]]; then printf '%s' "$_c"; return 0; fi
-  done
-  return 1
+# The dock's two launcher icons, drawn for AgentBox and carried here as base64
+# rather than shipped as files: this script is the one runtime asset every
+# provider already installs, so embedding them keeps the dock out of the
+# per-provider runtime-assets lists entirely. They also sidestep what the base
+# images actually offer -- xterm's own pixmap is a 1990s bitmap of the letters
+# "XTERM", and no base image ships a browser icon at all (Chromium arrives later
+# via Playwright, under the box user's cache).
+DOCK_ICON_DIR="$HOME/.local/share/agentbox/dock"
+
+write_dock_icons() {
+  mkdir -p "$DOCK_ICON_DIR" 2>/dev/null || return 1
+  base64 -d > "$DOCK_ICON_DIR/terminal.png" <<'ICON_TERMINAL'
+iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAwFBMVEWdnaJNqXpTamhZ0ZI3Yk/l
+5OkfISYuQjwA//9Su4VRVl////9VVWM6Tk5bXmklJywAAABXW2YxNDo5PENKSlp/f39OVVtUVGFU
+VVUiHCby8vdFSFBh7KJZXWde4pwZGyCGh4wYGh9b2ZZPUlxUWGGfoKVYXGdVWmM/P381WktDimc9
+dls3Nzdi8aUAAP9ImnAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAB8Ucy7AAAAMHRSTlP//////////wH/WAESDZ/+APb+/hACKScD///+/8////////5M/7Bp
+BP///wT/Af+UviHYAAABZklEQVR42u2WW3OCMBCFo9D7hWwiSBqCLVBAUfn//64bUOh0xrh5dfox
+Aw/ksDnJkLOMe8JOzzR1j5vej4L4BW8rB8OgWYDq6t2AA1NXw7BRkPKkhlJLB7oEkwwKZkslACK6
+gijh2SoYj49r0BEBDQl+HAW8hohEafZHzlJeXZ/PCWh4y1pel8TxkTY8RtNGUwUSVuhhBZIqEGj7
+X2BRXgLVBw/KQ6DCLMs75VFhl+V5thCKPqVtkeG1VWTTSiwOWGTns6xdgQLlsaxbFHRkgYp69H3o
+yabDwJoOyaa7PCgOT+Pebb7OODZumc0r9DkhHFNaTHsg7j7O6PvLpsW0y0TBLylj7HtE0v6HzcQN
+/tOp51HpfRi3vsc9BoohltA4oyGBiJEllxWGHLMhWgGhhl42YygOsWtAS+FAajDVOXatYt/U4MQ0
+b3Owj11Bmqwv88pPjcDcnMTu5uRx/6ebsWUcHKf25wfmAJtdbTPgiQAAAABJRU5ErkJggg==
+ICON_TERMINAL
+  base64 -d > "$DOCK_ICON_DIR/browser.png" <<'ICON_BROWSER'
+iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAwFBMVEUSc/c6hfo7g/dMjfeBrvmd
+wPk7gvbe6v0AEedVVf9poPj5+/0mdvg7g/dBhfQgb/NVVarM3vuqqv/q8f6q//8/f78refhAh/m4
+0fr/f/8AAAA7g/f6/P4ve/ZFifZ2p/ji7PyPt/nY5vyqyPpknPdVqv9ZlPY9fv0A///G2vsAAP78
+/f+50vs7g/h/f/87g/YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAADESgaUAAAAMHRSTlMXIs4b9PSQ0wwD0CzlY11UA6ADXQMEsZK1AgD96/799+327vL6A/sF
+AfACA/GuAkuTe45UAAADWUlEQVR42o1W2WKjMAx0mqNpeh/b7vrE3ARI/v/vdiSbQBK6Wz1weoyk
+0UgIOWt129bzb8TVk31R3cV3VVH/F3AoAqptt3xR3P0TIA5SLo9Pn7tb2O7z67iAdy/fAvbYfbFR
+VjnN5nHZA1Ls5wG4XPRKKZNr7RINlDO4JchhDlDIaqPYEp2bRCurtSWE2lSyugYUUtxYem3W2j2Y
+VKuHXHcMsDdC/roEFHJplYFZcsh7rdee/OKHSj2dviFO65VRpc9SfWFp53O8Og4IEY9C5VlYgOx4
+j4j9ir4TNsicEvJlBOzftrsGLzNXqlJn5BliwNEjUaVbA5Xutn/qE+BDvmPHkrzlNZYyZZU1hCag
+xbde5dsA+GjvdWINZwRbcy4JANOaEw1Iqt9lGwGtfA3bUgp1Grmge9PoMmQWbN7uI+BFCqfTwBGe
+Z2YC8IFtpKnT7hnJJEAlNwo+riwFu9Kev8UAaxxuKQZQkqmeSkTIvaywA57oBhlfoyzIEs4Sou7A
+TqdDXS1kDUAhj/xN1wSmOr9yjujOnfOBG904RZ49whvBHsVMuGuimZ2YQbVhQCF7FY0Jw74+w85d
+BsLxpVBMbDdyvxcQx40aLSwYmKaznbxdylpwzCezOlETHkYigiFqUcslsp0m0bSePydJCoaW8hAB
+P7ITQNnRUFRsiS7ppJpwDgaXDtdBmxjscLZDDIE5Ie8u0loSYUGiLi85a2qa1glxsQgujCUaMD21
+iqE0TJQomB0lmsVyyXIzlkYtF1hfBonaLBZfOhRfY4NEcw5BUHlTbazgM0kUGb4o77WJEvUIgcub
+/CoHic4JyHJhNiSgapDo70GiBhKdArqpRLejpu8HiSoVq+3UBKwaJDo2AbSZ1yhRZbLzNtOFNgNB
+TtoMJtp2FyQaWtFJohxCYGcl2sPYKtE4okRTHP1JooluWIPNynLLmDbjo/qXRNXzeTOW6P9PXEvW
+EslRoon21s63e+pOw0ChsJlp0MzkWDT74npkYS71UaZIfhhZgYRezI0siTqXR5IG6kHnmHMpqoRq
++ijH/c/Hbk2QHh74ydg9ot7Et4Odxv7i8evBIVuJe+gfF/Js+5lfh4LZ2Yr7+wWP8/psqs/+nOCX
+ZFhTVOIHfzO876FtD/P/P38B9+r6YXltNFMAAAAASUVORK5CYII=
+ICON_BROWSER
 }
 
 TERM_CMD='xterm -fa Monospace -fs 11 -bg black -fg white'
@@ -100,24 +142,19 @@ TERM_CMD='xterm -fa Monospace -fs 11 -bg black -fg white'
 BROWSER_CMD='agent-browser --session desktop open --headed'
 
 write_jwmrc() {
-  local term_icon browser_icon term_button browser_button include_local
-  term_icon="$(first_existing \
-    /usr/share/pixmaps/xterm-color_48x48.xpm \
-    /usr/share/pixmaps/xterm_48x48.xpm || true)"
-  # Chromium is Playwright's, unpacked under the box user's cache, so its icon
-  # only exists once a browser has been installed. Fall back to a text label.
-  browser_icon="$(first_existing \
-    /usr/share/icons/hicolor/48x48/apps/chromium.png \
-    /usr/share/pixmaps/chromium.png \
-    "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux/product_logo_48.png || true)"
+  local term_button browser_button include_local
+  write_dock_icons || true
 
-  if [[ -n "$term_icon" ]]; then
-    term_button="<TrayButton popup=\"Terminal\" icon=\"$term_icon\">exec:$TERM_CMD</TrayButton>"
+  # Icon-only buttons: the tooltip carries the name, so a text label would just
+  # be clutter next to the running-window icons. A label is the fallback only if
+  # the icon failed to land (no base64, read-only home).
+  if [[ -s "$DOCK_ICON_DIR/terminal.png" ]]; then
+    term_button="<TrayButton popup=\"Terminal\" icon=\"$DOCK_ICON_DIR/terminal.png\">exec:$TERM_CMD</TrayButton>"
   else
     term_button="<TrayButton popup=\"Terminal\" label=\"Term\">exec:$TERM_CMD</TrayButton>"
   fi
-  if [[ -n "$browser_icon" ]]; then
-    browser_button="<TrayButton popup=\"Browser\" icon=\"$browser_icon\">exec:$BROWSER_CMD</TrayButton>"
+  if [[ -s "$DOCK_ICON_DIR/browser.png" ]]; then
+    browser_button="<TrayButton popup=\"Browser\" icon=\"$DOCK_ICON_DIR/browser.png\">exec:$BROWSER_CMD</TrayButton>"
   else
     browser_button="<TrayButton popup=\"Browser\" label=\"Web\">exec:$BROWSER_CMD</TrayButton>"
   fi
@@ -213,8 +250,8 @@ write_jwmrc() {
   </Group>
 
   <RootMenu onroot="123">
-    <Program label="Terminal">$TERM_CMD</Program>
-    <Program label="Browser">$BROWSER_CMD</Program>
+    <Program label="Terminal" icon="$DOCK_ICON_DIR/terminal.png">$TERM_CMD</Program>
+    <Program label="Browser" icon="$DOCK_ICON_DIR/browser.png">$BROWSER_CMD</Program>
     <Separator/>
     <Restart label="Restart JWM"/>
   </RootMenu>
