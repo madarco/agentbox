@@ -132,6 +132,10 @@ export const claudeSpec: AgentSyncSpec = {
     cloudMountPath: '/home/vscode/.agentbox-creds/claude',
     cloudSubpath: 'claude/',
     realShape: 'claude-oauth',
+    // `claudeAiOauth.expiresAt` strictly increases on every OAuth refresh
+    // (verified live), and the refresh ROTATES the refresh token — so an older
+    // blob is dead, not merely stale, and must never overwrite a newer one.
+    freshness: { jsonPath: ['claudeAiOauth', 'expiresAt'] },
   },
   forwardedEnvKeys: [
     'ANTHROPIC_API_KEY',

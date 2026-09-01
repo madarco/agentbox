@@ -19,6 +19,7 @@ export {
   hostBackupHasCredentials,
   type CredentialAgentKind,
 } from '@agentbox/sandbox-core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 
 /**
  * Host-side backup of the in-box Claude Code OAuth credentials.
@@ -230,6 +231,20 @@ export function parseSyncResult(stdout: string): SyncClaudeCredentialsResult {
 // downgrade here logs the whole fleet out. It also never seeded a volume that
 // already had *some* credential, so a volume left holding a rotated-dead blob
 // could never be repaired from a good backup.
+/**
+ * The jq path for claude's declared freshness field, rendered from the SAME spec
+ * entry `shouldAcceptCredentialUpdate` reads.
+ *
+ * This script is the rule's second implementation, in another language, running
+ * in a container that has only `jq`. Hardcoding the field here is what made it a
+ * copy that could drift; `credential-freshness.test.ts` pins the two together.
+ */
+const FRESHNESS_JQ = (
+  resolveAgentSpec('claude').credential.freshness?.jsonPath ?? ['claudeAiOauth', 'expiresAt']
+)
+  .map((k: string) => `.${k}`)
+  .join('');
+
 export const SYNC_SCRIPT = `
 EXTRACTED=no
 SEEDED=no
@@ -238,8 +253,8 @@ HOST=/host-state/claude-credentials.json
 num() { case "$1" in ''|*[!0-9]*) echo 0;; *) echo "$1";; esac; }
 if [ -f "$VOL" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$VOL" >/dev/null 2>&1; then VOL_REAL=yes; else VOL_REAL=no; fi
 if [ -f "$HOST" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$HOST" >/dev/null 2>&1; then HOST_REAL=yes; else HOST_REAL=no; fi
-VOL_EXP=$(num "$(jq -r '(.claudeAiOauth.expiresAt // 0) | floor' "$VOL" 2>/dev/null)")
-HOST_EXP=$(num "$(jq -r '(.claudeAiOauth.expiresAt // 0) | floor' "$HOST" 2>/dev/null)")
+VOL_EXP=$(num "$(jq -r '(${FRESHNESS_JQ} // 0) | floor' "$VOL" 2>/dev/null)")
+HOST_EXP=$(num "$(jq -r '(${FRESHNESS_JQ} // 0) | floor' "$HOST" 2>/dev/null)")
 if [ "$VOL_REAL" = yes ] && [ "$ISOLATE" != yes ] && { [ "$HOST_REAL" = no ] || [ "$VOL_EXP" -gt "$HOST_EXP" ]; }; then
   cp -a "$VOL" "$HOST" && chmod 600 "$HOST" && EXTRACTED=yes
 elif [ "$HOST_REAL" = yes ] && { [ "$VOL_REAL" = no ] || [ "$HOST_EXP" -gt "$VOL_EXP" ]; }; then

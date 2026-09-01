@@ -504,7 +504,6 @@ async function seedCredentialsOne(
   }
 }
 
-
 /**
  * Spec for a single agent — for callers that need the mount path or volume
  * name outside the create flow.
@@ -642,9 +641,13 @@ export async function reconcileAgentCredentialsViaTransport(
         log(`captured ${spec.id} credential from box (no host backup)`);
         continue;
       }
+      // Box->host capture needs an ORDERING to be safe, or a resumed box's
+      // older blob overwrites a newer host backup. Gated on the agent declaring
+      // one (`credential.freshness`) rather than on it being claude — the same
+      // rule `shouldAcceptCredentialUpdate` applies, so the two cannot disagree.
       if (
         boxReal &&
-        spec.credential.realShape === 'claude-oauth' &&
+        spec.credential.freshness !== undefined &&
         shouldAcceptCredentialUpdate(spec.id, boxText, hostText).accept
       ) {
         await writeCredentialBackup(spec.id, boxText, { backupPath });

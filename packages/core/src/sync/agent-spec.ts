@@ -151,6 +151,33 @@ export interface AgentCredential {
    * the docker credential helper.
    */
   realShape: 'claude-oauth' | 'nonempty-json';
+  /**
+   * How to tell which of two credential blobs is NEWER, when the agent's
+   * credential carries an ordering field.
+   *
+   * `jsonPath` names a numeric JSON property (a ms-epoch expiry); the larger
+   * value wins. Absent means the agent has no ordering information and the rule
+   * falls back to last-writer-wins — correct for a static token, wrong for a
+   * ROTATING one, which is why claude declares it: an OAuth refresh rotates the
+   * refresh token, so accepting an older blob does not merely go stale, it kills
+   * the login for every other box that holds the newer one.
+   *
+   * DATA rather than a module hook, deliberately. The fan-out that consumes it
+   * runs in `agentbox-relay`, a separately spawned process bundled from
+   * `@agentbox/relay` alone which never registers agent modules — a hook there
+   * would silently degrade claude to last-writer-wins. The relay already reads
+   * the registry synchronously, so data works everywhere the rule is needed.
+   *
+   * Kept off the `agents.list` descriptor on purpose: ctl never orders blobs (it
+   * shape-validates and posts), so this is a host-side concern in the same
+   * category as `hostBackup`, which the descriptor already strips.
+   *
+   * Deliberately NOT expressed by widening `realShape`: ctl drops a watch whose
+   * shape it does not recognise, and an empty watch list makes it fall back to
+   * the list baked into its image — which for a plugin agent, never bakeable,
+   * means no credential watch at all.
+   */
+  freshness?: { jsonPath: readonly string[] };
 }
 
 /**

@@ -151,6 +151,27 @@ function credentialProblem(raw: unknown): string | null {
   if (typeof cred.cloudSubpath !== 'string' || !cred.cloudSubpath.endsWith('/')) {
     return '`credential.cloudSubpath` must be a sub-directory, ending in `/` (e.g. `myagent/`)';
   }
+  // A shape ctl does not recognise is DROPPED on arrival, and if that empties
+  // the watch list ctl falls back to the list baked into its image — which a
+  // plugin agent can never be in. The result is no credential watch at all, with
+  // nothing logged about this agent. Refuse it here, where there is a person to
+  // tell.
+  if (cred.realShape !== 'claude-oauth' && cred.realShape !== 'nonempty-json') {
+    return "`credential.realShape` must be 'claude-oauth' or 'nonempty-json'";
+  }
+  // Optional, but a malformed one silently disables newest-wins ordering, which
+  // for a rotating token means an older blob can overwrite a newer one.
+  const fresh = (cred as { freshness?: unknown }).freshness;
+  if (fresh !== undefined) {
+    const path = (fresh as { jsonPath?: unknown }).jsonPath;
+    if (
+      !Array.isArray(path) ||
+      path.length === 0 ||
+      path.some((k) => typeof k !== 'string' || k.length === 0)
+    ) {
+      return '`credential.freshness.jsonPath` must be a non-empty array of property names';
+    }
+  }
   return null;
 }
 

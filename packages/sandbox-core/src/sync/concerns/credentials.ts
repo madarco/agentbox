@@ -175,15 +175,30 @@ export function parseCredentialsUpdate(payload: unknown): CredentialsUpdate | nu
   return { agent: agent as CredentialAgentKind, content };
 }
 
-/** `claudeAiOauth.expiresAt` (ms epoch) of a claude blob, or null. */
-export function oauthExpiresAt(text: string): number | null {
+/**
+ * The finite number at `path` in a JSON blob, or null.
+ *
+ * Generic on purpose: this used to be `claudeAiOauth.expiresAt` inlined behind a
+ * role-shaped name, so the naming guard could not see it and any other agent
+ * with an OAuth expiry got `null` and fell through to last-writer-wins.
+ */
+export function jsonNumberAt(text: string, path: readonly string[]): number | null {
   try {
-    const parsed = JSON.parse(text) as { claudeAiOauth?: { expiresAt?: unknown } };
-    const exp = parsed?.claudeAiOauth?.expiresAt;
-    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
+    let cur: unknown = JSON.parse(text);
+    for (const key of path) {
+      if (!cur || typeof cur !== 'object') return null;
+      cur = (cur as Record<string, unknown>)[key];
+    }
+    return typeof cur === 'number' && Number.isFinite(cur) ? cur : null;
   } catch {
     return null;
   }
+}
+
+/** The agent's declared freshness value for a blob, or null when it declares none. */
+export function credentialFreshness(agent: CredentialAgentKind, text: string): number | null {
+  const path = resolveAgentSpec(agent).credential.freshness?.jsonPath;
+  return path ? jsonNumberAt(text, path) : null;
 }
 
 /**
@@ -192,13 +207,7 @@ export function oauthExpiresAt(text: string): number | null {
  * that says whether the login is still renewable, unlike `expiresAt`.
  */
 export function oauthRefreshExpiresAt(text: string): number | null {
-  try {
-    const parsed = JSON.parse(text) as { claudeAiOauth?: { refreshTokenExpiresAt?: unknown } };
-    const exp = parsed?.claudeAiOauth?.refreshTokenExpiresAt;
-    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
-  } catch {
-    return null;
-  }
+  return jsonNumberAt(text, ['claudeAiOauth', 'refreshTokenExpiresAt']);
 }
 
 /**
@@ -215,14 +224,16 @@ export function shouldAcceptCredentialUpdate(
 ): { accept: boolean; reason: string } {
   if (existing === null) return { accept: true, reason: 'no existing backup' };
   if (existing === incoming) return { accept: false, reason: 'unchanged' };
-  if (resolveAgentSpec(agent).credential.realShape === 'claude-oauth') {
-    const incomingExp = oauthExpiresAt(incoming);
-    const existingExp = oauthExpiresAt(existing);
-    if (incomingExp === null) return { accept: false, reason: 'incoming blob has no expiresAt' };
+  const path = resolveAgentSpec(agent).credential.freshness?.jsonPath;
+  if (path) {
+    const field = path.join('.');
+    const incomingExp = jsonNumberAt(incoming, path);
+    const existingExp = jsonNumberAt(existing, path);
+    if (incomingExp === null) return { accept: false, reason: `incoming blob has no ${field}` };
     if (existingExp !== null && incomingExp <= existingExp) {
       return { accept: false, reason: 'not newer than backup' };
     }
-    return { accept: true, reason: 'newer expiresAt' };
+    return { accept: true, reason: `newer ${field}` };
   }
   return { accept: true, reason: 'content changed' };
 }

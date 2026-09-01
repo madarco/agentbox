@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  oauthExpiresAt,
+  credentialFreshness,
+  jsonNumberAt,
   makeRecordingTransport,
   parseCredentialsUpdate,
   pushCredentialToBox,
@@ -27,7 +28,7 @@ describe('parseCredentialsUpdate', () => {
     });
     expect(update).not.toBeNull();
     expect(update!.agent).toBe('claude');
-    expect(oauthExpiresAt(update!.content)).toBe(123);
+    expect(credentialFreshness('claude', update!.content)).toBe(123);
   });
 
   it.each([
@@ -134,5 +135,46 @@ describe('pushCredentialToBox', () => {
           : { exitCode: 0, stdout: '', stderr: '' },
     });
     await expect(pushCredentialToBox(t, 'codex', '{"k":1}')).rejects.toThrow('denied');
+  });
+});
+
+describe('freshness is the agent`s declaration, not claude`s JSON inlined', () => {
+  /**
+   * The rule used to be `realShape === 'claude-oauth'` with
+   * `claudeAiOauth.expiresAt` hardcoded in the branch, behind role-shaped names
+   * (`oauthExpiresAt`) the naming guard could not see. Any other agent — however
+   * OAuth-shaped — got null and fell through to last-writer-wins, which for a
+   * ROTATING refresh token accepts a dead blob and logs the fleet out.
+   */
+  it('reads the declared path for an agent that has one', () => {
+    const blob = (exp: number): string => JSON.stringify({ claudeAiOauth: { expiresAt: exp } });
+    expect(credentialFreshness('claude', blob(42))).toBe(42);
+    expect(shouldAcceptCredentialUpdate('claude', blob(200), blob(100)).accept).toBe(true);
+    expect(shouldAcceptCredentialUpdate('claude', blob(100), blob(200)).accept).toBe(false);
+  });
+
+  it('names the declared field in its reason, so a refusal is explainable', () => {
+    const blob = (exp: number): string => JSON.stringify({ claudeAiOauth: { expiresAt: exp } });
+    expect(shouldAcceptCredentialUpdate('claude', blob(200), blob(100)).reason).toBe(
+      'newer claudeAiOauth.expiresAt',
+    );
+    expect(shouldAcceptCredentialUpdate('claude', '{"x":1}', blob(100)).reason).toBe(
+      'incoming blob has no claudeAiOauth.expiresAt',
+    );
+  });
+
+  it('falls back to last-writer-wins for an agent that declares none', () => {
+    expect(credentialFreshness('codex', '{"t":"x"}')).toBeNull();
+    expect(shouldAcceptCredentialUpdate('codex', '{"t":"new"}', '{"t":"old"}')).toEqual({
+      accept: true,
+      reason: 'content changed',
+    });
+  });
+
+  it('jsonNumberAt walks an arbitrary path and rejects non-numbers', () => {
+    expect(jsonNumberAt('{"a":{"b":{"c":7}}}', ['a', 'b', 'c'])).toBe(7);
+    expect(jsonNumberAt('{"a":{"b":"7"}}', ['a', 'b'])).toBeNull();
+    expect(jsonNumberAt('{"a":null}', ['a', 'b'])).toBeNull();
+    expect(jsonNumberAt('not json', ['a'])).toBeNull();
   });
 });
