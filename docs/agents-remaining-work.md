@@ -13,35 +13,46 @@ decision still unmade.
 
 **The live measure is `apps/cli/test/no-agent-named-exports.test.ts`.** Outside
 `packages/agent-*`, an exported symbol may not be named after an agent. Its
-allowlist started at 27 files and is at **6**, each tagged with the item below
+allowlist started at 27 files and is at **4**, each tagged with the item below
 that removes it. The test fails both ways — an unlisted offender AND a stale
 exemption — so the list can only shrink, and when it is empty the rule holds
 repo-wide with no exemptions.
 
 ---
 
-## 1. `claudeInstall` → a role name (2 allowlist entries)
+## 1. `claudeInstall` / `claudeTui` → agent settings — **done**
 
-`packages/config/src/types.ts`, `packages/sandbox-core/src/prepared-state.ts`.
+Not a rename in the end. These are genuinely Claude-specific — which installer,
+which of Claude Code's two renderers — so a role name would have been a lie the
+moment a second agent needed a setting of its own shape. What generalised is the
+MECHANISM: an agent declares `settings` on its row, config generates
+`<agent>.<key>` from it (for a built-in and for an `agentbox agent add`-installed
+package alike), and every call site carries one opaque `agentSettings` map. See
+[`agents.md`](./agents.md) → "Agent settings"; the work is recorded in
+[`agent-settings-plan.md`](./agent-settings-plan.md).
 
-The mechanism is already generic: `resolveAgentInstall(spec.install, mode)` takes
-any agent. Only the *name* is claude-specific — ~320 sites across ~76 files, most
-of them the seven providers' `prepare.ts` / `prepared-state.ts`.
+`box.claudeInstall` / `box.claudeTui` became `claude.install` / `claude.tui` and
+hard-error through `RENAMED_KEYS`. Both phase-5b allowlist entries are gone
+(6 → 4).
 
-**Why it is not just a rename.** It renames a **docker build arg**, so it forces a
-re-`prepare` on every provider and shifts the published box-image tag; it changes
-the **hub REST schema** (`apps/hub/app/(dashboard)/api/v1/lib/{openapi,validate}.ts`), which
-the tray and a remote CLI both speak; and it touches **on-disk prepared state** in
-`~/.agentbox`, so it needs a migration or a documented re-bake. The SDK surface is
-one symbol, `claudeInstallFingerprint`; `AGENTBOX_CLAUDE_INSTALL` never crosses
-the SDK boundary.
+Two things were **deleted** rather than renamed, which is what made the change
+smaller than the ~320 sites suggested:
 
-Fold the `box.claudeTui` config key into the same change, behind the existing
-`RENAMED_KEYS` mechanism (`packages/config/src/parse.ts`) — it hard-errors with a
-fix-it message, and doing two config renames in two releases is churn.
+- `AGENTBOX_CLAUDE_INSTALL` was already dead. `Dockerfile.box` declared the ARG
+  and no `RUN` read it — the base is agentless — so CI's `[native, npm]` matrix
+  published two byte-identical images under two tags, and daytona's
+  `writeNpmDockerfile` rewrote a line that did nothing. Settings now fold only
+  into the DERIVED artifact's `variantFingerprint`, which removed
+  `claudeInstallFingerprint`, `matchClaudeInstallFingerprint`, the build arg, the
+  CI matrix, and the mode threading through freshness / doctor / bake-share /
+  prepared-hydrate.
+- `asRootScript` embedded the script in `sudo -n sh -c "…"`, so everything
+  `$`-shaped was expanded by the OUTER shell before sudo ran. A `postInstall`
+  reading a variable its own prefix exported saw it empty on every cloud provider
+  and correct on docker. The script now rides as a positional parameter.
 
-**Verification it needs:** `prepare --force` on at least two providers, and a
-`~/.agentbox` prepared-state file written before the rename.
+Cost paid: `SDK_API_VERSION` 3 → 4 (clean break), and one re-`prepare` per
+provider, since removing the ARG line moves the build-context sha.
 
 ## 2. Claude's four files in the shared packages (4 allowlist entries) — blocked
 

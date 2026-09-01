@@ -73,8 +73,8 @@ among them). The bake retries three times and then aborts rather than shipping a
 Claude-less snapshot. If it keeps failing, switch to the npm installer:
 
 ```bash
-agentbox prepare --provider hetzner --claude-install npm
-# or persist it: agentbox config set box.claudeInstall npm
+agentbox prepare --provider hetzner --agent-setting claude.install=npm
+# or persist it: agentbox config set claude.install npm
 ```
 
 `npm` installs `@anthropic-ai/claude-code` and symlinks it into the same

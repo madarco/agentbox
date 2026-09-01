@@ -264,8 +264,10 @@ falls back to exclude-list mode. Two real gaps:
 
 - `packages/sandbox-hetzner/scripts/install-box.sh` — the creds dir + symlink block (~249)
   and the new baked asset (~220). The **binary install is not added here**: it comes from the
-  catalog, either on demand via `ensureAgentInstalled` or through the `AGENTBOX_AGENTS`
-  variant the script reads the same way it reads `AGENTBOX_CLAUDE_INSTALL` (~391).
+  catalog, either on demand via `ensureAgentInstalled` or through the derived agent
+  variant. (Openclaw is also the obvious first user of `AgentSyncSpec.settings` — see
+  [`agents.md`](./agents.md) → "Agent settings" — for anything it needs configured
+  per host.)
 - `packages/sandbox-hetzner/src/runtime-assets.ts` and its `test/runtime-assets.test.ts`
   (pins the exact asset list — fails until updated).
 - `packages/sandbox-cloud/src/sync/agent-credentials.ts` — the **second** per-agent table

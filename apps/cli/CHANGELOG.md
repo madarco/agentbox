@@ -9,6 +9,36 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Changed
+
+- **`box.claudeInstall` and `box.claudeTui` are now `claude.install` and
+  `claude.tui`.** An agent declares its own settings, and AgentBox generates a
+  config key per declaration — for agents installed with `agentbox agent add`
+  too. `agentbox prepare --claude-install <mode>` becomes
+  `--agent-setting claude.install=npm` (repeatable, works for any agent). The old
+  keys are refused with a message naming the new one.
+- **One box image per build context.** The published base is agentless, so an
+  agent setting no longer forks it: CI published two byte-identical images before
+  this, and Daytona's `linux-vm` path could not boot an npm-mode base at all.
+  **Re-run `agentbox prepare --provider <name> --force` once per cloud provider.**
+
+### Fixed
+
+- An agent's install `postInstall` could not read its own settings on a cloud
+  provider: the root-escalation wrapper expanded them on the host shell before
+  `sudo` ran, so they arrived empty everywhere except docker.
+
+### Removed
+
+- Provider SDK 4.0.0 (`SDK_API_VERSION` 4, a clean break):
+  `PrepareOptions.claudeInstall` is replaced by `agentSettings`,
+  `resolveAgentInstall` takes an agent's settings, `Provider.baseFingerprint`
+  takes no arguments, and `claudeInstallFingerprint` is gone. New:
+  `renderAgentSettingEnv`, `bakeSettingsFingerprintInput`, `agentSettings` /
+  `allAgentSettings` / `agentSettingsFor`.
+
 ## [0.29.2] - 2026-08-30
 
 ### Added

@@ -55,12 +55,107 @@ byte-identical in layout; no provision script installs an agent any more.
   `~/.codex`, `~/.agentbox-creds/<agent>/` and the symlinks that pivot each
   agent's credential path into a mounted volume). It lives here, not in the
   Dockerfile, so every install site produces the same layout.
-- **`alternates`** are other ways to install the same agent, keyed by mode.
-  Only `npm` is used: `box.claudeInstall: npm` is the escape hatch for hosts
-  whose egress IP the Claude CDN 403s.
+- **`alternates`** are other ways to install the same agent, keyed by the value
+  of the setting named in `alternatesFrom`. Only claude declares one:
+  `claude.install: npm` is the escape hatch for hosts whose egress IP the Claude
+  CDN 403s. See "Agent settings" below.
 - **`script` recipes fetch to a file and run it with `bash`.** Not `curl | bash`
   — piping hides a blocked download behind bash's exit 0 — and not `sh`, because
   `/bin/sh` is dash on Debian/Ubuntu and these installers are bash scripts.
+
+---
+
+## Agent settings
+
+Some things about an agent are genuinely that agent's own. Which installer Claude
+Code uses (`native` vs the npm package) and which of its two renderers it pins
+are facts about Claude, not about agents in general — so they stay CLAUDE-named.
+What generalises is the **mechanism**.
+
+An agent declares its settings on its row:
+
+```ts
+settings: [
+  {
+    key: 'install',                       // -> the `claude.install` config key
+    type: 'enum',
+    enumValues: ['native', 'npm'],
+    default: 'native',
+    description: '…',
+    affectsBake: true,                    // folds into variantFingerprint
+  },
+],
+install: { …, alternatesFrom: 'install', alternates: { npm: { … } } },
+tuiEnvFrom: 'tui',
+```
+
+Three consumers, and only the first two are things AgentBox itself knows how to
+do with a setting:
+
+| declaration | what reads it |
+|---|---|
+| `install.alternatesFrom` | `resolveAgentInstall` picks the alternate recipe |
+| `tuiEnvFrom` | `agentTuiEnv` picks the launch env |
+| *(everything)* | `renderAgentSettingEnv` exports `AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>` into the agent's own `recipe` and `postInstall` |
+
+The third is the point. An agent installed from an npm package can put arbitrary
+logic in its `postInstall` and read its own settings there, so a setting nothing
+in this repo was written to understand still reaches the bake — on every
+provider, including a community one, because the env is rendered by the shared
+install path rather than by any provider's script.
+
+**Both bindings are named explicitly** rather than by a reserved key. That is
+what lets `agent-settings-drift.test.ts` assert the named setting exists, is an
+enum, and covers every key of the map it selects — a convention could not be
+checked, and an `alternates` map nothing selects is silently dead code.
+
+### Where the config keys come from
+
+`@agentbox/config` is a zero-internal-dep leaf, so it cannot read the registry.
+The settings are mirrored into `AGENT_KINDS` (`packages/config/src/agents.ts`)
+as data and drift-tested from `apps/cli`, the same copy-not-import arrangement
+`PROVIDERS` uses. `perAgentKeys()` generates `<agent>.<key>` from that, and the
+agent blocks on `UserConfig`/`EffectiveConfig` carry an index signature — so
+adding a setting needs **no** hand edit to a TypeScript interface, unlike
+`sessionName`.
+
+**A plugin agent's settings are real config keys too.** `AgentSyncSpec.settings`
+is pure JSON, so it survives `agentbox agent add`'s snapshot into
+`~/.agentbox/agents.json`; `KEY_REGISTRY` is `BUILTIN_KEY_REGISTRY` plus whatever
+that file declares, resolved once at module load exactly like `AGENT_SPECS`. The
+JSON schema is generated from the built-ins only — it ships with the package and
+must describe what this BUILD knows, not one machine's install set.
+
+### Reading them
+
+Host-side, always through the accessor (`@agentbox/config`):
+
+```ts
+agentSettings(cfg, 'claude')          // one agent's block, defaults applied
+allAgentSettings(cfg)                 // every agent's — the prepare/create payload
+agentSettingsFor('claude', workspace) // from disk; never throws
+```
+
+`agentSettingsFor` reads the BOX's workspace, not `process.cwd()`: the queue
+worker runs from the state dir and `agentbox config set` writes `--project` by
+default. It also swallows every failure — a renderer preference must not be able
+to stop a session starting.
+
+At the CLI, `--agent-setting <agent>.<key>=<value>` (repeatable) overrides one
+setting for a bake. One generic flag rather than one per setting, because which
+settings exist is a runtime fact; validation is against the declaration, so a
+typo still fails loudly and an enum still lists its values.
+
+### The root-escalation trap
+
+`asRootScript` passes the script as a **positional parameter**
+(`sh -c 'if [ "$(id -u)" = 0 ]; then sh -c "$1"; else sudo -n sh -c "$1"; fi' _ "<script>"`),
+never interpolated into a quoted string. It used to embed it, which made the two
+branches expand at different times: everything `$`-shaped in the sudo branch —
+`$(command -v claude)`, and any variable the script's own prefix exported — was
+substituted by the OUTER shell, as the box user, before sudo ran. A `postInstall`
+reading its own setting therefore saw it empty on every cloud provider and
+correct on docker.
 
 ---
 
@@ -116,11 +211,21 @@ Timings on a warm layer cache: base 56s, `+claude` 23s, `+codex` 21s, repeat
 
 ### Fingerprints and prepared records
 
-- `variantFingerprint(baseSha, { claudeInstall, agents })` folds the build
-  variant into the image identity. **The empty variant is the identity fold**, so
-  the plain base keeps the raw context hash and a provider that passes no
-  variant is unaffected. `claudeInstallFingerprint` is left alone — it ships in
-  the published provider SDK.
+- `variantFingerprint(baseSha, { agents, agentSettings })` folds the build
+  variant into the image identity. **The empty variant is the identity fold** —
+  no agents, every setting at its declared default — so the plain base keeps the
+  raw context hash and a provider that passes no variant is unaffected. Only
+  settings declared `affectsBake` fold, and only when they differ from their
+  default; without that second filter, declaring a setting on any agent would
+  invalidate every existing artifact on every provider.
+- **The agentless base folds nothing.** It installs no agent, so no agent setting
+  can change what it contains: `evaluateDockerBaseFreshness`,
+  `Provider.baseFingerprint` and each provider's `current<P>BaseFingerprintLive`
+  all take no arguments and answer with the raw context hash. This was learned
+  the expensive way — the base used to fork on the Claude install mode via a
+  `Dockerfile.box` ARG that no `RUN` ever read, so CI published two
+  byte-identical images under two tags, daytona rewrote a Dockerfile line that
+  did nothing, and every freshness/adoption path had to try both hashes.
 - `variantImageRef` gives each set its own local tag (`…:dev-claude`), so two
   boxes built for different agents can't overwrite one another's image.
 - `docker-prepared.json` keeps **one record per variant**. It also stamps `base`
@@ -157,14 +262,16 @@ that agent at all.
 ### Root escalation across seams
 
 Docker honours `exec --user root`; cloud backends run as the box user by name and
-generally ignore it. One string covers both:
+generally ignore it. One argv covers both:
 
 ```sh
-if [ "$(id -u)" = 0 ]; then <cmd>; else sudo -n sh -c "<cmd>"; fi
+sh -c 'if [ "$(id -u)" = 0 ]; then sh -c "$1"; else sudo -n sh -c "$1"; fi' _ "<cmd>"
 ```
 
 `sudo -n` never prompts, so a box without a sudo grant fails fast with a usable
-message instead of blocking on a password read nothing will answer.
+message instead of blocking on a password read nothing will answer. The command
+rides as `$1` rather than being interpolated — see "The root-escalation trap"
+above for what interpolating it silently broke.
 
 ---
 
@@ -175,9 +282,12 @@ message instead of blocking on a password read nothing will answer.
    `postInstall`), `sessionName`,
    `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`,
    plus `seeds` / `launchFlags` if the agent needs an agentbox-owned file in
-   place to work (see step 4).
+   place to work (see step 4), and `settings` (+ `install.alternatesFrom` /
+   `tuiEnvFrom`) for anything the user should be able to configure per agent
+   (see "Agent settings").
    Keep it JSON-serializable — no closures — so the descriptor can later be
-   shipped into a box whose `agentbox-ctl` was baked before the agent existed.
+   shipped into a box whose `agentbox-ctl` was baked before the agent existed,
+   and so `agentbox agent add` can snapshot it verbatim.
 2. **Add the agent's package** — `packages/agent-<id>/`, with its CLI surface
    under `src/cli/` — and its arm in the `AGENT_MODULES` table
    (`apps/cli/src/agents/index.ts`): the guided-login detector, and a
@@ -212,20 +322,21 @@ message instead of blocking on a password read nothing will answer.
    missing from either fails `packages/sandbox-core/test/agent-seed.test.ts`.
    There is no per-agent seeding CODE to write: docker seeds into the config
    volume and the cloud path seeds into the live box, both from this one row.
-5. **Config keys**: one row in `AGENT_KINDS` (`packages/config/src/agents.ts`).
+5. **Config keys**: one row in `AGENT_KINDS` (`packages/config/src/agents.ts`),
+   carrying `settings` if the agent declares any (see "Agent settings").
    `<agent>.sessionName`, `<agent>.dangerouslySkipPermissions` (only where the
-   agent has such a flag) and `box.isolate<Agent>Config` are GENERATED from it —
-   key descriptor, default and all — the way `perProviderImageKeys()` generates
-   the per-provider image keys. The row exists because `@agentbox/config` is a
-   zero-internal-dep leaf (`sandbox-core` depends on *it*), so it cannot read
-   `AGENT_SYNC_SPECS`; it is the same copy-not-import arrangement `PROVIDERS`
-   uses, and it is drift-tested against the registry from `apps/cli`, which can
-   see both. Two hand edits remain and cannot be generated: the block on the
-   `UserConfig` / `EffectiveConfig` interfaces (a TypeScript interface cannot be
-   built from a runtime array) and its branch in
-   `packages/config/schema/user-config.schema.json`, which is
-   `additionalProperties: false` — both are caught by the config suite rather
-   than left to discover. The command descriptor reaches the keys through typed
+   agent has such a flag), `<agent>.<setting>` and `box.isolate<Agent>Config` are
+   all GENERATED from it — key descriptor, default and all — the way
+   `perProviderImageKeys()` generates the per-provider image keys. The row exists
+   because `@agentbox/config` is a zero-internal-dep leaf (`sandbox-core` depends
+   on *it*), so it cannot read `AGENT_SYNC_SPECS`; it is the same copy-not-import
+   arrangement `PROVIDERS` uses, and it is drift-tested against the registry from
+   `apps/cli`, which can see both. One hand edit remains and cannot be generated:
+   the branch in `packages/config/schema/user-config.schema.json`, which is
+   `additionalProperties: false` — caught by the config suite rather than left to
+   discover. (The `UserConfig` / `EffectiveConfig` block used to be a second: the
+   agent blocks now carry an index signature, so a declared setting needs no
+   interface edit.) The command descriptor reaches the keys through typed
    accessors (`sessionNameOf`, `isolateOf`, `cliOverrides`).
 6. **Activity reporting**, if the agent should report one: declare
    `caps.activitySource` — a list of `hooks` / `plugin` / `scraper`, empty if it

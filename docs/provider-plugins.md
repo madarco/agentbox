@@ -297,23 +297,36 @@ To opt in:
 import {
   agentSetArg, normalizeAgentSet, variantFingerprint,
   resolveAgentSpec, resolveAgentInstall, renderInstallRecipe, renderPackageInstall,
+  renderAgentSettingEnv,
 } from '@madarco/agentbox-provider-sdk';
+
+// `opts.agentSettings` is every agent's declared settings, keyed by agent id —
+// `{ claude: { install: 'npm' } }`. Opaque on purpose: which keys exist and what
+// they select is the AGENT's declaration, so you carry the bag and never read a
+// key by name.
 
 // 1. Identity for this bake. '' is the agentless base; the set is normalised,
 //    so ['codex','claude'] and ['claude','codex'] are the SAME artifact.
 const agents = normalizeAgentSet(opts.agents);
 const variantKey = agentSetArg(agents);
 
-// 2. Fingerprint. Use this instead of `claudeInstallFingerprint` — it folds the
-//    agent set in, and is the IDENTITY for the empty set, so an existing base
-//    record keeps its hash and does not spuriously re-bake.
-const contextSha = variantFingerprint(baseSha, { claudeInstall, agents });
+// 2. Fingerprint. Folds the agent set AND any bake-affecting agent setting, and
+//    is the IDENTITY for the empty variant (no agents, every setting at its
+//    default), so an existing base record keeps its hash and does not spuriously
+//    re-bake. Your AGENTLESS base should use the raw context hash: it installs no
+//    agent, so no agent setting can change what it contains.
+const contextSha = variantFingerprint(baseSha, { agents, agentSettings: opts.agentSettings });
 
 // 3. Render the install into your bake. Same data the built-ins and the runtime
 //    installer use, so a baked agent and a runtime-added one are identical.
 for (const id of agents) {
   const spec = resolveAgentSpec(id);
-  const install = resolveAgentInstall(spec.install, claudeInstall);
+  const settings = opts.agentSettings?.[spec.id];
+  const install = resolveAgentInstall(spec.install, settings);
+  // The agent's settings as `AGENTBOX_AGENT_SETTING_*` exports. Prefix BOTH the
+  // recipe and the post-install — they are separate shells — so a setting your
+  // provider has never heard of still reaches the agent's own script.
+  const settingEnv = renderAgentSettingEnv(settings);
   const steps: string[] = [];
   if (install.packages?.length) {
     const line = renderPackageInstall(install.packages);
@@ -322,9 +335,9 @@ for (const id of agents) {
   }
   // `runAs: 'box-user'` is load-bearing: native installers write to the INVOKING
   // user's ~/.local/bin, so running them as root hides the binary in /root.
-  const recipe = renderInstallRecipe(install.recipe);
+  const recipe = settingEnv + renderInstallRecipe(install.recipe);
   steps.push(install.runAs === 'box-user' ? `sudo -u vscode -H bash -lc '${recipe}'` : recipe);
-  if (install.postInstall) steps.push(install.postInstall);
+  if (install.postInstall) steps.push(settingEnv + install.postInstall);
   // Verify on the BOX USER's PATH, not just that the build exited 0.
   steps.push(`sudo -u vscode -H bash -lc 'command -v ${spec.binary} >/dev/null'`);
 }
@@ -344,7 +357,11 @@ Three rules the built-in providers each learned the hard way:
   boot one agent's artifact.
 - **Keep your `base` record meaning the agentless base.** Provider-generic readers
   (freshness, bake sharing) read `base.contextSha256` and assume exactly that;
-  pointing it at the newest bake reports a permanent false "stale".
+  pointing it at the newest bake reports a permanent false "stale". Its hash is
+  the raw context sha with no variant folded in, so `baseFingerprint()` takes no
+  arguments — unless your base really does install an agent, in which case fold
+  the settings there too and read them yourself with `allAgentSettings`
+  (`examples/agentbox-provider-example` does exactly this).
 
 ---
 
@@ -397,6 +414,16 @@ provision infrastructure and handle secrets).
 The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported
 set (`SUPPORTED_SDK_API_VERSIONS`). An incompatible plugin is refused at
 `plugin add` and skipped (with a warning) at load — it never crashes the CLI.
+
+**v4 is a clean break** (as v3 was, and for the same reason). It replaces
+`PrepareOptions.claudeInstall` with the generic `agentSettings` map, gives
+`resolveAgentInstall` that agent's settings instead of a mode string, drops
+`claudeInstallFingerprint`, and makes `Provider.baseFingerprint` take no
+arguments. A v3 provider would still load and silently drop every agent setting —
+so on a host that set `claude.install: npm` it would bake with the recipe the
+user chose specifically because it fails there. That is a wrong artifact rather
+than a missing feature, which is why older majors are refused instead of
+tolerated.
 
 **A plugin pinned to an older SDK tolerates config keys added after it shipped.**
 The SDK inlines `@agentbox/config`, so your plugin carries a snapshot of the key

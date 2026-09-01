@@ -171,25 +171,32 @@ doesn't change any baked file produces an identical SHA, so the base
 stays `fresh`. See `docs/cloud-create-flow.md` → "Stale base detection
 at create" for the full state machine.
 
-### 1.2.1 Claude install method (`box.claudeInstall`)
+### 1.2.1 Agent settings at bake time (`claude.install`)
 
-Every provider bakes Claude Code with Anthropic's **native installer**
+An agent declares its own settings (`AgentSyncSpec.settings`), config
+generates a `<agent>.<key>` key from each, and `prepare` carries them as
+one opaque `agentSettings` map. See [`agents.md`](./agents.md) → "Agent
+settings" for the mechanism.
+
+Claude's `install` is the one that matters here. Every provider installs
+Claude Code with Anthropic's **native installer**
 (`curl claude.ai/install.sh`) by default. Its CDN intermittently 403s
-cloud-datacenter egress IPs; the bake retries 3× then aborts (exit 71)
-rather than shipping a Claude-less base. `box.claudeInstall=npm` (or
-`agentbox prepare --claude-install npm`) is the opt-in escape hatch: the
-bake runs `npm install -g @anthropic-ai/claude-code` and symlinks it into
-`/home/vscode/.local/bin/claude` — the path the attach command, PATH
-shim, and host-side `installMethod=native` coercion all hardcode — so the
-box stays indistinguishable from a native install. It's **bake-time
-only** (never read at create), and the mode is folded into the base
-fingerprint (`claudeInstallFingerprint`, `@agentbox/sandbox-core`) so a
-switch re-bakes. Plumbing per provider: shell-script bakes (hetzner,
-vercel, e2b) read `AGENTBOX_CLAUDE_INSTALL` in their install script;
-docker passes a Dockerfile `--build-arg` (and folds the mode into
-`ensureImage`'s create-time fingerprint so the lazy rebuild doesn't
-clobber an npm image); daytona — whose SDK has no build-arg — builds from
-a sibling temp Dockerfile with the ARG default flipped.
+cloud-datacenter egress IPs; the install retries 3× then aborts (exit 71)
+rather than shipping a Claude-less image. `claude.install=npm` (or
+`agentbox prepare --agent-setting claude.install=npm`) is the opt-in
+escape hatch: the recipe runs `npm install -g @anthropic-ai/claude-code`
+and symlinks it into `/home/vscode/.local/bin/claude` — the path the
+attach command, PATH shim, and host-side `installMethod=native` coercion
+all hardcode — so the box stays indistinguishable from a native install.
+
+**It does not touch the base.** The base is agentless, so no agent
+setting can change what it contains; there is one image per build context
+on every provider, and CI publishes one tag. The setting folds into the
+DERIVED agent artifact's `variantFingerprint` instead, and reaches the
+recipe two ways: `install.alternatesFrom` selects the alternate, and every
+resolved value is exported as `AGENTBOX_AGENT_SETTING_<KEY>` into the
+agent's own recipe and `postInstall` — which is how an agent nobody wrote
+provider code for gets a setting through a bake.
 
 ### 1.2.2 Where a cloud base is baked, and who ends up holding it
 
@@ -232,10 +239,11 @@ Two mechanisms do that, and both key off the same `base.contextSha256`:
   `syncBakesWithControlBox` (hub setup / deploy / update) and the
   `self-update` post-update refresh reconcile **both** directions: push
   the local record when it matches this CLI's build context, otherwise
-  pull the box's. Adoption is fingerprint-match-wins and fold-tolerant
-  (`matchClaudeInstallFingerprint`), so a base baked in the other
-  `box.claudeInstall` mode is taken rather than re-baked, exactly as the
-  hub's own `hydratePreparedFromCustody` does. Adopting also mirrors the
+  pull the box's. Adoption is a plain fingerprint match — the agentless
+  base folds no agent setting, so both machines compute the same hash for
+  the same context whatever their `claude.install` is, exactly as the
+  hub's own `hydratePreparedFromCustody` does. (This used to have to try
+  both install modes.) Adopting also mirrors the
   `box.image<Provider>` pin — daytona resolves its base from that key,
   not from prepared-state, so a record-only adoption would be inert.
 
@@ -311,13 +319,12 @@ Hetzner and Vercel use.
 
 Consequences:
 
-- **`--claude-install npm` gets a VM too, as of the two-variant publish.** The
-  install mode is part of the image's identity (the sha is folded with
-  `claudeInstallFingerprint`, same as the docker pull path), and CI now matrixes
-  over it, so both `native` and `npm` images are published under their own
-  fingerprint tags. Only the native build claims `latest` / the version tag — it
-  is the default image. (Before this, only native was ever built, so npm mode had
-  no image to boot from and prepare fell back to a container.)
+- **An agent setting never costs you the VM path.** The published base is
+  agentless, so there is one image per build context and `claude.install: npm`
+  boots the same tag as `native`. It briefly cost a two-image CI matrix (two
+  byte-identical images under two tags, from a Dockerfile ARG no `RUN` read), and
+  before that a silent fallback to a container because npm mode had no published
+  image at all.
 - **Monorepo contributors can't bake a VM by default.** A local `pnpm build`
   regenerates `packages/ctl/dist/bin.cjs`, which shifts the build-context sha off
   the one CI published, so no tag matches. Prepare falls back to a container.

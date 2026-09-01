@@ -93,10 +93,11 @@ agentbox prepare --provider daytona
 
 The default `container` base is built from the Dockerfile, so it needs nothing published and works on any account.
 
-A `linux-vm` base is instead baked from the prebuilt box image AgentBox publishes, which is why it's fast — Daytona can only build a VM snapshot from a published image, never from a Dockerfile. Two cases have no published image to boot, and both fall back to a `container` snapshot with a warning rather than failing:
+A `linux-vm` base is instead baked from the prebuilt box image AgentBox publishes, which is why it's fast — Daytona can only build a VM snapshot from a published image, never from a Dockerfile. One case has no published image to boot, and falls back to a `container` snapshot with a warning rather than failing:
 
-- **`box.claudeInstall: npm`** — only the default (native) image is published.
 - **A locally modified `Dockerfile.box`** — i.e. you're developing on the AgentBox repo itself. Point `box.daytonaVmBaseImage` at an image you've published to bake a VM anyway. It's also the knob for a private registry mirror.
+
+An agent setting like [`claude.install: npm`](/docs/configuration#agent-settings) no longer forces the container fallback: the published base is agentless, so there is one image per build context and the setting reaches the derived agent tier below instead.
 
 ### Agents are a separate tier
 

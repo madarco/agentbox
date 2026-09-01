@@ -374,7 +374,7 @@ reporting feeds it) — that's the always-visible view of active boxes. Plugins
 sidebar only shows boxes with a live pane, so the full roster (incl. paused) is
 the keyboard-toggled overlay instead.
 
-## Claude Code's renderer inside a box (`box.claudeTui`)
+## Claude Code's renderer inside a box (`claude.tui`)
 
 Claude Code has two renderers, switchable with `/tui`. The `fullscreen` one
 (alternate screen + virtualised scrollback) repaints **differentially**: it skips
@@ -389,9 +389,11 @@ the terminal clears it.
 Confirmed upstream, not an AgentBox bug: `agentbox shell` in the same box is
 clean, and so is Claude Code with `/tui default`.
 
-Boxes therefore pin the classic renderer. `box.claudeTui` (`default` |
-`fullscreen` | `auto`, default `default`) maps to Claude Code's own overrides via
-`claudeTuiEnv` in `@agentbox/core`:
+Boxes therefore pin the classic renderer. `claude.tui` (`default` |
+`fullscreen` | `auto`, default `default`) is one of the settings claude declares
+on its registry row (see [`agents.md`](./agents.md) → "Agent settings"). The row
+also declares `tuiEnvFrom: 'tui'`, which is what points `agentTuiEnv` at it; the
+modes map to Claude Code's own overrides through the row's `tuiEnv`:
 
 | mode | env |
 | --- | --- |
@@ -418,12 +420,12 @@ login shell — showed the variable set and looked correct.
   remote-docker** — it is `createCloudProvider(remoteDockerBackend)`):
   `buildCloudAttachInnerCommand` emits `export <VAR>=…;` before `exec claude`.
 
-Both resolve `box.claudeTui` from the effective config at launch, so flipping it
+Both resolve `claude.tui` from the effective config at launch, so flipping it
 takes effect on the agent session's next start — no box recreate, no re-bake.
 A `claude` you launch by hand from `agentbox shell` is not covered; use `/tui`
 there.
 
-Revert with `agentbox config set box.claudeTui auto` once Claude Code fixes the
+Revert with `agentbox config set claude.tui auto` once Claude Code fixes the
 fullscreen repaint.
 
 ## Gotchas

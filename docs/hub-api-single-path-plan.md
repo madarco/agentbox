@@ -187,7 +187,7 @@ and rejected an empty key (`invalid_request`).
   them here** to fix this rather than ship a capability regression, since nothing was running in
   parallel. Config-fallback semantics: a remote control-box bake uses the *control box's* config pins
   for anything you don't pass explicitly (it owns its snapshots), consistent with how the worker
-  already treats `box.claudeInstall` / `box.imageRegistry`. Public docs (`cli.mdx`, `daytona.mdx`,
+  already treats `claude.install` / `box.imageRegistry`. Public docs (`cli.mdx`, `daytona.mdx`,
   `e2b.mdx`, `hetzner.mdx`, `deployed-hub.mdx`) document the flags as working in both modes.
 - **The choice is WHICH HUB, not hub-vs-inline — Steps 5 and 8 will hit this same fork.** When
   "always go through `/api/v1`" deletes an inline path, the cases the inline path used to handle

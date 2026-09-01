@@ -1,6 +1,10 @@
 # Agent settings — plan
 
-Status: **phase 1 in progress**. Update this file as each phase lands.
+Status: **done** (landed in one change — the `resolveAgentInstall` signature made
+the phases inseparable, and dropping the dead base fold deleted most of what the
+plumbing phase would have renamed). Kept as the reference for WHY the shape is
+this one; the steady-state description lives in [`agents.md`](./agents.md) →
+"Agent settings".
 
 ## Why
 
@@ -103,7 +107,7 @@ replaces `--claude-install`).
 `bakeSettingsFingerprintInput()`, which drops anything not `affectsBake` and anything
 equal to its declared default — so **the empty variant stays the identity fold**.
 
-## Phases
+## What landed, in the order it was built
 
 1. **Declare + generate + read.** `AgentSettingSpec` on the spec, claude's two rows,
    `AGENT_KINDS.settings`, generated config keys, index signature, plugin-aware
