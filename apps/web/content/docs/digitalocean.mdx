@@ -35,7 +35,7 @@ agentbox prepare --provider digitalocean    # bake the agentless base snapshot
 agentbox digitalocean claude
 ```
 
-`agentbox digitalocean create|claude|codex|opencode` is sugar for the same command with `--provider digitalocean`.
+`agentbox digitalocean create|claude|codex|opencode|pi` is sugar for the same command with `--provider digitalocean`.
 
 ## Prepare snapshot
 
@@ -82,7 +82,7 @@ identically. Bake-time only — changing it re-bakes the snapshot.
 
 ## Create a box and run an agent
 
-Once login and prepare are done, `create`/`claude`/`codex`/`opencode`/`shell` behave exactly like local Docker — only `--provider digitalocean` (or the pinned config) differs. The workspace is seeded from a host git bundle plus your uncommitted and untracked changes, the same as the other clouds (see [teleport a project](/docs/teleport-a-project) and [sync & git](/docs/sync-and-git)).
+Once login and prepare are done, `create`/`claude`/`codex`/`opencode`/`pi`/`shell` behave exactly like local Docker — only `--provider digitalocean` (or the pinned config) differs. The workspace is seeded from a host git bundle plus your uncommitted and untracked changes, the same as the other clouds (see [teleport a project](/docs/teleport-a-project) and [sync & git](/docs/sync-and-git)).
 
 ```console
 $ agentbox create -y --provider digitalocean

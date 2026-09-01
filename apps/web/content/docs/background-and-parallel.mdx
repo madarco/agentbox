@@ -9,7 +9,7 @@ There are three capabilities here. **Running boxes in parallel** means you launc
 
 ## Run boxes in parallel
 
-Each `agentbox claude` / `codex` / `opencode` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Each gets an auto-numbered name; pass `-n <name>` if you want to label them in `ls` and `top`.
+Each `agentbox claude` / `codex` / `opencode` / `pi` call spins up a separate box — separate container, branch, and `/workspace` worktree. They never share state. Each gets an auto-numbered name; pass `-n <name>` if you want to label them in `ls` and `top`.
 
 ```bash
 # Three independent boxes on the same repo, each on its own branch
@@ -34,7 +34,7 @@ It's one agent per box, but a box can hold multiple shell sessions — see [acce
 
 ## Queue background runs with `-i`
 
-`-i, --initial-prompt <text>` (on `agentbox claude`, `codex`, and `opencode`) seeds the agent session with a first user turn and runs the box in the background — no attach. The call writes a queue manifest and returns immediately.
+`-i, --initial-prompt <text>` (on `agentbox claude`, `codex`, `opencode`, and `pi`) seeds the agent session with a first user turn and runs the box in the background — no attach. The call writes a queue manifest and returns immediately.
 
 ```bash
 agentbox claude -i "Upgrade all dependencies and fix the build"
@@ -123,7 +123,7 @@ Three command families do the actual driving. All are stateless one-shot command
 
 ### `agentbox drive` — read the screen, send keystrokes
 
-`agentbox drive <box>` targets the box's running agent tmux session (auto-picking `claude` → `codex` → `opencode`) and is provider-uniform across docker, Daytona, Hetzner, and Vercel.
+`agentbox drive <box>` targets the box's running agent tmux session (auto-picking `claude` → `codex` → `opencode` → `pi`) and is provider-uniform across docker, Daytona, Hetzner, and Vercel.
 
 ```bash
 agentbox drive snapshot 1                              # print the rendered TUI as plain text
@@ -253,7 +253,7 @@ Per-box live CPU/mem metrics are docker-only; cloud boxes show `—` for those c
 />
 
 <Callout title="NOTE">
-  The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` runs work in
+  The `dashboard` compositor is Claude-only today. `agentbox codex` / `opencode` / `pi` runs work in
   parallel but aren't shown in the dashboard panes yet — use `agentbox top` / `agentbox ls` to
   monitor those.
 </Callout>

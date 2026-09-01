@@ -21,7 +21,7 @@ the **local Docker** provider, which needs no account.
 - **Docker** — Desktop or OrbStack, running.
 - **Node** `>=20.10` on your `PATH`.
 - **MacOS** or **Linux**
-- An agent CLI — e.g. `claude`, `codex` or `opencode`.
+- An agent CLI — e.g. `claude`, `codex`, `opencode` or `pi`.
 - (Optional) an account for Vercel, Hetzner, DigitalOcean or Daytona.
 
 NB: Agentbox will open a link for OAuth and acquire the tokens for your AI subscription and for cloud providers API keys.
@@ -132,14 +132,14 @@ list.
 | `Ctrl+a t` | Open a fresh shell in the same box, in a new tab                       |
 | `Ctrl+a k` | Destroy the box (asks to confirm)                                      |
 
-| Command                            | What it does                                                                |
-| ---------------------------------- | --------------------------------------------------------------------------- |
-| `agentbox list`                    | List every box in the current project with its agent's live state.          |
-| `agentbox attach 1`                | Reattach to the running agent session on box 1 (claude / codex / opencode). |
-| `agentbox shell 1`                 | Open an interactive bash shell inside the box.                              |
-| `agentbox url`                     | Open the box's web app URL in your browser.                                 |
-| `agentbox pause 1`                 | Freeze the box to save resources — resumes sub-second.                      |
-| `agentbox destroy <N or box name>` | Tear down the box and discard its upper volume.                             |
+| Command                            | What it does                                                                     |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| `agentbox list`                    | List every box in the current project with its agent's live state.               |
+| `agentbox attach 1`                | Reattach to the running agent session on box 1 (claude / codex / opencode / pi). |
+| `agentbox shell 1`                 | Open an interactive bash shell inside the box.                                   |
+| `agentbox url`                     | Open the box's web app URL in your browser.                                      |
+| `agentbox pause 1`                 | Freeze the box to save resources — resumes sub-second.                           |
+| `agentbox destroy <N or box name>` | Tear down the box and discard its upper volume.                                  |
 
 Want to run the same agent on a cloud provider instead? Prefix the command with the
 provider name — for example `agentbox hetzner claude`. See [Hetzner](/docs/hetzner)

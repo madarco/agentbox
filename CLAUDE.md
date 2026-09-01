@@ -26,7 +26,7 @@
 
 ## Testing / verifying
 
-`create`, `claude`, `codex`, and `opencode` tee their progress to a file at
+`create`, `claude`, `codex`, `opencode`, and `pi` tee their progress to a file at
 `~/.agentbox/logs/<command>.log`, and `~/.agentbox/logs/latest.log` always points
 at the most recent run. The log is rotated 1-deep — the previous run is at
 `<command>.log.prev`.
@@ -38,7 +38,7 @@ When verifying a change:
   `tail -f ~/.agentbox/logs/latest.log` to watch real progress. Stop waiting
   the moment the log shows what you need (e.g. `box ... ready` or a failed
   step). Don't sit on a 120s blocking call hoping it returns.
-- **Interactive TUIs (`dashboard`, `claude`, `codex`, `opencode`):** drive them
+- **Interactive TUIs (`dashboard`, `claude`, `codex`, `opencode`, `pi`):** drive them
   through `pnpm drive` (the PTY harness at `apps/cli/test/_harness/`).
   `pnpm drive start --name X -- node apps/cli/dist/index.js dashboard`, then
   `pnpm drive screen X` to read the rendered terminal and

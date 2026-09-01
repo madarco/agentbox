@@ -467,6 +467,48 @@ each. It currently has **4 callers**, all in `apps/cli` — the module and comma
 tables and the runtime probes that phase 2 moves into the agent packages. When
 that file has no callers, the claim is a test result rather than a promise.
 
+#### The Pi datapoint
+
+Pi (`packages/agent-pi`) is the first REAL agent added since the above was
+written, so it is the honest measure rather than the canary's.
+
+What the checklist promised held: the registry row, the config row, the package
+and the two literal table arms were the whole of it, and the install seam needed
+nothing — one `install` recipe drove the docker derived layer with no provider
+edit anywhere. `list`, `attach`, `fork`, `agent-sessions`, `argv-prefix`, the
+whole command factory, seeding, staging, credential fan-out and every cloud
+provider picked Pi up from data alone.
+
+What it did NOT cover, and what a fifth agent should expect:
+
+- **The per-agent tails are real.** `_run-queued-job.ts` (the `-i` path),
+  `dashboard.ts` + `compositor.ts` + `sidebar.ts`, `inspect.ts`, `prepare.ts`,
+  the cmux/herdr status maps, `wrapped-pty/run.ts`, the drive session priority,
+  and nine hub files each needed a literal edit. None of them fails a test when
+  skipped — they degrade silently, which is what makes them expensive.
+- **Two shared gaps only a live smoke found**, both fixed generically rather
+  than for Pi: the default pull ignored `AgentPullSpec.categories` (so an agent
+  whose config is directories-of-items could never pull a box-created item back
+  once the host had that directory), and it offered agentbox's own `seeds` back
+  to the host as if the user had written them.
+- **A two-letter id broke a guard's assumption.**
+  `no-agent-named-exports.test.ts` matched `[A-Za-z_]*(?:claude|codex|…)`, which
+  is safe only because those names are long. A bare `pi|Pi|PI` alternative
+  matched **60** innocent exports (`ping`, `pickFreePort`, `SPINNER_FRAMES`,
+  `ApiErrorCode`). The pattern now carries a boundary rule for short ids, with
+  both the catches and the rejects pinned.
+- **Two test fixtures were machine-dependent, not agent-dependent.**
+  `credential-reconcile.test.ts` overrode backups for three agents by name and
+  let the rest fall through to the real `~/.agentbox`, so any developer with a
+  fourth credential backup saw a spurious push. Fixtures over agents should
+  cover the registry, not a literal three.
+
+Live-validated on docker: derived `dev-pi` layer, seeded activity extension
+reporting `idle`/`working` through the generic `agent-state` op, a real
+authenticated `pi -p` turn, `download pi`, and full host->box session teleport
+(the box's Pi recalled the host conversation's first message, checked against
+the host transcript rather than taken on trust).
+
 ---
 
 ## Provider status

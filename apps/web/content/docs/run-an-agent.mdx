@@ -1,11 +1,11 @@
 ---
 title: Run an agent
-description: Launch Claude Code, Codex, or OpenCode in a box and attach or detach sessions
+description: Launch Claude Code, Codex, OpenCode, or Pi in a box and attach or detach sessions
 ---
 
-AgentBox runs **Claude Code**, **OpenAI Codex**, and **OpenCode** inside a box, in a detachable tmux session — so you can leave the agent working, detach, and reattach later.
+AgentBox runs **Claude Code**, **OpenAI Codex**, **OpenCode**, and **Pi** inside a box, in a detachable tmux session — so you can leave the agent working, detach, and reattach later.
 
-The three agent verbs (`claude`, `codex`, `opencode`) each create the box if it doesn't already exist, start the agent, and attach you. They share all `agentbox create` flags — see [CLI commands](/docs/cli) — plus session-resume and attach controls. This page assumes you've read [core concepts](/docs/core-concepts); the project-teleport mechanics live in [teleport a project](/docs/teleport-a-project).
+The agent verbs (`claude`, `codex`, `opencode`, `pi`) each create the box if it doesn't already exist, start the agent, and attach you. They share all `agentbox create` flags — see [CLI commands](/docs/cli) — plus session-resume and attach controls. This page assumes you've read [core concepts](/docs/core-concepts); the project-teleport mechanics live in [teleport a project](/docs/teleport-a-project).
 
 <Callout title="NOTE">
 `<box>` is optional almost everywhere — it defaults to the single box for the current project. Otherwise pass its short index (`1`, `2`, …), name, or id prefix.
@@ -13,7 +13,7 @@ The three agent verbs (`claude`, `codex`, `opencode`) each create the box if it 
 
 ## Launch an agent
 
-`agentbox claude` is the one-liner: it creates a box (snapshotting the current directory), starts Claude Code in a detached tmux session, and attaches you. `agentbox codex` and `agentbox opencode` have the identical shape.
+`agentbox claude` is the one-liner: it creates a box (snapshotting the current directory), starts Claude Code in a detached tmux session, and attaches you. `agentbox codex`, `agentbox opencode` and `agentbox pi` have the identical shape.
 
 ```bash
 agentbox claude                       # create a box + start Claude Code, then attach
@@ -42,7 +42,7 @@ The agent runs in a detachable tmux session whose prefix is **`Control+a`** (not
 
 `Control+a` also opens an actions menu: `c` (VS Code / Cursor), `s` (noVNC screen), `u` (box URL), **`t` (a fresh shell in the _same_ box, opened in a new tab)**, and **`k` (destroy the box, after a confirmation)**. The shell tab opens as a cmux surface in the current workspace, a new tmux window, or a new iTerm2 tab depending on your terminal.
 
-Reattach with `agentbox attach` — it picks the running agent session in the box automatically. Resync your host config and (re)start a session with `agentbox claude start` (or `codex start` / `opencode start`).
+Reattach with `agentbox attach` — it picks the running agent session in the box automatically. Resync your host config and (re)start a session with `agentbox claude start` (or `codex start` / `opencode start` / `pi start`).
 
 ```bash
 # detach from inside the session: press Control+a then d
@@ -50,7 +50,7 @@ agentbox attach 1                     # reattach to whichever agent is running o
 agentbox claude start mybox           # start a session (resyncs host ~/.claude)
 ```
 
-`agentbox attach` is agent-agnostic — if multiple agent sessions live in the same box it prompts you to pick. It never auto-starts: when nothing is running it prints a warning and exits non-zero. To start a fresh session use the agent's own command (`agentbox claude`, `codex`, `opencode`) — `start` also resyncs your host config so new skills, plugins, or a fresh login flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
+`agentbox attach` is agent-agnostic — if multiple agent sessions live in the same box it prompts you to pick. It never auto-starts: when nothing is running it prints a warning and exits non-zero. To start a fresh session use the agent's own command (`agentbox claude`, `codex`, `opencode`, `pi`) — `start` also resyncs your host config so new skills, plugins, or a fresh login flow into the box. For `--attach-in`, `--no-attach`, and the other attach controls, see [CLI commands](/docs/cli).
 
 <Callout type="warn" title="HEADS UP">
   `attach` never resyncs your host `~/.claude` (skills, plugins, login). After installing a new
@@ -60,19 +60,20 @@ agentbox claude start mybox           # start a session (resyncs host ~/.claude)
 
 ## Switch agents
 
-Codex and OpenCode follow the identical flow — `agentbox codex` / `agentbox opencode`, each with `attach`, `start`, and `login` subcommands.
+Codex, OpenCode and Pi follow the identical flow — `agentbox codex` / `agentbox opencode` / `agentbox pi`, each with `attach`, `start`, and `login` subcommands.
 
 ```bash
 agentbox codex                        # OpenAI Codex in a box
 agentbox opencode                     # OpenCode in a box
+agentbox pi                           # Pi in a box
 agentbox dashboard                    # switch between running boxes/agents
 ```
 
-Auto-approve is on by default because the box is isolated from your host; pass `--no-dangerously-skip-permissions` to keep the agent's own approval prompts. Each agent shares an identity volume across boxes by default — opt out per box with `--isolate-claude-config` (and the codex/opencode equivalents). See [configuration](/docs/configuration) and [CLI commands](/docs/cli).
+Auto-approve is on by default because the box is isolated from your host; pass `--no-dangerously-skip-permissions` to keep the agent's own approval prompts. Pi has no such flag — it ships with no permission prompts at all, which is why its own docs recommend running it in a container. Each agent shares an identity volume across boxes by default — opt out per box with `--isolate-claude-config` (and the codex/opencode/pi equivalents). See [configuration](/docs/configuration) and [CLI commands](/docs/cli).
 
-You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude and Codex resume sessions; OpenCode does not yet (resume starts a fresh box).
+You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude, Codex and Pi resume sessions; OpenCode does not yet (resume starts a fresh box).
 
-A box carries **only the agent you launched it for** — its binary, its config volume and its credentials. `agentbox claude` gives you a box with no Codex or OpenCode credentials in it at all. If you later point another agent at that same box (from `agentbox dashboard`, or by running `agentbox codex <box>`), AgentBox installs it on first use, which adds a few seconds to that one launch.
+A box carries **only the agent you launched it for** — its binary, its config volume and its credentials. `agentbox claude` gives you a box with no Codex, OpenCode or Pi credentials in it at all. If you later point another agent at that same box (from `agentbox dashboard`, or by running `agentbox codex <box>`), AgentBox installs it on first use, which adds a few seconds to that one launch.
 
 <Callout title="WHY">
   An agent you aren't using has no reason to have its login sitting in the box. Shipping only the
@@ -93,9 +94,14 @@ Credentials are handled on the host and seeded into every box (macOS Keychain do
 agentbox claude login                 # sign in once, reused by every box
 agentbox codex login                  # device-auth flow for Codex
 agentbox opencode login -- --provider anthropic
+agentbox pi login                     # opens Pi's TUI; run /login, then /exit
 ```
 
-Sign-in runs in a throwaway container, but the agent's own login TUI never takes over your terminal: AgentBox drives it behind the scenes, prints the approval URL, and prompts you for the code (or API key) itself. That keeps the flow identical in every terminal emulator. Two escape hatches:
+Sign-in runs in a throwaway container, but the agent's own login TUI never takes over your terminal: AgentBox drives it behind the scenes, prints the approval URL, and prompts you for the code (or API key) itself. That keeps the flow identical in every terminal emulator.
+
+**Pi is the exception**, and not by omission: its only sign-in is the in-TUI `/login` slash command, so there is no prompt sequence a host can drive. `agentbox pi login` hands your terminal to Pi itself — run `/login`, pick a provider, then `/exit`, and the captured `auth.json` is reused by every later box. Pi also reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and the other provider keys straight from your environment, which is the headless path.
+
+Two escape hatches:
 
 - `--interactive` hands your terminal to the agent's own login TUI — the old behavior. Use it for a login method the guided prompt can't drive (an exotic `agentbox claude login -- --sso`, or OpenCode's GitHub Copilot picker, which AgentBox falls back to automatically).
 - `--headless` (claude, and the automatic choice with no TTY) prints the URL and a greppable `AGENTBOX_LOGIN_URL=` marker, then you finish with `agentbox claude login --code <CODE>` — so an orchestrating agent can drive the sign-in. Codex's device-code flow needs no keystroke at all, so it already works without a terminal.
@@ -110,7 +116,7 @@ Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_
 
 ## Credential sync across boxes
 
-Claude's OAuth refresh **rotates** the refresh token: the moment any box refreshes, every other copy of that login (the host backup, other boxes) stops working and 401s. AgentBox handles this automatically: the in-box supervisor watches each agent's credential file (`~/.claude/.credentials.json`, codex/opencode `auth.json`) and reports a refreshed blob to the host relay, which keeps the newest one (for Claude, `expiresAt` decides; codex/opencode are last-writer-wins) and pushes it into all your other running boxes — docker boxes via their config volumes (paused ones included), cloud boxes over the provider transport. A paused cloud box is reconciled when it wakes: `resume`/`start` compares the box's blobs with the host backup and pushes or captures whichever is newer.
+Claude's OAuth refresh **rotates** the refresh token: the moment any box refreshes, every other copy of that login (the host backup, other boxes) stops working and 401s. AgentBox handles this automatically: the in-box supervisor watches each agent's credential file (`~/.claude/.credentials.json`, codex/opencode/pi `auth.json`) and reports a refreshed blob to the host relay, which keeps the newest one (for Claude, `expiresAt` decides; codex/opencode/pi are last-writer-wins) and pushes it into all your other running boxes — docker boxes via their config volumes (paused ones included), cloud boxes over the provider transport. A paused cloud box is reconciled when it wakes: `resume`/`start` compares the box's blobs with the host backup and pushes or captures whichever is newer.
 
 This is on by default; disable it per box with `agentbox create --no-credential-sync` or globally with `agentbox config set box.credentialSync false`. A long-_running_ agent session may hold the old token in memory and ask you to `/login` once even after the file was fixed — restart the session and it picks up the fresh login.
 
@@ -147,6 +153,7 @@ $ agentbox agent list
 claude               built-in
 codex                built-in
 opencode             built-in
+pi                   built-in
 demo                 agentbox-agent-demo@0.1.0 (agent API v1)
 ```
 

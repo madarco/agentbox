@@ -107,7 +107,7 @@ The largest group. A pattern runs through it: a generic key plus per-provider ov
 | -------------- | ------------------------------------------------------------------------------------------------------------------ | -------- | -------------------------------- |
 | `box.provider` | enum `docker`/`daytona`/`hetzner`/`vercel`/`e2b`/`digitalocean`/`remote-docker`, or a `docker:<alias>` engine spec | `docker` | backend new boxes are created on |
 
-This is what plain `agentbox claude` (or `create`, `codex`, `opencode`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
+This is what plain `agentbox claude` (or `create`, `codex`, `opencode`, `pi`) uses when you don't pass `--provider`. `agentbox install` offers to set it for you at the end of the wizard, so the provider you just logged in to and prepared becomes the one new boxes go to. Set it yourself at any time:
 
 ```bash
 agentbox config set box.provider hetzner --global    # every project on this machine
@@ -208,9 +208,9 @@ See [teleport a project](/docs/teleport-a-project), [environment](/docs/environm
 
 ### Config-volume isolation
 
-| Key                                                                                | Type | Default | Meaning                                                            |
-| ---------------------------------------------------------------------------------- | ---- | ------- | ------------------------------------------------------------------ |
-| `box.isolateClaudeConfig` / `box.isolateCodexConfig` / `box.isolateOpencodeConfig` | bool | `false` | give the box its own agent config volume instead of the shared one |
+| Key                                                                                                        | Type | Default | Meaning                                                            |
+| ---------------------------------------------------------------------------------------------------------- | ---- | ------- | ------------------------------------------------------------------ |
+| `box.isolateClaudeConfig` / `box.isolateCodexConfig` / `box.isolateOpencodeConfig` / `box.isolatePiConfig` | bool | `false` | give the box its own agent config volume instead of the shared one |
 
 ### Vercel only
 
@@ -230,19 +230,21 @@ See [Vercel](/docs/vercel).
 
 See [checkpoints and pausing](/docs/checkpoints-and-pausing).
 
-## Agent sessions — claude / codex / opencode
+## Agent sessions — claude / codex / opencode / pi
 
 | Key                                 | Type   | Default    | Meaning                                                                    |
 | ----------------------------------- | ------ | ---------- | -------------------------------------------------------------------------- |
 | `claude.sessionName`                | string | `claude`   | tmux session name for the claude agent                                     |
 | `codex.sessionName`                 | string | `codex`    | tmux session name for the codex agent                                      |
 | `opencode.sessionName`              | string | `opencode` | tmux session name for the opencode agent                                   |
+| `pi.sessionName`                    | string | `pi`       | tmux session name for the pi agent                                         |
 | `claude.dangerouslySkipPermissions` | bool   | `true`     | launch claude with `--dangerously-skip-permissions` (auto-accept tool use) |
 | `codex.dangerouslySkipPermissions`  | bool   | `true`     | launch codex with `--dangerously-bypass-approvals-and-sandbox`             |
 
 These keys are generated per agent, so every agent AgentBox ships gets the same
 set — `<agent>.sessionName` always, and `<agent>.dangerouslySkipPermissions` only
-where that agent actually has such a launch flag (OpenCode has none).
+where that agent actually has such a launch flag (OpenCode and Pi have none —
+Pi ships with no permission prompts at all).
 
 ### Agent settings
 
@@ -259,7 +261,7 @@ which of its two renderers it picks are facts about Claude, not about agents in
 general — so the names stay Claude's. What is generic is the mechanism: an agent
 declares its settings, AgentBox generates the keys, and the values reach that
 agent's own install recipe and launch. An agent installed with
-[`agentbox agent add`](/docs/agents) gets real config keys the same way, with no
+[`agentbox agent add`](/docs/run-an-agent) gets real config keys the same way, with no
 change to AgentBox — run `agentbox config list` to see what an agent declares.
 
 <Callout type="warn" title="Renamed">
@@ -278,7 +280,7 @@ change to AgentBox — run `agentbox config list` to see what an agent declares.
 
 | Key                  | Type                               | Default | Meaning                                                                                                                                                       |
 | -------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `attach.openIn`      | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode` opens the attached session under tmux, cmux, Herdr, or iTerm2                                                        |
+| `attach.openIn`      | enum `split`/`window`/`tab`/`same` | `split` | where `agentbox claude\|codex\|opencode\|pi` opens the attached session under tmux, cmux, Herdr, or iTerm2                                                    |
 | `attach.cmuxStatus`  | bool                               | `true`  | when attached inside cmux, reflect the box agent's activity on its cmux workspace (colour + description)                                                      |
 | `attach.herdrStatus` | bool                               | `true`  | when attached inside Herdr, report the box agent's activity to its Herdr pane (so it looks like a normal agent) and highlight AgentBox's own approval prompts |
 
@@ -360,7 +362,7 @@ Whether a granted tool prompts on every call is controlled by `box.autoApproveSa
 
 | Key                         | Type                               | Default   | Meaning                                                                                                                                           |
 | --------------------------- | ---------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queue.enabled`             | bool                               | `true`    | run `agentbox claude\|codex\|opencode -i <prompt>` jobs through the host-wide FIFO queue                                                          |
+| `queue.enabled`             | bool                               | `true`    | run `agentbox claude\|codex\|opencode\|pi -i <prompt>` jobs through the host-wide FIFO queue                                                      |
 | `queue.maxConcurrent`       | int                                | `5`       | max simultaneously-running boxes before `-i` jobs queue; override with `--max-running <n>`                                                        |
 | `queue.maxWorking`          | int                                | `0` (off) | max agents actively working at once before `-i` jobs queue; override with `--max-working <n>`                                                     |
 | `queue.idleGraceSeconds`    | int                                | `15`      | debounce before an agent frees its working slot; only used when `maxWorking > 0`                                                                  |
