@@ -78,18 +78,22 @@ done
 # The config is generated here rather than shipped as its own file so it rides
 # the one script every provider already installs, and so the icon paths can be
 # probed on the box instead of hardcoded per base OS.
-# The dock's two launcher icons, drawn for AgentBox and carried here as base64
-# rather than shipped as files: this script is the one runtime asset every
-# provider already installs, so embedding them keeps the dock out of the
-# per-provider runtime-assets lists entirely. They also sidestep what the base
+# The desktop's static assets -- two launcher icons and the wallpaper -- carried
+# here as base64 rather than shipped as files: this script is the one runtime
+# asset every provider already installs, so embedding them keeps the desktop out
+# of the per-provider runtime-assets lists entirely. The wallpaper is a 16-colour
+# indexed PNG at exactly the Xvnc geometry: flat paper plus sharp black glyphs is
+# the case indexed PNG wins outright (4KB, vs 10KB for JPEG q60, which also rings
+# around the letterforms) -- and the AL2023 source build of JWM has no jpeg
+# support at all, only png. They also sidestep what the base
 # images actually offer -- xterm's own pixmap is a 1990s bitmap of the letters
 # "XTERM", and no base image ships a browser icon at all (Chromium arrives later
 # via Playwright, under the box user's cache).
-DOCK_ICON_DIR="$HOME/.local/share/agentbox/dock"
+DESKTOP_ASSET_DIR="$HOME/.local/share/agentbox/desktop"
 
-write_dock_icons() {
-  mkdir -p "$DOCK_ICON_DIR" 2>/dev/null || return 1
-  base64 -d > "$DOCK_ICON_DIR/terminal.png" <<'ICON_TERMINAL'
+write_desktop_assets() {
+  mkdir -p "$DESKTOP_ASSET_DIR" 2>/dev/null || return 1
+  base64 -d > "$DESKTOP_ASSET_DIR/terminal.png" <<'ICON_TERMINAL'
 iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAwFBMVEWdnaJNqXpTamhZ0ZI3Yk/l
 5OkfISYuQjwA//9Su4VRVl////9VVWM6Tk5bXmklJywAAABXW2YxNDo5PENKSlp/f39OVVtUVGFU
 VVUiHCby8vdFSFBh7KJZXWde4pwZGyCGh4wYGh9b2ZZPUlxUWGGfoKVYXGdVWmM/P381WktDimc9
@@ -103,7 +107,7 @@ yabDwJoOyaa7PCgOT+Pebb7OODZumc0r9DkhHFNaTHsg7j7O6PvLpsW0y0TBLylj7HtE0v6HzcQN
 /tOp51HpfRi3vsc9BoohltA4oyGBiJEllxWGHLMhWgGhhl42YygOsWtAS+FAajDVOXatYt/U4MQ0
 b3Owj11Bmqwv88pPjcDcnMTu5uRx/6ebsWUcHKf25wfmAJtdbTPgiQAAAABJRU5ErkJggg==
 ICON_TERMINAL
-  base64 -d > "$DOCK_ICON_DIR/browser.png" <<'ICON_BROWSER'
+  base64 -d > "$DESKTOP_ASSET_DIR/browser.png" <<'ICON_BROWSER'
 iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAwFBMVEUSc/c6hfo7g/dMjfeBrvmd
 wPk7gvbe6v0AEedVVf9poPj5+/0mdvg7g/dBhfQgb/NVVarM3vuqqv/q8f6q//8/f78refhAh/m4
 0fr/f/8AAAA7g/f6/P4ve/ZFifZ2p/ji7PyPt/nY5vyqyPpknPdVqv9ZlPY9fv0A///G2vsAAP78
@@ -126,6 +130,80 @@ EslRoon21s63e+pOw0ChsJlp0MzkWDT74npkYS71UaZIfhhZgYRezI0siTqXR5IG6kHnmHMpqoRq
 +ijH/c/Hbk2QHh74ydg9ot7Et4Odxv7i8evBIVuJe+gfF/Js+5lfh4LZ2Yr7+wWP8/psqs/+nOCX
 ZFhTVOIHfzO876FtD/P/P38B9+r6YXltNFMAAAAASUVORK5CYII=
 ICON_BROWSER
+  base64 -d > "$DESKTOP_ASSET_DIR/wallpaper.png" <<'DESKTOP_WALLPAPER'
+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
+f18qjdHgjSpoAAAAAElFTkSuQmCC
+DESKTOP_WALLPAPER
 }
 
 TERM_CMD='xterm -fa Monospace -fs 11 -bg black -fg white'
@@ -142,21 +220,27 @@ TERM_CMD='xterm -fa Monospace -fs 11 -bg black -fg white'
 BROWSER_CMD='agent-browser --session desktop open --headed'
 
 write_jwmrc() {
-  local term_button browser_button include_local
-  write_dock_icons || true
+  local term_button browser_button background include_local
+  write_desktop_assets || true
 
   # Icon-only buttons: the tooltip carries the name, so a text label would just
   # be clutter next to the running-window icons. A label is the fallback only if
   # the icon failed to land (no base64, read-only home).
-  if [[ -s "$DOCK_ICON_DIR/terminal.png" ]]; then
-    term_button="<TrayButton popup=\"Terminal\" icon=\"$DOCK_ICON_DIR/terminal.png\">exec:$TERM_CMD</TrayButton>"
+  if [[ -s "$DESKTOP_ASSET_DIR/terminal.png" ]]; then
+    term_button="<TrayButton popup=\"Terminal\" icon=\"$DESKTOP_ASSET_DIR/terminal.png\">exec:$TERM_CMD</TrayButton>"
   else
     term_button="<TrayButton popup=\"Terminal\" label=\"Term\">exec:$TERM_CMD</TrayButton>"
   fi
-  if [[ -s "$DOCK_ICON_DIR/browser.png" ]]; then
-    browser_button="<TrayButton popup=\"Browser\" icon=\"$DOCK_ICON_DIR/browser.png\">exec:$BROWSER_CMD</TrayButton>"
+  if [[ -s "$DESKTOP_ASSET_DIR/browser.png" ]]; then
+    browser_button="<TrayButton popup=\"Browser\" icon=\"$DESKTOP_ASSET_DIR/browser.png\">exec:$BROWSER_CMD</TrayButton>"
   else
     browser_button="<TrayButton popup=\"Browser\" label=\"Web\">exec:$BROWSER_CMD</TrayButton>"
+  fi
+
+  if [[ -s "$DESKTOP_ASSET_DIR/wallpaper.png" ]]; then
+    background="<Background type=\"scale\">$DESKTOP_ASSET_DIR/wallpaper.png</Background>"
+  else
+    background="<Background type=\"solid\">#f4f3ef</Background>"
   fi
 
   # Emitted only when it exists: JWM warns on a missing include, and this file
@@ -172,8 +256,14 @@ write_jwmrc() {
      overwritten; put your own JWM config in ~/.jwmrc.local, included below. -->
 <JWM>
   <!-- One desktop. Extra desktops in a single-window VNC view only lose windows
-       behind a shortcut nobody knew they pressed. -->
-  <Desktops width="1" height="1"/>
+       behind a shortcut nobody knew they pressed. `scale` is JWM's fill-the-
+       screen mode (`fit` and `stretch` are not background types it accepts);
+       the wallpaper is written at exactly the Xvnc geometry, so it neither
+       upscales nor distorts. The solid fallback keeps the brand paper colour on
+       a box where the image could not be written, instead of a black void. -->
+  <Desktops width="1" height="1">
+    $background
+  </Desktops>
 
   <!-- The dock: a fixed-width strip centered on the bottom edge. The explicit
        width is load-bearing, because JWM honors halign only on a sized tray and
@@ -250,8 +340,8 @@ write_jwmrc() {
   </Group>
 
   <RootMenu onroot="123">
-    <Program label="Terminal" icon="$DOCK_ICON_DIR/terminal.png">$TERM_CMD</Program>
-    <Program label="Browser" icon="$DOCK_ICON_DIR/browser.png">$BROWSER_CMD</Program>
+    <Program label="Terminal" icon="$DESKTOP_ASSET_DIR/terminal.png">$TERM_CMD</Program>
+    <Program label="Browser" icon="$DESKTOP_ASSET_DIR/browser.png">$BROWSER_CMD</Program>
     <Separator/>
     <Restart label="Restart JWM"/>
   </RootMenu>
