@@ -164,6 +164,38 @@ function captureGit(args: string[], cwd: string): Promise<string> {
 }
 
 /**
+ * What `pull` merges: the remote-tracking ref for the branch the box is on.
+ *
+ * The upstream if the branch has one, else `<remote>/<branch>`, else
+ * `<remote>/HEAD` for a freshly cloned worktree that has neither.
+ *
+ * This used to be an unconditional `<remote>/HEAD`, which is wrong twice over.
+ * `refs/remotes/<remote>/HEAD` is written by `git clone`, and a docker box is a
+ * WORKTREE on the host's bind-mounted `.git/` — no clone, so no such ref, and
+ * every pull died with `merge: origin/HEAD - not something we can merge`. Where
+ * the ref does exist it names the remote's DEFAULT branch, so a box on
+ * `agentbox/<name>` would have merged `origin/main` into it.
+ *
+ * FETCH_HEAD is not the answer either, tempting as it looks: the fetch runs
+ * HOST-side through the relay, so FETCH_HEAD lands in the host's git dir, not
+ * in this worktree's (`.git/worktrees/<name>/`), where it does not resolve.
+ */
+export async function resolveMergeTarget(
+  remote: string,
+  cwd: string,
+  probe: (args: string[], cwd: string) => Promise<string> = captureGit,
+): Promise<string> {
+  const upstream = await probe(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd);
+  if (upstream) return upstream;
+  const branch = await probe(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+  if (branch && branch !== 'HEAD') {
+    const tracking = `${remote}/${branch}`;
+    if (await probe(['rev-parse', '--verify', '--quiet', tracking], cwd)) return tracking;
+  }
+  return `${remote}/HEAD`;
+}
+
+/**
  * Control-plane push: instead of the relay pushing host-side, the box leases a
  * repo-scoped GitHub-App token from the control plane and pushes directly.
  * Used when AGENTBOX_GIT_LEASE=1. The host writes that flag into
@@ -339,8 +371,6 @@ export const gitCommand = new Command('git')
         // Merge happens in the container, where the working tree lives. No
         // creds needed; refs are already in the shared .git from the fetch.
         const remote = resolveRemote(opts.remote);
-        // Resolve branch via the current HEAD's upstream, falling back to
-        // `<remote>/HEAD` so a freshly cloned worktree still pulls.
         const cwd = opts.cwd ?? process.cwd();
         // A non-fast-forward merge writes a merge commit, which needs a
         // committer identity. Fall back to a generic agentbox identity only
@@ -363,7 +393,7 @@ export const gitCommand = new Command('git')
           mergeArgs.push('--ff-only');
         }
         mergeArgs.push(...passthroughMergeArgs);
-        mergeArgs.push(`${remote}/HEAD`);
+        mergeArgs.push(await resolveMergeTarget(remote, cwd));
         const mergeCode = await runLocalGit(mergeArgs, cwd);
         process.exit(mergeCode);
       }),

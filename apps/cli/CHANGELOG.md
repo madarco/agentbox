@@ -13,6 +13,11 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`agentbox git pull` works again.** It merged an unconditional `origin/HEAD`,
+  a ref `git clone` writes and a bind-mounted worktree therefore never has, so
+  every pull ended in `merge: origin/HEAD - not something we can merge`. It now
+  merges the branch's upstream, else its remote-tracking ref — which is also the
+  right branch, where `origin/HEAD` would have pulled the remote's default one.
 - **Adding an agent to a live cloud box no longer fails on Daytona.** An agent's
   post-install claimed ownership of `~/.agentbox-creds`, which at runtime is the
   mounted credentials volume — virtiofs on Daytona, where `chown` fails even for
