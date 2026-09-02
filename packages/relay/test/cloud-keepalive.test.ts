@@ -59,6 +59,35 @@ describe('selectBoxesToRenew', () => {
     expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([]);
   });
 
+  // ── Persistent (always-on) boxes. The inversion that matters: such a box
+  //    typically has NO reporting agent, so every heuristic above reads it as
+  //    abandoned and would let its session lapse. ──
+
+  it('renews a persistent box with no agent state at all', () => {
+    const e = entry({ boxId: 'svc', agentState: null, lastActivityMs: null, persistent: true });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
+      { boxId: 'svc', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
+    ]);
+  });
+
+  it('renews a persistent box whose agent has been idle far past the window', () => {
+    const e = entry({
+      boxId: 'svc',
+      agentState: 'idle',
+      lastActivityMs: NOW - 100 * WINDOW,
+      persistent: true,
+    });
+    expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([
+      { boxId: 'svc', backend: 'vercel', targetDeadlineEpochMs: NOW + WINDOW },
+    ]);
+  });
+
+  it('still lets a non-persistent sibling lapse in the same sweep', () => {
+    const svc = entry({ boxId: 'svc', agentState: null, lastActivityMs: null, persistent: true });
+    const tmp = entry({ boxId: 'tmp', agentState: 'idle', lastActivityMs: NOW - WINDOW });
+    expect(selectBoxesToRenew([svc, tmp], WINDOW, NOW).map((d) => d.boxId)).toEqual(['svc']);
+  });
+
   it('skips an idle box with no activity timestamp', () => {
     const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: null });
     expect(selectBoxesToRenew([e], WINDOW, NOW)).toEqual([]);
@@ -79,6 +108,16 @@ describe('selectBoxesToRenew', () => {
 describe('shouldIdlePause', () => {
   // The box's own idle timeout (box.daytonaTimeoutMs), NOT the 5-min renewal window.
   const IDLE = 25 * 60_000;
+
+  it('never idle-pauses a persistent box, however long its agent has been idle', () => {
+    const e = entry({
+      boxId: 'svc',
+      agentState: 'idle',
+      lastActivityMs: NOW - 100 * IDLE,
+      persistent: true,
+    });
+    expect(shouldIdlePause(e, IDLE, NOW)).toBe(false);
+  });
 
   it('pauses a box idle for its full configured timeout', () => {
     const e = entry({ boxId: 'a', agentState: 'idle', lastActivityMs: NOW - IDLE });

@@ -118,6 +118,12 @@ export interface CreateBoxRequest {
   imageRegistry?: string;
   /** Start from this checkpoint ref instead of a cold image. */
   checkpointRef?: string;
+  /**
+   * Create this box as PERSISTENT (always-on). Absent → the provider falls back
+   * to the effective `box.persistent`, so a caller with no flag to forward
+   * (the queue worker's config-override path) still gets the right answer.
+   */
+  persistent?: boolean;
   withPlaywright?: boolean;
   withEnv?: boolean;
   /** Workspace-relative host file paths to seed into /workspace at create. */

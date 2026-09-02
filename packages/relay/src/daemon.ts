@@ -1,6 +1,7 @@
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
+import { startPersistentBoxLoop } from './persistent-boxes.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
 import { HostReachPoller } from './host-reach-poller.js';
@@ -111,6 +112,10 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
     // backend (e2b) revives the box on the poller's next long-poll.
     stopPoller: (boxId) => handle.stopCloudPoller(boxId),
   });
+  // Boot reconcile for always-on boxes: a host reboot (or a provider-side stop)
+  // leaves a persistent box down with nothing else to notice. Runs once
+  // immediately, then on a slow tick.
+  const persistentBoxes = startPersistentBoxLoop({ log });
   const queue = startQueueLoop({
     log,
     registry: handle.registry,
@@ -134,6 +139,7 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
       await Promise.allSettled([
         autopause.stop(),
         cloudKeepalive.stop(),
+        persistentBoxes.stop(),
         queue.stop(),
         retention.stop(),
         hostReachPoller?.stop() ?? Promise.resolve(),

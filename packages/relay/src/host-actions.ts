@@ -35,7 +35,7 @@ import {
   sanitizeGitArgs,
   upstreamRef,
 } from '@agentbox/core';
-import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import type { CloudBackend, CloudHandle, Provider } from '@agentbox/core';
 import {
   buildAgentDescriptors,
   findBox,
@@ -161,6 +161,14 @@ export interface CloudBackendLoader {
   id?: string;
   /** Resolve a BUILT-IN backend; `null` means "not mine — keep looking". */
   resolveBackend(name: string): Promise<CloudBackend | null>;
+  /**
+   * Resolve a BUILT-IN provider (docker included — it has no cloud backend but
+   * is very much a provider). `null` means "not mine — keep looking".
+   *
+   * Optional: a loader written before the persistent-box reconcile existed omits
+   * it, and the relay falls back to its own bare-specifier import.
+   */
+  resolveProvider?(name: string): Promise<Provider | null>;
   /** The `@agentbox/sandbox-cloud` cp helpers used by the download executor. */
   loadCloudCp(): Promise<CloudCpModule>;
 }
@@ -175,6 +183,11 @@ let cloudBackendLoader: CloudBackendLoader | undefined;
 export function setCloudBackendLoader(loader: CloudBackendLoader | undefined): void {
   cloudBackendLoader = loader;
   cloudCpModule = undefined;
+}
+
+/** The registered loader, for consumers that resolve more than cloud backends. */
+export function currentCloudBackendLoader(): CloudBackendLoader | undefined {
+  return cloudBackendLoader;
 }
 
 /**

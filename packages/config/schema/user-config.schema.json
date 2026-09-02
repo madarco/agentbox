@@ -53,6 +53,7 @@
         "resyncOnStart": { "type": "boolean" },
         "vnc": { "type": "boolean" },
         "autoApproveHostActions": { "type": "boolean" },
+        "persistent": { "type": "boolean" },
         "autoApproveSafeHostActions": { "type": "boolean" },
         "isolateClaudeConfig": { "type": "boolean" },
         "isolateCodexConfig": { "type": "boolean" },

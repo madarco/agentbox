@@ -6,6 +6,7 @@ import {
   parseUserConfig,
   type UserConfig,
 } from '@agentbox/config';
+import { readState } from '@agentbox/sandbox-core';
 import { readActiveAgent, type WorkingAgentState } from './queue.js';
 import type { BoxRegistry, EventBuffer } from './registry.js';
 import type { BoxStatusStore } from './status-store.js';
@@ -37,6 +38,12 @@ export interface BoxScanEntry {
   idleMs: number | null;
   /** Box creation time as epoch ms; 0 when unknown/unparseable. */
   createdAt: number;
+  /**
+   * `BoxRecord.persistent` — an always-on box. Never a pause candidate, and not
+   * counted against `maxRunningBoxes`: counting it would make the loop pause
+   * expendable boxes to free a slot for a box it can never pause.
+   */
+  persistent?: boolean;
 }
 
 /**
@@ -47,13 +54,18 @@ export interface BoxScanEntry {
  */
 export function selectBoxesToPause(entries: BoxScanEntry[], cfg: AutopauseConfig): string[] {
   if (!cfg.enabled) return [];
-  const runningCount = entries.reduce((n, e) => (e.running ? n + 1 : n), 0);
+  const runningCount = entries.reduce((n, e) => (e.running && !e.persistent ? n + 1 : n), 0);
   const excess = runningCount - cfg.maxRunningBoxes;
   if (excess <= 0) return [];
 
   const idleThresholdMs = cfg.idleMinutes * 60_000;
   const candidates = entries.filter(
-    (e) => e.running && e.agentState === 'idle' && e.idleMs != null && e.idleMs >= idleThresholdMs,
+    (e) =>
+      e.running &&
+      !e.persistent &&
+      e.agentState === 'idle' &&
+      e.idleMs != null &&
+      e.idleMs >= idleThresholdMs,
   );
   candidates.sort(
     (a, b) =>
@@ -127,6 +139,11 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
       const cfg = await loadConfig();
       if (!cfg.enabled) return;
 
+      // The registry is the relay's in-memory view and carries no `persistent`
+      // flag; the box RECORD is where create persisted it (see BoxRecord).
+      // One read per tick, not per box.
+      const persistentIds = await readPersistentBoxIds();
+
       const entries: BoxScanEntry[] = [];
       for (const reg of registry.list()) {
         if (!reg.containerName) continue; // pre-feature box; can't pause it
@@ -141,6 +158,7 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
           agentState: active.state,
           idleMs,
           createdAt: reg.createdAt ? toEpoch(reg.createdAt) : 0,
+          persistent: persistentIds.has(reg.boxId),
         });
       }
 
@@ -148,7 +166,7 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
       if (toPause.length === 0) return;
 
       const byId = new Map(entries.map((e) => [e.boxId, e]));
-      const runningBefore = entries.reduce((n, e) => (e.running ? n + 1 : n), 0);
+      const runningBefore = entries.reduce((n, e) => (e.running && !e.persistent ? n + 1 : n), 0);
       for (const boxId of toPause) {
         const e = byId.get(boxId);
         if (!e) continue;
@@ -240,6 +258,21 @@ function coarsePauseState(s: WorkingAgentState | null): CoarseAgentState | null 
     // — never auto-pause it (maps to a non-idle, non-candidate state).
     default:
       return 'unknown';
+  }
+}
+
+/**
+ * Ids of every box whose record says `persistent`. Read per tick (not cached)
+ * so flipping a box's record — or creating a persistent box — takes effect
+ * without a relay restart. A missing/corrupt state file yields an empty set:
+ * the loop then behaves exactly as it did before this feature.
+ */
+export async function readPersistentBoxIds(): Promise<Set<string>> {
+  try {
+    const { boxes } = await readState();
+    return new Set(boxes.filter((b) => b.persistent === true).map((b) => b.id));
+  } catch {
+    return new Set();
   }
 }
 

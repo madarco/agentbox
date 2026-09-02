@@ -120,6 +120,7 @@ export const statusCommand = withWatchOptions(
         JSON.stringify(
           {
             state: inspected.state,
+            persistent: inspected.record.persistent === true,
             source: live ? 'live' : 'persisted',
             ...(live ?? {}),
             resources,
@@ -146,6 +147,13 @@ async function buildStatusText(id: string, container: string): Promise<string> {
   const live = await fetchLive(state, container);
 
   const out: string[] = [];
+  if (inspected.record.persistent) {
+    out.push(
+      'PERSISTENT',
+      '  always-on: never auto-paused, skipped by prune, restarted by the relay after a reboot',
+      '',
+    );
+  }
   const epLines = renderEndpointLines(endpoints, process.stdout);
   if (epLines.length > 0) {
     out.push('ENDPOINTS', epLines.join('\n'), '');

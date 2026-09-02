@@ -74,6 +74,8 @@ export interface CreateJobRequestOpts {
   withPlaywright?: boolean;
   withEnv?: boolean;
   vnc?: boolean;
+  /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
+  persistent?: boolean;
   /** Cap commits in the cloud-seed git bundle (`--bundle-depth`). */
   bundleDepth?: number;
   /** `--build`: force a local base build instead of pulling. */

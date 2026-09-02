@@ -169,6 +169,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     'withPlaywright',
     'withEnv',
     'vnc',
+    'persistent',
     'resync',
     'sharedDockerCache',
     'portless',

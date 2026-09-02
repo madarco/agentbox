@@ -47,7 +47,7 @@ import {
 } from '@agentbox/config';
 import type { CloudBackend } from '@agentbox/core';
 import { findBox, readState, recordBox } from '@agentbox/sandbox-core';
-import { loadAutopauseConfig, type AutopauseConfig } from './autopause.js';
+import { loadAutopauseConfig, readPersistentBoxIds, type AutopauseConfig } from './autopause.js';
 import { resolveCloudBackend } from './host-actions.js';
 import { readActiveAgent, type WorkingAgentState } from './queue.js';
 import type { BoxRegistry } from './registry.js';
@@ -65,6 +65,13 @@ export interface KeepaliveScanEntry {
   agentState: KeepaliveAgentState;
   /** epoch ms of the active agent's `updatedAt`, or null when no snapshot. */
   lastActivityMs: number | null;
+  /**
+   * `BoxRecord.persistent` — an always-on box: renewed on every tick regardless
+   * of agent state, and never idle-paused. A persistent box typically has NO
+   * reporting agent (a plain service box reports `agentState: null`), which
+   * every heuristic below would otherwise read as abandoned.
+   */
+  persistent?: boolean;
 }
 
 export interface RenewDecision {
@@ -99,6 +106,12 @@ export function selectBoxesToRenew(
 ): RenewDecision[] {
   const out: RenewDecision[] = [];
   for (const e of entries) {
+    // Always-on, and usually with no agent to report activity: renew
+    // unconditionally.
+    if (e.persistent) {
+      out.push({ boxId: e.boxId, backend: e.backend, targetDeadlineEpochMs: now + windowMs });
+      continue;
+    }
     if (e.agentState == null) continue;
     let target: number | null = null;
     if (e.agentState === 'active') {
@@ -137,6 +150,9 @@ export function selectBoxesToRenew(
  * An `active` agent (incl. waiting/question) is never a candidate.
  */
 export function shouldIdlePause(e: KeepaliveScanEntry, idleWindowMs: number, now: number): boolean {
+  // An always-on box's agent (when it has one) settling to `idle` is its
+  // resting state, not evidence the box is unused.
+  if (e.persistent) return false;
   if (e.agentState !== 'idle' || e.lastActivityMs == null) return false;
   return now - e.lastActivityMs >= idleWindowMs;
 }
@@ -270,6 +286,10 @@ export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeep
       const windowMs = cfg.idleMinutes * 60_000;
       const now = nowFn();
 
+      // Persistent flags live on the box RECORDS, not on the relay's in-memory
+      // registrations. One read per tick.
+      const persistentIds = await readPersistentBoxIds();
+
       const live = new Set<string>();
       const entries: KeepaliveScanEntry[] = [];
       for (const reg of registry.list()) {
@@ -283,6 +303,7 @@ export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeep
           backend: reg.backend,
           agentState: coarseKeepaliveState(active.state),
           lastActivityMs: active.updatedAt ? toEpoch(active.updatedAt) : null,
+          persistent: persistentIds.has(reg.boxId),
         });
       }
 

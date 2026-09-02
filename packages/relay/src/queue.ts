@@ -222,6 +222,8 @@ export interface QueueJobCreateOpts {
   withPlaywright?: boolean;
   withEnv?: boolean;
   vnc?: boolean;
+  /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
+  persistent?: boolean;
   /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */
   resync?: boolean;
   sharedDockerCache?: boolean;

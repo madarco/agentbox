@@ -349,7 +349,9 @@ async function buildCmuxText(live: boolean, color: boolean, linkNames = false): 
  * merge and so no `on hub` / `orphan` qualifier anymore.
  */
 function stateCell(b: HubApiBox): string {
-  return effectiveState(b);
+  // Trailing `*` marks a persistent (always-on) box; the legend under the table
+  // explains it, so the column stays narrow.
+  return b.persistent ? `${effectiveState(b)}*` : effectiveState(b);
 }
 
 /**
@@ -440,7 +442,7 @@ function renderTable(
     return cell.text + ' '.repeat(Math.max(0, target - cell.width));
   };
 
-  return all
+  const table = all
     .map((row) =>
       row
         .map((cell, i) => padCell(cell ?? plain(''), i))
@@ -448,6 +450,11 @@ function renderTable(
         .trimEnd(),
     )
     .join('\n');
+  // Only when it applies: a legend on every listing is noise for the common
+  // all-expendable fleet.
+  if (!boxes.some((b) => b.persistent)) return table;
+  const legend = '* persistent (always-on): never auto-paused or pruned; restarted after a reboot';
+  return `${table}\n${color ? colorize(legend, 'dim') : legend}`;
 }
 
 /**

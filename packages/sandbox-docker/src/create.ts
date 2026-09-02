@@ -238,6 +238,11 @@ export interface CreateBoxOptions {
    */
   vnc?: { enabled: boolean };
   /**
+   * Create this box as PERSISTENT (always-on). Absent → the effective
+   * `box.persistent`. Mirrors `CreateBoxRequest.persistent`.
+   */
+  persistent?: boolean;
+  /**
    * Docker-in-Docker. Always-on (the in-box dockerd is part of the box
    * surface). When `sharedCache` is true the per-box `agentbox-docker-<id>`
    * volume is replaced with the shared `agentbox-docker-cache` volume — image
@@ -825,6 +830,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const effectiveBoxCfg = (await loadEffectiveConfig(opts.projectRoot ?? workspace)).effective.box;
   const autoApproveHostActions = effectiveBoxCfg.autoApproveHostActions;
   const autoApproveSafeHostActions = effectiveBoxCfg.autoApproveSafeHostActions;
+  // Persistent (always-on) boxes: resolved here so every entrypoint agrees, with
+  // the caller's explicit `--persistent` winning over the config layers.
+  const persistent = opts.persistent ?? effectiveBoxCfg.persistent;
 
   // Per-box bearer token for the host relay. Register *before* runBox so the
   // box's supervisor can post on boot. Skip if the relay isn't reachable —
@@ -968,6 +976,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // Default on: persist only when explicitly disabled (mirrors the relay's
     // `!== false` read); an absent field on an older record stays relaxed.
     autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+    persistent: persistent ? true : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,
     vncPassword: vncPassword,

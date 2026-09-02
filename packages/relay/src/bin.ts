@@ -40,6 +40,20 @@ function registerCloudBackendsFromEnv(log: (line: string) => void): void {
         return null;
       }
     },
+    // Providers (not just cloud backends): the persistent-box reconcile drives
+    // `provider.reconnect`, and docker — the common persistent case — has no
+    // cloud backend at all, so it can only come from here.
+    resolveProvider: async (name) => {
+      try {
+        return (await (await load()).resolveProvider?.(name)) ?? null;
+      } catch (err) {
+        pending = undefined;
+        log(
+          `provider loader at ${path} failed (${err instanceof Error ? err.message : String(err)}); falling back`,
+        );
+        return null;
+      }
+    },
     loadCloudCp: async () => (await load()).loadCloudCp(),
   });
   log(`cloud backends: ${path}`);

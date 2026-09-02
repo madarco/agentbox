@@ -13,7 +13,12 @@
 
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { generateBoxId, resolveSyncTopology, UserFacingError } from '@agentbox/core';
+import {
+  generateBoxId,
+  persistentRefusal,
+  resolveSyncTopology,
+  UserFacingError,
+} from '@agentbox/core';
 import type {
   AttachKind,
   AttachSpec,
@@ -1195,6 +1200,14 @@ export function createCloudProvider(
         const effectiveBoxForApprove = effectiveForCreate.box;
         const autoApproveHostActions = effectiveBoxForApprove.autoApproveHostActions;
         const autoApproveSafeHostActions = effectiveBoxForApprove.autoApproveSafeHostActions;
+        // Persistent (always-on) box: an explicit request wins over the config
+        // layers. Refused up front on a backend whose platform session cap the
+        // host can only extend, never remove.
+        const persistent = req.persistent ?? effectiveBoxForApprove.persistent;
+        if (persistent) {
+          const refusal = persistentRefusal(backend.name);
+          if (refusal) throw new Error(refusal);
+        }
 
         // Register the box so its RPCs (status, git.lease-token) are recognized.
         // Control-plane box → register on the PLANE with its origin URL (the
@@ -1373,6 +1386,7 @@ export function createCloudProvider(
           withEnv: req.withEnv,
           autoApproveHostActions: autoApproveHostActions ? true : undefined,
           autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+          persistent: persistent ? true : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,
           portlessUrl: portlessUrlResolved,

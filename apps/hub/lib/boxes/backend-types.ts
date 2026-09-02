@@ -106,6 +106,8 @@ export interface CreateBoxOpts {
   /** Gitignore-bypassing env/config files to copy in (`--with-env` / wizard picks). */
   envFiles?: string[];
   vnc?: boolean;
+  /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
+  persistent?: boolean;
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;

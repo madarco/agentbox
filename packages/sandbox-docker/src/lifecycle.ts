@@ -855,7 +855,14 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
   // Their liveness is a provider question; `prune --provider <cloud>` answers it
   // by listing the remote sandboxes instead. Same guard `listBoxes` applies
   // before any docker probe.
-  const dockerBoxes = boxes.filter((b) => (b.provider ?? 'docker') === 'docker');
+  //
+  // Persistent boxes are excluded outright: an always-on box that is currently
+  // stopped (host rebooted, relay not up yet) reads as `missing` until the
+  // reconcile runs, and prune would drop the only record of it — losing the box.
+  // Its container/volumes stay in the `expected*` sets below via `survivingBoxes`.
+  const dockerBoxes = boxes.filter(
+    (b) => (b.provider ?? 'docker') === 'docker' && b.persistent !== true,
+  );
   const stateChecks = await Promise.all(
     dockerBoxes.map(async (b) => ({ box: b, status: await inspectContainerStatus(b.container) })),
   );

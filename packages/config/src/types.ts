@@ -158,6 +158,7 @@ export interface UserConfig {
     vnc?: boolean;
     autoApproveHostActions?: boolean;
     autoApproveSafeHostActions?: boolean;
+    persistent?: boolean;
     isolateClaudeConfig?: boolean;
     isolateCodexConfig?: boolean;
     isolateOpencodeConfig?: boolean;
@@ -368,6 +369,7 @@ export interface EffectiveConfig {
     vnc: boolean;
     autoApproveHostActions: boolean;
     autoApproveSafeHostActions: boolean;
+    persistent: boolean;
     isolateClaudeConfig: boolean;
     isolateCodexConfig: boolean;
     isolateOpencodeConfig: boolean;
@@ -550,6 +552,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     vnc: true,
     autoApproveHostActions: false,
     autoApproveSafeHostActions: true,
+    persistent: false,
     ...(perAgentIsolateDefaults() as Pick<EffectiveConfig['box'], AgentIsolateKey>),
     image: 'agentbox/box:dev',
     imageDocker: '',
@@ -934,6 +937,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "Auto-approve the SAFE subset of host actions without a prompt: opening a PR, PR/review comments, re-running CI, pushing to the box's scratch or host-sanctioned branch, checkpoints, calls to a granted host tool, and file copy/download that stays inside the box project folder (non-secret). Uncontained or secret file transfers, non-sanctioned-branch pushes, and PR merge/checkout still prompt. On by default; set false to prompt for every host action (the pre-relax behavior). Superseded by box.autoApproveHostActions, which approves everything. Each auto-approval is recorded as a relay event.",
+  },
+  {
+    key: 'box.persistent',
+    type: 'bool',
+    description:
+      'Make new boxes persistent (always-on): never auto-paused, never idle-lapsed on a cloud provider, skipped by `agentbox prune`, confirmed before `destroy` even with -y, and started again by the relay after a host reboot. Off by default. Refused on e2b/vercel, whose platform session cap the host can extend but not remove.',
   },
   ...perAgentIsolateKeys(),
   {

@@ -49,6 +49,16 @@ export const cloudBackendLoader: CloudBackendLoader = {
     if (!isProviderKind(name)) return null;
     return (await IMPORTERS[name]()).providerModule.backend ?? null;
   },
+  // Full providers, for the relay's persistent-box reconcile
+  // (`provider.reconnect`). Built-ins AND registered plugins, via the same
+  // resolver the worker uses — docker included, which has no cloud backend.
+  resolveProvider: async (name) => {
+    try {
+      return (await loadProviderModuleByName(name)).provider ?? null;
+    } catch {
+      return null;
+    }
+  },
   loadCloudCp: async (): Promise<CloudCpModule> => import('@agentbox/sandbox-cloud'),
 };
 

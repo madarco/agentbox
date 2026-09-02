@@ -103,10 +103,23 @@ export const destroyCommand = new Command('destroy')
       }
       const box = await resolveBoxOrExit(idOrName);
 
+      // An always-on box is not expendable, so `-y` alone does not destroy one.
+      // `--force` is the override (it already exists for dropping a record no
+      // hub owns).
+      if (box.persistent && opts.yes && !opts.force) {
+        log.error(
+          `${box.name} is a persistent (always-on) box; -y does not destroy one. ` +
+            `Re-run without -y to confirm interactively, or pass --force.`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+
       if (!opts.yes) {
         log.warn('Will also wipe the box volume and agent work-in-progress');
         const rootBranch = box.gitWorktrees?.find((w) => w.kind === 'root')?.branch;
         const lines = [box.name];
+        if (box.persistent) lines.push('persistent: yes (always-on box)');
         if (rootBranch) lines.push(`branch:    ${rootBranch}`);
         lines.push(`project: ${box.workspacePath}`);
         if (box.snapshotDir) {

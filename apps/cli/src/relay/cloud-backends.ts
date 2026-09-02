@@ -14,6 +14,7 @@
  */
 import type { CloudBackendLoader, CloudCpModule } from '@agentbox/relay';
 import { cloudBackendForProvider } from '../provider/cloud-backend.js';
+import { loadProviderModule } from '../provider/loaders.js';
 
 /** Marker the build-time wiring check greps for in `dist/cloud-backends.js`. */
 export const CLOUD_BACKEND_LOADER_ID = 'agentbox:builtin-cloud-backends';
@@ -24,6 +25,17 @@ export const cloudBackendLoader: CloudBackendLoader = {
   // backend) and for any non-built-in name, which leaves provider PLUGINS on the
   // relay's own registry path — the one place that enforces the SDK-version gate.
   resolveBackend: (name) => cloudBackendForProvider(name),
+  // Full providers, for the relay's persistent-box reconcile (`provider.reconnect`).
+  // Goes through the same literal-specifier map as everything else, so docker —
+  // which has no cloud backend — is reachable too. A name this CLI doesn't know
+  // returns null and leaves the relay's own plugin path to answer.
+  resolveProvider: async (name) => {
+    try {
+      return (await loadProviderModule(name)).provider ?? null;
+    } catch {
+      return null;
+    }
+  },
   // Dynamic on purpose: `@agentbox/sandbox-cloud` statically imports
   // sandbox-docker → relay, so a static import here would load a second copy of
   // the relay graph inside the relay process. This way it lands in its own lazy

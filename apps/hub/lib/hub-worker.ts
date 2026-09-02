@@ -351,6 +351,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
           : {}),
         ...(createOpts?.withEnv !== undefined ? { withEnv: createOpts.withEnv } : {}),
         ...(createOpts?.vnc !== undefined ? { vnc: { enabled: createOpts.vnc } } : {}),
+        ...(createOpts?.persistent !== undefined ? { persistent: createOpts.persistent } : {}),
         ...(createOpts?.bundleDepth !== undefined ? { bundleDepth: createOpts.bundleDepth } : {}),
         ...(createOpts?.build ? { allowPull: false } : {}),
         ...(createOpts?.credentialSync !== undefined

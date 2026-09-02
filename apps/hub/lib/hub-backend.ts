@@ -354,6 +354,7 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     projectRoot: root,
     projectIndex: b.projectIndex,
     vncEnabled: b.vncEnabled ?? false,
+    persistent: b.persistent === true,
     gitWorktrees: b.gitWorktrees?.map((w) => ({ kind: w.kind, branch: w.branch })),
     // The keyed map is the source; the five named fields below are its derived
     // projection, kept because the macOS tray decodes the three title keys BY
@@ -2311,6 +2312,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             withEnv: o.withEnv,
             envFiles: o.envFiles,
             vnc: o.vnc,
+            persistent: o.persistent,
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,

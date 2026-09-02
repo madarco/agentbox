@@ -30,6 +30,7 @@ export interface ControlPlaneCreateInput {
     withPlaywright?: boolean;
     withEnv?: boolean;
     vnc?: boolean;
+    persistent?: boolean;
     bundleDepth?: number;
     build?: boolean;
     credentialSync?: boolean;
@@ -86,6 +87,7 @@ export function controlPlaneCreateRequest(
         ...(o.withPlaywright !== undefined ? { withPlaywright: o.withPlaywright } : {}),
         ...(o.withEnv !== undefined ? { withEnv: o.withEnv } : {}),
         ...(o.vnc !== undefined ? { vnc: o.vnc } : {}),
+        ...(o.persistent !== undefined ? { persistent: o.persistent } : {}),
         ...(o.bundleDepth !== undefined ? { bundleDepth: o.bundleDepth } : {}),
         ...(o.build ? { build: o.build } : {}),
         ...(o.credentialSync !== undefined ? { credentialSync: o.credentialSync } : {}),

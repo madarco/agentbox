@@ -64,6 +64,8 @@ export interface HubApiBox {
   webUrl?: string | null;
   vncUrl?: string | null;
   vncEnabled?: boolean;
+  /** Always-on box (`box.persistent`); `agentbox list` marks it. */
+  persistent?: boolean;
   // ── Adoption / reconstruction fields (non-secret; cloud boxes only, EXCEPT
   //    originUrl which is populated for any registered box, docker included). ──
   sandboxId?: string;

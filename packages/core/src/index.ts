@@ -21,6 +21,7 @@ export type {
   StateFile,
 } from './box-record.js';
 export { dockerField, agentConfigVolume } from './box-record.js';
+export { PERSISTENT_UNSUPPORTED, persistentRefusal } from './persistent.js';
 export type { BoxEndpoint, BoxEndpoints } from './endpoints.js';
 export { buildNoVncUrl, NOVNC_PORT } from './vnc.js';
 export type {

@@ -378,6 +378,17 @@ export interface BoxRecord {
    */
   autoApproveSafeHostActions?: boolean;
   /**
+   * Resolved `box.persistent` at create time (`--persistent`). A persistent box
+   * is always-on: autopause never pauses it, the cloud keepalive never lets it
+   * lapse, `prune` skips it, `destroy` asks even under `-y`, and the relay's
+   * boot reconcile starts it again after a host reboot.
+   *
+   * Persisted on the RECORD rather than read from project config because the
+   * relay reads records, not the project's `agentbox.yaml`/config layers — the
+   * same reason `autoApproveHostActions` lives here. Absent → not persistent.
+   */
+  persistent?: boolean;
+  /**
    * Carry summary recorded at create time: which host paths were copied into
    * the box from `agentbox.yaml`'s `carry:` block. Audit trail for inspect
    * (the actual file content is not retained — only the src/dest pairs and

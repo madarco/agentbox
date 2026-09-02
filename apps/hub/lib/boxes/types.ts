@@ -43,6 +43,10 @@ export interface Box {
   projectRoot?: string;
   projectIndex?: number;
   vncEnabled?: boolean;
+  // Always-on box (`BoxRecord.persistent`, from `box.persistent`/`--persistent`):
+  // never auto-paused, never idle-lapsed, skipped by prune, restarted by the
+  // relay's boot reconcile. Absent/false = an ordinary expendable box.
+  persistent?: boolean;
   gitWorktrees?: Array<{ kind?: string; branch?: string }>;
   // Every reporting agent's activity + session title, keyed by agent id. THE
   // source; the five named fields below are its derived projection, kept because

@@ -386,6 +386,7 @@ async function runDockerJob(
     // picked files must travel or a gitignored .env would silently not arrive.
     envFilesToImport: opts.envFiles,
     vnc: { enabled: cfg.effective.box.vnc },
+    persistent: cfg.effective.box.persistent,
     docker: { sharedCache: cfg.effective.box.dockerCacheShared },
     portless: portlessEnabled,
     portlessStateDir: cfg.effective.portless.stateDir || undefined,
@@ -611,6 +612,7 @@ async function runCloudJob(
     withEnv: cfg.effective.box.withEnv,
     envFilesToImport: opts.envFiles,
     vnc: { enabled: cfg.effective.box.vnc },
+    persistent: cfg.effective.box.persistent,
     limits: resolveLimits(cfg.effective.box, opts),
     // carry: entries the submitter resolved + approved on the host; the cloud
     // worker runs on the host too, so it reads the files and uploads them.
@@ -701,6 +703,7 @@ function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
+  if (opts.persistent !== undefined) box.persistent = opts.persistent;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   const out: Partial<UserConfig> = {};
   if (Object.keys(box).length > 0) out.box = box;

@@ -51,6 +51,37 @@ On cloud providers, `stop` leaves the sandbox in your account with disk preserve
   freeze a running agent in place instead, use `pause`.
 </Callout>
 
+## Persistent boxes
+
+Most boxes are expendable. The relay pauses idle ones once more than `autopause.maxRunningBoxes` are running, a cloud box lapses when its keepalive window runs out, and `agentbox prune` drops records whose container is gone. That is the right default for a coding-agent box you destroy after the PR merges, and the wrong one for a box that hosts something you dial.
+
+`--persistent` opts a box out of all of it:
+
+```bash
+agentbox create -n gateway --persistent
+agentbox config set box.persistent true --project   # default for this project
+```
+
+A persistent box is:
+
+- **never auto-paused** — autopause skips it, and it does not count against `autopause.maxRunningBoxes`, so it cannot push expendable boxes out of the running budget either;
+- **never idle-lapsed** on a cloud provider — the host keepalive renews its session on every tick regardless of agent state. A service box usually has no agent reporting at all, which every idle heuristic otherwise reads as abandoned;
+- **skipped by `agentbox prune`**, `--all` included — a persistent box that happens to be stopped would otherwise look like an orphan record;
+- **confirmed before `destroy`** — `agentbox destroy <box> -y` refuses on one, and `--force` is the deliberate override;
+- **started again by the relay** after a host reboot, a docker daemon restart, or a provider-side stop.
+
+The restart goes through the provider's own start path, so `/workspace`, the `agentbox-ctl` supervisor, the in-box dockerd and the published host ports come back with the box. A docker `--restart` policy would return the container without any of them. The relay reconciles once when it starts and on a slow tick after that.
+
+`agentbox list` marks a persistent box with a `*` after its state; `agentbox status <box>` prints `PERSISTENT` at the top. `--no-persistent` opts a single box back out when `box.persistent` is set for the project.
+
+<Callout type="warn" title="Not on e2b or vercel">
+  Both run boxes as Firecracker microVMs with a hard platform session cap (E2B 1h on Hobby, Vercel
+  ~45m). The host keepalive can push the deadline out within that cap but cannot remove it, so the
+  box lapses on its own however it is configured. `--persistent` refuses on those two by name. Use
+  [docker](/docs/local-docker), [hetzner](/docs/hetzner), [digitalocean](/docs/digitalocean),
+  [remote-docker](/docs/remote-docker), or [daytona](/docs/daytona).
+</Callout>
+
 ## Checkpoints
 
 A checkpoint captures a box's accumulated state — all of `/workspace` (deps installed, project built, build caches) plus everything else the agent wrote into the writable layer — so a _new_ box can start warm instead of from bare host code. Under the hood it's a `docker commit` into a project-scoped image; only metadata lives on the host.

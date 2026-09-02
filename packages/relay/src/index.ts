@@ -259,6 +259,13 @@ export {
   type RenewDecision,
 } from './cloud-keepalive.js';
 export {
+  selectPersistentBoxesToStart,
+  startPersistentBoxLoop,
+  type PersistentBoxEntry,
+  type PersistentBoxLoopDeps,
+  type PersistentBoxLoopHandle,
+} from './persistent-boxes.js';
+export {
   startRetentionLoop,
   type RetentionLoopDeps,
   type RetentionLoopHandle,

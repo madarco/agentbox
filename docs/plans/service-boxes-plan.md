@@ -1,6 +1,6 @@
 # Persistent boxes & service agents — implementation plan
 
-Status: **in progress** (Phase 0 done; phases 1-3 in flight). This is the durable plan doc; update the phase status lines as work
+Status: **in progress** (phases 0-1 done; phases 2-3 in flight). This is the durable plan doc; update the phase status lines as work
 lands. One session per phase.
 
 > **Supersedes `docs/openclaw-hosting-plan.md`**, which scopes only OpenClaw and whose Phase 1
@@ -122,8 +122,10 @@ box.persistent: true ──▶ never autopaused, never idle-lapsed, skipped by p
 
 ## Phase 1 — persistent boxes
 
-Status: **not started**. Provider-agnostic, no agent work. Ships value on its own: t3code and
-Hermes are usable after this phase plus Phase 4.
+Status: **done** (2026-09-02). Provider-agnostic, no agent work. Ships value on its own: t3code and
+Hermes are usable after this phase plus Phase 4. Deferred items are in
+[`service-boxes-backlog.md`](./service-boxes-backlog.md) — the flag is not yet on the agent
+commands, and the hub's `destroy` route has no guard.
 
 - `BoxRecord.persistent?: boolean` (`packages/core/src/box-record.ts`), config key
   `box.persistent` (default `false`) + `--persistent` / `--no-persistent` on `create` and every

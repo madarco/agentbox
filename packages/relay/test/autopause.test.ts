@@ -44,6 +44,26 @@ describe('selectBoxesToPause', () => {
     expect(selectBoxesToPause(es, { ...CFG, maxRunningBoxes: 1 })).toEqual(['b', 'c']);
   });
 
+  it('never pauses a persistent box, however long it has been idle', () => {
+    const es = [
+      entry({ boxId: 'svc', idleMs: 100 * IDLE, persistent: true }),
+      entry({ boxId: 'tmp', idleMs: IDLE }),
+    ];
+    // max 0 -> pause everything pausable; the always-on box is not pausable.
+    expect(selectBoxesToPause(es, { ...CFG, maxRunningBoxes: 0 })).toEqual(['tmp']);
+  });
+
+  it('does not count a persistent box against maxRunningBoxes', () => {
+    // 2 running, max 1 — but one is always-on, so there is no excess and the
+    // expendable box is left alone (pausing it would make room for a box the
+    // loop can never pause anyway).
+    const es = [
+      entry({ boxId: 'svc', idleMs: 100 * IDLE, persistent: true }),
+      entry({ boxId: 'tmp', idleMs: IDLE }),
+    ];
+    expect(selectBoxesToPause(es, { ...CFG, maxRunningBoxes: 1 })).toEqual([]);
+  });
+
   it('tie-breaks equal idle by oldest createdAt then boxId', () => {
     const es = [
       entry({ boxId: 'z', idleMs: IDLE, createdAt: 2000 }),

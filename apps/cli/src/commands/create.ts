@@ -10,6 +10,7 @@ import {
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
+import { persistentRefusal } from '@agentbox/core';
 import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
@@ -64,6 +65,8 @@ interface CreateOptions {
   /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
+  /** --persistent / --no-persistent: always-on box (config box.persistent). */
+  persistent?: boolean;
   resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
@@ -108,6 +111,7 @@ function buildCliOverrides(opts: CreateOptions): Partial<UserConfig> {
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
+  if (opts.persistent !== undefined) box.persistent = opts.persistent;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   if (opts.credentialSync === false) box.credentialSync = false;
   if (opts.bundleDepth !== undefined) box.bundleDepth = opts.bundleDepth;
@@ -221,6 +225,7 @@ async function runCreateViaHubApi(
     ...(opts.withPlaywright === true ? { withPlaywright: true } : {}),
     ...(opts.withEnv === true ? { withEnv: true } : {}),
     ...(opts.vnc === false ? { vnc: false } : {}),
+    ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
     ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
     ...(opts.build === true ? { build: true } : {}),
     ...(opts.credentialSync === false ? { credentialSync: false } : {}),
@@ -295,6 +300,11 @@ export const createCommand = new Command('create')
     'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
   )
   .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+  .option(
+    '--persistent',
+    'always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.',
+  )
+  .option('--no-persistent', 'create an expendable box even when box.persistent is set')
   .option(
     '--no-resync',
     "when starting from a checkpoint, do not merge the host's current branch + overlay its uncommitted/untracked changes (default: do, keeping the box's version on conflict)",
@@ -414,6 +424,18 @@ export const createCommand = new Command('create')
       log.error(dockerRefusal);
       cmdLog.close();
       process.exit(1);
+    }
+
+    // Always-on box on a provider whose platform session cap the host can only
+    // extend, never remove. Runs BEFORE routing so a control-box create cannot
+    // slip past it.
+    if (cfg.effective.box.persistent) {
+      const refusal = persistentRefusal(providerName);
+      if (refusal) {
+        log.error(refusal);
+        cmdLog.close();
+        process.exit(1);
+      }
     }
 
     // git.pushMode=direct (--dangerously-with-credentials) gating, in the same
@@ -696,6 +718,7 @@ export const createCommand = new Command('create')
           withEnv: cfg.effective.box.withEnv,
           envFiles: wiz.envFilesToImport,
           vnc: cfg.effective.box.vnc,
+          persistent: cfg.effective.box.persistent,
           resync: opts.resync,
           sharedDockerCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
