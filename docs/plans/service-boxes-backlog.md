@@ -205,3 +205,28 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   `agentbox agent add` plugin agent). Until then a service box is created by the CLI's own
   `provider.create` and the hub-queue path is dead for it. Pre-existing — nothing used this path
   before — but it is now the last thing between a service agent and the web UI / tray.
+- **`opts.envFiles` / `opts.withEnv` on `POST /api/v1/boxes` name files on the HUB's disk, not the
+  caller's.** Found by the cwd/`$HOME` audit that followed the `--into` fix; same class, left
+  unfixed there because it is not the same one-line boundary fix. The entries are workspace-relative
+  paths (`.env`, `apps/web/.env.local`) produced by the CLI wizard scanning the **user's** tree
+  (`scanHostEnvFiles(proj.root, …)`, `packages/sandbox-core/src/sync/concerns/env.ts:115`), and they
+  are re-resolved against the workspace root on whichever machine performs the create — the hub's,
+  now that create is behind the API. **The concrete failure against a remote control box:** the user
+  ticks `.env` in the wizard, the *string* travels, and the control box resolves it inside its own
+  fresh `git clone` — where `.env` does not exist, because it is gitignored and the untracked seed
+  excludes ignored paths by design (see the comment at `apps/cli/src/commands/create.ts:196`). The
+  worker's `copyHostFilesToBox` copies 0/1, logs `copied 0/1 selected env/config file(s)` into the
+  queue log, and the create **succeeds** — so the box comes up missing the file the user explicitly
+  chose, with nothing on the terminal saying so. An absolute or `..`-escaping entry is worse and just
+  as accepted: `parseCreateBoxOpts` only checks that `envFiles` is a string array, so a same-named
+  file that happens to exist on the hub's disk would be copied into the box instead of the caller's.
+  Latent for the CLI today — `remoteOpts` in `create.ts` does not forward `envFiles` — but
+  `withEnv: true` IS forwarded and expands to `DEFAULT_ENV_PATTERNS` against the hub's workspace with
+  exactly the same result, and nothing stops the web UI, the tray or any API client from sending
+  `envFiles` directly.
+  Why it is not the `--into` fix: a path cannot be resolved client-side into a file's *contents*, so
+  making this honest means either uploading the bytes (custody blobs / the create seed, which is what
+  `carry:` already does — today the only route by which a gitignored file reaches a hub-built box) or
+  refusing the field outright when the hub is not the caller's machine. Cheap partial hardening in
+  the meantime: reject absolute and `..`-escaping entries at the validator, and have the worker fail
+  loudly rather than log `copied 0/N` and continue.
