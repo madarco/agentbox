@@ -24,6 +24,10 @@ CLI, not the raw commits.
   instead of leaving an empty desktop while the first launch fetches Chromium.
   The window sits low on the screen, centred, so the wallpaper logo stays
   visible behind it.
+- **The desktop terminal and its titlebars match the wallpaper.** The terminal
+  opens ink-on-paper with a light ANSI palette (xterm's defaults assume a black
+  background), window titlebars are painted the wallpaper's own colour, and a
+  terminal window carries the dock's Terminal icon instead of xterm's X.
 - **The desktop's browser window has no titlebar.** The browser is always
   maximized, so the window manager's titlebar only repeated what the tab strip
   says and cost ~30px of page; the progress window loses its decoration too.

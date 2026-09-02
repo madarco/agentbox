@@ -103,6 +103,17 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     expect(jwmrc).not.toContain('$(');
   });
 
+  it('dresses the window chrome in the wallpaper palette', () => {
+    // The focused titlebar is the wallpaper's own paper colour, the same one
+    // the dock paints, so a window's chrome belongs to the desktop behind it.
+    const style = jwmrc.slice(jwmrc.indexOf('<WindowStyle'), jwmrc.indexOf('</WindowStyle>'));
+    const backgrounds = style.match(/<Background>#[0-9a-f]{6}<\/Background>/g) ?? [];
+    expect(backgrounds).toEqual([
+      '<Background>#e9e7e4</Background>', // unfocused: the next grey down
+      '<Background>#f5f3f0</Background>', // focused: the wallpaper's paper
+    ]);
+  });
+
   it('leaves the browser and the progress window undecorated', () => {
     // A titlebar on an always-maximized browser is ~30px of an 800px-tall
     // desktop spent repeating the title the tab strip already shows, and the
@@ -134,6 +145,15 @@ describe('agentbox-vnc-start desktop launcher', () => {
     script.indexOf(`cat > "$DESKTOP_LAUNCHER" <<'LAUNCHER'`),
     script.indexOf('\nLAUNCHER\n'),
   );
+
+  it('opens the desktop terminal light, with a palette to match', () => {
+    // Paper background over the wallpaper, and its own sixteen colours: xterm's
+    // defaults are picked for a black background, where bright white on paper
+    // is invisible.
+    expect(script).toContain('-bg "#f5f3f0" -fg "#1d1e20"');
+    const colors = script.match(/-xrm XTerm\.vt100\.color\d+:#[0-9a-f]{6}/g) ?? [];
+    expect(colors).toHaveLength(16);
+  });
 
   it('takes a per-session lock so two launches cannot race', () => {
     expect(launcher).toContain('flock -n 9');

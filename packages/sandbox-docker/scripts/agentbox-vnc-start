@@ -366,7 +366,26 @@ LAUNCHER
   chmod 755 "$DESKTOP_LAUNCHER" 2>/dev/null || return 1
 }
 
-TERM_CMD='xterm -fa Monospace -fs 11 -bg black -fg white'
+# The desktop terminal is ink on paper, not white on black: it opens over the
+# AgentBox wallpaper, and #f5f3f0 is that wallpaper's own paper colour (palette
+# entry 0 of the PNG above), the same one the dock and the window titlebars
+# paint. The ANSI palette has to come with it -- xterm's default sixteen are
+# picked for a black background, and the bright ones (yellow, cyan, white) are
+# unreadable on paper, with "bright white" invisible. These are the paper-theme
+# equivalents: darker, desaturated, and 7/15 mapped to grey/ink so anything a
+# prompt draws in white still reads. #-values must be quoted for -bg/-fg/-cr
+# (the shell JWM spawns would take a word-initial # as a comment) but not for
+# the -xrm specs, where the # sits mid-word.
+TERM_COLORS='-xrm XTerm.vt100.color0:#1d1e20 -xrm XTerm.vt100.color1:#b4271f'
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color2:#2c7a39 -xrm XTerm.vt100.color3:#96690c"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color4:#2359b5 -xrm XTerm.vt100.color5:#8a3fa0"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color6:#1a7b86 -xrm XTerm.vt100.color7:#4a4b4f"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color8:#7a7b7f -xrm XTerm.vt100.color9:#d0392c"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color10:#37934a -xrm XTerm.vt100.color11:#b0801a"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color12:#3670d6 -xrm XTerm.vt100.color13:#a154b8"
+TERM_COLORS="$TERM_COLORS -xrm XTerm.vt100.color14:#23929e -xrm XTerm.vt100.color15:#1d1e20"
+TERM_CMD='xterm -name agentbox-term -fa Monospace -fs 11 -bg "#f5f3f0" -fg "#1d1e20" -cr "#1d1e20"'
+TERM_CMD="$TERM_CMD $TERM_COLORS"
 # agent-browser, not a raw chromium: it is the session-managed path the rest of
 # agentbox drives (`agentbox screen` -> ensureBoxBrowserShowingApp), so the dock
 # opens a browser the host already knows how to talk to.
@@ -481,17 +500,22 @@ write_jwmrc() {
     </Active>
   </TaskListStyle>
 
+  <!-- Titlebars in the same paper palette as the dock: the focused one is the
+       wallpaper's own #f5f3f0, so a window's chrome reads as part of the
+       desktop rather than a dark bar dropped on it, and an unfocused one is the
+       next grey down. The browser and the launch card are undecorated (below),
+       so in practice this dresses the terminal. -->
   <WindowStyle decorations="flat">
     <Font>Sans-9</Font>
     <Width>3</Width>
     <Height>22</Height>
-    <Background>#2a2a2d</Background>
-    <Foreground>#9a9aa0</Foreground>
-    <Outline>#141416</Outline>
+    <Background>#e9e7e4</Background>
+    <Foreground>#6b6c70</Foreground>
+    <Outline>#e1e0df</Outline>
     <Active>
-      <Background>#3a3a3d</Background>
-      <Foreground>#ffffff</Foreground>
-      <Outline>#141416</Outline>
+      <Background>#f5f3f0</Background>
+      <Foreground>#1d1e20</Foreground>
+      <Outline>#e1e0df</Outline>
     </Active>
   </WindowStyle>
 
@@ -527,6 +551,14 @@ write_jwmrc() {
        one case where it stays, a failed launch, closes on Enter and says so).
        It keeps its dock entry, which is how it is raised and what shows a launch
        is running. -->
+  <!-- The terminal's own dock icon: a window carries whatever _NET_WM_ICON it
+       sets, and xterm's is a 1990s X bitmap that has nothing to do with the
+       Terminal button that opened it. -->
+  <Group>
+    <Name>agentbox-term</Name>
+    <Option>icon:$DESKTOP_ASSET_DIR/terminal.png</Option>
+  </Group>
+
   <Group>
     <Name>agentbox-launch</Name>
     <Option>icon:$DESKTOP_ASSET_DIR/browser.png</Option>
