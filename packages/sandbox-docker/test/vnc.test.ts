@@ -92,6 +92,23 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     expect(jwmrc).toContain('$browser_button');
   });
 
+  it('tiles a wallpaper big enough to cover a resized desktop', () => {
+    // A noVNC viewer can resize the desktop to its window, and JWM's "scale"
+    // and "center" both fit the image by aspect ratio and letterbox the rest in
+    // black. Tiling never scales, so the sheet has to be large enough that one
+    // tile covers any screen worth covering -- and it is flat paper past the
+    // logo, so a repeat past 4K is invisible.
+    expect(script).toContain('<Background type=\\"tile\\">');
+    const marker = `base64 -d > "$DESKTOP_ASSET_DIR/wallpaper.png" <<'DESKTOP_WALLPAPER'`;
+    const start = script.indexOf(marker) + marker.length;
+    const png = Buffer.from(
+      script.slice(start, script.indexOf('\nDESKTOP_WALLPAPER\n', start)).replace(/\s/g, ''),
+      'base64',
+    );
+    expect(png.subarray(1, 4).toString()).toBe('PNG');
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([3840, 2400]);
+  });
+
   it('never command-substitutes inside the config body', () => {
     // The delimiter is unquoted so the config can interpolate the paths probed
     // on the box, which means a backtick or $(...) anywhere in the body — an
