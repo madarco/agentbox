@@ -103,6 +103,21 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     expect(jwmrc).not.toContain('$(');
   });
 
+  it('leaves the browser and the progress window undecorated', () => {
+    // A titlebar on an always-maximized browser is ~30px of an 800px-tall
+    // desktop spent repeating the title the tab strip already shows, and the
+    // progress window is a status card, not a window to manage. Each WM_CLASS
+    // spelling needs its own Group, so all three browser groups must carry it.
+    const groups = jwmrc.match(/<Group>[\s\S]*?<\/Group>/g) ?? [];
+    const undecorated = ['agentbox-launch', 'Chromium-browser', 'Chromium', 'Google-chrome'];
+    for (const name of undecorated) {
+      const group = groups.find((g) => g.includes(`>${name}<`));
+      expect(group, name).toBeDefined();
+      expect(group, name).toContain('<Option>notitle</Option>');
+      expect(group, name).toContain('<Option>noborder</Option>');
+    }
+  });
+
   it('writes the desktop launcher from a quoted heredoc', () => {
     // The launcher is bash of its own, full of $vars and $(...) that must reach
     // the file intact.

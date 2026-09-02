@@ -24,6 +24,11 @@ CLI, not the raw commits.
   instead of leaving an empty desktop while the first launch fetches Chromium.
   The window sits low on the screen, centred, so the wallpaper logo stays
   visible behind it.
+- **The desktop's browser window has no titlebar.** The browser is always
+  maximized, so the window manager's titlebar only repeated what the tab strip
+  says and cost ~30px of page; the progress window loses its decoration too.
+  Both are raised and closed from their dock entry (right-click for the window
+  menu).
 
 ### Fixed
 

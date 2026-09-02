@@ -510,31 +510,48 @@ write_jwmrc() {
        there was no WM at all, now minus the dock's strut. Playwright's Chromium
        (what agent-browser drives) reports WM_CLASS "Chromium-browser"; the other
        two are what a distro chromium and a real Chrome report. JWM matches the
-       class exactly, so each spelling needs its own Group. -->
+       class exactly, so each spelling needs its own Group.
+       Undecorated: on a 800px-tall desktop a titlebar over a browser that is
+       always maximized is ~30px of page spent on a second title above the one
+       the tab strip already shows. The dock entry (right-click for the window
+       menu) is how the window is raised and closed instead. -->
   <!-- The launcher's progress window (an xterm named agentbox-launch). It borrows
        the Browser icon so the dock entry that appears while Chromium starts is
        the browser's own -- the closest thing JWM has to a launch indicator, as
        it implements no startup notification. Above the layer the browser
        maximizes into, so a re-launch over a running window is still visible.
        Its position is the launcher's own (JWM honours it): low on the screen,
-       clear of the logo on the wallpaper. -->
+       clear of the logo on the wallpaper.
+       Undecorated -- no titlebar, no border: it is a transient status card, not
+       a window to manage, and the buttons on it did nothing worth clicking (the
+       one case where it stays, a failed launch, closes on Enter and says so).
+       It keeps its dock entry, which is how it is raised and what shows a launch
+       is running. -->
   <Group>
     <Name>agentbox-launch</Name>
     <Option>icon:$DESKTOP_ASSET_DIR/browser.png</Option>
+    <Option>notitle</Option>
+    <Option>noborder</Option>
     <Option>nomax</Option>
     <Option>layer:above</Option>
   </Group>
 
   <Group>
     <Class>Chromium-browser</Class>
+    <Option>notitle</Option>
+    <Option>noborder</Option>
     <Option>maximized</Option>
   </Group>
   <Group>
     <Class>Chromium</Class>
+    <Option>notitle</Option>
+    <Option>noborder</Option>
     <Option>maximized</Option>
   </Group>
   <Group>
     <Class>Google-chrome</Class>
+    <Option>notitle</Option>
+    <Option>noborder</Option>
     <Option>maximized</Option>
   </Group>
 
