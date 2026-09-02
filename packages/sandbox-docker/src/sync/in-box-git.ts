@@ -489,7 +489,9 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
         input: r.untrackedNul.replace(/\0$/, ''),
         encoding: 'buffer',
         reject: false,
-      });
+            // COPYFILE_DISABLE: no macOS `._*` AppleDouble stubs in the box.
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
       if (tarOut.exitCode !== 0) {
         log(`warning: tar of untracked files for ${r.repo.hostMainRepo} failed: ${tarOut.stderr}`);
         continue;
@@ -647,6 +649,9 @@ export async function seedWorkspaceFromDir(opts: {
   const tarOut = await execa('tar', ['-C', opts.hostSource, '-cf', '-', '.'], {
     encoding: 'buffer',
     reject: false,
+    // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
+    // which extract on Linux as literal junk in the box's /workspace.
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
   });
   if (tarOut.exitCode !== 0) {
     throw new GitWorktreeError(`tar of ${opts.hostSource} failed: ${tarOut.stderr}`);
@@ -708,7 +713,7 @@ function splitNul(s: string): string[] {
  * mount means the host branch ref is already present in the box (no fetch
  * needed).
  */
-function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
+export function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
   return {
     ...makeHostGitPorts(),
     async boxGit(ct, args) {
@@ -736,16 +741,32 @@ function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
           'bash',
           ct,
         ],
-        { input: relPaths.join('\0'), reject: false },
+        // NUL-TERMINATED, not merely NUL-joined: `read -r -d ""` treats an
+        // unterminated tail as EOF, so the LAST path was never probed — and an
+        // unprobed path reads as "absent in the box", which makes the overlay
+        // overwrite a box file it should have kept.
+        { input: relPaths.length === 0 ? '' : `${relPaths.join('\0')}\0`, reject: false },
       );
+      // FAIL-CLOSED. A path missing from this map means "the box does not have
+      // it", and the overlay acts on that by copying the host's file over. So a
+      // probe that could not answer must NOT degrade to an empty map — that
+      // reads as an empty box and overwrites everything the box holds. Same
+      // class as the NUL-termination bug above: an unreadable answer is not an
+      // empty answer.
+      if (probe.exitCode !== 0) {
+        throw new Error(
+          `could not read ${ct} in the box (exit ${String(probe.exitCode)}): ` +
+            `${probe.stderr || probe.stdout || 'no output'}\n` +
+            `Refusing to resync: without the box's file list every host file would ` +
+            `look new and overwrite the box's version.`,
+        );
+      }
       const boxTokens = new Map<string, string>();
-      if (probe.exitCode === 0) {
-        const flat = splitNul(probe.stdout);
-        for (let i = 0; i + 1 < flat.length; i += 2) {
-          const token = flat[i];
-          const path = flat[i + 1];
-          if (token !== undefined && path !== undefined) boxTokens.set(path, token);
-        }
+      const flat = splitNul(probe.stdout);
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        const token = flat[i];
+        const path = flat[i + 1];
+        if (token !== undefined && path !== undefined) boxTokens.set(path, token);
       }
       return boxTokens;
     },

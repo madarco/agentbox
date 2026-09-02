@@ -20,6 +20,7 @@ import {
   setConfigValue,
   unregisterProject,
   parseProviderSpec,
+  sanitizeMnemonic,
   unsetConfigValue,
   type ProviderKind,
 } from '@agentbox/config';
@@ -71,6 +72,7 @@ import {
   boxRestartServices,
   boxServicesStatusRaw,
   boxSshDirForProvider,
+  exportBoxWorkspace,
   mutateState,
   readPreparedStateRaw,
   readState,
@@ -79,6 +81,7 @@ import {
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
+  syncWorkspaceToBox,
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
@@ -135,9 +138,11 @@ import type {
   OpenInApp,
   OpenTargets,
   OpenTargetsReport,
+  PrepareCloneResult,
   PruneView,
   RemoteDockerHostView,
   ServicesResult,
+  SyncBoxResult,
   VncUrlResult,
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
@@ -3061,6 +3066,66 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: true, jobId: job.id };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+
+    // ── workspace sync / clone ──
+    // Both go through the same shared concerns the CLI uses, so the web UI and
+    // the tray get exactly the operation `agentbox sync` / `agentbox clone` do.
+    async syncBox(id, opts): Promise<SyncBoxResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        await ensureBoxRunning(rp.provider, rp.box);
+        const result = await syncWorkspaceToBox({
+          provider: rp.provider,
+          box: rp.box,
+          includeNodeModules: opts?.includeNodeModules,
+          onLog: (line) => {
+            console.log(`[hub] ${line}`);
+          },
+        });
+        return {
+          ok: true,
+          mode: result.mode,
+          copied: result.copied,
+          conflicts: result.conflicts,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async prepareClone(id, input): Promise<PrepareCloneResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        await ensureBoxRunning(rp.provider, rp.box);
+        const name = sanitizeMnemonic(input?.name?.trim() || `${rp.box.name}-clone`);
+        const workspace = input?.into?.trim()
+          ? path.resolve(input.into)
+          : path.join(os.homedir(), '.agentbox', 'clones', name);
+        const exported = await exportBoxWorkspace({
+          provider: rp.provider,
+          box: rp.box,
+          destDir: workspace,
+          includeNodeModules: input?.includeNodeModules,
+          onLog: (line) => {
+            console.log(`[hub] ${line}`);
+          },
+        });
+        // The clone's workspace dir is its own project: register it so the
+        // create below can resolve it by id (never by a client-supplied path).
+        await registerProject(workspace);
+        return {
+          ok: true,
+          projectId: hashProjectPath(workspace),
+          workspace,
+          name,
+          provider: input?.provider ?? rp.box.provider ?? 'docker',
+          files: exported.files,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
       }
     },
   };

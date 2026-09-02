@@ -307,7 +307,29 @@ both halves are updated — that is the forcing function.
 
 ## Phase 4 — workspace sync, both directions
 
-Status: **not started**. Needed by all three workloads; nothing here is OpenClaw-specific.
+Status: **done** (2026-09-02). Needed by all three workloads; nothing here is OpenClaw-specific.
+Landed as `agentbox sync`, cloud `download` parity, and the exclude-list defaults. The shared halves
+live in `packages/sandbox-core/src/sync/concerns/{workspace-files,workspace-pull,workspace-sync,box-files}.ts`;
+`BoxFilePorts` (exec + uploadPath + downloadPath) is the seam that let the cloud pull reuse docker's
+stage 2 without a new provider method. Both directions are also `POST /api/v1/boxes/:id/sync`.
+
+Defects surfaced by exercising the new command against a real box and by review, all fixed here and
+pinned by unit tests:
+
+- the untracked-overlay probe was NUL-*joined* rather than NUL-*terminated* in both the docker and
+  the cloud resync, so the last host path read as "absent in the box" and overwrote a box file it
+  should have kept;
+- the exclude-list `find` pruned excluded names only as directories, so a linked worktree's `.git`
+  FILE entered the selection and aborted the whole pull;
+- **every probe was fail-OPEN** — a non-zero exit yielded an empty/partial token map, which the
+  overlay reads as "the box has none of these paths" and acts on by copying the host's files over.
+  All three implementations (the new `boxOverlayPorts`, plus the docker and cloud resync ports) now
+  throw. An unreadable answer is not an empty answer;
+- **box-side path lists overflowed `MAX_ARG_STRLEN`.** The list rides in as one base64 `printf`
+  argument, capped at 128 KiB, so `clone` / cloud `download` / non-git `sync` failed on any
+  workspace with a few thousand files. `chunkPathsForExec` is the shared budget;
+- `assertEmptyDir` read any stat failure as "absent", so `clone --into <an existing file>` `rm -rf`d
+  that file. Only `ENOENT` means absent now.
 
 **4a. `agentbox sync [box]` — host → live box.** Wraps `provider.resyncWorkspace`
 (`packages/core/src/provider.ts:519`), which is fully implemented for docker
@@ -343,7 +365,12 @@ prominently — for these users it is the normal mode, not a fallback.
 
 ## Phase 5 — `agentbox clone`
 
-Status: **not started**.
+Status: **done** (2026-09-02), with one deviation from the sketch below: the clone gets its **own
+host workspace directory** (`~/.agentbox/clones/<name>`, or `--into <dir>`) rather than sharing the
+source's, and is registered as its own project. That makes it a real box — `sync` pushes into it and
+`download` pulls out of it — and it is what let the create go through the existing hub queue
+unchanged, with no new create-path plumbing. `--persistent` is accepted and inert until Phase 1
+lands (see the TODO in `apps/cli/src/commands/clone.ts` and the clone route).
 
 `agentbox clone <box> [--name <n>] [--provider <p>] [--no-persistent]`:
 

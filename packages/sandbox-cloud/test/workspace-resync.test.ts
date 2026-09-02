@@ -71,7 +71,11 @@ describe('resyncCloudWorkspace pre-fetch', () => {
     expect(bundle).toContain(`^${BASE}`);
 
     // The box fetches the private refs from the uploaded bundle.
-    expect(boxExec.some((c) => c.includes('fetch --no-tags') && c.includes('refs/agentbox-resync/target'))).toBe(true);
+    expect(
+      boxExec.some(
+        (c) => c.includes('fetch --no-tags') && c.includes('refs/agentbox-resync/target'),
+      ),
+    ).toBe(true);
 
     // DATA-LOSS GUARD: the live-box resync must NEVER reset --hard / checkout -f
     // (that would drop in-box commits). Merge-only.
@@ -94,7 +98,9 @@ describe('resyncCloudWorkspace pre-fetch', () => {
     const execaCalls = execaMock.mock.calls.map((c) => (c[1] as string[]).join(' '));
     expect(execaCalls.some((c) => c.includes('bundle create'))).toBe(false);
     // No merge issued against the target ref.
-    expect(boxExec.some((c) => c.includes('merge') && c.includes('refs/agentbox-resync/target'))).toBe(false);
+    expect(
+      boxExec.some((c) => c.includes('merge') && c.includes('refs/agentbox-resync/target')),
+    ).toBe(false);
   });
 
   it('runs the untracked probe as root on vercel (avoids the $()/while re-parse hang)', async () => {
@@ -104,7 +110,8 @@ describe('resyncCloudWorkspace pre-fetch', () => {
       async exec(_h: CloudHandle, cmd: string, opts?: { user?: string }) {
         boxExec.push(cmd);
         if (cmd.includes('base64 -d')) seenUsers.push(opts?.user);
-        if (cmd.includes('rev-list --max-count')) return { exitCode: 0, stdout: `${BOX_TIP}\n${BASE}`, stderr: '' };
+        if (cmd.includes('rev-list --max-count'))
+          return { exitCode: 0, stdout: `${BOX_TIP}\n${BASE}`, stderr: '' };
         // Report one untracked host file so the probe actually runs.
         return { exitCode: cmd.includes('MERGE_HEAD') ? 1 : 0, stdout: '', stderr: '' };
       },
@@ -113,12 +120,78 @@ describe('resyncCloudWorkspace pre-fetch', () => {
     // Host has one untracked file so the concern probes the box.
     execaMock.mockImplementation((_bin: string, args: string[]) => {
       const j = args.join(' ');
-      if (j.includes('ls-files')) return Promise.resolve({ exitCode: 0, stdout: 'note.txt\0', stderr: '' });
+      if (j.includes('ls-files'))
+        return Promise.resolve({ exitCode: 0, stdout: 'note.txt\0', stderr: '' });
       return Promise.resolve(routeExeca(args));
     });
     await resyncCloudWorkspace(backend, handle, [worktree]);
     // The probe ran and every probe invocation was as root.
     expect(seenUsers.length).toBeGreaterThan(0);
     expect(seenUsers.every((u) => u === 'root')).toBe(true);
+  });
+
+  it('ABORTS when the untracked probe fails — never treats it as an empty box', async () => {
+    // Fail-closed. A partial/empty token map reads as "the box has none of these
+    // paths", and the overlay then copies every host file over the box's — the
+    // inverse of the box-wins contract this whole path exists to keep.
+    const backend = {
+      name: 'hetzner',
+      async exec(_h: CloudHandle, cmd: string) {
+        boxExec.push(cmd);
+        if (cmd.includes('rev-list --max-count')) {
+          return { exitCode: 0, stdout: `${BOX_TIP}\n${BASE}`, stderr: '' };
+        }
+        if (cmd.includes('base64 -d')) return { exitCode: 7, stdout: '', stderr: 'probe exploded' };
+        return { exitCode: cmd.includes('MERGE_HEAD') ? 1 : 0, stdout: '', stderr: '' };
+      },
+      async uploadFile() {},
+    } as unknown as CloudBackend;
+    execaMock.mockImplementation((_bin: string, args: string[]) => {
+      const j = args.join(' ');
+      if (j.includes('ls-files')) {
+        return Promise.resolve({ exitCode: 0, stdout: 'note.txt\0', stderr: '' });
+      }
+      return Promise.resolve(routeExeca(args));
+    });
+    await expect(resyncCloudWorkspace(backend, handle, [worktree])).rejects.toThrow(
+      /probe exploded/,
+    );
+    // And nothing was pushed into the box on the strength of a failed probe.
+    expect(boxExec.some((c) => c.includes('tar') && c.includes('-xf'))).toBe(false);
+  });
+
+  it('chunks the untracked probe so no single exec exceeds MAX_ARG_STRLEN', async () => {
+    // The path list rides in as ONE base64 argv entry; Linux caps that at 128 KiB.
+    // Unchunked, a repo with a few thousand untracked files simply fails.
+    const MAX_ARG_STRLEN = 128 * 1024;
+    const untracked = Array.from(
+      { length: 9000 },
+      (_, i) => `build/artifacts/chunk-${String(i).padStart(6, '0')}.js`,
+    );
+    const probes: string[] = [];
+    const backend = {
+      name: 'hetzner',
+      async exec(_h: CloudHandle, cmd: string) {
+        boxExec.push(cmd);
+        if (cmd.includes('base64 -d')) probes.push(cmd);
+        if (cmd.includes('rev-list --max-count')) {
+          return { exitCode: 0, stdout: `${BOX_TIP}\n${BASE}`, stderr: '' };
+        }
+        return { exitCode: cmd.includes('MERGE_HEAD') ? 1 : 0, stdout: '', stderr: '' };
+      },
+      async uploadFile() {},
+    } as unknown as CloudBackend;
+    execaMock.mockImplementation((_bin: string, args: string[]) => {
+      const j = args.join(' ');
+      if (j.includes('ls-files')) {
+        return Promise.resolve({ exitCode: 0, stdout: `${untracked.join('\0')}\0`, stderr: '' });
+      }
+      if (j.includes('hash-object'))
+        return Promise.resolve({ exitCode: 0, stdout: 'ff', stderr: '' });
+      return Promise.resolve(routeExeca(args));
+    });
+    await resyncCloudWorkspace(backend, handle, [worktree]);
+    expect(probes.length).toBeGreaterThan(1);
+    for (const p of probes) expect(p.length).toBeLessThan(MAX_ARG_STRLEN);
   });
 });

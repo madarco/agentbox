@@ -592,7 +592,65 @@ export interface HubBackend {
   // jobId — progress streams over GET /jobs/{id}/logs, like prepareProvider).
   // Reuses an in-flight bake for the same host if one exists.
   bakeRemoteDockerHost(alias: string): Promise<CreateBoxResult>;
+
+  // ── workspace sync / clone (host <-> live box) ──
+
+  // Push the host workspace into a live box (`agentbox sync`). Merges through
+  // git when the workspace is a repo, else overlays the plain files; the BOX
+  // wins every conflict either way, and the skipped host paths come back so the
+  // caller can surface them.
+  syncBox(id: string, opts?: SyncBoxInput): Promise<SyncBoxResult>;
+  // Stage a clone: export the source box's workspace files into a fresh host
+  // dir and register it as a project. Returns what `create` needs to build the
+  // new box; the agent's config volume and credential are deliberately NOT
+  // copied, so the clone onboards with its own identity.
+  prepareClone(id: string, input?: CloneBoxInput): Promise<PrepareCloneResult>;
 }
+
+// Options for POST /boxes/:id/sync.
+export interface SyncBoxInput {
+  /** Push node_modules too (non-git workspaces only). */
+  includeNodeModules?: boolean;
+}
+
+export type SyncBoxResult =
+  | {
+      ok: true;
+      /** Which leg ran: a git merge+overlay, or a plain file overlay. */
+      mode: 'git' | 'files';
+      /** Files copied into the box (always 0 on the git leg). */
+      copied: number;
+      /** Host paths skipped to keep the box's version. */
+      conflicts: string[];
+    }
+  | { ok: false; error: string };
+
+// Options for POST /boxes/:id/clone.
+export interface CloneBoxInput {
+  /** Name for the new box (default `<source>-clone`). */
+  name?: string;
+  /** Provider for the new box (default: the source box's). */
+  provider?: string;
+  /** Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). */
+  into?: string;
+  includeNodeModules?: boolean;
+  /** Accepted and inert until persistent boxes land (plan phase 1). */
+  persistent?: boolean;
+}
+
+export type PrepareCloneResult =
+  | {
+      ok: true;
+      /** Registered project id for the exported dir — feed straight to create. */
+      projectId: string;
+      /** Absolute host dir the workspace was exported to. */
+      workspace: string;
+      name: string;
+      provider: string;
+      /** Files exported. */
+      files: number;
+    }
+  | { ok: false; error: string };
 
 // One remote-docker host alias, as surfaced by the hub API.
 export interface RemoteDockerHostView {

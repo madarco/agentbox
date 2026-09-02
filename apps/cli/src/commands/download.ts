@@ -1,13 +1,18 @@
 import { confirm, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
+import { join } from 'node:path';
+import type { BoxRecord } from '@agentbox/core';
 import {
   DEFAULT_ENV_PATTERNS,
+  boxRunDirFor,
   inspectBox,
   pullToHost,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
+import { pullWorkspaceToHost, type PullWorkspaceResult } from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
+import { ensureBoxRunningVia } from '../lib/ensure-running.js';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 import { downloadClaudeCommand } from './download-claude.js';
@@ -27,6 +32,21 @@ interface DownloadOpts {
   pattern: string[];
 }
 
+/**
+ * A box that commits on its own branch in a separate worktree can be merged
+ * with git instead of copied; say so before we rsync over the working tree.
+ */
+function warnAboutRootWorktree(box: BoxRecord): void {
+  const rootWorktree = box.gitWorktrees?.find((w) => w.kind === 'root');
+  if (!rootWorktree) return;
+  log.warn(
+    `This box has been committing to branch \`${rootWorktree.branch}\` in a separate worktree.\n` +
+      `For a git-aware merge instead of a file copy, run from your checkout:\n` +
+      `  git merge ${rootWorktree.branch}\n` +
+      `Continuing with rsync into ${box.workspacePath}`,
+  );
+}
+
 export const downloadCommand = new Command('download')
   // Parent and the `env` subcommand share option names (--dry-run, -y,
   // --pattern). Positional options make post-subcommand options bind to the
@@ -41,13 +61,13 @@ export const downloadCommand = new Command('download')
   .option('--dry-run', "print the change list and exit; don't write")
   .option(
     '--no-respect-gitignore',
-    'disable git ls-files mode; use --exclude=node_modules,.git instead',
+    'force exclude-list mode (skip git ls-files) even in a git workspace',
   )
   .option(
     '--include-node-modules',
-    'do not exclude node_modules in fallback mode (no effect in gitignore mode)',
+    'keep node_modules in exclude-list mode (no effect in gitignore mode)',
   )
-  .option('--no-refresh', "skip the box->scratch-dir rsync step (use whatever's already there)")
+  .option('--no-refresh', "skip the box->scratch-dir staging step (use whatever's already there)")
   .option(
     '--with-env',
     'also download env/config files (.env*, .envrc, secrets.toml, agentbox.yaml, ...) ignoring gitignore',
@@ -60,99 +80,83 @@ export const downloadCommand = new Command('download')
   )
   .action(async (idOrName: string | undefined, opts: DownloadOpts) => {
     try {
-      const box = await resolveBoxOrExit(idOrName);
+      let box = await resolveBoxOrExit(idOrName);
       const isCloud = (box.provider ?? 'docker') !== 'docker';
-
-      if (isCloud) {
-        // Cloud download (workspace): we don't have rsync over docker exec, so
-        // gitignore-aware change-detection isn't wired. Fall back to a bulk
-        // tar of `/workspace` via provider.downloadPath — overwrites the host
-        // workspace dir. The user already gets git-aware sync-back via
-        // `agentbox-ctl git push` inside the box for tracked files; this is
-        // for grabbing untracked or env artifacts.
-        if (opts.dryRun) {
-          throw new Error(
-            'cloud download does not yet support --dry-run; omit to bulk-pull /workspace.',
-          );
-        }
-        if (
-          !opts.respectGitignore ||
-          opts.includeNodeModules ||
-          opts.withEnv ||
-          opts.pattern.length > 0
-        ) {
-          log.warn(
-            'cloud download ignores gitignore/--with-env/--pattern filters in v1 — pulling the whole /workspace tree (Phase 6 polish).',
-          );
-        }
-        if (!opts.yes) {
-          const ok = await confirm({
-            message: `Overwrite ${box.workspacePath} with the cloud box's /workspace contents?`,
-            initialValue: false,
-          });
-          if (!ok) {
-            log.info('cancelled');
-            return;
-          }
-        }
-        const provider = await providerForBox(box);
-        if (!provider.downloadDirContents) {
-          throw new Error(`provider '${provider.name}' does not support bulk workspace download`);
-        }
-        // Pull the *contents* of /workspace into box.workspacePath — files
-        // land directly, not under a `workspace/` subdir.
-        const result = await provider.downloadDirContents(box, '/workspace', box.workspacePath);
-        process.stdout.write(`downloaded /workspace contents to ${result.finalPath}\n`);
-        return;
-      }
-
-      const insp = await inspectBox(box.id);
-      if (insp.state === 'paused') {
-        log.info('box is paused; unpausing');
-        await unpauseBox(box.id);
-      } else if (insp.state === 'stopped') {
-        log.info('box is stopped; starting');
-        await startBox(box.id);
-      } else if (insp.state === 'missing') {
-        throw new Error(`box ${box.name} has no container; was it destroyed?`);
-      }
-
-      const rootWorktree = box.gitWorktrees?.find((w) => w.kind === 'root');
-      if (rootWorktree) {
-        log.warn(
-          `This box has been committing to branch \`${rootWorktree.branch}\` in a separate worktree.\n` +
-            `For a git-aware merge instead of a file copy, run from your checkout:\n` +
-            `  git merge ${rootWorktree.branch}\n` +
-            `Continuing with rsync into ${box.workspacePath}`,
-        );
-      }
-
       const envPatterns = opts.withEnv ? [...DEFAULT_ENV_PATTERNS, ...opts.pattern] : undefined;
 
-      const preview = await pullToHost(box, {
-        dryRun: true,
-        respectGitignore: opts.respectGitignore,
-        includeNodeModules: opts.includeNodeModules,
-        envPatterns,
-        noRefresh: !opts.refresh,
-      });
+      // One pull, two stage-1s. Docker materializes /workspace over its
+      // /host-export bind mount; every other provider tars the selected files
+      // out over the provider seam. Both then run the SAME host-side rsync
+      // (`rsyncPullToHost`), which is what gives a cloud box `--dry-run`, the
+      // itemized change list, and gitignore/exclude selection.
+      let pull: (o: { dryRun: boolean; noRefresh: boolean }) => Promise<PullWorkspaceResult>;
+      if (isCloud) {
+        const provider = await providerForBox(box);
+        box = await ensureBoxRunningVia(provider, box);
+        const scratchDir = join(boxRunDirFor(box), 'workspace');
+        pull = (o) =>
+          pullWorkspaceToHost({
+            provider,
+            box,
+            scratchDir,
+            destDir: box.workspacePath,
+            respectGitignore: opts.respectGitignore,
+            includeNodeModules: opts.includeNodeModules,
+            envPatterns,
+            dryRun: o.dryRun,
+            noRefresh: o.noRefresh,
+          });
+      } else {
+        const insp = await inspectBox(box.id);
+        if (insp.state === 'paused') {
+          log.info('box is paused; unpausing');
+          await unpauseBox(box.id);
+        } else if (insp.state === 'stopped') {
+          log.info('box is stopped; starting');
+          await startBox(box.id);
+        } else if (insp.state === 'missing') {
+          throw new Error(`box ${box.name} has no container; was it destroyed?`);
+        }
+        warnAboutRootWorktree(box);
+        pull = async (o) => {
+          const r = await pullToHost(box, {
+            dryRun: o.dryRun,
+            respectGitignore: opts.respectGitignore,
+            includeNodeModules: opts.includeNodeModules,
+            envPatterns,
+            noRefresh: o.noRefresh,
+          });
+          return {
+            hostPath: r.hostPath,
+            changes: r.changes,
+            applied: r.applied,
+            usedGitignore: r.usedGitignore,
+          };
+        };
+      }
+
+      const preview = await pull({ dryRun: true, noRefresh: !opts.refresh });
 
       if (preview.changes.length === 0) {
-        process.stdout.write(`no changes to download into ${box.workspacePath}\n`);
+        process.stdout.write(
+          `no changes to download into ${box.workspacePath}` +
+            `${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
+        );
         return;
       }
 
       if (opts.dryRun) {
         for (const line of preview.changes) process.stdout.write(`${line}\n`);
         process.stdout.write(
-          `\n[dry-run] ${preview.changes.length} file(s) would change in ${box.workspacePath}\n`,
+          `\n[dry-run] ${String(preview.changes.length)} file(s) would change in ` +
+            `${box.workspacePath}${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
         );
         return;
       }
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Download ${preview.changes.length} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
+          message: `Download ${String(preview.changes.length)} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
           initialValue: false,
         });
         if (!ok) {
@@ -161,17 +165,11 @@ export const downloadCommand = new Command('download')
         }
       }
 
-      const result = await pullToHost(box, {
-        dryRun: false,
-        respectGitignore: opts.respectGitignore,
-        includeNodeModules: opts.includeNodeModules,
-        envPatterns,
-        // The dry-run pass above already refreshed (or intentionally skipped)
-        // the scratch dir — don't rsync box->scratch a second time.
-        noRefresh: true,
-      });
+      // The preview pass already refreshed (or intentionally skipped) the
+      // scratch dir — don't restage a second time.
+      const result = await pull({ dryRun: false, noRefresh: true });
       process.stdout.write(
-        `updated ${result.changes.length} file(s) in ${result.hostPath}` +
+        `updated ${String(result.changes.length)} file(s) in ${result.hostPath}` +
           `${result.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
       );
     } catch (err) {

@@ -280,6 +280,10 @@ export function makeHostGitPorts(): Pick<
         input: relPaths.join('\0'),
         encoding: 'buffer',
         reject: false,
+        // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs;
+        // without it the untracked overlay seeds AppleDouble junk into the box
+        // on every session-start resync. Same guard as `host-export.ts`.
+        env: { ...process.env, COPYFILE_DISABLE: '1' },
       });
       return tarOut.exitCode === 0 ? (tarOut.stdout as Buffer) : null;
     },

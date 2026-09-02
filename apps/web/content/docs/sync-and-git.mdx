@@ -41,6 +41,92 @@ agentbox download --with-env
   committing to the copy.
 </Callout>
 
+### Exclude-list mode
+
+When `/workspace` is **not** a git repo — a service box, a scratch folder, anything you created with
+`agentbox create` in a plain directory — there is no `.gitignore` to consult, so `download` selects
+files with an exclude list instead. It is not a degraded fallback: for those boxes it is the normal
+mode, and the output says so.
+
+The list drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and
+every agent's state directory (`.claude`, `.codex`, `.config/opencode`, …). Live databases are never
+safe to copy — the main file without its write-ahead log is a torn read — and an agent's state
+directory belongs to the box, not to your project folder. `--include-node-modules` keeps
+`node_modules`; `--no-respect-gitignore` forces this mode even in a git workspace.
+
+```bash
+agentbox download --dry-run
+# >f+++++++++ made-in-box.txt
+# >fcst...... src/app.js
+#
+# [dry-run] 2 file(s) would change in /srv/gateway (exclude-list mode)
+```
+
+This works identically on every provider. A cloud box has no bind mount, so it tars the selected
+files out over the provider connection instead of rsyncing over one — but the change list,
+`--dry-run` and the gitignore/exclude selection are the same code on both sides.
+
+## Push your workspace into a box
+
+`agentbox sync [box]` is the other direction: it pushes your host workspace into a **live** box.
+Useful when the box is long-running (a service, a gateway) and you have edited config or content on
+the host that the box should pick up without being recreated.
+
+```bash
+# Push the host workspace into the box for this project
+agentbox sync
+
+# Target a specific box
+agentbox sync svc
+```
+
+**The box always wins.** A git workspace merges your branch into the box's branch and overlays your
+uncommitted and untracked changes; a non-git workspace gets a plain file overlay. In both cases a
+file the box has changed is left alone and reported — nothing in the box is overwritten, and no
+branch is ever reset. That matters because this runs against a box that may have an agent working in
+it right now.
+
+```text
+sync: 1 copied, 3 unchanged, 1 kept by the box
+▲  1 host change(s) were SKIPPED to keep the box's version:
+     README.md
+```
+
+To take the box's version instead, run `agentbox download` — the two commands are exact mirrors.
+
+## Clone a box
+
+`agentbox clone <box>` stands up a **second box from the same workspace files and the same
+`agentbox.yaml`**, with a **fresh agent identity**.
+
+```bash
+# New box "svc2" from svc's current workspace
+agentbox clone svc --name svc2
+
+# Clone onto a different provider, into a directory you choose
+agentbox clone svc --name svc-hz --provider hetzner --into ~/projects/svc-hz
+```
+
+The clone gets its own host workspace directory (`~/.agentbox/clones/<name>` by default, or
+`--into <dir>`), exported from the source box with the same gitignore/exclude rules `download` uses.
+That directory is a real project: `agentbox sync` pushes into the clone and `agentbox download`
+pulls back out of it, like any other box.
+
+What is **not** copied is the agent's config volume and its credential. The new box onboards from
+scratch, so it generates its own identity and carries no pairings or sessions from the source. There
+is deliberately no `--with-state`: two live daemons sharing one identity is the failure this design
+exists to prevent. To move a box's full state somewhere else, use a
+[checkpoint](/docs/checkpoints-and-pausing) instead.
+
+`.git` is not exported either — the clone is a template, not a second checkout. If you want a
+git-backed second box on the same project, that is what `agentbox create` already gives you.
+
+<Callout title="NOTE">
+  Today the clone is created **without an agent** — it is a box holding the workspace files and the
+  `agentbox.yaml`, which is what a service box needs (its services are declared in that file). Start
+  a coding agent in it with `agentbox claude <clone>` and it logs in as its own box.
+</Callout>
+
 ## Sync agent settings between boxes
 
 Installed a skill or plugin _inside_ a box and want it everywhere? `agentbox download claude [box]` pulls box-installed Claude skills/plugins/agents/commands back to your host `~/.claude` (additive — nothing on the host is ever overwritten), and then offers to **propagate** them to your other boxes: same project, all boxes, or none. `download codex`, `download opencode` and `download pi` do the same for their config/auth files. Works on every provider: docker boxes are read from their config volume (even while stopped), cloud boxes from the live box (auto-resuming a paused one).
@@ -256,5 +342,5 @@ By default, a **safe subset** of relay write ops runs without a prompt (each sti
 - [Core concepts](/docs/core-concepts) — the worktree, shared `.git/`, and relay security model
 - [Checkpoints & pausing](/docs/checkpoints-and-pausing) — a checkpoint preserves the box's full state; `download` extracts files
 - [Background & parallel](/docs/background-and-parallel) — reusing a box via `git pull <branch>`; `AGENTBOX_GH_NO_SUB` for unattended boxes
-- [CLI reference](/docs/cli) — full flags for `download`, `cp`, `git`, and `relay`
+- [CLI reference](/docs/cli) — full flags for `download`, `sync`, `clone`, `cp`, `git`, and `relay`
 - [Configuration](/docs/configuration) — relay management and related config keys
