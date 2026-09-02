@@ -70,3 +70,17 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   consumer of the non-git leg. The code path is provider-neutral (`BoxFilePorts` over
   `exec`/`uploadPath`/`downloadPath`, which both implement) and docker + the hub routes were verified
   live, but neither VPS provider was run.
+
+## From host-side integration testing (2026-09-02)
+
+- **`agentbox relay restart` does not restart the hub-embedded relay.** It reports
+  `hub (serving the relay) running` and exits 0, but the hub PID is unchanged, so
+  loops registered in `startRelayDaemon` (autopause, keepalive, the new persistent
+  boot reconcile) are NOT re-run. Only `hub restart` actually recycles them. This made
+  a working boot-reconcile look broken during testing. Either make `relay restart`
+  restart the hub when the hub owns the relay, or say so in its output.
+- **`agentbox status <box> --json` reports `"name": null`** for a box with no
+  `displayName`, while `agentbox list` shows the real name. Fall back to `name`.
+- **`BoxRecord.provider` is `null` on a docker box** created through the hub queue
+  (the loops cope via `box.provider ?? 'docker'`, so this is cosmetic — but a null
+  where `'docker'` is meant will bite something eventually).
