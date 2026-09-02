@@ -384,6 +384,10 @@ export async function overlayHostDirIntoBox(
       input: copy.join('\0'),
       encoding: 'buffer',
       reject: false,
+      // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs;
+      // without it a mac host seeds AppleDouble junk into the box's workspace,
+      // which `download` then pulls back. Same guard as `host-export.ts`.
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
     });
     if (tarOut.exitCode !== 0) {
       throw new Error(`tar of ${args.hostDir} failed`);
