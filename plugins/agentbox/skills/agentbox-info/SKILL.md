@@ -45,19 +45,7 @@ agentbox claude -- --model sonnet     # extra args after `--` go to claude itsel
 
 While attached: **`Ctrl+a d`** detaches without killing claude. The box keeps running. Reattach with `agentbox claude attach <name|n>`.
 
-Variants with the same shape for other agents: **`agentbox codex`**, **`agentbox opencode`**, **`agentbox pi`**.
-
-### `agentbox openclaw` — a box that HOSTS a service, not a TUI
-
-Not every agent is something you attach to. `agentbox openclaw` creates or resumes a box running the [OpenClaw](https://docs.openclaw.ai) gateway as a supervised daemon, waits for it to report healthy, and prints the box's web URL plus the gateway token the Control UI asks for:
-
-```sh
-agentbox openclaw                     # create-or-resume, wait for ready, print URL + token
-agentbox openclaw url                 # URL on line 1, token on line 2
-agentbox openclaw status|logs|restart|stop
-```
-
-There is no `attach`, no `login`, no `--resume` and no `-i` — a daemon has no session. One box per tenant: two gateways sharing a state directory would share one identity, so the config volume is always per-box. Config goes in a top-level `openclaw:` block in `agentbox.yaml`, applied as an overlay through OpenClaw's own validated patch command, so an in-box hand edit to a key you did not put in the overlay survives.
+Variants with the same shape for other agents: **`agentbox codex`**, **`agentbox opencode`**.
 
 ## `-i` / `--initial-prompt`: background queue
 
