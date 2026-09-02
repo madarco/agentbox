@@ -45,8 +45,23 @@ export interface ServiceAgentOptions {
   timeout?: string;
 }
 
-/** A service is "up" once it reaches `ready`; unprobed units settle at `running`. */
-const UP_STATES = new Set(['ready', 'running']);
+/**
+ * Is this service up, by the SUPERVISOR'S OWN rule?
+ *
+ * `Supervisor.onServiceState` satisfies a unit at `ready` when it declares a
+ * `ready_when` probe and at `running` when it does not — and a probed service
+ * enters `running` the instant its process is spawned, long before the probe
+ * passes. Accepting `running` for everything therefore reported a launch that
+ * had not happened: the URL was printed while `/healthz` was still refused.
+ *
+ * `probed` is absent on a box whose ctl predates the field; treating that as
+ * unprobed matches every other reader of the flag, and is the only choice that
+ * cannot hang forever on a genuinely unprobed unit.
+ */
+function isUp(view: HubApiServiceView): boolean {
+  return view.state === 'ready' || (view.state === 'running' && view.probed !== true);
+}
+
 /** States that will never become ready without intervention. */
 const DEAD_STATES = new Set(['crashed', 'unhealthy', 'stopped']);
 
@@ -78,12 +93,12 @@ async function findExistingBox(
  * against a local hub and a remote control box — the hub holds the credentials
  * that let it run the box's `provider.exec`.
  */
-async function waitForService(
+export async function waitForService(
   box: BoxRecord,
   unit: string,
   timeoutSeconds: number,
   onProgress: (line: string) => void,
-): Promise<HubApiServiceView | null> {
+): Promise<HubApiServiceView> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   let last: HubApiServiceView | undefined;
   for (;;) {
@@ -94,7 +109,7 @@ async function waitForService(
     });
     if (view) {
       last = view;
-      if (UP_STATES.has(view.state)) return view;
+      if (isUp(view)) return view;
       if (DEAD_STATES.has(view.state)) {
         throw new Error(
           `service "${unit}" is ${view.state}` +
@@ -109,11 +124,17 @@ async function waitForService(
       onProgress(`waiting for the supervisor to pick up ${unit}`);
     }
     if (Date.now() >= deadline) {
-      log.warn(
+      // THROW, never warn-and-continue. A service that never came up must not
+      // look like a completed launch: the caller (a script, CI, the queue) reads
+      // the exit code, and returning 0 here tells it the gateway is serving when
+      // nothing is listening.
+      throw new Error(
         `service "${unit}" did not report ready within ${String(timeoutSeconds)}s` +
-          (last ? ` (last state: ${last.state})` : ' (the supervisor never picked it up)'),
+          (last
+            ? ` (last state: ${last.state}${last.probed === true && last.state === 'running' ? ', its readiness probe has not passed' : ''})`
+            : ' (the supervisor never picked it up)') +
+          `. See \`agentbox logs ${box.name} ${unit}\`, or raise --timeout.`,
       );
-      return last ?? null;
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
@@ -249,14 +270,17 @@ export async function runServiceAgent(
 
     const s = makeProgressReporter(opts.verbose === true);
     s.start(`waiting for ${service.name}`);
-    let view: HubApiServiceView | null = null;
+    let view: HubApiServiceView;
     try {
       view = await waitForService(box, service.name, timeoutSeconds, (line) => {
         s.message(line);
         cmdLog.write(line);
       });
-      s.stop(view && UP_STATES.has(view.state) ? `${service.name} ${view.state}` : 'not ready');
+      s.stop(`${service.name} ${view.state}`);
     } catch (err) {
+      // Includes the ready timeout: `waitForService` throws rather than
+      // returning, so the outro below is reached only by a service that is
+      // genuinely up. `handleLifecycleError` turns this into a non-zero exit.
       s.stop(`${service.name} failed`);
       throw err;
     }

@@ -192,6 +192,7 @@ export class ServiceRunner extends EventEmitter<ServiceRunnerEvents> implements 
       nextRetryAt: this.nextRetryAt ? this.nextRetryAt.toISOString() : null,
       blockedOn,
       command: describeCommand(this.spec.command),
+      probed: this.spec.readyWhen !== undefined,
     };
   }
 

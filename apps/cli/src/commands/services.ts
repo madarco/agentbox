@@ -38,6 +38,9 @@ function toStatusRows(services: HubApiServiceView[]): ServiceStatus[] {
     nextRetryAt: null,
     blockedOn: s.blockedOn,
     command: s.command,
+    // Absent on a box whose ctl predates the field; `false` is what every other
+    // reader means by that (see `BoxStatusServiceEntry.probed`).
+    probed: s.probed ?? false,
   }));
 }
 

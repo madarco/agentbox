@@ -31,6 +31,17 @@ export interface ServiceStatus {
   nextRetryAt: string | null;
   blockedOn: string[];
   command: string;
+  /**
+   * Whether this service declares a `ready_when` probe. Same meaning — and the
+   * same reason for existing — as {@link BoxStatusServiceEntry.probed}: a probed
+   * service enters `running` the moment its process is spawned and only reaches
+   * `ready` once the probe passes, so `running` does NOT mean "up" for it.
+   *
+   * The persisted snapshot has carried this for a while; the LIVE reply did not,
+   * which let a host-side waiter accept a probed `running` service and report a
+   * launch that had not happened yet.
+   */
+  probed: boolean;
 }
 
 export interface StatusReply {

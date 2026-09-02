@@ -14,8 +14,10 @@
  *   1. read the `<overlayKey>:` block out of agentbox.yaml (opaque — ctl does
  *      not know the tool's schema; the tool's `validate` is the real gate),
  *   2. diff it against `.agentbox-overlay.json`, the overlay as last applied,
- *   3. dry-run the patch, apply it, and only then record the new overlay,
- *   4. run `validate` as the final gate.
+ *   3. dry-run the patch, then apply it,
+ *   4. run `validate` as the final gate, and record the overlay only once BOTH
+ *      halves passed — the record means "fully applied and valid", so a failed
+ *      gate re-runs on the next render instead of being skipped as a no-op.
  *
  * Step 2 is what makes an in-box hand edit survive: a key the user did not touch
  * in `agentbox.yaml` is not in the patch, so the tool never revisits it.
@@ -38,7 +40,11 @@ import { resolveAutoSecrets } from '../secret.js';
 import { DEFAULT_CONFIG_PATH, DEFAULT_STATE_DIR } from '../types.js';
 
 /**
- * Record of the overlay AS LAST APPLIED — the diff's other side.
+ * Record of the overlay AS LAST APPLIED **AND VALIDATED** — the diff's other side.
+ *
+ * The "and validated" half is load-bearing: the record is what makes a render
+ * with an unchanged overlay a no-op, so writing it after a patch but before the
+ * gate turned a failed `validate` into a permanent silent pass.
  *
  * Next to the tool's own config file rather than in ctl's state dir: it is only
  * meaningful paired with that file, so a checkpoint or a config-volume copy that
@@ -217,16 +223,6 @@ const renderSubcommand = new Command('render')
       );
     }
     if (applied.output.trim().length > 0) process.stdout.write(applied.output);
-
-    // Recorded only after a successful apply, so a failed run re-tries the same
-    // patch next time instead of believing it landed.
-    const record: OverlayRecord = {
-      schema: 1,
-      agent,
-      appliedAt: new Date().toISOString(),
-      overlay,
-    };
-    await writeFile(recordPath, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
     say(
       `${desc.file}: applied ${String(paths.length)} key(s)` +
         (removed.length > 0 ? ` (${String(removed.length)} removed)` : '') +
@@ -238,11 +234,34 @@ const renderSubcommand = new Command('render')
       if (code !== 0) {
         // Loud and fatal: a service that starts on an invalid config fails later,
         // in a log nobody is watching.
+        //
+        // Thrown BEFORE the record is written, on purpose. Advancing it here
+        // would make the next render see no overlay diff, return early, and
+        // never re-run validate — a failed gate quietly becoming a success with
+        // the invalid config still in place. Leaving the record behind costs one
+        // idempotent re-send of the same patch and re-runs the gate every time
+        // until it passes.
         throw new Error(
           `validate failed (\`${desc.validate}\` exited ${String(code)}):\n${output.trim()}`,
         );
       }
     }
+
+    // LAST, and only once the whole render succeeded — the patch AND the gate.
+    // The record's meaning is "this overlay is fully applied and valid"; anything
+    // weaker makes the early-return above skip work that still needs doing.
+    //
+    // A re-send after a failed gate re-asserts keys the overlay names, so a hand
+    // fix to one of THOSE keys is overwritten. That is the same direction a lost
+    // record takes, and the alternative — trusting a config that failed its own
+    // validator — is worse.
+    const record: OverlayRecord = {
+      schema: 1,
+      agent,
+      appliedAt: new Date().toISOString(),
+      overlay,
+    };
+    await writeFile(recordPath, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   });
 
 export const agentCommand = new Command('agent')
