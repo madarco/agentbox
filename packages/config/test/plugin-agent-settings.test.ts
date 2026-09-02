@@ -20,7 +20,10 @@ function agentsFile(body: unknown): string {
   return path;
 }
 
-const OPENCLAW_SETTING = {
+// A FICTIONAL agent id, and it has to stay fictional: `installedAgentKeys()`
+// deliberately drops any id that is also a built-in, so naming a shipped agent
+// here would make this test assert the opposite of what it means.
+const PLUGIN_SETTING = {
   key: 'flavour',
   type: 'enum',
   enumValues: ['a', 'b'],
@@ -32,9 +35,9 @@ describe('pluginAgentSettings', () => {
   it('reads a declared setting out of an installed agent record', () => {
     const path = agentsFile({
       version: 1,
-      agents: [{ specs: { openclaw: { id: 'openclaw', settings: [OPENCLAW_SETTING] } } }],
+      agents: [{ specs: { sidewinder: { id: 'sidewinder', settings: [PLUGIN_SETTING] } } }],
     });
-    expect(pluginAgentSettings(path)).toEqual([{ id: 'openclaw', settings: [OPENCLAW_SETTING] }]);
+    expect(pluginAgentSettings(path)).toEqual([{ id: 'sidewinder', settings: [PLUGIN_SETTING] }]);
   });
 
   it('degrades to nothing rather than throwing', () => {
@@ -56,10 +59,10 @@ describe('pluginAgentSettings', () => {
       agents: [
         {
           specs: {
-            openclaw: {
-              id: 'openclaw',
+            sidewinder: {
+              id: 'sidewinder',
               settings: [
-                OPENCLAW_SETTING,
+                PLUGIN_SETTING,
                 { key: 'no-type', default: 'x', description: 'd' },
                 { key: 'enum-without-values', type: 'enum', default: 'x', description: 'd' },
                 {
@@ -70,7 +73,7 @@ describe('pluginAgentSettings', () => {
                   description: 'd',
                 },
                 { key: 'wrong-default-type', type: 'bool', default: 'yes', description: 'd' },
-                // A dotted leaf would generate `openclaw.a.b`, which the parser
+                // A dotted leaf would generate `sidewinder.a.b`, which the parser
                 // reads as a nested branch nothing materialises.
                 { key: 'a.b', type: 'string', default: '', description: 'd' },
               ],
@@ -79,7 +82,7 @@ describe('pluginAgentSettings', () => {
         },
       ],
     });
-    expect(pluginAgentSettings(path)).toEqual([{ id: 'openclaw', settings: [OPENCLAW_SETTING] }]);
+    expect(pluginAgentSettings(path)).toEqual([{ id: 'sidewinder', settings: [PLUGIN_SETTING] }]);
   });
 });
 
@@ -89,7 +92,7 @@ describe('the key registry folds them in', () => {
     // the import — the same "next command sees it" contract AGENT_SPECS has.
     const path = agentsFile({
       version: 1,
-      agents: [{ specs: { openclaw: { id: 'openclaw', settings: [OPENCLAW_SETTING] } } }],
+      agents: [{ specs: { sidewinder: { id: 'sidewinder', settings: [PLUGIN_SETTING] } } }],
     });
     vi.resetModules();
     vi.doMock('../src/paths.js', async () => ({
@@ -99,9 +102,9 @@ describe('the key registry folds them in', () => {
     const { KEY_REGISTRY, BUILTIN_KEY_REGISTRY, BUILT_IN_DEFAULTS } =
       await import('../src/types.js');
     const keys = KEY_REGISTRY.map((d) => d.key);
-    expect(keys).toContain('openclaw.flavour');
-    expect(BUILTIN_KEY_REGISTRY.map((d) => d.key)).not.toContain('openclaw.flavour');
-    expect((BUILT_IN_DEFAULTS as unknown as Record<string, unknown>)['openclaw']).toMatchObject({
+    expect(keys).toContain('sidewinder.flavour');
+    expect(BUILTIN_KEY_REGISTRY.map((d) => d.key)).not.toContain('sidewinder.flavour');
+    expect((BUILT_IN_DEFAULTS as unknown as Record<string, unknown>)['sidewinder']).toMatchObject({
       flavour: 'a',
     });
     vi.doUnmock('../src/paths.js');

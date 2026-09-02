@@ -101,6 +101,40 @@ be controlled and `recover` says so.
 
 This split is why "add a new cloud" is small: only the SDK shim differs.
 
+### 1.0.2 Service agents need nothing per provider
+
+A `caps.surface: 'service'` agent (openclaw) reaches every provider from its
+registry row alone, and this is worth stating because it is the thing that would
+otherwise have grown a per-provider tail:
+
+- **The binary** comes from the spec's `install` recipe, run either at derived-layer
+  bake time or by `ensureAgentInstalled` into a live box. It is deliberately NOT
+  added to any provider's `install-box.sh`, and NOT baked into any base — openclaw
+  is ~893 MB installed, and a base variant would shift the build-context
+  fingerprint and stale every provider's snapshot.
+- **The supervisor units** ride the `agents.list` RPC, not a file a provider writes.
+  That was the explicit Phase-2 choice: a pushed file would make its shape a
+  contract every provider (community ones included) implements.
+- **The credentials mount** is derived from `spec.credential.cloudMountPath` /
+  `cloudSubpath` in `agentSpecs()` (`packages/sandbox-cloud/src/sync/agent-credentials.ts`),
+  which walks `AGENT_SYNC_SPECS` — there is no hand-listed per-agent table left to
+  update. (openclaw has no host-side credential at all; its slot names a path
+  nothing writes, so every credential mechanism is a clean no-op and ctl's fanout
+  watcher never fires. Its gateway token is per-box and must never leave the box.)
+- **Host→box static staging** is `stageAllAgentStatic`, likewise registry-driven,
+  and absent-tolerant: almost no host has a `~/.openclaw`, and staging one
+  produces `tarballPath: null` rather than failing a bake
+  (`packages/sandbox-cloud/test/agent-static-all.test.ts`).
+- **The run-env** (`boxRunEnv`) is merged by `agentRunEnv` at provision time on the
+  clouds, and returned by the agent's docker module on docker. Those are two
+  different code paths for one declaration, which is exactly where they drift —
+  see CLAW-006 in [`test-plan.md`](./test-plan.md).
+
+What is left per provider is the ordinary always-on question. **hetzner**,
+**digitalocean** and **remote-docker** are the intended cloud homes for a gateway;
+**e2b** and **vercel** carry hard microVM session caps that `cloud-keepalive.ts`
+can extend but never remove, so they are the wrong shape for a daemon.
+
 ### 1.0.1 `AGENTBOX_BOX_HOST` on cloud boxes
 
 The `{{AGENTBOX_BOX_HOST}}` placeholder (used by `agentbox-ctl render` and carry

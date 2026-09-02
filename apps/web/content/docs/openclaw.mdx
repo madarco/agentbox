@@ -1,0 +1,148 @@
+---
+title: OpenClaw
+description: Run the OpenClaw gateway as a hosted service in its own box — one box per tenant, its own identity, its config under version control
+---
+
+[OpenClaw](https://docs.openclaw.ai) is an always-on AI gateway: one long-running daemon with a Control UI, health endpoints, and live channel connections. It is not a TUI you attach to, so AgentBox runs it as a **service agent** — a daemon the box's supervisor owns, published on the box's web URL.
+
+```bash
+agentbox openclaw            # create-or-resume a box, wait for the gateway, print its URL + token
+```
+
+```console
+$ agentbox openclaw -n claw
+┌  agentbox openclaw
+│
+◇  box ready: claw
+│
+◇  openclaw ready
+│
+│  token: 5f3c…c1d2
+│
+└  openclaw on claw: https://claw.localhost
+```
+
+Open that URL and paste the token when the Control UI asks for it.
+
+<Callout title="ONE BOX PER TENANT">
+  OpenClaw does not support multiple tenants in one gateway: two gateways sharing a state directory
+  share a gateway identity and its channel pairings. AgentBox enforces that — a service agent always
+  gets a per-box config volume, and there is no config key to turn that off.
+</Callout>
+
+## The commands
+
+`agentbox openclaw` has the shape a hosted service has, not the shape an agent TUI has — there is no `attach`, no `login`, no `--resume`.
+
+| Command                           | What it does                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token |
+| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                    |
+| `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                           |
+| `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                |
+| `agentbox openclaw restart [box]` | Restart the gateway                                                                                    |
+| `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                |
+
+The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180).
+
+`agentbox openclaw url` prints the URL on the first line and the token on the second, so `agentbox openclaw url | head -1` still yields just the URL. The token is read out of the gateway's own config file on demand: OpenClaw's `config get gateway.auth.token` deliberately answers `__OPENCLAW_REDACTED__`.
+
+## What happens on create
+
+Nothing here is OpenClaw-specific code. The units below are declared on OpenClaw's catalog row and folded into the box's supervisor through the same reload diff an edit to your `agentbox.yaml` uses — which is why a box booted from a snapshot baked before OpenClaw existed still runs it.
+
+1. **Install, on demand.** `npm i -g openclaw` runs into the live box the first time. It is **not** baked into any base image: OpenClaw is ~893 MB installed, a ~29% increase on the base image, and baking it would stale every provider's snapshot.
+2. **`openclaw-onboard`** — a one-shot unit running `openclaw onboard --non-interactive --accept-risk --mode local --skip-channels --skip-health --no-install-daemon`. It writes the factory config, sets the agent workspace to `/workspace`, and **generates this box's gateway identity and auth token**. It is marked run-once, so a restart never replaces that identity.
+3. **`openclaw-render`** — `agentbox-ctl agent render openclaw`, which applies your `openclaw:` overlay (below).
+4. **`openclaw`** — `openclaw gateway`, `restart: always`, ready when `http://127.0.0.1:18789/healthz` answers, published on the box's web port.
+
+The gateway binds **loopback only**. AgentBox forwards the box's `:80` to `127.0.0.1:18789` inside the same container, so the Control UI is reachable without ever widening the bind — which is both sufficient and safer than exposing the daemon on `0.0.0.0`.
+
+## Configuring it: the `openclaw:` overlay
+
+Put gateway config in a top-level `openclaw:` block in your project's `agentbox.yaml`. It is an **overlay**, not the file: `agentbox-ctl agent render openclaw` sends it to OpenClaw's own `openclaw config patch --stdin`, which performs the recursive merge and validates as it goes.
+
+```yaml
+# yaml-language-server: $schema=https://agent-box.sh/schema/agentbox.schema.json
+openclaw:
+  logging:
+    level: debug
+  channels:
+    telegram:
+      enabled: true
+      tokenEnv: TELEGRAM_BOT_TOKEN
+```
+
+To apply an edit to a live box, re-run the render inside it:
+
+```bash
+agentbox shell claw -- agentbox-ctl run-task openclaw-render --force
+```
+
+`agentbox-ctl reload` alone is not enough: it applies the _unit_ diff, and the render task's definition has not changed. Restarting the box re-runs it too.
+
+<Callout title="DOCKER BOXES READ THEIR OWN WORKSPACE">
+  On docker, `/workspace` is an in-container git worktree, not a bind mount of your host directory —
+  so an uncommitted edit to `agentbox.yaml` on the host is not what the render reads. Edit it in the
+  box (`agentbox shell`, or your agent), or commit and re-create.
+</Callout>
+
+Three properties are worth knowing:
+
+- **Only what you changed is sent.** The render diffs your block against the overlay it applied last time and patches only the keys whose value changed. A key you edit by hand inside the box therefore survives every later render — and comes back under AgentBox's control the moment you touch it in `agentbox.yaml`.
+- **Removing a key restores OpenClaw's default**, rather than freezing whatever AgentBox wrote last.
+- **A bad overlay writes nothing.** The render dry-runs the patch first (`--dry-run`) and gates on `openclaw config validate` afterwards; either failing fails the unit loudly with OpenClaw's own message, e.g.:
+
+  ```console
+  agentbox-ctl: openclaw config patch --stdin --dry-run rejected the overlay (exit 1):
+  OpenClaw config is invalid
+  Problem:
+    - openclaw.json:58 — logging: Unrecognized key: "format"
+  ```
+
+<Callout title="NEVER PUT A SECRET IN THE OVERLAY" type="warn">
+  `agentbox.yaml` is committed. Carry the real value into the box with a
+  [`carry:`](/docs/agentbox-yaml) entry — it lands 0600 — and have the overlay reference it by name.
+  The render warns when a value under the overlay key looks like a literal token.
+</Callout>
+
+Do not set `gateway.bind` or `gateway.auth` from the overlay. Onboard already binds loopback and generates a token, and overriding either only widens exposure or fights OpenClaw for ownership of its own identity.
+
+The JSON schema for `agentbox.yaml` does not know about the `openclaw:` key — which keys are overlay keys lives in the host's agent catalog, not in the schema — so a YAML-LSP editor flags it as unknown. The supervisor accepts it.
+
+## Channels
+
+Token-based channels (Telegram, Discord) are fully scriptable and are the documented path: carry the token in, reference it from the overlay, and `openclaw channels add --use-env` inside the box. WhatsApp pairing is QR-only and interactive; it works through the Control UI in a browser, and a box with the [VNC desktop](/docs/browser-and-screen) enabled is a workable way to drive it.
+
+## Overriding a unit
+
+The unit names (`openclaw`, `openclaw-onboard`, `openclaw-render`) are public surface. Declaring a service or task of the same name in your `agentbox.yaml` **replaces** the one the agent ships — that is the supported way to change the gateway's command, env or readiness probe. See [services and tasks](/docs/services-and-tasks).
+
+Only one unit may `expose:`. If your `agentbox.yaml` already publishes the box's web port, OpenClaw's `expose:` is dropped with a warning rather than silently taking it over.
+
+## State, sync and clones
+
+| Path in the box                   | What it is                      | Travels?                         |
+| --------------------------------- | ------------------------------- | -------------------------------- |
+| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | Never leaves the box             |
+| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | Never                            |
+| `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                            |
+| `~/.openclaw/agents/`             | Your agent definitions          | Both directions                  |
+| `~/.config/openclaw`              | Auth-profile key                | Stays in the box's config volume |
+
+`agentbox download openclaw [box]` pulls the agent definitions back to your host, additively — an item the host already has is never overwritten. There is deliberately no `--propagate`: an OpenClaw box is a tenant, and copying one tenant's definitions into another's gateway is not a sensible default.
+
+If your host happens to run OpenClaw itself, its config and state are excluded from everything pushed into a box, for the same identity reason.
+
+## Providers
+
+OpenClaw needs a box that is genuinely always on. **Docker**, **Hetzner**, **DigitalOcean** and **remote-docker** are the intended targets. E2B and Vercel microVMs carry hard session caps and are not a good home for a gateway.
+
+Nothing provider-specific had to be written for it: the install recipe, the units and the overlay all ride the agent catalog, so `agentbox openclaw --provider hetzner` is the same command.
+
+## Troubleshooting
+
+- **`service "openclaw" did not report ready`** — `agentbox openclaw logs claw` first. On a cold box the first run also installs ~893 MB from npm, so raise `--timeout` on a slow link.
+- **The unit never appears** — it arrives with the agent catalog over the host relay. `agentbox-ctl reload` inside the box re-applies it; check `agentbox relay status` on the host.
+- **`config validate` failed** — the render prints OpenClaw's own message and leaves the config untouched. Fix the `openclaw:` block and reload.
+- **The Control UI asks for a token you do not have** — `agentbox openclaw url` prints it.

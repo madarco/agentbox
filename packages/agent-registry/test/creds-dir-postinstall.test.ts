@@ -34,7 +34,9 @@ function postInstalls(): { id: string; script: string }[] {
 describe('agent post-install vs the credentials mount', () => {
   it('covers every shipped recipe, including the alternates', () => {
     const ids = postInstalls().map((p) => p.id);
-    expect(new Set(ids)).toEqual(new Set(['claude', 'codex', 'opencode', 'pi', 'example']));
+    expect(new Set(ids)).toEqual(
+      new Set(['claude', 'codex', 'opencode', 'pi', 'openclaw', 'example']),
+    );
     // claude declares an `npm` alternate with its own postInstall.
     expect(ids.filter((id) => id === 'claude').length).toBeGreaterThan(1);
   });

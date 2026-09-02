@@ -28,6 +28,9 @@ agentbox claude
 agentbox codex
 agentbox opencode
 agentbox pi
+
+# Create a box that HOSTS a daemon, and print its URL (no TUI to attach to)
+agentbox openclaw
 ```
 
 The agent-agnostic `agentbox attach [box]` reattaches to whichever agent session is running in the box (it prompts when more than one is live). It never auto-starts: when nothing is running it prints a warning and exits non-zero. Each agent command also exposes its own `attach` / `start` / `login` subcommands: per-agent `attach` reattaches _and_ starts a session if none is running (never re-syncs config), `start` (re)starts a session in an existing box (rsyncs host config unless `--no-sync-config`), and `login` runs that agent's auth flow. In a terminal, `login` prints the approval URL and prompts you for the code itself — the agent's own sign-in TUI never takes over your terminal, so it behaves the same in every emulator. Pass `--interactive` to hand the terminal to that TUI instead (needed for login methods the guided prompt can't drive). With no TTY (or `--headless`), `claude login` prints the OAuth approval URL — including a greppable `AGENTBOX_LOGIN_URL=` marker — and you finish with `agentbox claude login --code <CODE>`, so an orchestrating agent can drive the sign-in. See [first-run auth](/docs/run-an-agent#first-run-auth).
@@ -72,6 +75,21 @@ Agent-specific: `--attach-in <split|window|tab|same>`, `-d, --no-attach`, `-i, -
 />
 
 These commands tee progress to `~/.agentbox/logs/<command>.log`; `~/.agentbox/logs/latest.log` always points at the most recent run.
+
+### Service agents
+
+`agentbox openclaw` creates or resumes a box that HOSTS a daemon rather than a TUI you attach to, waits for it to report ready, and prints its URL. None of the TUI surface applies — there is no `attach`, `login`, `--resume`, `-i` or `--dangerously-skip-permissions` — and its subcommands are the ones a hosted service has:
+
+```bash
+agentbox openclaw                     # create-or-resume, wait for ready, print the URL + token
+agentbox openclaw url [box]           # URL on line 1, gateway token on line 2
+agentbox openclaw status [box]        # the supervisor's view of the unit
+agentbox openclaw logs [box] -f       # tail the daemon's log
+agentbox openclaw restart [box]
+agentbox openclaw stop [box]          # stop the daemon; the box keeps running
+```
+
+It takes the create flags a box still needs — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--carry <mode>`, `--verbose` — plus `--timeout <seconds>` (how long to wait for the service to report ready, default 180). See [OpenClaw](/docs/openclaw).
 
 See [Run an agent](/docs/run-an-agent), [Teleport a project](/docs/teleport-a-project), [Background & parallel](/docs/background-and-parallel), and [Sync & git](/docs/sync-and-git).
 
@@ -263,7 +281,7 @@ agentbox services restart 1                # restart every service
 agentbox services restart 1 web            # restart one service
 ```
 
-`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download openclaw`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `download openclaw` is the exception: it pulls only the gateway's agent definitions (its config and state are that box's identity), and takes no `--propagate` — see [OpenClaw](/docs/openclaw#state-sync-and-clones). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
 `sync` is `download`'s mirror: it pushes the host workspace into a **live** box. A git workspace merges your branch into the box's and overlays your uncommitted/untracked changes; a non-git one gets a plain file overlay. **The box wins every conflict** — a file the box changed is left alone and reported, and no branch is ever reset. `--include-node-modules` pushes `node_modules` too (non-git workspaces only).
 

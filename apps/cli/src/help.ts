@@ -16,7 +16,10 @@ export interface HelpGroup {
 export const HELP_GROUPS: HelpGroup[] = [
   {
     title: 'Create & run',
-    commands: ['create', 'attach', 'fork', 'claude', 'codex', 'opencode', 'pi'],
+    // `openclaw` sits with the agent commands even though it is a SERVICE
+    // agent: what the user types is still "create-or-resume a box for this
+    // tool". What differs is where it ends — a URL instead of a terminal.
+    commands: ['create', 'attach', 'fork', 'claude', 'codex', 'opencode', 'pi', 'openclaw'],
   },
   {
     title: 'Access',

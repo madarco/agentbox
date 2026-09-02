@@ -36,4 +36,30 @@ describe('stageAllAgentStatic', () => {
     },
     SUBPROCESS_TIMEOUT_MS,
   );
+
+  it(
+    'is a clean no-op for an agent the host has no config for',
+    async () => {
+      // The Phase-7 requirement for openclaw specifically: almost no host has a
+      // `~/.openclaw`, and staging one must produce NOTHING rather than fail
+      // the whole bake. The generic stager already answers `tarballPath: null`
+      // for an absent source; this is what stops a future per-agent stager
+      // from quietly making it an error.
+      const home = await mkdtemp(join(tmpdir(), 'agentbox-stage-empty-'));
+      const stages = await stageAllAgentStatic({ agents: ['openclaw'], hostHome: home });
+      try {
+        expect(stages.map((s) => s.kind)).toEqual(['openclaw', 'agents']);
+        const openclaw = stages.find((s) => s.kind === 'openclaw');
+        expect(openclaw?.staged.tarballPath).toBeNull();
+        expect(openclaw?.staged.warnings).toEqual([]);
+        expect(openclaw?.extractDir).toBe(
+          AGENT_SYNC_SPECS.find((s) => s.id === 'openclaw')?.staticPaths[0]?.boxDir,
+        );
+      } finally {
+        for (const s of stages) await s.staged.cleanup();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    SUBPROCESS_TIMEOUT_MS,
+  );
 });

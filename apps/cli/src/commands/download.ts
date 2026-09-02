@@ -18,6 +18,7 @@ import { handleLifecycleError } from './_errors.js';
 import { downloadClaudeCommand } from './download-claude.js';
 import { downloadCodexCommand } from './download-codex.js';
 import { downloadOpencodeCommand } from './download-opencode.js';
+import { downloadOpenclawCommand } from './download-openclaw.js';
 import { downloadPiCommand } from './download-pi.js';
 import { downloadConfigCommand } from './download-config.js';
 import { downloadEnvCommand } from './download-env.js';
@@ -197,6 +198,10 @@ downloadCommand.addCommand(downloadOpencodeCommand);
 // `agentbox download pi [box]` — box -> host pull of Pi config/auth
 // (additive; reads the pi-config volume so the box need not be running).
 downloadCommand.addCommand(downloadPiCommand);
+
+// `agentbox download openclaw [box]` — box -> host pull of the gateway's agent
+// definitions only. The config and state are identity and are never pulled.
+downloadCommand.addCommand(downloadOpenclawCommand);
 
 // `agentbox download config [box]` — box -> host pull of just agentbox.yaml
 // (gitignore-bypassing; for syncing back an in-box-edited/regenerated config).

@@ -71,12 +71,12 @@ describe('the spec table stays importable from the bottom of the graph', () => {
 
 describe('the aggregated registry', () => {
   it('carries every built-in, in canonical order with claude first', () => {
-    expect(builtinAgentIds()).toEqual(['claude', 'codex', 'opencode', 'pi', 'example']);
+    expect(builtinAgentIds()).toEqual(['claude', 'codex', 'opencode', 'pi', 'openclaw', 'example']);
   });
 
   it('hides the canary from the agents a user is offered', () => {
     // `example` is real to the machinery and absent from every picker.
-    expect(visibleAgentIds()).toEqual(['claude', 'codex', 'opencode', 'pi']);
+    expect(visibleAgentIds()).toEqual(['claude', 'codex', 'opencode', 'pi', 'openclaw']);
     expect(findAgentSpec('example')?.hidden).toBe(true);
   });
 

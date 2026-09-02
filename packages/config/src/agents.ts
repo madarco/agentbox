@@ -40,6 +40,16 @@ export interface AgentConfigKind {
    */
   readonly isolateVolumeDesc?: string;
   /**
+   * Mirror of the registry row's `caps.surface`. Absent means `'tui'`.
+   *
+   * Config needs it for one decision: a `'service'` agent gets NO
+   * `box.isolate<Id>Config` key. Its config volume is always per-box — two
+   * daemons sharing a state dir share one identity — so the flag is derived
+   * from the surface at create time and a key that could be set to `false`
+   * would be one the product ignores.
+   */
+  readonly surface?: 'tui' | 'service';
+  /**
    * Settings this agent declares for itself, mirroring
    * `AgentSyncSpec.settings`. Each generates a `<id>.<key>` config key.
    *
@@ -113,6 +123,17 @@ export const AGENT_KINDS = [
     hasSkipPermissions: false,
     isolateVolumeDesc:
       'Use a per-box Pi config/data volume (~/.pi/agent) instead of the shared one.',
+  },
+  {
+    id: 'openclaw',
+    // No tmux session exists for a daemon; the key is generated anyway because
+    // every agent block carries one, and the registry row declares the same
+    // name. It is the unit name that matters for openclaw, and that lives on
+    // the spec's `service` block.
+    defaultSessionName: 'openclaw',
+    // A gateway has no tool-approval prompts to bypass.
+    hasSkipPermissions: false,
+    surface: 'service',
   },
   // The hidden demo agent (see `@agentbox/agent-example`). Present so the
   // generated keys cover it too — an agent absent from this table would be the

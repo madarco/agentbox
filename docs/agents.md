@@ -351,6 +351,84 @@ above for what interpolating it silently broke.
 
 ---
 
+## Two surfaces: TUI agents and service agents
+
+`caps.surface` on the registry row says what an agent IS, and it is DECLARED,
+never derived from the id:
+
+- **`tui`** (the default when absent) — claude, codex, opencode, pi. An
+  interactive tool the user attaches to: a tmux session, a wrapped pty,
+  `attach` / `start` / `login`, session resume and teleport.
+- **`service`** — openclaw. A daemon the box HOSTS. It has no session to attach
+  to; ctl's supervisor runs it, its state is read from the supervisor rather
+  than a tmux probe, and its CLI command ends at "service ready + URL printed".
+
+Everything that behaves differently for a daemon reads that one field, so a
+second service agent needs no new branch anywhere. What a service agent
+declares instead of the TUI machinery:
+
+- **`service: AgentServiceSpec`** — the ctl units that run it, mirroring ctl's
+  own `ServiceSpec`/`TaskSpec` field-for-field: `command`, `restart`,
+  `readyWhen`, `expose: { port, as: 80 }`, `needs`, and one-shot `tasks` (an
+  onboard, a config render). They ride the `agents.list` RPC into the box and
+  the supervisor folds them in through its normal reload diff — which is what
+  lets a box booted from a snapshot baked before the agent existed still run it.
+  A unit of the same name in `/workspace/agentbox.yaml` **wins**.
+- **`service.urlFields`** — values `<agent> url` prints beside the URL, read out
+  of the daemon's own config file (a Control UI's gateway token). Data, because
+  the only per-agent parts are which file and which dotted key.
+- **`configRender: AgentConfigRenderSpec`** — the layered-config descriptor
+  `agentbox-ctl agent render <id>` drives; independent of `service`, since a TUI
+  agent could want it too. See "Layered config" below.
+
+What it does NOT get, and must not be given: an entry in the CLI's
+`AGENT_MODULES` table (`AgentModule` is `AgentRuntime` + a login detector + a
+teleport resolver, and a daemon satisfies none of the three — `startSession` has
+to make a tmux session), an `attachWrapped`, or a `box.isolate<Agent>Config`
+config key. That last one is not an omission: a service agent's config volume is
+ALWAYS per-box, because two daemons sharing a state dir share one identity, so
+`create` derives isolation from `caps.surface` and a key that could be set to
+`false` would be one the product ignores.
+
+Its CLI command is built by the shared factory
+(`apps/cli/src/agents/command/service-factory.ts`) straight off the registry row
+— there is nothing tool-specific to write — so adding a service agent is adding
+a registry row plus the docker half of its package (which volume, mounted where,
+and "no tmux session"). `packages/agent-openclaw` is that package, and it is
+smaller than any TUI agent's.
+
+The split is asserted, not documented: `agent-caps-wiring.test.ts` requires a
+service agent to declare `service` and to declare `resume: false` /
+`teleport: 'stub'`, and forbids a TUI agent from declaring `service`;
+`agent-command-coverage.test.ts` asserts a service agent has a command and NO
+attach wrapper; `agent-module-table.test.ts` asserts it has no CLI module.
+
+### Layered config (`configRender`)
+
+For an agent whose config file AgentBox owns a LAYER of: the tool underneath
+gets updated, its factory defaults gain keys, and the user has hand-edited the
+file in the box. A plain regenerate loses their edits; never regenerating means
+they never get the new defaults.
+
+**The merge is the tool's job.** `applyCmd` is a command the tool already ships
+that takes a patch on stdin and merges it into its own file, validating as it
+goes (`openclaw config patch --stdin`). Delegating buys three things a
+hand-rolled merge cannot: no format parser, no shadow copy of the file, and a
+render that keeps working across the tool's own config migrations — which is the
+entire point. An agent whose tool has no such command simply does not declare
+`configRender`.
+
+AgentBox keeps only the small half: WHICH keys it is asserting this time.
+`agentbox-ctl agent render <id>` reads the `agentbox.yaml` `<overlayKey>:` block,
+diffs it against `~/.<agent>/.agentbox-overlay.json` (the overlay as last applied
+AND validated), and sends only what changed — so a key the user edited in-box is
+never re-asserted unless they edited the overlay too. It dry-runs first, gates on
+`validate`, and records the overlay only once both halves passed.
+
+Secrets never belong in the overlay: `agentbox.yaml` is committed. Real values
+ride a `carry:` entry into a 0600 env file and the overlay references them by
+name; the render lints for a secret-shaped literal and warns.
+
 ## Adding a new agent
 
 1. **Add the row** to `AGENT_SYNC_SPECS`: `id`, `binary`, `install`
@@ -430,6 +508,15 @@ above for what interpolating it silently broke.
    volumes are SHARED BETWEEN BOXES: a `hooks.json` seeded by a newer image can
    be read by a box running older baked ctl, and that box would silently stop
    reporting.
+6b. **If the agent is a SERVICE**, steps 2, 3 and 6 collapse: declare
+   `caps.surface: 'service'` plus a `service` block (and `configRender` if its
+   tool ships a patch command), skip the `AGENT_MODULES` arm and the `src/cli/`
+   tree entirely, and add `surface: 'service'` to its `AGENT_KINDS` row so no
+   `box.isolate<Agent>Config` key is generated. The CLI command comes from
+   `buildServiceAgentCommand` off the registry row. What remains is the docker
+   half of its package: `resolveVolume` / `buildMounts` / `ensureVolume`, and a
+   `sessionInfo` that reports no session rather than probing tmux.
+   `packages/agent-openclaw` is the worked example.
 7. **`agentbox download <agent>`** — the box-to-host direction. A CLI command
    (`apps/cli/src/commands/download-<agent>.ts`) plus the pull functions and
    box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to

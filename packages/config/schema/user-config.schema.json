@@ -130,6 +130,13 @@
         "sessionName": { "type": "string", "minLength": 1 }
       }
     },
+    "openclaw": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionName": { "type": "string", "minLength": 1 }
+      }
+    },
     "example": {
       "type": "object",
       "additionalProperties": false,

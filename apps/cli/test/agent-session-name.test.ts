@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { isServiceAgent } from '@agentbox/core';
 import type { EffectiveConfig } from '@agentbox/config';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveSessionName } from '../src/agents/command/start-attach.js';
@@ -16,11 +17,14 @@ import type { AgentCliSpec } from '@agentbox/cli-kit';
  * command factory; the bug predates it in all three hand-written commands.
  */
 describe('session name resolution', () => {
+  // TUI agents only: `resolveSessionName` takes an `AgentCliSpec`, which a
+  // service agent has none of — it has no tmux session to name.
+  const TUI_IDS = AGENT_SYNC_SPECS.filter((s) => !isServiceAgent(s)).map((s) => s.id);
   const cfgWith = (id: string, name: string): EffectiveConfig =>
     ({ [id]: { sessionName: name } }) as unknown as EffectiveConfig;
 
   it('prefers --session-name over everything', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_IDS) {
       const { runtime } = await loadAgentModule(id);
       const a = { id, spec: resolveAgentSpec(id), runtime } as unknown as AgentCliSpec;
       expect(resolveSessionName(a, { sessionName: 'mine' }, cfgWith(id, 'configured'))).toBe(
@@ -30,7 +34,7 @@ describe('session name resolution', () => {
   });
 
   it('falls back to the configured name, not the registry default', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_IDS) {
       const { runtime } = await loadAgentModule(id);
       const a = { id, spec: resolveAgentSpec(id), runtime } as unknown as AgentCliSpec;
       const configured = `${id}-custom`;

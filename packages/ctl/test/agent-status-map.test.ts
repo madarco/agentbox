@@ -78,7 +78,15 @@ describe('BAKED_AGENT_SESSIONS drift vs the agent registry', () => {
     // bake cannot be in a compiled-in list — it arrives over `agents.list`
     // (#340), which `agent-registry-fetch.test.ts` covers. A hidden agent is
     // exactly that case.
-    const baked_specs = AGENT_SYNC_SPECS.filter((s) => !s.hidden);
+    //
+    // And REPORTING agents only, which is the same rule the fetched list
+    // applies (`agent-registry.ts`): an agent declaring no `activitySource` has
+    // no tmux session worth probing — a service agent has no tmux session at
+    // all — and probing it would add a permanently-`unknown` entry to every
+    // snapshot.
+    const baked_specs = AGENT_SYNC_SPECS.filter(
+      (s) => !s.hidden && s.caps.activitySource.length > 0,
+    );
     for (const spec of baked_specs) {
       const baked = BAKED_AGENT_SESSIONS.find((s) => s.agent === spec.id);
       expect(baked, `missing baked session probe for '${spec.id}'`).toBeDefined();

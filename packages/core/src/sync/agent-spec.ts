@@ -247,6 +247,33 @@ export interface AgentServiceSpec {
   needs?: readonly string[];
   /** One-shot units run before the service — onboard, render. */
   tasks?: readonly AgentServiceTask[];
+  /**
+   * Extra values `agentbox <agent> url` prints beside the URL, read out of the
+   * daemon's own config file in the box.
+   *
+   * For the thing a hosted UI asks for that its URL alone does not carry — a
+   * gateway token pasted into a Control UI on first load. Declared as data
+   * (file + dotted path) rather than an agent-specific `url` implementation,
+   * because the only per-agent parts are where to read and what to call it.
+   *
+   * WHY NOT THE TOOL'S OWN `config get`: openclaw's answers
+   * `__OPENCLAW_REDACTED__` for exactly this key, which is the correct default
+   * for a CLI and useless here. Reading the raw JSON is the way round it.
+   *
+   * These are SECRETS. A value is fetched only when the user asks for it, and
+   * never persisted on the box record or logged.
+   */
+  urlFields?: readonly AgentServiceUrlField[];
+}
+
+/** One value `<agent> url` reads out of the daemon's config file. */
+export interface AgentServiceUrlField {
+  /** Printed before the value (`token`). */
+  label: string;
+  /** Absolute in-box path of a JSON file to read. */
+  file: string;
+  /** Dotted path into that JSON — `gateway.auth.token`. */
+  jsonPath: string;
 }
 
 /** A ready probe, one of three kinds. Mirrors ctl's `ReadyProbe` inputs. */

@@ -35,7 +35,12 @@ import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
 import { reportBoxNotOnAnyHub, withOwningHub } from '../../control-plane/with-hub.js';
 import type { HubApiServiceView } from '../../control-plane/hub-api-client.js';
-import { resolveServiceUrl, runServiceAgent, type ServiceAgentOptions } from './service-action.js';
+import {
+  readServiceUrlFields,
+  resolveServiceUrl,
+  runServiceAgent,
+  type ServiceAgentOptions,
+} from './service-action.js';
 
 const BOX_REF_HELP =
   'box ref: project index, id, id prefix, name, or container (default: the only box in this project)';
@@ -177,7 +182,12 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
 
   command.addCommand(
     new Command('url')
-      .description(`Print the URL the ${spec.id} service is published on`)
+      .description(
+        `Print the URL the ${spec.id} service is published on` +
+          (service.urlFields?.length
+            ? `, plus its ${service.urlFields.map((f) => f.label).join(' and ')}`
+            : ''),
+      )
       .argument('[box]', BOX_REF_HELP)
       .action(async (idOrName: string | undefined) => {
         try {
@@ -193,7 +203,14 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
             process.exitCode = 1;
             return;
           }
-          process.stdout.write(url + '\n');
+          // The URL alone is not enough to open a gateway's Control UI: it
+          // asks for the token on first load. The extra values go on their own
+          // lines AFTER the URL so `<agent> url | head -1` still yields just
+          // the URL — and the whole thing is ONE write, because a second write
+          // after `head` has closed the pipe raises EPIPE and would turn that
+          // documented idiom into a node stack trace.
+          const extra = await readServiceUrlFields(box, service.urlFields ?? []);
+          process.stdout.write([url, ...extra.map((f) => `${f.label}: ${f.value}`), ''].join('\n'));
         } catch (err) {
           handleLifecycleError(err);
         }

@@ -44,20 +44,37 @@ describe('config AGENT_KINDS vs the agent registry', () => {
     }
   });
 
-  it('generates a per-box config-volume key for every agent', () => {
+  it('generates a per-box config-volume key for every TUI agent, and none for a service agent', () => {
     // These live under `box.` — they describe which volume the BOX mounts, not
     // how the agent launches — so they are generated separately from the
     // `<agent>.*` block and need their own check.
+    //
+    // A SERVICE agent gets none: its volume is always per-box (two daemons
+    // sharing a state dir share one identity), so `create` derives isolation
+    // from `caps.surface` and a key that could be set to `false` would be one
+    // the product ignores.
+    const service = AGENT_SYNC_SPECS.filter((s) => s.caps.surface === 'service');
+    expect(service.length, 'the registry has no service agent left to check').toBeGreaterThan(0);
     for (const spec of AGENT_SYNC_SPECS) {
       const cap = spec.id.charAt(0).toUpperCase() + spec.id.slice(1);
-      expect(lookupKey(`box.isolate${cap}Config`), spec.id).toBeDefined();
+      const key = lookupKey(`box.isolate${cap}Config`);
+      expect(Boolean(key), `box.isolate${cap}Config`).toBe(spec.caps.surface !== 'service');
+    }
+  });
+
+  it('AGENT_KINDS mirrors the registry surface', () => {
+    // The one field config copies beyond the id and the session name, and the
+    // only thing the isolate-key decision above reads.
+    for (const spec of AGENT_SYNC_SPECS) {
+      const kind = AGENT_KINDS.find((a) => a.id === spec.id) as { surface?: string } | undefined;
+      expect(kind?.surface ?? 'tui', spec.id).toBe(spec.caps.surface ?? 'tui');
     }
   });
 
   it('gives every generated key a description', () => {
     // A key with no description is invisible in `agentbox config list`.
     const agentKeys = KEY_REGISTRY.filter((d) =>
-      AGENT_KINDS.some(
+      (AGENT_KINDS as readonly { id: string }[]).some(
         (a) =>
           d.key.startsWith(`${a.id}.`) ||
           d.key === `box.isolate${a.id.charAt(0).toUpperCase() + a.id.slice(1)}Config`,

@@ -886,6 +886,189 @@
       }
     ]
   },
+  "openclaw": {
+    "name": "openclaw",
+    "aliases": [],
+    "description": "Create or resume a box hosting the openclaw service, and print its URL",
+    "arguments": [
+      {
+        "name": "box",
+        "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+        "required": false,
+        "variadic": false,
+        "defaultValue": null
+      }
+    ],
+    "options": [
+      {
+        "flags": "-w, --workspace <path>",
+        "description": "host workspace to mount",
+        "defaultValue": "<cwd>",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-n, --name <name>",
+        "description": "friendly box name (default: <workspace-basename>-<id>)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-p, --provider <name>",
+        "description": "sandbox backend (default: box.provider)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--image <ref>",
+        "description": "override the box image",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--snapshot <ref>",
+        "description": "start from a project checkpoint (see `agentbox checkpoint`)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "-y, --yes",
+        "description": "skip prompts, accept defaults",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry-yes",
+        "description": "auto-approve the agentbox.yaml carry: block",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--carry <mode>",
+        "description": "'skip' disables carry for this run",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--timeout <seconds>",
+        "description": "how long to wait for the service to report ready",
+        "defaultValue": "180",
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--verbose",
+        "description": "stream create progress instead of a spinner",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "status",
+        "aliases": [],
+        "description": "Show the supervisor state of the openclaw service",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [],
+        "subcommands": []
+      },
+      {
+        "name": "logs",
+        "aliases": [],
+        "description": "Tail the openclaw service log",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "-n, --tail <lines>",
+            "description": "lines to show",
+            "defaultValue": "200",
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-f, --follow",
+            "description": "stream new lines as they arrive",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "restart",
+        "aliases": [],
+        "description": "Restart the openclaw service",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [],
+        "subcommands": []
+      },
+      {
+        "name": "stop",
+        "aliases": [],
+        "description": "Stop the openclaw service (the box keeps running)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [],
+        "subcommands": []
+      },
+      {
+        "name": "url",
+        "aliases": [],
+        "description": "Print the URL the openclaw service is published on, plus its token",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [],
+        "subcommands": []
+      }
+    ]
+  },
   "opencode": {
     "name": "opencode",
     "aliases": [],

@@ -19,7 +19,12 @@
  */
 
 import { findProjectRoot, loadEffectiveConfig, resolveBoxImage } from '@agentbox/config';
-import type { AgentSyncSpec, BoxRecord, ResolvedCarryEntry } from '@agentbox/core';
+import type {
+  AgentServiceUrlField,
+  AgentSyncSpec,
+  BoxRecord,
+  ResolvedCarryEntry,
+} from '@agentbox/core';
 import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentbox/cli-kit';
 import { ensureAgentInstalled, readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { recordLastAgent } from '@agentbox/sandbox-docker';
@@ -148,6 +153,56 @@ export async function resolveServiceUrl(box: BoxRecord): Promise<string | null> 
   } catch {
     return null;
   }
+}
+
+/** Walk a dotted path into a parsed JSON document. */
+function atJsonPath(doc: unknown, path: string): unknown {
+  let cur = doc;
+  for (const seg of path.split('.')) {
+    if (typeof cur !== 'object' || cur === null || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/**
+ * The extra values `<agent> url` prints beside the URL — a Control UI's gateway
+ * token, read out of the daemon's own config file.
+ *
+ * Read on demand and never persisted: these are secrets, so they are fetched
+ * when the user asks for them and are not written to the box record or the
+ * command log.
+ *
+ * Best-effort per field. The service can be up before it has written the file
+ * (or the tool may rename the key across a version), and a missing token must
+ * not turn a working `url` into a failure — the URL is the thing the user
+ * asked for.
+ */
+export async function readServiceUrlFields(
+  box: BoxRecord,
+  fields: readonly AgentServiceUrlField[],
+): Promise<{ label: string; value: string }[]> {
+  if (fields.length === 0) return [];
+  const provider = await providerForBox(box);
+  const out: { label: string; value: string }[] = [];
+  // One read per distinct file, not per field: two fields out of one config
+  // would otherwise be two `exec` round-trips into the box.
+  const docs = new Map<string, unknown>();
+  for (const field of fields) {
+    if (!docs.has(field.file)) {
+      let parsed: unknown;
+      try {
+        const r = await provider.exec(box, ['cat', field.file], { user: 'vscode' });
+        parsed = r.exitCode === 0 ? JSON.parse(r.stdout) : undefined;
+      } catch {
+        parsed = undefined;
+      }
+      docs.set(field.file, parsed);
+    }
+    const value = atJsonPath(docs.get(field.file), field.jsonPath);
+    if (typeof value === 'string' && value.length > 0) out.push({ label: field.label, value });
+  }
+  return out;
 }
 
 /**
@@ -285,6 +340,12 @@ export async function runServiceAgent(
       throw err;
     }
 
+    // Printed BEFORE the outro so the outro stays the one line a script greps
+    // for the URL. The Control UI asks for the token on first load, so a launch
+    // that prints only the URL sends the user straight back to the CLI.
+    for (const f of await readServiceUrlFields(box, service.urlFields ?? [])) {
+      log.info(`${f.label}: ${f.value}`);
+    }
     const url = service.expose ? await resolveServiceUrl(box) : null;
     if (url) outro(`${spec.id} on ${box.name}: ${url}`);
     else outro(`${spec.id} on ${box.name}`);

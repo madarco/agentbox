@@ -578,6 +578,58 @@ EOF`
 
 ---
 
+### agentbox openclaw (service agent)
+
+- [ ] **CLAW-001** `openclaw` creates a box, the supervisor reaches `ready`, and the URL is real.
+  - **Providers:** [docker], [hetzner], [digitalocean], [remote-docker]
+  - **Run:** `node apps/cli/dist/index.js openclaw -y -n claw`; then
+    `node apps/cli/dist/index.js services claw`; then
+    `curl -s -o /dev/null -w '%{http_code}\n' "$(node apps/cli/dist/index.js openclaw url claw | head -1)/healthz"`.
+  - **Signal:** the `openclaw` service row is `ready`, and `/healthz` answers **200**. The exit code
+    of the create alone is not the signal — a service that never came up must be caught by the
+    HTTP check.
+
+- [ ] **CLAW-002** `openclaw url` prints the gateway token, and it is the box's real one.
+  - **Providers:** [docker], [hetzner]
+  - **Run:** `node apps/cli/dist/index.js openclaw url claw`; compare against
+    `agentbox shell claw -- node -e "console.log(require(process.env.HOME+'/.openclaw/openclaw.json').gateway.auth.token)"`.
+  - **Signal:** the `token:` line matches byte-for-byte. `openclaw config get gateway.auth.token`
+    would answer `__OPENCLAW_REDACTED__` — that is why this is read from the raw file.
+  - **Also:** `openclaw url claw | head -1` prints only the URL and exits 0 (no EPIPE trace).
+
+- [ ] **CLAW-003** The `openclaw:` overlay reaches the config, and an in-box hand edit survives.
+  - **Providers:** [docker]
+  - **Run:** put `openclaw: { logging: { level: debug } }` in the box's `/workspace/agentbox.yaml`;
+    `agentbox shell claw -- agentbox-ctl run-task openclaw-render --force`. Then hand-edit an
+    unrelated valid key in the box (e.g. `tools.profile`), change the overlay to
+    `level: info`, and re-run the render.
+  - **Signal:** the render log says `applied 1 key(s): logging.level`; `logging.level` is `info`,
+    the hand-edited `tools.profile` is unchanged, and `openclaw config validate` passes.
+  - **Note:** `agentbox-ctl reload` alone does NOT re-run the render — it applies the unit diff, and
+    the task's definition has not changed. On docker, `/workspace` is an in-container worktree, so
+    edit `agentbox.yaml` inside the box (a host-side uncommitted edit is not what the render reads).
+
+- [ ] **CLAW-004** A bad overlay writes nothing.
+  - **Providers:** [docker]
+  - **Run:** put an unknown key under `openclaw:` and re-run the render.
+  - **Signal:** the task exits 1 with openclaw's own `config patch --dry-run` message naming the
+    key; the config file and `.agentbox-overlay.json` are both unchanged.
+
+- [ ] **CLAW-005** The gateway's identity never leaves its box.
+  - **Providers:** [docker]
+  - **Run:** `node apps/cli/dist/index.js download openclaw claw --dry-run`.
+  - **Signal:** only items under `agents/` are listed — never `openclaw.json`, `state/` or
+    `config-journal-fingerprint.key`. There is no `--propagate` flag on this subcommand.
+
+- [ ] **CLAW-006** The declared run-env reaches the box on every transport.
+  - **Providers:** [docker], [hetzner]
+  - **Run:** `agentbox shell claw -- node -e "console.log(require(process.env.HOME+'/.openclaw/openclaw.json').agents.defaults.workspace)"`.
+  - **Signal:** `/workspace`, not `~/.openclaw/workspace`. Docker gets `boxRunEnv` through the
+    agent's docker module; the clouds merge it at provision time — this is what catches the two
+    drifting apart.
+
+---
+
 ### agentbox open
 
 - [ ] **OPEN-001** `open --path` prints local sshfs/rsync mount path.
