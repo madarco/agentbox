@@ -489,7 +489,9 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
         input: r.untrackedNul.replace(/\0$/, ''),
         encoding: 'buffer',
         reject: false,
-      });
+            // COPYFILE_DISABLE: no macOS `._*` AppleDouble stubs in the box.
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
       if (tarOut.exitCode !== 0) {
         log(`warning: tar of untracked files for ${r.repo.hostMainRepo} failed: ${tarOut.stderr}`);
         continue;
@@ -647,6 +649,9 @@ export async function seedWorkspaceFromDir(opts: {
   const tarOut = await execa('tar', ['-C', opts.hostSource, '-cf', '-', '.'], {
     encoding: 'buffer',
     reject: false,
+    // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
+    // which extract on Linux as literal junk in the box's /workspace.
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
   });
   if (tarOut.exitCode !== 0) {
     throw new GitWorktreeError(`tar of ${opts.hostSource} failed: ${tarOut.stderr}`);
