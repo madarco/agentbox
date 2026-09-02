@@ -165,10 +165,43 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 - **The AGENT column item from Phase 2 is still open**, and now has a real service agent to be seen
   on — `agentbox list` reports nothing for an openclaw box because it has no tmux session. See the
   Phases 2-3 entry above.
-- **`--persistent` does not exist yet (Phase 1).** `agentbox openclaw` is exactly the workload that
-  needs it: a gateway box will be autopaused and idle-lapsed like any other, and it has no reporting
-  agent so every idle heuristic reads it as abandoned. The service-agent command should imply
-  `--persistent` once Phase 1 lands.
+- ~~**`--persistent` does not exist yet (Phase 1).**~~ **Done** (2026-09-02): a
+  `caps.surface: 'service'` row now creates a persistent box by default, derived in
+  `resolveCreatePersistent` (`packages/core/src/persistent.ts`) from the surface rather than from
+  an agent id, on both the CLI's `provider.create` and the hub's `POST /api/v1/boxes`.
+  `--no-persistent` opts out and the e2b/vercel refusal fires before the create.
 - **Channel pairing is still unverified end to end.** Carried over from Phase 0: `openclaw channels
   add --use-env` needs a real bot token, and the smoke here stopped at a healthy gateway with no
   channels. Wire one before calling OpenClaw support complete.
+
+## From the upload/clone API conversion (2026-09-02)
+
+- **`POST /boxes/:id/upload` has no progress stream.** The route is synchronous, so the per-file
+  lines `uploadWorkspaceToBox` emits go to the hub's stdout (`~/.agentbox/hub.log`) and the CLI
+  shows nothing until it returns. Fine for a normal workspace, thin for a large non-git one. The
+  fix is the shape `clone` already has — return a job id and stream `GET /jobs/{id}/logs` — but
+  that turns a one-round-trip op into a queued one, so it is worth doing only if a slow upload is
+  actually observed.
+- **`agentbox upload` is refused when a remote control box owns the box.** The hub reads the host
+  side of the workspace off its own disk, so a control box could only ever push *its* copy of the
+  project. Refusing is the honest answer today; making it work means a client→hub file upload
+  (custody blobs are the existing primitive) and belongs with the wider IO-plane move that
+  `docs/hub-api-single-path-plan.md` defers.
+- **`agentbox <agent> --no-persistent` on an EXISTING box is silently inert.** The service command
+  is create-or-resume, and the flag only reaches the create leg; resuming an always-on box with
+  `--no-persistent` neither changes the record nor warns. Either warn, or make it a real edit of
+  `BoxRecord.persistent`.
+- **`agentbox <agent> stop` still goes through `provider.exec`.** Unchanged by this pass; the hub's
+  services route exposes `restart` but not `stop`. Same item as before — the route belongs behind
+  `/api/v1` like every other box operation.
+- **The hub queue worker cannot build a SERVICE-agent box.** `POST /api/v1/boxes` with
+  `agent: "openclaw"` validates (the registry is the accept-list) and enqueues a job carrying the
+  right `createOpts` — including the derived `persistent: true`, verified — but the worker dies with
+  `unknown agent kind: openclaw`. Two causes, both fail-closed by design: `toSyncKind`
+  (`packages/core/src/sync/agent-kind.ts`) only accepts `BUILTIN_AGENT_KINDS`, which lists the four
+  TUI agents, and `_run-queued-job.ts`'s session dispatch has no branch for a surface with no tmux
+  session. The fix is the same shape as `job.noAgent`: skip the session leg for a
+  `caps.surface: 'service'` agent, and widen the wire-kind boundary (which also blocks every
+  `agentbox agent add` plugin agent). Until then a service box is created by the CLI's own
+  `provider.create` and the hub-queue path is dead for it. Pre-existing — nothing used this path
+  before — but it is now the last thing between a service agent and the web UI / tray.

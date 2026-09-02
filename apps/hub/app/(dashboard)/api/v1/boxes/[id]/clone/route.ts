@@ -39,9 +39,11 @@ export async function POST(
     provider: str(body.provider),
     into: str(body.into),
     includeNodeModules: body.includeNodeModules === true,
-    // TODO(plan phase 1): forward as `--persistent` on the create once
-    // `BoxRecord.persistent` exists. Accepted here so the API shape is final.
-    persistent: body.persistent !== false,
+    // Tri-state on purpose: absent inherits the SOURCE box's persistence, so a
+    // clone of an always-on service box is always-on too. `false` here is only
+    // ever an explicit `--no-persistent`, never "no opinion" — which would
+    // otherwise override the hub's own `box.persistent`.
+    persistent: typeof body.persistent === 'boolean' ? body.persistent : undefined,
   });
   if (!prepared.ok) return failFromAction(prepared.error);
 
@@ -50,6 +52,7 @@ export async function POST(
     provider: prepared.provider,
     agent: 'none',
     name: prepared.name,
+    ...(prepared.persistent !== undefined ? { opts: { persistent: prepared.persistent } } : {}),
   });
   if (!created.ok) return failFromAction(created.error);
   return ok({
@@ -58,5 +61,6 @@ export async function POST(
     workspace: prepared.workspace,
     provider: prepared.provider,
     files: prepared.files,
+    ...(prepared.persistent !== undefined ? { persistent: prepared.persistent } : {}),
   });
 }

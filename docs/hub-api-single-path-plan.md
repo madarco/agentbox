@@ -1466,6 +1466,49 @@ boxes without a second wire. The hub API contract it already speaks is unchanged
 
 ---
 
+## Follow-up — `upload` and `clone` (2026-09-02) ✅ done
+
+Two commands landed after Step 14 (the `service-boxes-plan.md` work) and arrived as CLI-side
+implementations: `agentbox upload` called `providerForBox()` + `uploadWorkspaceToBox()` inline, and
+`agentbox clone` streamed a create job through `/api/v1` but did its workspace **export** host-side
+first. Their routes already existed and were unused. Both are now thin clients:
+
+- **`upload` → `POST /api/v1/boxes/:id/upload`** (`HubApiClient.uploadBox`). The hub starts the box
+  and runs the push, so the CLI no longer holds a provider handle. UX unchanged — the
+  `(exclude-list mode)` label, the copied count, and the skipped-conflict warning with its paths all
+  come from the route's `{ mode, copied, conflicts }`. Synchronous, so no job: the whole push is one
+  round trip.
+- **`clone` → `POST /api/v1/boxes/:id/clone`** (`HubApiClient.cloneBox`). One call now does the
+  export AND the create, and the response carries the authoritative `name`/`workspace`/`files`
+  beside the `jobId` the CLI still streams. The export reads the **source box**, which the hub
+  reaches on every provider, so there was no argument for keeping it in the CLI — it was simply a
+  second implementation the web UI and the tray could not use. The clone's workspace dir and its
+  project registration now land on the hub's machine, which is also where the new box runs.
+
+**The one thing that could NOT go behind the API for every topology: `upload` against a REMOTE
+control box.** The route reads the *host* side of the workspace off the machine it runs on, so a
+control box can only ever push its own clone of the project — never the tree you are standing in.
+Pushing that silently would be the worst kind of success, so the CLI refuses by name
+(`remoteHubHostFileRefusal` in `control-plane/with-hub.ts`), gated on `HubTarget.onThisMachine`
+rather than `mode` (a `hub expose`-d machine is `remote`-shaped while still running here). The
+capability it names instead — `agentbox cp` — already reaches back to the user's machine. Making
+`upload` itself work remotely means a client→hub file upload (custody blobs are the existing
+primitive) and belongs with the wider IO-plane move this plan defers. `download` is untouched: it is
+IO-plane by the same rule, and writes to the caller's disk.
+
+Also folded in, because it is the same rule applied to a create: a `caps.surface: 'service'` agent
+now creates a **persistent** box by default, and the decision (`resolveCreatePersistent`,
+`packages/core/src/persistent.ts`) is read by BOTH the CLI's `provider.create` and the hub's
+`POST /api/v1/boxes`, so the web UI and the tray get the same default. The `persistentRefusal`
+for e2b/vercel fires before either create rather than leaving a failed job behind. Two gaps found
+by doing this, both pre-existing: the docker provider **dropped `req.persistent`** entirely (fixed —
+the CLI's own docker paths call `createBox` directly and pass it themselves, so nothing had
+exercised the `provider.create` mapping), and the hub queue worker still cannot BUILD a
+service-agent box (`unknown agent kind`) — recorded in
+[`plans/service-boxes-backlog.md`](./plans/service-boxes-backlog.md), not fixed here.
+
+---
+
 ## What this leaves on the laptop
 
 With a remote hub configured and these steps landed, the laptop runs **no long-lived agentbox

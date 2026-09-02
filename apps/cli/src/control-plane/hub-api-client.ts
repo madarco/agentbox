@@ -225,6 +225,44 @@ export interface HubApiOpResult {
 /** One supervised service, as `GET /boxes/:id/services` returns it (mirrors the
  * backend `ServiceView`). The persisted-snapshot source fills pid/restarts/
  * lastExitCode/command with nulls/defaults. */
+/** `POST /api/v1/boxes/:id/upload` — the result of one host->box push. */
+export interface HubApiUploadResult {
+  /** Which leg ran: a git merge+overlay, or a plain file overlay. */
+  mode: 'git' | 'files';
+  /** Files copied into the box (always 0 on the git leg). */
+  copied: number;
+  /** Host paths skipped to keep the box's version. */
+  conflicts: string[];
+}
+
+/** Body for `POST /api/v1/boxes/:id/clone`. */
+export interface HubApiCloneInput {
+  name?: string;
+  provider?: string;
+  /** Host dir for the clone's workspace, ON THE HUB'S MACHINE. */
+  into?: string;
+  includeNodeModules?: boolean;
+  /**
+   * `--persistent` / `--no-persistent`. Absent inherits the SOURCE box's
+   * persistence; `false` is only ever an explicit opt-out.
+   */
+  persistent?: boolean;
+}
+
+/** `POST /api/v1/boxes/:id/clone` — the staged clone plus its create job. */
+export interface HubApiCloneResult {
+  /** The create job; stream it with {@link HubApiClient.streamJobLog}. */
+  jobId: string;
+  name: string;
+  /** Absolute dir the workspace was exported to, on the hub's machine. */
+  workspace: string;
+  provider: string;
+  /** Files exported out of the source box. */
+  files: number;
+  /** Always-on flag the hub resolved for the clone, when it had an opinion. */
+  persistent?: boolean;
+}
+
 export interface HubApiServiceView {
   name: string;
   state: string;
@@ -704,6 +742,36 @@ export class HubApiClient {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/rename`, {
       displayName,
     });
+  }
+
+  // ── workspace upload / clone (host <-> live box) ──
+
+  /**
+   * Push the host workspace into a live box (`agentbox upload`). The BOX wins
+   * every conflict, so nothing in it is overwritten or reset; the host paths
+   * skipped to keep the box's version come back in `conflicts`.
+   *
+   * Reads files from the HUB's machine — see `remoteHubHostFileRefusal`, the
+   * guard that keeps a remote control box from silently uploading its own
+   * workspace instead of yours.
+   */
+  uploadBox(id: string, body: { includeNodeModules?: boolean } = {}): Promise<HubApiUploadResult> {
+    return this.request<HubApiUploadResult>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/upload`,
+      body,
+    );
+  }
+
+  /**
+   * New box from this box's workspace files, with a FRESH agent identity
+   * (`agentbox clone`). Two steps behind one call: the hub exports the source
+   * box's workspace into a new project dir on its own machine, then enqueues a
+   * normal create seeded from it — so the returned `jobId` streams through
+   * {@link streamJobLog} like any other create.
+   */
+  cloneBox(id: string, body: HubApiCloneInput = {}): Promise<HubApiCloneResult> {
+    return this.request<HubApiCloneResult>('POST', `/boxes/${encodeURIComponent(id)}/clone`, body);
   }
 
   // ── checkpoints (durable project assets) ──

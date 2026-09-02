@@ -45,6 +45,15 @@ Open that URL and paste the token when the Control UI asks for it.
 
 The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180).
 
+<Callout title="ALWAYS-ON BY DEFAULT">
+  OpenClaw's box is a [persistent box](/docs/checkpoints-and-pausing#persistent-boxes): never
+  auto-paused, never idle-lapsed, skipped by `agentbox prune`, and started again after a host
+  reboot. A gateway an autopause can reap is an outage, so that is the default for any service agent
+  rather than a flag you have to remember — `--no-persistent` opts out. It also means `--provider
+  e2b` and `--provider vercel` are **refused**: their platform session cap makes an always-on box
+  impossible, so the box would lapse on its own.
+</Callout>
+
 `agentbox openclaw url` prints the URL on the first line and the token on the second, so `agentbox openclaw url | head -1` still yields just the URL. The token is read out of the gateway's own config file on demand: OpenClaw's `config get gateway.auth.token` deliberately answers `__OPENCLAW_REDACTED__`.
 
 ## What happens on create
@@ -136,7 +145,7 @@ If your host happens to run OpenClaw itself, its config and state are excluded f
 
 ## Providers
 
-OpenClaw needs a box that is genuinely always on. **Docker**, **Hetzner**, **DigitalOcean** and **remote-docker** are the intended targets. E2B and Vercel microVMs carry hard session caps and are not a good home for a gateway.
+OpenClaw needs a box that is genuinely always on. **Docker**, **Hetzner**, **DigitalOcean** and **remote-docker** are the intended targets. E2B and Vercel microVMs carry hard session caps and are **refused** — not warned about — because a gateway that lapses on its own is not a gateway.
 
 Nothing provider-specific had to be written for it: the install recipe, the units and the overlay all ride the agent catalog, so `agentbox openclaw --provider hetzner` is the same command.
 

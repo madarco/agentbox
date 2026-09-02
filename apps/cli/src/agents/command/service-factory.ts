@@ -82,6 +82,14 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
     .option('-y, --yes', 'skip prompts, accept defaults')
     .option('--carry-yes', 'auto-approve the agentbox.yaml carry: block')
     .option('--carry <mode>', "'skip' disables carry for this run")
+    .option(
+      '--persistent',
+      'always-on box (the default for a service agent: a daemon that autopause reaps is an outage)',
+    )
+    .option(
+      '--no-persistent',
+      'create an expendable box instead — it can be auto-paused, idle-lapsed and pruned',
+    )
     .option('--timeout <seconds>', 'how long to wait for the service to report ready', '180')
     .option('--verbose', 'stream create progress instead of a spinner')
     .action(async (boxRef: string | undefined, opts: ServiceAgentOptions) => {

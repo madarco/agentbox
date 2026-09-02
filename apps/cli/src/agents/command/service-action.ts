@@ -25,6 +25,7 @@ import type {
   BoxRecord,
   ResolvedCarryEntry,
 } from '@agentbox/core';
+import { persistentRefusal, resolveCreatePersistent } from '@agentbox/core';
 import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentbox/cli-kit';
 import { ensureAgentInstalled, readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { recordLastAgent } from '@agentbox/sandbox-docker';
@@ -32,6 +33,7 @@ import { runCarryGate } from '../../lib/carry-gate.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
 import { resolveLimits } from '../../limits.js';
+import { resolveProviderChoice } from '../../provider/spec.js';
 import { withOwningHub } from '../../control-plane/with-hub.js';
 import type { HubApiServiceView } from '../../control-plane/hub-api-client.js';
 
@@ -46,6 +48,11 @@ export interface ServiceAgentOptions {
   verbose?: boolean;
   carryYes?: boolean;
   carry?: 'skip' | 'ask';
+  /**
+   * `--persistent` / `--no-persistent`. Undefined when neither was passed, which
+   * is what lets the registry's surface supply the default.
+   */
+  persistent?: boolean;
   /** Seconds to wait for the service to report ready. */
   timeout?: string;
 }
@@ -265,6 +272,20 @@ export async function runServiceAgent(
       }
       if (gate.decision === 'approve') carry = gate.entries;
 
+      // A service agent's box hosts a daemon, so it is always-on by default —
+      // derived from the registry row's `caps.surface`, exactly like the
+      // config-volume isolation below, never from an agent id. `--no-persistent`
+      // is the opt-out; `undefined` leaves the call to `box.persistent`.
+      const persistent = resolveCreatePersistent({ spec, flag: opts.persistent });
+      if (persistent ?? cfg.box.persistent) {
+        // Refused off the provider NAME, before the provider module is loaded —
+        // the same order `create` uses. A capped provider must say no, not fail
+        // later or hand back the expendable box the user did not ask for.
+        const { providerName } = resolveProviderChoice(cfg, { provider: opts.provider });
+        const refusal = persistentRefusal(providerName);
+        if (refusal) throw new Error(refusal);
+      }
+
       const provider = await providerForCreate({ flag: opts.provider, config: cfg });
       const s = makeProgressReporter(opts.verbose === true);
       s.start('creating box');
@@ -283,6 +304,7 @@ export async function runServiceAgent(
           withEnv: cfg.box.withEnv,
           carry,
           vnc: { enabled: cfg.box.vnc },
+          ...(persistent !== undefined ? { persistent } : {}),
           limits: resolveLimits(cfg.box, {}),
           providerOptions: {
             // ISOLATION IS NOT A USER KNOB HERE. Two daemons sharing a state dir

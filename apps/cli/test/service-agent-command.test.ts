@@ -79,6 +79,15 @@ describe('buildServiceAgentCommand', () => {
     );
   });
 
+  it('offers --persistent AND --no-persistent, so "neither" stays distinguishable', () => {
+    // Both must be declared: commander defaults a lone `--no-x` to true, which
+    // would make "the user did not choose" indistinguishable from "--persistent"
+    // and let it override `box.persistent`. The DEFAULT itself is derived from
+    // the registry surface in `resolveCreatePersistent`, not from the flag.
+    expect(flags).toEqual(expect.arrayContaining(['--persistent', '--no-persistent']));
+    expect(command.opts().persistent).toBeUndefined();
+  });
+
   it('refuses to build a command for an agent with no service block', () => {
     const noService = { ...spec, service: undefined } as unknown as AgentSyncSpec;
     expect(() => buildServiceAgentCommand(noService)).toThrow(/declares no service block/);
