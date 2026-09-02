@@ -180,7 +180,13 @@ export {
   type WorkspaceOverlayPorts,
   type WorkspaceOverlayResult,
 } from './concerns/workspace-files.js';
-export { boxOverlayPorts, providerBoxFilePorts, type BoxFilePorts } from './concerns/box-files.js';
+export {
+  BoxProbeError,
+  boxOverlayPorts,
+  chunkPathsForExec,
+  providerBoxFilePorts,
+  type BoxFilePorts,
+} from './concerns/box-files.js';
 export {
   pullWorkspaceToHost,
   readStagedWorkspace,

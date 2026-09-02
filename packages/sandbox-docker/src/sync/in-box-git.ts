@@ -742,14 +742,26 @@ export function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
         // overwrite a box file it should have kept.
         { input: relPaths.length === 0 ? '' : `${relPaths.join('\0')}\0`, reject: false },
       );
+      // FAIL-CLOSED. A path missing from this map means "the box does not have
+      // it", and the overlay acts on that by copying the host's file over. So a
+      // probe that could not answer must NOT degrade to an empty map — that
+      // reads as an empty box and overwrites everything the box holds. Same
+      // class as the NUL-termination bug above: an unreadable answer is not an
+      // empty answer.
+      if (probe.exitCode !== 0) {
+        throw new Error(
+          `could not read ${ct} in the box (exit ${String(probe.exitCode)}): ` +
+            `${probe.stderr || probe.stdout || 'no output'}\n` +
+            `Refusing to resync: without the box's file list every host file would ` +
+            `look new and overwrite the box's version.`,
+        );
+      }
       const boxTokens = new Map<string, string>();
-      if (probe.exitCode === 0) {
-        const flat = splitNul(probe.stdout);
-        for (let i = 0; i + 1 < flat.length; i += 2) {
-          const token = flat[i];
-          const path = flat[i + 1];
-          if (token !== undefined && path !== undefined) boxTokens.set(path, token);
-        }
+      const flat = splitNul(probe.stdout);
+      for (let i = 0; i + 1 < flat.length; i += 2) {
+        const token = flat[i];
+        const path = flat[i + 1];
+        if (token !== undefined && path !== undefined) boxTokens.set(path, token);
       }
       return boxTokens;
     },

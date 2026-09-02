@@ -36,7 +36,7 @@ import type {
   ResyncWorktree,
   WorkspaceResyncPorts,
 } from '@agentbox/core';
-import { makeHostGitPorts, resyncWorkspace } from '@agentbox/sandbox-core';
+import { chunkPathsForExec, makeHostGitPorts, resyncWorkspace } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArg, quoteShellArgv } from '../shell.js';
 
 /** Private in-box refs the pre-fetch writes; force-updated each resync, cleaned up after. */
@@ -259,18 +259,32 @@ async function probeUntrackedTokens(
 ): Promise<Map<string, string>> {
   const tokens = new Map<string, string>();
   if (relPaths.length === 0) return tokens;
-  // NUL-TERMINATED, not merely NUL-joined: `read -r -d ''` treats an
-  // unterminated tail as EOF, so the last path was never probed — and an
-  // unprobed path reads as "absent in the box", which makes the overlay
-  // overwrite a box file it should have kept.
-  const payload = Buffer.from(`${relPaths.join('\0')}\0`).toString('base64');
-  const script =
-    `printf %s ${quoteShellArg(payload)} | base64 -d | ( cd ${quoteShellArg(ct)} && ` +
-    `while IFS= read -r -d '' f; do ` +
-    `if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\\0%s\\0' "$(sha256sum < "$f" | cut -d' ' -f1)" "$f"; ` +
-    `elif [ -e "$f" ]; then printf '%s\\0%s\\0' '-' "$f"; fi; done )`;
-  const r = await backend.exec(handle, bashScript(script), asRoot ? { user: 'root' } : undefined);
-  if (r.exitCode === 0) {
+  // Chunked: the payload is ONE argv entry and Linux caps that at
+  // `MAX_ARG_STRLEN` (128 KiB), so an unchunked list breaks on any repo with a
+  // few thousand untracked files.
+  for (const chunk of chunkPathsForExec(relPaths)) {
+    // NUL-TERMINATED, not merely NUL-joined: `read -r -d ''` treats an
+    // unterminated tail as EOF, so the last path was never probed — and an
+    // unprobed path reads as "absent in the box", which makes the overlay
+    // overwrite a box file it should have kept.
+    const payload = Buffer.from(`${chunk.join('\0')}\0`).toString('base64');
+    const script =
+      `printf %s ${quoteShellArg(payload)} | base64 -d | ( cd ${quoteShellArg(ct)} && ` +
+      `while IFS= read -r -d '' f; do ` +
+      `if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\\0%s\\0' "$(sha256sum < "$f" | cut -d' ' -f1)" "$f"; ` +
+      `elif [ -e "$f" ]; then printf '%s\\0%s\\0' '-' "$f"; fi; done )`;
+    const r = await backend.exec(handle, bashScript(script), asRoot ? { user: 'root' } : undefined);
+    // FAIL-CLOSED. A path missing from this map means "the box does not have
+    // it", and the overlay copies the host's file over on that basis — so a
+    // probe that could not answer must never degrade to a partial map.
+    if (r.exitCode !== 0) {
+      throw new Error(
+        `could not read ${ct} in the box (exit ${String(r.exitCode)}): ` +
+          `${r.stderr || r.stdout || 'no output'}\n` +
+          `Refusing to resync: without the box's file list every host file would ` +
+          `look new and overwrite the box's version.`,
+      );
+    }
     const flat = r.stdout.split('\0').filter((s) => s.length > 0);
     for (let i = 0; i + 1 < flat.length; i += 2) {
       const token = flat[i];

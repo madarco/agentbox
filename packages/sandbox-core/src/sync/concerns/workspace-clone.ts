@@ -17,7 +17,7 @@
  * cannot ride along even if the source box committed one.
  */
 
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { stageBoxWorkspace } from './workspace-pull.js';
 
@@ -41,14 +41,33 @@ export interface ExportWorkspaceResult {
   usedGitignore: boolean;
 }
 
-/** Throw unless `dir` is absent or empty — never clobber someone's folder. */
+/**
+ * Throw unless `dir` is absent, or is a real and empty directory.
+ *
+ * The export `rm -rf`s this path before refilling it, so it has to be
+ * POSITIVELY identified first. Reading any stat failure as "absent" is what
+ * made `--into ~/notes.md` delete `notes.md`: `readdir` on a file fails with
+ * `ENOTDIR`, the old code took that for "nothing there", and the staging step
+ * removed the file and put a directory in its place. Only `ENOENT` means absent;
+ * everything else that exists but is not a directory is refused by name.
+ */
 export async function assertEmptyDir(dir: string): Promise<void> {
-  let entries: string[];
+  let stats;
   try {
-    entries = await readdir(dir);
-  } catch {
-    return; // absent is fine; the export creates it
+    stats = await lstat(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return; // the export creates it
+    throw new Error(`cannot use ${dir} as a destination: ${(err as Error).message}`);
   }
+  if (stats.isSymbolicLink()) {
+    throw new Error(
+      `${dir} is a symlink; pick a real directory (the export would replace the link, not its target)`,
+    );
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`${dir} exists and is not a directory; pick another destination`);
+  }
+  const entries = await readdir(dir);
   if (entries.length > 0) {
     throw new Error(`${dir} is not empty; pick another destination or empty it first`);
   }

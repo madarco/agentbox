@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const calls: { argv: string[]; input?: string }[] = [];
+let nextResult = { exitCode: 0, stdout: '', stderr: '' };
 vi.mock('execa', () => ({
   execa: (_bin: string, argv: string[], opts?: { input?: string }) => {
     calls.push({ argv, input: opts?.input });
-    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    return Promise.resolve(nextResult);
   },
 }));
 
@@ -28,5 +29,20 @@ describe('docker probeUntrackedTokens', () => {
     const ports = makeDockerResyncPorts('agentbox-svc');
     await ports.probeUntrackedTokens('/workspace', []);
     expect(calls.at(-1)?.input).toBe('');
+  });
+
+  it('THROWS on a failed probe instead of returning an empty map', async () => {
+    // Fail-closed. An empty map reads downstream as "the box has none of these
+    // paths", so the untracked overlay copies every host file over the box's —
+    // the inverse of the box-wins contract. Same class as the NUL bug above.
+    nextResult = { exitCode: 1, stdout: '', stderr: 'docker exec: no such container' };
+    try {
+      const ports = makeDockerResyncPorts('agentbox-svc');
+      await expect(ports.probeUntrackedTokens('/workspace', ['a.txt'])).rejects.toThrow(
+        /no such container/,
+      );
+    } finally {
+      nextResult = { exitCode: 0, stdout: '', stderr: '' };
+    }
   });
 });

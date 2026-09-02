@@ -1,8 +1,12 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   agentStateExcludePaths,
   buildWorkspaceListScript,
   isExcludedPath,
+  overlayHostDirIntoBox,
   parseItemizedChanges,
   parseWorkspaceList,
   workspaceExcludes,
@@ -121,5 +125,34 @@ describe('parseItemizedChanges', () => {
     // them would overstate "files changed". `*deleting <dir>` reads as a `d`
     // entry too — and the pull never passes `--delete` anyway.
     expect(parseItemizedChanges('cd+++++++++ a/\n*deleting   b/')).toEqual([]);
+  });
+});
+
+describe('overlayHostDirIntoBox', () => {
+  it('propagates a probe failure and pushes NOTHING into the box', async () => {
+    // The end of the fail-closed chain: if the probe cannot answer, the overlay
+    // must abort rather than read the silence as "the box is empty" and copy the
+    // whole host tree over the box's own work.
+    const hostDir = await mkdtemp(join(tmpdir(), 'agentbox-overlay-test-'));
+    try {
+      await writeFile(join(hostDir, 'a.txt'), 'host');
+      let pushed = 0;
+      await expect(
+        overlayHostDirIntoBox({
+          hostDir,
+          excludes: workspaceExcludes(),
+          ports: {
+            probeBoxTokens: () => Promise.reject(new Error('probe exploded')),
+            applyTarToBox: () => {
+              pushed += 1;
+              return Promise.resolve();
+            },
+          },
+        }),
+      ).rejects.toThrow(/probe exploded/);
+      expect(pushed).toBe(0);
+    } finally {
+      await rm(hostDir, { recursive: true, force: true });
+    }
   });
 });

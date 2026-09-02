@@ -309,6 +309,11 @@ export interface WorkspaceOverlayPorts {
    * For each relative path, the box's token: absent when the path does not
    * exist, `NON_REGULAR_TOKEN` for a dir/symlink, else the sha256 of the file.
    * Mirrors `WorkspaceResyncPorts.probeUntrackedTokens`.
+   *
+   * MUST THROW rather than return a partial map. A key missing from the result
+   * means "the box does not have this path", and {@link overlayHostDirIntoBox}
+   * acts on that by copying the host's file over — so an implementation that
+   * degraded to an empty map on failure would overwrite the whole box.
    */
   probeBoxTokens(relPaths: string[]): Promise<Map<string, string>>;
   /** Extract a tar (rooted at the workspace dir) into the box. */

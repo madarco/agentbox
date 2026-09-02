@@ -34,6 +34,12 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   `packages/sandbox-core/test/box-files.test.ts` and
   `packages/sandbox-docker/test/resync-probe-nul.test.ts`. Worth a look for other `join('\0')`
   payloads.
+- **Every box-side path list is now chunked; watch for new ones.** A list encoded into a single
+  `printf` argument is capped by Linux `MAX_ARG_STRLEN` (128 KiB), which a normal repo exceeds — a
+  9001-file workspace produced a 456 KB argument and `docker exec` refused it with
+  `Argument list too long`. `chunkPathsForExec` (`packages/sandbox-core/src/sync/concerns/box-files.ts`)
+  is the shared budget; `pullTar` creates with `tar -cf` and appends the rest with `-rf`. Any new
+  box-side payload built the same way needs the same treatment.
 - **Empty directories are not carried in exclude-list mode.** The selection is a file list
   (`find … -type f -o -type l`), and `rsync --files-from` only creates the parent dirs it needs. A
   workspace that depends on an empty `uploads/` existing gets it back only once it has a file. Fix
