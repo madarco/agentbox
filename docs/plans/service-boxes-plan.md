@@ -1,6 +1,6 @@
 # Persistent boxes & service agents — implementation plan
 
-Status: **not started**. This is the durable plan doc; update the phase status lines as work
+Status: **in progress** (Phase 0 done; phases 1-3 in flight). This is the durable plan doc; update the phase status lines as work
 lands. One session per phase.
 
 > **Supersedes `docs/openclaw-hosting-plan.md`**, which scopes only OpenClaw and whose Phase 1
@@ -42,7 +42,7 @@ Hermes then need no new code** — Phases 1, 4 and 5 plus their own `agentbox.ya
 | Shape | Generic primitives (**persistent box**, **service agent**), OpenClaw first |
 | Providers | **docker**, **hetzner**, **remote-docker**, **digitalocean** |
 | `agentbox clone` | Workspace + `agentbox.yaml`, **fresh agent identity** — no `--with-state` |
-| Config ownership | **3-way merge** — AgentBox overwrites only keys it wrote and the user hasn't changed |
+| Config ownership | **Overlay via the tool's own validated merge** — AgentBox re-applies only the overlay keys that changed since its last render, so in-box edits survive (Phase 0 finding) |
 
 **Why those four providers:** hetzner and digitalocean are real always-on VPSes with no session
 cap; remote-docker is a machine the user already owns (always-on for free, docker-shaped image
@@ -102,9 +102,9 @@ host project dir ──create/clone──▶ /workspace ──expose 18789 as 80
                  ◀──── download ──            (Control UI / dashboard / API port)
                  ────── sync ────▶
 
-baked factory base  ─┐
-agentbox.yaml block ─┼──▶ 3-way merge vs last-render ──▶ ~/.<agent>/<config>   (per-box, isolated)
-carried 0600 .env   ─┘
+agentbox.yaml block  ─┐
+last-applied overlay ─┼──▶ changed keys only ──▶ `<tool> config patch` ──▶ ~/.<agent>/<config>
+carried 0600 .env    ─┘       (the TOOL validates + merges; per-box, isolated)
 
 box.persistent: true ──▶ never autopaused, never idle-lapsed, skipped by prune,
                          restarted by the relay's boot reconcile
@@ -236,47 +236,62 @@ forbids. Derive `isolate` from `caps.surface === 'service'` rather than adding a
 
 ---
 
-## Phase 3 — layered config (factory base + overlay + 3-way merge)
+## Phase 3 — layered config (overlay applied through the tool's own merge)
 
 Status: **not started**.
 
 ```ts
 // AgentSyncSpec
 configRender?: {
-  file: string;                       // in-box absolute, e.g. ~/.openclaw/openclaw.json
-  format: 'json' | 'json5' | 'yaml';
-  baseAsset: string;                  // baked runtime asset, e.g. openclaw-base.json5
+  file: string;                       // in-box absolute — for the reads we must do ourselves
   overlayKey: string;                 // agentbox.yaml top-level key, e.g. `openclaw`
+  /** Merge is DELEGATED to the tool; it receives the overlay JSON on stdin. */
+  applyCmd: string;                   // e.g. `openclaw config patch --stdin`
+  dryRunFlag?: string;                // e.g. `--dry-run`
   validate?: string;                  // e.g. `openclaw config validate`
 };
 ```
 
-New **`agentbox-ctl agent render <id>`** (`packages/ctl/src/commands/agent-render.ts`). Renders
-in-box so it is provider-uniform and re-runs on `agentbox-ctl reload`:
+New **`agentbox-ctl agent render <id>`** (`packages/ctl/src/commands/agent-render.ts`), run
+in-box so it is provider-uniform and re-runs on `agentbox-ctl reload`.
 
-1. **base** — the baked factory asset. Never user-edited; regenerated every render.
-2. **overlay** — the `agentbox.yaml` `<overlayKey>:` block, parsed as an opaque mapping
-   (ctl does not need the tool's schema; `validate` is the real gate). Add `overlayKey` to
-   `TOP_LEVEL_KEYS` (`packages/ctl/src/config.ts:677`) **from the descriptor**, not a hardcoded
-   list. Unknown keys are already non-fatal warnings, so an older ctl degrades cleanly.
-3. **3-way merge** — compare the live file against `~/.<agent>/.agentbox-render.json` (the last
-   render we wrote). Overwrite a key only where `live == lastRendered`; leave a key the user
-   changed in-box, and report it as a conflict. This is what survives the tool adding new
-   default keys on a future update — the reason the mechanism exists at all.
-4. `resolveAutoSecrets` (`packages/ctl/src/secret.ts`) for `{{AGENTBOX_AUTO_SECRET:…}}`
-   (0600 under `/var/lib/agentbox/secrets/`) and `applyReplacements` +
-   `placeholderContextFromEnv` (`packages/ctl/src/replace.ts`, `packages/core/src/replace.ts`)
-   for `{{AGENTBOX_*}}`.
-5. Run `validate`; fail the task loudly on a bad merge.
+**Do NOT hand-roll a 3-way merge over a parsed config file.** Phase 0 established that openclaw
+ships `config patch --stdin` — a *validated, recursive* merge it performs on its own file, with
+`--dry-run`, which leaves untouched keys alone and reports whether a restart is needed. A tool
+either offers such a command or it does not; the spec names it, and an agent without one simply
+does not declare `configRender`. Delegating buys us no format parser, no conflict engine, no
+shadow copy of the file — and, the real prize, a render that keeps working across the tool's own
+config migrations, which is the entire point of this phase.
+
+What ctl actually does:
+
+1. **overlay** — read the `agentbox.yaml` `<overlayKey>:` block as an opaque mapping. Add
+   `overlayKey` to `TOP_LEVEL_KEYS` (`packages/ctl/src/config.ts:677`) **from the descriptor**,
+   not a hardcoded list. Unknown keys are already non-fatal warnings, so an older ctl degrades
+   cleanly.
+2. **diff against the last applied overlay** — `~/.<agent>/.agentbox-overlay.json` records the
+   overlay as last applied. Send only the keys whose OVERLAY value changed. This is what honours
+   the chosen semantics: AgentBox re-asserts a key when the user edits `agentbox.yaml`, and
+   otherwise never fights an in-box edit. (Verified in Phase 0: a patch that does not name a key
+   leaves a hand-edit to it intact.)
+3. **apply** — `<applyCmd>` with the overlay JSON on stdin, preceded by a `dryRunFlag` pass whose
+   failure aborts before anything is written. Persist the new overlay record only after a
+   successful apply.
+4. `applyReplacements` + `placeholderContextFromEnv` (`packages/ctl/src/replace.ts`,
+   `packages/core/src/replace.ts`) for `{{AGENTBOX_*}}` in the overlay. **`resolveAutoSecrets` is
+   not needed for openclaw** — onboard self-generates the gateway token; keep the hook available
+   for a tool that needs one.
+5. Run `validate` as the final gate and fail the task loudly.
 
 **Secrets never go in `agentbox.yaml`.** Real values ride a `carry:` entry into a 0600 env file
 (`packages/sandbox-core/src/sync/concerns/files.ts` `planCarryEntry`), and the overlay
 references them by name. Add a lint that warns when a secret-shaped literal appears under the
 overlay key.
 
-Baked assets go through the collapsed manifest: `apps/cli/scripts/stage-runtime.mjs`
-(`contextFiles` + `execBitFiles`), `DOCKER_CONTEXT_FILE_MAP`, and
-`packages/provider-sdk/src/runtime-assets.ts`.
+No baked factory asset is needed for openclaw — `openclaw onboard` writes the factory default
+itself. If a future agent does need one, it goes through the collapsed manifest
+(`apps/cli/scripts/stage-runtime.mjs` `contextFiles`/`execBitFiles`, `DOCKER_CONTEXT_FILE_MAP`,
+`packages/provider-sdk/src/runtime-assets.ts`).
 
 `packages/ctl/schema/agentbox.schema.json` + `packages/ctl/test/schema-drift.test.ts` fail until
 both halves are updated — that is the forcing function.
@@ -374,8 +389,8 @@ export const openclawSpec: AgentSyncSpec = {
       { name: 'openclaw-render', command: 'agentbox-ctl agent render openclaw', needs: ['openclaw-onboard'] },
     ],
   },
-  configRender: { file: `${BOX_HOME}/.openclaw/openclaw.json`, format: 'json5',
-                  baseAsset: 'openclaw-base.json5', overlayKey: 'openclaw',
+  configRender: { file: `${BOX_HOME}/.openclaw/openclaw.json`, overlayKey: 'openclaw',
+                  applyCmd: 'openclaw config patch --stdin', dryRunFlag: '--dry-run',
                   validate: 'openclaw config validate' },
   caps: { surface: 'service', resume: false, teleport: 'stub', activitySource: [] },
   // staticPaths: ~/.openclaw AND ~/.config/openclaw (the auth-profile key lives outside the state dir)
@@ -385,13 +400,16 @@ export const openclawSpec: AgentSyncSpec = {
 - Register in `BUILTIN_AGENT_SPECS` (`packages/agent-registry/src/index.ts:45`), the lazy
   `AGENT_MODULES` and eager `AGENT_COMMANDS` tables (`apps/cli/src/agents/{index,commands}.ts`),
   and the config mirror `AGENT_KINDS` (`packages/config/src/agents.ts:68`).
-- Baked base asset `openclaw-base.json5`: `gateway.mode=local` (the gateway refuses to start
-  without it), `gateway.port=18789`, token as a SecretRef fed by
-  `{{AGENTBOX_AUTO_SECRET:openclaw-gateway}}` (auth is **mandatory** — `gateway.bind` resolves to
-  `0.0.0.0` in a container and OpenClaw refuses a non-loopback bind without it),
-  `agents.defaults.workspace=/workspace`.
+- **No baked base asset, no AUTO_SECRET, no bind override.** Phase 0 settled all three: `onboard`
+  writes `gateway.mode=local`, `gateway.port=18789`, `agents.defaults.workspace=/workspace` and a
+  self-generated auth token on its own, and binds **loopback**, which ctl's `WebProxy` reaches
+  from inside the same container. Overriding `gateway.bind` would only widen exposure.
 - `agentbox openclaw url` prints the Control UI URL **and the gateway token**, which the UI needs
-  pasted in.
+  pasted in. **Read the token from the raw `openclaw.json`** — `openclaw config get
+  gateway.auth.token` returns `__OPENCLAW_REDACTED__`.
+- `staticPaths`/`pull` must EXCLUDE `~/.openclaw/tmp/openclaw-<uid>/` — it holds lock sqlites and
+  its name is keyed by the box user's uid, which differs per provider. `LIVE_DATABASE_EXCLUDES`
+  already covers `*.sqlite*`.
 - Add the shape to the setup skill (`apps/cli/share/agentbox-setup/SKILL.md` + the per-provider
   mirrors under `apps/cli/runtime/*/agentbox-setup-skill.md`).
 
@@ -436,28 +454,58 @@ Status: **not started**.
 
 ---
 
-## Phase 0 — the PoC gate (do this before Phase 6, not before Phase 1)
+## Phase 0 — PoC results (RUN 2026-09-02, openclaw 2026.8.2, node 24.18.0)
 
-Phases 1–5 are provider/product work and need no OpenClaw facts. Phase 6 does. Validate by hand
-inside a docker box (`agentbox claude --shared-docker-cache --carry-yes`) and record results
-here:
+Status: **done**. Run in a throwaway `agentbox/box:dev` container. Several results change the
+phases below — read this before starting Phase 3 or Phase 6.
 
-1. `npm i -g openclaw --allow-scripts=openclaw` on the box's Node. **Check the engine range** —
-   OpenClaw needs `>=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0`, and the box installs NodeSource
-   `setup_24.x`; confirm the resolved 24.x is `>= 24.15.0`. Measure the image-size delta (~87 MB
-   unpacked).
-2. Headless bootstrap: `openclaw onboard --non-interactive --accept-risk --mode local
-   --skip-channels --skip-health --no-install-daemon` (`--non-interactive` *requires*
-   `--accept-risk`).
-3. `OPENCLAW_WORKSPACE_DIR=/workspace` is honoured and does not fight the agent bootstrap files.
-4. `openclaw gateway` binds `0.0.0.0:18789`, `/healthz` answers, Control UI renders through the
-   box web proxy on 80.
-5. A hand-merged config passes `openclaw config validate`; `openclaw channels add --channel
-   telegram --use-env` works non-interactively.
-6. **Which dirs must survive a restart** — stop/start and re-check pairing. Confirms the
-   `staticPaths` set (`~/.openclaw` *and* `~/.config/openclaw`).
-7. **New, for clone:** a second box seeded from the same workspace files onboards cleanly and
-   does not inherit the first box's gateway identity.
+| # | Assumption | Result |
+|---|---|---|
+| 1 | Node engine range | **OK.** Box ships node 24.18.0; range is `>=22.22.3 <23 \|\| >=24.15.0 <25 \|\| >=25.9.0`. |
+| 2 | `npm i -g openclaw` size | **~87 MB was wrong: 893 MB installed** (206 MB unpacked tarball + 331 deps). |
+| 3 | `--allow-scripts=openclaw` | Valid on npm 11.16.0, but covers only openclaw's OWN scripts. **4 dependency install scripts are skipped**: `koffi` (native FFI), `tree-sitter-bash` (node-gyp-build), `protobufjs`, `@google/genai`. openclaw still installs, launches and serves. |
+| 4 | Headless onboard | **Works.** `openclaw onboard --non-interactive --accept-risk --mode local --skip-channels --skip-health --no-install-daemon` exits 0. |
+| 5 | `OPENCLAW_WORKSPACE_DIR=/workspace` | **Honoured** — onboard prints `Workspace OK: /workspace` and writes `agents.defaults.workspace`. |
+| 6 | Gateway bind | **The plan was wrong.** It binds `127.0.0.1`/`[::1]` only (`gateway.bind: "loopback"`), NOT `0.0.0.0`. |
+| 7 | Gateway auth | **Onboard self-generates a token** (`gateway.auth.mode: token`). |
+| 8 | Health endpoints | `/healthz`, `/readyz` and `/` all return **200**; gateway reaches `ready` in ~1s. |
+| 9 | Config validate | `openclaw config validate` exists and passes. |
+| 10 | Fresh identity | Two onboards under different HOMEs produce **different gateway tokens** — clone gets a distinct identity for free. |
+
+**The three findings that change the design:**
+
+- **`openclaw config patch --stdin` is a validated recursive merge, performed by openclaw itself**
+  ("Objects merge recursively, arrays/scalars replace, null deletes a path"), with `--dry-run`, and
+  it reports whether a gateway restart is needed. Verified: a patch that does not name a key leaves
+  a user's hand-edit to that key intact. **Phase 3 therefore delegates the merge to the tool**
+  instead of hand-rolling a 3-way merge over a parsed file — see Phase 3.
+- **Loopback bind + a self-generated token means the `{{AGENTBOX_AUTO_SECRET}}` / mandatory-auth /
+  `0.0.0.0` machinery in the original plan is unnecessary.** ctl's `WebProxy` forwards
+  `:80 -> 127.0.0.1:<port>` inside the same container, so a loopback gateway is reachable and
+  strictly safer. Do not override `gateway.bind`.
+- **`openclaw config get gateway.auth.token` returns `__OPENCLAW_REDACTED__`.** `agentbox openclaw
+  url` must read the token from the raw JSON file, not via the CLI.
+
+**Layout confirmed** (for `staticPaths` / `pull` / download excludes):
+
+```
+~/.openclaw/openclaw.json            config (JSON, not JSON5 on disk)
+~/.openclaw/openclaw.json.bak        onboard's own backup
+~/.openclaw/config-journal-fingerprint.key
+~/.openclaw/state/openclaw.sqlite    (+ -wal, -shm)
+~/.openclaw/agents/<id>/…            per-agent dirs
+~/.openclaw/migration/
+~/.openclaw/tmp/openclaw-<UID>/…     EXCLUDE — lock sqlites, and the dir name is keyed by the
+                                     box user's uid, which differs per provider (docker 1000,
+                                     vercel 1001, e2b 1002)
+~/.config/openclaw/                  EMPTY after onboard; still persisted for the auth-profile key
+```
+
+A direct out-of-band edit of `openclaw.json` is accepted (`config validate` and `config get` both
+honour it) — the config-journal fingerprint does not reject external writes.
+
+**Still unverified** (needs a real credential, deferred to Phase 6): `openclaw channels add
+--use-env`, and which dirs a channel PAIRING actually needs to survive a restart.
 
 ---
 
@@ -519,8 +567,15 @@ files with `npx prettier --write <files>` — `pnpm format` rewrites ~530 unrela
 - **Only one service may `expose:`** (`packages/ctl/src/config.ts:810`). A service agent that
   exposes 80 conflicts with a workspace `agentbox.yaml` that already does. Decide the precedence
   explicitly and make the collision an error with a clear message, not a silent drop.
-- **Node engine range and image size** for OpenClaw — ~87 MB shifts the build-context
-  fingerprint, so every provider's base snapshot goes stale and the `box-image` CI tag moves.
+- **OpenClaw is 893 MB installed**, not the ~87 MB the old plan assumed (Phase 0 #2). That is a
+  ~29% increase on a 3.1 GB base image. It is the strongest argument for keeping the install
+  **on demand** and NOT baking openclaw into a base variant by default; if a variant is ever
+  baked it shifts the build-context fingerprint, staling every provider's base snapshot and
+  moving the `box-image` CI tag.
+- **`--allow-scripts=openclaw` does not cover dependency scripts.** Four are skipped, two of them
+  native builds (`koffi` FFI, `tree-sitter-bash`). openclaw installs and serves anyway in the
+  PoC, but any feature routed through those deps may be silently degraded. Decide in Phase 6
+  whether to broaden the allowlist, and smoke-test a real channel before calling it done.
 - **WhatsApp pairing is QR-only and interactive.** It works through the Control UI in a browser
   (and the box now has a VNC desktop, which is a viable path), but token-based channels
   (Telegram/Discord, `channels add --use-env`) are fully scriptable and should be the documented
