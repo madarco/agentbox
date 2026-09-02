@@ -92,21 +92,31 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     expect(jwmrc).toContain('$browser_button');
   });
 
-  it('tiles a wallpaper big enough to cover a resized desktop', () => {
-    // A noVNC viewer can resize the desktop to its window, and JWM's "scale"
-    // and "center" both fit the image by aspect ratio and letterbox the rest in
-    // black. Tiling never scales, so the sheet has to be large enough that one
-    // tile covers any screen worth covering -- and it is flat paper past the
-    // logo, so a repeat past 4K is invisible.
-    expect(script).toContain('<Background type=\\"tile\\">');
-    const marker = `base64 -d > "$DESKTOP_ASSET_DIR/wallpaper.png" <<'DESKTOP_WALLPAPER'`;
+  it('fills the desktop with paper and centres the logo on its own tray', () => {
+    // A noVNC viewer can resize the desktop to its window, and JWM's image
+    // backgrounds ("scale" and "center" alike) fit by aspect ratio and
+    // letterbox the rest in black, with no way to change that colour. A solid
+    // covers any size, and a centred tray keeps the logo in the middle of any
+    // screen at its native size. The tray must match the logo's own pixels, or
+    // JWM rescales the mark.
+    expect(script).toContain('<Background type="solid">#f5f3f0</Background>');
+    expect(script).toMatch(
+      /<Tray valign=\\"center\\" halign=\\"center\\" width=\\"(\d+)\\" height=\\"(\d+)\\"/,
+    );
+    const tray = script.match(
+      /valign=\\"center\\" halign=\\"center\\" width=\\"(\d+)\\" height=\\"(\d+)\\"/,
+    );
+    const marker = `base64 -d > "$DESKTOP_ASSET_DIR/logo.png" <<'DESKTOP_LOGO'`;
     const start = script.indexOf(marker) + marker.length;
     const png = Buffer.from(
-      script.slice(start, script.indexOf('\nDESKTOP_WALLPAPER\n', start)).replace(/\s/g, ''),
+      script.slice(start, script.indexOf('\nDESKTOP_LOGO\n', start)).replace(/\s/g, ''),
       'base64',
     );
     expect(png.subarray(1, 4).toString()).toBe('PNG');
-    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([3840, 2400]);
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([
+      Number(tray?.[1]),
+      Number(tray?.[2]),
+    ]);
   });
 
   it('never command-substitutes inside the config body', () => {

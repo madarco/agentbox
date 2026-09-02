@@ -24,10 +24,11 @@ CLI, not the raw commits.
   instead of leaving an empty desktop while the first launch fetches Chromium.
   The window sits low on the screen, centred, so the wallpaper logo stays
   visible behind it.
-- **The wallpaper covers a resized desktop.** A viewer that resizes the desktop
-  to its window used to get black bars around a 1280x800 wallpaper (JWM fits an
-  image by aspect ratio). The wallpaper is now a 4K sheet of the same paper,
-  tiled, so paper reaches every edge at any size and the logo keeps its place.
+- **The desktop looks right at any size.** A viewer that resizes the desktop to
+  its own window used to get black bars around a 1280x800 wallpaper. The paper
+  is now a colour rather than an image, so it fills any screen, and the logo
+  rides on its own centred layer -- dead centre, at its native size, whatever
+  the desktop measures.
 - **The desktop terminal and its titlebars match the wallpaper.** The terminal
   opens ink-on-paper with a light ANSI palette (xterm's defaults assume a black
   background), window titlebars are painted the wallpaper's own colour, and a

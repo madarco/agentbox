@@ -78,17 +78,13 @@ done
 # The config is generated here rather than shipped as its own file so it rides
 # the one script every provider already installs, and so the icon paths can be
 # probed on the box instead of hardcoded per base OS.
-# The desktop's static assets -- two launcher icons and the wallpaper -- carried
-# here as base64 rather than shipped as files: this script is the one runtime
-# asset every provider already installs, so embedding them keeps the desktop out
-# of the per-provider runtime-assets lists entirely. The wallpaper is a 16-colour
-# indexed PNG: the logo centred in the 1280x800 Xvnc geometry, on a 3840x2400
-# sheet of paper that covers a viewer-resized desktop without stretching
-# anything (see the Desktops comment below). Flat paper plus
-# sharp black glyphs is the case indexed PNG wins outright -- 7KB for all of
-# 4K, and the padding is free because it is one palette entry repeated -- while
-# JPEG rings around the letterforms and the AL2023 source build of JWM has no
-# jpeg support at all, only png. The icons also sidestep what the base images
+# The desktop's static assets -- two launcher icons and the logo -- carried here
+# as base64 rather than shipped as files: this script is the one runtime asset
+# every provider already installs, so embedding them keeps the desktop out of
+# the per-provider runtime-assets lists entirely. They are 16-colour indexed
+# PNGs, the case indexed wins outright (flat paper plus sharp black glyphs;
+# JPEG rings around the letterforms, and the AL2023 source build of JWM has no
+# jpeg support at all, only png). The icons also sidestep what the base images
 # actually offer -- xterm's own pixmap is a 1990s bitmap of the letters "XTERM",
 # and no base image ships a browser icon at all (Chromium arrives later via
 # Playwright, under the box user's cache).
@@ -134,139 +130,52 @@ EslRoon21s63e+pOw0ChsJlp0MzkWDT74npkYS71UaZIfhhZgYRezI0siTqXR5IG6kHnmHMpqoRq
 +ijH/c/Hbk2QHh74ydg9ot7Et4Odxv7i8evBIVuJe+gfF/Js+5lfh4LZ2Yr7+wWP8/psqs/+nOCX
 ZFhTVOIHfzO876FtD/P/P38B9+r6YXltNFMAAAAASUVORK5CYII=
 ICON_BROWSER
-  base64 -d > "$DESKTOP_ASSET_DIR/wallpaper.png" <<'DESKTOP_WALLPAPER'
-iVBORw0KGgoAAAANSUhEUgAADwAAAAlgBAMAAADHMd9uAAAAMFBMVEX18/Dh4N+wsK9wcHBOT09e
-YGAqKywREhMdHiCQkJAfICAeICI+P0HR0dB/gIHAwb413w7qAAAchklEQVR42u3dTWwc53kH8CX1
-AfDAemUbBnowwLBNCBUQ4lg2CB8EyLZkxm0DqLBspWgL2I69q5TwRR87o103hxbVTHdRgK7TskSR
-S4GaxPKUIuAynPpQoIlPBSQ7lZUGRHUL2lNRFPCpaGfe2SVX4ocs1QwC8vc7cHd2Z4fAzOGP5513
-nrdSAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-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
-YE88HqfL2VKW1XJZt728nGUr5ft06arTAwB7ZLqsd9N0s/aNy43GnLMDAHtk9LUkTdvLRdG7lqbd
-bDZUwLOr6Q9OOTkAsGfGJ7f46nr+x9wqAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAuMv/AUlIt+4hupulAAAA
-AElFTkSuQmCC
-DESKTOP_WALLPAPER
+  base64 -d > "$DESKTOP_ASSET_DIR/logo.png" <<'DESKTOP_LOGO'
+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
+RU5ErkJggg==
+DESKTOP_LOGO
 }
 
 # The dock's Browser button and the host's "show the app on the VNC screen" step
@@ -331,7 +240,7 @@ if ! command -v xterm >/dev/null 2>&1; then
 fi
 
 # The window sits low on the desktop -- horizontally centred, its middle about
-# three quarters down -- so the logo on the wallpaper stays visible above it
+# three quarters down -- so the logo on the desktop stays visible above it
 # while the browser starts. JWM can only centre a window, so the position is
 # computed: this geometry is the guess for the desktop as agentbox-vnc-start
 # starts it (Xvnc at 1280x800, where Monospace 11 measures 9x18 px per cell,
@@ -429,9 +338,8 @@ LAUNCHER
 }
 
 # The desktop terminal is ink on paper, not white on black: it opens over the
-# AgentBox wallpaper, and #f5f3f0 is that wallpaper's own paper colour (palette
-# entry 0 of the PNG above), the same one the dock and the window titlebars
-# paint. The ANSI palette has to come with it -- xterm's default sixteen are
+# desktop's paper background, and #f5f3f0 is that paper -- the same colour the
+# dock, the logo's own sheet and the window titlebars carry. The ANSI palette has to come with it -- xterm's default sixteen are
 # picked for a black background, and the bright ones (yellow, cyan, white) are
 # unreadable on paper, with "bright white" invisible. These are the paper-theme
 # equivalents: darker, desaturated, and 7/15 mapped to grey/ink so anything a
@@ -463,7 +371,7 @@ TERM_CMD="$TERM_CMD $TERM_COLORS"
 BROWSER_CMD='agent-browser --session desktop open --headed'
 
 write_jwmrc() {
-  local term_button browser_button background include_local browser_cmd
+  local term_button browser_button logo_tray include_local browser_cmd
   write_desktop_assets || true
   write_desktop_launcher || true
 
@@ -486,10 +394,19 @@ write_jwmrc() {
     browser_button="<TrayButton popup=\"Browser\" label=\"Web\">exec:$browser_cmd</TrayButton>"
   fi
 
-  if [[ -s "$DESKTOP_ASSET_DIR/wallpaper.png" ]]; then
-    background="<Background type=\"tile\">$DESKTOP_ASSET_DIR/wallpaper.png</Background>"
+  # The wallpaper is a colour, not an image, and the logo rides on a tray of its
+  # own. JWM's image backgrounds ("scale" and "center" alike) are an aspect-
+  # preserving fit -- verified: a 32:10 image on a 16:10 screen filled the width
+  # and left black above and below -- and the colour it letterboxes with is not
+  # configurable, so any image at all put black on the screen as soon as a noVNC
+  # viewer resized the desktop to its own window. A solid fills any size, and a
+  # centred tray puts the logo dead centre of any screen at its native size, no
+  # scaling and nothing to re-render on resize. The tray reserves no space
+  # (verified: a maximized browser covers it) and sits below every window.
+  if [[ -s "$DESKTOP_ASSET_DIR/logo.png" ]]; then
+    logo_tray="<Tray valign=\"center\" halign=\"center\" width=\"314\" height=\"68\" border=\"0\" autohide=\"off\" layer=\"below\"><TrayButton icon=\"$DESKTOP_ASSET_DIR/logo.png\"></TrayButton></Tray>"
   else
-    background="<Background type=\"solid\">#f5f3f0</Background>"
+    logo_tray=""
   fi
 
   # Emitted only when it exists: JWM warns on a missing include, and this file
@@ -509,23 +426,16 @@ write_jwmrc() {
      overwritten; put your own JWM config in ~/.jwmrc.local, included below. -->
 <JWM>
   <!-- One desktop. Extra desktops in a single-window VNC view only lose windows
-       behind a shortcut nobody knew they pressed.
-       "tile", not "scale", because the screen is not fixed at the Xvnc geometry
-       -- a noVNC viewer can resize it to the browser window, and then the
-       screen's aspect ratio is the browser's. JWM's "scale" is not a stretch
-       but an aspect-preserving fit (verified: a 32:10 image on a 16:10 screen
-       filled the width and left black above and below), and "center" fits the
-       same way, so every aspect but the wallpaper's own gets black bars, at any
-       image size. Tiling is the one mode that neither scales nor letterboxes:
-       the wallpaper is a 3840x2400 sheet of paper with the logo drawn in its
-       top-left 1280x800, so at the Xvnc geometry the logo is centred as before,
-       and every larger screen is covered edge to edge in paper with the logo
-       where it has always been. Only past 3840x2400 does the sheet repeat, and
-       what repeats is paper. The solid fallback keeps the brand paper colour on
-       a box where the image could not be written, instead of a black void. -->
+       behind a shortcut nobody knew they pressed. The background is the brand
+       paper as a colour, so it fills a desktop of any size; the shell comment
+       above the logo tray covers why the logo is not part of it. -->
   <Desktops width="1" height="1">
-    $background
+    <Background type="solid">#f5f3f0</Background>
   </Desktops>
+
+  <!-- The logo: a borderless tray JWM keeps centred on whatever the screen
+       measures, below every window, with nothing but the mark in it. -->
+  $logo_tray
 
   <!-- The dock: a fixed-width strip centered on the bottom edge. The explicit
        width is load-bearing, because JWM honors halign only on a sized tray and
@@ -541,20 +451,19 @@ write_jwmrc() {
     <TaskList labeled="false" maxwidth="48"/>
   </Tray>
 
-  <!-- The dock paints the wallpaper's own paper colour (#f5f3f0 is palette entry
-       0 of the PNG below, and the strip it sits on is flat paper), so it reads
-       as free-floating icons rather than a slab across the desktop. Matching the
+  <!-- The dock paints the desktop's own paper colour (#f5f3f0), so it reads as
+       free-floating icons rather than a slab across the desktop. Matching the
        colour is the only way to get that look: JWM ships no compositor, so its
        Opacity is inert unless a picom/xcompmgr is added -- which on a software
        VNC framebuffer buys repaint churn and nothing else. The window-hover and
-       active tints are the wallpaper's own next two greys, so the dock stays in
-       the same palette as everything behind it. -->
+       active tints are the next two greys down, so the dock stays in the same
+       palette as everything behind it. -->
   <TrayStyle decorations="flat">
     <Font>Sans-9</Font>
     <Background>#f5f3f0</Background>
     <Foreground>#1d1e20</Foreground>
     <!-- Paper, not a colour: JWM draws the tray edge in the outline colour even
-         at border="0", and a 240px rectangle on the wallpaper is exactly the
+         at border="0", and a 240px rectangle on the paper is exactly the
          slab this style exists to get rid of. -->
     <Outline>#f5f3f0</Outline>
   </TrayStyle>
@@ -572,7 +481,7 @@ write_jwmrc() {
   </TaskListStyle>
 
   <!-- Titlebars in the same paper palette as the dock: the focused one is the
-       wallpaper's own #f5f3f0, so a window's chrome reads as part of the
+       desktop's own #f5f3f0, so a window's chrome reads as part of the
        desktop rather than a dark bar dropped on it, and an unfocused one is the
        next grey down. The browser and the launch card are undecorated (below),
        so in practice this dresses the terminal. -->
@@ -616,7 +525,7 @@ write_jwmrc() {
        it implements no startup notification. Above the layer the browser
        maximizes into, so a re-launch over a running window is still visible.
        Its position is the launcher's own (JWM honours it): low on the screen,
-       clear of the logo on the wallpaper.
+       clear of the logo in the middle of the desktop.
        Undecorated -- no titlebar, no border: it is a transient status card, not
        a window to manage, and the buttons on it did nothing worth clicking (the
        one case where it stays, a failed launch, closes on Enter and says so).
