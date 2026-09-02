@@ -42,14 +42,47 @@ export interface HostPaths {
 }
 
 let cachedEngine: DockerEngine | null = null;
+let engineOverride: DockerEngine | null = null;
 
 /**
- * Inspect the docker daemon to decide which host-side conventions apply.
- * `docker info --format '{{.OperatingSystem}}'` returns strings like
- * "OrbStack" or "Docker Desktop" — we only care about those two on macOS.
+ * The user's `engine.kind` pin, when it is not `auto`. Read here rather than
+ * pushed in from the CLI entrypoint: the hub creates boxes and mints their
+ * URLs too, and a pin only the CLI honored was a pin the boxes ignored. Loaded
+ * from `process.cwd()` for parity with every other config read; `engine.kind`
+ * is a host-level setting, so in practice that resolves to the global layer.
+ */
+async function pinnedEngine(): Promise<DockerEngine | null> {
+  try {
+    const { loadEffectiveConfig } = await import('@agentbox/config');
+    const loaded = await loadEffectiveConfig(process.cwd());
+    const kind = loaded.effective.engine.kind;
+    return kind === 'auto' ? null : kind;
+  } catch {
+    return null; // a broken config must not break box lifecycle; `agentbox config` reports it
+  }
+}
+
+/**
+ * Which docker engine this host runs, deciding the host-side conventions that
+ * differ between them (a box's `.orb.local` URL, Portless, volume paths).
+ * `docker info --format '{{.OperatingSystem}}'` returns strings like "OrbStack"
+ * or "Docker Desktop" — the only two that matter on macOS. An `engine.kind`
+ * pin wins over the probe.
+ *
+ * Resolved ONCE per process. Switching engines is a thing people do about
+ * never, so the cost of noticing (a `docker info` on a live timer, in every
+ * process that touches docker) is not worth paying; the long-lived processes —
+ * `agentbox hub`, `agentbox relay` — pick up a switch when they are restarted,
+ * which is also what makes their answer stable for as long as they run.
  */
 export async function detectEngine(): Promise<DockerEngine> {
+  if (engineOverride !== null) return engineOverride;
   if (cachedEngine !== null) return cachedEngine;
+  const pinned = await pinnedEngine();
+  if (pinned !== null) {
+    cachedEngine = pinned;
+    return cachedEngine;
+  }
   const result = await execa('docker', ['info', '--format', '{{.OperatingSystem}}'], {
     reject: false,
   });
@@ -61,20 +94,18 @@ export async function detectEngine(): Promise<DockerEngine> {
 }
 
 /**
- * Pin the engine to a specific value, bypassing the `docker info` probe. Two
- * callers today:
- *  1. The CLI bootstrap (apps/cli) when the user has set `engine.kind` in
- *     ~/.agentbox/config.yaml — the override applies for the rest of the
- *     process so every `detectEngine()` returns the user's choice.
- *  2. Tests, via `__setEngineForTesting` (kept as an alias for back-compat).
+ * Pin the engine for the rest of the process, bypassing both the config pin and
+ * the `docker info` probe. Tests only — the user-facing pin is `engine.kind`,
+ * which {@link detectEngine} reads itself. `null` clears the pin and the cache.
  */
 export function setEngineOverride(engine: DockerEngine | null): void {
-  cachedEngine = engine;
+  engineOverride = engine;
+  cachedEngine = null;
 }
 
 /** @deprecated alias for `setEngineOverride`; kept so existing tests don't churn. */
 export function __setEngineForTesting(engine: DockerEngine | null): void {
-  cachedEngine = engine;
+  setEngineOverride(engine);
 }
 
 /**

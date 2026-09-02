@@ -30,6 +30,8 @@ agentbox install
 
 Installation basics are also covered in [teleport-a-project](/docs/teleport-a-project); override the engine with `engine.kind` in [configuration](/docs/configuration).
 
+Which engine you are on is read off the daemon itself — `docker info`'s operating system, matched against OrbStack and Docker Desktop — and it decides host-side conventions like a box's `.orb.local` URL. It is resolved once per process, so after switching engines restart the two long-running ones (`agentbox hub restart`, `agentbox relay restart`) or they keep minting URLs for the engine they started on. Boxes created on the old engine stay on it — that daemon still owns their containers. Pin the answer with `engine.kind` to take the detection out of the loop.
+
 ## First-run image
 
 On first use the CLI **pulls** the `agentbox/box:dev` image from public GHCR (no `docker login` needed) and retags it locally; only on a pull miss does it **build locally**. The first box pays the one-time ~1 GB cost — later boxes reuse the cached image and start fast.

@@ -25,6 +25,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`engine.kind` applies to the hub and relay, not just the CLI.** It was
+  pinned at CLI startup only, so the process that actually creates boxes and
+  mints their URLs ignored it. Engine detection stays once-per-process: after
+  switching engines, restart the hub and relay to pick up the new one.
 - **A comment could hang the whole VNC desktop.** The generated `~/.jwmrc` is
   written from an unquoted heredoc, so backticks in its comments ran as
   commands; a blocking one left the box with no window manager and no noVNC.
