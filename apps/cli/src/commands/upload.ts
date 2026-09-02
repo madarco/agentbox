@@ -1,6 +1,6 @@
 import { log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
-import { syncWorkspaceToBox } from '@agentbox/sandbox-core';
+import { uploadWorkspaceToBox } from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { ensureBoxRunningVia } from '../lib/ensure-running.js';
 import { providerForBox } from '../provider/registry.js';
@@ -11,7 +11,7 @@ interface SyncOpts {
 }
 
 /**
- * `agentbox sync [box]` — the host→box direction, the mirror of
+ * `agentbox upload [box]` — the host→box direction, the mirror of
  * `agentbox download`.
  *
  * The box always wins: a merge never resets the box's branch, and a file the
@@ -20,7 +20,7 @@ interface SyncOpts {
  * on demand, and adds the leg a non-git workspace needs (a service box's
  * `/workspace` is often a plain directory that no `git merge` can reach).
  */
-export const syncCommand = new Command('sync')
+export const uploadCommand = new Command('upload')
   .description("Push your host workspace into a live box's /workspace (box wins on conflict)")
   .argument(
     '[box]',
@@ -33,7 +33,7 @@ export const syncCommand = new Command('sync')
       const provider = await providerForBox(resolved);
       const box = await ensureBoxRunningVia(provider, resolved);
 
-      const result = await syncWorkspaceToBox({
+      const result = await uploadWorkspaceToBox({
         provider,
         box,
         includeNodeModules: opts.includeNodeModules,

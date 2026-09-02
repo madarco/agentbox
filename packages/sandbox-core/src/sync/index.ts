@@ -203,10 +203,10 @@ export {
   type ExportWorkspaceResult,
 } from './concerns/workspace-clone.js';
 export {
-  syncWorkspaceToBox,
-  type SyncWorkspaceArgs,
-  type SyncWorkspaceResult,
-} from './concerns/workspace-sync.js';
+  uploadWorkspaceToBox,
+  type UploadWorkspaceArgs,
+  type UploadWorkspaceResult,
+} from './concerns/workspace-upload.js';
 export {
   BOX_WORKFLOWS_DIR,
   BOX_MEMORY_DIR,

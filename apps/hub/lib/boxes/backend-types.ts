@@ -599,7 +599,7 @@ export interface HubBackend {
   // git when the workspace is a repo, else overlays the plain files; the BOX
   // wins every conflict either way, and the skipped host paths come back so the
   // caller can surface them.
-  syncBox(id: string, opts?: SyncBoxInput): Promise<SyncBoxResult>;
+  uploadBox(id: string, opts?: UploadBoxInput): Promise<UploadBoxResult>;
   // Stage a clone: export the source box's workspace files into a fresh host
   // dir and register it as a project. Returns what `create` needs to build the
   // new box; the agent's config volume and credential are deliberately NOT
@@ -608,12 +608,12 @@ export interface HubBackend {
 }
 
 // Options for POST /boxes/:id/sync.
-export interface SyncBoxInput {
+export interface UploadBoxInput {
   /** Push node_modules too (non-git workspaces only). */
   includeNodeModules?: boolean;
 }
 
-export type SyncBoxResult =
+export type UploadBoxResult =
   | {
       ok: true;
       /** Which leg ran: a git merge+overlay, or a plain file overlay. */

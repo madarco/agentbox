@@ -68,16 +68,16 @@ files out over the provider connection instead of rsyncing over one — but the 
 
 ## Push your workspace into a box
 
-`agentbox sync [box]` is the other direction: it pushes your host workspace into a **live** box.
+`agentbox upload [box]` is the other direction: it pushes your host workspace into a **live** box.
 Useful when the box is long-running (a service, a gateway) and you have edited config or content on
 the host that the box should pick up without being recreated.
 
 ```bash
 # Push the host workspace into the box for this project
-agentbox sync
+agentbox upload
 
 # Target a specific box
-agentbox sync svc
+agentbox upload svc
 ```
 
 **The box always wins.** A git workspace merges your branch into the box's branch and overlays your
@@ -109,7 +109,7 @@ agentbox clone svc --name svc-hz --provider hetzner --into ~/projects/svc-hz
 
 The clone gets its own host workspace directory (`~/.agentbox/clones/<name>` by default, or
 `--into <dir>`), exported from the source box with the same gitignore/exclude rules `download` uses.
-That directory is a real project: `agentbox sync` pushes into the clone and `agentbox download`
+That directory is a real project: `agentbox upload` pushes into the clone and `agentbox download`
 pulls back out of it, like any other box.
 
 What is **not** copied is the agent's config volume and its credential. The new box onboards from
@@ -342,5 +342,5 @@ By default, a **safe subset** of relay write ops runs without a prompt (each sti
 - [Core concepts](/docs/core-concepts) — the worktree, shared `.git/`, and relay security model
 - [Checkpoints & pausing](/docs/checkpoints-and-pausing) — a checkpoint preserves the box's full state; `download` extracts files
 - [Background & parallel](/docs/background-and-parallel) — reusing a box via `git pull <branch>`; `AGENTBOX_GH_NO_SUB` for unattended boxes
-- [CLI reference](/docs/cli) — full flags for `download`, `sync`, `clone`, `cp`, `git`, and `relay`
+- [CLI reference](/docs/cli) — full flags for `download`, `upload`, `clone`, `cp`, `git`, and `relay`
 - [Configuration](/docs/configuration) — relay management and related config keys

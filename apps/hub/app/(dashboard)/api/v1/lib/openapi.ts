@@ -514,10 +514,10 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
-      '/boxes/{id}/sync': {
+      '/boxes/{id}/upload': {
         post: {
           tags: ['Box services'],
-          summary: 'Push the host workspace into the box (`agentbox sync`)',
+          summary: 'Push the host workspace into the box (`agentbox upload`)',
           description:
             "The host->box direction, the mirror of `agentbox download`. A git workspace merges the host branch into the box branch and overlays the host's uncommitted/untracked changes; a non-git workspace gets a plain file overlay. THE BOX WINS every conflict — nothing in the box is overwritten or reset, and the skipped host paths come back in `conflicts`. Needs the in-process host backend (it reads host files).",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],

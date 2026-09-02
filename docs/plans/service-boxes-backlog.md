@@ -89,7 +89,7 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   `packages/sandbox-docker/src/sync/in-box-git.ts`, but `read -r -d ''` treats an unterminated tail
   as EOF — so the LAST untracked path was never probed, came back as "absent in the box", and was
   overwritten by the host's version on every session-start resync. Reproduced live on docker
-  (`agentbox sync` silently clobbered the box's `shared.txt`) and fixed in both; pinned by
+  (`agentbox upload` silently clobbered the box's `shared.txt`) and fixed in both; pinned by
   `packages/sandbox-core/test/box-files.test.ts` and
   `packages/sandbox-docker/test/resync-probe-nul.test.ts`. Worth a look for other `join('\0')`
   payloads.
@@ -116,7 +116,7 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   alongside Phase 2, when `caps.surface === 'service'` already derives `isolate`.
 - **`sync` has no `--dry-run`.** `download` does, and the machinery (hash + probe + classify) already
   computes the full plan before writing anything, so it is a flag and a return path away.
-- **`agentbox sync` runs inline in the CLI, not through the hub.** The hub route exists
+- **`agentbox upload` runs inline in the CLI, not through the hub.** The hub route exists
   (`POST /api/v1/boxes/:id/sync`) and the web UI/tray can use it, but the CLI calls the shared
   concern directly — same as `download` does today. Routing both through the hub client is the
   `docs/hub-api-single-path-plan.md` cleanup, not a Phase-4 one.

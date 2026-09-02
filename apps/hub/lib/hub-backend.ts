@@ -81,7 +81,7 @@ import {
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
-  syncWorkspaceToBox,
+  uploadWorkspaceToBox,
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
@@ -142,7 +142,7 @@ import type {
   PruneView,
   RemoteDockerHostView,
   ServicesResult,
-  SyncBoxResult,
+  UploadBoxResult,
   VncUrlResult,
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
@@ -3072,12 +3072,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // ── workspace sync / clone ──
     // Both go through the same shared concerns the CLI uses, so the web UI and
     // the tray get exactly the operation `agentbox sync` / `agentbox clone` do.
-    async syncBox(id, opts): Promise<SyncBoxResult> {
+    async uploadBox(id, opts): Promise<UploadBoxResult> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);
         if (!rp) return { ok: false, error: `box ${id} not found` };
         await ensureBoxRunning(rp.provider, rp.box);
-        const result = await syncWorkspaceToBox({
+        const result = await uploadWorkspaceToBox({
           provider: rp.provider,
           box: rp.box,
           includeNodeModules: opts?.includeNodeModules,

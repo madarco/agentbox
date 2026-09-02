@@ -1,5 +1,5 @@
 /**
- * `agentbox sync` — host → live box, both legs.
+ * `agentbox upload` — host → live box, both legs.
  *
  * A box's workspace is either a git worktree or a plain directory, and the two
  * need different machinery:
@@ -27,7 +27,7 @@ import { detectGitRepos } from '../../git-detect.js';
 import { boxOverlayPorts, providerBoxFilePorts } from './box-files.js';
 import { overlayHostDirIntoBox, workspaceExcludes } from './workspace-files.js';
 
-export interface SyncWorkspaceArgs {
+export interface UploadWorkspaceArgs {
   provider: Provider;
   box: BoxRecord;
   /** In-box workspace dir (default `/workspace`). */
@@ -37,7 +37,7 @@ export interface SyncWorkspaceArgs {
   onLog?: (line: string) => void;
 }
 
-export interface SyncWorkspaceResult {
+export interface UploadWorkspaceResult {
   /** Which leg ran. `git` merges; `files` overlays a plain directory. */
   mode: 'git' | 'files';
   /** Paths the box kept its own version of (the host change was skipped). */
@@ -53,7 +53,9 @@ export interface SyncWorkspaceResult {
  * workspace is: a git repo there means the box was seeded as a worktree/clone
  * and the git path applies; anything else is a plain file overlay.
  */
-export async function syncWorkspaceToBox(args: SyncWorkspaceArgs): Promise<SyncWorkspaceResult> {
+export async function uploadWorkspaceToBox(
+  args: UploadWorkspaceArgs,
+): Promise<UploadWorkspaceResult> {
   const log = args.onLog ?? ((): void => {});
   const boxDir = args.boxWorkspaceDir ?? '/workspace';
   const repos = await detectGitRepos(args.box.workspacePath);

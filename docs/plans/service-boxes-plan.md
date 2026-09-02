@@ -82,7 +82,7 @@ The catalog work landed and is more capable than the old plan assumed:
 
 - No "never reap this box" concept anywhere (searched `neverPause`/`pinned`/`protected`).
 - No docker `--restart` policy — a host reboot leaves every box stopped.
-- No `agentbox sync` and no `agentbox clone`.
+- No `agentbox upload` and no `agentbox clone`.
 - Cloud `agentbox download` is a bulk overwrite: `--dry-run` throws, gitignore/`--pattern`
   are silently ignored (`apps/cli/src/commands/download.ts:82`).
 - The CLI agent contract (`packages/cli-kit/src/agent-contract.ts`) is TUI-shaped and **not
@@ -310,7 +310,7 @@ both halves are updated — that is the forcing function.
 ## Phase 4 — workspace sync, both directions
 
 Status: **done** (2026-09-02). Needed by all three workloads; nothing here is OpenClaw-specific.
-Landed as `agentbox sync`, cloud `download` parity, and the exclude-list defaults. The shared halves
+Landed as `agentbox upload`, cloud `download` parity, and the exclude-list defaults. The shared halves
 live in `packages/sandbox-core/src/sync/concerns/{workspace-files,workspace-pull,workspace-sync,box-files}.ts`;
 `BoxFilePorts` (exec + uploadPath + downloadPath) is the seam that let the cloud pull reuse docker's
 stage 2 without a new provider method. Both directions are also `POST /api/v1/boxes/:id/sync`.
@@ -333,7 +333,7 @@ pinned by unit tests:
 - `assertEmptyDir` read any stat failure as "absent", so `clone --into <an existing file>` `rm -rf`d
   that file. Only `ENOENT` means absent now.
 
-**4a. `agentbox sync [box]` — host → live box.** Wraps `provider.resyncWorkspace`
+**4a. `agentbox upload [box]` — host → live box.** Wraps `provider.resyncWorkspace`
 (`packages/core/src/provider.ts:519`), which is fully implemented for docker
 (`packages/sandbox-docker/src/sync/in-box-git.ts:770`) and cloud
 (`packages/sandbox-cloud/src/sync/workspace-resync.ts:63`) and today is reachable only from an
@@ -539,12 +539,12 @@ agent reaches every provider from its row alone. Documented in
 
 ## Phase 8 — docs (same change, not a follow-up)
 
-Status: **done** (2026-09-02), for the parts Phases 6-7 shipped. The `agentbox sync`, `agentbox
+Status: **done** (2026-09-02), for the parts Phases 6-7 shipped. The `agentbox upload`, `agentbox
 clone` and `--persistent` reference entries below belong to Phases 1, 4 and 5 and are still open.
 
 - `apps/web/content/docs/**` — a **persistent boxes** page, a **service agents** page (with the
   t3code/Hermes `agentbox.yaml` worked example — it is the case that needs no new code), an
-  OpenClaw page, and CLI reference entries for `agentbox sync`, `agentbox clone`,
+  OpenClaw page, and CLI reference entries for `agentbox upload`, `agentbox clone`,
   `agentbox openclaw`, `--persistent`, and the new config keys. Plus `meta.json`.
 - `docs/architecture.md`, `docs/sync-architecture.md`, `docs/cloud-providers.md`,
   `docs/agents.md` (the service-agent surface), `docs/test-plan.md`, `CLAUDE.md`, and

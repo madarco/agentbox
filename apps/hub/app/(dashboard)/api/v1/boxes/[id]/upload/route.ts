@@ -1,5 +1,5 @@
 // POST /api/v1/boxes/:id/sync — push the host workspace into the live box
-// (`agentbox sync`). Git workspaces merge + overlay; non-git ones get a file
+// (`agentbox upload`). Git workspaces merge + overlay; non-git ones get a file
 // overlay. The BOX wins every conflict, so this never destroys in-box work; the
 // skipped host paths come back in `conflicts`.
 // Needs the in-process host backend (it reads host files); the Postgres/plane
@@ -28,7 +28,7 @@ export async function POST(
     includeNodeModules?: unknown;
   };
 
-  const res = await backend.syncBox(id, {
+  const res = await backend.uploadBox(id, {
     includeNodeModules: body.includeNodeModules === true,
   });
   if (!res.ok) return failFromAction(res.error);
