@@ -22,6 +22,8 @@ CLI, not the raw commits.
 - **Starting a browser shows its progress on the desktop.** A launch now opens a
   progress window (and a dock entry) that closes itself when the browser is up,
   instead of leaving an empty desktop while the first launch fetches Chromium.
+  The window sits low on the screen, centred, so the wallpaper logo stays
+  visible behind it.
 
 ### Fixed
 

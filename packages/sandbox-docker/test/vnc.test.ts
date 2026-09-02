@@ -132,4 +132,17 @@ describe('agentbox-vnc-start desktop launcher', () => {
     expect(calls).toHaveLength(2);
     for (const call of calls ?? []) expect(call).toContain('9>&-');
   });
+
+  it('places itself low on the screen with the window ops enabled', () => {
+    // The window sits three quarters down so the wallpaper logo stays visible
+    // behind it, and re-centres from its own measurements because the desktop
+    // can be any size (a noVNC viewer can resize it). Both the queries and the
+    // move are xterm window ops, which do nothing unless allowWindowOps is set.
+    expect(launcher).toContain('-xrm "XTerm*allowWindowOps:true"');
+    expect(launcher).toContain('\\033[15t'); // screen size
+    expect(launcher).toContain('\\033[14t'); // own text-area size
+    expect(launcher).toContain('\\033[3;%d;%dt'); // move
+    expect(launcher).toContain('$(( sh * 3 / 4 - wh / 2 ))');
+    expect(launcher).toContain('$(( (sw - ww) / 2 ))');
+  });
 });

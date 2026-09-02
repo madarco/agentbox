@@ -268,14 +268,58 @@ if ! command -v xterm >/dev/null 2>&1; then
   exec agent-browser --session "$session" open --headed "$url" 9>&-
 fi
 
+# The window sits low on the desktop -- horizontally centred, its middle about
+# three quarters down -- so the logo on the wallpaper stays visible above it
+# while the browser starts. JWM can only centre a window, so the position is
+# computed: this geometry is the guess for the desktop as agentbox-vnc-start
+# starts it (Xvnc at 1280x800, where Monospace 11 measures 9x18 px per cell,
+# plus xterm's 2px internal border per side), and the window re-centres itself
+# from its real measurements once it is up -- see place_window below.
+cols=64
+rows=9
+win_w=$(( cols * 9 + 4 ))
+win_h=$(( rows * 18 + 4 ))
+pos_x=$(( (1280 - win_w) / 2 ))
+pos_y=$(( 800 * 3 / 4 - win_h / 2 ))
+
 exec xterm \
   -name agentbox-launch \
   -title "Starting browser" \
-  -geometry 64x9 \
+  -geometry "${cols}x${rows}+${pos_x}+${pos_y}" \
+  -xrm "XTerm*allowWindowOps:true" \
   -fa Monospace -fs 11 -bg "#1c1c1e" -fg "#e8e8ed" \
   -e bash -c '
 set -uo pipefail
 session="$1"; url="$2"
+
+# Centre the window horizontally and put its middle three quarters down the
+# screen, whatever the desktop actually measures -- the -geometry above is only
+# a guess at both sizes, and a viewer can resize the screen under us (noVNC
+# remote resize). The image ships no xdpyinfo/xwininfo/xdotool, so the terminal
+# is asked about itself: xterm reports the screen size (CSI 15 t) and its own
+# text area (CSI 14 t), and moves itself (CSI 3 t) -- all three need the
+# allowWindowOps resource set on the xterm above. A terminal that answers
+# neither query leaves the window on its guessed geometry.
+tty=/dev/tty
+place_window() {
+  local saved scr win re_scr re_win sw sh ww wh
+  saved="$(stty -g <"$tty" 2>/dev/null)" || return 0
+  stty -echo -icanon min 0 time 2 <"$tty" 2>/dev/null || return 0
+  printf "\033[15t" >"$tty"
+  IFS= read -r -t 1 -d t scr <"$tty"
+  printf "\033[14t" >"$tty"
+  IFS= read -r -t 1 -d t win <"$tty"
+  stty "$saved" <"$tty" 2>/dev/null
+  re_scr="5;([0-9]+);([0-9]+)"
+  re_win="4;([0-9]+);([0-9]+)"
+  [[ $scr =~ $re_scr ]] || return 0
+  sh="${BASH_REMATCH[1]}"; sw="${BASH_REMATCH[2]}"
+  [[ $win =~ $re_win ]] || return 0
+  wh="${BASH_REMATCH[1]}"; ww="${BASH_REMATCH[2]}"
+  printf "\033[3;%d;%dt" "$(( (sw - ww) / 2 ))" "$(( sh * 3 / 4 - wh / 2 ))" >"$tty"
+}
+place_window
+
 log="$(mktemp)"
 agent-browser --session "$session" open --headed "$url" >"$log" 2>&1 9>&- &
 pid=$!
@@ -471,11 +515,12 @@ write_jwmrc() {
        the Browser icon so the dock entry that appears while Chromium starts is
        the browser's own -- the closest thing JWM has to a launch indicator, as
        it implements no startup notification. Above the layer the browser
-       maximizes into, so a re-launch over a running window is still visible. -->
+       maximizes into, so a re-launch over a running window is still visible.
+       Its position is the launcher's own (JWM honours it): low on the screen,
+       clear of the logo on the wallpaper. -->
   <Group>
     <Name>agentbox-launch</Name>
     <Option>icon:$DESKTOP_ASSET_DIR/browser.png</Option>
-    <Option>centered</Option>
     <Option>nomax</Option>
     <Option>layer:above</Option>
   </Group>
