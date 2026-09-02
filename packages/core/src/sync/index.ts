@@ -13,6 +13,7 @@ export type {
 export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export type {
   AgentCapabilities,
+  AgentConfigRenderSpec,
   AgentCredential,
   AgentInstall,
   AgentInstallRecipe,
@@ -20,6 +21,10 @@ export type {
   AgentPullSpec,
   AgentPushTarget,
   AgentSeedSpec,
+  AgentServiceExpose,
+  AgentServiceReadyWhen,
+  AgentServiceSpec,
+  AgentServiceTask,
   AgentSettings,
   AgentSettingSpec,
   AgentSyncSpec,
@@ -33,6 +38,8 @@ export {
   BOX_HOME,
   BOX_CREDS_DIR,
   agentDirPrelude,
+  isServiceAgent,
+  BOX_ASSET_DIR,
   SETUP_GUIDE_PATH,
 } from './agent-spec.js';
 export type {

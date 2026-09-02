@@ -23,12 +23,32 @@ describe('per-agent dispatch table', () => {
     expect([...agentCommandIds()].sort()).toEqual([...AGENT_SYNC_SPECS.map((s) => s.id)].sort());
   });
 
-  it('every entry carries both a command and an attach wrapper', () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
-      const entry = agentCommandEntry(id);
-      expect(entry, `no command entry for '${id}'`).toBeDefined();
-      expect(entry!.command.name()).toBe(id);
+  it('every TUI agent carries both a command and an attach wrapper', () => {
+    const tui = AGENT_SYNC_SPECS.filter((s) => s.caps.surface !== 'service');
+    expect(tui.length, 'the registry has no TUI agent left to check').toBeGreaterThan(0);
+    for (const spec of tui) {
+      const entry = agentCommandEntry(spec.id);
+      expect(entry, `no command entry for '${spec.id}'`).toBeDefined();
+      expect(entry!.command.name()).toBe(spec.id);
       expect(typeof entry!.attachWrapped).toBe('function');
+    }
+  });
+
+  /**
+   * The other half of the split, and the reason `attachWrapped` is optional.
+   *
+   * A `surface: 'service'` agent is a daemon the box's supervisor runs: there is
+   * no tmux session, so an attach wrapper for it could only ever be a stub that
+   * throws. It gets its command from the shared service factory instead, and
+   * `attach` refuses it by name (`commands/attach.ts`). Asserting the ABSENCE
+   * here is what keeps someone from "fixing" the missing wrapper with a stub.
+   */
+  it('every service agent carries a command and NO attach wrapper', () => {
+    for (const spec of AGENT_SYNC_SPECS.filter((s) => s.caps.surface === 'service')) {
+      const entry = agentCommandEntry(spec.id);
+      expect(entry, `no command entry for '${spec.id}'`).toBeDefined();
+      expect(entry!.command.name()).toBe(spec.id);
+      expect(entry!.attachWrapped).toBeUndefined();
     }
   });
 

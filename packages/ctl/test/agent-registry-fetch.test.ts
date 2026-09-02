@@ -38,6 +38,11 @@ describe('fetchWatchList', () => {
     await expect(pending).resolves.toEqual({
       files: WATCHED_CREDENTIALS,
       sessions: BAKED_AGENT_SESSIONS,
+      // Nothing is baked for either: a unit or a render descriptor exists only
+      // for an agent this ctl may never have heard of, so the fallback is
+      // "none" rather than a stale guess.
+      units: [],
+      renders: [],
       source: 'timeout',
     });
   });
@@ -61,6 +66,10 @@ describe('fetchWatchList', () => {
     await expect(fetchWatchList()).resolves.toEqual({
       files: [{ agent: 'codex', path: '/tmp/c', shape: 'nonempty-json' }],
       sessions: [{ agent: 'codex', sessionName: 'codex' }],
+      // A schema-1 payload names no surface, so every agent in it is a TUI and
+      // contributes neither a unit nor a render descriptor.
+      units: [],
+      renders: [],
       source: 'host',
     });
   });

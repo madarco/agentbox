@@ -19,12 +19,14 @@
 import type { Command } from 'commander';
 import type { AttachOpenIn } from '@agentbox/config';
 import type { BoxRecord } from '@agentbox/sandbox-docker';
+import { isServiceAgent } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { claudeCommand, attachClaudeWrapped } from './claude/command.js';
 import { codexCommand, attachCodexWrapped } from './codex/command.js';
 import { opencodeCommand, attachOpencodeWrapped } from './opencode/command.js';
 import { piCommand, attachPiWrapped } from './pi/command.js';
 import { exampleCommand, attachExampleWrapped } from './example/command.js';
+import { buildServiceAgentCommand } from './command/service-factory.js';
 
 /**
  * Attach to a box's agent tmux session through the wrapped-pty footer, then
@@ -40,7 +42,30 @@ export type AttachWrapped = (
 
 export interface AgentCommandEntry {
   command: Command;
-  attachWrapped: AttachWrapped;
+  /**
+   * How `attach` hands the terminal to this agent's tmux session.
+   *
+   * OPTIONAL because a `caps.surface: 'service'` agent has no session to attach
+   * to — it is a daemon the box's supervisor runs, and its command tree ends at
+   * "ready + URL" (see `command/service-factory.ts`). Every TUI agent must still
+   * have one; `agent-command-coverage.test.ts` asserts exactly that split, so
+   * this being optional never becomes "some TUI agent forgot".
+   */
+  attachWrapped?: AttachWrapped;
+}
+
+/**
+ * Service agents get their command from the shared service factory rather than
+ * from a per-agent package: there is nothing tool-specific to write. The entry
+ * is built here, off the registry row, so adding one is adding a registry row.
+ */
+function serviceAgentEntries(): Record<string, AgentCommandEntry> {
+  const out: Record<string, AgentCommandEntry> = {};
+  for (const spec of AGENT_SYNC_SPECS) {
+    if (!isServiceAgent(spec) || !spec.service) continue;
+    out[spec.id] = { command: buildServiceAgentCommand(spec) };
+  }
+  return out;
 }
 
 const AGENT_COMMANDS: Record<string, AgentCommandEntry> = {
@@ -49,6 +74,7 @@ const AGENT_COMMANDS: Record<string, AgentCommandEntry> = {
   opencode: { command: opencodeCommand, attachWrapped: attachOpencodeWrapped },
   pi: { command: piCommand, attachWrapped: attachPiWrapped },
   example: { command: exampleCommand, attachWrapped: attachExampleWrapped },
+  ...serviceAgentEntries(),
 };
 
 /** Agent ids with a command in this build. */

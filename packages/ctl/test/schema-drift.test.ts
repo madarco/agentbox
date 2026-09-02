@@ -711,6 +711,44 @@ function schemaAccepts(yaml: string): boolean {
   return validate(doc ?? {});
 }
 
+/**
+ * A service agent's `configRender.overlayKey` is a legitimate top-level key that
+ * exists only on the HOST's agent registry — it reaches ctl over `agents.list`,
+ * as `extraTopLevelKeys`. So it is the one top-level key the schema deliberately
+ * cannot enumerate, and this is where that disagreement is written down.
+ *
+ * The schema stays `additionalProperties: false` on purpose: it drives editor
+ * autocomplete, where the value of flagging `defualts:` as you type outweighs a
+ * squiggle under an overlay block the runtime accepts (tracked in
+ * docs/plans/service-boxes-backlog.md).
+ */
+describe('agent overlay keys (host-supplied, runtime-only)', () => {
+  const yaml = `openclaw:\n  gateway:\n    port: 18789\nservices:\n  web:\n    command: pnpm dev\n`;
+
+  it('is accepted with no warning when the descriptor named it', () => {
+    const cfg = parseConfig(yaml, { extraTopLevelKeys: ['openclaw'] });
+    expect(cfg.warnings).toEqual([]);
+    expect(cfg.services.map((s) => s.name)).toEqual(['web']);
+  });
+
+  it('still parses, but WARNS, when the descriptor never arrived', () => {
+    // The degrade path: a ctl baked before the agent existed, or a host that
+    // never answered `agents.list`. The box boots; it just says so.
+    const cfg = parseConfig(yaml);
+    expect(cfg.warnings.join(' ')).toMatch(/openclaw/);
+    expect(cfg.services.map((s) => s.name)).toEqual(['web']);
+  });
+
+  it('is a key the JSON schema rejects, by design', () => {
+    expect(schemaAccepts(yaml)).toBe(false);
+  });
+
+  it('does not make the overlay key a wildcard — a typo is still a warning', () => {
+    const cfg = parseConfig(`openclow:\n  a: 1\n`, { extraTopLevelKeys: ['openclaw'] });
+    expect(cfg.warnings.join(' ')).toMatch(/openclow/);
+  });
+});
+
 describe('JSON Schema ↔ runtime validator agreement', () => {
   for (const f of VALID) {
     it(`accepts: ${f.name}`, () => {

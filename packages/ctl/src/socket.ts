@@ -10,7 +10,7 @@ import {
   type CtlResponse,
   type LogEvent,
 } from './types.js';
-import { loadConfig } from './config.js';
+import { loadConfig, type CtlConfig } from './config.js';
 
 export interface ServerOptions {
   socketPath: string;
@@ -19,6 +19,15 @@ export interface ServerOptions {
   configPath: string;
   /** Optional — present when the daemon runs the status reporter. */
   reporter?: StatusReporter;
+  /**
+   * How the `reload` op rebuilds the config. Defaults to reading `configPath`.
+   *
+   * The daemon overrides it so a reload re-folds the units a service agent
+   * contributed over `agents.list`. Without the hook, `agentbox-ctl reload` read
+   * the yaml alone and its diff DELETED the agent's service — the failure mode
+   * being that editing an unrelated key stopped the box's daemon.
+   */
+  reloadConfig?: () => Promise<CtlConfig>;
 }
 
 export async function startServer(opts: ServerOptions): Promise<Server> {
@@ -142,7 +151,7 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       return;
     }
     case 'reload': {
-      const cfg = await loadConfig(opts.configPath);
+      const cfg = await (opts.reloadConfig ?? (() => loadConfig(opts.configPath)))();
       const diff = await opts.supervisor.reload(cfg);
       writeLine(sock, { ok: true, data: diff });
       sock.end();

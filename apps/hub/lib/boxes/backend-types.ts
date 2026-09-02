@@ -51,6 +51,15 @@ export interface ServiceView {
   lastExitCode: number | null;
   blockedOn: string[];
   command: string;
+  /**
+   * Whether the service declares a `ready_when` probe. A probed service enters
+   * `running` when its process spawns and only reaches `ready` once the probe
+   * passes, so a caller waiting for it to be UP must not accept `running` here.
+   *
+   * Optional because a box whose ctl predates the field sends neither half;
+   * absent means "treat as unprobed", matching `BoxStatusServiceEntry.probed`.
+   */
+  probed?: boolean;
 }
 
 export interface TaskView {

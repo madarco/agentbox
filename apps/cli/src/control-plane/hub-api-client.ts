@@ -233,6 +233,12 @@ export interface HubApiServiceView {
   lastExitCode: number | null;
   blockedOn: string[];
   command: string;
+  /**
+   * Whether the service declares a `ready_when` probe. `running` means "up" only
+   * for an UNPROBED service; a probed one is up at `ready`. Absent (a box whose
+   * ctl predates the field) is read as unprobed.
+   */
+  probed?: boolean;
 }
 
 /**

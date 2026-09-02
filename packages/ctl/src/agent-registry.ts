@@ -1,4 +1,5 @@
 import { postRpcAwait } from './relay-rpc.js';
+import { agentUnitsFromWire, type AgentUnits } from './agent-units.js';
 import { WATCHED_CREDENTIALS, type WatchedCredential } from './credentials-watcher.js';
 import { BAKED_AGENT_SESSIONS, type WatchedAgentSession } from './status-reporter.js';
 
@@ -50,12 +51,60 @@ interface WireAgent {
   watch?: unknown;
   sessionName?: unknown;
   activitySource?: unknown;
+  surface?: unknown;
+  service?: unknown;
+  configRender?: unknown;
 }
 
-/** What one `agents.list` answer yields: the two lists ctl drives from it. */
+/**
+ * What `agent render <id>` needs from the descriptor, narrowed off the wire.
+ *
+ * Kept as its own shape rather than importing `AgentConfigRenderSpec` from
+ * `@agentbox/core`: the wire is untrusted input, so every field is checked here
+ * and the result is what the rest of ctl may assume.
+ */
+export interface AgentRenderDescriptor {
+  agent: string;
+  file: string;
+  overlayKey: string;
+  applyCmd: string;
+  dryRunFlag?: string;
+  validate?: string;
+}
+
+function parseRenderDescriptor(agent: string, raw: unknown): AgentRenderDescriptor | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const file = typeof r.file === 'string' ? r.file : '';
+  const overlayKey = typeof r.overlayKey === 'string' ? r.overlayKey : '';
+  const applyCmd = typeof r.applyCmd === 'string' ? r.applyCmd : '';
+  if (file.length === 0 || overlayKey.length === 0 || applyCmd.length === 0) return null;
+  const out: AgentRenderDescriptor = { agent, file, overlayKey, applyCmd };
+  if (typeof r.dryRunFlag === 'string' && r.dryRunFlag.length > 0) out.dryRunFlag = r.dryRunFlag;
+  if (typeof r.validate === 'string' && r.validate.length > 0) out.validate = r.validate;
+  return out;
+}
+
+/** What one `agents.list` answer yields: the lists ctl drives from it. */
 export interface AgentDescriptors {
   files: readonly WatchedCredential[];
   sessions: readonly WatchedAgentSession[];
+  /**
+   * Supervisor units contributed by `surface: 'service'` agents.
+   *
+   * Applied through the existing `Supervisor.reload()` diff rather than
+   * `init()`, which keeps the fetch OFF the critical path: the box comes up on
+   * `/workspace/agentbox.yaml` exactly as before, and these arrive when they
+   * arrive. An unreachable host therefore costs a service agent its unit — not
+   * the box its supervisor.
+   */
+  units: readonly AgentUnits[];
+  /**
+   * Layered-config descriptors, keyed by agent id. Two consumers: `agent render`
+   * reads one, and the daemon reads every `overlayKey` so ctl's config parser
+   * stops calling a service agent's overlay block an unknown top-level key.
+   */
+  renders: readonly AgentRenderDescriptor[];
 }
 
 /**
@@ -65,7 +114,10 @@ export interface AgentDescriptors {
  * older box. Same posture as the in-box `agentbox.yaml` parser, which warns on
  * unknown keys instead of failing.
  */
-export function parseAgentDescriptors(stdout: string): AgentDescriptors | null {
+export function parseAgentDescriptors(
+  stdout: string,
+  onWarn?: (msg: string) => void,
+): AgentDescriptors | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -78,9 +130,21 @@ export function parseAgentDescriptors(stdout: string): AgentDescriptors | null {
 
   const files: WatchedCredential[] = [];
   const sessions: WatchedAgentSession[] = [];
+  const units: AgentUnits[] = [];
+  const renders: AgentRenderDescriptor[] = [];
+  const warn = onWarn ?? ((m: string) => process.stderr.write(`agentbox-ctl: ${m}\n`));
   for (const raw of agents as WireAgent[]) {
     const id = typeof raw?.id === 'string' ? raw.id : null;
     if (!id) continue;
+
+    // An absent `surface` is an older host, and every agent it knew was a TUI.
+    const surface = raw.surface === 'service' ? 'service' : 'tui';
+    if (surface === 'service' && raw.service !== undefined) {
+      const u = agentUnitsFromWire(id, raw.service, warn);
+      if (u) units.push(u);
+    }
+    const render = parseRenderDescriptor(id, raw.configRender);
+    if (render) renders.push(render);
 
     // An agent is probed for activity only if it says it reports any. A row with
     // no `activitySource` has no hooks, no plugin and no scraper, so probing its
@@ -111,7 +175,7 @@ export function parseAgentDescriptors(stdout: string): AgentDescriptors | null {
   // empty on their own (a host whose agents all opt out of activity), but not
   // when the credentials were unusable too.
   if (files.length === 0) return null;
-  return { files, sessions };
+  return { files, sessions, units, renders };
 }
 
 /**
@@ -143,6 +207,11 @@ export async function fetchWatchList(): Promise<
   const baked = {
     files: WATCHED_CREDENTIALS,
     sessions: BAKED_AGENT_SESSIONS,
+    // Nothing is baked here on purpose: units and render descriptors exist only
+    // for agents this ctl may never have heard of, so the fallback is "none",
+    // never a stale guess.
+    units: [],
+    renders: [],
   } satisfies AgentDescriptors;
   try {
     const timeout = new Promise<'timeout'>((resolve) => {
@@ -160,9 +229,35 @@ export async function fetchWatchList(): Promise<
     return {
       files: parsed.files,
       sessions: parsed.sessions.length > 0 ? parsed.sessions : baked.sessions,
+      units: parsed.units,
+      renders: parsed.renders,
       source: 'host',
     };
   } catch {
     return { ...baked, source: 'baked' };
   }
+}
+
+/**
+ * The same answer, but LOUD — for `agent render`, whose whole job depends on it.
+ *
+ * {@link fetchWatchList} is a best-effort upgrade of lists that are already
+ * running, so every failure there is a silent fallback. A render has no fallback:
+ * without the descriptor there is no file to write, and quietly doing nothing
+ * would leave a service starting against a config that was never rendered.
+ */
+export async function fetchAgentDescriptorsOrThrow(): Promise<AgentDescriptors> {
+  const timeout = new Promise<'timeout'>((resolve) => {
+    setTimeout(() => resolve('timeout'), AGENTS_LIST_TIMEOUT_MS).unref();
+  });
+  const res = await Promise.race([postRpcAwait('agents.list', {}), timeout]);
+  if (res === 'timeout') {
+    throw new Error(`agents.list timed out after ${String(AGENTS_LIST_TIMEOUT_MS)}ms`);
+  }
+  if (res.exitCode !== 0) {
+    throw new Error(`agents.list failed: ${res.stderr.trim() || `exit ${String(res.exitCode)}`}`);
+  }
+  const parsed = parseAgentDescriptors(res.stdout);
+  if (!parsed) throw new Error('agents.list returned a payload this ctl could not parse');
+  return parsed;
 }

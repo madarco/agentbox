@@ -215,8 +215,140 @@ export interface AgentSeedSpec {
   label: string;
 }
 
+/**
+ * How ctl should run a `surface: 'service'` agent, as ctl's own unit shapes.
+ *
+ * FIELD-FOR-FIELD WITH `ServiceSpec`/`TaskSpec` in `packages/ctl/src/config.ts`,
+ * on purpose. The synthesizer that turns this into supervisor units is then a
+ * field copy rather than a translation layer, and a field ctl grows later is one
+ * line here instead of a new mapping decision. What it is NOT is a second
+ * `agentbox.yaml` parser: the yaml's snake_case keys stay in ctl's parser; this
+ * is the already-parsed shape.
+ *
+ * Data, like the rest of the spec — it rides `agents.list` into a box whose
+ * `agentbox-ctl` was baked before this agent existed.
+ */
+export interface AgentServiceSpec {
+  /** ctl unit name. A unit of the same name in `/workspace/agentbox.yaml` WINS. */
+  name: string;
+  command: string | string[];
+  /** Working dir for the process. Absent ⇒ the supervisor's workspace. */
+  cwd?: string;
+  env?: Record<string, string>;
+  /** Exactly one of the three is used, in the order `http`, `port`, `logMatch`. */
+  readyWhen?: AgentServiceReadyWhen;
+  /**
+   * Publish this service on the box's web URL. `as` must be the reserved web
+   * port (80) — it is the only port a box publishes.
+   */
+  expose?: AgentServiceExpose;
+  restart?: 'always' | 'on-failure' | 'never';
+  /** Other unit names this service waits for. */
+  needs?: readonly string[];
+  /** One-shot units run before the service — onboard, render. */
+  tasks?: readonly AgentServiceTask[];
+}
+
+/** A ready probe, one of three kinds. Mirrors ctl's `ReadyProbe` inputs. */
+export interface AgentServiceReadyWhen {
+  /** URL ctl polls until it answers 2xx. */
+  http?: string;
+  /** TCP port on 127.0.0.1 ctl polls until it accepts. */
+  port?: number;
+  /** Regex source matched against the service's own log lines. */
+  logMatch?: string;
+}
+
+/** `expose:` — container port `as` forwards to `127.0.0.1:port`. */
+export interface AgentServiceExpose {
+  port: number;
+  as: number;
+}
+
+/** A one-shot unit that runs before the service. Mirrors ctl's `TaskSpec`. */
+export interface AgentServiceTask {
+  name: string;
+  command: string | string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  needs?: readonly string[];
+  /**
+   * `'marker'` — ctl stores a marker keyed by the resolved command, so a warm
+   * boot skips it and editing the command re-runs it. `{ check }` — run the
+   * probe first; exit 0 means already satisfied.
+   */
+  runOnce?: 'marker' | { check: string };
+}
+
+/**
+ * Layered config for an agent whose own config file AgentBox owns a LAYER of.
+ *
+ * The problem it solves: the tool underneath gets updated, its factory defaults
+ * gain keys, and the user has hand-edited the file in the box. A plain
+ * regenerate loses their edits; never regenerating means they never get the new
+ * defaults.
+ *
+ * THE MERGE IS THE TOOL'S JOB, NOT OURS. `applyCmd` is a command the tool
+ * already ships that takes a config patch on stdin and merges it into its own
+ * file, validating as it goes. Delegating buys three things a hand-rolled merge
+ * cannot: no format parser (the tool owns its own syntax), no shadow copy of the
+ * file, and a render that keeps working across the tool's own config
+ * migrations — which is the entire point of the mechanism. An agent whose tool
+ * has no such command simply does not declare `configRender`.
+ *
+ * What AgentBox keeps for itself is the small half: which keys it is asserting
+ * this time. `agentbox-ctl agent render <id>` diffs the `agentbox.yaml` overlay
+ * against the overlay it applied last time and sends only what changed, so a key
+ * the user edited in-box is never re-asserted unless they edited the overlay
+ * too.
+ *
+ * Secrets NEVER belong in the overlay: real values ride a `carry:` entry into a
+ * 0600 env file and the overlay references them by name. `agent render` lints
+ * for a secret-shaped literal under the overlay key and warns.
+ */
+export interface AgentConfigRenderSpec {
+  /**
+   * Absolute in-box path of the tool's config file.
+   *
+   * The render itself never writes it — `applyCmd` does. It is here for the
+   * reads AgentBox must do on its own (a token the tool's `config get`
+   * redacts) and to anchor the overlay record that sits beside it.
+   */
+  file: string;
+  /** Top-level `agentbox.yaml` key holding the user's overlay for this agent. */
+  overlayKey: string;
+  /**
+   * The tool's own patch command. It receives the changed overlay keys as JSON
+   * on stdin and is expected to merge them into {@link file} recursively.
+   */
+  applyCmd: string;
+  /**
+   * Flag that turns {@link applyCmd} into a no-write check, run first so a bad
+   * overlay fails before anything is written. Absent means the tool has none and
+   * the apply is the only gate.
+   */
+  dryRunFlag?: string;
+  /** Command run after the apply; a non-zero exit fails the render loudly. */
+  validate?: string;
+}
+
 /** Capabilities that genuinely differ per tool (drive resume/teleport/activity wiring). */
 export interface AgentCapabilities {
+  /**
+   * What an agent IS, from the product's point of view.
+   *
+   *  - `tui` (the default when absent) — an interactive tool the user attaches
+   *    to: a tmux session, a wrapped pty, `attach`/`start`/`login`.
+   *  - `service` — a long-running daemon the box HOSTS. It has no session to
+   *    attach to; its unit is run by ctl's supervisor, its state is read from
+   *    the supervisor rather than from a tmux probe, and its CLI command ends at
+   *    "service ready + URL printed".
+   *
+   * DECLARED, never derived from the id. Everything that behaves differently for
+   * a daemon reads this field, so a second service agent needs no new branch
+   * anywhere — the same rule `caps.resume` and `caps.teleport` already follow.
+   */
+  surface?: 'tui' | 'service';
   /** Session resume supported (`--resume`). OpenCode: false. */
   resume: boolean;
   /** Session-teleport support. OpenCode: a stub that throws. */
@@ -473,6 +605,18 @@ export interface AgentSyncSpec {
   settings?: readonly AgentSettingSpec[];
   caps: AgentCapabilities;
   /**
+   * The ctl unit that RUNS this agent. Present iff `caps.surface === 'service'`
+   * (asserted by `agent-service-spec.test.ts`); a TUI agent is launched into a
+   * tmux session instead and declares nothing here.
+   */
+  service?: AgentServiceSpec;
+  /**
+   * Layered rendering of this agent's own config file. Independent of `service`
+   * — a TUI agent could want it too — which is why it is its own field rather
+   * than a member of {@link AgentServiceSpec}.
+   */
+  configRender?: AgentConfigRenderSpec;
+  /**
    * Box->host (`agentbox download <agent>`) descriptor.
    *
    * Separate from `staticPaths` on purpose: that field's `exclude`/`include` are
@@ -593,5 +737,25 @@ export function agentDirPrelude(agentDirs: readonly string[], credsSubdir: strin
     `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR} 2>/dev/null || true`,
   ];
 }
+/**
+ * Where a provider's base image bakes AgentBox's own shared assets.
+ *
+ * Named once rather than spelled out at each use: the staging that puts a file
+ * there runs on the host, while the code that reads it runs inside the box, and
+ * the two packages have to agree on the path.
+ */
+export const BOX_ASSET_DIR = '/usr/local/share/agentbox';
+
 /** Baked into every provider's base image; the source for the wizard skill. */
-export const SETUP_GUIDE_PATH = '/usr/local/share/agentbox/setup-guide.md';
+export const SETUP_GUIDE_PATH = `${BOX_ASSET_DIR}/setup-guide.md`;
+
+/**
+ * Does this agent run as a ctl service rather than a tmux TUI?
+ *
+ * One reader of `caps.surface` instead of `spec.caps.surface === 'service'`
+ * repeated at every call site, so the default ("absent means tui") is stated
+ * once and cannot drift.
+ */
+export function isServiceAgent(spec: { caps: AgentCapabilities }): boolean {
+  return spec.caps.surface === 'service';
+}

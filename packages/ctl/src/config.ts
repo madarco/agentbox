@@ -674,6 +674,11 @@ function assertBool(raw: unknown, where: string): boolean {
 // via @agentbox/ctl/tools-spec, approved at create time). Same deal as `carry`:
 // the supervisor never reads it, listing it here only keeps a project yaml that
 // declares `tools:` parsing cleanly inside the box.
+// A service agent's `configRender.overlayKey` is a legitimate top-level key too,
+// but WHICH key that is only exists on the host's agent registry — so it arrives
+// over `agents.list` and is passed in as `extraTopLevelKeys` rather than being
+// hardcoded here. Unknown keys are non-fatal warnings, so a ctl that never got
+// the descriptor still parses the file; it just says so.
 const TOP_LEVEL_KEYS = new Set([
   'services',
   'tasks',
@@ -684,7 +689,23 @@ const TOP_LEVEL_KEYS = new Set([
   'tools',
 ]);
 
-function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
+/** Options both parsers take. */
+export interface ParseConfigOptions {
+  /**
+   * Extra legal top-level keys, from the agent descriptors (`overlayKey`).
+   * Their CONTENTS are never validated here — the agent's own `validate`
+   * command is the real gate, and ctl does not know the tool's schema.
+   */
+  extraTopLevelKeys?: readonly string[];
+}
+
+/**
+ * Exported so the agent-unit merge can validate the COMBINED graph before
+ * handing it to the supervisor — units synthesized from `agents.list` join the
+ * same namespace as the workspace's, and a dangling `needs:` there would block a
+ * unit forever instead of failing loudly.
+ */
+export function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   const names = new Set<string>();
   for (const t of tasks) {
     if (names.has(t.name)) {
@@ -747,7 +768,7 @@ function validateUnitGraph(tasks: TaskSpec[], services: ServiceSpec[]): void {
   }
 }
 
-export function parseConfig(text: string): CtlConfig {
+export function parseConfig(text: string, opts: ParseConfigOptions = {}): CtlConfig {
   unknownKeyWarnings = [];
   let doc: unknown;
   try {
@@ -761,7 +782,11 @@ export function parseConfig(text: string): CtlConfig {
   if (!isPlainObject(doc)) {
     throw new ConfigError('top-level config must be a mapping');
   }
-  warnUnknownKeys(doc, TOP_LEVEL_KEYS, '(root)');
+  const topLevel =
+    opts.extraTopLevelKeys && opts.extraTopLevelKeys.length > 0
+      ? new Set([...TOP_LEVEL_KEYS, ...opts.extraTopLevelKeys])
+      : TOP_LEVEL_KEYS;
+  warnUnknownKeys(doc, topLevel, '(root)');
 
   const services: ServiceSpec[] = [];
   const servicesRaw = doc.services;
@@ -824,7 +849,7 @@ export function parseConfig(text: string): CtlConfig {
   return { services, tasks, replacements, warnings: unknownKeyWarnings };
 }
 
-export async function loadConfig(path: string): Promise<CtlConfig> {
+export async function loadConfig(path: string, opts: ParseConfigOptions = {}): Promise<CtlConfig> {
   let text: string;
   try {
     text = await readFile(path, 'utf8');
@@ -834,7 +859,7 @@ export async function loadConfig(path: string): Promise<CtlConfig> {
     }
     throw err;
   }
-  return parseConfig(text);
+  return parseConfig(text, opts);
 }
 
 export function describeCommand(cmd: string | string[]): string {
