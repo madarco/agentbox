@@ -19,7 +19,7 @@ describe('agent sync registry', () => {
   it('exposes the canonical ids in registry order, shipped agents first', () => {
     // `example` is the seam canary (hidden, see @agentbox/agent-example). It is
     // last so the order the shipped agents are presented in never moves.
-    expect(agentIds()).toEqual(['claude', 'codex', 'opencode', 'pi', 'example']);
+    expect(agentIds()).toEqual(['claude', 'codex', 'opencode', 'pi', 'openclaw', 'example']);
   });
 
   it('credential + volume data matches the known docker/cloud layout', () => {

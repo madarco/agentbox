@@ -32,6 +32,7 @@
 import { claudeSpec } from './specs/claude.js';
 import { codexSpec } from './specs/codex.js';
 import { exampleSpec } from './specs/example.js';
+import { openclawSpec } from './specs/openclaw.js';
 import { opencodeSpec } from './specs/opencode.js';
 import { piSpec } from './specs/pi.js';
 import { pluginAgentSpecs } from './plugin-agents.js';
@@ -47,6 +48,7 @@ export const BUILTIN_AGENT_SPECS: readonly AgentSyncSpec[] = [
   codexSpec,
   opencodeSpec,
   piSpec,
+  openclawSpec,
   exampleSpec,
 ];
 

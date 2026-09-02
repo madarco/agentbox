@@ -205,6 +205,7 @@ export interface UserConfig {
   codex?: AgentConfigBlock;
   opencode?: AgentConfigBlock;
   pi?: AgentConfigBlock;
+  openclaw?: AgentConfigBlock;
   example?: AgentConfigBlock;
   attach?: {
     openIn?: AttachOpenIn;
@@ -410,6 +411,9 @@ export interface EffectiveConfig {
   codex: EffectiveAgentBlock;
   opencode: EffectiveAgentBlock;
   pi: EffectiveAgentBlock;
+  // No `box.isolateOpenclawConfig` leaf: a service agent's config volume is
+  // always per-box (see `isolatable`).
+  openclaw: EffectiveAgentBlock;
   example: EffectiveAgentBlock;
   attach: {
     openIn: AttachOpenIn;
@@ -793,6 +797,20 @@ function capitalizeAgentId(id: string): string {
 }
 
 /**
+ * Does this agent get a `box.isolate<Agent>Config` key at all?
+ *
+ * A SERVICE agent does not. Its config volume is always per-box — two daemons
+ * sharing one state dir share one identity, which is the thing the product
+ * cannot allow — so `create` derives isolation from `caps.surface` and never
+ * reads a key. Generating one anyway would offer a switch that does nothing,
+ * the same reason `dangerouslySkipPermissions` is generated only where the
+ * agent has such a flag.
+ */
+function isolatable(agent: AgentConfigKind): boolean {
+  return agent.surface !== 'service';
+}
+
+/**
  * `box.isolate<Agent>Config` for every agent. These live under `box.` rather
  * than `<agent>.` because they are a property of the BOX (which volume it
  * mounts), not of the agent's launch.
@@ -800,7 +818,7 @@ function capitalizeAgentId(id: string): string {
 function perAgentIsolateKeys(): KeyDescriptor[] {
   // Widened: `as const satisfies` narrows each row to its own literal type, so
   // an optional field is absent from the rows that omit it.
-  return (AGENT_KINDS as readonly AgentConfigKind[]).map((agent) => ({
+  return (AGENT_KINDS as readonly AgentConfigKind[]).filter(isolatable).map((agent) => ({
     key: `box.isolate${capitalizeAgentId(agent.id)}Config`,
     type: 'bool' as const,
     description:
@@ -810,7 +828,9 @@ function perAgentIsolateKeys(): KeyDescriptor[] {
 
 function perAgentIsolateDefaults(): Record<string, boolean> {
   const out: Record<string, boolean> = {};
-  for (const agent of AGENT_KINDS) out[`isolate${capitalizeAgentId(agent.id)}Config`] = false;
+  for (const agent of (AGENT_KINDS as readonly AgentConfigKind[]).filter(isolatable)) {
+    out[`isolate${capitalizeAgentId(agent.id)}Config`] = false;
+  }
   return out;
 }
 

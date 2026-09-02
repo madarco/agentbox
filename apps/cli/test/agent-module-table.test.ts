@@ -1,7 +1,20 @@
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { isServiceAgent } from '@agentbox/core';
 import { describe, expect, it } from 'vitest';
 import { agentModuleIds, loadAgentModule } from '../src/agents/index.js';
+
+/**
+ * The TUI agents — the ones this table is ABOUT.
+ *
+ * A `surface: 'service'` agent has no module here and must not: `AgentModule`
+ * is `AgentRuntime` plus a login detector plus a teleport resolver, and a
+ * daemon can satisfy none of the three (`startSession` has to make a tmux
+ * session, `buildAttachArgv` has to return an attach argv). Its command comes
+ * from the shared service factory instead. Asserting the ABSENCE below is what
+ * keeps someone from "fixing" the gap with a module of throwing stubs.
+ */
+const TUI_SPECS = AGENT_SYNC_SPECS.filter((s) => !isServiceAgent(s));
 
 /**
  * The exhaustiveness `Record<AgentId, …>` used to give for free.
@@ -12,12 +25,18 @@ import { agentModuleIds, loadAgentModule } from '../src/agents/index.js';
  * `undefined` produced. These assertions are the replacement.
  */
 describe('agent module table', () => {
-  it('covers exactly the registry, no more and no less', () => {
-    expect([...agentModuleIds()].sort()).toEqual([...AGENT_SYNC_SPECS.map((s) => s.id)].sort());
+  it('covers exactly the TUI agents in the registry, no more and no less', () => {
+    expect([...agentModuleIds()].sort()).toEqual([...TUI_SPECS.map((s) => s.id)].sort());
+  });
+
+  it('a service agent has no module here, by design', () => {
+    const service = AGENT_SYNC_SPECS.filter(isServiceAgent);
+    expect(service.length, 'the registry has no service agent left to check').toBeGreaterThan(0);
+    for (const spec of service) expect(agentModuleIds()).not.toContain(spec.id);
   });
 
   it('every module carries the registry row by reference, not a copy', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       expect(mod.id).toBe(id);
       // Identity, not deep-equality: a copy could drift from the registry while
@@ -27,14 +46,14 @@ describe('agent module table', () => {
   });
 
   it('login detectors are wired to the agent they claim', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       expect(mod.login.agent).toBe(id);
     }
   });
 
   it('teleport resolver presence matches the declared capability', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_SPECS.map((s) => s.id)) {
       const mod = await loadAgentModule(id);
       const declared = resolveAgentSpec(id).caps.teleport;
       expect(typeof mod.teleport === 'function', `${id} declares teleport '${declared}'`).toBe(
@@ -59,7 +78,7 @@ describe('agent module table', () => {
  */
 describe('resume support', () => {
   it('a resume probe exists exactly for the agents declaring caps.resume', async () => {
-    for (const id of AGENT_SYNC_SPECS.map((s) => s.id)) {
+    for (const id of TUI_SPECS.map((s) => s.id)) {
       const { runtime } = await loadAgentModule(id);
       expect(
         Boolean(runtime.resume),

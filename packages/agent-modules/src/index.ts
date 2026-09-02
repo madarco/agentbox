@@ -21,6 +21,7 @@
 import { registerClaudeAgent } from '@agentbox/agent-claude';
 import { registerCodexAgent } from '@agentbox/agent-codex';
 import { registerExampleAgent } from '@agentbox/agent-example';
+import { registerOpenclawAgent } from '@agentbox/agent-openclaw';
 import { registerOpencodeAgent } from '@agentbox/agent-opencode';
 import { registerPiAgent } from '@agentbox/agent-pi';
 
@@ -34,6 +35,9 @@ export function registerAllAgentModules(): void {
   registerCodexAgent();
   registerOpencodeAgent();
   registerPiAgent();
+  // The first service agent: a daemon the box hosts, with no CLI module of its
+  // own (see @agentbox/agent-openclaw).
+  registerOpenclawAgent();
   // Hidden from users, real to the machinery — see @agentbox/agent-example.
   registerExampleAgent();
 }

@@ -128,6 +128,15 @@ The box's primary web app (the dev server / Next.js / API the user opens in a br
 
 At most **one** service may set `expose:`. AgentBox forwards container `:80` to `127.0.0.1:<port>` and publishes it on the host with `portless` proxy to a <boxname>.localhost url, so `agentbox list`/`status` show it as the box's main URL on every engine (no OrbStack dependency). Set this on the same service whose `ready_when:` you just wrote (a DB or worker should **not** get `expose:`).
 
+### If the box hosts a SERVICE AGENT (openclaw), the units are already there
+
+A service agent — `agentbox openclaw` today — is a daemon AgentBox itself runs. Its supervisor units (an `openclaw-onboard` one-shot, an `openclaw-render`, and the `openclaw gateway` service with `ready_when: { http: /healthz }` and `expose: { port: 18789, as: 80 }`) are synthesized from the agent's own catalog row and folded in at boot. **Do not write them into `agentbox.yaml`** — a unit of the same name in the workspace file WINS and would replace the one the agent ships.
+
+Two things you may still need to write:
+
+- **A different web app on `:80`.** Only ONE service may `expose:`. If the project has its own web service that must be the box URL, the agent's `expose:` is dropped with a warning — decide which one the user wants and keep exactly one.
+- **The `openclaw:` overlay block** (see §11a below), for gateway config the user wants under version control.
+
 ## 4. Restart + backoff
 
 Per service:
@@ -305,6 +314,28 @@ Many apps hard-code a hostname (e.g. `optima.localhost`) or read a gitignored `.
   Note: an `run_once: { check: <cmd> }` probe runs verbatim via `bash -c` with the box env — use shell vars like `$AGENTBOX_BOX_NAME`, NOT `{{…}}` placeholders (those are only expanded by `render`/carry, never by the supervisor).
 
   **Generated secrets:** put `{{AGENTBOX_AUTO_SECRET}}` in the template for a value like `BETTER_AUTH_SECRET` instead of shelling out to `openssl rand`. Unnamed → a fresh 32-byte base64url secret each render (stable when you render the template→`.env` once). `{{AGENTBOX_AUTO_SECRET:better-auth}}` → generated once, persisted at `/var/lib/agentbox/secrets/<name>`, reused on every render (stable even if you render every boot). Example `env.example` line: `BETTER_AUTH_SECRET="{{AGENTBOX_AUTO_SECRET:better-auth}}"`.
+
+### 11a. `openclaw:` — layered config for a service agent
+
+A box created with `agentbox openclaw` accepts a top-level `openclaw:` block. It is an OVERLAY on the gateway's own `~/.openclaw/openclaw.json`, applied through openclaw's own validated `config patch --stdin` merge by the `openclaw-render` task:
+
+```yaml
+openclaw:
+  logging:
+    level: debug
+  channels:
+    telegram:
+      enabled: true
+      # NEVER a literal token here — agentbox.yaml is committed. See below.
+      tokenEnv: TELEGRAM_BOT_TOKEN
+```
+
+Three rules:
+
+- **Only the keys you CHANGE are sent.** The render diffs the block against the overlay it applied last time, so a key you edit in the box by hand survives every later render — and re-appears under AgentBox's control the moment you name it here again.
+- **Never put a secret in the block.** `agentbox.yaml` is committed. Real values ride a `carry:` entry into a 0600 env file and the overlay references them by name; the render warns when a value looks like a literal secret.
+- **Re-apply with `agentbox-ctl run-task openclaw-render --force`** after editing the block on a live box. `reload` alone applies the unit diff, and the task itself has not changed.
+- **Do not set `gateway.bind` or `gateway.auth`.** The gateway binds loopback and generates its own token; AgentBox forwards `:80` to it inside the container, which is both sufficient and safer. `agentbox openclaw url` prints the URL and that token.
 
 - **`carry:` + `replaceEnvs`/`replace`/`rules`** — for a host-only file (e.g. a real `.env` with secrets that never lives in the repo), carry it in and render it host-side in one step (file entries only):
 

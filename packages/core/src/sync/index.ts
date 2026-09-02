@@ -25,6 +25,7 @@ export type {
   AgentServiceReadyWhen,
   AgentServiceSpec,
   AgentServiceTask,
+  AgentServiceUrlField,
   AgentSettings,
   AgentSettingSpec,
   AgentSyncSpec,

@@ -1,10 +1,10 @@
 # Persistent boxes & service agents — implementation plan
 
-Status: **in progress** (Phases 0, 2 and 3 done; Phase 1 not started). This is the durable plan doc;
-update the phase status lines as work lands. One session per phase.
+Status: **in progress** (Phases 0, 2, 3, 6, 7 and 8 done; Phases 1, 4 and 5 not started). This is
+the durable plan doc; update the phase status lines as work lands. One session per phase.
 
-> **Supersedes `docs/openclaw-hosting-plan.md`**, which scopes only OpenClaw and whose Phase 1
-> was written against an agent catalog that now exists. Delete that file when Phase 6 lands.
+> Superseded `docs/openclaw-hosting-plan.md`, which scoped only OpenClaw and whose Phase 1 was
+> written against an agent catalog that now exists. **Deleted with Phase 6.**
 
 ---
 
@@ -366,8 +366,11 @@ get it from one implementation (per `docs/hub-api-single-path-plan.md`).
 
 ## Phase 6 — OpenClaw as the first service agent
 
-Status: **not started**. **Phase 0 gate first** (below) — anything that fails there changes this
-phase.
+Status: **done** (2026-09-02). Live-smoked on docker; the VPS providers are a backlog follow-up.
+Two things differ from the sketch below, both recorded in place: the row also declares
+`service.urlFields` (a new, generic field — see the note after the sketch), and `~/.config/openclaw`
+is `relocToSubpath`'d under the state root rather than given its own `boxDir`, because a docker
+volume can only be mounted once.
 
 New package `packages/agent-openclaw`, mirroring `packages/agent-example` (the smallest
 template):
@@ -413,14 +416,73 @@ export const openclawSpec: AgentSyncSpec = {
 - `staticPaths`/`pull` must EXCLUDE `~/.openclaw/tmp/openclaw-<uid>/` — it holds lock sqlites and
   its name is keyed by the box user's uid, which differs per provider. `LIVE_DATABASE_EXCLUDES`
   already covers `*.sqlite*`.
-- Add the shape to the setup skill (`apps/cli/share/agentbox-setup/SKILL.md` + the per-provider
-  mirrors under `apps/cli/runtime/*/agentbox-setup-skill.md`).
+- Add the shape to the setup skill (`apps/cli/share/agentbox-setup/SKILL.md`; the per-provider
+  mirrors under `apps/cli/runtime/*/agentbox-setup-skill.md` are build output staged from it by
+  `stage-runtime.mjs`, not files to edit).
+
+**What the row actually needed beyond the sketch:**
+
+- **`service.urlFields`** — a new generic field on `AgentServiceSpec`: `{ label, file, jsonPath }`,
+  values `<agent> url` reads out of the daemon's own config file. Declared as data rather than an
+  agent-specific `url` implementation, because the only per-agent parts are which file and which
+  key. openclaw declares one (`gateway.auth.token`), the read is best-effort, and the URL and the
+  extra lines go out in ONE write so `<agent> url | head -1` cannot EPIPE.
+- **`~/.config/openclaw` is `relocToSubpath: 'xdg'` under the state root**, not its own `boxDir`.
+  A docker volume can only be mounted once, and a second `$HOME` dir would live in the container's
+  writable layer and be lost on re-create. The spec's `postInstall` symlinks
+  `~/.config/openclaw -> ~/.openclaw/xdg`, which is the same arrangement opencode uses for its
+  config dir.
+- **A credential slot that names a path nothing writes.** `AgentSyncSpec.credential` is required and
+  openclaw has no host-side credential; pointing it at `openclaw.json` would be actively wrong,
+  because the credential watch is FANOUT by contract and would copy one box's gateway identity into
+  every other box. Backlogged as "make `credential` optional".
+- **`staticPaths[0].exclude` drops everything identity-bearing** (`openclaw.json`, the journal key,
+  `state`, `migration`, `tmp`) so a host that runs openclaw itself never pushes its gateway identity
+  into a box. What carries in is the user's `agents/` content, which is also the only thing
+  `download openclaw` pulls back.
+- **`surface: 'service'` on the `AGENT_KINDS` row**, so config generates no `box.isolateOpenclawConfig`
+  key — isolation is derived from the surface and the key would be one the product ignores.
+- **No CLI module and no attach wrapper**, which meant splitting `agent-module-table.test.ts` and
+  `agent-session-name.test.ts` by surface the way `agent-command-coverage.test.ts` already was.
 
 ---
 
 ## Phase 7 — provider parity: hetzner, remote-docker, digitalocean
 
-Status: **not started**.
+Status: **done** (2026-09-02) — and most of it turned out to be **already true**. The list below is
+kept as written, annotated with what was actually needed. The finding worth carrying forward: every
+per-agent table this phase expected to hand-edit has since become registry-derived, so a service
+agent reaches every provider from its row alone. Documented in
+[`../cloud-providers.md`](../cloud-providers.md) §1.0.2.
+
+- **Creds dir + symlink in each install script — NOT NEEDED.** Both
+  `packages/sandbox-{hetzner,digitalocean}/scripts/install-box.sh` already say so in a comment: the
+  per-agent home dirs and `~/.agentbox-creds/<agent>/` pivots belong to the agent and are created by
+  its `install.postInstall`, applied by whichever path adds it (derived bake, or
+  `ensureAgentInstalled` against a live box). Adding them here would put every agent's credential
+  path in every box and be a second copy to keep in step.
+- **`runtime-assets.ts` + their tests — NOT NEEDED.** openclaw adds no baked asset (Phase 0 settled
+  that there is no factory config to bake — `onboard` writes it), so neither provider's pinned asset
+  list changes. The one asset whose CONTENT changed is `agentbox-setup-skill.md`, which is staged
+  from `apps/cli/share/agentbox-setup/SKILL.md` by `stage-runtime.mjs`; the per-provider mirrors
+  under `apps/cli/runtime/*/` are build output, not files to edit.
+- **`sandbox-cloud`'s second per-agent table — GONE.** `AGENT_SPECS` is now `agentSpecs()`, derived
+  from `AGENT_SYNC_SPECS` (`staticPaths[0].boxDir`, `credential.cloudMountPath`,
+  `credential.cloudSubpath`), and `test/agent-credentials.test.ts` asserts exactly that. openclaw
+  got its mount with no edit.
+- **`host-stage.ts` absent-tolerance — ALREADY TRUE, now pinned.** `stageAgentStaticForUpload`
+  returns `emptyResult()` when no source dir exists. A test was added
+  (`sandbox-cloud/test/agent-static-all.test.ts`) asserting openclaw specifically stages to
+  `tarballPath: null` with no warnings against an empty host home, so a future per-agent stager
+  cannot quietly make it an error.
+- **What DID need doing:** the docker agent module has to return `spec.boxRunEnv` as its `env` — the
+  clouds merge that field at provision time (`agentRunEnv`) but docker only gets it through the
+  module. Returning `{}` is how `OPENCLAW_WORKSPACE_DIR` went missing on docker while every cloud
+  box had it, caught by the live smoke and now pinned by `CLAW-006` and a unit test.
+- **Not run from inside a box:** the hetzner/digitalocean re-bake and the VPS live checks. Exact
+  commands in [`service-boxes-backlog.md`](./service-boxes-backlog.md).
+
+### As originally written
 
 - Creds dir + symlink and the new baked asset in each install script —
   `packages/sandbox-hetzner/scripts/install-box.sh`, the digitalocean equivalent. The **binary
@@ -443,6 +505,9 @@ Status: **not started**.
 ---
 
 ## Phase 8 — docs (same change, not a follow-up)
+
+Status: **done** (2026-09-02), for the parts Phases 6-7 shipped. The `agentbox sync`, `agentbox
+clone` and `--persistent` reference entries below belong to Phases 1, 4 and 5 and are still open.
 
 - `apps/web/content/docs/**` — a **persistent boxes** page, a **service agents** page (with the
   t3code/Hermes `agentbox.yaml` worked example — it is the case that needs no new code), an
@@ -549,6 +614,44 @@ curl -fsS "$(node apps/cli/dist/index.js url claw)/healthz"   # ground truth, no
 #   then hand-edit a key IN THE BOX and re-render: the hand edit must survive (3-way merge)
 node apps/cli/dist/index.js openclaw --provider hetzner -y -n claw-hz    # same checks
 ```
+
+### Phase 6/7 — openclaw, live on docker (RUN 2026-09-02, all green)
+
+Run from a small scratch workspace, not the agentbox repo itself (the repo's `/workspace` is big
+enough that the create-time tar of it reset the connection — unrelated to openclaw). The hub must be
+running: the service path polls the supervisor through `/api/v1`.
+
+1. `agentbox openclaw -y -n claw3` — derived `agentbox/box:dev-openclaw` layer built (openclaw
+   installed on demand, not in the base), config volume created with
+   `no host ~/.openclaw + ~/.config/openclaw`, then `waiting → running → openclaw ready`, and the
+   outro printed the token above the URL.
+2. `agentbox services claw3` → the `openclaw` row is `ready`. `agentbox status` shows both one-shot
+   tasks `done 0`: `openclaw-onboard` then `openclaw-render`.
+3. **Ground truth, not exit codes:** `curl "$(agentbox openclaw url | head -1)/healthz"` → **200**;
+   `/readyz` → 200; `/` → 200. `url | head -1` exits 0 and prints only the URL.
+4. The printed token matched `~/.openclaw/openclaw.json`'s `gateway.auth.token` byte-for-byte.
+   `gateway.bind` is `loopback` and `gateway.port` is 18789 — neither touched by us.
+5. **Layered config, both directions.** The `agentbox.yaml` `openclaw:` block reached the config
+   (`applied 1 key(s): logging`). Then a hand edit in the box to an unrelated valid key
+   (`tools.profile: coding → full`) plus an overlay change (`logging.level: debug → info`) and a
+   re-render: `applied 1 key(s): logging.level`, `logging.level` became `info`, **the hand edit
+   survived**, and `openclaw config validate` passed.
+6. **The gate works.** An earlier attempt hand-edited two keys openclaw's schema rejects; the
+   render's `--dry-run` pass refused with openclaw's own message
+   (`logging: Unrecognized key: "format"`, `<root>: Unrecognized key: "handEdited"`), exited 1, and
+   wrote nothing.
+
+Two things the smoke caught that unit tests could not:
+
+- **`OPENCLAW_WORKSPACE_DIR` was not reaching a docker box.** The agent's docker module returned
+  `env: {}`, so `boxRunEnv` never made it onto `docker run` and onboard wrote
+  `agents.defaults.workspace = ~/.openclaw/workspace`. The clouds merge that field at provision time,
+  so this was docker-only drift. Fixed by returning `spec.boxRunEnv`; pinned by a unit test and
+  `CLAW-006`.
+- **`agentbox-ctl reload` does not re-run the render.** Reload applies the unit diff and the render
+  task's definition has not changed. The working command is
+  `agentbox-ctl run-task openclaw-render --force`; the docs say so, and making reload smarter is a
+  backlog item.
 
 ### Phases 2-3 — the mechanism, without a real agent (RUN 2026-09-02, all green)
 
