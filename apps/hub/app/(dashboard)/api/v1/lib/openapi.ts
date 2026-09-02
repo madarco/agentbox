@@ -568,7 +568,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "New box from this box's workspace, with a fresh agent identity",
           description:
-            "Exports the box's workspace files (gitignore/exclude aware, agent state dropped) into a new host project dir, then enqueues a normal create seeded from it. The agent's config volume and credential are deliberately NOT copied, so the clone onboards from scratch and gets its own identity — there is no `--with-state`. `.git` is not exported: the clone is a template, and a git-backed second box is what a plain create already gives you. Returns the create job; stream it via GET /jobs/{jobId}/logs. Backs `agentbox clone`.",
+            "Exports the box's workspace files (gitignore/exclude aware, agent state dropped) into a new host project dir, then enqueues a normal create seeded from it. The agent's config volume and credential are deliberately NOT copied, so the clone onboards from scratch and gets its own identity — there is no `--with-state`. `.git` is not exported: the clone is a template, and a git-backed second box is what a plain create already gives you. Returns the create job; stream it via GET /jobs/{jobId}/logs — the create is enqueued in the ungated FOREGROUND lane, because the caller is blocked on that stream and must not queue behind background jobs. Backs `agentbox clone`.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: false,
@@ -588,7 +588,7 @@ export function buildOpenApi(): Record<string, unknown> {
                     into: {
                       type: 'string',
                       description:
-                        "Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). Must be absent or empty.",
+                        "Dir for the clone's workspace ON THE HUB'S MACHINE (default `~/.agentbox/clones/<name>`, in the hub user's home); must be absent or empty. MUST BE ABSOLUTE — a working directory is client state that does not travel over an API, so a relative path is rejected with `invalid_request` rather than resolved against whatever directory the hub daemon was started in. `agentbox clone --into` resolves it against your cwd before sending.",
                     },
                     includeNodeModules: { type: 'boolean' },
                     persistent: {

@@ -1,7 +1,7 @@
 // Hand-rolled request validation for the public API boundary. The repo has no zod
 // convention (validation is typeof-guards throughout); these mirror that style and
 // return a discriminated result so routes stay a flat parse-then-act.
-import type { CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
+import type { CloneBoxInput, CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
@@ -250,6 +250,78 @@ export function parseProject(body: unknown): Parsed<{ path: string }> {
     return { ok: false, message: 'path is required (absolute directory path)' };
   }
   return { ok: true, value: { path } };
+}
+
+/**
+ * `POST /boxes/:id/clone`.
+ *
+ * **`into` must be ABSOLUTE.** A working directory is CLIENT state and does not
+ * travel over an API: the hub is a long-lived daemon started in some arbitrary
+ * directory, and the web UI and the tray have no cwd at all. Resolving a
+ * relative path here would land the clone's workspace — and its project
+ * registration — somewhere nobody asked for, so the caller resolves it against
+ * its own cwd and this refuses anything else by name. `agentbox clone --into`
+ * does exactly that before it sends the request.
+ *
+ * `persistent` is deliberately TRI-STATE: absent means "inherit the source
+ * box's", which is not the same as `false`.
+ */
+export function parseCloneBox(body: unknown): Parsed<CloneBoxInput> {
+  if (body === undefined || body === null) return { ok: true, value: {} };
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { name, provider, into, includeNodeModules, persistent } = body;
+
+  const out: CloneBoxInput = {};
+  const str = (v: unknown, field: string): Parsed<string | undefined> => {
+    if (v === undefined || v === null) return { ok: true, value: undefined };
+    if (typeof v !== 'string') return { ok: false, message: `${field} must be a string` };
+    const t = v.trim();
+    return { ok: true, value: t.length > 0 ? t : undefined };
+  };
+
+  const n = str(name, 'name');
+  if (!n.ok) return n;
+  if (n.value !== undefined) out.name = n.value;
+
+  const p = str(provider, 'provider');
+  if (!p.ok) return p;
+  if (p.value !== undefined) out.provider = p.value;
+
+  const i = str(into, 'into');
+  if (!i.ok) return i;
+  if (i.value !== undefined) {
+    if (!isAbsolutePosixOrWin32(i.value)) {
+      return {
+        ok: false,
+        message:
+          `into must be an absolute path (got "${i.value}") — it names a directory on the hub's ` +
+          'machine, which has no notion of your working directory',
+      };
+    }
+    out.into = i.value;
+  }
+
+  if (includeNodeModules !== undefined && typeof includeNodeModules !== 'boolean') {
+    return { ok: false, message: 'includeNodeModules must be a boolean' };
+  }
+  if (includeNodeModules === true) out.includeNodeModules = true;
+
+  if (persistent !== undefined && typeof persistent !== 'boolean') {
+    return { ok: false, message: 'persistent must be a boolean' };
+  }
+  if (typeof persistent === 'boolean') out.persistent = persistent;
+
+  return { ok: true, value: out };
+}
+
+/**
+ * Absolute by POSIX **or** Windows rules, deliberately — this runs in the hub,
+ * which may be a different OS from the client that resolved the path, so
+ * `node:path.isAbsolute` (which only knows the platform it runs on) would reject
+ * a legitimate `C:\\…` from a Windows CLI talking to a Linux control box.
+ */
+function isAbsolutePosixOrWin32(p: string): boolean {
+  return p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\');
 }
 
 export function isLifecycleAction(v: string): v is LifecycleAction {

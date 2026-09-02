@@ -631,7 +631,12 @@ export interface CloneBoxInput {
   name?: string;
   /** Provider for the new box (default: the source box's). */
   provider?: string;
-  /** Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). */
+  /**
+   * Dir for the clone's workspace ON THE HUB'S MACHINE (default
+   * `~/.agentbox/clones/<name>`, in the hub user's home). MUST be absolute: this
+   * process's cwd is wherever the hub daemon was started, so a relative path has
+   * no defensible meaning. `parseCloneBox` enforces it at the API boundary.
+   */
   into?: string;
   includeNodeModules?: boolean;
   /**

@@ -1496,6 +1496,42 @@ capability it names instead — `agentbox cp` — already reaches back to the us
 primitive) and belongs with the wider IO-plane move this plan defers. `download` is untouched: it is
 IO-plane by the same rule, and writes to the caller's disk.
 
+### The boundary rule this exposed: client state does not travel over an API
+
+Two regressions came out of the review, both the same mistake in different
+clothes — a value the CLI used to resolve against ITS OWN environment, forwarded
+raw to a hub that has a different one:
+
+- **`--into` was `path.resolve`d inside the hub**, whose cwd is wherever the
+  long-lived daemon happened to be started (and which may be a control box on
+  another machine). `agentbox clone x --into ./svc` created the workspace, and
+  registered the project, under that directory. Fixed at the boundary rather than
+  at the symptom: the CLI resolves it against the caller's cwd (`resolveIntoDir`,
+  `commands/clone.ts`) and the API **refuses a relative path** by name
+  (`parseCloneBox`). An un-expanded `~` is refused for the same reason one level
+  up — it means "home", and whose home is exactly what a cross-machine path
+  cannot answer.
+- **The clone lost `foreground: true`** when the create moved from the CLI into
+  the route, so it queued behind background `-i` jobs while its caller sat blocked
+  on the job stream. The lane choice now lives with the request that needs it
+  (`lib/boxes/clone-create.ts`), where it is unit-tested.
+
+**The rule for every future conversion: a cwd, a `$HOME`, an env var and a shell
+expansion are all client state. Whatever only the caller knows, the caller
+resolves — and the API accepts only the unambiguous form and rejects the rest,
+because the web UI and the tray have no cwd at all to fall back on.** The
+existing precedent is box refs: the CLI resolves `1` / a name / a prefix against
+local state and sends an id.
+
+Audited the rest of this PR's surface against that rule: `upload` sends only
+`includeNodeModules` and takes its host path from `box.workspacePath` on the
+record; `exportBoxWorkspace` / `uploadWorkspaceToBox` read no cwd, `$HOME` or env
+(every path is an explicit argument); the create-side change adds only a derived
+boolean. The one remaining environment-dependent value is deliberate and now
+documented: the clone's default `~/.agentbox/clones/<name>` resolves in the HUB
+user's home, and its `registerProject` lands there — correct, because that is the
+machine the clone's box runs on.
+
 Also folded in, because it is the same rule applied to a create: a `caps.surface: 'service'` agent
 now creates a **persistent** box by default, and the decision (`resolveCreatePersistent`,
 `packages/core/src/persistent.ts`) is read by BOTH the CLI's `provider.create` and the hub's

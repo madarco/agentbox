@@ -3119,8 +3119,16 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (!rp) return { ok: false, error: `box ${id} not found` };
         await ensureBoxRunning(rp.provider, rp.box);
         const name = sanitizeMnemonic(input?.name?.trim() || `${rp.box.name}-clone`);
-        const workspace = input?.into?.trim()
-          ? path.resolve(input.into)
+        // `into` is ABSOLUTE by contract — `parseCloneBox` refuses anything else,
+        // because this process's cwd is wherever the hub daemon happened to be
+        // started and has nothing to do with the caller's. `normalize` only
+        // tidies `..`/duplicate separators; it never consults a cwd.
+        const rawInto = input?.into?.trim();
+        if (rawInto !== undefined && rawInto.length > 0 && !path.isAbsolute(rawInto)) {
+          return { ok: false, error: `into must be an absolute path (got "${rawInto}")` };
+        }
+        const workspace = rawInto
+          ? path.normalize(rawInto)
           : path.join(os.homedir(), '.agentbox', 'clones', name);
         const provider = input?.provider ?? rp.box.provider ?? 'docker';
         // An always-on source gives an always-on clone unless the caller says

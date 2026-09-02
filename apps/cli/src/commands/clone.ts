@@ -4,7 +4,43 @@ import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { boxOwningHubIsLocal, withHubClient } from '../control-plane/with-hub.js';
+import { isAbsolute, resolve } from 'node:path';
 import { handleLifecycleError } from './_errors.js';
+
+/**
+ * `--into`, made absolute against the CALLER's working directory.
+ *
+ * The one thing only this side knows. A cwd is client state and does not travel
+ * over an API: the hub is a long-lived daemon started in some arbitrary
+ * directory (and may be a control box on another machine entirely), so a
+ * relative path sent as-is would land the clone's workspace — and its project
+ * registration — wherever that daemon happens to live. The API refuses a
+ * relative `into` for exactly that reason, so resolving here is what keeps
+ * `agentbox clone --into ./svc` meaning what the user typed.
+ *
+ * Note the asymmetry that follows and is intended: the path is resolved against
+ * YOUR cwd but names a directory on the HUB's filesystem. They are the same
+ * machine for a local hub, which is the case `--into` is for.
+ */
+export function resolveIntoDir(
+  raw: string | undefined,
+  cwd: string = process.cwd(),
+): string | undefined {
+  const t = raw?.trim();
+  if (!t) return undefined;
+  // A `~` that reached us un-expanded (it was quoted) is the same class of bug
+  // one level up: it means "home", and WHOSE home is exactly what a path bound
+  // for another machine cannot answer. Resolving it would silently create a
+  // directory literally named `~`, so say so instead.
+  if (t === '~' || t.startsWith('~/') || t.startsWith('~\\')) {
+    throw new Error(
+      `--into ${t}: '~' is not expanded here — it names a directory on the hub's machine, whose ` +
+        'home is not necessarily yours. Write the path out, or leave --into off for the default ' +
+        "~/.agentbox/clones/<name> (resolved in the hub user's home).",
+    );
+  }
+  return isAbsolute(t) ? t : resolve(cwd, t);
+}
 
 interface CloneOpts {
   name?: string;
@@ -48,7 +84,7 @@ export const cloneCommand = new Command('clone')
   .option('-p, --provider <name>', "provider for the new box (default: the source box's)")
   .option(
     '--into <dir>',
-    "dir for the clone's workspace on the hub's machine (default: ~/.agentbox/clones/<name>)",
+    "dir for the clone's workspace on the hub's machine (relative paths resolve against your cwd; default: ~/.agentbox/clones/<name>)",
   )
   .option('--include-node-modules', 'carry node_modules into the clone as well')
   .option(
@@ -66,12 +102,13 @@ export const cloneCommand = new Command('clone')
       // than in a second copy of the naming rule.
       const cloneName = sanitizeMnemonic(opts.name?.trim() || `${source.name}-clone`);
       const providerName = opts.provider ?? source.provider ?? 'docker';
+      const into = resolveIntoDir(opts.into);
 
       if (!opts.yes) {
         const ok = await confirm({
           message:
             `Clone ${source.name} into a new ${providerName} box "${cloneName}"?\n` +
-            `  workspace files -> ${opts.into?.trim() || `~/.agentbox/clones/${cloneName}`} (on the hub's machine)\n` +
+            `  workspace files -> ${into ?? `~/.agentbox/clones/${cloneName}`} (on the hub's machine)\n` +
             `  the agent onboards fresh (no credential, no state dir carried over)`,
           initialValue: true,
         });
@@ -89,7 +126,7 @@ export const cloneCommand = new Command('clone')
           const staged = await client.cloneBox(source.id, {
             name: opts.name?.trim() || undefined,
             provider: opts.provider?.trim() || undefined,
-            into: opts.into?.trim() || undefined,
+            into,
             includeNodeModules: opts.includeNodeModules === true,
             persistent: opts.persistent,
           });

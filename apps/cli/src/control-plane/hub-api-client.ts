@@ -239,7 +239,12 @@ export interface HubApiUploadResult {
 export interface HubApiCloneInput {
   name?: string;
   provider?: string;
-  /** Host dir for the clone's workspace, ON THE HUB'S MACHINE. */
+  /**
+   * Dir for the clone's workspace, ON THE HUB'S MACHINE. Must be ABSOLUTE — the
+   * hub has no notion of the caller's working directory, so it rejects a
+   * relative path rather than resolving it somewhere arbitrary (`resolveIntoDir`
+   * in `commands/clone.ts` is what makes it absolute).
+   */
   into?: string;
   includeNodeModules?: boolean;
   /**
