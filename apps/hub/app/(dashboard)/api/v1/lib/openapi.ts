@@ -514,6 +514,121 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/sync': {
+        post: {
+          tags: ['Box services'],
+          summary: 'Push the host workspace into the box (`agentbox sync`)',
+          description:
+            "The host->box direction, the mirror of `agentbox download`. A git workspace merges the host branch into the box branch and overlays the host's uncommitted/untracked changes; a non-git workspace gets a plain file overlay. THE BOX WINS every conflict — nothing in the box is overwritten or reset, and the skipped host paths come back in `conflicts`. Needs the in-process host backend (it reads host files).",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    includeNodeModules: {
+                      type: 'boolean',
+                      description: 'Push node_modules too (non-git workspaces only).',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Workspace synced',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      mode: { type: 'string', enum: ['git', 'files'] },
+                      copied: { type: 'integer' },
+                      conflicts: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['mode', 'copied', 'conflicts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/clone': {
+        post: {
+          tags: ['Boxes'],
+          summary: "New box from this box's workspace, with a fresh agent identity",
+          description:
+            "Exports the box's workspace files (gitignore/exclude aware, agent state dropped) into a new host project dir, then enqueues a normal create seeded from it. The agent's config volume and credential are deliberately NOT copied, so the clone onboards from scratch and gets its own identity — there is no `--with-state`. `.git` is not exported: the clone is a template, and a git-backed second box is what a plain create already gives you. Returns the create job; stream it via GET /jobs/{jobId}/logs. Backs `agentbox clone`.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: {
+                      type: 'string',
+                      description: 'Name for the new box (default `<source>-clone`).',
+                    },
+                    provider: {
+                      type: 'string',
+                      description: "Provider for the new box (default: the source box's).",
+                    },
+                    into: {
+                      type: 'string',
+                      description:
+                        "Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). Must be absent or empty.",
+                    },
+                    includeNodeModules: { type: 'boolean' },
+                    persistent: {
+                      type: 'boolean',
+                      description: 'Accepted and inert until persistent boxes land.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Clone staged; create job enqueued',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      jobId: { type: 'string' },
+                      name: { type: 'string' },
+                      workspace: {
+                        type: 'string',
+                        description: "Host dir the clone's workspace was exported to.",
+                      },
+                      provider: { type: 'string' },
+                      files: { type: 'integer' },
+                    },
+                    required: ['jobId', 'name', 'workspace', 'provider', 'files'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/boxes/{id}/open': {
         post: {
           tags: ['Box services'],

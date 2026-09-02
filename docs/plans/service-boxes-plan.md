@@ -300,7 +300,17 @@ both halves are updated — that is the forcing function.
 
 ## Phase 4 — workspace sync, both directions
 
-Status: **not started**. Needed by all three workloads; nothing here is OpenClaw-specific.
+Status: **done** (2026-09-02). Needed by all three workloads; nothing here is OpenClaw-specific.
+Landed as `agentbox sync`, cloud `download` parity, and the exclude-list defaults. The shared halves
+live in `packages/sandbox-core/src/sync/concerns/{workspace-files,workspace-pull,workspace-sync,box-files}.ts`;
+`BoxFilePorts` (exec + uploadPath + downloadPath) is the seam that let the cloud pull reuse docker's
+stage 2 without a new provider method. Both directions are also `POST /api/v1/boxes/:id/sync`.
+
+Two defects surfaced by exercising the new command against a real box and fixed here: the untracked
+overlay probe was NUL-*joined* rather than NUL-*terminated* in both the docker and the cloud resync,
+so the last host path read as "absent in the box" and overwrote a box file it should have kept; and
+the exclude-list `find` pruned excluded names only as directories, so a linked worktree's `.git`
+FILE entered the selection and aborted the whole pull. Both are pinned by unit tests.
 
 **4a. `agentbox sync [box]` — host → live box.** Wraps `provider.resyncWorkspace`
 (`packages/core/src/provider.ts:519`), which is fully implemented for docker
@@ -336,7 +346,12 @@ prominently — for these users it is the normal mode, not a fallback.
 
 ## Phase 5 — `agentbox clone`
 
-Status: **not started**.
+Status: **done** (2026-09-02), with one deviation from the sketch below: the clone gets its **own
+host workspace directory** (`~/.agentbox/clones/<name>`, or `--into <dir>`) rather than sharing the
+source's, and is registered as its own project. That makes it a real box — `sync` pushes into it and
+`download` pulls out of it — and it is what let the create go through the existing hub queue
+unchanged, with no new create-path plumbing. `--persistent` is accepted and inert until Phase 1
+lands (see the TODO in `apps/cli/src/commands/clone.ts` and the clone route).
 
 `agentbox clone <box> [--name <n>] [--provider <p>] [--no-persistent]`:
 

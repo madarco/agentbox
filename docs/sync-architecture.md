@@ -299,7 +299,9 @@ provider-varying part is only the injected mechanism.
 | **skills** | `seedAgentsVolume` (`~/.agents`) | `transport.seedVolumeFromHost` | rsync helper container | baked into snapshot (n/a) |
 | **credentials** | `extractCredentials`, `isRealAgentCredential`, expiry/backup guards | `transport.readText` (extract) | helper-container sync (separate) | `seedCredentialsOne` + caps |
 | **dynamic** | workflows/memory manifest (`buildHostSyncManifest`, `computeSyncDelta`) | exec/upload | `~/.claude` volume rsync | staged tarball |
-| **git (resync)** | `classifyUntrackedOverlay`, `resyncWorkspace` | `WorkspaceResyncPorts` | `makeDockerResyncPorts` | planned |
+| **git (resync)** | `classifyUntrackedOverlay`, `resyncWorkspace` | `WorkspaceResyncPorts` | `makeDockerResyncPorts` | `resyncCloudWorkspace` |
+| **workspace pull** (`download`, `clone` export) | `buildWorkspaceListScript` (selection) + `rsyncPullToHost` (stage 2) | stage 1 only | `refreshExport` over the `/host-export` bind | `stageBoxWorkspace` (one tar hop over `BoxFilePorts`) |
+| **workspace overlay** (`sync`, non-git) | `overlayHostDirIntoBox` (reuses `classifyUntrackedOverlay`) | `WorkspaceOverlayPorts` | `providerBoxFilePorts` | `providerBoxFilePorts` |
 
 ### Topology (a third axis)
 `SyncTopology = 'docker' | 'cloud' | 'control-plane'`. The **control-plane** path
@@ -346,10 +348,27 @@ type lives here too.
 `DownloadKind`/`parseDownloadKind`/`resolveHostPath` sit in `core/src/sync/`
 purely for **co-location** — so all sync decision logic is discoverable in one
 place — even though the two download handlers keep intrinsically different
-transports (docker re-shells the host CLI; cloud calls `pullCloudDirContents`,
-workspace-only). The transport divergence and the cloud workspace-only gate are
-NOT unified; only the pure decisions moved. The file header says so, so the
-non-unified mechanism isn't later mistaken for an oversight.
+transports (docker re-shells the host CLI; cloud stages one tar). The transport
+divergence is NOT unified; only the pure decisions moved. The file header says
+so, so the non-unified mechanism isn't later mistaken for an oversight.
+
+### Workspace pull: stage 1 diverges, stage 2 does not
+
+The workspace pull (`agentbox download`, and `clone`'s export) is deliberately
+split in half. **Stage 1** — materializing the box's `/workspace` on the host —
+is genuinely provider-shaped: docker rsyncs over its `/host-export` bind mount,
+everyone else tars the selected files out over `BoxFilePorts`. **Stage 2** — the
+host-side `rsync -a --checksum` into the user's working dir and the itemized
+change list — is `rsyncPullToHost`, and both run it. That is what makes
+`--dry-run`, the change list and the gitignore/exclude selection real on a cloud
+box: they live in the half neither provider owns. Writing a second cloud pull
+instead is what produced the original bulk-overwrite behaviour, where `--dry-run`
+threw and every filter flag was silently ignored.
+
+`BoxFilePorts` (`sandbox-core/src/sync/concerns/box-files.ts`) is the seam that
+makes that possible without a new provider method: whole-tree file movement needs
+only `exec` + `uploadPath` + `downloadPath`, which every provider already
+implements.
 
 ---
 

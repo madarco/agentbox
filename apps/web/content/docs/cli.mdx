@@ -227,6 +227,14 @@ agentbox download 1
 agentbox download 1 --dry-run
 agentbox download 1 --with-env
 
+# Push the host workspace INTO a live box (the box wins every conflict)
+agentbox sync
+agentbox sync 1
+
+# New box from another box's workspace files, with a fresh agent identity
+agentbox clone 1 --name svc2
+agentbox clone 1 --name svc-hz --provider hetzner --into ~/projects/svc-hz
+
 # Copy files/dirs (direction inferred from the box: prefix)
 agentbox cp mybox:/workspace/.env      # download to cwd
 agentbox cp ./local.txt mybox:/workspace/   # upload
@@ -257,11 +265,17 @@ agentbox services restart 1 web            # restart one service
 
 `download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
+`sync` is `download`'s mirror: it pushes the host workspace into a **live** box. A git workspace merges your branch into the box's and overlays your uncommitted/untracked changes; a non-git one gets a plain file overlay. **The box wins every conflict** — a file the box changed is left alone and reported, and no branch is ever reset. `--include-node-modules` pushes `node_modules` too (non-git workspaces only).
+
+`clone <box>` creates a new box from the source box's current workspace files and its `agentbox.yaml`, with a **fresh agent identity**: the agent's config volume and credential are deliberately not copied, so it onboards from scratch. The clone gets its own host workspace dir (`~/.agentbox/clones/<name>`, or `--into <dir>`), and `-n/--name`, `-p/--provider` and `-y` behave as on `create`. `.git` is not exported — the clone is a template; a git-backed second box on the same project is a plain `agentbox create`. There is no `--with-state`; to move a box's full state, use a [checkpoint](/docs/checkpoints-and-pausing). The clone is created without an agent — start one in it with `agentbox claude <clone>`.
+
 `cp` takes multiple sources in one call — list several files/dirs (or a shell-expanded wildcard like `./*.log`) before the destination, which must then be a directory (trailing `/`). Wildcards are expanded by your shell, so a box-path glob (`mybox:/workspace/*.log`) only expands when run from inside the box; from the host, glob box contents from inside the box or list the files explicitly.
 
 `cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway. The limit is checked per source.
 
-Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore`, `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
+When `/workspace` is not a git repo, `download` and `sync` select files with an **exclude list** rather than `.gitignore` — the normal mode for a service box, not a fallback, and the output labels it. It drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and every agent's state directory.
+
+Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore` (force exclude-list mode), `--include-node-modules`, `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 
 `git branch <box> <name>` forks a fresh `agentbox/<name>` branch (an `agentbox/` prefix is added when missing) from the box's current HEAD — or from `--from <ref>` — and switches the box onto it, handy for reusing a box on a new task. `services <box>` lists the [services](/docs/services-and-tasks) from the box's `agentbox.yaml` with their live state (running / ready / crashed / …); `services restart <box> [name]` restarts one service, or all of them when no name is given. All of these operations are also available on the [hub](/docs/hub) box-detail page and the [REST API](/docs/api).
 

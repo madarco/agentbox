@@ -708,7 +708,7 @@ function splitNul(s: string): string[] {
  * mount means the host branch ref is already present in the box (no fetch
  * needed).
  */
-function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
+export function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
   return {
     ...makeHostGitPorts(),
     async boxGit(ct, args) {
@@ -736,7 +736,11 @@ function makeDockerResyncPorts(container: string): WorkspaceResyncPorts {
           'bash',
           ct,
         ],
-        { input: relPaths.join('\0'), reject: false },
+        // NUL-TERMINATED, not merely NUL-joined: `read -r -d ""` treats an
+        // unterminated tail as EOF, so the LAST path was never probed — and an
+        // unprobed path reads as "absent in the box", which makes the overlay
+        // overwrite a box file it should have kept.
+        { input: relPaths.length === 0 ? '' : `${relPaths.join('\0')}\0`, reject: false },
       );
       const boxTokens = new Map<string, string>();
       if (probe.exitCode === 0) {

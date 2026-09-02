@@ -259,7 +259,11 @@ async function probeUntrackedTokens(
 ): Promise<Map<string, string>> {
   const tokens = new Map<string, string>();
   if (relPaths.length === 0) return tokens;
-  const payload = Buffer.from(relPaths.join('\0')).toString('base64');
+  // NUL-TERMINATED, not merely NUL-joined: `read -r -d ''` treats an
+  // unterminated tail as EOF, so the last path was never probed — and an
+  // unprobed path reads as "absent in the box", which makes the overlay
+  // overwrite a box file it should have kept.
+  const payload = Buffer.from(`${relPaths.join('\0')}\0`).toString('base64');
   const script =
     `printf %s ${quoteShellArg(payload)} | base64 -d | ( cd ${quoteShellArg(ct)} && ` +
     `while IFS= read -r -d '' f; do ` +

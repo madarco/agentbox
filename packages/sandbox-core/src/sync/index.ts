@@ -161,6 +161,47 @@ export {
   resyncWorkspace,
 } from './concerns/git.js';
 export {
+  WORKSPACE_EXCLUDE_DIR_NAMES,
+  agentStateExcludePaths,
+  buildWorkspaceListScript,
+  isExcludedPath,
+  listHostFiles,
+  overlayHostDirIntoBox,
+  parseItemizedChanges,
+  parseWorkspaceList,
+  rsyncPullToHost,
+  workspaceExcludes,
+  type OverlayHostDirArgs,
+  type ParsedWorkspaceList,
+  type RsyncPullArgs,
+  type WorkspaceExcludeOptions,
+  type WorkspaceListMode,
+  type WorkspaceListScriptOptions,
+  type WorkspaceOverlayPorts,
+  type WorkspaceOverlayResult,
+} from './concerns/workspace-files.js';
+export { boxOverlayPorts, providerBoxFilePorts, type BoxFilePorts } from './concerns/box-files.js';
+export {
+  pullWorkspaceToHost,
+  readStagedWorkspace,
+  stageBoxWorkspace,
+  type PullWorkspaceArgs,
+  type PullWorkspaceResult,
+  type StageWorkspaceArgs,
+  type StagedWorkspace,
+} from './concerns/workspace-pull.js';
+export {
+  assertEmptyDir,
+  exportBoxWorkspace,
+  type ExportWorkspaceArgs,
+  type ExportWorkspaceResult,
+} from './concerns/workspace-clone.js';
+export {
+  syncWorkspaceToBox,
+  type SyncWorkspaceArgs,
+  type SyncWorkspaceResult,
+} from './concerns/workspace-sync.js';
+export {
   BOX_WORKFLOWS_DIR,
   BOX_MEMORY_DIR,
   BOX_DYNAMIC_SYNC_MANIFEST,

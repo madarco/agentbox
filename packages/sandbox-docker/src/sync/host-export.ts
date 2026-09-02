@@ -9,6 +9,10 @@ import {
   makeSyncContext,
   pushEnvFiles,
   planCarryEntry,
+  buildWorkspaceListScript,
+  parseWorkspaceList,
+  rsyncPullToHost,
+  workspaceExcludes,
   BOX_HOME,
   ENV_PRUNE_DIRS,
 } from '@agentbox/sandbox-core';
@@ -445,26 +449,6 @@ export interface PullResult {
 }
 
 /**
- * Keep only itemized lines that represent an actual file transfer or delete.
- * rsync `-i` emits a leading 11-char code: char 0 is the update type
- * (`>`/`<`/`c`/`*` = transfer/change/delete; `.` = attr-only, skipped) and
- * char 1 is the entry type (`f` file, `d` dir, ...). Directory lines (`d`)
- * are pruned: rsync creates parent dirs as a side effect of transferring
- * files, so counting them would overstate "files changed".
- */
-function parseItemizedChanges(stdout: string): string[] {
-  return stdout
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .filter((l) => l.length > 0)
-    .filter((l) => {
-      const code = l[0];
-      const kind = l[1];
-      return (code === '>' || code === '<' || code === 'c' || code === '*') && kind !== 'd';
-    });
-}
-
-/**
  * Reverse of `refreshExport`: bring the box's merged `/workspace` view back
  * into the user's actual host working directory (`record.workspacePath`).
  *
@@ -499,32 +483,27 @@ export async function pullToHost(
   }
 
   // The rsync file list is the union of up to two independent NUL-delimited
-  // segments: git-tracked (gitignore-aware) and env-pattern (gitignore
-  // bypassed). If neither is produced we fall through to the static
-  // exclude-list (non-git workspace, no env patterns).
-  const segments: string[] = [];
-  let usedGitignore = false;
-  if (opts.respectGitignore !== false) {
-    const isGit = await execInBox(
-      record.container,
-      ['git', '-C', '/workspace', 'rev-parse', '--is-inside-work-tree'],
-      { user: 'root' },
-    );
-    if (isGit.exitCode === 0 && isGit.stdout.trim() === 'true') {
-      const ls = await execInBox(
-        record.container,
-        ['git', '-C', '/workspace', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-        { user: 'root' },
-      );
-      if (ls.exitCode !== 0) {
-        throw new ExportError('git ls-files in box failed', ls.stdout, ls.stderr);
-      }
-      // git -z is NUL-delimited; rsync --from0 wants the same.
-      const tracked = ls.stdout.replace(/\0$/, '');
-      if (tracked.length > 0) segments.push(tracked);
-      usedGitignore = true;
-    }
+  // segments: the PRIMARY selection (git-tracked when /workspace is a repo, else
+  // the exclude-list `find`) and the env-pattern one (gitignore bypassed). Both
+  // segments come from the box, so what lands on the host is what the box has.
+  //
+  // The primary segment is built by the shared `buildWorkspaceListScript` — the
+  // same script the cloud pull runs — so a non-git workspace gets the same
+  // exclude defaults (live databases, `media/`, agent state dirs) on every
+  // provider instead of docker's old bare `--exclude=.git,node_modules`.
+  const excludes = workspaceExcludes({ includeNodeModules: opts.includeNodeModules });
+  const listed = await execInBox(
+    record.container,
+    ['bash', '-c', buildWorkspaceListScript({ respectGitignore: opts.respectGitignore, excludes })],
+    { user: 'root' },
+  );
+  if (listed.exitCode !== 0) {
+    throw new ExportError('workspace file list in box failed', listed.stdout, listed.stderr);
   }
+  const primary = parseWorkspaceList(listed.stdout);
+  const selected = new Set(primary.paths);
+  const usedGitignore = primary.mode === 'git';
+
   if (opts.envPatterns && opts.envPatterns.length > 0) {
     const found = await execInBox(record.container, buildEnvFindArgs(opts.envPatterns), {
       user: 'root',
@@ -532,48 +511,20 @@ export async function pullToHost(
     if (found.exitCode !== 0) {
       throw new ExportError('find env files in box failed', found.stdout, found.stderr);
     }
-    const envFiles = found.stdout.replace(/\0$/, '');
-    if (envFiles.length > 0) segments.push(envFiles);
+    for (const p of found.stdout.split('\0')) {
+      if (p.length > 0) selected.add(p);
+    }
   }
-  const fileList =
-    segments.length > 0 ? Array.from(new Set(segments.join('\0').split('\0'))).join('\0') : null;
+  const fileList = selected.size > 0 ? [...selected].join('\0') : null;
 
-  // --checksum, not the default size+mtime quick-check: the box runs on a
-  // fresh git worktree so every file's mtime differs from the user's working
-  // tree even when the content is byte-identical. Without -c, rsync would
-  // "update" the entire tree. -c compares content hashes so only genuinely
-  // changed files are written.
-  const baseArgs = ['-a', '--checksum'];
-  if (fileList === null) {
-    baseArgs.push('--exclude=.git');
-    if (!opts.includeNodeModules) baseArgs.push('--exclude=node_modules');
-  } else {
-    baseArgs.push('--files-from=-', '--from0');
-  }
-  const src = `${scratchDir}/`;
-  const dst = `${record.workspacePath}/`;
-
-  const dry = await execa('rsync', [...baseArgs, '--dry-run', '-i', src, dst], {
-    reject: false,
-    input: fileList !== null ? fileList : undefined,
+  const { changes, applied } = await rsyncPullToHost({
+    scratchDir,
+    destDir: record.workspacePath,
+    fileList,
+    excludes,
+    dryRun: opts.dryRun,
   });
-  if (dry.exitCode !== 0) {
-    throw new ExportError('rsync dry-run failed', dry.stdout, dry.stderr);
-  }
-  const changes = parseItemizedChanges(dry.stdout);
-
-  if (opts.dryRun) {
-    return { hostPath: record.workspacePath, changes, applied: false, usedGitignore };
-  }
-
-  const real = await execa('rsync', [...baseArgs, src, dst], {
-    reject: false,
-    input: fileList !== null ? fileList : undefined,
-  });
-  if (real.exitCode !== 0) {
-    throw new ExportError(`rsync into ${record.workspacePath} failed`, real.stdout, real.stderr);
-  }
-  return { hostPath: record.workspacePath, changes, applied: true, usedGitignore };
+  return { hostPath: record.workspacePath, changes, applied, usedGitignore };
 }
 
 export interface OpenOptions extends RefreshOptions {

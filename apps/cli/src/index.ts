@@ -61,6 +61,8 @@ import { remoteDockerShareSubcommands } from './commands/remote-docker-share-cmd
 import { setRemoteHostBaker, setRemoteHostSharer } from '@agentbox/sandbox-remote-docker';
 import { destroyCommand } from './commands/destroy.js';
 import { downloadCommand } from './commands/download.js';
+import { syncCommand } from './commands/sync.js';
+import { cloneCommand } from './commands/clone.js';
 import { driveCommand } from './commands/drive.js';
 import { forkCommand } from './commands/fork.js';
 import { installCommand, runInstallWizard } from './commands/install.js';
@@ -218,6 +220,8 @@ program.addCommand(openCommand);
 program.addCommand(urlCommand);
 program.addCommand(screenCommand);
 program.addCommand(downloadCommand);
+program.addCommand(syncCommand);
+program.addCommand(cloneCommand);
 program.addCommand(cpCommand);
 program.addCommand(statusCommand);
 program.addCommand(servicesCommand);
