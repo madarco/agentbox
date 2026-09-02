@@ -1,7 +1,7 @@
 # Persistent boxes & service agents — implementation plan
 
-Status: **in progress** (Phase 0 done; phases 1-3 in flight). This is the durable plan doc; update the phase status lines as work
-lands. One session per phase.
+Status: **in progress** (Phases 0, 2 and 3 done; Phase 1 not started). This is the durable plan doc;
+update the phase status lines as work lands. One session per phase.
 
 > **Supersedes `docs/openclaw-hosting-plan.md`**, which scopes only OpenClaw and whose Phase 1
 > was written against an agent catalog that now exists. Delete that file when Phase 6 lands.
@@ -161,7 +161,9 @@ Files: `packages/core/src/box-record.ts`, `packages/config/src/types.ts` +
 
 ## Phase 2 — service agents in the catalog
 
-Status: **not started**.
+Status: **done** (2026-09-02). The generic mechanism only — no service agent ships yet; openclaw is
+still Phase 6. Two items moved to the backlog: the `AGENT` column / hub payload reading ctl service
+state, and the hub's missing `stop` route.
 
 **Declare the surface, don't branch on the id.**
 
@@ -238,7 +240,8 @@ forbids. Derive `isolate` from `caps.surface === 'service'` rather than adding a
 
 ## Phase 3 — layered config (overlay applied through the tool's own merge)
 
-Status: **not started**.
+Status: **done** (2026-09-02). Delegated merge as written below; `resolveAutoSecrets` is wired but
+unused by any shipping agent, and no baked base asset exists.
 
 ```ts
 // AgentSyncSpec
@@ -547,9 +550,32 @@ curl -fsS "$(node apps/cli/dist/index.js url claw)/healthz"   # ground truth, no
 node apps/cli/dist/index.js openclaw --provider hetzner -y -n claw-hz    # same checks
 ```
 
-Unit tests: `pnpm test` — `agent-command-coverage`, `agent-caps-wiring`, `schema-drift`,
-`runtime-assets`, and `agent-credentials` all fail until updated; that is the intended forcing
-function. Then `pnpm typecheck` (tsup does not typecheck and CI runs it), and format only touched
+### Phases 2-3 — the mechanism, without a real agent (RUN 2026-09-02, all green)
+
+No service agent ships yet, so the smoke runs the REAL `agentbox-ctl daemon` against a throwaway
+one: a stub host relay answering `agents.list` with a schema-2 payload, and a `demosvc` script that
+implements the two things the design delegates (`config patch --stdin [--dry-run]`, `config
+validate`) plus a gateway with a `/healthz`. What it proved:
+
+1. `agent units applied: demosvc, demosvc-onboard` — the daemon came up on the workspace yaml
+   first, then folded the synthesized units in through `Supervisor.reload()`; the one-shot task ran,
+   the http probe reached `ready`, and `/healthz` answered 200.
+2. A `demosvc:` service in the workspace `agentbox.yaml` won: reload reported `changed: demosvc`,
+   the workspace command was the one running, and the daemon warned which unit it dropped.
+3. `agent render demosvc` applied the overlay through `demosvc config patch --stdin`, resolved
+   `{{AGENTBOX_BOX_NAME}}`, and left `gateway.port` (never named) alone.
+4. After a hand edit in the box, a re-render sent ONLY `channels.telegram.enabled` — the hand-edited
+   `logging.level` survived, and so did `channels.telegram.name`, a key the overlay names but did
+   not change.
+5. Gates: an invalid overlay was rejected by the tool's own `--dry-run` with nothing written and the
+   record left at its old value; removing a key sent `null` and restored the tool's default; a
+   secret-shaped literal warned; a failing `validate` failed the render loudly. All exit 1.
+
+Unit tests: `agent-command-coverage`, `agent-caps-wiring`, `service-agent-command`, `agent-units`,
+`overlay-diff`, `schema-drift`, and `agent-registry-fetch` — 450 in `@agentbox/ctl`, 151 across the
+CLI's agent suites. Run one package at a time with a worker cap
+(`npx vitest run --pool=forks --poolOptions.forks.minForks=1 --poolOptions.forks.maxForks=2`): a
+bare `pnpm test` spawns one worker per CPU and OOMs the box. Then `pnpm typecheck` (tsup does not typecheck and CI runs it), and format only touched
 files with `npx prettier --write <files>` — `pnpm format` rewrites ~530 unrelated files.
 
 ---

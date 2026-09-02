@@ -23,6 +23,7 @@
  * parser warns on unknown keys instead of failing.
  */
 
+import type { AgentConfigRenderSpec, AgentServiceSpec } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './registry.js';
 
 /** One file ctl watches in the box, and what the host should do when it changes. */
@@ -66,11 +67,41 @@ export interface AgentDescriptor {
    * rather than adding a permanently-`unknown` entry to every snapshot.
    */
   activitySource: readonly string[];
+  /**
+   * `'tui'` (a tmux session ctl probes) or `'service'` (a daemon ctl RUNS).
+   *
+   * Always sent, even though the spec's own field is optional: on the wire an
+   * absent field means "an older host that predates the surface", which ctl must
+   * read as `tui`. Sending the resolved value keeps that default in ONE place.
+   */
+  surface: 'tui' | 'service';
+  /**
+   * The supervisor units this agent contributes, verbatim from its spec. Present
+   * only for `surface: 'service'`.
+   *
+   * This — not a file the provider writes — is why a box booted from a snapshot
+   * baked before this agent existed can still run it: the shape stays host-side,
+   * and no provider (community ones included) implements anything for it.
+   */
+  service?: AgentServiceSpec;
+  /**
+   * Layered-config descriptor for `agentbox-ctl agent render <id>`, verbatim
+   * from the spec. Also what tells ctl that `<overlayKey>:` is a legitimate
+   * top-level `agentbox.yaml` key rather than a typo.
+   */
+  configRender?: AgentConfigRenderSpec;
 }
 
-/** The wire payload of `agents.list`. Versioned host-side; ctl tolerates extras. */
+/**
+ * The wire payload of `agents.list`. Versioned host-side; ctl tolerates extras.
+ *
+ * `2` added `surface` / `service` / `configRender`. The bump is informational —
+ * ctl NEVER gates on it, because the forward-compatibility rule runs the other
+ * way (ignore what you don't know), and an older ctl reading a `2` payload must
+ * keep working on the fields it does know rather than rejecting the lot.
+ */
 export interface AgentDescriptorPayload {
-  schema: 1;
+  schema: 2;
   agents: readonly AgentDescriptor[];
 }
 
@@ -84,11 +115,14 @@ export interface AgentDescriptorPayload {
  */
 export function buildAgentDescriptors(): AgentDescriptorPayload {
   return {
-    schema: 1,
+    schema: 2,
     agents: AGENT_SYNC_SPECS.map((spec) => ({
       id: spec.id,
       sessionName: spec.sessionName,
       activitySource: spec.caps.activitySource,
+      surface: spec.caps.surface ?? ('tui' as const),
+      ...(spec.service ? { service: spec.service } : {}),
+      ...(spec.configRender ? { configRender: spec.configRender } : {}),
       watch: [
         {
           path: spec.credential.boxAbsPath,

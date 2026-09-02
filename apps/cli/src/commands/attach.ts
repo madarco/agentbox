@@ -182,6 +182,16 @@ async function dispatchDocker(
   // `agent-command-coverage.test.ts` keeps the table matching the registry; this
   // is the run-time half.
   if (!entry) throw new Error(`attach: no wrapper registered for agent '${winner.kind}'`);
+  // A service agent has a command but no attach wrapper by design — it is a
+  // daemon, not a session. Reaching here means a tmux session claimed its id,
+  // so say which agent and what to use instead rather than crashing on
+  // `undefined`.
+  if (!entry.attachWrapped) {
+    throw new Error(
+      `attach: '${winner.kind}' is a service agent — it has no session to attach to. ` +
+        `Use \`agentbox ${winner.kind} logs\` or \`agentbox shell ${box.name}\`.`,
+    );
+  }
   await entry.attachWrapped(box, winner.sessionName, ref, undefined, openIn);
 }
 

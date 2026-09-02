@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { bootstrapCommand } from './commands/bootstrap.js';
+import { agentCommand } from './commands/agent-render.js';
 import { agentSessionCommand } from './commands/agent-session.js';
 import { buildAgentStateCommand, LEGACY_AGENT_STATE_COMMANDS } from './commands/agent-state.js';
 import { cpCommand } from './commands/cp.js';
@@ -40,6 +41,7 @@ program.addCommand(restartCommand);
 program.addCommand(stopServiceCommand);
 program.addCommand(startServiceCommand);
 program.addCommand(reloadCommand);
+program.addCommand(agentCommand);
 program.addCommand(agentSessionCommand);
 program.addCommand(buildAgentStateCommand({ kind: 'generic' }));
 // The frozen per-agent command names. Generated, not hand-written — and kept

@@ -50,7 +50,9 @@ export { renderPortsTable, renderStatusTable, renderTaskTable } from './render.j
 export {
   parseConfig,
   loadConfig,
+  validateUnitGraph,
   ConfigError,
+  type ParseConfigOptions,
   RESERVED_WEB_PORT,
   type BackoffSpec,
   type CtlConfig,
@@ -72,6 +74,14 @@ export {
   CarryConfigError,
   type CarryItem,
 } from './carry.js';
+export { agentUnitsFromWire, mergeAgentUnits, type AgentUnits } from './agent-units.js';
+export {
+  deepEqual,
+  lintOverlaySecrets,
+  overlayPatch,
+  type JsonValue,
+  type OverlayPatch,
+} from './overlay-diff.js';
 export { ToolLinksWatcher, parseToolNames } from './tool-links-watcher.js';
 export {
   listToolLinks,

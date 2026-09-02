@@ -1,12 +1,13 @@
 import { Command } from 'commander';
 import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
-import { loadConfig } from '../config.js';
+import { loadConfig, type CtlConfig } from '../config.js';
+import { mergeAgentUnits, type AgentUnits } from '../agent-units.js';
 import { writeRelayEnvFile } from '../relay-env.js';
 import { selectInBoxTransport } from './in-box-transport.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
-import { fetchWatchList } from '../agent-registry.js';
+import { fetchWatchList, type AgentRenderDescriptor } from '../agent-registry.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
@@ -48,10 +49,28 @@ export const daemonCommand = new Command('daemon')
   .option('--state-dir <path>', 'where run_once task markers are written', DEFAULT_STATE_DIR)
   .option('--workspace <path>', 'cwd for service processes', '/workspace')
   .action(async (opts: DaemonOptions) => {
-    const cfg = await loadConfig(opts.config);
-    // Unknown keys never block startup — an older box image must still boot on a
-    // workspace whose agentbox.yaml uses keys a newer CLI added.
-    for (const w of cfg.warnings) process.stderr.write(`agentbox-ctl: warning: ${w}\n`);
+    /**
+     * What `agents.list` contributed, and the two things that read it back.
+     *
+     * Mutable module-local state rather than a re-fetch, because the fetch is
+     * deliberately once-per-daemon (see `agent-registry.ts`): a `reload` must
+     * re-fold the SAME units it already applied, not go back to the host.
+     */
+    let agentUnits: readonly AgentUnits[] = [];
+    let agentRenders: readonly AgentRenderDescriptor[] = [];
+    const warn = (m: string): void => void process.stderr.write(`agentbox-ctl: warning: ${m}\n`);
+    /** Read the workspace yaml, then fold in whatever the agents contributed. */
+    const buildConfig = async (): Promise<CtlConfig> => {
+      const base = await loadConfig(opts.config, {
+        extraTopLevelKeys: agentRenders.map((r) => r.overlayKey),
+      });
+      // Unknown keys never block startup — an older box image must still boot on
+      // a workspace whose agentbox.yaml uses keys a newer CLI added.
+      for (const w of base.warnings) warn(w);
+      return mergeAgentUnits(base, agentUnits, warn);
+    };
+
+    const cfg = await buildConfig();
     // Cloud backends that can't expose port 80 (Vercel) set AGENTBOX_WEB_PROXY_PORT
     // so the WebProxy binds a reachable non-privileged port. Unset → default 80.
     const webProxyPort = Number(process.env.AGENTBOX_WEB_PROXY_PORT) || undefined;
@@ -124,6 +143,7 @@ export const daemonCommand = new Command('daemon')
       logDir: opts.logDir,
       configPath: opts.config,
       reporter,
+      reloadConfig: buildConfig,
     });
 
     process.stdout.write(`agentbox-ctl: listening on ${opts.socket}\n`);
@@ -257,7 +277,7 @@ export const daemonCommand = new Command('daemon')
     // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
     // ECONNREFUSED on a fresh box.
     const watcher = credentialsWatcher;
-    void fetchWatchList().then((watch) => {
+    void fetchWatchList().then(async (watch) => {
       if (watch.source === 'host') {
         watcher?.setFiles(watch.files);
         // Same answer, second consumer: which agents to probe for activity. The
@@ -265,6 +285,24 @@ export const daemonCommand = new Command('daemon')
         // upgrades it — an agent added after this image was baked starts being
         // probed without a re-bake.
         reporter.setSessions(watch.sessions);
+        // Third consumer: the units a `surface: 'service'` agent contributes.
+        // Applied through the reload DIFF, never through `init()`, which is what
+        // keeps this fetch off the critical path — the box already came up on
+        // the workspace yaml, and a host that never answers costs the service
+        // agent its unit rather than costing the box its supervisor.
+        agentUnits = watch.units;
+        agentRenders = watch.renders;
+        if (watch.units.length === 0 && watch.renders.length === 0) return;
+        try {
+          const diff = await sup.reload(await buildConfig());
+          const applied = [...diff.added, ...diff.changed];
+          if (applied.length > 0) {
+            process.stdout.write(`agentbox-ctl: agent units applied: ${applied.join(', ')}\n`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`agentbox-ctl: failed to apply agent units: ${msg}\n`);
+        }
         return;
       }
       process.stderr.write(

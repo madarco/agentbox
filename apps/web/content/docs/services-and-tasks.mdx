@@ -134,8 +134,21 @@ The supervisor also posts `service-state` / `task-state` events to the host rela
   live.
 </Callout>
 
+## Units an agent brings with it
+
+Most units come from your `agentbox.yaml`. An agent can also contribute its own — a **service agent** is a tool the box runs as a daemon rather than a TUI you attach to, and it declares the service (and any one-shot setup tasks) that run it. Those units arrive from the host when the box asks for the agent catalog, and the supervisor folds them in through the same reload diff as an edit to your file, so a box booted from an older snapshot still runs an agent that did not exist when the snapshot was baked.
+
+Two rules make that predictable:
+
+- **Your file wins.** A service or task in `agentbox.yaml` with the same name as one the agent contributes replaces it. That is the supported way to override an agent's unit — change its command, its env, or its readiness probe — and the daemon logs which unit it dropped.
+- **Only one unit may `expose:`.** If your file already publishes the box's web port, the agent's `expose:` is dropped with a warning rather than silently taking it over. Remove one of the two.
+
+A service agent may also own a **layered config**: it names a top-level `agentbox.yaml` key as its overlay, and `agentbox-ctl agent render <agent>` pushes that overlay into the tool's own config file through the tool's own patch command. Only the keys whose overlay value changed since the last render are sent, so anything you edited by hand inside the box survives — and removing a key from the overlay restores the tool's own default rather than freezing the last value AgentBox wrote. Never put a real secret in the overlay; carry it into the box with a [`carry:`](/docs/agentbox-yaml) entry and reference it by name (the render warns when a value looks like a literal token).
+
 ## Schema & editor support
 
 A JSON Schema ships with `@agentbox/ctl`. Add the `yaml-language-server` modeline to the top of `agentbox.yaml` and any YAML-LSP editor gives you key completion, hover docs, and inline error squiggles. See [agentbox.yaml](/docs/agentbox-yaml) for the modeline and `agentbox-ctl validate` details.
+
+The schema does not know an agent's overlay key — which key that is lives in the host's agent catalog, not in the schema — so an editor flags it as unknown. The supervisor accepts it and warns only when no agent claimed it.
 
 For the full file reference (including `carry:`, `ide:`, and `defaults:`), see [agentbox.yaml](/docs/agentbox-yaml). The `defaults:` block ties into [layered configuration](/docs/configuration), and the [CLI reference](/docs/cli) lists every `agentbox status` and `agentbox logs` flag.
