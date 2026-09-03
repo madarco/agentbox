@@ -15,6 +15,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import type { ResolvedCarryEntry } from '@agentbox/core';
+import { persistentRefusal, resolveCreatePersistent } from '@agentbox/core';
 import {
   createBox,
   DEFAULT_BOX_IMAGE,
@@ -75,6 +76,7 @@ function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<U
   if (opts.withPlaywright === true) box.withPlaywright = true;
   if (opts.withEnv === true) box.withEnv = true;
   if (opts.vnc === false) box.vnc = false;
+  if (opts.persistent !== undefined) box.persistent = opts.persistent;
   if (opts.sharedDockerCache === true) box.dockerCacheShared = true;
   // `<agent>.sessionName`, `<agent>.dangerouslySkipPermissions` and
   // `box.isolate<Agent>Config` — typed accessors, since config is a leaf that
@@ -261,6 +263,18 @@ export async function runAgentCreate(
   const dockerRefusal = await dockerProviderRefusal(cfg, providerName, remoteHost, 'create');
   if (dockerRefusal) fail(dockerRefusal, 1);
 
+  // Always-on box. `undefined` means "no opinion" and leaves the call to the
+  // config layers — passing `false` there would turn a silent default into an
+  // opt-out of the user's own `box.persistent`. Resolved here so every branch
+  // below (docker, cloud, hub, the -i queue) sends the same value, and refused
+  // BEFORE routing so a hub or cloud create cannot slip past a provider whose
+  // platform session cap the host can only extend, never remove.
+  const persistent = resolveCreatePersistent({ spec: a.spec, flag: opts.persistent });
+  if (persistent ?? cfg.box.persistent) {
+    const refusal = persistentRefusal(providerName);
+    if (refusal) fail(refusal, 1);
+  }
+
   if (cfg.git.pushMode === 'direct' && !isCloud) {
     fail(
       'git.pushMode=direct / --dangerously-with-credentials is not applicable to docker boxes (they run on your host and bind-mount the host .git). Use a cloud provider (e.g. --provider hetzner|e2b|vercel|daytona).',
@@ -340,6 +354,7 @@ export async function runAgentCreate(
             carry: carryForHub,
             name: opts.name,
             fromBranch: opts.fromBranch,
+            persistent,
             urlFlag: opts.url,
             prompt: seedPrompt,
             agentArgs: applySkip(agentArgs),
@@ -397,7 +412,9 @@ export async function runAgentCreate(
       providerName,
       prompt: opts.initialPrompt,
       agentArgs,
-      createOpts: { ...pickQueueCreateOpts(a, opts), carry: carryForQueue },
+      // `persistent` rides RESOLVED, not raw: the worker replays flags, and the
+      // agent-surface default is not one of them.
+      createOpts: { ...pickQueueCreateOpts(a, opts), persistent, carry: carryForQueue },
       maxRunningOverride,
       maxWorkingOverride,
       openTerminal: captureOpenTerminalContext(cfg.queue.openIn),
@@ -569,6 +586,7 @@ export async function runAgentCreate(
             carry: carryEntries,
             name: opts.name,
             fromBranch,
+            persistent,
             urlFlag: opts.url,
             onStatus,
             onLog: (line) => cmdLog.write(line),
@@ -617,6 +635,7 @@ export async function runAgentCreate(
         ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
         carry: carryEntries,
         vnc: { enabled: cfg.box.vnc },
+        ...(persistent !== undefined ? { persistent } : {}),
         limits: resolveLimits(cfg.box, opts),
         fromBranch,
         useBranch,
@@ -699,6 +718,7 @@ export async function runAgentCreate(
       ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
       carry: carryEntries,
       vnc: { enabled: cfg.box.vnc },
+      ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },
       portless: portlessEnabled,
       portlessStateDir: cfg.portless.stateDir || undefined,

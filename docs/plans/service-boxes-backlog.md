@@ -39,12 +39,10 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 
 ## From Phase 1 (persistent boxes, 2026-09-02)
 
-- **`--persistent` is not on the agent commands yet.** `create` has it; `agentbox claude|codex|
-  opencode|pi` do not, because the shared agent-flag table
-  (`apps/cli/src/agents/command/options.ts`) was owned by another box during this phase. The
-  capability is still reachable there — `createBox`/`createCloudProvider` fall back to the
-  effective `box.persistent`, so `agentbox config set box.persistent true --project` applies to an
-  agent create. Add the flag when the agent-command files are free.
+- ~~**`--persistent` is not on the agent commands yet.**~~ **Done (2026-09-03.)** Declared once in
+  the shared agent-flag table (`apps/cli/src/agents/command/options.ts`) and forwarded from
+  `create-action.ts` down all four create paths (docker, cloud, the hub adopt, the `-i` queue job),
+  with the e2b/vercel refusal running before routing as it does on `create`.
 - **`../agentbox-tray/CLAUDE.md` not updated.** The plan calls for it (the `GET /api/v1/boxes`
   payload is the tray's contract) but the sibling checkout is not present in this box. The new
   `persistent` field is documented in `apps/web/content/docs/api.mdx`; mirror it into the tray's
@@ -56,6 +54,11 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 - **The boot reconcile needs a running relay.** A persistent box comes back when the relay
   daemon starts, so a host where the relay is not installed as a login/launchd unit gets no
   restart. `agentbox hub expose` installs such a unit; a plain dev host may not have one.
+- **The hub's create form repeats the capped-provider list.** `create-box-modal.tsx` carries its own
+  `PERSISTENT_CAPPED = {e2b, vercel}` to grey the checkbox out, because the client bundle
+  deliberately imports no `@agentbox/*` package. The API still refuses the create, so the copy is a
+  UX affordance rather than the gate — but it is a second place to edit if a provider ever grows or
+  loses a session cap. Serving it from `GET /api/v1/providers` would remove the copy.
 - **`selectPersistentBoxesToStart` skips `missing`.** A persistent cloud box whose sandbox the
   provider reaped (rather than stopped) is logged once and left alone — recreating it from the
   record is a Phase 4/5 question (workspace sync), not a reconcile one.
@@ -230,3 +233,19 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   refusing the field outright when the hub is not the caller's machine. Cheap partial hardening in
   the meantime: reject absolute and `..`-escaping entries at the validator, and have the worker fail
   loudly rather than log `copied 0/N` and continue.
+
+## From Phase 1 follow-up (`--persistent` on the agent commands, 2026-09-03)
+
+- **The non-git workspace seed buffers the whole tree in memory.**
+  `seedWorkspaceFromDir` (`packages/sandbox-docker/src/sync/in-box-git.ts:643`) runs
+  `tar -C <source> -cf - .` with `encoding: 'buffer'` and holds the entire archive as one Buffer
+  before piping it into `docker exec … tar -xf -`. On a workspace with `node_modules` that exceeds
+  the heap and the create dies at `tar of <dir> failed:` with an EMPTY stderr, which reads as a tar
+  problem rather than an out-of-memory one. Hit while smoke-testing a nested `agentbox claude` from
+  inside `/workspace`; worked around with a small scratch project.
+  This is the **no-git seeding path** — `create.ts:1090`, taken when no repos are detected (and for
+  `--host-snapshot`, where the source is the clone dir). It also backs **`agentbox clone`**, whose
+  export deliberately drops `.git`, so every clone of a workspace carrying `node_modules`
+  (`--include-node-modules`, or a non-git project that simply has one) goes through it. The fix is
+  to stream the tar — pipe the `tar` child's stdout straight into the `docker exec` stdin instead of
+  materializing it — not to raise a limit. Recorded only; not fixed here.

@@ -30,6 +30,12 @@ type Agent = CreateBoxInput['agent'];
 // hosted/Postgres path, where host readiness isn't known).
 const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
 
+// Providers whose platform session cap makes an always-on box impossible — the
+// API refuses `opts.persistent: true` on them (see PERSISTENT_UNSUPPORTED in
+// packages/core/src/persistent.ts). Repeated here rather than imported so the
+// heavy packages stay out of the Next bundle, like PROVIDERS/OpenInApp.
+const PERSISTENT_CAPPED = new Set(['e2b', 'vercel']);
+
 // The agents built into this release, rendered until GET /api/v1/agents answers
 // (and if it can't). The endpoint is the authority — it also carries agents
 // registered with `agentbox agent add`, which no list here can name — so this is
@@ -104,6 +110,9 @@ function CreateBoxModal({
   const [fromBranch, setFromBranch] = useState('');
   const [branches, setBranches] = useState<string[] | null>(null);
   const [runSetup, setRunSetup] = useState(false);
+  // Always-on box. Off by default and behind Advanced: for a coding box the
+  // expendable default is right almost always, and this is the exception.
+  const [persistent, setPersistent] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -191,6 +200,9 @@ function CreateBoxModal({
   // points there rather than leaving the disabled options unexplained.
   const controlBoxUrl = providers.find((p) => p.origin === 'hub' && p.hubUrl)?.hubUrl;
   const providerFreshness = freshness?.[providerId];
+  // A `docker:<alias>` remote-docker spec is never capped, so the bare id is
+  // the right thing to test.
+  const persistentCapped = PERSISTENT_CAPPED.has(providerId);
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   const bakeNeeded =
     !!providerFreshness &&
@@ -301,6 +313,9 @@ function CreateBoxModal({
             ? fromBranch.trim()
             : undefined,
         setupWizard: agent !== 'none' && runSetup,
+        // Omitted unless asked for: sending `false` would override the hub's own
+        // `box.persistent`, turning "no opinion" into an opt-out.
+        ...(persistent && !persistentCapped ? { opts: { persistent: true } } : {}),
       });
       if (!res.ok) {
         setError(res.error);
@@ -514,6 +529,32 @@ function CreateBoxModal({
                       />
                     </Field>
                   ) : null}
+                  {/* Always-on box. Secondary on purpose: an expendable box is the
+                      right default for coding work, and this is the exception. */}
+                  <label
+                    className={cn(
+                      'flex items-start gap-2.5',
+                      persistentCapped && 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={persistent && !persistentCapped}
+                      disabled={persistentCapped}
+                      onChange={(e) => setPersistent(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 flex-none accent-primary"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium text-secondary-foreground">
+                        Keep this box always on
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {persistentCapped
+                          ? `${providerOption?.label ?? providerId} caps how long a sandbox can live, so an always-on box is not possible there.`
+                          : 'Never auto-paused, never idle-lapsed, skipped by prune, and started again after a host reboot. It keeps costing while it runs, and destroying it takes an explicit force.'}
+                      </span>
+                    </span>
+                  </label>
                 </>
               ) : null}
             </div>

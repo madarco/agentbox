@@ -1909,6 +1909,11 @@ export function buildOpenApi(): Record<string, unknown> {
               enum: ['claude', 'codex', 'opencode', 'pi'],
               description: 'The agent the box was created for.',
             },
+            persistent: {
+              type: 'boolean',
+              description:
+                "Always-on box (`--persistent` / `box.persistent`, resolved at create time): never auto-paused, never idle-lapsed, skipped by prune, and started again by the relay's boot reconcile after a host reboot. `agentbox destroy -y` refuses one without `--force`; POST /boxes/{id}/destroy has no such guard, so a client that offers destroy should confirm on this field. Absent/false = an ordinary expendable box.",
+            },
             topology: {
               type: 'string',
               description: "Sync federation shape ('cloud' | 'control-plane'); absent for docker.",

@@ -126,6 +126,20 @@
         "negate": true
       },
       {
+        "flags": "--persistent",
+        "description": "always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-persistent",
+        "description": "create an expendable box even when box.persistent is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
         "flags": "--no-resync",
         "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
         "defaultValue": null,
@@ -575,6 +589,20 @@
       {
         "flags": "--no-vnc",
         "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--persistent",
+        "description": "always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-persistent",
+        "description": "create an expendable box even when box.persistent is set",
         "defaultValue": null,
         "mandatory": false,
         "negate": true
@@ -1196,6 +1224,20 @@
         "negate": true
       },
       {
+        "flags": "--persistent",
+        "description": "always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-persistent",
+        "description": "create an expendable box even when box.persistent is set",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
         "flags": "--no-resync",
         "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
         "defaultValue": null,
@@ -1610,6 +1652,20 @@
       {
         "flags": "--no-vnc",
         "description": "disable the per-box Xvnc + noVNC web client (on by default)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--persistent",
+        "description": "always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-persistent",
+        "description": "create an expendable box even when box.persistent is set",
         "defaultValue": null,
         "mandatory": false,
         "negate": true

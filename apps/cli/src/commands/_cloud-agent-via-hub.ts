@@ -88,6 +88,13 @@ export interface CloudAgentViaHubArgs {
   name?: string;
   /** `--from-branch` base ref for the box's per-box branch. */
   fromBranch?: string;
+  /**
+   * `--persistent` / `--no-persistent`, already resolved (a service agent's
+   * default included). Left out of the request when undefined so the control
+   * box's own `box.persistent` still decides — sending `false` there would
+   * override it.
+   */
+  persistent?: boolean;
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
   /**
@@ -145,6 +152,7 @@ export async function createCloudBoxViaHubAndAdopt(
     agent,
     name,
     fromBranch,
+    persistent,
     urlFlag,
     carry,
     onStatus,
@@ -180,6 +188,7 @@ export async function createCloudBoxViaHubAndAdopt(
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,
+    ...(persistent !== undefined ? { opts: { persistent } } : {}),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
     startAgent: false,
@@ -258,6 +267,7 @@ export async function enqueueAgentJobViaHub(
     agent,
     name,
     fromBranch,
+    persistent,
     prompt,
     agentArgs,
     urlFlag,
@@ -290,6 +300,7 @@ export async function enqueueAgentJobViaHub(
     agent,
     name: name?.trim() || undefined,
     fromBranch: fromBranch?.trim() || undefined,
+    ...(persistent !== undefined ? { opts: { persistent } } : {}),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,
