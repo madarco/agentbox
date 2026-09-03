@@ -6,6 +6,7 @@
  */
 
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { requireAgentCredential } from '@agentbox/core';
 import {
   extractVolumeAuthToBackup,
   registerAgentSyncModule,
@@ -34,7 +35,7 @@ export const piSyncModule: AgentSyncModule = {
     await extractVolumeAuthToBackup({
       volume: spec.dockerVolume,
       image,
-      backupFile: spec.credential.hostBackup,
+      backupFile: requireAgentCredential(spec).hostBackup,
     });
   },
 };

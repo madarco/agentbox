@@ -55,18 +55,15 @@ export const WATCHED_CREDENTIALS: readonly WatchedCredential[] = [
     shape: 'nonempty-json',
   },
   { agent: 'pi', path: '/home/vscode/.pi/agent/auth.json', shape: 'nonempty-json' },
-  // OpenClaw has no host-side credential: its gateway token is self-generated
-  // per box and must never leave it, and channel tokens ride a `carry:` entry
-  // instead. The registry names a path nothing ever writes so this watch is a
-  // permanent no-op -- deliberately NOT `openclaw.json`, which a fanout would
-  // copy into every other box along with box #1's gateway identity. The entry
-  // exists because the drift test pairs one watcher with every non-hidden
-  // registry row, and an absent row would read as "someone forgot".
-  {
-    agent: 'openclaw',
-    path: '/home/vscode/.openclaw/agentbox-credential.json',
-    shape: 'nonempty-json',
-  },
+  // NO OPENCLAW ROW, deliberately: openclaw's registry row declares no
+  // `credential`, because its gateway token is generated per box during
+  // `openclaw onboard` and must never leave it. A row pointed at
+  // `openclaw.json` would be harmful, not redundant -- this list is FANOUT, so
+  // every other box would receive box #1's gateway identity and channel
+  // pairings. Channel tokens are real secrets, but they ride a `carry:` entry
+  // into a 0600 env file; AgentBox never holds them. The drift test pairs a
+  // watcher with every baked agent that declares a credential, so this absence
+  // is asserted rather than tolerated.
 ];
 
 /** Mirror of the sandbox-core `isRealAgentCredential` shapes (drift-tested). */

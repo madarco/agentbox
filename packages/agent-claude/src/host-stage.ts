@@ -1,4 +1,4 @@
-import { agentPushExcludes } from '@agentbox/core';
+import { agentPushExcludes, requireAgentCredential } from '@agentbox/core';
 /**
  * Claude's host-side staging — the part that is more than a copy.
  *
@@ -38,7 +38,7 @@ import {
 
 /** Workspace path inside every cloud sandbox — matches the Docker model. */
 const CLOUD_WORKSPACE = '/workspace';
-const CREDENTIALS_BACKUP_FILE = resolveAgentSpec('claude').credential.hostBackup;
+const CREDENTIALS_BACKUP_FILE = requireAgentCredential(resolveAgentSpec('claude')).hostBackup;
 
 // ---------- claude ----------
 

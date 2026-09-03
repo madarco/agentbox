@@ -117,7 +117,10 @@ import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
  * after them — including one installed by `agentbox agent add`, which can never
  * be in a compiled-in list.
  */
-const CREDENTIAL_AGENT_IDS = (): string[] => AGENT_SYNC_SPECS.map((a) => a.id);
+// Only agents that DECLARE a credential: `--agent openclaw` has nothing to push
+// or pull, so naming it is a user error worth reporting as one.
+const CREDENTIAL_AGENT_IDS = (): string[] =>
+  AGENT_SYNC_SPECS.filter((a) => a.credential).map((a) => a.id);
 import { handleLifecycleError } from './_errors.js';
 import { isAgentKind, type AgentId } from '@agentbox/core';
 
@@ -1391,12 +1394,14 @@ const credentialsPullSub = new Command('pull')
       let pulled = 0;
       for (const spec of AGENT_SYNC_SPECS) {
         if (opts.agent && spec.id !== opts.agent) continue;
-        const data = await client.get(`agents/${spec.id}/${spec.credential.boxRelPath}`);
+        const cred = spec.credential;
+        if (!cred) continue;
+        const data = await client.get(`agents/${spec.id}/${cred.boxRelPath}`);
         if (data === null) continue;
-        await mkdir(dirname(spec.credential.hostBackup), { recursive: true });
-        await writeFile(spec.credential.hostBackup, data, { mode: 0o600 });
-        await chmod(spec.credential.hostBackup, 0o600);
-        log.info(`pulled ${spec.id} credentials → ${spec.credential.hostBackup}`);
+        await mkdir(dirname(cred.hostBackup), { recursive: true });
+        await writeFile(cred.hostBackup, data, { mode: 0o600 });
+        await chmod(cred.hostBackup, 0o600);
+        log.info(`pulled ${spec.id} credentials → ${cred.hostBackup}`);
         pulled++;
       }
       if (pulled === 0) log.info('No agent credentials in custody to pull.');

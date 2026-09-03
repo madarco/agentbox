@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentPushExcludes, LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
+import { agentPushExcludes, LIVE_DATABASE_EXCLUDES, requireAgentCredential } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { volumeExcludeFlags, volumeIncludeFlags, volumePurgeCommand } from '../src/docker-sync.js';
 
@@ -51,9 +51,12 @@ describe('codex docker-volume excludes', () => {
   });
 
   it('KEEPS the credential file — the volume is the box login store', () => {
-    expect(patterns).not.toContain(spec.credential.boxRelPath);
+    // Codex declares one; `requireAgentCredential` states that rather than
+    // letting an optional-chained `undefined` make both assertions vacuous.
+    const cred = requireAgentCredential(spec);
+    expect(patterns).not.toContain(cred.boxRelPath);
     // ...while the shared snapshot must not carry it.
-    expect(agentPushExcludes(spec, path, 'snapshot')).toContain(spec.credential.boxRelPath);
+    expect(agentPushExcludes(spec, path, 'snapshot')).toContain(cred.boxRelPath);
   });
 
   it('keeps config.toml out (reconciled separately) and the carve-in first', () => {

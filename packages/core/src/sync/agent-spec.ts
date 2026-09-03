@@ -115,7 +115,7 @@ export type AgentPushTarget = 'snapshot' | 'volume';
  * The credential file is DERIVED from `spec.credential.boxRelPath` rather than
  * listed, which is why the specs no longer name it: it is the one entry whose
  * correct value differs by target, and deriving it is what makes a single list
- * safe for both.
+ * safe for both. An agent that declares no credential contributes no such entry.
  */
 export function agentPushExcludes(
   spec: AgentSyncSpec,
@@ -125,7 +125,9 @@ export function agentPushExcludes(
   return [
     ...(path.allowDatabases ? [] : LIVE_DATABASE_EXCLUDES),
     ...(path.exclude ?? []),
-    ...(target === 'snapshot' ? [spec.credential.boxRelPath] : []),
+    // An agent with no credential (`credential` absent) contributes nothing
+    // here: there is no file to keep out of a shared snapshot.
+    ...(target === 'snapshot' && spec.credential ? [spec.credential.boxRelPath] : []),
   ];
 }
 
@@ -178,6 +180,25 @@ export interface AgentCredential {
    * means no credential watch at all.
    */
   freshness?: { jsonPath: readonly string[] };
+}
+
+/**
+ * This agent's credential, for a call site that only works with one.
+ *
+ * `credential` is optional, but some code exists only to move a credential —
+ * claude's host-backup guards, pi's volume extract, the custody upload set.
+ * Those callers already know their agent has one, and a `?? ''` fallback at
+ * each site would turn a spec change into a silent write to the wrong path.
+ * A throw here means a spec changed under a mechanism that requires the field.
+ */
+export function requireAgentCredential(spec: AgentSyncSpec): AgentCredential {
+  if (!spec.credential) {
+    throw new Error(
+      `agent '${spec.id}' declares no credential — this code path requires one; ` +
+        `gate on \`spec.credential\` before calling it`,
+    );
+  }
+  return spec.credential;
 }
 
 /**
@@ -563,7 +584,24 @@ export interface AgentSyncSpec {
   dockerVolume: string;
   /** Host→box static-config source map (1 entry for claude/codex, 3 for opencode). */
   staticPaths: AgentPathMap[];
-  credential: AgentCredential;
+  /**
+   * Where this agent's login credential lives, when it HAS one.
+   *
+   * ABSENT MEANS "this agent has no host-side credential to sync". That is a
+   * declaration, not a shortcut for "not wired up yet". An agent that
+   * authenticates inside the box — openclaw generates its gateway token during
+   * `openclaw onboard` — has nothing on the host to back up, push, watch or fan
+   * out, and every mechanism skips it: no credentials-volume mount, no
+   * `agents.list` credential watch, no relay fan-out entry, no host backup probe.
+   *
+   * Omitting is the only correct way to say that. Naming a path nothing writes
+   * buys a no-op at the cost of a fictional file every consumer has to know
+   * about. Pointing it at the agent's real config is worse: the credential watch
+   * is FANOUT by contract (`buildAgentDescriptors` emits `sync: 'fanout'` for
+   * every credential it sees), so one box's identity would be copied into every
+   * other box.
+   */
+  credential?: AgentCredential;
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
   /**
@@ -757,11 +795,18 @@ export const BOX_CREDS_DIR = `${BOX_HOME}/.agentbox-creds`;
  * `cannot change owner and permissions of '…/.agentbox-creds/<agent>'`, so an
  * agent missing from a snapshot could never be installed into a live box.
  */
-export function agentDirPrelude(agentDirs: readonly string[], credsSubdir: string): string[] {
+export function agentDirPrelude(agentDirs: readonly string[], credsSubdir?: string): string[] {
   return [
     `install -d -o ${BOX_USER} -g ${BOX_USER} ${agentDirs.join(' ')}`,
-    `mkdir -p ${BOX_CREDS_DIR}/${credsSubdir}`,
-    `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR} 2>/dev/null || true`,
+    // Omitted for an agent that declares no `credential`: it gets no subpath of
+    // the shared credentials volume, so creating a dir there would reserve a
+    // mount point nothing will ever mount.
+    ...(credsSubdir === undefined
+      ? []
+      : [
+          `mkdir -p ${BOX_CREDS_DIR}/${credsSubdir}`,
+          `chown -R ${BOX_USER}:${BOX_USER} ${BOX_CREDS_DIR} 2>/dev/null || true`,
+        ]),
   ];
 }
 /**

@@ -31,8 +31,6 @@
 
 import { BOX_HOME, BOX_USER, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
-import { join } from 'node:path';
-import { STATE_DIR } from '@agentbox/config';
 
 /** OpenClaw's state root: config, sqlite state, per-agent dirs, migrations. */
 const OPENCLAW_BOX_DIR = `${BOX_HOME}/.openclaw`;
@@ -73,10 +71,9 @@ export const openclawSpec: AgentSyncSpec = {
       // `install -d -o u -g g a/b` applies ownership to the FINAL component
       // only, so a nested path alone leaves the parent root-owned and the later
       // static-config stage (which runs as the box user) cannot write it.
-      ...agentDirPrelude(
-        [OPENCLAW_BOX_DIR, OPENCLAW_XDG_BOX_DIR, `${BOX_HOME}/.config`],
-        'openclaw',
-      ),
+      // No creds-subdir argument: with no `credential` declared there is no
+      // subpath of the shared credentials volume to create a mount point for.
+      ...agentDirPrelude([OPENCLAW_BOX_DIR, OPENCLAW_XDG_BOX_DIR, `${BOX_HOME}/.config`]),
       // Point `~/.config/openclaw` into the state root so it rides the one
       // config volume. `ln -sfn` onto an existing DIRECTORY would create the
       // link inside it, so the real dir goes first -- it is either absent or
@@ -120,30 +117,20 @@ export const openclawSpec: AgentSyncSpec = {
       relocToSubpath: OPENCLAW_XDG_SUBPATH,
     },
   ],
-  // OPENCLAW HAS NO HOST-SIDE CREDENTIAL, and this slot names a path nothing
-  // ever writes so every credential mechanism degrades to a clean no-op: no
-  // host backup to read, nothing to push at create, and ctl's watcher finds no
-  // file to fan out.
+  // NO `credential`: openclaw has no host-side credential to sync. Its gateway
+  // token is generated per box by `openclaw onboard` and must never leave that
+  // box, so there is no host backup to read, nothing to push at create, no
+  // subpath of the shared credentials volume to reserve, and no credential watch.
   //
-  // That last one is the reason the path is deliberately fictional rather than
-  // pointed at `openclaw.json`. The credential watch is FANOUT by contract — a
-  // rotating secret redistributed to every other box — and fanning openclaw's
-  // config out would give every openclaw box box #1's gateway identity.
+  // Pointing this at `openclaw.json` to fill the slot would be harmful, not
+  // redundant: the credential watch is FANOUT by contract
+  // (`buildAgentDescriptors` emits `sync: 'fanout'` for every credential it
+  // sees), so every other openclaw box would receive box #1's gateway identity
+  // and channel pairings — the multi-tenancy failure openclaw forbids, and the
+  // one `clone`'s fresh-identity rule exists to prevent.
+  //
   // Channel tokens are real secrets, but they ride a `carry:` entry into a 0600
-  // env file and the overlay references them by name; they are never a
-  // credential AgentBox holds.
-  //
-  // The slot is required today because `AgentSyncSpec.credential` is not
-  // optional; making it optional is a backlog item
-  // (`docs/plans/service-boxes-backlog.md`).
-  credential: {
-    boxRelPath: 'agentbox-credential.json',
-    boxAbsPath: `${OPENCLAW_BOX_DIR}/agentbox-credential.json`,
-    hostBackup: join(STATE_DIR, 'openclaw-credentials.json'),
-    cloudMountPath: `${BOX_HOME}/.agentbox-creds/openclaw`,
-    cloudSubpath: 'openclaw/',
-    realShape: 'nonempty-json',
-  },
+  // env file and the overlay references them by name; AgentBox never holds them.
   forwardedEnvKeys: [],
   boxRunEnv: {
     // Honoured by `onboard`, which writes it to `agents.defaults.workspace`

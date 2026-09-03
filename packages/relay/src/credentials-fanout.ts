@@ -112,6 +112,11 @@ export class CredentialsFanout {
     if (!this.custody) return;
     try {
       const spec = resolveAgentSpec(agent);
+      // An agent that declares no credential has nothing to mirror. Unreachable
+      // via `handle` (`parseCredentialsUpdate` rejects such an agent), but this
+      // is the write to custody -- the copy every later create seeds from -- so
+      // it checks rather than trusting its caller.
+      if (!spec.credential) return;
       await this.custody.put(
         `agents/${agent}/${spec.credential.boxRelPath}`,
         Buffer.from(content, 'utf8'),

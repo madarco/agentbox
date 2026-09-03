@@ -9,7 +9,7 @@ import {
   type AgentId,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE, volumeSettingsTarget } from '@agentbox/sandbox-docker';
-import { agentConfigVolume } from '@agentbox/core';
+import { agentConfigVolume, requireAgentCredential } from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
@@ -39,10 +39,16 @@ const propagateCommand = new Command('propagate')
     try {
       const spec = resolveAgentSpec(opts.agent);
       const agent = spec.id;
+      // An agent that declares no credential has nothing to propagate and no
+      // backup path to name in the error, so say the real reason.
+      const cred = spec.credential;
+      if (!cred) {
+        throw new Error(`${agent} has no host-side credential — there is nothing to propagate`);
+      }
       const content = await readCredentialBackup(agent);
       if (content === null || !isRealAgentCredential(agent, content)) {
         throw new Error(
-          `no usable ${agent} credential backup at ${spec.credential.hostBackup}; nothing to propagate`,
+          `no usable ${agent} credential backup at ${cred.hostBackup}; nothing to propagate`,
         );
       }
 
@@ -68,7 +74,7 @@ const propagateCommand = new Command('propagate')
       for (const vol of plan.dockerVolumes) {
         try {
           await volumeSettingsTarget(vol.volume, image, vol.volume).writeText(
-            spec.credential.boxRelPath,
+            cred.boxRelPath,
             content,
             { mode: 0o600 },
           );
@@ -139,7 +145,7 @@ async function pushCredentialToCustody(agent: AgentId, content: string): Promise
     if (!target) return;
     const { CustodyClient, planPush } = await import('../control-plane/custody-client.js');
     const client = new CustodyClient(target);
-    const path = `agents/${agent}/${resolveAgentSpec(agent).credential.boxRelPath}`;
+    const path = `agents/${agent}/${requireAgentCredential(resolveAgentSpec(agent)).boxRelPath}`;
     const item = { path, data: Buffer.from(content, 'utf8') };
     const manifest = await client.list('agents');
     if (planPush([item], manifest)[0]!.action === 'skip') return;

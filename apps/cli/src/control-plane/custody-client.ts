@@ -291,6 +291,8 @@ export async function collectAgentCredentialUploads(only?: AgentId): Promise<Upl
   const items: UploadItem[] = [];
   for (const spec of AGENT_SYNC_SPECS) {
     if (only && spec.id !== only) continue;
+    // No declared credential -> no host backup to collect.
+    if (!spec.credential) continue;
     const text = await readCredentialBackup(spec.id);
     if (text === null || !isRealAgentCredential(spec.id, text)) continue;
     items.push({

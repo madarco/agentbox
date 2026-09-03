@@ -112,6 +112,9 @@ export interface AgentDescriptorPayload {
  * behaviour, restated as data. Additional watches come from the spec, and
  * default to `backup`: `fanout` has to be asked for, because getting it wrong
  * overwrites files in every other box.
+ *
+ * An agent that declares NO `credential` emits no credential watch at all: this
+ * watch is fanout, so a file named here is copied into every other box.
  */
 export function buildAgentDescriptors(): AgentDescriptorPayload {
   return {
@@ -124,11 +127,15 @@ export function buildAgentDescriptors(): AgentDescriptorPayload {
       ...(spec.service ? { service: spec.service } : {}),
       ...(spec.configRender ? { configRender: spec.configRender } : {}),
       watch: [
-        {
-          path: spec.credential.boxAbsPath,
-          sync: 'fanout' as const,
-          shape: spec.credential.realShape,
-        },
+        ...(spec.credential
+          ? [
+              {
+                path: spec.credential.boxAbsPath,
+                sync: 'fanout' as const,
+                shape: spec.credential.realShape,
+              },
+            ]
+          : []),
         ...(spec.watch ?? []).map((w) => ({
           path: w.path,
           sync: w.sync ?? ('backup' as const),

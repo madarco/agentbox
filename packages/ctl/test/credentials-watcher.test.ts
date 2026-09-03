@@ -41,16 +41,39 @@ function fakeRelay(outcomes: PostOutcome[] = []): {
  * the daemon.
  */
 const BAKED_SPECS = AGENT_SYNC_SPECS.filter((s) => !s.hidden);
+/**
+ * The watcher's domain: baked agents that DECLARE a credential.
+ *
+ * `credential` is optional; absent means the agent has no host-side credential
+ * at all (openclaw generates its gateway token inside the box). Such an agent
+ * gets no watcher row, because this list is FANOUT — a row here is a file
+ * copied into every other box.
+ */
+const BAKED_WITH_CREDENTIAL = BAKED_SPECS.filter((s) => s.credential);
 
 describe('WATCHED_CREDENTIALS drift vs @agentbox/sandbox-core registry', () => {
   it('mirrors credential.boxAbsPath and realShape per baked agent', () => {
-    for (const spec of BAKED_SPECS) {
+    for (const spec of BAKED_WITH_CREDENTIAL) {
       const watched = WATCHED_CREDENTIALS.find((w) => w.agent === spec.id);
       expect(watched, `missing watcher entry for '${spec.id}'`).toBeDefined();
-      expect(watched!.path).toBe(spec.credential.boxAbsPath);
-      expect(watched!.shape).toBe(spec.credential.realShape);
+      expect(watched!.path).toBe(spec.credential?.boxAbsPath);
+      expect(watched!.shape).toBe(spec.credential?.realShape);
     }
-    expect(WATCHED_CREDENTIALS).toHaveLength(BAKED_SPECS.length);
+    expect(WATCHED_CREDENTIALS).toHaveLength(BAKED_WITH_CREDENTIAL.length);
+  });
+
+  it('watches nothing for a baked agent that declares no credential', () => {
+    // The absence is the declaration, so assert it. A row for openclaw pointed
+    // at `openclaw.json` would fan one box's gateway identity and channel
+    // pairings out to every other box.
+    const credentialless = BAKED_SPECS.filter((s) => !s.credential);
+    expect(credentialless.map((s) => s.id)).toContain('openclaw');
+    for (const spec of credentialless) {
+      expect(
+        WATCHED_CREDENTIALS.find((w) => w.agent === spec.id),
+        `'${spec.id}' declares no credential but is watched — the watch is fanout`,
+      ).toBeUndefined();
+    }
   });
 
   it('isRealCredentialText agrees with isRealAgentCredential', () => {
@@ -62,7 +85,7 @@ describe('WATCHED_CREDENTIALS drift vs @agentbox/sandbox-core registry', () => {
       'not-json',
       JSON.stringify([1, 2]),
     ];
-    for (const spec of BAKED_SPECS) {
+    for (const spec of BAKED_WITH_CREDENTIAL) {
       const watched = WATCHED_CREDENTIALS.find((w) => w.agent === spec.id)!;
       for (const sample of samples) {
         expect(

@@ -15,6 +15,10 @@ import { BUILTIN_AGENT_SPECS } from '../src/index.js';
  * Every agent's recipe, including a plugin's, must therefore create that subdir
  * without asserting ownership of it.
  */
+function byId(id: string) {
+  return BUILTIN_AGENT_SPECS.find((s) => s.id === id);
+}
+
 function postInstalls(): { id: string; script: string }[] {
   const out: { id: string; script: string }[] = [];
   for (const spec of BUILTIN_AGENT_SPECS) {
@@ -56,9 +60,22 @@ describe('agent post-install vs the credentials mount', () => {
     }
   });
 
-  it('still creates the agent subdir of the mount', () => {
+  it('still creates the agent subdir of the mount -- for an agent that has a credential', () => {
     for (const { id, script } of postInstalls()) {
+      if (!byId(id)?.credential) continue;
       expect(script, id).toContain(`mkdir -p ${BOX_CREDS_DIR}/`);
+    }
+  });
+
+  it('creates no subdir at all for an agent that declares no credential', () => {
+    // `credential` is optional and openclaw declares none, so it gets no
+    // subpath of the shared credentials volume. Creating one would reserve a
+    // mount point nothing will ever mount.
+    const credentialless = BUILTIN_AGENT_SPECS.filter((s) => !s.credential).map((s) => s.id);
+    expect(credentialless).toContain('openclaw');
+    for (const { id, script } of postInstalls()) {
+      if (!credentialless.includes(id)) continue;
+      expect(script, id).not.toContain(BOX_CREDS_DIR);
     }
   });
 });

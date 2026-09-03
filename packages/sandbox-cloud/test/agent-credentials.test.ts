@@ -33,6 +33,7 @@ import {
   seedAgentVolumesIfFresh,
 } from '../src/sync/agent-credentials.js';
 import { registerAgentCloudModule } from '../src/sync/agent-cloud-module.js';
+import { requireAgentCredential } from '@agentbox/core';
 
 interface ExecCall {
   cmd: string;
@@ -119,6 +120,14 @@ function makeMockBackend(opts: {
  * be a hardcoded three, which meant a fourth agent got no mounts at all.
  */
 const EXPECTED_AGENTS = AGENT_SYNC_SPECS.filter((a) => a.staticPaths[0]?.boxDir).map((a) => a.id);
+/**
+ * Mounts track the agents that DECLARE a credential, which is a subset: an
+ * agent may have none (openclaw), and it then gets a static mount but no
+ * subpath of the shared credentials volume.
+ */
+const EXPECTED_MOUNTED = AGENT_SYNC_SPECS.filter(
+  (a) => a.staticPaths[0]?.boxDir && a.credential,
+).map((a) => a.id);
 
 /**
  * `sandbox-cloud` cannot import an agent package — that is the cycle — so the
@@ -135,7 +144,8 @@ async function stageHostFile(hostPath: string, entryName: string) {
 registerAgentCloudModule({
   id: 'claude',
   afterSeed: () => Promise.resolve(),
-  stageCredentials: () => stageHostFile(join(homedir(), '.agentbox', 'claude-credentials.json'), '.credentials.json'),
+  stageCredentials: () =>
+    stageHostFile(join(homedir(), '.agentbox', 'claude-credentials.json'), '.credentials.json'),
 });
 registerAgentCloudModule({
   id: 'codex',
@@ -156,7 +166,7 @@ describe('ensureAgentVolumesForCloud', () => {
     // Derived, not listed: the rows come from the registry now, so an agent
     // added later gets a mount instead of being silently absent.
     expect(res.agents).toEqual(EXPECTED_AGENTS);
-    expect(res.mounts).toHaveLength(EXPECTED_AGENTS.length);
+    expect(res.mounts).toHaveLength(EXPECTED_MOUNTED.length);
 
     // Every mount shares the same volumeId (single shared volume).
     const volumeIds = new Set(res.mounts.map((m) => m.volumeId));
@@ -181,11 +191,9 @@ describe('ensureAgentVolumesForCloud', () => {
     const res = await ensureAgentVolumesForCloud(backend);
     expect(res.agents).toContain('example');
     const byPath = new Map(res.mounts.map((m) => [m.mountPath, m] as const));
-    const spec = AGENT_SYNC_SPECS.find((a) => a.id === 'example');
+    const cred = requireAgentCredential(AGENT_SYNC_SPECS.find((a) => a.id === 'example')!);
     // Both paths come from its registry row, with nothing hand-written here.
-    expect(byPath.get(spec!.credential.cloudMountPath)?.subpath).toBe(
-      spec!.credential.cloudSubpath,
-    );
+    expect(byPath.get(cred.cloudMountPath)?.subpath).toBe(cred.cloudSubpath);
   });
 
   it('derives every mount from the registry row, not a local copy', async () => {
@@ -194,11 +202,36 @@ describe('ensureAgentVolumesForCloud', () => {
     const byPath = new Map(res.mounts.map((m) => [m.mountPath, m] as const));
     for (const spec of AGENT_SYNC_SPECS) {
       if (!spec.staticPaths[0]?.boxDir) continue;
-      expect(byPath.get(spec.credential.cloudMountPath), spec.id).toBeDefined();
-      expect(byPath.get(spec.credential.cloudMountPath)?.subpath, spec.id).toBe(
-        spec.credential.cloudSubpath,
-      );
+      const cred = spec.credential;
+      if (!cred) continue;
+      expect(byPath.get(cred.cloudMountPath), spec.id).toBeDefined();
+      expect(byPath.get(cred.cloudMountPath)?.subpath, spec.id).toBe(cred.cloudSubpath);
     }
+  });
+
+  it('reserves NO credentials-volume mount for an agent that declares none', async () => {
+    // The shared `agentbox-credentials` volume is per-org, and a mount is a
+    // reserved subpath in it. An agent with no host-side credential would never
+    // have anything to put there, so it gets no mount at all — not a mount at an
+    // invented path. openclaw is the live case.
+    const { backend } = makeMockBackend({});
+    const res = await ensureAgentVolumesForCloud(backend);
+    const credentialless = AGENT_SYNC_SPECS.filter(
+      (s) => !s.credential && s.staticPaths[0]?.boxDir,
+    );
+    expect(credentialless.map((s) => s.id)).toContain('openclaw');
+    // It is still a real agent of this box: static config, run-env, install.
+    for (const spec of credentialless) expect(res.agents).toContain(spec.id);
+    // Every mount that IS reserved traces back to a declared credential.
+    const declared = new Set(
+      AGENT_SYNC_SPECS.flatMap((s) => (s.credential ? [s.credential.cloudMountPath] : [])),
+    );
+    for (const mount of res.mounts) {
+      expect(declared.has(mount.mountPath), `unexpected mount ${mount.mountPath}`).toBe(true);
+      expect(mount.mountPath).toBeDefined();
+      expect(mount.subpath).toBeDefined();
+    }
+    expect(res.mounts).toHaveLength(declared.size);
   });
 
   it('returns empty mounts but full agents list when backend has no volume primitive', async () => {
@@ -378,7 +411,6 @@ describe('seedAgentVolumesIfFresh (credentials-only)', () => {
 
     await rm(codexDir, { recursive: true, force: true });
   });
-
 });
 
 describe('extractCloudAgentCredentials', () => {

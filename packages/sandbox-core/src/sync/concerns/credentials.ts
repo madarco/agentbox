@@ -44,8 +44,12 @@ export type CredentialAgentKind = AgentId;
  */
 export const SEED_MARKER = '.agentbox-seeded-at';
 
-/** Host backup of the claude OAuth blob — the registry is the single source of truth. */
-const CLAUDE_HOST_BACKUP = resolveAgentSpec('claude').credential.hostBackup;
+/**
+ * Host backup of the claude OAuth blob — the registry is the single source of
+ * truth. Claude always declares a credential; the `?? ''` is the type's, not a
+ * real case (an empty path simply fails the `readFile` below).
+ */
+const CLAUDE_HOST_BACKUP = resolveAgentSpec('claude').credential?.hostBackup ?? '';
 
 /**
  * True iff `text` looks like a real (usable) credential for `agent`, not an
@@ -65,7 +69,7 @@ export function isRealAgentCredential(agent: CredentialAgentKind, text: string):
   }
   if (typeof parsed !== 'object' || parsed === null) return false;
   const spec = AGENT_SYNC_SPECS.find((s) => s.id === agent);
-  if (spec?.credential.realShape === 'claude-oauth') {
+  if (spec?.credential?.realShape === 'claude-oauth') {
     const rt = (parsed as { claudeAiOauth?: { refreshToken?: unknown } }).claudeAiOauth
       ?.refreshToken;
     return typeof rt === 'string' && rt.length > 0;
@@ -119,6 +123,10 @@ export async function extractCredentials(
   const log = opts.onLog ?? (() => {});
   const extracted: AgentId[] = [];
   for (const spec of AGENT_SYNC_SPECS) {
+    // No credential declared → nothing on the box to read and nowhere on the
+    // host to put it. Skipped before the `readText`, so a credential-less agent
+    // costs no round-trip per box.
+    if (!spec.credential) continue;
     const hostBackup = opts.backups?.[spec.id] ?? spec.credential.hostBackup;
     try {
       // `readText` is `cat <path> 2>/dev/null` with noRetry → null on a missing
@@ -162,7 +170,11 @@ export function parseCredentialsUpdate(payload: unknown): CredentialsUpdate | nu
   if (payload === null || typeof payload !== 'object') return null;
   const obj = payload as Record<string, unknown>;
   const agent = obj['agent'];
-  if (typeof agent !== 'string' || !AGENT_SYNC_SPECS.some((s) => s.id === agent)) return null;
+  // Unknown agent, or one that declares no credential: there is no host backup
+  // to write and no fan-out to run, so an event naming it is malformed.
+  // Rejecting here keeps every writer below total.
+  if (typeof agent !== 'string' || !AGENT_SYNC_SPECS.some((s) => s.id === agent && s.credential))
+    return null;
   const b64 = obj['contentBase64'];
   if (typeof b64 !== 'string' || b64.length === 0 || b64.length > MAX_CREDENTIAL_BYTES) return null;
   let content: string;
@@ -197,7 +209,7 @@ export function jsonNumberAt(text: string, path: readonly string[]): number | nu
 
 /** The agent's declared freshness value for a blob, or null when it declares none. */
 export function credentialFreshness(agent: CredentialAgentKind, text: string): number | null {
-  const path = resolveAgentSpec(agent).credential.freshness?.jsonPath;
+  const path = resolveAgentSpec(agent).credential?.freshness?.jsonPath;
   return path ? jsonNumberAt(text, path) : null;
 }
 
@@ -224,7 +236,7 @@ export function shouldAcceptCredentialUpdate(
 ): { accept: boolean; reason: string } {
   if (existing === null) return { accept: true, reason: 'no existing backup' };
   if (existing === incoming) return { accept: false, reason: 'unchanged' };
-  const path = resolveAgentSpec(agent).credential.freshness?.jsonPath;
+  const path = resolveAgentSpec(agent).credential?.freshness?.jsonPath;
   if (path) {
     const field = path.join('.');
     const incomingExp = jsonNumberAt(incoming, path);
@@ -244,7 +256,13 @@ export async function writeCredentialBackup(
   content: string,
   opts: { backupPath?: string } = {},
 ): Promise<void> {
-  const path = opts.backupPath ?? resolveAgentSpec(agent).credential.hostBackup;
+  const path = opts.backupPath ?? resolveAgentSpec(agent).credential?.hostBackup;
+  // An agent with no credential has no backup file. Reaching here means a caller
+  // skipped a gate (`parseCredentialsUpdate` and `extractCredentials` both drop
+  // these agents), so say so rather than writing to `undefined`.
+  if (path === undefined) {
+    throw new Error(`agent '${agent}' declares no credential — there is no host backup to write`);
+  }
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${String(process.pid)}`;
   await writeFile(tmp, content, { mode: 0o600 });
@@ -257,7 +275,9 @@ export async function readCredentialBackup(
   agent: CredentialAgentKind,
   opts: { backupPath?: string } = {},
 ): Promise<string | null> {
-  const path = opts.backupPath ?? resolveAgentSpec(agent).credential.hostBackup;
+  const path = opts.backupPath ?? resolveAgentSpec(agent).credential?.hostBackup;
+  // No credential declared ⇒ no backup, which reads the same as "absent".
+  if (path === undefined) return null;
   try {
     return await readFile(path, 'utf8');
   } catch {
@@ -284,6 +304,9 @@ export async function readCredentialBackup(
  */
 export async function resolveHostCredential(agent: CredentialAgentKind): Promise<string | null> {
   const spec = resolveAgentSpec(agent);
+  // The agent declares no host-side credential, so there is no backup AND no
+  // tool path to fall back to.
+  if (!spec.credential) return null;
   const backup = await readCredentialBackup(agent);
   if (backup !== null && isRealAgentCredential(agent, backup)) return backup;
 
@@ -303,7 +326,15 @@ export async function pushCredentialToBox(
   agent: CredentialAgentKind,
   content: string,
 ): Promise<void> {
-  const abs = resolveAgentSpec(agent).credential.boxAbsPath;
+  const abs = resolveAgentSpec(agent).credential?.boxAbsPath;
+  // Same reasoning as `writeCredentialBackup`: no declared credential means no
+  // canonical in-box path, so there is nowhere to push. A caller that got here
+  // skipped its gate.
+  if (abs === undefined) {
+    throw new Error(
+      `agent '${agent}' declares no credential — there is nothing to push into a box`,
+    );
+  }
   const dir = abs.slice(0, abs.lastIndexOf('/'));
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-cred-push-'));
   try {

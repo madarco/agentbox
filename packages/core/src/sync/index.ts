@@ -33,6 +33,7 @@ export type {
 } from './agent-spec.js';
 export {
   agentPushExcludes,
+  requireAgentCredential,
   LIVE_DATABASE_EXCLUDES,
   resolveAgentInstall,
   BOX_USER,

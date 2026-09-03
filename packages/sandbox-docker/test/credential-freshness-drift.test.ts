@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { requireAgentCredential } from '@agentbox/core';
 import { SYNC_SCRIPT } from '../src/sync/claude-credentials.js';
 
 /**
@@ -13,7 +14,7 @@ import { SYNC_SCRIPT } from '../src/sync/claude-credentials.js';
  * whole fleet out.
  */
 describe('the docker sync script and the spec agree on the freshness field', () => {
-  const path = resolveAgentSpec('claude').credential.freshness?.jsonPath;
+  const path = requireAgentCredential(resolveAgentSpec('claude')).freshness?.jsonPath;
 
   it('claude declares one', () => {
     // Without it, `shouldAcceptCredentialUpdate` silently degrades claude to

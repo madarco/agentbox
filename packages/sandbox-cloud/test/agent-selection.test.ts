@@ -56,9 +56,14 @@ describe('cloud agent selection', () => {
     // since `CloudAgentKind` is an open string. Hardcoding the expectation here
     // is what let that ship.
     const expected = AGENT_SYNC_SPECS.filter((a) => a.staticPaths[0]?.boxDir).map((a) => a.id);
+    // One mount per agent that declares a credential -- fewer than `expected`,
+    // because an agent may declare none and then gets no subpath of the shared
+    // volume at all.
+    const mounted = expected.filter((id) => AGENT_SYNC_SPECS.find((a) => a.id === id)?.credential);
+    expect(mounted.length).toBeLessThan(expected.length);
     const res = await ensureAgentVolumesForCloud(volumeBackend(), {});
     expect(res.agents).toEqual(expected);
-    expect(res.mounts).toHaveLength(expected.length);
+    expect(res.mounts).toHaveLength(mounted.length);
     // The canary specifically: a hidden agent is still a real one here.
     expect(res.agents).toContain('example');
   });

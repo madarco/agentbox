@@ -5,16 +5,39 @@ import { AGENT_SYNC_SPECS } from '../src/sync/registry.js';
 describe('buildAgentDescriptors', () => {
   it('reproduces the credential watch list ctl has baked in today', () => {
     // The whole point of shipping this over RPC is that a box's behaviour does
-    // not change on day one. Every agent's credential must still be watched,
-    // with the same path and the same validator.
+    // not change on day one. Every agent that DECLARES a credential must still
+    // be watched, with the same path and the same validator.
     const { agents } = buildAgentDescriptors();
     expect(agents).toHaveLength(AGENT_SYNC_SPECS.length);
     for (const spec of AGENT_SYNC_SPECS) {
+      const declared = spec.credential;
+      if (!declared) continue;
       const got = agents.find((a) => a.id === spec.id);
-      const cred = got?.watch.find((w) => w.path === spec.credential.boxAbsPath);
+      const cred = got?.watch.find((w) => w.path === declared.boxAbsPath);
       expect(cred, spec.id).toBeDefined();
       expect(cred?.sync).toBe('fanout');
-      expect(cred?.shape).toBe(spec.credential.realShape);
+      expect(cred?.shape).toBe(declared.realShape);
+    }
+  });
+
+  it('emits NO credential watch for an agent that declares none', () => {
+    // The credential watch is FANOUT: whatever it names is copied into every
+    // other box. An agent with no host-side credential contributes no watch at
+    // all — not one on a fictional path, and not one on its own config, which
+    // would hand every box the first box's identity. openclaw is the live case
+    // (its gateway token is generated per box).
+    const { agents } = buildAgentDescriptors();
+    const credentialless = AGENT_SYNC_SPECS.filter((s) => !s.credential);
+    expect(credentialless.map((s) => s.id)).toContain('openclaw');
+    for (const spec of credentialless) {
+      const got = agents.find((a) => a.id === spec.id);
+      expect(got, spec.id).toBeDefined();
+      // It still ships a descriptor (session, activity, service, configRender)
+      // — only the credential watch is absent.
+      expect(
+        got?.watch.filter((w) => w.sync === 'fanout'),
+        spec.id,
+      ).toEqual([]);
     }
   });
 
@@ -47,6 +70,7 @@ describe('buildAgentDescriptors', () => {
     // a box it is meaningless, and sending it leaks the host's home layout.
     const json = JSON.stringify(buildAgentDescriptors());
     for (const spec of AGENT_SYNC_SPECS) {
+      if (!spec.credential) continue;
       expect(json, spec.id).not.toContain(spec.credential.hostBackup);
     }
     expect(json).not.toContain('/Users/');

@@ -20,6 +20,7 @@ export {
   type CredentialAgentKind,
 } from '@agentbox/sandbox-core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { requireAgentCredential } from '@agentbox/core';
 
 /**
  * Host-side backup of the in-box Claude Code OAuth credentials.
@@ -240,7 +241,10 @@ export function parseSyncResult(stdout: string): SyncClaudeCredentialsResult {
  * copy that could drift; `credential-freshness.test.ts` pins the two together.
  */
 const FRESHNESS_JQ = (
-  resolveAgentSpec('claude').credential.freshness?.jsonPath ?? ['claudeAiOauth', 'expiresAt']
+  requireAgentCredential(resolveAgentSpec('claude')).freshness?.jsonPath ?? [
+    'claudeAiOauth',
+    'expiresAt',
+  ]
 )
   .map((k: string) => `.${k}`)
   .join('');

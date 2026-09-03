@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentPushExcludes, LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
+import { agentPushExcludes, LIVE_DATABASE_EXCLUDES, requireAgentCredential } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, agentIds, resolveAgentSpec } from '../src/sync/registry.js';
 
 describe('agent sync registry', () => {
@@ -23,16 +23,14 @@ describe('agent sync registry', () => {
   });
 
   it('credential + volume data matches the known docker/cloud layout', () => {
-    const claude = resolveAgentSpec('claude');
-    expect(claude.dockerVolume).toBe('agentbox-claude-config');
-    expect(claude.credential.boxAbsPath).toBe('/home/vscode/.claude/.credentials.json');
-    expect(claude.credential.hostBackup).toBe(
-      join(homedir(), '.agentbox', 'claude-credentials.json'),
-    );
-    expect(claude.credential.cloudMountPath).toBe('/home/vscode/.agentbox-creds/claude');
+    const claude = requireAgentCredential(resolveAgentSpec('claude'));
+    expect(resolveAgentSpec('claude').dockerVolume).toBe('agentbox-claude-config');
+    expect(claude.boxAbsPath).toBe('/home/vscode/.claude/.credentials.json');
+    expect(claude.hostBackup).toBe(join(homedir(), '.agentbox', 'claude-credentials.json'));
+    expect(claude.cloudMountPath).toBe('/home/vscode/.agentbox-creds/claude');
 
     const codex = resolveAgentSpec('codex');
-    expect(codex.credential.boxAbsPath).toBe('/home/vscode/.codex/auth.json');
+    expect(requireAgentCredential(codex).boxAbsPath).toBe('/home/vscode/.codex/auth.json');
     expect(codex.forwardedEnvKeys).toEqual(['OPENAI_API_KEY']);
   });
 
@@ -131,7 +129,7 @@ describe('agent sync registry', () => {
     // The credential file is the one entry that differs by target: out of a
     // SHARED snapshot, into the box's OWN volume (which is its login store).
     for (const id of ['claude', 'codex', 'opencode']) {
-      const cred = resolveAgentSpec(id).credential.boxRelPath;
+      const cred = requireAgentCredential(resolveAgentSpec(id)).boxRelPath;
       expect(pushExcludes(id, 'snapshot')).toContain(cred);
       expect(pushExcludes(id, 'volume')).not.toContain(cred);
     }
