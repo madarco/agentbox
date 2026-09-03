@@ -130,13 +130,19 @@ describe('credentials concern — extractCredentials', () => {
     const extracted = await extractCredentials(t, { backups: b });
     expect(extracted).toEqual(['claude']);
 
-    // One readText per agent, in registry order, at the canonical box paths.
-    // Derived from the registry rather than listed: this asserts the concern
-    // visits EVERY agent, which a hardcoded list quietly stops doing the moment
-    // an agent is added.
-    expect(t.ops.map((o) => o.op)).toEqual(AGENT_SYNC_SPECS.map(() => 'readText'));
+    // One readText per CREDENTIAL-DECLARING agent, in registry order, at the
+    // canonical box paths. Derived from the registry rather than listed: this
+    // asserts the concern visits every such agent, which a hardcoded list
+    // quietly stops doing the moment an agent is added.
+    //
+    // An agent with no declared credential is skipped before the transport is
+    // touched — there is no file to read and nowhere to put it — so it costs no
+    // round-trip per box. openclaw is the live case, so the two lists differ.
+    const withCredential = AGENT_SYNC_SPECS.filter((spec) => spec.credential);
+    expect(withCredential.length).toBeLessThan(AGENT_SYNC_SPECS.length);
+    expect(t.ops.map((o) => o.op)).toEqual(withCredential.map(() => 'readText'));
     expect(t.ops.map((o) => o.args['boxPath'])).toEqual(
-      AGENT_SYNC_SPECS.map((spec) => spec.credential.boxAbsPath),
+      withCredential.map((spec) => spec.credential?.boxAbsPath),
     );
 
     expect(await readFile(b.claude, 'utf8')).toBe(realClaude);

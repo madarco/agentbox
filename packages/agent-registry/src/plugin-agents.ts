@@ -82,7 +82,9 @@ const REQUIRED_SPEC_FIELDS = [
   'install',
   'dockerVolume',
   'staticPaths',
-  'credential',
+  // NOT `credential`: an agent may declare it has none (openclaw generates its
+  // gateway token inside the box and there is nothing on the host to sync). A
+  // credential that IS present is still shape-checked — see `credentialProblem`.
   'forwardedEnvKeys',
   'boxRunEnv',
   'caps',
@@ -209,7 +211,8 @@ export function agentSpecProblem(raw: unknown): string | null {
   if (!Array.isArray(spec.aliases)) return '`aliases` must be an array';
   const shape =
     installProblem(spec.install) ??
-    credentialProblem(spec.credential) ??
+    // Optional field: absent is a legitimate declaration, malformed is not.
+    (spec.credential === undefined ? null : credentialProblem(spec.credential)) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

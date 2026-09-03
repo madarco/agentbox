@@ -88,10 +88,15 @@ interface AgentSpec {
   kind: CloudAgentKind;
   /** Where stage*Static tarballs extract (sandbox FS, snapshot-captured). */
   staticMountPath: string;
-  /** Where the credentials-volume subpath gets mounted at runtime. */
-  credentialsMountPath: string;
+  /**
+   * Where the credentials-volume subpath gets mounted at runtime, or undefined
+   * when the agent declares no `credential`. Both fields move together: a mount
+   * is a reserved slot in a volume shared by the whole org, and an agent with no
+   * host-side credential would never have anything to put in it.
+   */
+  credentialsMountPath?: string;
   /** Subdir of the shared credentials volume for this agent. */
-  credentialsSubpath: string;
+  credentialsSubpath?: string;
   stageStatic?: (opts: { hostWorkspace?: string }) => Promise<StageResult>;
   stageCredentials?: () => Promise<StageResult>;
 }
@@ -106,8 +111,12 @@ function agentSpecs(): AgentSpec[] {
     out.push({
       kind: spec.id,
       staticMountPath: boxDir,
-      credentialsMountPath: spec.credential.cloudMountPath,
-      credentialsSubpath: spec.credential.cloudSubpath,
+      ...(spec.credential
+        ? {
+            credentialsMountPath: spec.credential.cloudMountPath,
+            credentialsSubpath: spec.credential.cloudSubpath,
+          }
+        : {}),
       ...(mod?.stageStatic ? { stageStatic: (o) => mod.stageStatic!(o) } : {}),
       ...(mod?.stageCredentials ? { stageCredentials: () => mod.stageCredentials!() } : {}),
     });
@@ -214,11 +223,13 @@ export async function ensureAgentVolumesForCloud(
     return { mounts: [], env: buildForwardedEnv([]), agents: [] };
   }
 
-  const mounts: CloudVolumeMount[] = specs.map((spec) => ({
-    volumeId,
-    mountPath: spec.credentialsMountPath,
-    subpath: spec.credentialsSubpath,
-  }));
+  // `flatMap`, not `map`: an agent with no declared credential gets no mount at
+  // all rather than a mount at `undefined`.
+  const mounts: CloudVolumeMount[] = specs.flatMap((spec) =>
+    spec.credentialsMountPath !== undefined && spec.credentialsSubpath !== undefined
+      ? [{ volumeId, mountPath: spec.credentialsMountPath, subpath: spec.credentialsSubpath }]
+      : [],
+  );
   return { mounts, env: buildForwardedEnv(allAgents), agents: allAgents };
 }
 
@@ -385,6 +396,12 @@ async function seedCredentialsOne(
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
 
+  // No declared credential at all: no mount was reserved and there is no
+  // host-side blob, so there is nothing to probe or seed. Checked before the
+  // stager so the box is never touched on this agent's behalf.
+  const credentialsMountPath = spec.credentialsMountPath;
+  if (credentialsMountPath === undefined) return;
+
   // Before anything touches the box: an agent whose cloud module supplies no
   // credential stager has nothing to send, so probing its marker would be a
   // round-trip for a seed that cannot happen. Its MOUNTS still exist, so an
@@ -410,7 +427,7 @@ async function seedCredentialsOne(
     typeof backend.ensureVolume === 'function' && cloudVolumesUsable(handle.sandboxClass);
 
   if (hasVolume && !opts.force) {
-    const probe = await backend.exec(handle, `test -f ${spec.credentialsMountPath}/${SEED_MARKER}`);
+    const probe = await backend.exec(handle, `test -f ${credentialsMountPath}/${SEED_MARKER}`);
     if (probe.exitCode === 0) {
       log(`${spec.kind}: credentials already seeded — mounting only`);
       return;
@@ -466,9 +483,9 @@ async function seedCredentialsOne(
             `rm -rf ${stageDir}; ` +
             `mkdir -p ${stageDir}; ` +
             `tar -xzf ${remoteTar} -C ${stageDir}; ` +
-            `cp -r ${stageDir}/. ${spec.credentialsMountPath}/; ` +
+            `cp -r ${stageDir}/. ${credentialsMountPath}/; ` +
             `rm -rf ${stageDir}; ` +
-            `date -u +%FT%TZ > ${spec.credentialsMountPath}/${SEED_MARKER}; ` +
+            `date -u +%FT%TZ > ${credentialsMountPath}/${SEED_MARKER}; ` +
             `rm -f ${remoteTar}`
           );
         })()
@@ -484,8 +501,8 @@ async function seedCredentialsOne(
         // `--no-same-permissions --no-same-owner -m` flags mirror what
         // vercel/hetzner did in their old custom pushers.
         `set -e; ` +
-        `mkdir -p ${spec.credentialsMountPath}; ` +
-        `tar -xzf ${remoteTar} -C ${spec.credentialsMountPath} --no-same-permissions --no-same-owner -m; ` +
+        `mkdir -p ${credentialsMountPath}; ` +
+        `tar -xzf ${remoteTar} -C ${credentialsMountPath} --no-same-permissions --no-same-owner -m; ` +
         `rm -f ${remoteTar}`;
     const extract = hasVolume
       ? await backend.exec(handle, extractCmd)
@@ -511,14 +528,17 @@ async function seedCredentialsOne(
 export function agentSpecsForCloud(): Array<{
   kind: CloudAgentKind;
   staticMountPath: string;
-  credentialsMountPath: string;
-  credentialsSubpath: string;
+  /** Absent for an agent that declares no `credential` — it gets no mount. */
+  credentialsMountPath?: string;
+  credentialsSubpath?: string;
 }> {
   return agentSpecs().map((s) => ({
     kind: s.kind,
     staticMountPath: s.staticMountPath,
-    credentialsMountPath: s.credentialsMountPath,
-    credentialsSubpath: s.credentialsSubpath,
+    ...(s.credentialsMountPath !== undefined
+      ? { credentialsMountPath: s.credentialsMountPath }
+      : {}),
+    ...(s.credentialsSubpath !== undefined ? { credentialsSubpath: s.credentialsSubpath } : {}),
   }));
 }
 
@@ -628,6 +648,8 @@ export async function reconcileAgentCredentialsViaTransport(
   const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
   for (const spec of AGENT_SYNC_SPECS) {
     if (wanted && !wanted.has(spec.id)) continue;
+    // No host-side credential to reconcile in either direction.
+    if (!spec.credential) continue;
     const backupPath = opts.backups?.[spec.id];
     try {
       const hostText = await readCredentialBackup(spec.id, { backupPath });

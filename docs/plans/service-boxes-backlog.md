@@ -149,13 +149,22 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 
 ## From Phases 6-8 (openclaw as a service agent, 2026-09-02)
 
-- **`AgentSyncSpec.credential` should be optional.** OpenClaw has no host-side credential at all —
-  its gateway token is generated per box and must never leave it — but the field is required, so the
-  row names a path nothing writes (`~/.openclaw/agentbox-credential.json`) to make every credential
-  mechanism a clean no-op. That is honest but indirect, and it forces a `WATCHED_CREDENTIALS` row in
-  ctl for a file that will never exist. Making the field optional touches ~10 shared call sites
-  (`agent-descriptor`, `credentials-watcher`, the cloud `agentSpecs()`, the credentials concern, the
-  relay fanout, the hub catalog); worth doing when a second credential-less agent appears.
+- ~~**`AgentSyncSpec.credential` should be optional.**~~ **Done.** The field is optional, openclaw
+  declares none, and every mechanism (descriptor watch, ctl `WATCHED_CREDENTIALS`, the cloud
+  `agentSpecs()` mounts, the credentials concern, the relay fanout, the custody upload set, the hub
+  catalog) skips an agent without one. `requireAgentCredential(spec)` is the unwrap for the call
+  sites that only exist to move a credential.
+- **Nothing checks `agentDirPrelude`'s creds-subdir against `credential.cloudSubpath`.** The
+  argument is now optional (omit it for a credential-less agent), but when it IS passed it is a
+  hand-typed string that must match the spec's `cloudSubpath` or the recipe creates a mount point at
+  a path nothing mounts. `creds-dir-postinstall.test.ts` only checks that a subdir is created, not
+  that it is the right one. Deriving it from the spec would remove the class.
+- **`CLAUDE_HOST_BACKUP` in the credentials concern falls back to `''`.** It resolves
+  `resolveAgentSpec('claude').credential?.hostBackup ?? ''` at module load, so if claude ever
+  stopped declaring a credential the reads would silently target the empty path rather than fail.
+  `requireAgentCredential` is the right unwrap, but throwing at import time is its own hazard — the
+  fix is to resolve it lazily inside the two functions that use it.
+
 - **`agentbox-ctl reload` does not re-run a service agent's render.** Reload applies the *unit*
   diff, and the render task's definition has not changed when only the overlay block has — so
   editing `openclaw:` needs `agentbox-ctl run-task openclaw-render --force`. Teaching reload to

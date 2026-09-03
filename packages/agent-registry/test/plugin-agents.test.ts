@@ -100,7 +100,26 @@ describe('agentSpecProblem', () => {
     const problem = agentSpecProblem({ id: 'x', aliases: [] });
     expect(problem).toMatch(/missing required field/);
     expect(problem).toContain('sessionName');
-    expect(problem).toContain('credential');
+    expect(problem).toContain('dockerVolume');
+    // `credential` is NOT required: an agent may declare it has none.
+    expect(problem).not.toContain('credential');
+  });
+
+  it('accepts a spec that declares no credential', () => {
+    // Absent means "this agent has no host-side credential to sync" -- the
+    // openclaw case, where the gateway token is generated inside the box. A
+    // plugin agent must be able to say that; requiring the field forced such an
+    // agent to name a file nothing writes, or worse, its own config.
+    const { credential: _credential, ...noCredential } = exampleSpec;
+    expect(agentSpecProblem(noCredential)).toBeNull();
+    expect(agentSpecProblem({ ...exampleSpec, credential: undefined })).toBeNull();
+  });
+
+  it('still rejects a malformed credential when one IS declared', () => {
+    // Optional is not unchecked: a present credential is the fan-out's write
+    // target, so it is shape-checked exactly as before.
+    expect(agentSpecProblem({ ...exampleSpec, credential: {} })).toMatch(/credential/);
+    expect(agentSpecProblem({ ...exampleSpec, credential: 'yes' })).toMatch(/credential/);
   });
 
   it('rejects a structurally wrong `install`, not merely a missing one', () => {

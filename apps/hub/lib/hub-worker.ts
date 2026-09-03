@@ -77,6 +77,8 @@ export async function seedHostBackupsFromCustody(
   log: (l: string) => void,
 ): Promise<void> {
   for (const spec of AGENT_SYNC_SPECS) {
+    // Nothing was ever uploaded for an agent that declares no credential.
+    if (!spec.credential) continue;
     const custodyPath = `agents/${spec.id}/${spec.credential.boxRelPath}`;
     try {
       const found = await custody.get(custodyPath);

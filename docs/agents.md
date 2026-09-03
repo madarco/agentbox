@@ -203,6 +203,8 @@ makes a single list safe for both:
 - **The credential file**, from `credential.boxRelPath`. Out of a `'snapshot'`
   (shared by every box made from it); INTO a `'volume'`, which is that box's own
   login store. All three agents listed it and all three meant the same thing.
+  An agent that declares no `credential` contributes no such entry — there is no
+  file to keep out of a shared snapshot.
 - **`LIVE_DATABASE_EXCLUDES`** (`*.sqlite*`, `*.db`, `*.db-*`), for every agent,
   with an `allowDatabases` opt-out nothing declares. Hand-enumerating these is
   what went stale: codex's list named `state_*` and `logs_*`, and three later
@@ -434,7 +436,7 @@ name; the render lints for a secret-shaped literal and warns.
 1. **Add the row** to `AGENT_SYNC_SPECS`: `id`, `binary`, `install`
    (recipe + `runAs` + any OS `packages` (+ `packagesOptional`) +
    `postInstall`), `sessionName`,
-   `dockerVolume`, `staticPaths`, `credential`, `forwardedEnvKeys`, `caps`,
+   `dockerVolume`, `staticPaths`, `forwardedEnvKeys`, `caps`,
    plus `seeds` / `launchFlags` if the agent needs an agentbox-owned file in
    place to work (see step 4), and `settings` (+ `install.alternatesFrom` /
    `tuiEnvFrom`) for anything the user should be able to configure per agent
@@ -442,6 +444,20 @@ name; the render lints for a secret-shaped literal and warns.
    Keep it JSON-serializable — no closures — so the descriptor can later be
    shipped into a box whose `agentbox-ctl` was baked before the agent existed,
    and so `agentbox agent add` can snapshot it verbatim.
+
+   **`credential` is optional.** Declare it when the agent has a login the HOST
+   holds and AgentBox moves into the box — claude's OAuth blob, codex's
+   `auth.json`. Omit it when the agent authenticates entirely inside the box, as
+   openclaw does: its gateway token is generated per box by `openclaw onboard`,
+   so there is nothing on the host to back up or push. Omitting is the only
+   correct way to say that. The credential watch is FANOUT — whatever the field
+   names is copied into every other box — so pointing it at the agent's real
+   config would hand every box the first box's identity, and naming a file
+   nothing ever writes adds a fiction every consumer has to know about. With the
+   field absent the agent gets no credentials-volume mount, no `agents.list`
+   credential watch, no host-backup probe and no entry in the relay fan-out;
+   everything else about it is unchanged. Absent is not a placeholder for "not
+   wired up yet" — if the agent has a host-side login, declare it.
 2. **Add the agent's package** — `packages/agent-<id>/`, with its CLI surface
    under `src/cli/` — and its arm in the `AGENT_MODULES` table
    (`apps/cli/src/agents/index.ts`): the guided-login detector, and a

@@ -18,8 +18,9 @@ import {
   oauthRefreshExpiresAt,
   resolveAgentSpec,
 } from '@agentbox/sandbox-core';
+import { requireAgentCredential } from '@agentbox/core';
 
-const CLAUDE_HOST_BACKUP = resolveAgentSpec('claude').credential.hostBackup;
+const CLAUDE_HOST_BACKUP = requireAgentCredential(resolveAgentSpec('claude')).hostBackup;
 
 /**
  * True iff the claude host backup's *access* token has lapsed

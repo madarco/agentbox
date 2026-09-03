@@ -22,7 +22,7 @@ import {
   type SignInResult,
 } from '@agentbox/cli-kit';
 import { ensureImage, extractVolumeAuthToBackup, type BoxRecord } from '@agentbox/sandbox-docker';
-import { agentConfigVolume } from '@agentbox/core';
+import { agentConfigVolume, requireAgentCredential } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +43,8 @@ import { piAuthAvailable } from './host-creds.js';
 import { piAuthFileHasProviders } from '../auth-shape.js';
 
 const PI_SPEC = resolveAgentSpec('pi');
+/** Pi declares a credential; unwrap once so the two call sites below share it. */
+const PI_HOST_BACKUP = requireAgentCredential(PI_SPEC).hostBackup;
 
 /**
  * Hand the terminal to Pi in a throwaway container against the shared volume.
@@ -105,7 +107,7 @@ async function cloudPiCredAvailable(env: NodeJS.ProcessEnv = process.env): Promi
   // sign-in offer would then never appear and the box would be seeded with an
   // empty credential. `piAuthAvailable` already had this rule; these two paths
   // did not, which is the inconsistency Bugbot caught.
-  for (const p of [PI_SPEC.credential.hostBackup, join(homedir(), '.pi', 'agent', 'auth.json')]) {
+  for (const p of [PI_HOST_BACKUP, join(homedir(), '.pi', 'agent', 'auth.json')]) {
     if (await piAuthFileHasProviders(p)) return true;
   }
   return false;
@@ -174,7 +176,7 @@ export const piRuntime: AgentRuntime = {
     const { copied } = await extractVolumeAuthToBackup({
       volume: SHARED_PI_VOLUME,
       image,
-      backupFile: PI_SPEC.credential.hostBackup,
+      backupFile: PI_HOST_BACKUP,
     });
     if (copied) log.success('Signed in to Pi — saved for future boxes.');
     else
