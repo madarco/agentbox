@@ -233,3 +233,19 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   refusing the field outright when the hub is not the caller's machine. Cheap partial hardening in
   the meantime: reject absolute and `..`-escaping entries at the validator, and have the worker fail
   loudly rather than log `copied 0/N` and continue.
+
+## From Phase 1 follow-up (`--persistent` on the agent commands, 2026-09-03)
+
+- **The non-git workspace seed buffers the whole tree in memory.**
+  `seedWorkspaceFromDir` (`packages/sandbox-docker/src/sync/in-box-git.ts:643`) runs
+  `tar -C <source> -cf - .` with `encoding: 'buffer'` and holds the entire archive as one Buffer
+  before piping it into `docker exec … tar -xf -`. On a workspace with `node_modules` that exceeds
+  the heap and the create dies at `tar of <dir> failed:` with an EMPTY stderr, which reads as a tar
+  problem rather than an out-of-memory one. Hit while smoke-testing a nested `agentbox claude` from
+  inside `/workspace`; worked around with a small scratch project.
+  This is the **no-git seeding path** — `create.ts:1090`, taken when no repos are detected (and for
+  `--host-snapshot`, where the source is the clone dir). It also backs **`agentbox clone`**, whose
+  export deliberately drops `.git`, so every clone of a workspace carrying `node_modules`
+  (`--include-node-modules`, or a non-git project that simply has one) goes through it. The fix is
+  to stream the tar — pipe the `tar` child's stdout straight into the `docker exec` stdin instead of
+  materializing it — not to raise a limit. Recorded only; not fixed here.
