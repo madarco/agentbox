@@ -59,8 +59,14 @@ Most boxes are expendable. The relay pauses idle ones once more than `autopause.
 
 ```bash
 agentbox create -n gateway --persistent
+agentbox claude -n reviewer --persistent            # same flag on every agent command
 agentbox config set box.persistent true --project   # default for this project
 ```
+
+Every surface that creates a box takes it: `create`, the agent commands
+(`claude`, `codex`, `opencode`, `pi`), a [service agent](/docs/openclaw) (which
+defaults to persistent), and `clone` (which inherits the source box's). In the
+hub's web UI it is a checkbox under **Advanced** in the create form.
 
 A persistent box is:
 

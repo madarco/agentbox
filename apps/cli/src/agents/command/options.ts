@@ -35,6 +35,10 @@ export interface AgentCreateOptions {
    *  interactive prompt (TTY required). */
   dangerouslyWithCredentials?: boolean;
   vnc?: boolean;
+  /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`).
+   *  Undefined when neither was passed, which is what lets the agent's registry
+   *  surface supply the default. */
+  persistent?: boolean;
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -150,6 +154,11 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
       'copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at create time (gitignore-bypassing)',
     )
     .option('--no-vnc', 'disable the per-box Xvnc + noVNC web client (on by default)')
+    .option(
+      '--persistent',
+      'always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.',
+    )
+    .option('--no-persistent', 'create an expendable box even when box.persistent is set')
     .option(
       '--no-resync',
       "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",

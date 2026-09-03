@@ -195,8 +195,11 @@ until the real box lands. A failed create can be cleared with
 host-side fields for native clients (the tray app): `state` (the raw provider
 state — absent on synthetic entries, which is how a client tells a failed create
 from a running box whose agent errored), `name`, `provider`, `projectRoot`,
-`projectIndex`, `vncEnabled`, `persistent` (an always-on box — see
-[persistent boxes](/docs/checkpoints-and-pausing#persistent-boxes)), `gitWorktrees`,
+`projectIndex`, `vncEnabled`, `persistent` (an always-on box — never auto-paused,
+never idle-lapsed, skipped by prune, restarted by the relay's boot reconcile; see
+[persistent boxes](/docs/checkpoints-and-pausing#persistent-boxes). `POST /boxes/{id}/destroy`
+has no guard on it, unlike `agentbox destroy -y`, so a client that offers destroy
+should confirm on this field), `gitWorktrees`,
 `shellCount`, and `agentStatus` —
 every agent reporting in the box, keyed by agent id, each `{ state, sessionTitle? }`
 where `state` is one of `working | idle | waiting | end-plan | question |

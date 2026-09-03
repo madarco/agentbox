@@ -39,12 +39,10 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 
 ## From Phase 1 (persistent boxes, 2026-09-02)
 
-- **`--persistent` is not on the agent commands yet.** `create` has it; `agentbox claude|codex|
-  opencode|pi` do not, because the shared agent-flag table
-  (`apps/cli/src/agents/command/options.ts`) was owned by another box during this phase. The
-  capability is still reachable there — `createBox`/`createCloudProvider` fall back to the
-  effective `box.persistent`, so `agentbox config set box.persistent true --project` applies to an
-  agent create. Add the flag when the agent-command files are free.
+- ~~**`--persistent` is not on the agent commands yet.**~~ **Done (2026-09-03.)** Declared once in
+  the shared agent-flag table (`apps/cli/src/agents/command/options.ts`) and forwarded from
+  `create-action.ts` down all four create paths (docker, cloud, the hub adopt, the `-i` queue job),
+  with the e2b/vercel refusal running before routing as it does on `create`.
 - **`../agentbox-tray/CLAUDE.md` not updated.** The plan calls for it (the `GET /api/v1/boxes`
   payload is the tray's contract) but the sibling checkout is not present in this box. The new
   `persistent` field is documented in `apps/web/content/docs/api.mdx`; mirror it into the tray's
@@ -56,6 +54,11 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 - **The boot reconcile needs a running relay.** A persistent box comes back when the relay
   daemon starts, so a host where the relay is not installed as a login/launchd unit gets no
   restart. `agentbox hub expose` installs such a unit; a plain dev host may not have one.
+- **The hub's create form repeats the capped-provider list.** `create-box-modal.tsx` carries its own
+  `PERSISTENT_CAPPED = {e2b, vercel}` to grey the checkbox out, because the client bundle
+  deliberately imports no `@agentbox/*` package. The API still refuses the create, so the copy is a
+  UX affordance rather than the gate — but it is a second place to edit if a provider ever grows or
+  loses a session cap. Serving it from `GET /api/v1/providers` would remove the copy.
 - **`selectPersistentBoxesToStart` skips `missing`.** A persistent cloud box whose sandbox the
   provider reaped (rather than stopped) is logged once and left alone — recreating it from the
   record is a Phase 4/5 question (workspace sync), not a reconcile one.

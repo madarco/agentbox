@@ -126,10 +126,11 @@ box.persistent: true ──▶ never autopaused, never idle-lapsed, skipped by p
 
 ## Phase 1 — persistent boxes
 
-Status: **done** (2026-09-02). Provider-agnostic, no agent work. Ships value on its own: t3code and
-Hermes are usable after this phase plus Phase 4. Deferred items are in
-[`service-boxes-backlog.md`](./service-boxes-backlog.md) — the flag is not yet on the agent
-commands, and the hub's `destroy` route has no guard.
+Status: **done** (2026-09-02; `--persistent` reached the agent commands and the hub's create form
+on 2026-09-03). Provider-agnostic, no agent work. Ships value on its own: t3code and Hermes are
+usable after this phase plus Phase 4. Deferred items are in
+[`service-boxes-backlog.md`](./service-boxes-backlog.md) — the hub's `destroy` route still has no
+guard.
 
 - `BoxRecord.persistent?: boolean` (`packages/core/src/box-record.ts`), config key
   `box.persistent` (default `false`) + `--persistent` / `--no-persistent` on `create` and every
