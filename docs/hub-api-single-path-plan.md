@@ -1466,6 +1466,85 @@ boxes without a second wire. The hub API contract it already speaks is unchanged
 
 ---
 
+## Follow-up — `upload` and `clone` (2026-09-02) ✅ done
+
+Two commands landed after Step 14 (the `service-boxes-plan.md` work) and arrived as CLI-side
+implementations: `agentbox upload` called `providerForBox()` + `uploadWorkspaceToBox()` inline, and
+`agentbox clone` streamed a create job through `/api/v1` but did its workspace **export** host-side
+first. Their routes already existed and were unused. Both are now thin clients:
+
+- **`upload` → `POST /api/v1/boxes/:id/upload`** (`HubApiClient.uploadBox`). The hub starts the box
+  and runs the push, so the CLI no longer holds a provider handle. UX unchanged — the
+  `(exclude-list mode)` label, the copied count, and the skipped-conflict warning with its paths all
+  come from the route's `{ mode, copied, conflicts }`. Synchronous, so no job: the whole push is one
+  round trip.
+- **`clone` → `POST /api/v1/boxes/:id/clone`** (`HubApiClient.cloneBox`). One call now does the
+  export AND the create, and the response carries the authoritative `name`/`workspace`/`files`
+  beside the `jobId` the CLI still streams. The export reads the **source box**, which the hub
+  reaches on every provider, so there was no argument for keeping it in the CLI — it was simply a
+  second implementation the web UI and the tray could not use. The clone's workspace dir and its
+  project registration now land on the hub's machine, which is also where the new box runs.
+
+**The one thing that could NOT go behind the API for every topology: `upload` against a REMOTE
+control box.** The route reads the *host* side of the workspace off the machine it runs on, so a
+control box can only ever push its own clone of the project — never the tree you are standing in.
+Pushing that silently would be the worst kind of success, so the CLI refuses by name
+(`remoteHubHostFileRefusal` in `control-plane/with-hub.ts`), gated on `HubTarget.onThisMachine`
+rather than `mode` (a `hub expose`-d machine is `remote`-shaped while still running here). The
+capability it names instead — `agentbox cp` — already reaches back to the user's machine. Making
+`upload` itself work remotely means a client→hub file upload (custody blobs are the existing
+primitive) and belongs with the wider IO-plane move this plan defers. `download` is untouched: it is
+IO-plane by the same rule, and writes to the caller's disk.
+
+### The boundary rule this exposed: client state does not travel over an API
+
+Two regressions came out of the review, both the same mistake in different
+clothes — a value the CLI used to resolve against ITS OWN environment, forwarded
+raw to a hub that has a different one:
+
+- **`--into` was `path.resolve`d inside the hub**, whose cwd is wherever the
+  long-lived daemon happened to be started (and which may be a control box on
+  another machine). `agentbox clone x --into ./svc` created the workspace, and
+  registered the project, under that directory. Fixed at the boundary rather than
+  at the symptom: the CLI resolves it against the caller's cwd (`resolveIntoDir`,
+  `commands/clone.ts`) and the API **refuses a relative path** by name
+  (`parseCloneBox`). An un-expanded `~` is refused for the same reason one level
+  up — it means "home", and whose home is exactly what a cross-machine path
+  cannot answer.
+- **The clone lost `foreground: true`** when the create moved from the CLI into
+  the route, so it queued behind background `-i` jobs while its caller sat blocked
+  on the job stream. The lane choice now lives with the request that needs it
+  (`lib/boxes/clone-create.ts`), where it is unit-tested.
+
+**The rule for every future conversion: a cwd, a `$HOME`, an env var and a shell
+expansion are all client state. Whatever only the caller knows, the caller
+resolves — and the API accepts only the unambiguous form and rejects the rest,
+because the web UI and the tray have no cwd at all to fall back on.** The
+existing precedent is box refs: the CLI resolves `1` / a name / a prefix against
+local state and sends an id.
+
+Audited the rest of this PR's surface against that rule: `upload` sends only
+`includeNodeModules` and takes its host path from `box.workspacePath` on the
+record; `exportBoxWorkspace` / `uploadWorkspaceToBox` read no cwd, `$HOME` or env
+(every path is an explicit argument); the create-side change adds only a derived
+boolean. The one remaining environment-dependent value is deliberate and now
+documented: the clone's default `~/.agentbox/clones/<name>` resolves in the HUB
+user's home, and its `registerProject` lands there — correct, because that is the
+machine the clone's box runs on.
+
+Also folded in, because it is the same rule applied to a create: a `caps.surface: 'service'` agent
+now creates a **persistent** box by default, and the decision (`resolveCreatePersistent`,
+`packages/core/src/persistent.ts`) is read by BOTH the CLI's `provider.create` and the hub's
+`POST /api/v1/boxes`, so the web UI and the tray get the same default. The `persistentRefusal`
+for e2b/vercel fires before either create rather than leaving a failed job behind. Two gaps found
+by doing this, both pre-existing: the docker provider **dropped `req.persistent`** entirely (fixed —
+the CLI's own docker paths call `createBox` directly and pass it themselves, so nothing had
+exercised the `provider.create` mapping), and the hub queue worker still cannot BUILD a
+service-agent box (`unknown agent kind`) — recorded in
+[`plans/service-boxes-backlog.md`](./plans/service-boxes-backlog.md), not fixed here.
+
+---
+
 ## What this leaves on the laptop
 
 With a remote hub configured and these steps landed, the laptop runs **no long-lived agentbox

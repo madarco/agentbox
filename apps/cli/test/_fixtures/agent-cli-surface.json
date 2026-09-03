@@ -957,6 +957,20 @@
         "negate": false
       },
       {
+        "flags": "--persistent",
+        "description": "always-on box (the default for a service agent: a daemon that autopause reaps is an outage)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-persistent",
+        "description": "create an expendable box instead — it can be auto-paused, idle-lapsed and pruned",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
         "flags": "--timeout <seconds>",
         "description": "how long to wait for the service to report ready",
         "defaultValue": "180",

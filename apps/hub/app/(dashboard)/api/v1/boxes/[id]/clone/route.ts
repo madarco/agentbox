@@ -4,9 +4,10 @@
 // Two steps, one route: `prepareClone` exports the workspace into a new host
 // project dir, then the normal create enqueues the box. Returns the create job
 // so the CLI, the web UI and the tray all stream the same progress.
+import { cloneCreateInput } from '@/lib/boxes/clone-create';
 import { backendOrNull } from '../../../lib/backend';
 import { fail, failFromAction, ok } from '../../../lib/envelope';
-import { readJson } from '../../../lib/validate';
+import { parseCloneBox, readJson } from '../../../lib/validate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,33 +25,13 @@ export async function POST(
 
   const raw = await readJson(req);
   if (!raw.ok) return fail('invalid_request', raw.message);
-  const body = (typeof raw.value === 'object' && raw.value !== null ? raw.value : {}) as {
-    name?: unknown;
-    provider?: unknown;
-    into?: unknown;
-    includeNodeModules?: unknown;
-    persistent?: unknown;
-  };
-  const str = (v: unknown): string | undefined =>
-    typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+  const parsed = parseCloneBox(raw.value);
+  if (!parsed.ok) return fail('invalid_request', parsed.message);
 
-  const prepared = await backend.prepareClone(id, {
-    name: str(body.name),
-    provider: str(body.provider),
-    into: str(body.into),
-    includeNodeModules: body.includeNodeModules === true,
-    // TODO(plan phase 1): forward as `--persistent` on the create once
-    // `BoxRecord.persistent` exists. Accepted here so the API shape is final.
-    persistent: body.persistent !== false,
-  });
+  const prepared = await backend.prepareClone(id, parsed.value);
   if (!prepared.ok) return failFromAction(prepared.error);
 
-  const created = await backend.create({
-    projectId: prepared.projectId,
-    provider: prepared.provider,
-    agent: 'none',
-    name: prepared.name,
-  });
+  const created = await backend.create(cloneCreateInput(prepared));
   if (!created.ok) return failFromAction(created.error);
   return ok({
     jobId: created.jobId,
@@ -58,5 +39,6 @@ export async function POST(
     workspace: prepared.workspace,
     provider: prepared.provider,
     files: prepared.files,
+    ...(prepared.persistent !== undefined ? { persistent: prepared.persistent } : {}),
   });
 }

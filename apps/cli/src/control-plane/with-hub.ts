@@ -183,6 +183,34 @@ export function boxOwningHubIsLocal(box: { provider?: string }): boolean {
   return p === 'docker' || p === 'remote-docker';
 }
 
+/**
+ * Refuse an op that reads HOST FILES when the hub that would serve it runs on
+ * another machine, or `null` when it is here.
+ *
+ * `upload` is the case: the hub reads `/workspace`'s host side and pushes it in,
+ * so it can only ever push the files on ITS OWN disk. Against a remote control
+ * box that is the control box's clone of the project — not the tree you are
+ * standing in — and pushing that silently would be the worst kind of success.
+ * `onThisMachine` rather than `mode` is the predicate, because a `hub expose`-d
+ * machine is its own control box (`mode: 'remote'`) while still running here.
+ *
+ * Returns the message to print; the caller sets the exit code.
+ */
+export async function remoteHubHostFileRefusal(
+  box: { name: string; provider?: string },
+  what: string,
+): Promise<string | null> {
+  const { resolveHubTarget } = await import('../commands/hub.js');
+  const target = await resolveHubTarget(undefined, { preferLocal: boxOwningHubIsLocal(box) });
+  if (target.onThisMachine) return null;
+  return (
+    `\`${what}\` reads files from the machine running the hub, and the hub that owns ${box.name} is ` +
+    `the control box at ${target.url}. Pushing from here would upload ITS workspace, not yours.\n` +
+    `Run \`agentbox ${what}\` on the control box, or use \`agentbox cp <src> ${box.name}:/workspace/...\` ` +
+    `to move specific files from this machine.`
+  );
+}
+
 /** The outcome of a box op routed to its owning hub (see {@link withOwningHub}). */
 export type OwningHubOutcome = 'ok' | 'not-found' | undefined;
 

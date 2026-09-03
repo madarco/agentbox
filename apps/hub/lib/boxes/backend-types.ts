@@ -631,10 +631,19 @@ export interface CloneBoxInput {
   name?: string;
   /** Provider for the new box (default: the source box's). */
   provider?: string;
-  /** Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). */
+  /**
+   * Dir for the clone's workspace ON THE HUB'S MACHINE (default
+   * `~/.agentbox/clones/<name>`, in the hub user's home). MUST be absolute: this
+   * process's cwd is wherever the hub daemon was started, so a relative path has
+   * no defensible meaning. `parseCloneBox` enforces it at the API boundary.
+   */
   into?: string;
   includeNodeModules?: boolean;
-  /** Accepted and inert until persistent boxes land (plan phase 1). */
+  /**
+   * `--persistent` / `--no-persistent` on the clone. Absent inherits the SOURCE
+   * box's persistence — cloning an always-on service box gives an always-on
+   * clone, and cloning an expendable box does not.
+   */
   persistent?: boolean;
 }
 
@@ -649,6 +658,11 @@ export type PrepareCloneResult =
       provider: string;
       /** Files exported. */
       files: number;
+      /**
+       * Resolved always-on flag for the create, or undefined to leave it to the
+       * hub's config layers. Explicit input wins; else the source box's.
+       */
+      persistent?: boolean;
     }
   | { ok: false; error: string };
 

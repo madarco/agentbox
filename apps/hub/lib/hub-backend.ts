@@ -28,6 +28,8 @@ import {
   LEGACY_AGENT_STATUS_KEYS,
   normalizeAgentStatus,
   normalizeLastAgent,
+  persistentRefusal,
+  resolveCreatePersistent,
   type BoxRecord,
   type CloudSandboxSummary,
   type ExecResult,
@@ -73,6 +75,7 @@ import {
   boxServicesStatusRaw,
   boxSshDirForProvider,
   exportBoxWorkspace,
+  findAgentSpec,
   mutateState,
   readPreparedStateRaw,
   readState,
@@ -2299,6 +2302,21 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // worker's config defaults. `workspace`/`name`/`fromBranch` are authoritative
         // here (resolved server-side), so they win over any opts echo.
         const o = input.opts ?? {};
+        // A SERVICE agent's box hosts a daemon: an autopause or an idle lapse is
+        // an outage, so it defaults to always-on. Derived from the registry row's
+        // `caps.surface`, never from an agent id, and left `undefined` when there
+        // is no opinion so the worker's own `box.persistent` still decides.
+        const persistent = resolveCreatePersistent({
+          spec: noAgent ? undefined : findAgentSpec(input.agent),
+          flag: o.persistent,
+        });
+        // Refuse here rather than let the worker's `provider.create` fail: a
+        // service agent on a capped provider must be told no, not handed the
+        // expendable box it did not ask for.
+        if (persistent) {
+          const refusal = persistentRefusal(provider);
+          if (refusal) return { ok: false, error: refusal };
+        }
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
@@ -2319,7 +2337,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             withEnv: o.withEnv,
             envFiles: o.envFiles,
             vnc: o.vnc,
-            persistent: o.persistent,
+            persistent,
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,
@@ -3101,9 +3119,27 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (!rp) return { ok: false, error: `box ${id} not found` };
         await ensureBoxRunning(rp.provider, rp.box);
         const name = sanitizeMnemonic(input?.name?.trim() || `${rp.box.name}-clone`);
-        const workspace = input?.into?.trim()
-          ? path.resolve(input.into)
+        // `into` is ABSOLUTE by contract — `parseCloneBox` refuses anything else,
+        // because this process's cwd is wherever the hub daemon happened to be
+        // started and has nothing to do with the caller's. `normalize` only
+        // tidies `..`/duplicate separators; it never consults a cwd.
+        const rawInto = input?.into?.trim();
+        if (rawInto !== undefined && rawInto.length > 0 && !path.isAbsolute(rawInto)) {
+          return { ok: false, error: `into must be an absolute path (got "${rawInto}")` };
+        }
+        const workspace = rawInto
+          ? path.normalize(rawInto)
           : path.join(os.homedir(), '.agentbox', 'clones', name);
+        const provider = input?.provider ?? rp.box.provider ?? 'docker';
+        // An always-on source gives an always-on clone unless the caller says
+        // otherwise — a clone of a service box is the same kind of thing the
+        // source is. Refuse here rather than in the worker so a capped provider
+        // fails the request instead of leaving a failed create job behind.
+        const persistent = input?.persistent ?? (rp.box.persistent === true ? true : undefined);
+        if (persistent) {
+          const refusal = persistentRefusal(provider);
+          if (refusal) return { ok: false, error: refusal };
+        }
         const exported = await exportBoxWorkspace({
           provider: rp.provider,
           box: rp.box,
@@ -3121,8 +3157,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           projectId: hashProjectPath(workspace),
           workspace,
           name,
-          provider: input?.provider ?? rp.box.provider ?? 'docker',
+          provider,
           files: exported.files,
+          ...(persistent !== undefined ? { persistent } : {}),
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };

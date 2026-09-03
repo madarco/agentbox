@@ -100,7 +100,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: 'Create a box',
           description:
-            'Async — returns a job id. agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers).',
+            'Async — returns a job id. agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers). A SERVICE agent (one whose GET /agents row reports `surface: "service"`, e.g. openclaw) creates a PERSISTENT box by default — it hosts a daemon, so an autopause would be an outage; pass `opts.persistent: false` for an expendable one. A persistent create on e2b/vercel is refused with `conflict` rather than silently downgraded. KNOWN LIMITATION: the queue worker cannot yet BUILD a service-agent box — it fails the job with `unknown agent kind` — so use the CLI (`agentbox <agent>`) for one until that lands; the request itself is accepted and carries the right options.',
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateBox' } } },
@@ -121,6 +121,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+            '409': errorResponse,
             '503': errorResponse,
           },
         },
@@ -519,7 +520,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Box services'],
           summary: 'Push the host workspace into the box (`agentbox upload`)',
           description:
-            "The host->box direction, the mirror of `agentbox download`. A git workspace merges the host branch into the box branch and overlays the host's uncommitted/untracked changes; a non-git workspace gets a plain file overlay. THE BOX WINS every conflict — nothing in the box is overwritten or reset, and the skipped host paths come back in `conflicts`. Needs the in-process host backend (it reads host files).",
+            "The host->box direction, the mirror of `agentbox download`. A git workspace merges the host branch into the box branch and overlays the host's uncommitted/untracked changes; a non-git workspace gets a plain file overlay. THE BOX WINS every conflict — nothing in the box is overwritten or reset, and the skipped host paths come back in `conflicts`. Needs the in-process host backend, and reads the workspace off the HUB'S OWN disk — a client on another machine cannot push its files this way, so `agentbox upload` refuses rather than uploading the hub's copy of the project.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: false,
@@ -567,7 +568,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "New box from this box's workspace, with a fresh agent identity",
           description:
-            "Exports the box's workspace files (gitignore/exclude aware, agent state dropped) into a new host project dir, then enqueues a normal create seeded from it. The agent's config volume and credential are deliberately NOT copied, so the clone onboards from scratch and gets its own identity — there is no `--with-state`. `.git` is not exported: the clone is a template, and a git-backed second box is what a plain create already gives you. Returns the create job; stream it via GET /jobs/{jobId}/logs. Backs `agentbox clone`.",
+            "Exports the box's workspace files (gitignore/exclude aware, agent state dropped) into a new host project dir, then enqueues a normal create seeded from it. The agent's config volume and credential are deliberately NOT copied, so the clone onboards from scratch and gets its own identity — there is no `--with-state`. `.git` is not exported: the clone is a template, and a git-backed second box is what a plain create already gives you. Returns the create job; stream it via GET /jobs/{jobId}/logs — the create is enqueued in the ungated FOREGROUND lane, because the caller is blocked on that stream and must not queue behind background jobs. Backs `agentbox clone`.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: false,
@@ -587,12 +588,13 @@ export function buildOpenApi(): Record<string, unknown> {
                     into: {
                       type: 'string',
                       description:
-                        "Host dir for the clone's workspace (default `~/.agentbox/clones/<name>`). Must be absent or empty.",
+                        "Dir for the clone's workspace ON THE HUB'S MACHINE (default `~/.agentbox/clones/<name>`, in the hub user's home); must be absent or empty. MUST BE ABSOLUTE — a working directory is client state that does not travel over an API, so a relative path is rejected with `invalid_request` rather than resolved against whatever directory the hub daemon was started in. `agentbox clone --into` resolves it against your cwd before sending.",
                     },
                     includeNodeModules: { type: 'boolean' },
                     persistent: {
                       type: 'boolean',
-                      description: 'Accepted and inert until persistent boxes land.',
+                      description:
+                        "Always-on clone. OMIT to inherit the source box's persistence (a clone of a service box is always-on too); `false` is an explicit opt-out. `true` against e2b/vercel is refused with `conflict` — their platform session cap makes an always-on box impossible.",
                     },
                   },
                 },
@@ -615,6 +617,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       },
                       provider: { type: 'string' },
                       files: { type: 'integer' },
+                      persistent: {
+                        type: 'boolean',
+                        description:
+                          "The always-on flag resolved for the clone. Absent when neither the request nor the source box had an opinion, leaving it to the hub's `box.persistent`.",
+                      },
                     },
                     required: ['jobId', 'name', 'workspace', 'provider', 'files'],
                   },
@@ -2204,8 +2211,49 @@ export function buildOpenApi(): Record<string, unknown> {
         CreateBox: {
           type: 'object',
           properties: {
-            projectId: { type: 'string' },
-            agent: { type: 'string', enum: ['claude', 'codex', 'opencode', 'pi', 'none'] },
+            projectId: {
+              type: 'string',
+              description:
+                'Project to build from. Exactly one of projectId / repoUrl. A projectId whose folder is absent on this machine (the normal case on a control box) routes to the control-plane clone queue.',
+            },
+            repoUrl: {
+              type: 'string',
+              description:
+                "Repo origin to clone from, when the project has no folder on the hub's machine. Exactly one of projectId / repoUrl.",
+            },
+            agent: {
+              type: 'string',
+              description:
+                'Canonical agent id, or "none" for a plain box with no agent. Open-ended: the built-ins are claude | codex | opencode | pi | openclaw, plus anything registered by `agentbox agent add` — GET /agents is the live list this route validates against.',
+              example: 'claude',
+            },
+            agentArgs: {
+              type: 'array',
+              items: { type: 'string' },
+              description: "Extra argv passed to the agent's launcher.",
+            },
+            startAgent: {
+              type: 'boolean',
+              description: 'Start the agent session after the box is built (default true).',
+            },
+            foreground: {
+              type: 'boolean',
+              description:
+                "An interactive create — the hub runs it in the ungated foreground lane so it doesn't queue behind background jobs.",
+            },
+            opts: {
+              type: 'object',
+              additionalProperties: true,
+              description:
+                "Box-shaping knobs the caller already resolved (image, snapshot, limits, size/location, carry, credential-sync, ...), so a hub-routed create builds the same box an inline one would. Absent keys fall back to the hub's own config.",
+              properties: {
+                persistent: {
+                  type: 'boolean',
+                  description:
+                    "Always-on box: never auto-paused, never idle-lapsed, skipped by prune, restarted after a host reboot. OMIT for no opinion — a service agent then defaults to `true` and everything else to the hub's `box.persistent`. `true` on e2b/vercel is refused with `conflict`.",
+                },
+              },
+            },
             provider: {
               type: 'string',
               enum: [

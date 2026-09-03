@@ -165,10 +165,68 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 - **The AGENT column item from Phase 2 is still open**, and now has a real service agent to be seen
   on — `agentbox list` reports nothing for an openclaw box because it has no tmux session. See the
   Phases 2-3 entry above.
-- **`--persistent` does not exist yet (Phase 1).** `agentbox openclaw` is exactly the workload that
-  needs it: a gateway box will be autopaused and idle-lapsed like any other, and it has no reporting
-  agent so every idle heuristic reads it as abandoned. The service-agent command should imply
-  `--persistent` once Phase 1 lands.
+- ~~**`--persistent` does not exist yet (Phase 1).**~~ **Done** (2026-09-02): a
+  `caps.surface: 'service'` row now creates a persistent box by default, derived in
+  `resolveCreatePersistent` (`packages/core/src/persistent.ts`) from the surface rather than from
+  an agent id, on both the CLI's `provider.create` and the hub's `POST /api/v1/boxes`.
+  `--no-persistent` opts out and the e2b/vercel refusal fires before the create.
 - **Channel pairing is still unverified end to end.** Carried over from Phase 0: `openclaw channels
   add --use-env` needs a real bot token, and the smoke here stopped at a healthy gateway with no
   channels. Wire one before calling OpenClaw support complete.
+
+## From the upload/clone API conversion (2026-09-02)
+
+- **`POST /boxes/:id/upload` has no progress stream.** The route is synchronous, so the per-file
+  lines `uploadWorkspaceToBox` emits go to the hub's stdout (`~/.agentbox/hub.log`) and the CLI
+  shows nothing until it returns. Fine for a normal workspace, thin for a large non-git one. The
+  fix is the shape `clone` already has — return a job id and stream `GET /jobs/{id}/logs` — but
+  that turns a one-round-trip op into a queued one, so it is worth doing only if a slow upload is
+  actually observed.
+- **`agentbox upload` is refused when a remote control box owns the box.** The hub reads the host
+  side of the workspace off its own disk, so a control box could only ever push *its* copy of the
+  project. Refusing is the honest answer today; making it work means a client→hub file upload
+  (custody blobs are the existing primitive) and belongs with the wider IO-plane move that
+  `docs/hub-api-single-path-plan.md` defers.
+- **`agentbox <agent> --no-persistent` on an EXISTING box is silently inert.** The service command
+  is create-or-resume, and the flag only reaches the create leg; resuming an always-on box with
+  `--no-persistent` neither changes the record nor warns. Either warn, or make it a real edit of
+  `BoxRecord.persistent`.
+- **`agentbox <agent> stop` still goes through `provider.exec`.** Unchanged by this pass; the hub's
+  services route exposes `restart` but not `stop`. Same item as before — the route belongs behind
+  `/api/v1` like every other box operation.
+- **The hub queue worker cannot build a SERVICE-agent box.** `POST /api/v1/boxes` with
+  `agent: "openclaw"` validates (the registry is the accept-list) and enqueues a job carrying the
+  right `createOpts` — including the derived `persistent: true`, verified — but the worker dies with
+  `unknown agent kind: openclaw`. Two causes, both fail-closed by design: `toSyncKind`
+  (`packages/core/src/sync/agent-kind.ts`) only accepts `BUILTIN_AGENT_KINDS`, which lists the four
+  TUI agents, and `_run-queued-job.ts`'s session dispatch has no branch for a surface with no tmux
+  session. The fix is the same shape as `job.noAgent`: skip the session leg for a
+  `caps.surface: 'service'` agent, and widen the wire-kind boundary (which also blocks every
+  `agentbox agent add` plugin agent). Until then a service box is created by the CLI's own
+  `provider.create` and the hub-queue path is dead for it. Pre-existing — nothing used this path
+  before — but it is now the last thing between a service agent and the web UI / tray.
+- **`opts.envFiles` / `opts.withEnv` on `POST /api/v1/boxes` name files on the HUB's disk, not the
+  caller's.** Found by the cwd/`$HOME` audit that followed the `--into` fix; same class, left
+  unfixed there because it is not the same one-line boundary fix. The entries are workspace-relative
+  paths (`.env`, `apps/web/.env.local`) produced by the CLI wizard scanning the **user's** tree
+  (`scanHostEnvFiles(proj.root, …)`, `packages/sandbox-core/src/sync/concerns/env.ts:115`), and they
+  are re-resolved against the workspace root on whichever machine performs the create — the hub's,
+  now that create is behind the API. **The concrete failure against a remote control box:** the user
+  ticks `.env` in the wizard, the *string* travels, and the control box resolves it inside its own
+  fresh `git clone` — where `.env` does not exist, because it is gitignored and the untracked seed
+  excludes ignored paths by design (see the comment at `apps/cli/src/commands/create.ts:196`). The
+  worker's `copyHostFilesToBox` copies 0/1, logs `copied 0/1 selected env/config file(s)` into the
+  queue log, and the create **succeeds** — so the box comes up missing the file the user explicitly
+  chose, with nothing on the terminal saying so. An absolute or `..`-escaping entry is worse and just
+  as accepted: `parseCreateBoxOpts` only checks that `envFiles` is a string array, so a same-named
+  file that happens to exist on the hub's disk would be copied into the box instead of the caller's.
+  Latent for the CLI today — `remoteOpts` in `create.ts` does not forward `envFiles` — but
+  `withEnv: true` IS forwarded and expands to `DEFAULT_ENV_PATTERNS` against the hub's workspace with
+  exactly the same result, and nothing stops the web UI, the tray or any API client from sending
+  `envFiles` directly.
+  Why it is not the `--into` fix: a path cannot be resolved client-side into a file's *contents*, so
+  making this honest means either uploading the bytes (custody blobs / the create seed, which is what
+  `carry:` already does — today the only route by which a gitignored file reaches a hub-built box) or
+  refusing the field outright when the hub is not the caller's machine. Cheap partial hardening in
+  the meantime: reject absolute and `..`-escaping entries at the validator, and have the worker fail
+  loudly rather than log `copied 0/N` and continue.

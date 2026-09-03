@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseCheckpointCreate,
+  parseCloneBox,
   parseCreateBox,
   parseHostUpsert,
   parsePrune,
@@ -216,5 +217,57 @@ describe('parseHostUpsert', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.identity).toContain('PRIVATE KEY');
+  });
+});
+
+describe('parseCloneBox', () => {
+  it('accepts an empty body — every field is optional', () => {
+    const r = parseCloneBox({});
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value).toEqual({});
+  });
+
+  it('REJECTS a relative --into: cwd is client state and does not travel over an API', () => {
+    // The regression: a relative path used to be `path.resolve`d inside the hub
+    // process, so the clone landed under whatever directory the long-lived
+    // daemon was started in — wrong for a local hub, meaningless for a remote one.
+    for (const rel of ['./svc-hz', '../svc', 'svc-hz', 'a/b/c']) {
+      const r = parseCloneBox({ into: rel });
+      expect(r.ok, `${rel} must be refused`).toBe(false);
+      if (r.ok) continue;
+      expect(r.message).toMatch(/absolute/);
+      expect(r.message).toContain(rel);
+    }
+  });
+
+  it('accepts an absolute into, POSIX or Windows — the hub may be a different OS', () => {
+    for (const abs of ['/home/vscode/clones/x', 'C:\\Users\\me\\x', '\\\\server\\share\\x']) {
+      const r = parseCloneBox({ into: abs });
+      expect(r.ok, `${abs} must be accepted`).toBe(true);
+      if (!r.ok) continue;
+      expect(r.value.into).toBe(abs);
+    }
+  });
+
+  it('keeps persistent TRI-STATE — absent inherits the source box, false does not', () => {
+    expect((parseCloneBox({}) as { value: { persistent?: boolean } }).value.persistent).toBe(
+      undefined,
+    );
+    const off = parseCloneBox({ persistent: false });
+    expect(off.ok).toBe(true);
+    if (!off.ok) return;
+    expect(off.value.persistent).toBe(false);
+    const on = parseCloneBox({ persistent: true });
+    expect(on.ok).toBe(true);
+    if (!on.ok) return;
+    expect(on.value.persistent).toBe(true);
+  });
+
+  it('rejects wrong-typed fields rather than coercing them', () => {
+    expect(parseCloneBox({ name: 7 }).ok).toBe(false);
+    expect(parseCloneBox({ persistent: 'yes' }).ok).toBe(false);
+    expect(parseCloneBox({ includeNodeModules: 1 }).ok).toBe(false);
+    expect(parseCloneBox('nope').ok).toBe(false);
   });
 });

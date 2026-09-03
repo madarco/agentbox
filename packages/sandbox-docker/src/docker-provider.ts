@@ -88,6 +88,12 @@ export const dockerProvider: Provider = {
       envFilesToImport: req.envFilesToImport,
       carry: req.carry,
       vnc: req.vnc,
+      // Always-on box. The CLI's own docker paths call `createBox` directly and
+      // pass this themselves, so it was invisible until a caller arrived that
+      // only ever goes through `provider.create` (a service agent) — the box
+      // came out expendable with no error anywhere. Same shape as `agents`
+      // above, and the same lesson.
+      persistent: req.persistent,
       docker: po.sharedCache !== undefined ? { sharedCache: po.sharedCache } : undefined,
       portless: po.portless,
       portlessStateDir: po.portlessStateDir,
