@@ -13,6 +13,35 @@ CLI, not the raw commits.
 
 ### Added
 
+- **One agent per box.** `agentbox claude` now builds a box carrying claude and
+  nothing else — only that agent gets a config volume, a credential seed and a
+  home dir. Every box used to ship all three agents' binaries and live-mount
+  credentials it would never use, on docker and on every cloud alike; a box
+  records its agent set, so pause/resume keeps the isolation.
+- **The published base ships no agent, and an agent is a thin layer on top of
+  it.** Adding one takes ~20s instead of a full rebuild, and the base is shared
+  by every variant (claude's unique size: 1.279 GB -> 434 MB). **Re-run
+  `agentbox prepare --provider <name> --force` once per cloud provider.**
+- **Pi is the fourth agent.** `agentbox pi` runs Pi (pi.dev), a minimal terminal
+  agent that has no permission prompts by design — which is what a box is for.
+  Host sessions teleport into the box the same way the other agents' do.
+- **An agent can arrive as an npm package.** `agentbox agent add|list|remove`
+  snapshots one into `~/.agentbox/agents.json`, the shape `plugin add` already
+  gives providers; a package cannot shadow a built-in agent's id or alias. An
+  example agent package ships in `examples/`.
+- **The hub serves the agent catalog on `GET /api/v1/agents`**, and the web
+  create picker builds its dropdown from it, so an added agent is offerable
+  instead of stranded behind a hardcoded list. `POST /boxes` accepts whatever
+  the registry knows.
+- **Checkpoints record the agent set they were captured from** and warn when it
+  differs from the box being created — the sharp case is `--set-default`, which
+  writes a per-provider key. Advisory only: the box still boots and installs the
+  missing agent.
+- Agent-owned files (Codex's hooks, OpenCode's state plugin, Claude's setup
+  skill) are seeded from one declaration and now reach cloud boxes too — a cloud
+  OpenCode box used to report `unknown` activity forever.
+- A `prepare` warning can outlive the command's spinner, so Daytona's bake-time
+  class fallback is finally visible instead of being overwritten a second later.
 - **The VNC desktop has a window manager and an icon dock.** JWM now runs on
   display `:1` with a bottom dock carrying a Terminal button, a Browser button,
   and one icon per open window, so windows can finally be raised, moved and
@@ -39,8 +68,41 @@ CLI, not the raw commits.
   Both are raised and closed from their dock entry (right-click for the window
   menu).
 
+### Changed
+
+- **Daytona defaults to the `container` class, not `linux-vm`.** `linux-vm` runs
+  only in a dedicated `us-east-1` region Daytona enables per organization by
+  invitation, so the old default failed mid-bake for most accounts. Set
+  `box.daytonaClass: linux-vm` to keep it.
+- **`box.claudeInstall` and `box.claudeTui` are now `claude.install` and
+  `claude.tui`.** An agent declares its own settings, and AgentBox generates a
+  config key per declaration — for agents installed with `agentbox agent add`
+  too. `agentbox prepare --claude-install <mode>` becomes
+  `--agent-setting claude.install=npm` (repeatable, works for any agent). The old
+  keys are refused with a message naming the new one.
+- **One box image per build context.** The published base is agentless, so an
+  agent setting no longer forks it: CI published two byte-identical images before
+  this, and Daytona's `linux-vm` path could not boot an npm-mode base at all.
+  **Re-run `agentbox prepare --provider <name> --force` once per cloud provider.**
+
 ### Fixed
 
+- **`agentbox pi --provider e2b` produced a box whose agent died instantly.**
+  E2B's upstream base ships Node 20 where every other provider is on Node 24;
+  the base is now Node 24, and a bad Node pairing fails at install rather than
+  at launch.
+- **A default Daytona container bake was pinned to 1 vCPU / 1 GiB / 3 GiB** for
+  the snapshot's whole life, so a real project's install step died to an OOM
+  kill with no other signal. It now bakes at the documented 2/4/8, and `--force`
+  replaces an existing base.
+- **Daytona login validation accepted any string, revoked keys included** — the
+  probe awaited a lazily-paging async iterator and issued no request, so the key
+  was saved and the failure surfaced minutes later as a bake that died with
+  "Invalid credentials".
+- Adding an agent to a live box left it installed but unauthenticated, with no
+  visible error; its login is now seeded alongside the binary.
+- A fourth agent can report activity at all: box status carries a keyed agent
+  map instead of naming claude, codex and opencode one at a time.
 - **`engine.kind` applies to the hub and relay, not just the CLI.** It was
   pinned at CLI startup only, so the process that actually creates boxes and
   mints their URLs ignored it. Engine detection stays once-per-process: after
@@ -76,21 +138,6 @@ CLI, not the raw commits.
 - Config volumes, cleanup and `agentbox prune` handle an agent outside the
   built-in three; they previously fell back to OpenCode's volume, and
   `box.isolate<Agent>Config` now works for every agent rather than three.
-
-### Changed
-
-- **`box.claudeInstall` and `box.claudeTui` are now `claude.install` and
-  `claude.tui`.** An agent declares its own settings, and AgentBox generates a
-  config key per declaration — for agents installed with `agentbox agent add`
-  too. `agentbox prepare --claude-install <mode>` becomes
-  `--agent-setting claude.install=npm` (repeatable, works for any agent). The old
-  keys are refused with a message naming the new one.
-- **One box image per build context.** The published base is agentless, so an
-  agent setting no longer forks it: CI published two byte-identical images before
-  this, and Daytona's `linux-vm` path could not boot an npm-mode base at all.
-  **Re-run `agentbox prepare --provider <name> --force` once per cloud provider.**
-
-### Fixed
 
 - An agent's install `postInstall` could not read its own settings on a cloud
   provider: the root-escalation wrapper expanded them on the host shell before
