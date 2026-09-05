@@ -6,7 +6,7 @@ export const SITE = {
   name: 'AgentBox',
   title: 'AgentBox — Teleport for agents',
   description:
-    'AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control.',
+    'AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, OpenCode, or Pi inside it. Checkpointed, parallel, on hardware you control.',
   twitterCreator: '@madarco',
   ogImage: {
     url: '/cover.jpg',
