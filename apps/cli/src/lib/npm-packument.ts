@@ -77,23 +77,36 @@ export function parsePackument(body: unknown): Packument | null {
 }
 
 /**
- * Fetch and parse, or null on ANY failure. The caller turns null into the
- * `offline` outcome — it must never degrade into installing a dist-tag blindly,
- * because unlike the CLI's own self-update the compatibility gate is exactly
- * what is in question here.
+ * `not-found` is kept separate from `unreachable` on purpose: they send the user
+ * to completely different places. A 404 means the registry answered and does not
+ * carry this package — a wrong name, or a private registry that does not mirror
+ * it — while `unreachable` is a network or registry-URL problem. Reporting both
+ * as "could not reach the registry" sends someone to debug their connection when
+ * the connection is fine.
+ *
+ * Never degrades into installing a dist-tag blindly: unlike the CLI's own
+ * self-update, the compatibility gate is exactly what is in question here.
  */
+export type PackumentResult =
+  | { ok: true; packument: Packument }
+  | { ok: false; reason: 'not-found' | 'unreachable' };
+
 export async function fetchPluginPackument(
   packageName: string,
   opts: { registry?: string; timeoutMs?: number } = {},
-): Promise<Packument | null> {
+): Promise<PackumentResult> {
   const { registry = DEFAULT_NPM_REGISTRY, timeoutMs = 5000 } = opts;
   try {
     const res = await fetch(packumentUrl(packageName, registry), {
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return null;
-    return parsePackument(await res.json());
+    if (res.status === 404) return { ok: false, reason: 'not-found' };
+    if (!res.ok) return { ok: false, reason: 'unreachable' };
+    const parsed = parsePackument(await res.json());
+    // A 200 carrying something that is not a packument is a broken registry, not
+    // a missing package.
+    return parsed === null ? { ok: false, reason: 'unreachable' } : { ok: true, packument: parsed };
   } catch {
-    return null;
+    return { ok: false, reason: 'unreachable' };
   }
 }

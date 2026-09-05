@@ -411,7 +411,13 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
         initialValue: true,
       });
       if (yes) {
-        await runPostUpdateRefresh();
+        // Plugins are deliberately NOT refreshed here: this confirm's wording
+        // promises skills/image/relay/app, and a provider-plugin refresh runs
+        // `npm i -g`, which must not happen mid-arbitrary-command behind a
+        // prompt that never mentioned it. `self-update` and `plugin update` are
+        // the explicit paths. Unifying the two refresh entry points is a
+        // separate change.
+        await runPostUpdateRefresh({ skipPlugins: true });
       } else {
         writeUpdateState({ lastRunVersion: AGENTBOX_VERSION });
       }

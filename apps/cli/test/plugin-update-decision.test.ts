@@ -181,6 +181,18 @@ describe('decidePluginUpdates', () => {
     expect(decide({ install: { kind: 'missing' } })).toMatchObject({ action: 'skipped-missing' });
   });
 
+  // A 404 and a dead network send the user to completely different places.
+  it('distinguishes "registry has no such package" from "cannot reach registry"', () => {
+    expect(decide({ published: [] })).toMatchObject({
+      action: 'no-compatible-version',
+      reason: 'not-published',
+    });
+    expect(decide({ published: undefined })).toMatchObject({
+      action: 'unknown',
+      reason: 'offline',
+    });
+  });
+
   it('leaves everything alone when the registry is unreachable', () => {
     expect(decide({ published: undefined })).toMatchObject({
       action: 'unknown',

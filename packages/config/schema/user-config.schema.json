@@ -287,7 +287,8 @@
       "additionalProperties": false,
       "properties": {
         "check": { "type": "boolean" },
-        "channel": { "enum": ["auto", "stable", "nightly"] }
+        "channel": { "enum": ["auto", "stable", "nightly"] },
+        "registry": { "type": "string" }
       }
     }
   }

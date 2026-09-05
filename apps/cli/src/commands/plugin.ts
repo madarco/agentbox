@@ -178,6 +178,80 @@ async function loadAndValidate(
   return { providers, apiVersion };
 }
 
+/** A package resolved, imported and validated — everything but the registry write. */
+export interface InspectedPlugin {
+  packageName: string;
+  version: string;
+  entryPath: string;
+  providers: LoadedProvider[];
+  apiVersion: number;
+}
+
+/**
+ * Resolve + import + validate. Throws with the same messages `plugin add` has
+ * always printed. No registry I/O and no prompting, so the refresh path and the
+ * interactive command share one implementation of "is this package usable".
+ */
+export async function inspectPluginPackage(arg: string): Promise<InspectedPlugin> {
+  const pkg = resolvePackage(arg);
+  const { providers, apiVersion } = await loadAndValidate(pkg);
+  return {
+    packageName: pkg.packageName,
+    version: pkg.version,
+    entryPath: pkg.entryPath,
+    providers,
+    apiVersion,
+  };
+}
+
+/**
+ * Collision check + registry write. `addPluginRecord` is an upsert keyed by
+ * package name, so this doubles as the refresh for an already-registered
+ * package whose on-disk version changed.
+ */
+export async function recordInspectedPlugin(
+  p: InspectedPlugin,
+  registryPath?: string,
+): Promise<void> {
+  // Reject a provider-name collision with a DIFFERENT already-registered
+  // package (re-adding the same package is an allowed upsert). Otherwise the
+  // registry would hold two entries for one name and only the first would
+  // ever resolve.
+  const existing = readPluginRegistrySync(registryPath).plugins;
+  for (const prov of p.providers) {
+    const clash = existing.find(
+      (r) => r.packageName !== p.packageName && r.providers.includes(prov.name),
+    );
+    if (clash) {
+      throw new Error(
+        `provider "${prov.name}" is already provided by "${clash.packageName}" — remove it first (\`agentbox plugin remove ${prov.name}\`)`,
+      );
+    }
+  }
+  await addPluginRecord(
+    {
+      packageName: p.packageName,
+      resolvedEntry: p.entryPath,
+      version: p.version,
+      providers: p.providers.map((x) => x.name),
+      descriptors: Object.fromEntries(p.providers.map((x) => [x.name, x.descriptor])),
+      apiVersion: p.apiVersion,
+      addedAt: new Date().toISOString(),
+    },
+    registryPath,
+  );
+}
+
+/** Non-interactive register/refresh — what `plugin add --yes` performs. */
+export async function registerPluginPackage(
+  arg: string,
+  registryPath?: string,
+): Promise<InspectedPlugin> {
+  const inspected = await inspectPluginPackage(arg);
+  await recordInspectedPlugin(inspected, registryPath);
+  return inspected;
+}
+
 /**
  * A `plugin list` row. The three-column gutter keeps the provider column aligned
  * whether or not the row is marked, so `!` is greppable (`plugin list | grep '^!'`)
@@ -218,62 +292,49 @@ pluginCommand
   .command('add')
   .argument('<package>', 'installed package name or a path to its directory')
   .option('-y, --yes', 'skip the trust confirmation prompt')
+  // Hidden: this exists so `self-update`'s plugin refresh, which spawns this
+  // command, can print one tidy line of its own instead of clack chrome.
+  .option('--quiet', 'suppress progress output (used by the self-update refresh)', false)
   .description('register an installed provider package so `--provider <name>` can use it')
-  .action(async (packageArg: string, opts: { yes?: boolean }) => {
-    let pkg: ResolvedPackage;
-    let validated: { providers: LoadedProvider[]; apiVersion: number };
+  .action(async (packageArg: string, opts: { yes?: boolean; quiet?: boolean }) => {
+    let inspected: InspectedPlugin;
     try {
-      pkg = resolvePackage(packageArg);
-      validated = await loadAndValidate(pkg);
+      inspected = await inspectPluginPackage(packageArg);
     } catch (err) {
       log.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
       return;
     }
 
-    // Reject a provider-name collision with a DIFFERENT already-registered
-    // package (re-adding the same package is an allowed upsert). Otherwise the
-    // registry would hold two entries for one name and only the first would
-    // ever resolve.
-    const existing = readPluginRegistrySync().plugins;
-    for (const p of validated.providers) {
-      const clash = existing.find(
-        (r) => r.packageName !== pkg.packageName && r.providers.includes(p.name),
+    const provNames = inspected.providers.map((p) => p.name).join(', ');
+    if (!opts.quiet) {
+      log.info(
+        `${inspected.packageName}@${inspected.version} — provider(s): ${provNames} (SDK v${String(inspected.apiVersion)})`,
       );
-      if (clash) {
-        log.error(
-          `provider "${p.name}" is already provided by "${clash.packageName}" — remove it first (\`agentbox plugin remove ${p.name}\`)`,
-        );
-        process.exitCode = 1;
-        return;
-      }
     }
-
-    const provNames = validated.providers.map((p) => p.name).join(', ');
-    log.info(
-      `${pkg.packageName}@${pkg.version} — provider(s): ${provNames} (SDK v${String(validated.apiVersion)})`,
-    );
     if (!opts.yes) {
       log.warn(
         'A provider plugin runs as trusted code inside AgentBox — it can read your cloud credentials and run commands on your host. Only add plugins you trust.',
       );
-      const ok = await confirm({ message: `Add "${pkg.packageName}"?`, initialValue: false });
+      const ok = await confirm({ message: `Add "${inspected.packageName}"?`, initialValue: false });
       if (!ok) {
         log.info('aborted');
         return;
       }
     }
 
-    await addPluginRecord({
-      packageName: pkg.packageName,
-      resolvedEntry: pkg.entryPath,
-      version: pkg.version,
-      providers: validated.providers.map((p) => p.name),
-      descriptors: Object.fromEntries(validated.providers.map((p) => [p.name, p.descriptor])),
-      apiVersion: validated.apiVersion,
-      addedAt: new Date().toISOString(),
-    });
-    log.success(`registered ${pkg.packageName} — now usable via \`--provider ${provNames}\``);
+    try {
+      await recordInspectedPlugin(inspected);
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
+    if (!opts.quiet) {
+      log.success(
+        `registered ${inspected.packageName} — now usable via \`--provider ${provNames}\``,
+      );
+    }
   });
 
 pluginCommand
@@ -312,6 +373,36 @@ pluginCommand
       );
     }
     process.stdout.write(JSON.stringify(hit, null, 2) + '\n');
+  });
+
+pluginCommand
+  .command('update')
+  .argument('[name]', 'provider or package name to update (default: all registered plugins)')
+  .option('--dry-run', 'show what would change without installing anything', false)
+  .option('-y, --yes', 'accepted for symmetry with `add`; this command never prompts', false)
+  .description('update registered provider plugins to their newest SDK-compatible release')
+  .action(async (name: string | undefined, opts: { dryRun?: boolean }) => {
+    // The enumerating dry-run `self-update` cannot offer: its plan block is
+    // printed by the OLD binary, whose gate is the one being replaced.
+    const { runPluginUpdates } = await import('../lib/plugin-update.js');
+    const report = await runPluginUpdates({
+      dryRun: opts.dryRun === true,
+      ...(name === undefined ? {} : { only: name }),
+      log: (line) => log.info(line),
+    });
+    if (report.outcomes.length === 0) {
+      log.info(
+        name === undefined
+          ? 'no provider plugins registered'
+          : `no registered plugin matches "${name}"`,
+      );
+      return;
+    }
+    for (const problem of report.problems) log.warn(problem);
+    if (report.updated.length > 0) {
+      log.success(`updated ${String(report.updated.length)} plugin(s)`);
+    }
+    if (report.problems.length > 0) process.exitCode = 1;
   });
 
 pluginCommand

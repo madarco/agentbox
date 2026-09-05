@@ -71,7 +71,7 @@ export type PluginUpdateOutcome =
       installedVersion: string;
       installedApiVersion: number;
       newestPublished: string | undefined;
-      reason: 'all-incompatible' | 'no-api-version-metadata';
+      reason: 'all-incompatible' | 'no-api-version-metadata' | 'not-published';
     }
   | { action: 'skipped-path'; packageName: string; reason: 'path' | 'linked' }
   | { action: 'skipped-missing'; packageName: string; installedVersion: string }
@@ -187,13 +187,21 @@ function decideOne(c: PluginUpdateCandidate, supported: readonly number[]): Plug
 
   if (compatible.length === 0) {
     const anyMetadata = usable.some((p) => publishApiVersion(p, supported).source !== 'none');
+    // An empty list means the registry answered and carries nothing for this
+    // name at all — a different problem from "published, but none compatible".
+    const reason =
+      c.published.length === 0
+        ? ('not-published' as const)
+        : anyMetadata
+          ? ('all-incompatible' as const)
+          : ('no-api-version-metadata' as const);
     return {
       action: 'no-compatible-version',
       packageName: c.packageName,
       installedVersion: c.installedVersion,
       installedApiVersion: c.installedApiVersion,
       newestPublished,
-      reason: anyMetadata ? 'all-incompatible' : 'no-api-version-metadata',
+      reason,
     };
   }
 
@@ -260,6 +268,9 @@ export function describePluginUpdate(o: PluginUpdateOutcome): string {
     case 'already-newest':
       return `${o.packageName}@${o.version} is already the newest compatible release`;
     case 'no-compatible-version':
+      if (o.reason === 'not-published') {
+        return `${o.packageName}@${o.installedVersion} left in place — the configured npm registry has no such package`;
+      }
       return o.reason === 'no-api-version-metadata'
         ? `${o.packageName}@${o.installedVersion} left in place — no published release declares a provider SDK version`
         : `${o.packageName}@${o.installedVersion} left in place — no published release targets this CLI's provider SDK (newest is ${o.newestPublished ?? 'unknown'})`;
