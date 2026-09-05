@@ -24,6 +24,7 @@ import {
   readPluginRegistrySync,
   removePluginRecord,
   SUPPORTED_SDK_API_VERSIONS,
+  type PluginRecord,
   type ProviderModule,
 } from '@agentbox/sandbox-core';
 import { PROVIDER_NAMES, type ProviderDescriptor } from '@agentbox/config';
@@ -177,6 +178,38 @@ async function loadAndValidate(
   return { providers, apiVersion };
 }
 
+/**
+ * A `plugin list` row. The three-column gutter keeps the provider column aligned
+ * whether or not the row is marked, so `!` is greppable (`plugin list | grep '^!'`)
+ * without the marked rows shifting out of line with the rest.
+ */
+export function renderPluginRow(rec: PluginRecord, supported: readonly number[]): string {
+  const providers = rec.providers.join(', ').padEnd(20);
+  const pkg = `${rec.packageName}@${rec.version}`;
+  if (supported.includes(rec.apiVersion)) {
+    return `   ${providers} ${pkg} (SDK v${String(rec.apiVersion)})\n`;
+  }
+  // Name the supported set from the constant rather than a literal, so the text
+  // stays correct if the gate ever widens back to accepting several majors.
+  const needs = supported.map((v) => `v${String(v)}`).join('/');
+  return `!  ${providers} ${pkg} (SDK v${String(rec.apiVersion)} — unsupported, this build needs ${needs})\n`;
+}
+
+/** Legend for `plugin list`, or null when every registered plugin is loadable. */
+export function pluginListFooter(
+  recs: readonly PluginRecord[],
+  supported: readonly number[],
+): string | null {
+  if (!recs.some((r) => !supported.includes(r.apiVersion))) return null;
+  // Indented into the same gutter as the rows on purpose: a footer starting with
+  // a column-0 `!` would be counted by `plugin list | grep -c '^!'`, which is the
+  // one-line health check the marker exists to enable.
+  return (
+    '\n   ! = built for an unsupported provider SDK and will not load — run `agentbox self-update` ' +
+    '(it updates plugins too), or `agentbox plugin remove <name>`\n'
+  );
+}
+
 export const pluginCommand = new Command('plugin').description(
   'Manage externally-installed provider packages (community providers)',
 );
@@ -253,10 +286,10 @@ pluginCommand
       return;
     }
     for (const p of plugins) {
-      process.stdout.write(
-        `${p.providers.join(', ').padEnd(20)} ${p.packageName}@${p.version} (SDK v${String(p.apiVersion)})\n`,
-      );
+      process.stdout.write(renderPluginRow(p, SUPPORTED_SDK_API_VERSIONS));
     }
+    const footer = pluginListFooter(plugins, SUPPORTED_SDK_API_VERSIONS);
+    if (footer) process.stdout.write(footer);
   });
 
 pluginCommand
@@ -270,6 +303,13 @@ pluginCommand
       process.stderr.write(`no registered plugin matches "${name}"\n`);
       process.exitCode = 1;
       return;
+    }
+    // stderr, not a synthetic key in the JSON: `plugin info x | jq` has to keep
+    // working, and the command's contract is "show the record" as it is stored.
+    if (!isSupportedApiVersion(hit.apiVersion)) {
+      process.stderr.write(
+        `! ${hit.packageName} targets provider SDK v${String(hit.apiVersion)}; this build supports v${SUPPORTED_SDK_API_VERSIONS.join(', v')} — it will not load\n`,
+      );
     }
     process.stdout.write(JSON.stringify(hit, null, 2) + '\n');
   });
