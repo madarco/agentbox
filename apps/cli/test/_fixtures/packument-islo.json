@@ -1,0 +1,19 @@
+{
+  "name": "agentbox-provider-islo",
+  "dist-tags": {
+    "latest": "0.1.0"
+  },
+  "versions": {
+    "0.1.0": {
+      "name": "agentbox-provider-islo",
+      "version": "0.1.0",
+      "agentbox": {
+        "providerApiVersion": 2
+      },
+      "dependencies": {
+        "@islo-labs/sdk": "^0.0.28",
+        "@madarco/agentbox-provider-sdk": "^2.1.0"
+      }
+    }
+  }
+}

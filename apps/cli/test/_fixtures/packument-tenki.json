@@ -1,0 +1,32 @@
+{
+  "name": "@tenkicloud/agentbox-provider",
+  "dist-tags": {
+    "latest": "0.1.1"
+  },
+  "versions": {
+    "0.1.0": {
+      "name": "@tenkicloud/agentbox-provider",
+      "version": "0.1.0",
+      "agentbox": {
+        "providerApiVersion": 2
+      },
+      "dependencies": {
+        "@clack/prompts": "^0.9.0",
+        "@tenkicloud/sandbox": "^0.5.2",
+        "@madarco/agentbox-provider-sdk": "^2"
+      }
+    },
+    "0.1.1": {
+      "name": "@tenkicloud/agentbox-provider",
+      "version": "0.1.1",
+      "agentbox": {
+        "providerApiVersion": 2
+      },
+      "dependencies": {
+        "@clack/prompts": "^0.9.0",
+        "@madarco/agentbox-provider-sdk": "^2",
+        "@tenkicloud/sandbox": "^0.5.2"
+      }
+    }
+  }
+}
