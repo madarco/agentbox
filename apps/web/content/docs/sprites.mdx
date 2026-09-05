@@ -22,6 +22,15 @@ Select it per box with `--provider sprites`. Comparing options? See the built-in
   at the [issue tracker](https://github.com/philippgerard/agentbox-provider-sprites/issues).
 </Callout>
 
+<Callout type="warn" title="Needs AgentBox 0.29.2 or earlier for now">
+  The published `agentbox-provider-sprites` targets **provider SDK v2**, and AgentBox 0.30.0 accepts
+  only v4 — `agentbox plugin add` refuses it, and a copy registered before you upgraded is marked
+  `!` by [`agentbox plugin list`](/docs/cli). Until an SDK v4 build is published, stay on AgentBox
+  0.29.2 to use sprites. Once one is, `agentbox self-update` picks it up on its own (or run
+  `agentbox plugin update`). Track it at the [issue
+  tracker](https://github.com/philippgerard/agentbox-provider-sprites/issues).
+</Callout>
+
 ## Install
 
 Requirements: Node.js 20.10 or newer, an AgentBox release that supports provider SDK API v2, the
@@ -32,7 +41,7 @@ Install the plugin, then register it so `--provider sprites` resolves:
 ```bash
 npm i -g agentbox-provider-sprites
 agentbox plugin add agentbox-provider-sprites
-agentbox plugin list            # → sprites … (SDK v2)
+agentbox plugin list            # → sprites … (SDK v4)
 ```
 
 A plugin runs in-process with full host and credential access, so `plugin add` is the trust

@@ -387,11 +387,49 @@ Copy the cloud-backend contract suite
 ```
 npm i -g agentbox-provider-myprovider     # or install anywhere resolvable
 agentbox plugin add agentbox-provider-myprovider   # validates + records it (a path also works)
-agentbox plugin list
+agentbox plugin list                       # `!` marks one this CLI cannot load
 agentbox doctor                            # shows your provider's group
 agentbox create --provider myprovider      # first create triggers ensureCredentials
+agentbox plugin update --dry-run           # what an update would change, and why
+agentbox plugin update [name]              # move to the newest SDK-compatible release
 agentbox plugin remove myprovider          # unregister (does not uninstall the npm package)
 ```
+
+### Keeping plugins current
+
+`agentbox self-update` refreshes registered plugins as one of its steps
+(`--skip-plugins` declines it); `agentbox plugin update` is the same work on
+demand, and the retry path when that step warned and continued.
+
+It installs the newest published version whose `providerApiVersion` major is in
+this CLI's `SUPPORTED_SDK_API_VERSIONS` — **never simply `@latest`**. A user on a
+CLI whose gate is `[1,2]` must not be moved onto a v4-only plugin build: that
+would break a plugin that works today, which is the inverse of the problem this
+solves. A package with no compatible release is left exactly as it is and
+reported.
+
+Mechanics worth knowing when changing this code:
+
+- The step runs from the **freshly installed** binary
+  (`_post-update-refresh`), because `SUPPORTED_SDK_API_VERSIONS` is compiled in
+  and the outgoing build's gate is the one being replaced. It is ordered before
+  `adoptPreparedBases`, which `import()`s every plugin provider, and before the
+  relay/hub restart — otherwise the old module is already cached, or the
+  respawned hub comes up holding it.
+- Re-registration runs `agentbox plugin add --yes --quiet` in a **child
+  process**: the install path is stable, so a second in-process `import()`
+  returns the cached old module.
+- Which plugins are eligible is decided from the record's stored
+  `resolvedEntry` — what `loadProviderModule` actually imports. Re-resolving by
+  package name would find a same-named global install and reclassify a
+  path-registered plugin as updatable. Local paths and `npm link`ed checkouts are
+  skipped, separately, so a dev tree is never overwritten.
+- A failed re-validate is **not** rolled back: `npm i -g` has already replaced
+  the directory `resolvedEntry` points at, so reverting the registry would
+  describe code that no longer exists. The warning names the manual fix.
+- Metadata comes from the full packument at `update.registry`
+  (default `https://registry.npmjs.org`). The abbreviated packument strips custom
+  fields including `agentbox`, so it cannot be used.
 
 Every create goes through the hub's `POST /api/v1/boxes` (see
 [`hub-api-single-path-plan.md`](./hub-api-single-path-plan.md)), so the hub
@@ -409,11 +447,20 @@ it names the package + version and warns before recording. Only add plugins you
 trust. AgentBox does not sandbox plugin code (a provider legitimately needs to
 provision infrastructure and handle secrets).
 
+Consent covers **the package, not a single version of it.** Once added,
+`self-update` / `plugin update` install newer releases published under that same
+npm name without prompting again — the `npm update` trust model, and the only way
+a fixed plugin can reach a user automatically. `--skip-plugins` opts out per run;
+a plugin you no longer trust should be removed rather than left un-updated.
+
 ## Compatibility
 
 The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported
 set (`SUPPORTED_SDK_API_VERSIONS`). An incompatible plugin is refused at
-`plugin add` and skipped (with a warning) at load — it never crashes the CLI.
+`plugin add`, and fails at load with an error naming the version it targets — it
+never crashes the CLI. A plugin registered *before* a gate change stays in the
+registry, so `plugin list` marks that row with `!` (and `plugin info` warns on
+stderr, leaving stdout valid JSON).
 
 **v4 is a clean break** (as v3 was, and for the same reason). It replaces
 `PrepareOptions.claudeInstall` with the generic `agentSettings` map, gives

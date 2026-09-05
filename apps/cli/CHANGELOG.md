@@ -13,6 +13,12 @@ CLI, not the raw commits.
 
 ### Added
 
+- **`agentbox self-update` now updates registered provider plugins too**, to the
+  newest published release whose provider SDK version this CLI supports — never
+  simply `@latest`, so a working plugin is never upgraded onto a build that
+  cannot load. `agentbox plugin update [name]` does it on demand (`--dry-run`
+  shows what would change), `--skip-plugins` declines the step, and
+  `update.registry` points it at a mirror or private registry.
 - **One agent per box.** `agentbox claude` now builds a box carrying claude and
   nothing else — only that agent gets a config volume, a credential seed and a
   home dir. Every box used to ship all three agents' binaries and live-mount
@@ -70,6 +76,9 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **`agentbox plugin list` marks a plugin this build cannot load** with a leading
+  `!` and a line naming the SDK version it needs. A plugin registered before an
+  SDK-gate change used to look healthy until a create failed.
 - **Daytona defaults to the `container` class, not `linux-vm`.** `linux-vm` runs
   only in a dedicated `us-east-1` region Daytona enables per organization by
   invitation, so the old default failed mid-bake for most accounts. Set

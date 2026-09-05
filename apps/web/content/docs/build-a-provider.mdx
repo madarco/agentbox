@@ -176,9 +176,11 @@ For your own package, point its `@madarco/agentbox-provider-sdk` dependency at a
 ```bash
 npm i -g agentbox-provider-myprovider        # or install anywhere resolvable
 agentbox plugin add agentbox-provider-myprovider   # validates + records it (a path also works)
-agentbox plugin list
+agentbox plugin list                         # `!` marks one this CLI cannot load
 agentbox doctor                              # shows your provider's group
 agentbox create --provider myprovider        # first create triggers ensureCredentials
+agentbox plugin update --dry-run             # what an update would change, and why
+agentbox plugin update                       # move every plugin to its newest compatible release
 agentbox plugin remove myprovider            # unregister (does not uninstall the package)
 ```
 
@@ -187,20 +189,41 @@ agentbox plugin remove myprovider            # unregister (does not uninstall th
   exactly like the CLI. `agentbox plugin add` is the consent boundary: it names the package and
   version and warns before recording. Only add plugins you trust; AgentBox does not sandbox plugin
   code.
+
+Consent covers **the package, not one version of it**: once added, `agentbox self-update` and
+`agentbox plugin update` install newer releases published under that same npm name without asking
+again — the same trust model as `npm update`. `--skip-plugins` opts out per run. A plugin you no
+longer trust should be removed (`agentbox plugin remove <name>`), not merely left un-updated.
+
 </Callout>
 
 ## Compatibility & publishing
 
-The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported set — the SDK's exported `SDK_API_VERSION` is the gate. An incompatible plugin is refused at `plugin add` and skipped (with a warning) at load; it never crashes the CLI.
+The CLI loads a plugin only if its `providerApiVersion` is in the CLI's supported set — the SDK's exported `SDK_API_VERSION` is the gate. An incompatible plugin is refused at `plugin add`, and fails at load with an error naming the version it targets; it never crashes the CLI. A plugin registered _before_ a gate change stays in the registry and is marked `!` by `agentbox plugin list`.
 
-<Callout title="v3 is a clean break">
-  A provider built on SDK v2 is **not** loaded by this release. v2 exposed three
-  per-agent staging helpers, so a v2 provider bakes a snapshot containing exactly
-  claude, codex and opencode — on a host with any other agent it produces a base
-  that silently lacks it. v3 replaces them with `stageAllAgentStatic`, which
-  stages whatever agents the host actually has. Rebuild against `^3`, set
-  `providerApiVersion: 3`, and replace the three `stage<Agent>StaticForUpload`
-  calls with the single one.
+`agentbox self-update` (and `agentbox plugin update`) moves each registered plugin to the newest published version whose SDK major the CLI supports — never simply to `@latest`, so a plugin that works today is not upgraded onto a build this CLI cannot load. Publish `agentbox.providerApiVersion` in your `package.json` and that resolution needs no guessing; the `@madarco/agentbox-provider-sdk` dependency range is the fallback. Plugins registered from a local path, and `npm link`ed checkouts, are left alone.
+
+<Callout title="v4 is the current contract; v2 and v3 are not loaded">
+  Two clean breaks landed together — v3 was never in a release, so a v2 provider
+  moves straight to v4. Rebuild against `^4` and set `providerApiVersion: 4`.
+
+**v3** removed the three per-agent staging helpers. A v2 provider bakes a
+snapshot containing exactly claude, codex and opencode, so on a host with any
+other agent it produces a base that silently lacks it. Replace
+`stageClaudeStaticForUpload` / `stageCodexStaticForUpload` /
+`stageOpencodeStaticForUpload` with the single `stageAllAgentStatic`, which
+stages whatever agents the host actually has.
+
+**v4** made agent settings generic. `PrepareOptions.claudeInstall` is replaced
+by the `agentSettings` map, `resolveAgentInstall` takes that agent's settings
+rather than a mode string, `Provider.baseFingerprint` takes no arguments (an
+agentless base folds no agent setting), and `claudeInstallFingerprint` is gone.
+A v3 provider silently drops every agent setting, which is why this is a break
+rather than a default.
+
+Both are refusals rather than degradations on purpose: either would produce a
+wrong artifact, which is worse than a missing feature.
+
 </Callout>
 
 Publish your package to npm under the `agentbox-provider-<name>` name and users install it like any other. For the full authoring reference — the complete `CloudBackend` contract, the backend conformance test suite, and publishing notes — see [`docs/provider-plugins.md`](https://github.com/madarco/agentbox/blob/main/docs/provider-plugins.md) and the [`agentbox-provider-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-provider-example) package.
