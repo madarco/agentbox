@@ -692,7 +692,7 @@ function CreateBoxModal({
                       <span className="font-mono text-xs text-muted-foreground">
                         {persistentCapped
                           ? `${providerOption?.label ?? providerId} caps how long a sandbox can live, so an always-on box is not possible there.`
-                          : 'Never auto-paused, never idle-lapsed, skipped by prune, and started again after a host reboot. It keeps costing while it runs, and destroying it takes an explicit force.'}
+                          : 'Never auto-paused, idle-lapsed or pruned, and it comes back after a host reboot — so it keeps costing while it runs, and destroying it takes an explicit force.'}
                       </span>
                     </span>
                   </label>
