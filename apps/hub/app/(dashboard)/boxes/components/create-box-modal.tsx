@@ -687,12 +687,12 @@ function CreateBoxModal({
                     />
                     <span className="flex flex-col gap-0.5">
                       <span className="text-xs font-medium text-secondary-foreground">
-                        Keep this box always on
+                        Persistent: keep this box always on
                       </span>
                       <span className="font-mono text-xs text-muted-foreground">
                         {persistentCapped
                           ? `${providerOption?.label ?? providerId} caps how long a sandbox can live, so an always-on box is not possible there.`
-                          : 'Keep this box running and protect it from pruning.'}
+                          : 'Protected from pruning, and destroying it takes an explicit force.'}
                       </span>
                     </span>
                   </label>
