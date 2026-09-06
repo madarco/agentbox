@@ -24,7 +24,7 @@ $ agentbox openclaw -n claw
 
 Open that URL and paste the token when the Control UI asks for it.
 
-<Callout title="NO `<box>.localhost` FOR AN OPENCLAW BOX" type="warn">
+<Callout type="warn" title="AN OPENCLAW BOX HAS NO FRIENDLY URL">
   Every other box gets a stable `https://<box>.localhost` from
   [Portless](/docs/web-apps-and-tunnels). OpenClaw's box does not, and cannot: Portless adds
   `X-Forwarded-*` headers to every request, and the gateway answers **any** request carrying one
