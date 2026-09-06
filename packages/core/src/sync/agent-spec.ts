@@ -286,6 +286,26 @@ export interface AgentServiceSpec {
    * proxied request.
    */
   rejectsProxyHeaders?: boolean;
+  /**
+   * Argv for an interactive CLIENT of this daemon — what `agentbox attach` and
+   * `agentbox open --in <app>` should open. NOT a shell line: it is passed as
+   * argv, so nothing here is word-split or glob-expanded.
+   *
+   * This is not an "attach to the agent" in the TUI sense and does not make the
+   * agent a TUI one — there is still no agent session. The daemon runs under
+   * ctl either way; this is a terminal talking to it, and it is data precisely
+   * so the attach path can implement it once for every service agent rather
+   * than per agent.
+   *
+   * Point it at a client that talks to the ALREADY-RUNNING daemon. OpenClaw's
+   * `tui` connects to the gateway; its `chat`/`terminal` aliases are
+   * `tui --local`, which start a second, embedded runtime and ignore the
+   * gateway the box exists to host — the wrong thing here.
+   *
+   * Absent means there is no such client, and attach says so rather than
+   * opening a bare shell.
+   */
+  repl?: readonly string[];
   restart?: 'always' | 'on-failure' | 'never';
   /** Other unit names this service waits for. */
   needs?: readonly string[];

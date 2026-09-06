@@ -49,16 +49,17 @@ inside the box (in there the gateway is `http://localhost:18789`). Re-read it wi
 
 ## The commands
 
-`agentbox openclaw` has the shape a hosted service has, not the shape an agent TUI has — there is no `attach`, no `login`, no `--resume`.
+`agentbox openclaw` has the shape a hosted service has, not the shape an agent TUI has — there is no `login` and no `--resume`. It does have an `attach`, but it means something different: it opens OpenClaw's own terminal client against the gateway the box is already running, rather than attaching to an agent session (there isn't one).
 
-| Command                           | What it does                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token |
-| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                    |
-| `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                           |
-| `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                |
-| `agentbox openclaw restart [box]` | Restart the gateway                                                                                    |
-| `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                |
+| Command                           | What it does                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token  |
+| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                     |
+| `agentbox openclaw attach [box]`  | Open OpenClaw's terminal UI against the running gateway (`Control+a d` detaches, gateway keeps running) |
+| `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                            |
+| `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                 |
+| `agentbox openclaw restart [box]` | Restart the gateway                                                                                     |
+| `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                 |
 
 The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180).
 

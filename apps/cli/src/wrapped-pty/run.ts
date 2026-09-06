@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
+import { isServiceAgent } from '@agentbox/core';
+import { findAgentSpec } from '@agentbox/sandbox-core';
 import { serviceStatusLabel } from './service-status.js';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '@agentbox/cli-kit';
@@ -203,7 +205,13 @@ function buildAgentboxAttachArgv(
   mode: WrappedAttachOptions['mode'],
   boxName: string,
 ): string[] | null {
-  if (mode !== 'claude' && mode !== 'codex' && mode !== 'opencode' && mode !== 'pi') return null;
+  // Off the registry, not a literal list: a hardcoded four silently downgraded
+  // `openIn` to an inline attach for openclaw — the new pane was never spawned,
+  // and nothing said why. `'shell'` legitimately has no `attach` subcommand,
+  // and neither does a service agent that ships no client, so both stay null.
+  const spec = findAgentSpec(mode);
+  if (!spec) return null;
+  if (isServiceAgent(spec) && !(spec.service?.repl && spec.service.repl.length > 0)) return null;
   return [mode, 'attach', boxName, '--attach-in', 'same'];
 }
 

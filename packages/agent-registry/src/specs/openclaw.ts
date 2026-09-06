@@ -52,9 +52,10 @@ const GATEWAY_PORT = 18789;
 export const openclawSpec: AgentSyncSpec = {
   id: 'openclaw',
   aliases: [],
-  // No tmux session exists for a daemon. The field is required by the spec
-  // shape and ships in the descriptor, but `activitySource: []` already tells
-  // ctl not to probe it — see `caps` below.
+  // The tmux session `service.repl` opens on demand. NOT an agent session: the
+  // gateway runs under ctl whether or not anyone is attached, and
+  // `activitySource: []` still tells ctl not to probe this name — see `caps`.
+  // Nothing creates it until someone runs `agentbox attach`.
   sessionName: 'openclaw',
   binary: 'openclaw',
   install: {
@@ -160,6 +161,12 @@ export const openclawSpec: AgentSyncSpec = {
     // client claiming the loopback auth exemption by hopping through a proxy --
     // so there is no configuration that makes the proxied path work.
     rejectsProxyHeaders: true,
+    // `tui` connects to the gateway this box is already running. `chat` and
+    // `terminal` are aliases for `tui --local`, which start a SECOND embedded
+    // runtime and ignore that gateway — measured, not assumed. No token or URL
+    // argument: it defaults to the local gateway, and a loopback request with
+    // no forwarded headers is `direct-local` to openclaw's own auth.
+    repl: ['openclaw', 'tui'],
     tasks: [
       {
         name: 'openclaw-onboard',

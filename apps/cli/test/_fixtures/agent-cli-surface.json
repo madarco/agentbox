@@ -1108,6 +1108,22 @@
         ],
         "options": [],
         "subcommands": []
+      },
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Open openclaw's terminal client against the box's running openclaw (starts the session on first use; Control+a d detaches and leaves the daemon up)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [],
+        "subcommands": []
       }
     ]
   },

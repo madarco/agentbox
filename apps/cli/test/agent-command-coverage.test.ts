@@ -38,10 +38,15 @@ describe('per-agent dispatch table', () => {
    * The other half of the split, and the reason `attachWrapped` is optional.
    *
    * A `surface: 'service'` agent is a daemon the box's supervisor runs: there is
-   * no tmux session, so an attach wrapper for it could only ever be a stub that
-   * throws. It gets its command from the shared service factory instead, and
-   * `attach` refuses it by name (`commands/attach.ts`). Asserting the ABSENCE
-   * here is what keeps someone from "fixing" the missing wrapper with a stub.
+   * no AGENT session, so an attach wrapper for it could only ever be a stub that
+   * throws. It gets its command from the shared service factory instead.
+   * Asserting the ABSENCE here is what keeps someone from "fixing" the missing
+   * wrapper with a stub.
+   *
+   * Still true now that `attach` can open a service agent's REPL: that opens a
+   * CLIENT of the daemon, from `service.repl` on the registry row, handled once
+   * for every service agent in `agents/service-repl.ts` — deliberately not a
+   * per-agent wrapper, because there is nothing per-agent about it.
    */
   it('every service agent carries a command and NO attach wrapper', () => {
     for (const spec of AGENT_SYNC_SPECS.filter((s) => s.caps.surface === 'service')) {
