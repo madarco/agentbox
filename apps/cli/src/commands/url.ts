@@ -105,7 +105,11 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
   } else if (state === 'missing') {
     throw new Error(`cloud sandbox for ${box.name} is missing; was it deleted?`);
   }
-  return p.resolveUrl(box, { kind: 'web', ttl });
+  // `loopback` has to ride along: the cloud resolver honours it (it is what
+  // skips a registered Portless alias), and dropping it here made
+  // `agentbox url --loopback` silently return the proxied URL for every cloud
+  // box — the flag's one job.
+  return p.resolveUrl(box, { kind: 'web', ttl, ...(opts.loopback ? { loopback: true } : {}) });
 }
 
 function emitUrl(url: string, opts: UrlOptions): void {

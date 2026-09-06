@@ -86,6 +86,7 @@ import {
 } from './checkpoint.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
+import { skipWebProxyAlias } from '@agentbox/sandbox-docker';
 import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
@@ -1125,7 +1126,7 @@ export function createCloudProvider(
         const portlessOpt = (req.providerOptions?.['portless'] as boolean | undefined) ?? true;
         let portlessAliasName: string | undefined;
         let portlessUrlResolved: string | undefined;
-        if (portlessOpt && webPreview) {
+        if (portlessOpt && webPreview && !skipWebProxyAlias(req.agents, log)) {
           const r = await bootstrapPortlessForCloudBox(backend, handle, {
             boxName: name,
             webPreviewUrl: webPreview.url,

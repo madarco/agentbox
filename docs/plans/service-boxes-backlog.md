@@ -340,16 +340,42 @@ Any one forwarded header is enough. Portless always adds them, so
 is exempt — returns 200. Every smoke test so far checked `/healthz`, which is
 exactly why this was never caught.
 
-OpenClaw offers no way to ignore the headers. `gateway.trustedProxies`
-(CIDR allowlist) is not sufficient on its own: setting it to `127.0.0.1/32` +
-`::1/128` still 403s, because the policy also wants
-`gateway.auth.trustedProxy.userHeader`, which is REQUIRED once that object
-exists (`config patch` rejects the object without it). That whole mode is built
-for an identity proxy that authenticates the user and forwards who they are —
-oauth2-proxy, not a plain reverse proxy. Portless is not one and cannot become
-one. `portless alias` (0.13.0) has no flag to suppress the headers.
+OpenClaw offers no way to ignore the headers, and `gateway.trustedProxies` does
+not rescue it. The reason is in the source, `src/gateway/ingress-attribution.ts`:
 
-So the fix has to be ours. Three options, none of them free:
+```ts
+if (isTrustedProxyAddress(remoteAddress, params.trustedProxies)) {
+  const clientIp = resolveRequestClientIpFromHeaders(req, params.trustedProxies, ...);
+  if (!clientIp || isLoopbackAddress(clientIp)) {
+    return unattributableProxy(remoteAddress);   // -> 403
+  }
+  return { ...attributed("trusted-proxy", clientIp), ... };
+}
+```
+
+Configuring the proxy is **necessary but not sufficient**: the forwarded CLIENT
+must also be non-loopback. Our client is a browser on the same machine as
+Portless, so `X-Forwarded-For` is `::1` — always loopback, always refused. That
+is deliberate, not a bug: it stops a remote client claiming the loopback auth
+exemption by hopping through a proxy. (Adding `::1/128` to the allowlist, as the
+live test did, makes it worse: trusted entries are skipped as proxies when
+resolving the client, leaving none at all.)
+
+The docs are not wrong either — "a plain reverse proxy is supported" holds for a
+proxy carrying traffic from a real client. Reached from ANOTHER machine the
+forwarded IP would be a LAN address and `trustedProxies` would work; that is
+dead for us only because `<box>.localhost` does not resolve off-host.
+
+`portless alias` (0.13.0) has no flag to suppress the headers.
+
+**Resolved: the box publishes its port directly.** `service.rejectsProxyHeaders`
+on the agent's registry row makes AgentBox skip the box's Portless *web* alias,
+and every URL producer then falls back to the published port on its own. Fixes
+docker, hetzner and digitalocean. It does NOT fix vercel, e2b or daytona, whose
+preview URLs are served by the provider's own edge proxy, which will add
+forwarded headers of its own — expected but unverified.
+
+The options that were weighed, kept because two are still live for other cases:
 
 1. **Hand out the direct preview URL for such a service.** The raw SSH-tunnel
    URL already works. Cheapest and it works today, but it drops the symmetric
@@ -416,3 +442,60 @@ Prerequisites put this behind an opt-in rather than making it the default: a
 Tailscale daemon logged in inside the box (so a tailnet auth key has to reach
 it), MagicDNS, and HTTPS certs enabled on the tailnet. Users without a tailnet
 get nothing from it, so the default path still needs option 1 or 2.
+
+## What actually reaches an OpenClaw Control UI, per path (2026-09-06)
+
+Measured, after the direct-port change. Two independent gates decide it, and
+they fail differently — a `curl /` returning 200 proves only the first.
+
+**1. Ingress attribution** (`src/gateway/ingress-attribution.ts`). Any header
+matching `x-forwarded-*`, `forwarded` or `x-real-ip` disqualifies the request
+from `direct-local`; it then needs a trusted proxy AND a non-loopback forwarded
+client, which a same-machine browser can never provide. Failure is
+`403 proxy_attribution_required` on every path except `/healthz`.
+
+**2. Browser origin** (`src/gateway/origin-check.ts`). Only matters in a real
+browser — curl sends no `Origin`. Allowed without configuration when the origin
+is loopback and the client is local, or when origin == Host and the hostname is
+loopback, a private IP, or ends in **`.local`** or **`.ts.net`**. Otherwise the
+Control UI loads its shell and the WS connect fails with "Browser origin not
+allowed".
+
+| path | fwd headers | attribution | browser origin | Control UI |
+|---|---|---|---|---|
+| docker OrbStack, `<container>.orb.local` | none | direct-local | `.local` -> same-origin | works |
+| docker plain, direct published port | none | direct-local | loopback | works |
+| docker plain, via Portless | yes | **403** | — | was broken; alias now skipped |
+| hetzner / DO, direct ssh-forward port | none | direct-local | loopback | works |
+| hetzner / DO, via Portless | yes | **403** | — | was broken; alias now skipped |
+| e2b, `8080-<id>.e2b.app` | **none** | direct-local | public host -> **rejected** | needs `allowedOrigins` |
+| Tailscale Serve, `<host>.<tailnet>.ts.net` | tailscale-owned | tailscale-serve | `.ts.net` -> same-origin | works |
+
+Two corrections to earlier notes in this file:
+
+- **OrbStack was never affected.** It skips Portless entirely and routes
+  `<container>.orb.local` straight to the container. The "every provider,
+  docker included" claim was too broad — it holds for plain Docker Desktop,
+  where Portless is in the path.
+- **e2b's edge adds no forwarded headers at all.** Verified with an echo server
+  on a second exposed port: it adds only `via`, `x-cloud-trace-context` and
+  `x-request-id`. So the 403 never happens there, and the prediction that every
+  public-preview provider would be broken was wrong.
+
+### Open: public-preview providers need their origin allowlisted
+
+On e2b the Control UI loads and then refuses to connect until the box's own
+public origin is in `gateway.controlUi.allowedOrigins`. Setting it by hand makes
+the UI reach the normal "Auth required — paste the gateway token" state, which
+is the correct end state and confirms a public box is **not** wide open.
+
+AgentBox knows the box's public origin at create, so this should be automatic
+for providers whose URL is neither loopback nor `.local`/`.ts.net`. It needs
+somewhere for AgentBox to assert a config key it owns — the same seam a
+spec-declared base overlay would provide. Not built.
+
+**Vercel measured too, and it is identical**: `https://sb-<id>.vercel.run` serves
+`/` with `200` (so its edge sends no forwarded headers either) and the browser
+then reports the same "Browser origin not allowed". Only daytona is still
+untested.
+

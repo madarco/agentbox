@@ -19,10 +19,27 @@ $ agentbox openclaw -n claw
 │
 │  token: 5f3c…c1d2
 │
-└  openclaw on claw: https://claw.localhost
+└  openclaw on claw: http://127.0.0.1:54321
 ```
 
 Open that URL and paste the token when the Control UI asks for it.
+
+<Callout type="warn" title="AN OPENCLAW BOX HAS NO FRIENDLY URL">
+  Every other box gets a stable `https://<box>.localhost` from
+  [Portless](/docs/web-apps-and-tunnels). OpenClaw's box does not, and cannot: Portless adds
+  `X-Forwarded-*` headers to every request, and the gateway answers **any** request carrying one
+  with `403 proxy_attribution_required`. `gateway.trustedProxies` does not help — configuring the
+  proxy is necessary but not sufficient, because OpenClaw also requires the forwarded *client* to be
+  non-loopback, and a browser on the same machine as the proxy never is. That is deliberate: it
+  stops a remote client claiming the loopback auth exemption by going through a proxy.
+
+So AgentBox publishes the port directly instead. The consequences are worth knowing: the URL
+carries a host port that **changes every time the box restarts**, and it is not the same URL from
+inside the box (in there the gateway is `http://localhost:18789`). Re-read it with
+`agentbox openclaw url` rather than bookmarking it. The VNC desktop keeps its own
+`vnc-<box>.localhost` name.
+
+</Callout>
 
 <Callout title="ONE BOX PER TENANT">
   OpenClaw does not support multiple tenants in one gateway: two gateways sharing a state directory
@@ -32,16 +49,17 @@ Open that URL and paste the token when the Control UI asks for it.
 
 ## The commands
 
-`agentbox openclaw` has the shape a hosted service has, not the shape an agent TUI has — there is no `attach`, no `login`, no `--resume`.
+`agentbox openclaw` has the shape a hosted service has, not the shape an agent TUI has — there is no `login` and no `--resume`. It does have an `attach`, but it means something different: it opens OpenClaw's own terminal client against the gateway the box is already running, rather than attaching to an agent session (there isn't one).
 
-| Command                           | What it does                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token |
-| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                    |
-| `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                           |
-| `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                |
-| `agentbox openclaw restart [box]` | Restart the gateway                                                                                    |
-| `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                |
+| Command                           | What it does                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token  |
+| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                     |
+| `agentbox openclaw attach [box]`  | Open OpenClaw's terminal UI against the running gateway (`Control+a d` detaches, gateway keeps running) |
+| `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                            |
+| `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                 |
+| `agentbox openclaw restart [box]` | Restart the gateway                                                                                     |
+| `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                 |
 
 The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180).
 

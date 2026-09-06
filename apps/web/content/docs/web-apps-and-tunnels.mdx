@@ -99,6 +99,21 @@ agentbox url my-cloud-box --ttl 86400
   public domain depending on where the box lives.
 </Callout>
 
+## When a service refuses to be proxied
+
+A daemon can treat forwarded headers as a security signal and refuse to serve
+behind a proxy at all. [OpenClaw](/docs/openclaw) does: it answers any request
+carrying an `X-Forwarded-*` header with `403 proxy_attribution_required`.
+
+An agent declares that on its registry row, and AgentBox then skips the Portless
+**web** alias for boxes built for it — so the box's URL is the directly
+published port, with nothing in front of it. The VNC alias is unaffected. There
+is no config key for this: it is a fact about the daemon, not a preference.
+
+The trade is that such a box has no stable name. Its URL carries a host port
+that changes on every restart, and it is not the URL the box sees for itself, so
+read it with `agentbox url` rather than bookmarking it.
+
 ## Extra ports
 
 `expose:` covers _one_ web service on container `:80`. Reaching any _additional_ port depends on the provider:

@@ -116,9 +116,12 @@ function CreateBoxModal({
   const [fromBranch, setFromBranch] = useState('');
   const [branches, setBranches] = useState<string[] | null>(null);
   const [runSetup, setRunSetup] = useState(false);
-  // Always-on box. Off by default and behind Advanced: for a coding box the
-  // expendable default is right almost always, and this is the exception.
-  const [persistent, setPersistent] = useState(false);
+  // Always-on box, as a TRI-STATE: null means "no opinion", which is what the
+  // API wants for the common case. It matters because the default is not a
+  // constant — a service agent's box is always-on (`resolveCreatePersistent`),
+  // so a fixed `false` here would render the toggle off for OpenClaw and then
+  // create an always-on box anyway.
+  const [persistentChoice, setPersistentChoice] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   // VM size. '' = the provider's own default; CUSTOM_SIZE swaps in a free-text
   // field. There is no cross-provider size grammar (hetzner takes `cx43`,
@@ -218,6 +221,12 @@ function CreateBoxModal({
   // A `docker:<alias>` remote-docker spec is never capped, so the bare id is
   // the right thing to test.
   const persistentCapped = PERSISTENT_CAPPED.has(providerId);
+  // Mirrors `resolveCreatePersistent`: an untouched toggle shows what the API
+  // will do, not a guess. `surface` is absent on a catalog served without host
+  // scope, which reads as unknown — and unknown falls back to off, the answer
+  // for every agent this hub can name.
+  const persistentByDefault = agents.find((a) => a.id === agent)?.surface === 'service';
+  const persistent = (persistentChoice ?? persistentByDefault) && !persistentCapped;
   const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   const bakeNeeded =
@@ -401,8 +410,13 @@ function CreateBoxModal({
         // opt-out. `size` goes only to providers that apply one per create;
         // daytona and e2b reject it there and got theirs baked in above.
         ...(() => {
-          const opts: { persistent?: true; size?: string } = {};
-          if (persistent && !persistentCapped) opts.persistent = true;
+          const opts: { persistent?: boolean; size?: string } = {};
+          // Sent only when it differs from what the API would derive on its own.
+          // Silence is not `false`: it lets the hub's `box.persistent` decide,
+          // and for a service agent it is what keeps the box always-on.
+          if (!persistentCapped && persistent !== persistentByDefault) {
+            opts.persistent = persistent;
+          }
           if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {
             opts.size = chosenSize;
           }
@@ -680,19 +694,19 @@ function CreateBoxModal({
                   >
                     <input
                       type="checkbox"
-                      checked={persistent && !persistentCapped}
+                      checked={persistent}
                       disabled={persistentCapped}
-                      onChange={(e) => setPersistent(e.target.checked)}
+                      onChange={(e) => setPersistentChoice(e.target.checked)}
                       className="mt-0.5 h-4 w-4 flex-none accent-primary"
                     />
                     <span className="flex flex-col gap-0.5">
                       <span className="text-xs font-medium text-secondary-foreground">
-                        Keep this box always on
+                        Persistent
                       </span>
                       <span className="font-mono text-xs text-muted-foreground">
                         {persistentCapped
                           ? `${providerOption?.label ?? providerId} caps how long a sandbox can live, so an always-on box is not possible there.`
-                          : 'Never auto-paused, never idle-lapsed, skipped by prune, and started again after a host reboot. It keeps costing while it runs, and destroying it takes an explicit force.'}
+                          : 'Keep this box always on and protected from pruning'}
                       </span>
                     </span>
                   </label>

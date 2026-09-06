@@ -263,6 +263,49 @@ export interface AgentServiceSpec {
    * port (80) — it is the only port a box publishes.
    */
   expose?: AgentServiceExpose;
+  /**
+   * The daemon refuses any request carrying forwarded headers, so its URL must
+   * reach it with no reverse proxy in the path.
+   *
+   * A box normally publishes its web service behind Portless, which gives it a
+   * stable `https://<box>.localhost` that resolves the same on the host and
+   * inside the box. Portless always adds `X-Forwarded-*`. A daemon that treats
+   * those headers as a security signal then refuses to serve — OpenClaw answers
+   * `403 proxy_attribution_required`, and no amount of its own configuration
+   * helps, because it additionally requires the FORWARDED CLIENT to be
+   * non-loopback and a browser on the same machine never is.
+   *
+   * Setting this makes AgentBox skip the Portless WEB alias for the box, which
+   * is the whole mechanism: every URL producer already falls back to the
+   * directly published port when no alias is registered, and the in-box browser
+   * falls back to the service's own loopback port. The VNC alias is unaffected.
+   *
+   * The cost is real — the box has no friendly name, its URL carries a host
+   * port that changes on every restart, and host and in-box URLs stop matching
+   * — so set it only for a daemon that has actually been observed rejecting a
+   * proxied request.
+   */
+  rejectsProxyHeaders?: boolean;
+  /**
+   * Argv for an interactive CLIENT of this daemon — what `agentbox attach` and
+   * `agentbox open --in <app>` should open. NOT a shell line: it is passed as
+   * argv, so nothing here is word-split or glob-expanded.
+   *
+   * This is not an "attach to the agent" in the TUI sense and does not make the
+   * agent a TUI one — there is still no agent session. The daemon runs under
+   * ctl either way; this is a terminal talking to it, and it is data precisely
+   * so the attach path can implement it once for every service agent rather
+   * than per agent.
+   *
+   * Point it at a client that talks to the ALREADY-RUNNING daemon. OpenClaw's
+   * `tui` connects to the gateway; its `chat`/`terminal` aliases are
+   * `tui --local`, which start a second, embedded runtime and ignore the
+   * gateway the box exists to host — the wrong thing here.
+   *
+   * Absent means there is no such client, and attach says so rather than
+   * opening a bare shell.
+   */
+  repl?: readonly string[];
   restart?: 'always' | 'on-failure' | 'never';
   /** Other unit names this service waits for. */
   needs?: readonly string[];

@@ -1108,6 +1108,37 @@
         ],
         "options": [],
         "subcommands": []
+      },
+      {
+        "name": "attach",
+        "aliases": [],
+        "description": "Open openclaw's terminal client against the box's running openclaw (starts the session on first use; Control+a d detaches and leaves the daemon up)",
+        "arguments": [
+          {
+            "name": "box",
+            "description": "box ref: project index, id, id prefix, name, or container (default: the only box in this project)",
+            "required": false,
+            "variadic": false,
+            "defaultValue": null
+          }
+        ],
+        "options": [
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
       }
     ]
   },

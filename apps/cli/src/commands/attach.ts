@@ -10,8 +10,9 @@ import { hostAwareOpenIn } from '../terminal/host.js';
 import { cloudAgentAttach } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 import type { AgentId } from '@agentbox/core';
-import { agentIds } from '@agentbox/sandbox-core';
+import { agentIds, findAgentSpec } from '@agentbox/sandbox-core';
 import { agentCommandEntry } from '../agents/commands.js';
+import { openServiceRepl, serviceReplArgv } from '../agents/service-repl.js';
 
 const AGENT_KINDS: readonly AgentId[] = agentIds();
 
@@ -187,6 +188,17 @@ async function dispatchDocker(
   // so say which agent and what to use instead rather than crashing on
   // `undefined`.
   if (!entry.attachWrapped) {
+    // A service agent has no attach wrapper by design — it is a daemon, not a
+    // session. One that declares a `repl` still has something to open: a client
+    // of that daemon, handled generically (see `openServiceRepl`). Reaching
+    // here with no repl means a tmux session claimed the agent's id, so say
+    // which agent and what to use instead rather than crashing on `undefined`.
+    const argv = serviceReplArgv(findAgentSpec(winner.kind));
+    if (argv) {
+      const spec = findAgentSpec(winner.kind)!;
+      await openServiceRepl({ box, spec, argv, reattach: ref, ...(openIn ? { openIn } : {}) });
+      return;
+    }
     throw new Error(
       `attach: '${winner.kind}' is a service agent — it has no session to attach to. ` +
         `Use \`agentbox ${winner.kind} logs\` or \`agentbox shell ${box.name}\`.`,
@@ -211,7 +223,29 @@ export async function attachToRunningAgent(
   const sessions = isCloud
     ? await probeCloudAgentSessions(box, opts.sessionName)
     : await probeDockerAgentSessions(box.container, opts.sessionName);
-  if (sessions.length === 0) return 'none';
+  // A service agent's REPL session does not exist until someone opens one, so
+  // the probe finding nothing is the NORMAL first case — not "no agent
+  // running". Checked before the empty-session return, off the box's own agent
+  // rather than off a live session.
+  if (sessions.length === 0) {
+    const spec = findAgentSpec(box.lastAgent ?? box.agents?.[0] ?? '');
+    const argv = serviceReplArgv(spec);
+    if (spec && argv) {
+      const attachIn = resolveAttachInOption(opts);
+      const cfg = await loadEffectiveConfig(box.workspacePath, {
+        cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+      });
+      await openServiceRepl({
+        box,
+        spec,
+        argv,
+        reattach: reattachRef(box),
+        openIn: hostAwareOpenIn(cfg),
+      });
+      return;
+    }
+    return 'none';
+  }
   const winner = await pickSession(box.name, sessions);
   if (winner === null) return 'cancelled';
 
