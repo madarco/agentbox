@@ -86,6 +86,7 @@ import {
 } from './checkpoint.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
+import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
@@ -479,13 +480,13 @@ export function createCloudProvider(
         ? { url: box.cloud.relayPreviewUrl, token: box.cloud.relayPreviewToken }
         : undefined;
     }
-    // Build the refreshed preview map: keep cached values for ports we
-    // couldn't re-resolve, overlay fresh URLs from this start.
-    const mergedPreviews: Record<number, string> = {
-      ...(box.cloud?.previewUrls ?? {}),
-      ...servicePreviews,
-    };
-    if (webPreview !== undefined) mergedPreviews[webPort] = webPreview.url;
+    const mergedPreviews = mergePreviewUrls({
+      cached: box.cloud?.previewUrls,
+      fresh: servicePreviews,
+      previousWebPort: box.cloud?.webPort,
+      webPort,
+      webUrl: webPreview?.url,
+    });
 
     // Portless: the `ssh -L` local port is fresh after `agentbox start`
     // (pickFreePort picks again), and the in-VPS portless proxy died with
