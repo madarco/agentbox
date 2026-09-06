@@ -2226,8 +2226,32 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // resolvable local workspace goes to the file queue. Same 202 {jobId}.
         // Resolve the project by id server-side — never trust a client path.
         const workspace = input.projectId ? await resolveProjectPath(input.projectId) : null;
+        const noAgent = input.agent === 'none';
+        // A SERVICE agent's box hosts a daemon: an autopause or an idle lapse is
+        // an outage, so it defaults to always-on. Derived from the registry row's
+        // `caps.surface`, never from an agent id, and left `undefined` when there
+        // is no opinion so the worker's own `box.persistent` still decides.
+        //
+        // Derived ABOVE the control-plane fork, not inside the local-queue branch
+        // below it: a repo-based create takes that fork first, so deriving it
+        // there gave a hub-cloned service box no `persistent: true` at all.
+        const persistent = resolveCreatePersistent({
+          spec: noAgent ? undefined : findAgentSpec(input.agent),
+          flag: input.opts?.persistent,
+        });
+        // Refuse here rather than let the worker's `provider.create` fail: a
+        // service agent on a capped provider must be told no, not handed the
+        // expendable box it did not ask for.
+        if (persistent) {
+          const refusal = persistentRefusal((input.provider ?? 'docker').trim());
+          if (refusal) return { ok: false, error: refusal };
+        }
         if (input.repoUrl || !workspace || !existsSync(workspace)) {
-          return await createViaControlPlane(input);
+          // Carry the derived value on the request: the control-plane mapping
+          // only forwards `opts.persistent`, so an unset one would drop it.
+          return await createViaControlPlane(
+            persistent === undefined ? input : { ...input, opts: { ...input.opts, persistent } },
+          );
         }
         // Provider gate (defense-in-depth: a client could bypass the disabled UI
         // option). Default docker; reject unknown kinds and unconfigured providers.
@@ -2267,7 +2291,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             return { ok: false, error: `provider ${provider} is not set up on this host` };
           }
         }
-        const noAgent = input.agent === 'none';
         // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
         // keep a valid placeholder so the closed QueueAgentKind union holds.
         const agent: QueueAgentKind =
@@ -2305,21 +2328,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // worker's config defaults. `workspace`/`name`/`fromBranch` are authoritative
         // here (resolved server-side), so they win over any opts echo.
         const o = input.opts ?? {};
-        // A SERVICE agent's box hosts a daemon: an autopause or an idle lapse is
-        // an outage, so it defaults to always-on. Derived from the registry row's
-        // `caps.surface`, never from an agent id, and left `undefined` when there
-        // is no opinion so the worker's own `box.persistent` still decides.
-        const persistent = resolveCreatePersistent({
-          spec: noAgent ? undefined : findAgentSpec(input.agent),
-          flag: o.persistent,
-        });
-        // Refuse here rather than let the worker's `provider.create` fail: a
-        // service agent on a capped provider must be told no, not handed the
-        // expendable box it did not ask for.
-        if (persistent) {
-          const refusal = persistentRefusal(provider);
-          if (refusal) return { ok: false, error: refusal };
-        }
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',

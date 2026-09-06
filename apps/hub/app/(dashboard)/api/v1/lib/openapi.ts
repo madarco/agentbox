@@ -100,7 +100,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: 'Create a box',
           description:
-            'Async — returns a job id. agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers). A SERVICE agent (one whose GET /agents row reports `surface: "service"`, e.g. openclaw) creates a PERSISTENT box by default — it hosts a daemon, so an autopause would be an outage; pass `opts.persistent: false` for an expendable one. A persistent create on e2b/vercel is refused with `conflict` rather than silently downgraded. KNOWN LIMITATION: the queue worker cannot yet BUILD a service-agent box — it fails the job with `unknown agent kind` — so use the CLI (`agentbox <agent>`) for one until that lands; the request itself is accepted and carries the right options.',
+            'Async — returns a job id. agent "none" just creates the box without starting an agent (prompt ignored). provider defaults to docker; a cloud provider must be configured on the host (see GET /providers). A SERVICE agent (one whose GET /agents row reports `surface: "service"`, e.g. openclaw) creates a PERSISTENT box by default — it hosts a daemon, so an autopause would be an outage; pass `opts.persistent: false` for an expendable one. A persistent create on e2b/vercel is refused with `conflict` rather than silently downgraded. A service-agent box has no session to attach to: the build ends at a running daemon.',
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateBox' } } },

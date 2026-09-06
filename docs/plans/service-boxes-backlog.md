@@ -206,17 +206,16 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
 - **`agentbox <agent> stop` still goes through `provider.exec`.** Unchanged by this pass; the hub's
   services route exposes `restart` but not `stop`. Same item as before — the route belongs behind
   `/api/v1` like every other box operation.
-- **The hub queue worker cannot build a SERVICE-agent box.** `POST /api/v1/boxes` with
-  `agent: "openclaw"` validates (the registry is the accept-list) and enqueues a job carrying the
-  right `createOpts` — including the derived `persistent: true`, verified — but the worker dies with
-  `unknown agent kind: openclaw`. Two causes, both fail-closed by design: `toSyncKind`
-  (`packages/core/src/sync/agent-kind.ts`) only accepts `BUILTIN_AGENT_KINDS`, which lists the four
-  TUI agents, and `_run-queued-job.ts`'s session dispatch has no branch for a surface with no tmux
-  session. The fix is the same shape as `job.noAgent`: skip the session leg for a
-  `caps.surface: 'service'` agent, and widen the wire-kind boundary (which also blocks every
-  `agentbox agent add` plugin agent). Until then a service box is created by the CLI's own
-  `provider.create` and the hub-queue path is dead for it. Pre-existing — nothing used this path
-  before — but it is now the last thing between a service agent and the web UI / tray.
+- ~~**The hub queue worker cannot build a SERVICE-agent box.**~~ **Done (2026-09-06.)** The worker
+  resolved the job's agent with `toSyncKind`, whose accept-list is `BUILTIN_AGENT_KINDS` — a
+  strictly narrower gate than the live registry the hub route had already validated against — and
+  its session dispatch had no case for a surface with no tmux session. It now resolves through
+  `resolveAgentSpec` (`planJobAgent`, `apps/cli/src/lib/queue/job-agent.ts`) and skips the session
+  leg on `isServiceAgent`, the same shape as `job.noAgent`. Two more live bugs from the same root
+  cause went with it: `pi` could not be created on ANY cloud provider (no branch in the cloud
+  dispatch), and the control-plane path DROPPED an agent it did not recognize, building a box that
+  registered with none and started nothing — it now fails the job instead. Every
+  `agentbox agent add` plugin agent was blocked by all three.
 - **`opts.envFiles` / `opts.withEnv` on `POST /api/v1/boxes` name files on the HUB's disk, not the
   caller's.** Found by the cwd/`$HOME` audit that followed the `--into` fix; same class, left
   unfixed there because it is not the same one-line boundary fix. The entries are workspace-relative

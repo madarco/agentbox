@@ -48,7 +48,6 @@ import {
   type QueueJob,
   type QueueJobLogin,
 } from '@agentbox/relay';
-import { toSyncKind } from '@agentbox/core';
 import { resolveClaudeAuth } from '@agentbox/agent-claude/cli';
 import { claudeCredStatus } from '@agentbox/agent-claude/cli';
 import { runClaudeLogin } from '@agentbox/agent-claude/cli';
@@ -56,6 +55,8 @@ import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { planJobAgent } from '../lib/queue/job-agent.js';
+import { loadAgentModuleOrNull } from '../agents/index.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { claudeRuntime } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
@@ -286,6 +287,9 @@ async function runDockerJob(
   onBoxCreated: (boxId: string) => void,
 ): Promise<void> {
   const opts = job.createOpts;
+  // Resolved ONCE, off the registry (see `planJobAgent`): what the box is built
+  // for, and whether there is a session to start afterwards.
+  const plan = planJobAgent(job);
   const cfg = await loadEffectiveConfig(opts.workspace, {
     cliOverrides: buildOverridesFromJob(job),
   });
@@ -344,7 +348,9 @@ async function runDockerJob(
       cwd: opts.workspace,
     }));
 
-  log.write(`creating box for agent=${job.noAgent ? 'none' : job.agent}`);
+  const agentModule = plan.spec ? await loadAgentModuleOrNull(plan.spec.id) : null;
+
+  log.write(`creating box for agent=${plan.spec?.id ?? 'none'}`);
   const result = await createBox({
     workspacePath: opts.workspace,
     name: opts.name && opts.name.length > 0 ? opts.name : undefined,
@@ -365,19 +371,13 @@ async function runDockerJob(
     // The job names exactly one agent, so the box is built for that one only —
     // no other agent's volume, credentials or home dir. `noAgent` (a plain
     // `create`) selects none; an agent can still be added on demand later.
-    agents: job.noAgent ? [] : [toSyncKind(job.agent)],
-    claudeConfig:
-      !job.noAgent && job.agent === 'claude-code'
-        ? { isolate: cfg.effective.box.isolateClaudeConfig }
-        : undefined,
-    codexConfig:
-      !job.noAgent && job.agent === 'codex'
-        ? { isolate: cfg.effective.box.isolateCodexConfig }
-        : undefined,
-    opencodeConfig:
-      !job.noAgent && job.agent === 'opencode'
-        ? { isolate: cfg.effective.box.isolateOpencodeConfig }
-        : undefined,
+    agents: plan.agents,
+    // The agent's own `box.isolate<Agent>Config` accessor, through its CLI
+    // module — the same one `create-action` uses — instead of a switch over
+    // three named options. An agent this build has no module for (a service
+    // agent, a plugin agent) passes nothing, and `createBox` derives the
+    // default from its registry row.
+    ...(agentModule?.runtime.createBoxConfig(agentModule.runtime.isolateOf(cfg.effective)) ?? {}),
     claudeEnv: resolved?.env,
     withPlaywright,
     withEnv: cfg.effective.box.withEnv,
@@ -406,7 +406,7 @@ async function runDockerJob(
   // registered. Written before the session starts so a crash mid-launch is
   // still attributable to a box.
   onBoxCreated(result.record.id);
-  if (!job.noAgent) await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
+  if (plan.spec) await recordLastAgent(result.record.id, plan.spec.id).catch(() => {});
   // Preserve any `login` sub-state a re-login wrote to the manifest: the in-memory
   // `job` predates it, so a bare replace would wipe it mid-stream and the hub could
   // lose the OAuth phase/url or leave the create modal stuck on "Login required".
@@ -424,6 +424,15 @@ async function runDockerJob(
   // (agentbox shell / claude attach). No prompt, no terminal open.
   if (job.noAgent) {
     log.write('no-agent box created; skipping agent session');
+    return;
+  }
+
+  // A SERVICE agent has no session to start: it is a daemon the box's ctl
+  // supervisor runs, whose units ctl synthesizes in-box from the `agents.list`
+  // payload. The box IS the deliverable, so the job is done here — unlike
+  // `noAgent`, the box was still built FOR this agent and its record says so.
+  if (!plan.spec || !plan.startsSession) {
+    log.write(`${plan.spec?.id ?? 'agent'} runs as a box service; no session to start`);
     return;
   }
 
@@ -487,7 +496,7 @@ async function runDockerJob(
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
 
-  await maybeOpenQueuedTerminal(job, result.record.name, log);
+  await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
 }
 
 /**
@@ -499,6 +508,7 @@ async function runDockerJob(
  */
 async function maybeOpenQueuedTerminal(
   job: QueueJob,
+  agentId: string,
   boxName: string,
   log: ReturnType<typeof openCommandLog>,
 ): Promise<void> {
@@ -512,7 +522,9 @@ async function maybeOpenQueuedTerminal(
   const argv = [
     process.execPath,
     cliEntry,
-    toSyncKind(job.agent),
+    // The CANONICAL id — the subcommand's own spelling — not the job's wire
+    // spelling (`claude-code`), which no command answers to.
+    agentId,
     'attach',
     boxName,
     '--attach-in',
@@ -544,6 +556,8 @@ async function runCloudJob(
   onBoxCreated: (boxId: string) => void,
 ): Promise<void> {
   const opts = job.createOpts;
+  // Same registry resolution the docker runner does, once (see `planJobAgent`).
+  const plan = planJobAgent(job);
   const cfg = await loadEffectiveConfig(opts.workspace, {
     cliOverrides: buildOverridesFromJob(job),
   });
@@ -581,7 +595,7 @@ async function runCloudJob(
     await ensureClaudeLoginFresh({ id: job.id, log, image: DEFAULT_BOX_IMAGE, isCloud: true });
   }
 
-  log.write(`creating cloud box (${providerName}) for agent=${job.noAgent ? 'none' : job.agent}`);
+  log.write(`creating cloud box (${providerName}) for agent=${plan.spec?.id ?? 'none'}`);
   const result = await provider.create({
     workspacePath: opts.workspace,
     name: opts.name && opts.name.length > 0 ? opts.name : undefined,
@@ -594,7 +608,7 @@ async function runCloudJob(
     image: resolveBoxImage(cfg.effective, providerName),
     // Same authoritative selection the docker branch above applies: the job
     // names exactly one agent, so the box carries only that one's credentials.
-    agents: job.noAgent ? [] : [toSyncKind(job.agent)],
+    agents: plan.agents,
     // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
     // the push mode: the foreground `create` conversion routes cloud creates
     // through this worker, so each must ride the job to match the old inline path.
@@ -634,7 +648,7 @@ async function runCloudJob(
   // Record boxId before the session starts so a crash mid-launch is still
   // attributable to a box and the working-agent gate can join it to its box.
   onBoxCreated(result.record.id);
-  if (!job.noAgent) await recordLastAgent(result.record.id, toSyncKind(job.agent)).catch(() => {});
+  if (plan.spec) await recordLastAgent(result.record.id, plan.spec.id).catch(() => {});
   // Preserve any `login` sub-state a re-login wrote to the manifest: the in-memory
   // `job` predates it, so a bare replace would wipe it mid-stream and the hub could
   // lose the OAuth phase/url or leave the create modal stuck on "Login required".
@@ -659,6 +673,13 @@ async function runCloudJob(
     return;
   }
 
+  // A SERVICE agent's daemon is ctl's job, not a detached tmux session — same
+  // reason as the docker runner, gated on the same registry capability.
+  if (!plan.spec || !plan.startsSession) {
+    log.write(`${plan.spec?.id ?? 'agent'} runs as a box service; no session to start`);
+    return;
+  }
+
   const seeded = prependResyncWarning(
     resyncWarning,
     await applySetupWizardPrompt(job, opts.workspace, job.prompt),
@@ -680,6 +701,11 @@ async function runCloudJob(
     binary = 'opencode';
     sessionName = cfg.effective.opencode.sessionName;
     extraArgs = promptedArgs;
+  } else if (job.agent === 'pi') {
+    binary = 'pi';
+    sessionName = cfg.effective.pi.sessionName;
+    // No `skipPermissions.apply`: Pi has no bypass flag (see the docker branch).
+    extraArgs = promptedArgs;
   } else {
     throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
@@ -692,7 +718,7 @@ async function runCloudJob(
     extraArgs,
   });
 
-  await maybeOpenQueuedTerminal(job, result.record.name, log);
+  await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
 }
 
 function buildOverridesFromJob(job: QueueJob): Partial<UserConfig> {
