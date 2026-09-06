@@ -494,6 +494,8 @@ for providers whose URL is neither loopback nor `.local`/`.ts.net`. It needs
 somewhere for AgentBox to assert a config key it owns — the same seam a
 spec-declared base overlay would provide. Not built.
 
-Vercel and daytona are the same shape as e2b and are assumed to behave the same;
-only e2b was measured.
+**Vercel measured too, and it is identical**: `https://sb-<id>.vercel.run` serves
+`/` with `200` (so its edge sends no forwarded headers either) and the browser
+then reports the same "Browser origin not allowed". Only daytona is still
+untested.
 
