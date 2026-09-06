@@ -2348,6 +2348,17 @@ export function buildOpenApi(): Record<string, unknown> {
                 "This machine holds the agent's config dir or a saved AgentBox login. Absent " +
                 'when the hub has no host to answer for.',
             },
+            surface: {
+              type: 'string',
+              enum: ['tui', 'service'],
+              description:
+                'What the agent IS: `tui` is a session you attach to, `service` is a daemon ' +
+                'the box hosts (published on the box web URL, nothing to attach to). Read it ' +
+                'to show the defaults this API applies — a `service` agent creates an ' +
+                'always-on box unless `opts.persistent` says otherwise, so a create form that ' +
+                'renders that toggle off would contradict what POST /boxes does. Absent when ' +
+                'the hub has no host to answer for; treat that as unknown, not as `tui`.',
+            },
           },
           required: ['id', 'label'],
         },

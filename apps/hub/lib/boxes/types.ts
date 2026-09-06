@@ -306,6 +306,15 @@ export interface AgentOption {
    * which is unknown rather than false.
    */
   installed?: boolean;
+  /**
+   * What the agent IS: a `tui` agent is a session you attach to, a `service`
+   * agent is a daemon the box hosts. Absent means unknown (a catalog served
+   * with no host scope), never `tui`.
+   *
+   * A client needs it to show the defaults the API will apply — most visibly,
+   * a service agent's box is always-on unless the caller says otherwise.
+   */
+  surface?: 'tui' | 'service';
 }
 
 export interface HubState {

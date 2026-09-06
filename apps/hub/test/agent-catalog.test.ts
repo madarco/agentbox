@@ -73,3 +73,31 @@ describe('collectAgentCatalog', () => {
     expect(collectAgentCatalog([plugin], fs(['.acme']))[0]!.installed).toBe(true);
   });
 });
+
+describe('collectAgentCatalog surface', () => {
+  it("carries a service agent's surface", () => {
+    // The create form derives the always-on default from this. Without it the
+    // toggle renders off for OpenClaw and the API then makes an always-on box
+    // anyway — the form contradicting what it submits.
+    const [openclaw] = collectAgentCatalog(
+      [{ id: 'openclaw', staticPaths: [], caps: { surface: 'service' } }],
+      fs([]),
+    );
+    expect(openclaw?.surface).toBe('service');
+  });
+
+  it("carries a tui agent's surface", () => {
+    const [claude] = collectAgentCatalog(
+      [{ id: 'claude', staticPaths: [], caps: { surface: 'tui' } }],
+      fs([]),
+    );
+    expect(claude?.surface).toBe('tui');
+  });
+
+  it('omits it for a spec that declares none, rather than guessing tui', () => {
+    // A plugin agent may predate the field. Absent reads as unknown; asserting
+    // 'tui' would be a guess that silently loses an always-on default.
+    const [plugin] = collectAgentCatalog([{ id: 'plugin', staticPaths: [] }], fs([]));
+    expect(plugin && 'surface' in plugin).toBe(false);
+  });
+});
