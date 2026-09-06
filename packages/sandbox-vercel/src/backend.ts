@@ -114,6 +114,8 @@ export function parseNetworkPolicy(raw: string | undefined): NetworkPolicy | und
 
 /** vCPU counts Vercel accepts; anything else fails `Sandbox.create` with a 400. */
 const VERCEL_VCPUS = [1, 2, 4, 8] as const;
+/** vCPUs a sandbox gets when no `--size` is given. */
+export const VERCEL_DEFAULT_VCPUS = 2;
 export type VercelVcpus = (typeof VERCEL_VCPUS)[number];
 
 /**
@@ -327,7 +329,7 @@ export const vercelBackend: CloudBackend = {
         const sb = await Sandbox.create({
           name: req.name,
           source: { type: 'snapshot', snapshotId },
-          resources: { vcpus: vcpus ?? 2 },
+          resources: { vcpus: vcpus ?? VERCEL_DEFAULT_VCPUS },
           ports: buildExposedPorts(req.exposePorts),
           timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           env: req.env,

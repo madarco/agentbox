@@ -167,6 +167,17 @@ export interface Approval {
 // A provider the box could be created on. `configured` = usable on this host
 // (docker always; a cloud provider needs its base baked — see hub-backend). The
 // modal disables unconfigured options and shows `reason`.
+/** Answer to `POST /api/v1/providers/{id}/size-check`. */
+export interface ProviderSizeCheck {
+  /**
+   * The size will NOT take effect on a plain create — the base has to be
+   * re-baked at it first (`prepare` with `{ size, force: true }`).
+   */
+  rebakeRequired: boolean;
+  /** Why, in the provider's own words. Present only when `rebakeRequired`. */
+  reason?: string;
+}
+
 export interface ProviderOption {
   id: string;
   label: string;
@@ -213,6 +224,17 @@ export interface ProviderOption {
     timeoutModel?: 'absolute' | 'inactivity';
   };
   sizes?: readonly { key: string; label: string }[];
+  /**
+   * Placeholder for a free-text size. Its PRESENCE is what says `sizes` is an
+   * open list — render a custom-value field only when there is a hint for it.
+   */
+  sizeHint?: string;
+  /**
+   * 'bake' = the size is fixed when the base is baked and rejected per-create,
+   * so a change has to go through `POST /providers/{id}/prepare` with
+   * `{ size, force: true }` first. Absent/'create' = it rides the create.
+   */
+  sizeAppliesAt?: 'create' | 'bake';
   regions?: readonly { key: string; label: string }[];
   // Whether the provider has credentials on this host (docker: always true). A
   // cloud provider can have credentials but not yet be `configured` (baked).

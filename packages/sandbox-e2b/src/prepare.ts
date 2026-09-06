@@ -115,8 +115,8 @@ function templateNameFor(variantKey: string): string {
   return `agentbox-${variantKey.replaceAll(',', '-')}:${DEFAULT_TAG}`;
 }
 
-const DEFAULT_CPU = 2;
-const DEFAULT_MEMORY_MB = 4096;
+export const DEFAULT_CPU = 2;
+export const DEFAULT_MEMORY_MB = 4096;
 
 /**
  * Parse a `cpu-memory` GB size spec (e.g. `4-8`) into E2B's

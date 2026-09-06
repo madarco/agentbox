@@ -31,7 +31,15 @@ function GlobeIcon({ color }: { color: string }) {
 function BoxRow({ name, sub }: { name: string; sub: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 16px' }}>
-      <div style={{ display: 'flex', width: 11, height: 11, borderRadius: 11, backgroundColor: OG.accent }} />
+      <div
+        style={{
+          display: 'flex',
+          width: 11,
+          height: 11,
+          borderRadius: 11,
+          backgroundColor: OG.accent,
+        }}
+      />
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <div style={{ fontFamily: sans, fontWeight: 600, fontSize: 21, color: OG.ink }}>{name}</div>
         <div style={{ fontFamily: mono, fontSize: 15, color: OG.muted, marginTop: 2 }}>{sub}</div>
@@ -85,7 +93,7 @@ function iconImg(src: string | null, size = 24): React.ReactNode {
 }
 
 export async function GET() {
-  const [fonts, docker, vercel, hetzner, digitalocean, claude, codex, opencode] =
+  const [fonts, docker, vercel, hetzner, digitalocean, claude, codex, opencode, pi] =
     await Promise.all([
       loadOgFonts(),
       simpleIcon('docker'),
@@ -95,30 +103,44 @@ export async function GET() {
       localPng('assets/agent-claude.png'),
       localPng('assets/agent-codex.png'),
       localPng('assets/agent-opencode.png'),
+      localPng('assets/agent-pi.png'),
     ]);
 
   return new ImageResponse(
-    (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '100%',
+        padding: '46px 64px 30px',
+        backgroundColor: OG.paper,
+        fontFamily: sans,
+        borderBottom: `20px solid ${OG.accent}`,
+      }}
+    >
       <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          width: '100%',
-          height: '100%',
-          padding: '46px 64px 30px',
-          backgroundColor: OG.paper,
-          fontFamily: sans,
-          borderBottom: `20px solid ${OG.accent}`,
-        }}
+        style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', flex: 1, gap: 40 }}
       >
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', flex: 1, gap: 40 }}>
         {/* Left: wordmark + headline + lede + install chip */}
         <div style={{ display: 'flex', flexDirection: 'column', width: 470 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
             {boxMark(OG.ink, 38)}
-            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 29, color: OG.ink }}>agentbox</div>
+            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 29, color: OG.ink }}>
+              agentbox
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', fontSize: 52, fontWeight: 600, color: OG.ink, lineHeight: 1.08, letterSpacing: '-0.02em' }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              fontSize: 52,
+              fontWeight: 600,
+              color: OG.ink,
+              lineHeight: 1.08,
+              letterSpacing: '-0.02em',
+            }}
+          >
             <div style={{ display: 'flex' }}>One command teleport</div>
             <div style={{ display: 'flex', color: OG.faint }}>for agents, in parallel.</div>
           </div>
@@ -174,8 +196,12 @@ export async function GET() {
               borderBottom: `1px solid ${OG.line}`,
             }}
           >
-            <div style={{ display: 'flex', padding: 4, borderRadius: 6, backgroundColor: '#dcdcd6' }}>{boxMark(OG.ink, 20)}</div>
-            <div style={{ fontFamily: mono, fontSize: 15, color: OG.muted }}>Thu Jul 9  9:41 AM</div>
+            <div
+              style={{ display: 'flex', padding: 4, borderRadius: 6, backgroundColor: '#dcdcd6' }}
+            >
+              {boxMark(OG.ink, 20)}
+            </div>
+            <div style={{ fontFamily: mono, fontSize: 15, color: OG.muted }}>Thu Jul 9 9:41 AM</div>
           </div>
 
           {/* terminal window */}
@@ -193,15 +219,58 @@ export async function GET() {
               boxShadow: '0 18px 40px -12px rgba(0,0,0,0.45)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 12px', backgroundColor: '#15171b' }}>
-              <div style={{ display: 'flex', width: 11, height: 11, borderRadius: 11, backgroundColor: '#ff5f57' }} />
-              <div style={{ display: 'flex', width: 11, height: 11, borderRadius: 11, backgroundColor: '#febc2e' }} />
-              <div style={{ display: 'flex', width: 11, height: 11, borderRadius: 11, backgroundColor: '#28c840' }} />
-              <div style={{ fontFamily: mono, fontSize: 14, color: OG.termFaint, marginLeft: 8 }}>agentbox — zsh</div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '10px 12px',
+                backgroundColor: '#15171b',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  width: 11,
+                  height: 11,
+                  borderRadius: 11,
+                  backgroundColor: '#ff5f57',
+                }}
+              />
+              <div
+                style={{
+                  display: 'flex',
+                  width: 11,
+                  height: 11,
+                  borderRadius: 11,
+                  backgroundColor: '#febc2e',
+                }}
+              />
+              <div
+                style={{
+                  display: 'flex',
+                  width: 11,
+                  height: 11,
+                  borderRadius: 11,
+                  backgroundColor: '#28c840',
+                }}
+              />
+              <div style={{ fontFamily: mono, fontSize: 14, color: OG.termFaint, marginLeft: 8 }}>
+                agentbox — zsh
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', padding: '14px 16px', gap: 6 }}>
               {TERM_LINES.map((l, i) => (
-                <div key={i} style={{ display: 'flex', fontFamily: mono, fontSize: 15, color: l.color, height: 19 }}>
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    fontFamily: mono,
+                    fontSize: 15,
+                    color: l.color,
+                    height: 19,
+                  }}
+                >
                   {l.text}
                 </div>
               ))}
@@ -230,7 +299,9 @@ export async function GET() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', padding: '10px 16px 12px' }}>
-              <div style={{ fontFamily: sans, fontWeight: 600, fontSize: 23, color: OG.ink }}>AgentBox</div>
+              <div style={{ fontFamily: sans, fontWeight: 600, fontSize: 23, color: OG.ink }}>
+                AgentBox
+              </div>
               <div
                 style={{
                   marginLeft: 'auto',
@@ -249,36 +320,49 @@ export async function GET() {
                 + New Box
               </div>
             </div>
-            <div style={{ display: 'flex', height: 1, backgroundColor: OG.line, margin: '0 12px' }} />
+            <div
+              style={{ display: 'flex', height: 1, backgroundColor: OG.line, margin: '0 12px' }}
+            />
             <FolderRow name="storefront-web" />
             <BoxRow name="payment-retries" sub="codex · vercel" />
             <FolderRow name="docs-site" />
             <BoxRow name="search-filters" sub="claude · vercel" />
-            <div style={{ display: 'flex', height: 1, backgroundColor: OG.line, margin: '6px 12px' }} />
+            <div
+              style={{ display: 'flex', height: 1, backgroundColor: OG.line, margin: '6px 12px' }}
+            />
             <MenuRow label="Open Hub" />
           </div>
         </div>
       </div>
 
-        {/* Logos strip: clouds + agents (mirrors the home "works with" row) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 26, paddingTop: 22, borderTop: `1px solid ${OG.line}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
-            <div style={{ fontFamily: mono, fontSize: 18, color: OG.faint, width: 84 }}>clouds</div>
-            <LogoItem icon={iconImg(docker)} label="Docker" />
-            <LogoItem icon={iconImg(vercel)} label="Vercel" />
-            <LogoItem icon={iconImg(hetzner)} label="Hetzner" />
-            <LogoItem icon={iconImg(digitalocean)} label="DigitalOcean" />
-            <LogoItem icon={cubeMark(OG.ink, 22)} label="Daytona" />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
-            <div style={{ fontFamily: mono, fontSize: 18, color: OG.faint, width: 84 }}>agents</div>
-            <LogoItem icon={iconImg(claude)} label="Claude Code" />
-            <LogoItem icon={iconImg(codex)} label="Codex" />
-            <LogoItem icon={iconImg(opencode)} label="OpenCode" />
-          </div>
+      {/* Logos strip: clouds + agents (mirrors the home "works with" row) */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+          marginTop: 26,
+          paddingTop: 22,
+          borderTop: `1px solid ${OG.line}`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
+          <div style={{ fontFamily: mono, fontSize: 18, color: OG.faint, width: 84 }}>clouds</div>
+          <LogoItem icon={iconImg(docker)} label="Docker" />
+          <LogoItem icon={iconImg(vercel)} label="Vercel" />
+          <LogoItem icon={iconImg(hetzner)} label="Hetzner" />
+          <LogoItem icon={iconImg(digitalocean)} label="DigitalOcean" />
+          <LogoItem icon={cubeMark(OG.ink, 22)} label="Daytona" />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
+          <div style={{ fontFamily: mono, fontSize: 18, color: OG.faint, width: 84 }}>agents</div>
+          <LogoItem icon={iconImg(claude)} label="Claude Code" />
+          <LogoItem icon={iconImg(codex)} label="Codex" />
+          <LogoItem icon={iconImg(opencode)} label="OpenCode" />
+          <LogoItem icon={iconImg(pi)} label="Pi" />
         </div>
       </div>
-    ),
+    </div>,
     { width: 1200, height: 630, fonts: fonts.length ? fonts : undefined },
   );
 }

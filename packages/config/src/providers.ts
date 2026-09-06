@@ -132,8 +132,29 @@ export interface ProviderDescriptor {
     readonly bakeProgressSteps?: number;
   };
   readonly capabilities: ProviderCapabilities;
-  /** Known VM sizes. Absent = free-form string the backend interprets. */
+  /**
+   * Sizes offered as a picker, most-modest first. Each `key` is a literal
+   * `--size` value for THIS backend (there is no cross-provider grammar); the
+   * label spells out what it buys ("4 vCPU / 8 GB"). Absent = the provider has
+   * no size knob at all (docker, whose knobs are `box.memory` / `box.cpus`).
+   */
   readonly sizes?: readonly { readonly key: string; readonly label: string }[];
+  /**
+   * Grammar hint for a free-text size, e.g. `cpu-mem-disk GB, e.g. 4-8-10`.
+   * Presence is also what says the list is OPEN: a UI offers a custom-value
+   * escape only when there is a hint to place in it. Vercel omits it because
+   * `parseVercelVcpus` throws on anything outside `sizes`.
+   */
+  readonly sizeHint?: string;
+  /**
+   * When a size takes effect. 'create' (the default when absent) = the next
+   * box. 'bake' = fixed when the base is baked and rejected per-create
+   * (daytona's snapshot path, e2b templates), so a different size needs
+   * `prepare --force --size` first — a UI must say so rather than offer a
+   * control that silently does nothing. `ProviderModule.sizeIgnoredReason`
+   * answers whether a given size actually needs that re-bake.
+   */
+  readonly sizeAppliesAt?: 'create' | 'bake';
   /** Known regions/datacenters. Absent = the provider has no region choice. */
   readonly regions?: readonly { readonly key: string; readonly label: string }[];
   /** Fragment describing this backend, joined into the `box.provider` enum description. */
@@ -216,6 +237,16 @@ export const PROVIDERS = [
       hubRoutable: true,
       timeoutModel: 'inactivity',
     },
+    // `cpu-memory-disk` GB (parseDaytonaSize). First entry is
+    // DAYTONA_DEFAULT_RESOURCES. Disk is capped at 10 GB per sandbox on the
+    // free plan, so no preset asks for more.
+    sizes: [
+      { key: '2-4-8', label: '2 vCPU / 4 GB / 8 GB disk (default)' },
+      { key: '4-8-10', label: '4 vCPU / 8 GB / 10 GB disk' },
+      { key: '8-16-10', label: '8 vCPU / 16 GB / 10 GB disk' },
+    ],
+    sizeHint: 'cpu-memory-disk in GB, e.g. 4-8-10',
+    sizeAppliesAt: 'bake',
     blurb: 'Daytona Cloud sandboxes',
     sizeDesc:
       'Per-provider override of `box.size` for daytona. `cpu-memory-disk` GB spec (e.g. `4-8-20`). Only honored on the image/Dockerfile create path; on the snapshot path the size is fixed at bake time (Daytona rejects custom resources on snapshot-resume).',
@@ -254,6 +285,14 @@ export const PROVIDERS = [
       pauseSemantics: 'stop',
       hubRoutable: true,
     },
+    // Server-type slugs. The Arm `cax*` line is deliberately absent: the base
+    // snapshot is amd64, so booting one would fail at create.
+    sizes: [
+      { key: 'cx23', label: 'cx23 - 2 vCPU / 4 GB (default)' },
+      { key: 'cx33', label: 'cx33 - 4 vCPU / 8 GB' },
+      { key: 'cx43', label: 'cx43 - 8 vCPU / 16 GB' },
+    ],
+    sizeHint: 'any Hetzner server type, e.g. cpx41',
     blurb: 'Hetzner Cloud VPSes',
     sizeDesc:
       'Per-provider override of `box.size` for hetzner. Server type string (e.g. `cx23`, `cx33`, `cx43`).',
@@ -297,6 +336,15 @@ export const PROVIDERS = [
       pauseSemantics: 'freeze',
       hubRoutable: true,
     },
+    // vCPU count; Vercel couples RAM at 2048 MB/vCPU. A CLOSED set -
+    // `parseVercelVcpus` throws on anything else, so no `sizeHint` (and
+    // therefore no custom-value escape).
+    sizes: [
+      { key: '1', label: '1 vCPU / 2 GB' },
+      { key: '2', label: '2 vCPU / 4 GB (default)' },
+      { key: '4', label: '4 vCPU / 8 GB' },
+      { key: '8', label: '8 vCPU / 16 GB' },
+    ],
     blurb: 'Vercel Sandboxes',
     sizeDesc:
       'Per-provider override of `box.size` for vercel. vCPU count — one of `1`, `2`, `4`, `8` (Vercel couples RAM at 2048 MB/vCPU). Default 2.',
@@ -331,6 +379,15 @@ export const PROVIDERS = [
       hubRoutable: true,
       timeoutModel: 'inactivity',
     },
+    // `cpu-memory` GB. Template-level: E2B rejects per-create resources, so a
+    // different size means rebuilding the template.
+    sizes: [
+      { key: '2-4', label: '2 vCPU / 4 GB (default)' },
+      { key: '4-8', label: '4 vCPU / 8 GB' },
+      { key: '8-16', label: '8 vCPU / 16 GB' },
+    ],
+    sizeHint: 'cpu-memory in GB, e.g. 4-8',
+    sizeAppliesAt: 'bake',
     blurb: 'E2B microVMs',
     sizeDesc:
       'Per-provider override of `box.size` for e2b. `cpu-memory` GB spec (e.g. `4-8`). Template-level: baked by `agentbox prepare --provider e2b --size <spec>`; E2B rejects per-create resources.',
@@ -383,6 +440,12 @@ export const PROVIDERS = [
       pauseSemantics: 'stop',
       hubRoutable: true,
     },
+    sizes: [
+      { key: 's-2vcpu-4gb', label: '2 vCPU / 4 GB (default)' },
+      { key: 's-4vcpu-8gb', label: '4 vCPU / 8 GB' },
+      { key: 's-8vcpu-16gb', label: '8 vCPU / 16 GB' },
+    ],
+    sizeHint: 'any DigitalOcean size slug, e.g. c-4',
     blurb: 'DigitalOcean Droplets',
     sizeDesc:
       'Per-provider override of `box.size` for digitalocean. Droplet size slug (e.g. `s-2vcpu-4gb`, `s-4vcpu-8gb`).',
@@ -417,6 +480,15 @@ export const PROVIDERS = [
       // Docker on YOUR OWN machine — a control box can't reach it.
       hubRoutable: false,
     },
+    // `cpu-memory` GB, mapped to the container's `--cpus` / `--memory`. The
+    // empty key is a real choice: no limits, the remote engine's defaults.
+    sizes: [
+      { key: '', label: 'Unlimited (engine default)' },
+      { key: '2-4', label: '2 CPU / 4 GB' },
+      { key: '4-8', label: '4 CPU / 8 GB' },
+      { key: '8-16', label: '8 CPU / 16 GB' },
+    ],
+    sizeHint: 'cpu-memory in GB, e.g. 4-8',
     blurb: 'Docker on a remote machine over SSH',
     sizeDesc:
       "Per-provider override of `box.size` for remote-docker. `cpu-memory` GB spec (e.g. `4-8`) mapped to the container's `--cpus` / `--memory`. Empty = unlimited (the remote engine's defaults).",

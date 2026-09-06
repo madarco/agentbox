@@ -355,6 +355,17 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
   return { ok: true, value: out };
 }
 
+// A size is an opaque, provider-specific string (`cx43`, `4`, `4-8-10`) — the
+// provider's own parser is the only thing that can judge it, so this checks
+// nothing but presence.
+export function parseSizeCheck(body: unknown): Parsed<string> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const size = optionalString(body['size'], 'size');
+  if (!size.ok) return size;
+  if (size.value === undefined) return { ok: false, message: 'size is required' };
+  return { ok: true, value: size.value };
+}
+
 export function parseProviderPrepare(body: unknown): Parsed<{
   force?: boolean;
   agentSettings?: Record<string, Record<string, string | boolean>>;

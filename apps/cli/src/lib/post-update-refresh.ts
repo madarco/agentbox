@@ -40,6 +40,7 @@ import { readUpdateState, remoteCheckFresh, writeUpdateState } from './update-st
 
 export interface PostUpdateRefreshOptions {
   skipSkills?: boolean;
+  skipPlugins?: boolean;
   quiet?: boolean;
 }
 
@@ -152,6 +153,20 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
       }
     } catch (err) {
       warn('host skills refresh', err);
+    }
+  }
+
+  // Provider plugins, BEFORE `adoptPreparedBases` below: that step `import()`s
+  // every plugin provider's module, so after it runs the OLD build is in this
+  // process's ESM cache. It is also before the relay/hub restart, or the
+  // respawned hub would come up holding the old module.
+  if (!opts.skipPlugins) {
+    try {
+      const { runPluginUpdates } = await import('./plugin-update.js');
+      const report = await runPluginUpdates({ log: (line) => say(`plugins: ${line}`) });
+      for (const problem of report.problems) log.warn(`plugins: ${problem}`);
+    } catch (err) {
+      warn('provider plugin update', err);
     }
   }
 

@@ -86,7 +86,7 @@ const ACTION_DEADLINE_MS = 5 * 60_000;
 const SNAPSHOT_DEADLINE_MS = 30 * 60_000;
 // s-2vcpu-4gb: 2 vCPU / 4 GB / 80 GB SSD — the closest match to Hetzner's
 // cx23 default. nyc3 is a broadly-available US region.
-const DIGITALOCEAN_DEFAULT_SIZE = 's-2vcpu-4gb';
+export const DIGITALOCEAN_DEFAULT_SIZE = 's-2vcpu-4gb';
 const DIGITALOCEAN_DEFAULT_REGION = 'nyc3';
 
 /**

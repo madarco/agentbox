@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AgentBox — Teleport for agents</title>
-<meta name="description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control." />
+<meta name="description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, OpenCode, or Pi inside it. Checkpointed, parallel, on hardware you control." />
 <link rel="canonical" href="https://agent-box.sh/" />
 
 <!-- Open Graph / social sharing -->
@@ -12,7 +12,7 @@
 <meta property="og:site_name" content="AgentBox" />
 <meta property="og:url" content="https://agent-box.sh/" />
 <meta property="og:title" content="AgentBox — Teleport for agents" />
-<meta property="og:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control." />
+<meta property="og:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, OpenCode, or Pi inside it. Checkpointed, parallel, on hardware you control." />
 <meta property="og:image" content="https://agent-box.sh/home-og" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
@@ -21,7 +21,7 @@
 <!-- Twitter card -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="AgentBox — Teleport for agents" />
-<meta name="twitter:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, or OpenCode inside it. Checkpointed, parallel, on hardware you control." />
+<meta name="twitter:description" content="AgentBox teleports your project into an isolated VM — local or in the cloud — and runs Claude Code, Codex, OpenCode, or Pi inside it. Checkpointed, parallel, on hardware you control." />
 <meta name="twitter:image" content="https://agent-box.sh/home-og" />
 <meta name="twitter:creator" content="@madarco" />
 
@@ -607,12 +607,13 @@
   .roller { display: inline-block; height: 1.25em; overflow: hidden; vertical-align: bottom; position: relative; }
   .roller-track { display: flex; flex-direction: column; }
   .roller-track > span { height: 1.25em; line-height: 1.25em; color: var(--accent); white-space: nowrap; }
-  .roller.run .roller-track { animation: roll 6.6s cubic-bezier(.7,0,.2,1) infinite; }
+  .roller.run .roller-track { animation: roll 8.8s cubic-bezier(.7,0,.2,1) infinite; }
   @keyframes roll {
-    0%, 22%    { transform: translateY(0); }
-    28%, 55%   { transform: translateY(-1.25em); }
-    61%, 88%   { transform: translateY(-2.5em); }
-    94%, 100%  { transform: translateY(-3.75em); }
+    0%, 18%    { transform: translateY(0); }
+    24%, 42%   { transform: translateY(-1.25em); }
+    48%, 66%   { transform: translateY(-2.5em); }
+    72%, 90%   { transform: translateY(-3.75em); }
+    96%, 100%  { transform: translateY(-5em); }
   }
   @media (prefers-reduced-motion: reduce) {
     .roller.run .roller-track { animation: none; }
@@ -1202,11 +1203,11 @@
      <div class="hero-main">
       <div class="kicker">// self-hosted agent sandboxes</div>
       <h1>One command teleport<br /><span class="dim">for agents, in parallel.</span></h1>
-      <p class="lede">Move your project into a dedicated VM — local, on a machine you own, or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, or <b>Open Code</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control. Drive it from the CLI or the <a class="applink" href="#app"><b>macOS menu bar app</b></a>.</p>
+      <p class="lede">Move your project into a dedicated VM — local, on a machine you own, or in the cloud — and launch <b>Claude Code</b>, <b>Codex</b>, <b>Open Code</b>, or <b>Pi</b> inside it. Each box is isolated, checkpointed, and runs on hardware you control. Drive it from the CLI or the <a class="applink" href="#app"><b>macOS menu bar app</b></a>.</p>
       <div class="runline">
         <div class="body">
           <span class="p">$</span>
-          <span class="k"><span class="pkg">npx </span>@madarco/agentbox <span class="roller" id="agentRoller"><span class="roller-track"><span>claude</span><span>codex</span><span>opencode</span><span aria-hidden="true">claude</span></span></span></span>
+          <span class="k"><span class="pkg">npx </span>@madarco/agentbox <span class="roller" id="agentRoller"><span class="roller-track"><span>claude</span><span>codex</span><span>opencode</span><span>pi</span><span aria-hidden="true">claude</span></span></span></span>
         </div>
         <button data-copy="npx @madarco/agentbox claude" aria-label="Copy">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
@@ -1320,6 +1321,7 @@
                 <div class="s-item on"><img src="assets/agent-claude.png" alt="">Claude</div>
                 <div class="s-item"><img src="assets/agent-codex.png" alt="">Codex</div>
                 <div class="s-item"><img src="assets/agent-opencode.png" alt="">OpenCode</div>
+                <div class="s-item"><img src="assets/agent-pi.png" alt="">Pi</div>
               </div>
               <div class="flabel">Name<span class="opt">optional</span></div>
               <div class="tfield"><span class="ph" id="mNamePh">auto — docs-site-3f9a2c1b</span></div>
@@ -1368,6 +1370,7 @@
       <span class="ls-item"><img class="ag" src="assets/agent-claude.png" alt="" width="16" height="16">Claude Code</span>
       <span class="ls-item"><img class="ag" src="assets/agent-codex.png" alt="" width="16" height="16">Codex</span>
       <span class="ls-item"><img class="ag" src="assets/agent-opencode.png" alt="" width="16" height="16">OpenCode</span>
+      <span class="ls-item"><img class="ag" src="assets/agent-pi.png" alt="" width="16" height="16">Pi</span>
     </div>
     <div class="ls-group">
       <span class="ls-cap">apps</span>
@@ -1717,6 +1720,7 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
                 <div class="s-item on"><img src="assets/agent-claude.png" alt="">Claude</div>
                 <div class="s-item"><img src="assets/agent-codex.png" alt="">Codex</div>
                 <div class="s-item"><img src="assets/agent-opencode.png" alt="">OpenCode</div>
+                <div class="s-item"><img src="assets/agent-pi.png" alt="">Pi</div>
               </div>
               <div class="flabel">Name<span class="opt">optional</span></div>
               <div class="tfield"><span class="ph">auto — docs-site-3f9a2c1b</span></div>
@@ -2204,11 +2208,11 @@ AgentBox gives you the whole machine: a live browser you can screen-share into, 
   (function () {
     var roller = document.getElementById('agentRoller');
     if (!roller) return;
-    var words = ['claude', 'codex', 'opencode'];
+    var words = ['claude', 'codex', 'opencode', 'pi'];
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     roller.classList.add('run');
     var copyBtn = roller.closest('.runline') ? roller.closest('.runline').querySelector('[data-copy]') : null;
-    var i = 0, period = 6600 / 3;
+    var i = 0, period = 8800 / 4;
     setInterval(function () {
       i = (i + 1) % words.length;
       if (copyBtn) copyBtn.dataset.copy = 'npx @madarco/agentbox ' + words[i];

@@ -85,7 +85,7 @@ const ACTION_DEADLINE_MS = 5 * 60_000;
 const SNAPSHOT_DEADLINE_MS = 20 * 60_000;
 // `cx22` was deprecated by Hetzner in early 2026; `cx23` is the drop-in
 // replacement with the same 2 vCPU / 4 GB / 40 GB shape on x86.
-const HETZNER_DEFAULT_SERVER_TYPE = 'cx23';
+export const HETZNER_DEFAULT_SERVER_TYPE = 'cx23';
 const HETZNER_DEFAULT_LOCATION = 'nbg1';
 
 /**
@@ -158,7 +158,10 @@ async function getServerStrict(id: number): Promise<HetznerServer> {
 }
 
 /** Lookup an image by description ("snapshot name" in user-facing terms). */
-async function findImageByDescription(c: HetznerClient, description: string): Promise<HetznerImage | null> {
+async function findImageByDescription(
+  c: HetznerClient,
+  description: string,
+): Promise<HetznerImage | null> {
   const all = await c.listImages({ type: 'snapshot' });
   return all.find((i) => i.description === description) ?? null;
 }
@@ -171,7 +174,10 @@ async function findImageByDescription(c: HetznerClient, description: string): Pr
  *   - any other string → treated as a snapshot description (checkpoint name)
  *     and looked up via the API.
  */
-async function resolveImageId(c: HetznerClient, req: CloudProvisionRequest): Promise<number | string> {
+async function resolveImageId(
+  c: HetznerClient,
+  req: CloudProvisionRequest,
+): Promise<number | string> {
   const ref = req.snapshot ?? req.image;
   // `box.imageHetzner` is pinned to the base's own description by every bake, so
   // by the time we get here `ref` usually NAMES OUR OWN BASE rather than being
@@ -407,7 +413,11 @@ export const hetznerBackend: CloudBackend = {
     // Control-plane-topology creates: the control box locks the box to its own
     // egress IP; add the admin-supplied PC egress CIDR(s) so direct PC→box SSH
     // still works. Skipped when `open` (already 0.0.0.0/0). Deduped.
-    if (inboundPolicy.mode !== 'open' && req.extraInboundCidrs && req.extraInboundCidrs.length > 0) {
+    if (
+      inboundPolicy.mode !== 'open' &&
+      req.extraInboundCidrs &&
+      req.extraInboundCidrs.length > 0
+    ) {
       for (const cidr of req.extraInboundCidrs) {
         const normalized = normalizeSourceCidr(cidr);
         if (!sources.includes(normalized)) sources.push(normalized);
@@ -677,7 +687,9 @@ export const hetznerBackend: CloudBackend = {
     try {
       await c.deleteServer(id);
     } catch (err) {
-      if (!(err instanceof HetznerApiError && (err.statusCode === 404 || err.code === 'not_found'))) {
+      if (
+        !(err instanceof HetznerApiError && (err.statusCode === 404 || err.code === 'not_found'))
+      ) {
         throw err;
       }
     }
@@ -720,27 +732,23 @@ export const hetznerBackend: CloudBackend = {
 
   async uploadFile(h, localPath, remotePath): Promise<void> {
     const { target } = await ensureLiveTarget(h.sandboxId);
-    const argv = [
-      ...sshOptArgs(target),
-      localPath,
-      `${target.user}@${target.host}:${remotePath}`,
-    ];
+    const argv = [...sshOptArgs(target), localPath, `${target.user}@${target.host}:${remotePath}`];
     const res = await execa('scp', argv, { reject: false, timeout: 300_000 });
     if (res.exitCode !== 0) {
-      throw new Error(`hetzner: scp upload failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`);
+      throw new Error(
+        `hetzner: scp upload failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`,
+      );
     }
   },
 
   async downloadFile(h, remotePath, localPath): Promise<void> {
     const { target } = await ensureLiveTarget(h.sandboxId);
-    const argv = [
-      ...sshOptArgs(target),
-      `${target.user}@${target.host}:${remotePath}`,
-      localPath,
-    ];
+    const argv = [...sshOptArgs(target), `${target.user}@${target.host}:${remotePath}`, localPath];
     const res = await execa('scp', argv, { reject: false, timeout: 300_000 });
     if (res.exitCode !== 0) {
-      throw new Error(`hetzner: scp download failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`);
+      throw new Error(
+        `hetzner: scp download failed (exit ${String(res.exitCode)}): ${res.stderr || ''}`,
+      );
     }
   },
 
@@ -851,7 +859,10 @@ export const hetznerBackend: CloudBackend = {
     // the two state dirs are disjoint. Using sudo for both keeps them
     // pointed at the same `/root/.portless`.
     const tlsFlag = opts.tls ? '' : '--no-tls';
-    const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(/\s+/g, ' ');
+    const startCmd = `sudo portless proxy start ${tlsFlag} -p ${String(opts.proxyPort)}`.replace(
+      /\s+/g,
+      ' ',
+    );
     const aliasCmd = `sudo portless alias ${shellQuote(opts.boxName)} ${String(opts.webPort)}`;
     const cmds = [startCmd, aliasCmd];
     if (opts.tls) {
@@ -874,11 +885,7 @@ export const hetznerBackend: CloudBackend = {
     // Reuse the ControlMaster via `-S <sock>` — no new auth handshake, no
     // SSH-token mint pressure (unlike Daytona). Callers append `-t '<cmd>'`
     // or similar in the `buildAttach` helper.
-    return [
-      'ssh',
-      ...sshOptArgs(target),
-      `${target.user}@${target.host}`,
-    ];
+    return ['ssh', ...sshOptArgs(target), `${target.user}@${target.host}`];
   },
 
   async createSnapshot(h, name): Promise<void> {
@@ -910,7 +917,8 @@ export const hetznerBackend: CloudBackend = {
     try {
       await c.deleteImage(img.id);
     } catch (err) {
-      if (err instanceof HetznerApiError && (err.statusCode === 404 || err.code === 'not_found')) return;
+      if (err instanceof HetznerApiError && (err.statusCode === 404 || err.code === 'not_found'))
+        return;
       throw err;
     }
   },
@@ -918,4 +926,3 @@ export const hetznerBackend: CloudBackend = {
 
 /** Exposed for the CLI's `firewall sync` / `show` subcommands. */
 export { tunnels as _hetznerTunnels };
-

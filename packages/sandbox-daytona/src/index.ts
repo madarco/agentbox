@@ -41,6 +41,9 @@ export const providerModule: ProviderModule = {
 };
 
 export { DAYTONA_DEFAULT_RESOURCES, daytonaBackend, DEFAULT_BOX_IMAGE_REF };
+// Exported so the descriptor's declared `sizes` can be asserted against the
+// parser that actually accepts them (apps/cli/test/provider-sizes.test.ts).
+export { parseDaytonaSize } from './backend.js';
 export { resolveDockerfileContext, type DockerfileContext } from './dockerfile-context.js';
 export { ensureDaytonaEnvLoaded } from './env-loader.js';
 export { currentDaytonaBaseFingerprintLive } from './prepared-state.js';

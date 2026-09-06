@@ -29,6 +29,7 @@ interface UpdateOptions {
   dryRun?: boolean;
   skipSelf?: boolean;
   skipSkills?: boolean;
+  skipPlugins?: boolean;
   skipHub?: boolean;
   channel?: string;
 }
@@ -192,6 +193,7 @@ export const updateCommand = new Command('self-update')
     '--skip-skills',
     'skip refreshing the host skill files in ~/.claude, ~/.codex, ~/.config/opencode',
   )
+  .option('--skip-plugins', 'skip updating registered provider plugin packages')
   .option('--skip-hub', 'skip updating the deployed control box, if one is configured')
   .option(
     '--channel <channel>',
@@ -231,6 +233,14 @@ export const updateCommand = new Command('self-update')
       const skillsStep = opts.skipSkills
         ? 'skills: skipped (--skip-skills)'
         : 'skills: refresh agentbox-managed host skill files in ~/.claude (and Codex/OpenCode)';
+      // Deliberately says nothing about WHICH plugins or which versions: this
+      // line is printed by the build being replaced, whose supported SDK set is
+      // the one about to change. A list computed under the old gate would be
+      // exactly wrong. `agentbox plugin update --dry-run` enumerates honestly,
+      // because it runs under the gate that will actually apply.
+      const pluginsStep = opts.skipPlugins
+        ? 'plugins: skipped (--skip-plugins)'
+        : 'plugins: re-check registered provider plugins against the new SDK gate, updating any with a compatible release';
       // A deployed control box runs its own AgentBox; updating only this machine
       // leaves the two on different builds. Resolved before the confirm so the
       // plan says what will happen to the remote machine.
@@ -246,6 +256,7 @@ export const updateCommand = new Command('self-update')
           'plan:',
           `  ${selfStep}`,
           `  ${skillsStep}`,
+          `  ${pluginsStep}`,
           `  image: re-check ${DEFAULT_BOX_IMAGE} (left in place; its build-context fingerprint rebuilds it on the next create only if it changed)`,
           '  bases: adopt any matching cloud base bake from the control box, if one is configured',
           '  relay: stop, then respawn',
@@ -313,7 +324,15 @@ export const updateCommand = new Command('self-update')
       // stamps its own (new) version. Otherwise this process is already
       // current: run in-process.
       if (selfUpdated) {
-        const args = ['_post-update-refresh', ...(opts.skipSkills ? ['--skip-skills'] : [])];
+        const args = [
+          '_post-update-refresh',
+          ...(opts.skipSkills ? ['--skip-skills'] : []),
+          // Conditional, not unconditional: `--channel stable` off a nightly
+          // installs an OLDER build (decideSelfUpdate's `switching`), whose
+          // _post-update-refresh predates this flag — and commander errors on an
+          // unknown option, which would fail the whole refresh.
+          ...(opts.skipPlugins ? ['--skip-plugins'] : []),
+        ];
         const code = await runInherit('agentbox', args);
         if (code !== 0) {
           // Leave the stamp on the old version: the next run of the new
@@ -323,7 +342,10 @@ export const updateCommand = new Command('self-update')
           );
         }
       } else {
-        await runPostUpdateRefresh({ skipSkills: opts.skipSkills });
+        await runPostUpdateRefresh({
+          skipSkills: opts.skipSkills,
+          skipPlugins: opts.skipPlugins,
+        });
       }
 
       // Step 3: the deployed control box. Shelled out (not called in-process)

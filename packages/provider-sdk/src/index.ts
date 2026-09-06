@@ -85,6 +85,20 @@ export {
 // OPTIONAL: omit it and you get a descriptor derived from your module plus
 // defaults that reproduce pre-descriptor behavior — nothing breaks, you just
 // show up as your bare provider name.
+//
+// `sizes` / `sizeHint` / `sizeAppliesAt` drive the size picker in the create
+// forms (web hub and macOS tray). There is no cross-provider size grammar, so
+// each `sizes[].key` is a literal `--size` value YOUR backend parses:
+//   sizes: [{ key: 'small', label: '2 vCPU / 4 GB' }, ...]
+//   sizeHint: 'cpu-memory in GB, e.g. 4-8'   // omit for a CLOSED set: the
+//                                            // hint is what gates the
+//                                            // custom-value field
+//   sizeAppliesAt: 'bake'   // your backend rejects per-create resources, so a
+//                           // different size means re-baking the base first.
+//                           // Pair it with `ProviderModule.sizeIgnoredReason`,
+//                           // which decides whether a given size really needs
+//                           // that bake.
+// Declare nothing and no picker appears — the CLI's `--size` still reaches you.
 export {
   type ProviderDescriptor,
   type ProviderCapabilities,

@@ -164,6 +164,14 @@ export const exampleDescriptor: ProviderDescriptor = {
     pauseSemantics: 'freeze',
     hubRoutable: true,
   },
+  // The create-form size picker. `key` is a literal `--size` value this backend
+  // parses; the hint's presence is what opens the list to a custom value.
+  sizes: [
+    { key: '2', label: '2 vCPU / 4 GB' },
+    { key: '4', label: '4 vCPU / 8 GB' },
+    { key: '8', label: '8 vCPU / 16 GB' },
+  ],
+  sizeHint: 'vCPU count, e.g. 8',
   blurb: 'the example community provider',
   sizeDesc: 'Per-provider override of `box.size` for example (vCPU count).',
   imageDesc: 'Per-provider override of `box.image` for example (snapshot id).',

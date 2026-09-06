@@ -26,6 +26,12 @@ import { JobLogStream, type JobLoginState } from './job-log-stream';
 
 type Agent = CreateBoxInput['agent'];
 
+// Select value that swaps the size dropdown for a free-text field. Only offered
+// when the provider declares a `sizeHint` — its absence means the list is closed
+// (vercel's parser throws on anything outside it), so a custom value there could
+// only ever produce a failed create.
+const CUSTOM_SIZE = '__custom__';
+
 // Docker is always available; used when the server sent no provider list (the
 // hosted/Postgres path, where host readiness isn't known).
 const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
@@ -114,6 +120,15 @@ function CreateBoxModal({
   // expendable default is right almost always, and this is the exception.
   const [persistent, setPersistent] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // VM size. '' = the provider's own default; CUSTOM_SIZE swaps in a free-text
+  // field. There is no cross-provider size grammar (hetzner takes `cx43`,
+  // vercel a vCPU count, daytona `cpu-mem-disk` GB), so the choices come
+  // entirely from the provider's descriptor and reset when it changes.
+  const [size, setSize] = useState('');
+  const [customSize, setCustomSize] = useState('');
+  // For a provider that fixes resources at bake time (daytona, e2b): whether
+  // THIS size would be discarded by a plain create. Null = not asked yet.
+  const [sizeRebake, setSizeRebake] = useState<{ required: boolean; reason?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string>('streaming');
@@ -203,12 +218,58 @@ function CreateBoxModal({
   // A `docker:<alias>` remote-docker spec is never capped, so the bare id is
   // the right thing to test.
   const persistentCapped = PERSISTENT_CAPPED.has(providerId);
+  const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   const bakeNeeded =
     !!providerFreshness &&
     (!!providerFreshness.jobId ||
       providerFreshness.baseStatus === 'unprepared' ||
       providerFreshness.baseStatus === 'stale');
+
+  // A size is a literal value for ONE backend, so carrying `cx43` over to vercel
+  // would only fail at provision. Reset on every provider change.
+  useEffect(() => {
+    setSize('');
+    setCustomSize('');
+    setSizeRebake(null);
+  }, [providerId]);
+
+  // Daytona and e2b fix CPU/memory when the base is baked and discard anything
+  // else at create, so ask the hub whether THIS size needs a re-bake first.
+  // Debounced because a custom value is typed a character at a time.
+  useEffect(() => {
+    if (providerOption?.sizeAppliesAt !== 'bake' || chosenSize.length === 0) {
+      setSizeRebake(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/providers/${encodeURIComponent(providerId)}/size-check`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ size: chosenSize }),
+            },
+          );
+          if (!res.ok || cancelled) return;
+          const j = (await res.json()) as { rebakeRequired?: boolean; reason?: string };
+          if (cancelled) return;
+          setSizeRebake({ required: !!j.rebakeRequired, reason: j.reason });
+        } catch {
+          // Advisory only — a failed check must not block the create. Worst
+          // case the backend warns at provision, exactly as the CLI does.
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [providerId, chosenSize, providerOption?.sizeAppliesAt]);
 
   // Load the selected project's branches for the base-branch picker, and default
   // the base + setup-wizard toggle from the project. Re-runs when the project
@@ -244,11 +305,21 @@ function CreateBoxModal({
       setError('pick a project');
       return;
     }
+    // A size the base has to be re-baked at is the same two-phase flow as a
+    // missing base, minus the stale-base question (the user just asked for
+    // this, so there is nothing to confirm).
+    if (sizeRebake?.required && !bakeNeeded) {
+      startBake();
+      return;
+    }
     if (bakeNeeded) {
       // Docker auto-bakes (its base self-heals — same rule as the CLI); a
       // stale CLOUD base gets the CLI wizard's rebuild-vs-use-existing choice.
       // An in-flight bake is never re-asked — the create just waits on it.
+      // Not asked when the SIZE is what forces the bake: "use existing image"
+      // would boot at the baked size and silently drop what was just picked.
       if (
+        !sizeRebake?.required &&
         providerId !== 'docker' &&
         providerFreshness?.baseStatus === 'stale' &&
         !providerFreshness.jobId
@@ -277,9 +348,17 @@ function CreateBoxModal({
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           credentials: 'same-origin',
-          // No force: a fresh-again base becomes a fast no-op job; a stale
-          // fingerprint still triggers the rebuild.
-          body: JSON.stringify({}),
+          // No force by default: a fresh-again base becomes a fast no-op job; a
+          // stale fingerprint still triggers the rebuild.
+          //
+          // A SIZE change is the exception and needs force. It does not move the
+          // build-context fingerprint, so the base still reads as fresh and the
+          // bake would no-op — leaving the box at the old size with nothing to
+          // show for the wait.
+          body: JSON.stringify({
+            ...(chosenSize.length > 0 ? { size: chosenSize } : {}),
+            ...(sizeRebake?.required ? { force: true } : {}),
+          }),
         });
         const j = (await res.json().catch(() => null)) as {
           jobId?: string;
@@ -313,9 +392,22 @@ function CreateBoxModal({
             ? fromBranch.trim()
             : undefined,
         setupWizard: agent !== 'none' && runSetup,
-        // Omitted unless asked for: sending `false` would override the hub's own
-        // `box.persistent`, turning "no opinion" into an opt-out.
-        ...(persistent && !persistentCapped ? { opts: { persistent: true } } : {}),
+        // Both options land in ONE `opts`: two conditional `{ opts: ... }`
+        // spreads would overwrite each other, silently dropping `persistent`
+        // whenever a size was also picked.
+        //
+        // `persistent` is omitted unless asked for — sending `false` would
+        // override the hub's own `box.persistent`, turning "no opinion" into an
+        // opt-out. `size` goes only to providers that apply one per create;
+        // daytona and e2b reject it there and got theirs baked in above.
+        ...(() => {
+          const opts: { persistent?: true; size?: string } = {};
+          if (persistent && !persistentCapped) opts.persistent = true;
+          if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {
+            opts.size = chosenSize;
+          }
+          return Object.keys(opts).length > 0 ? { opts } : {};
+        })(),
       });
       if (!res.ok) {
         setError(res.error);
@@ -440,6 +532,30 @@ function CreateBoxModal({
                     : 'The base image is out of date and will be rebuilt first (can take 5–10 minutes).'}
               </p>
             ) : null}
+            {/* Base branch picker: the box forks its per-box branch from this ref.
+                Hidden on the hosted path (no local repo → empty branch list). */}
+            {branches === null ? (
+              <Field label="Base branch">
+                <Select value="" disabled>
+                  <option value="">Loading branches…</option>
+                </Select>
+              </Field>
+            ) : branches.length > 0 ? (
+              <Field label="Base branch">
+                <Select value={fromBranch} onChange={(e) => setFromBranch(e.target.value)}>
+                  {/* Empty = the repo's current HEAD when it isn't a named ref. */}
+                  {selected?.currentBranch && !branches.includes(selected.currentBranch) ? (
+                    <option value="">{selected.currentBranch} (current)</option>
+                  ) : null}
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                      {b === selected?.currentBranch ? ' (current)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 {agents.map((a) => (
@@ -481,7 +597,8 @@ function CreateBoxModal({
                 SSH (<span className="text-secondary-foreground">agentbox shell</span>).
               </p>
             ) : null}
-            {/* Advanced: base branch + initial prompt, collapsed to keep the form lean. */}
+            {/* Advanced: size + initial prompt, collapsed to keep the form lean.
+                Same two rows as the tray's Advanced section — keep them in step. */}
             <div className="flex flex-col gap-4">
               <button
                 type="button"
@@ -495,29 +612,53 @@ function CreateBoxModal({
               </button>
               {showAdvanced ? (
                 <>
-                  {/* Base branch picker: the box forks its per-box branch from this ref.
-                      Hidden on the hosted path (no local repo → empty branch list). */}
-                  {branches === null ? (
-                    <Field label="Base branch">
-                      <Select value="" disabled>
-                        <option value="">Loading branches…</option>
-                      </Select>
-                    </Field>
-                  ) : branches.length > 0 ? (
-                    <Field label="Base branch">
-                      <Select value={fromBranch} onChange={(e) => setFromBranch(e.target.value)}>
-                        {/* Empty = the repo's current HEAD when it isn't a named ref. */}
-                        {selected?.currentBranch && !branches.includes(selected.currentBranch) ? (
-                          <option value="">{selected.currentBranch} (current)</option>
-                        ) : null}
-                        {branches.map((b) => (
-                          <option key={b} value={b}>
-                            {b}
-                            {b === selected?.currentBranch ? ' (current)' : ''}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
+                  {/* Size. Entirely descriptor-driven: the choices, the grammar
+                      hint, and whether a change needs a re-bake all come from
+                      the provider, so a community plugin gets the same picker
+                      by declaring `sizes`. Absent for docker, whose knobs are
+                      box.memory / box.cpus. */}
+                  {providerOption?.sizes?.length ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Field label="Size">
+                        <Select
+                          value={size}
+                          onChange={(e) => {
+                            setSize(e.target.value);
+                            if (e.target.value !== CUSTOM_SIZE) setCustomSize('');
+                          }}
+                        >
+                          <option value="">Provider default</option>
+                          {providerOption.sizes.map((s) => (
+                            <option key={s.key} value={s.key}>
+                              {s.label}
+                            </option>
+                          ))}
+                          {providerOption.sizeHint ? (
+                            <option value={CUSTOM_SIZE}>Custom…</option>
+                          ) : null}
+                        </Select>
+                      </Field>
+                      {size === CUSTOM_SIZE ? (
+                        <Input
+                          value={customSize}
+                          onChange={(e) => setCustomSize(e.target.value)}
+                          placeholder={providerOption.sizeHint}
+                          autoFocus
+                        />
+                      ) : null}
+                      {sizeRebake?.required ? (
+                        // The provider's own sentence names the baked size, which is
+                        // detail rather than a decision — it rides the tooltip.
+                        <p className="font-mono text-xs text-amber-500" title={sizeRebake.reason}>
+                          {providerOption.label} fixes the size at bake time, so the base image is
+                          rebuilt first
+                          {providerOption.bake?.approxMinutes
+                            ? ` (about ${providerOption.bake.approxMinutes} min)`
+                            : ''}
+                          .
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                   {agent !== 'none' ? (
                     <Field label="Initial prompt (optional)">

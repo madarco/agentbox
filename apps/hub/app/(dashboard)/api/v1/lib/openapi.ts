@@ -897,18 +897,9 @@ export function buildOpenApi(): Record<string, unknown> {
               name: 'id',
               in: 'path',
               required: true,
-              schema: {
-                type: 'string',
-                enum: [
-                  'docker',
-                  'daytona',
-                  'hetzner',
-                  'vercel',
-                  'e2b',
-                  'digitalocean',
-                  'remote-docker',
-                ],
-              },
+              description:
+                'Provider name. Built-ins are docker, daytona, hetzner, vercel, e2b, digitalocean, remote-docker; a provider registered with `agentbox plugin add` uses its own name.',
+              schema: { type: 'string' },
             },
           ],
           requestBody: {
@@ -939,6 +930,69 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/providers/{id}/size-check': {
+        post: {
+          tags: ['Providers'],
+          summary: 'Would a box created at this size actually get it?',
+          description:
+            'Most backends apply a size per create and answer false. Daytona and e2b fix CPU/memory when the base is baked and discard anything else, so they answer true with the reason to show. Lets a create form re-bake only when the size really differs from the baked one. Advisory: an unresolvable provider or a backend with no opinion answers false.',
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              description:
+                'Provider name. Built-ins are docker, daytona, hetzner, vercel, e2b, digitalocean, remote-docker; a provider registered with `agentbox plugin add` uses its own name.',
+              schema: { type: 'string' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    size: {
+                      type: 'string',
+                      description:
+                        'A literal --size value for this provider (e.g. cx43, 4, 4-8-10). Opaque here — the provider parses it.',
+                    },
+                  },
+                  required: ['size'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Verdict',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      rebakeRequired: {
+                        type: 'boolean',
+                        description:
+                          'true = a plain create would discard this size; bake first with POST /providers/{id}/prepare { size, force: true }. `force` matters: a size change does not move the build-context fingerprint, so without it the bake is a no-op.',
+                      },
+                      reason: {
+                        type: 'string',
+                        description: "Why, in the provider's own words. Only when rebakeRequired.",
+                      },
+                    },
+                    required: ['rebakeRequired'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/providers/{id}/prepare': {
         post: {
           tags: ['Providers'],
@@ -949,18 +1003,9 @@ export function buildOpenApi(): Record<string, unknown> {
               name: 'id',
               in: 'path',
               required: true,
-              schema: {
-                type: 'string',
-                enum: [
-                  'docker',
-                  'daytona',
-                  'hetzner',
-                  'vercel',
-                  'e2b',
-                  'digitalocean',
-                  'remote-docker',
-                ],
-              },
+              description:
+                'Provider name. Built-ins are docker, daytona, hetzner, vercel, e2b, digitalocean, remote-docker; a provider registered with `agentbox plugin add` uses its own name.',
+              schema: { type: 'string' },
             },
           ],
           requestBody: {
@@ -2308,23 +2353,97 @@ export function buildOpenApi(): Record<string, unknown> {
         },
         Provider: {
           type: 'object',
+          description:
+            'A provider plus its declarative descriptor. The descriptor half comes from a sync snapshot (the built-in table, or ~/.agentbox/plugins.json for a community provider), so it is always present and costs nothing to serve. Clients should render from it rather than hardcoding provider names.',
           properties: {
             id: {
               type: 'string',
-              enum: [
-                'docker',
-                'daytona',
-                'hetzner',
-                'vercel',
-                'e2b',
-                'digitalocean',
-                'remote-docker',
-              ],
+              description:
+                'Built-ins are docker, daytona, hetzner, vercel, e2b, digitalocean, remote-docker; a registered plugin uses its own name.',
             },
             label: { type: 'string' },
             configured: {
               type: 'boolean',
               description: 'Base image baked (usable for create) on this host.',
+            },
+            kind: { type: 'string', enum: ['local', 'cloud'] },
+            credentials: {
+              type: 'object',
+              description: 'What "configured credentials" means, and the form to prompt with.',
+              properties: {
+                envKeys: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'secrets.env key NAMES whose presence means configured. Values are never read.',
+                },
+                fields: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      key: { type: 'string' },
+                      label: { type: 'string' },
+                      optional: { type: 'boolean' },
+                      secret: { type: 'boolean', description: 'Absent means secret — mask it.' },
+                      hint: { type: 'string' },
+                    },
+                    required: ['key', 'label'],
+                  },
+                },
+              },
+            },
+            bake: {
+              type: 'object',
+              properties: {
+                required: {
+                  type: 'boolean',
+                  description:
+                    'false = the base self-heals on create (docker), so a missing base is a slow first create, not a blocked one.',
+                },
+                approxMinutes: { type: 'string' },
+                createProgressSteps: {
+                  type: 'integer',
+                  description:
+                    'Typical streamed create-log line count, for client progress pacing.',
+                },
+                bakeProgressSteps: { type: 'integer' },
+              },
+            },
+            capabilities: {
+              type: 'object',
+              description:
+                'All DECLARED, not inferred from method presence. pauseSemantics "stop" means pause powers the box off — relabel the control, do not hide it.',
+              additionalProperties: true,
+            },
+            sizes: {
+              type: 'array',
+              description:
+                'Sizes to offer in a create picker, most-modest first. Each key is a literal --size value for THIS backend; there is no cross-provider grammar. Absent = the provider has no size knob (docker).',
+              items: {
+                type: 'object',
+                properties: { key: { type: 'string' }, label: { type: 'string' } },
+                required: ['key', 'label'],
+              },
+            },
+            sizeHint: {
+              type: 'string',
+              description:
+                'Placeholder for a free-text size. Its PRESENCE is what says `sizes` is an open list — offer a custom-value field only when there is a hint for it.',
+            },
+            sizeAppliesAt: {
+              type: 'string',
+              enum: ['create', 'bake'],
+              description:
+                'bake = the size is fixed when the base is baked and rejected per-create (daytona, e2b), so a change must go through POST /providers/{id}/prepare with { size, force: true } first. Absent = create. POST /providers/{id}/size-check says whether a SPECIFIC size needs that.',
+            },
+            regions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { key: { type: 'string' }, label: { type: 'string' } },
+                required: ['key', 'label'],
+              },
             },
             hasCredentials: {
               type: 'boolean',
@@ -2336,6 +2455,20 @@ export function buildOpenApi(): Record<string, unknown> {
               description: 'Id of an in-flight bake (prepare) job for this provider, if any.',
             },
             reason: { type: 'string' },
+            baseStatus: {
+              type: 'string',
+              enum: ['fresh', 'stale', 'unprepared', 'unknown'],
+              description:
+                'Only when ?freshness=1. stale = re-bake wanted; unknown = could not verify.',
+            },
+            baseStaleReason: { type: 'string' },
+            origin: {
+              type: 'string',
+              enum: ['local', 'hub'],
+              description:
+                'hub = this row came from a remote control box, which is where its boxes are created.',
+            },
+            hubUrl: { type: 'string' },
           },
           required: ['id', 'label', 'configured'],
         },

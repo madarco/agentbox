@@ -324,6 +324,11 @@ export interface UserConfig {
      * `stable` is the opt-out. See docs/nightly-channel-plan.md.
      */
     channel?: 'auto' | 'stable' | 'nightly';
+    /**
+     * npm registry base URL for resolving provider-plugin updates. Defaults to
+     * the public registry; set it for a mirror or a private registry.
+     */
+    registry?: string;
   };
   tools?: {
     gh?: {
@@ -486,6 +491,7 @@ export interface EffectiveConfig {
   update: {
     check: boolean;
     channel: 'auto' | 'stable' | 'nightly';
+    registry: string;
   };
   tools: {
     gh: {
@@ -675,6 +681,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   update: {
     check: true,
     channel: 'auto',
+    registry: 'https://registry.npmjs.org',
   },
   tools: {
     gh: { enabled: true },
@@ -1334,6 +1341,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['auto', 'stable', 'nightly'] as const,
     description:
       'Which release channel `agentbox self-update` and `install app` follow: `auto` (default) follows the installed build, `nightly` opts into pre-release builds cut from the nightly branch, `stable` opts back out. Nightly always installs the newest build of EITHER channel, so a stable release supersedes the nightlies that preceded it.',
+  },
+  {
+    key: 'update.registry',
+    type: 'string',
+    description:
+      'npm registry base URL used when resolving provider-plugin updates during `agentbox self-update` / `agentbox plugin update`. Defaults to https://registry.npmjs.org. Point it at a mirror or a private registry when your plugins are not on the public one.',
   },
   {
     key: 'tools.gh.enabled',

@@ -24,6 +24,15 @@ Switch per box with `--provider islo`, or pin it project-wide with `box.provider
   **support@incredibuild.com**.
 </Callout>
 
+<Callout type="warn" title="Needs AgentBox 0.29.2 or earlier for now">
+  The published `agentbox-provider-islo` targets **provider SDK v2**, and AgentBox 0.30.0 accepts
+  only v4 — `agentbox plugin add` refuses it, and a copy registered before you upgraded is marked
+  `!` by [`agentbox plugin list`](/docs/cli). Until an SDK v4 build is published, stay on AgentBox
+  0.29.2 to use islo. Once one is, `agentbox self-update` picks it up on its own (or run `agentbox
+  plugin update`). Track it at the [issue
+  tracker](https://github.com/zozo123/agentbox-provider-islo/issues).
+</Callout>
+
 ## Install
 
 Install the plugin, then register it so `--provider islo` resolves:
@@ -31,7 +40,7 @@ Install the plugin, then register it so `--provider islo` resolves:
 ```bash
 npm i -g agentbox-provider-islo
 agentbox plugin add agentbox-provider-islo
-agentbox plugin list            # → islo … (SDK v2)
+agentbox plugin list            # → islo … (SDK v4)
 ```
 
 ## Credentials

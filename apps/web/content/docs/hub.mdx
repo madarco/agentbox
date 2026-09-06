@@ -67,7 +67,14 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   offers docker plus any cloud provider set up on this host — providers you haven't
   configured yet show up disabled (set them up under **Settings → Sandbox
   providers**, below). Pick a **Base branch** to fork the box from a ref other than
-  the project's current HEAD (like `--from-branch`). When a project has no
+  the project's current HEAD (like `--from-branch`). Under **Advanced**, pick a
+  **Size** to give the box
+  more CPU and RAM than the provider's default — the choices come from the provider
+  itself (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10` on Daytona; there is no
+  common grammar), with a **Custom…** option where the backend accepts free-form
+  values. Docker has no Size row: it sizes with `box.memory` / `box.cpus`. On Daytona
+  and E2B the size is fixed when the base image is baked, so choosing a different one
+  rebuilds the base first — the form says so before you commit. When a project has no
   `agentbox.yaml` and no default snapshot, a **Run setup wizard** toggle (on by
   default) seeds the agent's first turn to explore the repo and propose an
   `agentbox.yaml`.
