@@ -237,12 +237,13 @@ export const PROVIDERS = [
       hubRoutable: true,
       timeoutModel: 'inactivity',
     },
-    // `cpu-memory-disk` GB (parseDaytonaSize). Disk is capped at 10 GB per
-    // sandbox on the free plan, so no preset asks for more.
+    // `cpu-memory-disk` GB (parseDaytonaSize). First entry is
+    // DAYTONA_DEFAULT_RESOURCES. Disk is capped at 10 GB per sandbox on the
+    // free plan, so no preset asks for more.
     sizes: [
-      { key: '1-1-3', label: '1 vCPU / 1 GB / 3 GB disk' },
-      { key: '2-4-10', label: '2 vCPU / 4 GB / 10 GB disk' },
+      { key: '2-4-8', label: '2 vCPU / 4 GB / 8 GB disk (default)' },
       { key: '4-8-10', label: '4 vCPU / 8 GB / 10 GB disk' },
+      { key: '8-16-10', label: '8 vCPU / 16 GB / 10 GB disk' },
     ],
     sizeHint: 'cpu-memory-disk in GB, e.g. 4-8-10',
     sizeAppliesAt: 'bake',
@@ -287,7 +288,7 @@ export const PROVIDERS = [
     // Server-type slugs. The Arm `cax*` line is deliberately absent: the base
     // snapshot is amd64, so booting one would fail at create.
     sizes: [
-      { key: 'cx23', label: 'cx23 - 2 vCPU / 4 GB' },
+      { key: 'cx23', label: 'cx23 - 2 vCPU / 4 GB (default)' },
       { key: 'cx33', label: 'cx33 - 4 vCPU / 8 GB' },
       { key: 'cx43', label: 'cx43 - 8 vCPU / 16 GB' },
     ],
@@ -340,7 +341,7 @@ export const PROVIDERS = [
     // therefore no custom-value escape).
     sizes: [
       { key: '1', label: '1 vCPU / 2 GB' },
-      { key: '2', label: '2 vCPU / 4 GB' },
+      { key: '2', label: '2 vCPU / 4 GB (default)' },
       { key: '4', label: '4 vCPU / 8 GB' },
       { key: '8', label: '8 vCPU / 16 GB' },
     ],
@@ -381,7 +382,7 @@ export const PROVIDERS = [
     // `cpu-memory` GB. Template-level: E2B rejects per-create resources, so a
     // different size means rebuilding the template.
     sizes: [
-      { key: '2-4', label: '2 vCPU / 4 GB' },
+      { key: '2-4', label: '2 vCPU / 4 GB (default)' },
       { key: '4-8', label: '4 vCPU / 8 GB' },
       { key: '8-16', label: '8 vCPU / 16 GB' },
     ],
@@ -440,7 +441,7 @@ export const PROVIDERS = [
       hubRoutable: true,
     },
     sizes: [
-      { key: 's-2vcpu-4gb', label: '2 vCPU / 4 GB' },
+      { key: 's-2vcpu-4gb', label: '2 vCPU / 4 GB (default)' },
       { key: 's-4vcpu-8gb', label: '4 vCPU / 8 GB' },
       { key: 's-8vcpu-16gb', label: '8 vCPU / 16 GB' },
     ],

@@ -1,4 +1,4 @@
-import type { HubState, ProviderOption } from './types';
+import type { HubState, ProviderOption, ProviderSizeCheck } from './types';
 import type { AgentId } from '@agentbox/core';
 
 // Result of a lifecycle server action.
@@ -426,6 +426,13 @@ export interface HubBackend {
   // to ~/.agentbox/secrets.env). `fields` is provider-specific (e.g. { apiKey },
   // { token }, { token, teamId?, projectId? }). Never returns secret values.
   setProviderCredentials(id: string, fields: Record<string, string>): Promise<ActionResult>;
+  // Would creating a box at `size` on this provider actually get that size?
+  // Most backends honour a size per create and answer `false`. Daytona and e2b
+  // fix resources when the base is baked and discard anything else, so they
+  // answer `true` with the sentence to show the user — which is what lets a
+  // create form re-bake only when it has to, instead of on every size change.
+  // A provider with no `sizeIgnoredReason` hook answers `false`.
+  checkProviderSize(id: string, size: string): Promise<ProviderSizeCheck>;
   // Enqueue a background image-bake (prepare) job for a provider; returns the
   // jobId (progress streams over the per-job log SSE, like create). Reuses an
   // in-flight bake for the same provider if one exists.

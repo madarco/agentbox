@@ -165,6 +165,7 @@ import type {
   HubState,
   Project,
   ProviderOption,
+  ProviderSizeCheck,
   User,
 } from './boxes/types';
 
@@ -838,6 +839,8 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
       bake: d.bake,
       capabilities: d.capabilities,
       ...(d.sizes ? { sizes: d.sizes } : {}),
+      ...(d.sizeHint ? { sizeHint: d.sizeHint } : {}),
+      ...(d.sizeAppliesAt ? { sizeAppliesAt: d.sizeAppliesAt } : {}),
       ...(d.regions ? { regions: d.regions } : {}),
     };
   });
@@ -2356,6 +2359,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return res.ok ? { ok: true } : { ok: false, error: res.error ?? 'invalid credentials' };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    async checkProviderSize(id, size): Promise<ProviderSizeCheck> {
+      const spec = size.trim();
+      if (spec.length === 0) return { rebakeRequired: false };
+      // Advisory, never fatal: an unknown provider, a plugin that fails to
+      // import, or a backend without the hook all mean "nothing to say", and a
+      // create form must not be blocked by a question it only asked to be
+      // helpful. Mirrors `apps/cli/src/lib/size-advisory.ts`.
+      try {
+        if (!isRuntimeProviderName(id)) return { rebakeRequired: false };
+        const mod = await loadProviderModuleByName(id);
+        const reason = mod.sizeIgnoredReason?.(spec) ?? null;
+        return reason ? { rebakeRequired: true, reason } : { rebakeRequired: false };
+      } catch {
+        return { rebakeRequired: false };
       }
     },
     prepareProvider(id, opts): Promise<CreateBoxResult> {

@@ -41,6 +41,9 @@ export const providerModule: ProviderModule = {
 };
 
 export { digitaloceanBackend, DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF };
+// Exported so the descriptor's declared default `size` can be asserted against
+// the value the backend really falls back to (apps/cli/test/provider-sizes.test.ts).
+export { DIGITALOCEAN_DEFAULT_SIZE } from './backend.js';
 export { ensureDigitalOceanEnvLoaded } from './env-loader.js';
 export {
   ensureDigitalOceanCredentials,

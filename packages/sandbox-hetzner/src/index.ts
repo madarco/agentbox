@@ -46,6 +46,9 @@ export const providerModule: ProviderModule = {
 };
 
 export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
+// Exported so the descriptor's declared default `size` can be asserted against
+// the value the backend really falls back to (apps/cli/test/provider-sizes.test.ts).
+export { HETZNER_DEFAULT_SERVER_TYPE } from './backend.js';
 export { ensureHetznerEnvLoaded } from './env-loader.js';
 export {
   ensureHetznerCredentials,

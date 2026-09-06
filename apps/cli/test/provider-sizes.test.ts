@@ -14,9 +14,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { PROVIDERS } from '@agentbox/config';
-import { parseDaytonaSize } from '@agentbox/sandbox-daytona';
-import { parseE2bSize } from '@agentbox/sandbox-e2b';
-import { parseVercelVcpus } from '@agentbox/sandbox-vercel';
+import { DAYTONA_DEFAULT_RESOURCES, parseDaytonaSize } from '@agentbox/sandbox-daytona';
+import { DIGITALOCEAN_DEFAULT_SIZE } from '@agentbox/sandbox-digitalocean';
+import { DEFAULT_CPU, DEFAULT_MEMORY_MB, parseE2bSize } from '@agentbox/sandbox-e2b';
+import { HETZNER_DEFAULT_SERVER_TYPE } from '@agentbox/sandbox-hetzner';
+import { parseVercelVcpus, VERCEL_DEFAULT_VCPUS } from '@agentbox/sandbox-vercel';
 
 function descriptor(name: string) {
   const d = PROVIDERS.find((p) => p.name === name);
@@ -90,6 +92,23 @@ describe('declared provider sizes', () => {
         expect(key, `${name}/${key}`).toMatch(/^[a-z0-9-]+$/);
       }
     }
+  });
+
+  // The picker labels one entry "(default)" — the size you get with no --size.
+  // That is a claim about the backend, so pin it to the backend's own constant
+  // rather than to a comment someone has to remember to update.
+  it.each([
+    [
+      'daytona',
+      `${String(DAYTONA_DEFAULT_RESOURCES.cpu)}-${String(DAYTONA_DEFAULT_RESOURCES.memory)}-${String(DAYTONA_DEFAULT_RESOURCES.disk)}`,
+    ],
+    ['hetzner', HETZNER_DEFAULT_SERVER_TYPE],
+    ['vercel', String(VERCEL_DEFAULT_VCPUS)],
+    ['e2b', `${String(DEFAULT_CPU)}-${String(DEFAULT_MEMORY_MB / 1024)}`],
+    ['digitalocean', DIGITALOCEAN_DEFAULT_SIZE],
+  ])('%s labels its real fallback size as the default', (name, expected) => {
+    const marked = sizesOf(name).filter((s) => s.label.includes('(default)'));
+    expect(marked.map((s) => s.key)).toEqual([expected]);
   });
 
   it('bake-scoped providers are exactly the ones with a sizeIgnoredReason hook', async () => {
