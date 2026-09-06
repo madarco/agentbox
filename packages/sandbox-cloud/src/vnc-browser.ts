@@ -26,10 +26,10 @@ export async function openWebAppOnVncScreen(
   provider: Provider,
 ): Promise<CloudVncBrowserResult> {
   const persisted = await readBoxStatus(box);
-  const hasWebService = persisted?.services.some((s) => s.expose) ?? false;
-  if (!hasWebService) return { opened: false, reason: 'no web service' };
+  const exposed = persisted?.services.find((s) => s.expose);
+  if (!exposed) return { opened: false, reason: 'no web service' };
   try {
-    const target = await provider.resolveUrl(box, { kind: 'web' });
+    const target = inBoxReachable(await provider.resolveUrl(box, { kind: 'web' }), exposed);
     const br = await provider.exec(box, ['bash', '-lc', desktopOpenCommand(target)], {
       user: 'vscode',
     });
@@ -41,4 +41,30 @@ export async function openWebAppOnVncScreen(
   } catch (err) {
     return { opened: false, reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * The URL to hand the browser INSIDE the box, given the one the host would use.
+ *
+ * A `<box>.localhost` URL works in both places: the in-box portless mirror
+ * serves the same name. A literal `127.0.0.1:<port>` does not — that port is an
+ * `ssh -L` forward living on the HOST, and inside the box it is nothing. The
+ * box reaches its own service most directly anyway, so fall back to the port the
+ * service actually listens on.
+ *
+ * Hit by a box whose agent refuses proxied requests (no portless web alias, so
+ * the resolved URL is the raw tunnel) and equally by one where the user turned
+ * portless off.
+ */
+function inBoxReachable(hostUrl: string, exposed: { expose?: { port: number } }): string {
+  const port = exposed.expose?.port;
+  if (port === undefined) return hostUrl;
+  let hostname: string;
+  try {
+    hostname = new URL(hostUrl).hostname;
+  } catch {
+    return hostUrl;
+  }
+  const isHostLoopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+  return isHostLoopback ? `http://localhost:${String(port)}` : hostUrl;
 }
