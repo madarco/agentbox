@@ -9,6 +9,18 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Added
+
+- **Pick a box size when you create one, in the web hub and the macOS tray.** The
+  choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`
+  on Daytona — there is no common grammar), with a custom-value field where the
+  backend accepts free-form sizes. On Daytona and E2B, where the size is fixed
+  when the base is baked, choosing a different one rebuilds the base first and the
+  form says so. A community provider gets the same picker by declaring `sizes` on
+  its descriptor.
+
 ## [0.30.0] - 2026-09-05
 
 ### Added

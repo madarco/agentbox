@@ -115,6 +115,13 @@ const descriptor: ProviderDescriptor = {
     pauseSemantics: 'freeze',
     hubRoutable: true,
   },
+  // The size picker in the create forms. Optional — omit and no picker appears.
+  sizes: [
+    { key: '2', label: '2 vCPU / 4 GB' },
+    { key: '4', label: '4 vCPU / 8 GB' },
+  ],
+  sizeHint: 'vCPU count, e.g. 8', // omit for a CLOSED set (no custom field)
+  sizeAppliesAt: 'create', // 'bake' if you reject per-create resources
   blurb: 'MyProvider microVMs',
   sizeDesc: 'Per-provider override of `box.size` for myprovider.',
   imageDesc: 'Per-provider override of `box.image` for myprovider.',
@@ -126,6 +133,24 @@ export const providerModule: ProviderModule = { provider, backend, descriptor /*
 `agentbox plugin add` snapshots this, so the CLI, hub and tray all read it without importing your package.
 
 **Declare what code can't reveal.** AgentBox doesn't infer capabilities from your `Provider` object: `createCloudProvider` gives _every_ cloud provider a `checkpoint`, `setInbound` and `enableDirectGit`, so their presence says which scaffold you used, not what you support. Three values are cross-checked against your `CloudBackend` (which you wrote, so it means something) — `prune` must equal `!!backend.list`, `inbound` must equal `!!backend.setInbound`, and `timeoutModel` must equal `backend.timeoutModel`.
+
+### Sizes
+
+There's no cross-provider size grammar. `--size` is an opaque string you parse however you like — hetzner reads a server-type slug (`cx43`), vercel a vCPU count (`4`), daytona `cpu-memory-disk` in GB (`4-8-10`). So the size picker in the web hub's create modal and the tray's create panel is built entirely from what you declare:
+
+- **`sizes`** — the offered choices, most-modest first. Each `key` is a literal `--size` value for _your_ backend; the `label` says what it buys. Omit it and no picker appears (`--size` still reaches you from the CLI).
+- **`sizeHint`** — placeholder for the free-text field. **Its presence is what opens the list**: a UI offers a custom value only when there's a hint to put in the box. Omit it when your parser rejects anything outside `sizes` — that's what vercel does.
+- **`sizeAppliesAt`** — `'create'` (the default) or `'bake'`.
+
+Use `sizeAppliesAt: 'bake'` when your backend fixes CPU/memory as the base image is built and **rejects resources on the create call** — daytona's snapshot path and e2b's templates both work this way. Declaring it makes the UI rebuild the base at the chosen size instead of silently handing you a value you'll discard. Pair it with `sizeIgnoredReason(size)`, which returns a sentence when `size` disagrees with what's baked and `null` when it doesn't — that's what stops the UI firing a bake it didn't need:
+
+```ts
+sizeIgnoredReason(size) {
+  const baked = readPreparedState()?.base?.size;
+  if (!baked || baked === size) return null;
+  return `myprovider fixes resources at bake time: this box will run at ${baked}, not ${size}.`;
+}
+```
 
 Three capabilities are easy to get wrong:
 

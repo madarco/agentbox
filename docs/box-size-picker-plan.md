@@ -1,6 +1,6 @@
 # Pick a box size at create time — plan
 
-Status: **phase 1 done**. Phases 2-4 open.
+Status: **done** (all four phases). Kept as the record of WHY the shape is this one.
 
 ## Why
 

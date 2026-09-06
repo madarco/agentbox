@@ -304,7 +304,10 @@ function CreateBoxModal({
       // Docker auto-bakes (its base self-heals — same rule as the CLI); a
       // stale CLOUD base gets the CLI wizard's rebuild-vs-use-existing choice.
       // An in-flight bake is never re-asked — the create just waits on it.
+      // Not asked when the SIZE is what forces the bake: "use existing image"
+      // would boot at the baked size and silently drop what was just picked.
       if (
+        !sizeRebake?.required &&
         providerId !== 'docker' &&
         providerFreshness?.baseStatus === 'stale' &&
         !providerFreshness.jobId
