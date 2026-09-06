@@ -31,6 +31,7 @@ const FALLBACK_AGENTS: readonly { id: string; label: string }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'opencode', label: 'OpenCode' },
   { id: 'pi', label: 'Pi' },
+  { id: 'openclaw', label: 'OpenClaw' },
 ];
 
 export function GET(): Response {

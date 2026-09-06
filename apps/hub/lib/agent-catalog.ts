@@ -28,6 +28,7 @@ export const AGENT_LABELS: Record<string, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
   pi: 'Pi',
+  openclaw: 'OpenClaw',
 };
 
 export interface AgentCatalogEntry {
