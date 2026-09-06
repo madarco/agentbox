@@ -41,6 +41,17 @@ export interface AgentCatalogEntry {
    * so creating with a `false` agent works, it just isn't the default offer.
    */
   installed: boolean;
+  /**
+   * What the agent IS: a `tui` agent is a session you attach to, a `service`
+   * agent is a daemon the box hosts.
+   *
+   * Carried so a client can show the same defaults the API will apply — a
+   * service agent's box is always-on unless the caller says otherwise
+   * (`resolveCreatePersistent`), and a create form that renders that toggle off
+   * tells the user the opposite of what will happen. Absent from a catalog
+   * served without host scope, where clients read it as unknown.
+   */
+  surface?: 'tui' | 'service';
 }
 
 /** A spec shaped like `AGENT_SYNC_SPECS[]` — structurally typed to stay decoupled. */
@@ -49,6 +60,7 @@ export interface AgentSpecLike {
   hidden?: boolean;
   staticPaths: readonly { hostHomeRel: readonly string[]; stagedAs?: string }[];
   credential?: { hostBackup?: string };
+  caps?: { surface?: 'tui' | 'service' };
 }
 
 export interface CollectOptions {
@@ -75,6 +87,7 @@ export function collectAgentCatalog(
     id: spec.id,
     label: AGENT_LABELS[spec.id] ?? spec.id,
     installed: isSetUp(spec, home, exists),
+    ...(spec.caps?.surface ? { surface: spec.caps.surface } : {}),
   }));
 }
 
