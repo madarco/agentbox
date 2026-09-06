@@ -11,7 +11,7 @@
  * `spec-purity.test.ts`).
  *
  * The shape below is what the Phase 0 PoC measured, not what the plan assumed —
- * see `docs/plans/service-boxes-plan.md` §"Phase 0 — PoC results". Three of its
+ * see `docs/plans/service-boxes-plan.md` §"Established facts". Three of its
  * findings are load-bearing here:
  *
  *  - the gateway binds LOOPBACK and generates its own auth token, so there is no
