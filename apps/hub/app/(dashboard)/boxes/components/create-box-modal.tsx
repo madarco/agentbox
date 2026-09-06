@@ -509,6 +509,30 @@ function CreateBoxModal({
                     : 'The base image is out of date and will be rebuilt first (can take 5–10 minutes).'}
               </p>
             ) : null}
+            {/* Base branch picker: the box forks its per-box branch from this ref.
+                Hidden on the hosted path (no local repo → empty branch list). */}
+            {branches === null ? (
+              <Field label="Base branch">
+                <Select value="" disabled>
+                  <option value="">Loading branches…</option>
+                </Select>
+              </Field>
+            ) : branches.length > 0 ? (
+              <Field label="Base branch">
+                <Select value={fromBranch} onChange={(e) => setFromBranch(e.target.value)}>
+                  {/* Empty = the repo's current HEAD when it isn't a named ref. */}
+                  {selected?.currentBranch && !branches.includes(selected.currentBranch) ? (
+                    <option value="">{selected.currentBranch} (current)</option>
+                  ) : null}
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                      {b === selected?.currentBranch ? ' (current)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             <Field label="Agent">
               <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 {agents.map((a) => (
@@ -550,7 +574,8 @@ function CreateBoxModal({
                 SSH (<span className="text-secondary-foreground">agentbox shell</span>).
               </p>
             ) : null}
-            {/* Advanced: base branch + initial prompt, collapsed to keep the form lean. */}
+            {/* Advanced: size + initial prompt, collapsed to keep the form lean.
+                Same two rows as the tray's Advanced section — keep them in step. */}
             <div className="flex flex-col gap-4">
               <button
                 type="button"
@@ -564,30 +589,6 @@ function CreateBoxModal({
               </button>
               {showAdvanced ? (
                 <>
-                  {/* Base branch picker: the box forks its per-box branch from this ref.
-                      Hidden on the hosted path (no local repo → empty branch list). */}
-                  {branches === null ? (
-                    <Field label="Base branch">
-                      <Select value="" disabled>
-                        <option value="">Loading branches…</option>
-                      </Select>
-                    </Field>
-                  ) : branches.length > 0 ? (
-                    <Field label="Base branch">
-                      <Select value={fromBranch} onChange={(e) => setFromBranch(e.target.value)}>
-                        {/* Empty = the repo's current HEAD when it isn't a named ref. */}
-                        {selected?.currentBranch && !branches.includes(selected.currentBranch) ? (
-                          <option value="">{selected.currentBranch} (current)</option>
-                        ) : null}
-                        {branches.map((b) => (
-                          <option key={b} value={b}>
-                            {b}
-                            {b === selected?.currentBranch ? ' (current)' : ''}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                  ) : null}
                   {/* Size. Entirely descriptor-driven: the choices, the grammar
                       hint, and whether a change needs a re-bake all come from
                       the provider, so a community plugin gets the same picker
@@ -623,15 +624,15 @@ function CreateBoxModal({
                         />
                       ) : null}
                       {sizeRebake?.required ? (
-                        <p className="font-mono text-xs text-amber-500">
-                          {sizeRebake.reason
-                            ? trimSizeReason(sizeRebake.reason, providerId)
-                            : 'This size is fixed when the base image is built.'}{' '}
-                          The base image is rebuilt at this size first
+                        // The provider's own sentence names the baked size, which is
+                        // detail rather than a decision — it rides the tooltip.
+                        <p className="font-mono text-xs text-amber-500" title={sizeRebake.reason}>
+                          {providerOption.label} fixes the size at bake time, so the base image is
+                          rebuilt first
                           {providerOption.bake?.approxMinutes
                             ? ` (about ${providerOption.bake.approxMinutes} min)`
                             : ''}
-                          , then the box is created.
+                          .
                         </p>
                       ) : null}
                     </div>
@@ -766,27 +767,6 @@ function JobStatusBadge({
       Working…
     </Badge>
   );
-}
-
-/**
- * `sizeIgnoredReason` is written for a TERMINAL: it names the mismatch, then
- * tells you to run `agentbox prepare --force`. In the create modal the second
- * half is wrong advice — the form is about to do exactly that — and the `id: `
- * prefix restates the provider you just picked. Keep the useful half (which
- * size is actually baked) and drop the rest.
- *
- * Both cuts are optional: an unrecognised sentence falls through unchanged, so
- * a community provider's wording is shown verbatim rather than mangled.
- */
-function trimSizeReason(reason: string, providerId: string): string {
-  // providerId can be a `docker:<alias>` spec or a plugin's own name, so escape
-  // it — an alias with a regex metacharacter would otherwise throw here and
-  // blank the note.
-  const id = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return reason
-    .replace(new RegExp(`^${id}:\\s*`, 'i'), '')
-    .replace(/\s*[—-]\s*re-bake with[\s\S]*$/i, '.')
-    .trim();
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
