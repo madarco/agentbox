@@ -1539,9 +1539,11 @@ now creates a **persistent** box by default, and the decision (`resolveCreatePer
 for e2b/vercel fires before either create rather than leaving a failed job behind. Two gaps found
 by doing this, both pre-existing: the docker provider **dropped `req.persistent`** entirely (fixed —
 the CLI's own docker paths call `createBox` directly and pass it themselves, so nothing had
-exercised the `provider.create` mapping), and the hub queue worker still cannot BUILD a
+exercised the `provider.create` mapping), and the hub queue worker still could not BUILD a
 service-agent box (`unknown agent kind`) — recorded in
-[`plans/service-boxes-backlog.md`](./plans/service-boxes-backlog.md), not fixed here.
+[`plans/service-boxes-backlog.md`](./plans/service-boxes-backlog.md), and fixed after this step:
+the worker now resolves the job's agent off the registry and skips the session leg for a service
+surface.
 
 ---
 

@@ -79,6 +79,7 @@ import {
   type AgentMountResult,
   type AgentVolumeChoice,
 } from './sync/agents/module.js';
+import { resolveAgentIsolation } from './agent-isolation.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import {
   ensureRelay,
@@ -683,17 +684,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // declared static paths exists". Claude is the one exception and stays
   // explicit: it is mounted always, even on a host with no `~/.claude` yet,
   // because a first-run claude box has to have somewhere to put its login.
-  // `--isolate-<agent>-config` is per-agent on the options object; an agent with
-  // no such flag simply never isolates.
-  const isolateFor = (agent: string): boolean => {
-    // The three named options win; `agentConfig` carries every other agent's.
-    // This used to `return false` for anything but the three, so a fourth or
-    // plugin agent could never isolate no matter what its config key said.
-    if (agent === 'claude' && opts.claudeConfig) return opts.claudeConfig.isolate;
-    if (agent === 'codex' && opts.codexConfig) return opts.codexConfig.isolate;
-    if (agent === 'opencode' && opts.opencodeConfig) return opts.opencodeConfig.isolate;
-    return opts.agentConfig?.[agent]?.isolate ?? false;
-  };
+  // Isolation (shared volume vs per-box) is `resolveAgentIsolation`'s call:
+  // per-agent from the options object, defaulting to the agent's own surface.
   const hostHasAnyStaticPath = async (spec: AgentSyncSpec): Promise<boolean> => {
     for (const path of spec.staticPaths) {
       if (await pathExists(join(homedir(), ...path.hostHomeRel))) return true;
@@ -707,7 +699,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     );
     if (!wanted) continue;
     agentSpecs[spec.id] = requireAgentSyncModule(spec.id).resolveVolume({
-      isolate: isolateFor(spec.id),
+      isolate: resolveAgentIsolation(spec, opts, log),
       boxId: id,
     });
   }

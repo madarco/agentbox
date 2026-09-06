@@ -46,11 +46,12 @@ import {
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
-import { resolveAgentLauncher, type ResolvedCarryEntry } from '@agentbox/core';
+import { resolveAgentLauncher, toQueueKind, type ResolvedCarryEntry } from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
+import { createStartsSession, resolveCreateAgentSpec } from './boxes/create-agent.js';
 import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
-import type { AgentId, QueueAgentKind } from '@agentbox/core';
+import type { QueueAgentKind } from '@agentbox/core';
 
 const execFileAsync = promisify(execFile);
 
@@ -200,17 +201,6 @@ async function applySeedFromCustody(
 // `hydratePreparedFromCustody` now lives in ./prepared-hydrate.js so the
 // settings/freshness path (hub-backend.ts) can reuse the exact adoption logic.
 
-/**
- * Narrow a create job's free-form `agent` to the union `provider.create` takes.
- * An unknown value is dropped rather than passed through — the box still gets
- * created, it just registers without an agent hint.
- */
-function normalizeCreateAgent(agent: string | undefined): AgentId | undefined {
-  return agent === 'claude' || agent === 'codex' || agent === 'opencode' || agent === 'pi'
-    ? agent
-    : undefined;
-}
-
 export interface HubWorkerHandle {
   stop: () => Promise<void>;
 }
@@ -311,6 +301,9 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
           );
         }
       }
+      // Resolved BEFORE the provider is loaded, so an unknown agent fails the
+      // job here rather than after a box has been built for it.
+      const agentSpec = resolveCreateAgentSpec(agent);
       const mod = await loadProviderModuleByName(providerName);
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
@@ -336,7 +329,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(carry?.length ? { carry: carry as ResolvedCarryEntry[] } : {}),
         projectRoot: workspacePath,
         // Registered on the plane so an adopting PC relaunches the right agent.
-        agent: normalizeCreateAgent(agent),
+        agent: agentSpec?.id,
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,
@@ -380,10 +373,13 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // not-logged-in box surfaces as an actionable error from
       // verifyDetachedSession, which we return so the job fails WITH the box id
       // (box preserved for adopt/attach + re-login).
-      const boxAgent = normalizeCreateAgent(agent);
+      // A SERVICE agent gets a box and a registered agent but NO session: its
+      // daemon is ctl's job, run from units synthesized in-box off the
+      // `agents.list` payload, so there is nothing to pre-start here.
+      const boxAgent = createStartsSession(agentSpec) ? agentSpec?.id : undefined;
       const seedPrompt = prompt && prompt.length > 0 ? prompt : undefined;
       if (boxAgent && (seedPrompt || startAgent)) {
-        const kind: QueueAgentKind = boxAgent === 'claude' ? 'claude-code' : boxAgent;
+        const kind: QueueAgentKind = toQueueKind(boxAgent);
         const extraArgs = resolveAgentLauncher(kind).buildArgs(seedPrompt ?? '', agentArgs ?? []);
         log(
           `starting ${boxAgent} in ${created.record.name}${seedPrompt ? ' with the seed prompt' : ''}`,

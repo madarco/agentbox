@@ -363,14 +363,9 @@ export async function runServiceAgent(
           vnc: { enabled: cfg.box.vnc },
           ...(persistent !== undefined ? { persistent } : {}),
           limits: resolveLimits(cfg.box, {}),
-          providerOptions: {
-            // ISOLATION IS NOT A USER KNOB HERE. Two daemons sharing a state dir
-            // share one identity — the gateway pairings of the first box would
-            // be the second box's too — so a service agent always gets a per-box
-            // config volume. Derived from `caps.surface`, never from a
-            // `box.isolate<Agent>Config` key that could be set to false.
-            agentConfig: { [spec.id]: { isolate: true } },
-          },
+          // No `agentConfig` isolate here: `create` derives it from
+          // `caps.surface` (a service agent's config volume is always per-box),
+          // so every caller gets it — this one, the hub's queue worker, the tray.
           onLog: (line) => {
             s.message(line);
             cmdLog.write(line);
