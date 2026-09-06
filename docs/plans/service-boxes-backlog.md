@@ -442,3 +442,58 @@ Prerequisites put this behind an opt-in rather than making it the default: a
 Tailscale daemon logged in inside the box (so a tailnet auth key has to reach
 it), MagicDNS, and HTTPS certs enabled on the tailnet. Users without a tailnet
 get nothing from it, so the default path still needs option 1 or 2.
+
+## What actually reaches an OpenClaw Control UI, per path (2026-09-06)
+
+Measured, after the direct-port change. Two independent gates decide it, and
+they fail differently — a `curl /` returning 200 proves only the first.
+
+**1. Ingress attribution** (`src/gateway/ingress-attribution.ts`). Any header
+matching `x-forwarded-*`, `forwarded` or `x-real-ip` disqualifies the request
+from `direct-local`; it then needs a trusted proxy AND a non-loopback forwarded
+client, which a same-machine browser can never provide. Failure is
+`403 proxy_attribution_required` on every path except `/healthz`.
+
+**2. Browser origin** (`src/gateway/origin-check.ts`). Only matters in a real
+browser — curl sends no `Origin`. Allowed without configuration when the origin
+is loopback and the client is local, or when origin == Host and the hostname is
+loopback, a private IP, or ends in **`.local`** or **`.ts.net`**. Otherwise the
+Control UI loads its shell and the WS connect fails with "Browser origin not
+allowed".
+
+| path | fwd headers | attribution | browser origin | Control UI |
+|---|---|---|---|---|
+| docker OrbStack, `<container>.orb.local` | none | direct-local | `.local` -> same-origin | works |
+| docker plain, direct published port | none | direct-local | loopback | works |
+| docker plain, via Portless | yes | **403** | — | was broken; alias now skipped |
+| hetzner / DO, direct ssh-forward port | none | direct-local | loopback | works |
+| hetzner / DO, via Portless | yes | **403** | — | was broken; alias now skipped |
+| e2b, `8080-<id>.e2b.app` | **none** | direct-local | public host -> **rejected** | needs `allowedOrigins` |
+| Tailscale Serve, `<host>.<tailnet>.ts.net` | tailscale-owned | tailscale-serve | `.ts.net` -> same-origin | works |
+
+Two corrections to earlier notes in this file:
+
+- **OrbStack was never affected.** It skips Portless entirely and routes
+  `<container>.orb.local` straight to the container. The "every provider,
+  docker included" claim was too broad — it holds for plain Docker Desktop,
+  where Portless is in the path.
+- **e2b's edge adds no forwarded headers at all.** Verified with an echo server
+  on a second exposed port: it adds only `via`, `x-cloud-trace-context` and
+  `x-request-id`. So the 403 never happens there, and the prediction that every
+  public-preview provider would be broken was wrong.
+
+### Open: public-preview providers need their origin allowlisted
+
+On e2b the Control UI loads and then refuses to connect until the box's own
+public origin is in `gateway.controlUi.allowedOrigins`. Setting it by hand makes
+the UI reach the normal "Auth required — paste the gateway token" state, which
+is the correct end state and confirms a public box is **not** wide open.
+
+AgentBox knows the box's public origin at create, so this should be automatic
+for providers whose URL is neither loopback nor `.local`/`.ts.net`. It needs
+somewhere for AgentBox to assert a config key it owns — the same seam a
+spec-declared base overlay would provide. Not built.
+
+Vercel and daytona are the same shape as e2b and are assumed to behave the same;
+only e2b was measured.
+
