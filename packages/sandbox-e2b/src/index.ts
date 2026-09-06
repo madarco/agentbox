@@ -174,6 +174,9 @@ export const providerModule: ProviderModule = {
 };
 
 export { e2bBackend, DEFAULT_BOX_IMAGE_REF };
+// Exported so the descriptor's declared `sizes` can be asserted against the
+// parser that actually accepts them (apps/cli/test/provider-sizes.test.ts).
+export { parseE2bSize } from './prepare.js';
 export { ensureE2bEnvLoaded, reloadE2bEnv } from './env-loader.js';
 export {
   ensureE2bCredentials,

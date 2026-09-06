@@ -121,6 +121,13 @@ const descriptor: ProviderDescriptor = {
     pauseSemantics: 'freeze',
     hubRoutable: true,
   },
+  // The size picker in the create forms. Optional — omit and no picker appears.
+  sizes: [
+    { key: '2', label: '2 vCPU / 4 GB' },
+    { key: '4', label: '4 vCPU / 8 GB' },
+  ],
+  sizeHint: 'vCPU count, e.g. 8',      // omit for a CLOSED set (no custom field)
+  sizeAppliesAt: 'create',             // 'bake' if you reject per-create resources
   blurb: 'MyProvider microVMs',
   sizeDesc: 'Per-provider override of `box.size` for myprovider (vCPU count).',
   imageDesc: 'Per-provider override of `box.image` for myprovider (snapshot id).',
@@ -149,6 +156,37 @@ which therefore means something — declare them to match or a test will disagre
 | `capabilities.prune` | `!!backend.list` |
 | `capabilities.inbound` | `!!backend.setInbound` |
 | `capabilities.timeoutModel` | `backend.timeoutModel` |
+
+### Declaring sizes
+
+There is **no cross-provider size grammar**. `--size` is an opaque string your
+backend parses however it likes — hetzner reads a server-type slug (`cx43`),
+vercel a vCPU count (`4`), daytona `cpu-memory-disk` in GB (`4-8-10`). So the
+picker in the web hub's create modal and the tray's create panel is built
+entirely from what you declare:
+
+| Field | Meaning |
+|---|---|
+| `sizes` | The offered choices, most-modest first. Each `key` is a literal `--size` value for *your* backend; the `label` says what it buys ("4 vCPU / 8 GB"). Absent = no picker, and `--size` still reaches you from the CLI. |
+| `sizeHint` | Placeholder for the free-text field, e.g. `cpu-memory in GB, e.g. 4-8`. **Its presence is what opens the list**: a UI offers a custom value only when there is a hint to put in the box. Omit it when your parser rejects anything outside `sizes` — vercel does exactly that. |
+| `sizeAppliesAt` | `'create'` (the default) or `'bake'`. |
+
+`sizeAppliesAt: 'bake'` is for a backend that fixes CPU/memory when the base
+image is built and **rejects resources on the create call** — daytona on its
+snapshot path and e2b's templates both work this way. Declaring it makes the UI
+route a size change through `prepare --force --size <spec>` instead of silently
+handing you a value you will discard. Pair it with
+`ProviderModule.sizeIgnoredReason(size)`, which returns a human sentence when
+`size` disagrees with what is baked and `null` when it does not — that is what
+stops the UI firing a ten-minute bake it did not need.
+
+```ts
+sizeIgnoredReason(size) {
+  const baked = readPreparedState()?.base?.size;
+  if (!baked || baked === size) return null;
+  return `myprovider fixes resources at bake time: this box will run at ${baked}, not ${size}. Re-bake with: agentbox prepare --provider myprovider --force --size ${size}`;
+}
+```
 
 ## Choosing capability values
 

@@ -121,6 +121,9 @@ export const providerModule: ProviderModule = {
 };
 
 export { vercelBackend, DEFAULT_BOX_IMAGE_REF };
+// Exported so the descriptor's declared `sizes` can be asserted against the
+// parser that actually accepts them (apps/cli/test/provider-sizes.test.ts).
+export { parseVercelVcpus } from './backend.js';
 export { ensureVercelEnvLoaded, reloadVercelEnv } from './env-loader.js';
 export { ensureVercelCredentials, setVercelCredentials } from './credentials.js';
 export type { EnsureVercelCredentialsOptions } from './credentials.js';
