@@ -414,7 +414,16 @@ function CreateBoxModal({
           // Sent only when it differs from what the API would derive on its own.
           // Silence is not `false`: it lets the hub's `box.persistent` decide,
           // and for a service agent it is what keeps the box always-on.
-          if (!persistentCapped && persistent !== persistentByDefault) {
+          //
+          // A capped provider is the case where silence is WRONG. e2b and vercel
+          // refuse `persistent: true`, and for a service agent the API derives
+          // exactly that — so omitting the field made every OpenClaw create on
+          // those providers fail, with the toggle sitting disabled and unable to
+          // say otherwise. It has to opt out explicitly, which is what the CLI's
+          // `--no-persistent` does.
+          if (persistentCapped) {
+            if (persistentByDefault) opts.persistent = false;
+          } else if (persistent !== persistentByDefault) {
             opts.persistent = persistent;
           }
           if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {

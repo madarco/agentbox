@@ -110,7 +110,7 @@ function parseTimeout(raw: string | undefined): number {
  * Two or more of this agent's own boxes is genuinely ambiguous, so it asks for
  * a ref instead of guessing.
  */
-async function findExistingBox(
+export async function findExistingBox(
   ref: string | undefined,
   projectRoot: string,
   agentId: string,

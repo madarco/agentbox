@@ -24,6 +24,8 @@ import {
   buildTmuxSessionArgs,
 } from '@agentbox/sandbox-docker';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
+import { providerForBox } from '../provider/registry.js';
+import { log } from '@agentbox/cli-kit';
 import { runWrappedAttach } from '../wrapped-pty/run.js';
 import { cloudAgentAttach } from '../commands/_cloud-attach.js';
 import type { AttachOpenIn } from '@agentbox/config';
@@ -91,8 +93,27 @@ export async function openServiceRepl(args: {
   reattach: string;
   openIn?: AttachOpenIn;
 }): Promise<void> {
-  const { box, spec, argv } = args;
+  const { spec, argv } = args;
   const sessionName = spec.sessionName;
+
+  // Bring the box up first. The cloud branch below does this itself inside
+  // `cloudAgentAttach`, but the docker one goes straight to `docker exec`,
+  // which just fails on a paused or stopped box — and the bare `<agent>`
+  // command already resumes, so refusing here would be the odd one out. Safe
+  // for the same reason start-on-attach is: the daemon is what the box is FOR.
+  let box = args.box;
+  const provider = await providerForBox(box);
+  const state = await provider.probeState(box);
+  if (state === 'missing') {
+    throw new Error(`box ${box.name} has no sandbox left; destroy it and run this again`);
+  }
+  if (state === 'paused') {
+    log.info(`resuming ${box.name}`);
+    await provider.resume(box);
+  } else if (state === 'stopped') {
+    log.info(`starting ${box.name}`);
+    box = await provider.start(box);
+  }
 
   if ((box.provider ?? 'docker') !== 'docker') {
     // `buildAttach` takes the binary + its args and runs them under

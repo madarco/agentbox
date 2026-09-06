@@ -37,11 +37,14 @@ import { ATTACH_IN_HELP, INLINE_HELP, resolveAttachInOption } from '../../comman
 import { hostAwareOpenIn } from '../../terminal/host.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { reattachRef, resolveBoxOrExit } from '../../box-ref.js';
+import { findProjectRoot } from '@agentbox/config';
+import { UserFacingError } from '@agentbox/core';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
 import { reportBoxNotOnAnyHub, withOwningHub } from '../../control-plane/with-hub.js';
 import type { HubApiServiceView } from '../../control-plane/hub-api-client.js';
 import {
+  findExistingBox,
   readServiceUrlFields,
   resolveServiceUrl,
   runServiceAgent,
@@ -256,7 +259,20 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
         .action(
           async (idOrName: string | undefined, opts: { attachIn?: string; inline?: boolean }) => {
             try {
-              const box = await resolveBoxOrExit(idOrName);
+              // Narrowed by agent, not `resolveBoxOrExit`: a bare
+              // `agentbox <agent> attach` in a project whose only box belongs
+              // to ANOTHER agent would otherwise open this client inside that
+              // sandbox, where the daemon is not even installed. Same resolver
+              // the root command uses.
+              const project = await findProjectRoot(process.cwd());
+              const box = await findExistingBox(idOrName, project.root, spec.id);
+              if (!box) {
+                throw new UserFacingError(
+                  idOrName === undefined
+                    ? `no ${spec.id} box in this project — run \`agentbox ${spec.id}\` to make one`
+                    : `no box matched "${idOrName}"`,
+                );
+              }
               const attachIn = resolveAttachInOption(opts);
               const cfg = await loadEffectiveConfig(box.workspacePath, {
                 cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
