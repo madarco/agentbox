@@ -128,6 +128,15 @@ export interface BoxStatusTaskEntry {
   state: TaskState;
 }
 
+export interface BoxStatusWebProxy {
+  /** Container port the forwarder listens on (80, or 8080 on a cloud box). */
+  port: number;
+  /** In-box service port it forwards to, or null when nothing is exposed. */
+  target: number | null;
+  /** Message from the last failed bind; absent when the listener is healthy. */
+  error?: string;
+}
+
 export interface BoxStatusPort {
   port: number;
   /** Name of the service whose `ready_when` port matches, else null (ad-hoc). */
@@ -150,6 +159,18 @@ export interface BoxStatus {
   tasks: BoxStatusTaskEntry[];
   /** Live-discovered listening TCP ports inside the box. */
   ports: BoxStatusPort[];
+  /**
+   * The in-box web forwarder: the container port it listens on, the exposed
+   * service port it forwards to, and the message from a bind that failed.
+   *
+   * Present so a broken publish is VISIBLE. The forwarder is best-effort by
+   * design and a failed bind only reached a log file, so a box whose reserved
+   * port was already taken still reported ready and still handed out a URL.
+   * Additive field (schema stays 1): absent from snapshots written before it,
+   * and from any box whose ctl predates it — treat absent as "no information",
+   * never as "healthy".
+   */
+  webProxy?: BoxStatusWebProxy;
   /**
    * Every reporting agent, keyed by id. THE source of agent status — the named
    * fields below are a derived mirror of it.

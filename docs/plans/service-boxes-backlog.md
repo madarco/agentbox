@@ -318,3 +318,101 @@ things block a straight swap — the contract has no slot for claude's
 claude's own `runtime.startSession` adapter drops it), and none for its
 `rebuildPluginNativeDeps` pre-step. Widening the contract with both, then
 deleting the chains and the list, is the whole job.
+
+## Portless's forwarded headers make OpenClaw refuse its own Control UI (2026-09-06)
+
+Found on a live hetzner box once the `:80` collision was fixed and the URL
+started routing. **Every provider is affected, docker included** — this is not
+cloud-specific, and it means the published box URL has never served the OpenClaw
+dashboard on any provider.
+
+Measured on the box, against the in-box gateway through the SSH tunnel:
+
+| request | result |
+|---|---|
+| no forwarded headers | `200`, the Control UI HTML |
+| `X-Forwarded-For: 127.0.0.1` | `403 proxy_attribution_required` |
+| `X-Forwarded-Proto: https` | `403` |
+| `Forwarded: for=127.0.0.1` | `403` |
+
+Any one forwarded header is enough. Portless always adds them, so
+`https://<box>.localhost/` 403s while `https://<box>.localhost/healthz` — which
+is exempt — returns 200. Every smoke test so far checked `/healthz`, which is
+exactly why this was never caught.
+
+OpenClaw offers no way to ignore the headers. `gateway.trustedProxies`
+(CIDR allowlist) is not sufficient on its own: setting it to `127.0.0.1/32` +
+`::1/128` still 403s, because the policy also wants
+`gateway.auth.trustedProxy.userHeader`, which is REQUIRED once that object
+exists (`config patch` rejects the object without it). That whole mode is built
+for an identity proxy that authenticates the user and forwards who they are —
+oauth2-proxy, not a plain reverse proxy. Portless is not one and cannot become
+one. `portless alias` (0.13.0) has no flag to suppress the headers.
+
+So the fix has to be ours. Three options, none of them free:
+
+1. **Hand out the direct preview URL for such a service.** The raw SSH-tunnel
+   URL already works. Cheapest and it works today, but it drops the symmetric
+   `<box>.localhost` property (see `feedback-symmetric-portless-urls`) for the
+   one agent that most wants a browser. Would be a capability on the agent's
+   `service` spec — "this daemon rejects proxy-forwarded headers" — not an id check.
+2. **Make ctl's `WebProxy` strip forwarded headers.** It is a raw TCP forwarder
+   today; this makes it HTTP-aware, which also means getting the WebSocket
+   upgrade right (the Control UI needs it) and paying that cost on every box.
+3. **Upstream**: ask OpenClaw for an explicit "trust no proxy / ignore forwarded
+   headers" setting for a loopback-bound gateway. Correct, slowest.
+
+Not decided here. Whichever way it goes, the smoke test must fetch `/`, not
+`/healthz`.
+
+### Why the managed Tailscale listener is not a way in
+
+OpenClaw does have a second listener that expects a proxy in front — the one the
+rate-limiting doc describes:
+
+> OpenClaw-managed Tailscale Serve and Funnel use a separate private loopback
+> listener. Reaching that listener establishes the managed ingress path, and
+> Tailscale's rewritten source address selects a normal non-exempt, resettable
+> per-client bucket. Serve tokenless identity auth additionally requires a
+> matching WhoIs result; Funnel requires its marker and password authentication.
+
+Read in context that passage is about which **rate-limit bucket** a request
+lands in, not about accepting arbitrary proxies. Pointing ctl's forwarder at it
+does not work, for four independent reasons:
+
+- **The port is ephemeral.** Managed Serve/Funnel proxies to a dedicated
+  `127.0.0.1:<ephemeral-port>` listener the Gateway picks at startup. There is
+  no stable target to configure a proxy against.
+- **It only exists with Tailscale on.** The listener is created by OpenClaw's
+  own Tailscale integration; with `gateway.tailscale.mode: off` there is nothing
+  listening.
+- **Sharing it is the thing it is designed to prevent.** "Startup fails closed
+  rather than sharing listener provenance, and the foreground claim releases the
+  route when its Gateway owner disappears."
+- **Reaching it is not enough.** Serve additionally requires a matching
+  `tailscale whois`; Funnel requires its marker plus password auth. Portless can
+  produce neither.
+
+So OpenClaw has exactly one sanctioned "there is a proxy in front of me" path,
+and it is Tailscale-shaped end to end.
+
+### Option 4: let OpenClaw manage its own Tailscale Serve
+
+That does make a fourth option real, and for a gateway it may be the best one —
+it is OpenClaw's own remote-access story, needs no change to our proxy, and ends
+at a genuinely stable HTTPS URL instead of a host-only `.localhost` name. Fully
+scriptable:
+
+```sh
+openclaw config set gateway.bind loopback
+openclaw config set gateway.tailscale.mode serve     # or `funnel` for public
+openclaw gateway restart
+```
+
+Result: `https://<host>.<tailnet>.ts.net`. Serve is tailnet-only and needs no
+password; Funnel is public and OpenClaw requires password auth for it.
+
+Prerequisites put this behind an opt-in rather than making it the default: a
+Tailscale daemon logged in inside the box (so a tailnet auth key has to reach
+it), MagicDNS, and HTTPS certs enabled on the tailnet. Users without a tailnet
+get nothing from it, so the default path still needs option 1 or 2.

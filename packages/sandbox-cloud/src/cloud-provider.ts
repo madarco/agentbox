@@ -86,6 +86,7 @@ import {
 } from './checkpoint.js';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { isSnapshotGoneError } from './snapshot-error.js';
+import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
@@ -439,7 +440,13 @@ export function createCloudProvider(
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
     // host poller see the live values.
-    const webPort = box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
+    // BACKEND-first here, unlike every read-only resolver (which trusts the
+    // record). A restart re-launches ctl, re-mints the preview URL and
+    // re-registers the portless alias, so it is the one moment all three can
+    // move together — and the value is written back below. That is what lets a
+    // box created before hetzner/digitalocean moved off :80 heal itself instead
+    // of staying pinned to a port its own portless proxy owns.
+    const webPort = backend.webProxyPort ?? box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
     let webPreview: { url: string; token?: string } | undefined;
     try {
       webPreview = await backend.previewUrl(h, webPort);
@@ -473,13 +480,13 @@ export function createCloudProvider(
         ? { url: box.cloud.relayPreviewUrl, token: box.cloud.relayPreviewToken }
         : undefined;
     }
-    // Build the refreshed preview map: keep cached values for ports we
-    // couldn't re-resolve, overlay fresh URLs from this start.
-    const mergedPreviews: Record<number, string> = {
-      ...(box.cloud?.previewUrls ?? {}),
-      ...servicePreviews,
-    };
-    if (webPreview !== undefined) mergedPreviews[webPort] = webPreview.url;
+    const mergedPreviews = mergePreviewUrls({
+      cached: box.cloud?.previewUrls,
+      fresh: servicePreviews,
+      previousWebPort: box.cloud?.webPort,
+      webPort,
+      webUrl: webPreview?.url,
+    });
 
     // Portless: the `ssh -L` local port is fresh after `agentbox start`
     // (pickFreePort picks again), and the in-VPS portless proxy died with
@@ -594,7 +601,11 @@ export function createCloudProvider(
       relayUrl: `http://127.0.0.1:${String(8788)}`,
       relayToken: box.relayToken ?? '',
       bridgeToken: box.cloud?.bridgeToken,
-      webProxyPort: backend.webProxyPort,
+      // The SAME port resolved above, minted a preview URL for and written to
+      // the record a few lines up. `box` is the record as it was BEFORE that
+      // refresh, so reading the port off it here is what would let ctl bind one
+      // port while the host forwards another.
+      webProxyPort: webPort,
       launchDockerd: opts.launchDockerd !== false,
       vncPassword: box.vncEnabled ? box.vncPassword : undefined,
       controlPlaneUrl: box.cloud?.controlPlaneUrl,

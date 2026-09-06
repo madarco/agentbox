@@ -865,6 +865,16 @@ decorates these URLs with Portless aliases for symmetric
 `<box-name>.localhost` URLs (handled provider-side, not in the
 backend, so the backend stays focused on plumbing).
 
+Because that in-box mirror owns `:443` and holds `:80` for the http→https
+redirect, ctl's `WebProxy` cannot have the reserved web port on these two
+providers: hetzner and digitalocean declare `webProxyPort: 8080`, which reaches
+ctl as `AGENTBOX_WEB_PROXY_PORT`, is what the in-box `portless alias` points at,
+and is the remote port the host forwards. Before that they raced for `:80`, the
+proxy lost, and the box published a URL Portless answered with a 302 into a 404
+— while still reporting ready. A restart now adopts the backend's current port
+and writes it back to `cloud.webPort`, so a box created before this heals
+itself.
+
 When the host Portless proxy runs in **TLS** mode, the in-box mirror serves a
 self-signed CA the box doesn't trust by default, so in-box Chromium (VNC window)
 and Playwright would reject `https://<box>.localhost`. The baked
@@ -951,7 +961,8 @@ snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
 - **Preview URLs are public HTTPS.** `previewUrl`/`signedPreviewUrl` both return
   `sandbox.domain(port)` — reachable from the host browser AND from inside the
   box, so (like Daytona) the Portless in-box mirror is skipped. Max 4 exposed
-  ports; we declare 80 (WebProxy), 6080 (noVNC), 8788 (relay/ctl bridge).
+  ports; we declare 8080 (WebProxy), 6080 (noVNC), 8788 (relay/ctl bridge), and
+  fill the fourth slot from `agentbox.yaml`'s `expose:` ports.
 - **No SSH → custom attach.** `@vercel/sandbox` exposes no stdin/PTY channel, so
   `buildAttach` is overridden to spawn `attach-helper.js`, which bridges the
   local terminal to a box-side tmux session via `send-keys`/`capture-pane` over

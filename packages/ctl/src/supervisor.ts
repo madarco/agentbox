@@ -15,7 +15,7 @@ import { DEFAULT_STATE_DIR } from './types.js';
 import { resolveWritableStateDir } from './state-dir.js';
 import { startProbe, type ProbeHandle } from './probe.js';
 import { RelayClient } from './relay-client.js';
-import { WebProxy } from './web-proxy.js';
+import { WebProxy, type WebProxyState } from './web-proxy.js';
 import type {
   LogEvent,
   ServiceState,
@@ -731,6 +731,15 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       if (expose) out.set(u.name, expose);
     }
     return out;
+  }
+
+  /**
+   * What the in-box forwarder is doing, including a bind that failed. The
+   * status reporter ships this so the host can tell the user the box's URL
+   * will not answer — see `WebProxyState`.
+   */
+  webProxyState(): WebProxyState {
+    return this.webProxy.state();
   }
 
   /** (Re)point the in-box :80 forwarder at the `expose:`-flagged service. */

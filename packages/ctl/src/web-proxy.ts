@@ -13,14 +13,41 @@ const DEFAULT_LOG = '/var/log/agentbox/web-proxy.log';
  * Dockerfile.box). Best-effort throughout — it must never throw into the
  * supervisor's lifecycle.
  */
+/**
+ * What the forwarder is currently doing, for the status snapshot.
+ *
+ * `error` is the whole reason this exists: a bind failure used to be a line in
+ * a log file nobody reads, so a box whose :80 was already taken still reported
+ * ready and still printed a URL — one that answered, wrongly, from whatever
+ * else held the port.
+ */
+export interface WebProxyState {
+  /** The container port the forwarder listens on. */
+  port: number;
+  /** The in-box service port it forwards to, or null when nothing is exposed. */
+  target: number | null;
+  /** Message from the last failed bind. Cleared by a bind that succeeds. */
+  error?: string;
+}
+
 export class WebProxy {
   private server: Server | null = null;
   private target: number | null = null;
+  private error: string | null = null;
 
   constructor(
     private readonly listenPort: number = DEFAULT_LISTEN_PORT,
     private readonly logPath: string = DEFAULT_LOG,
   ) {}
+
+  /** Snapshot for the status reporter. */
+  state(): WebProxyState {
+    return {
+      port: this.listenPort,
+      target: this.target,
+      ...(this.error === null ? {} : { error: this.error }),
+    };
+  }
 
   /**
    * Point :80 at `targetPort`. `null` tears the listener down. A no-op when the
@@ -31,6 +58,9 @@ export class WebProxy {
     if (targetPort === this.target) return;
     this.target = targetPort;
     this.closeServer();
+    // A new target gets a clean slate: the previous failure was about a bind
+    // that is no longer being attempted.
+    this.error = null;
     if (targetPort === null) {
       void this.log(`forwarding disabled`);
       return;
@@ -40,6 +70,7 @@ export class WebProxy {
 
   stop(): void {
     this.target = null;
+    this.error = null;
     this.closeServer();
   }
 
@@ -58,10 +89,14 @@ export class WebProxy {
       upstream.pipe(client);
     });
     server.on('error', (err: Error) => {
-      void this.log(`listen :${String(this.listenPort)} failed: ${err.message}`);
+      // Recorded, not just logged: `state()` carries it into the status
+      // snapshot so the host can say the published URL will not work.
+      this.error = `listen :${String(this.listenPort)} failed: ${err.message}`;
+      void this.log(this.error);
       this.server = null;
     });
     server.listen(this.listenPort, '0.0.0.0', () => {
+      this.error = null;
       void this.log(`:${String(this.listenPort)} -> 127.0.0.1:${String(targetPort)}`);
     });
     this.server = server;

@@ -369,6 +369,22 @@ async function ensureLiveTarget(sandboxId: string): Promise<{
 export const digitaloceanBackend: CloudBackend = {
   name: 'digitalocean',
 
+  /**
+   * The in-box WebProxy binds 8080, not the reserved :80.
+   *
+   * A DigitalOcean box runs its OWN portless proxy (see `startInBoxPortless`) so
+   * `https://<box>.localhost` resolves identically on the host and inside the
+   * box. That proxy owns :443 and holds :80 for the http->https redirect, so
+   * ctl's WebProxy lost the race for :80 and logged `EADDRINUSE` — leaving
+   * `agentbox url` printing a URL that redirected into portless and 404'd,
+   * with the box still reporting ready. Docker never hits this: there portless
+   * runs on the HOST, and the container's :80 is free.
+   *
+   * 8080 rather than some other port because vercel and e2b already bind it —
+   * one in-box convention across every provider that cannot use :80.
+   */
+  webProxyPort: 8080,
+
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const c = client();
     const onLog = req.onLog ?? (() => {});

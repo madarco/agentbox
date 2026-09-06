@@ -259,6 +259,7 @@ export class StatusReporter {
       schema: BOX_STATUS_SCHEMA,
       boxId: this.boxId,
       timestamp: new Date().toISOString(),
+      webProxy: this.supervisor.webProxyState(),
       services,
       tasks,
       ports,
