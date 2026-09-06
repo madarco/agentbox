@@ -30,26 +30,36 @@ closes a design question, so re-opening one needs new evidence, not an opinion.
 
 ## What is left
 
+Re-checked against the code and a live Hetzner box on 2026-09-07. The URL
+blocker and the hub-create blocker are **done**; what follows is what actually
+remains.
+
 ### Blocking — OpenClaw is not usable without these
 
-1. **The published URL does not serve on cloud providers.** The box's own
-   Portless proxy owns `:80`, so ctl's WebProxy cannot bind `expose:`;
-   `web-proxy.log` records `listen :80 failed: EADDRINUSE` and the create still
-   reports ready and prints a dead URL. Route `expose:` **through** Portless
-   rather than racing it — `AGENTBOX_WEB_PROXY_PORT` (Vercel uses 8080) is the
-   existing seam — and make a failed bind for an exposed service loud.
-2. **Cloud boxes ignore the workspace.** `spec.boxRunEnv` does not reach the ctl
-   tasks, so `OPENCLAW_WORKSPACE_DIR` is absent and onboard runs against
-   `~/.openclaw/workspace`. "Your project dir is the agent's workspace" — the
-   headline behaviour — is broken off docker.
-3. **The non-git cloud seed writes AppleDouble sidecars.** `seedCloudWorkspace`
-   tars the host dir without `COPYFILE_DISABLE=1`. The three docker-side call
-   sites are fixed; this is the fourth.
-4. **Channel pairing has never been verified.** Every smoke stops at a healthy
+1. **Cloud boxes ignore the workspace.** `spec.boxRunEnv` reaches the sandbox's
+   provision env but not `/etc/agentbox/box.env`, which is what ctl's tasks
+   read — so `OPENCLAW_WORKSPACE_DIR` is absent and onboard runs against
+   `~/.openclaw/workspace`. Verified live: a Hetzner box has the user's
+   `AGENTS.md` / `skills` / `memory` in `/workspace` and
+   `agents.defaults.workspace` pointing somewhere else entirely. "Your project
+   dir is the agent's workspace" — the headline behaviour — is broken off
+   docker. Hetzner/DO only; vercel and e2b carry the env through the SDK exec.
+2. **Channel pairing has never been verified.** Every smoke stops at a healthy
    gateway with **zero channels**. Until a real token goes through
    `openclaw channels add --use-env`, we do not know openclaw does anything
    useful in a box. This is the last open question about whether the feature
    works, not a polish item — do it first.
+3. **The Control UI cannot connect on a public-preview provider.** e2b and
+   vercel serve `/` fine (their edges add no forwarded headers), but the WS
+   connect is refused with "Browser origin not allowed" until the box's own
+   origin is in `gateway.controlUi.allowedOrigins`. AgentBox knows that origin
+   at create; it needs somewhere to assert a config key it owns. Setting it by
+   hand reaches the normal "paste the gateway token" state, so nothing else is
+   wrong. See the backlog for the measurement.
+4. **The non-git cloud seed still writes AppleDouble sidecars.** `seedFromTar`
+   (`sandbox-cloud/src/sync/workspace-seed.ts`, the `tar -C … -czf` with no
+   `env`) is the fourth call site of this bug; the other three are fixed. One
+   line.
 
 ### Rough edges
 
@@ -57,8 +67,9 @@ closes a design question, so re-opening one needs new evidence, not an opinion.
    the `openclaw:` overlay needs `run-task openclaw-render --force` — which
    contradicts the docs.
 6. `agentbox list`'s AGENT column is blank for a service box: it probes a tmux
-   session that does not exist. Read the ctl service state for
-   `caps.surface: 'service'`.
+   session that does not exist. Partly self-fixing now that `attach` creates one
+   (`service.repl`), but only once someone has attached — read the ctl service
+   state for `caps.surface: 'service'` instead.
 7. `<agent> stop` bypasses the hub via `provider.exec` — the services routes
    expose `restart` but not `stop`.
 
@@ -66,7 +77,7 @@ closes a design question, so re-opening one needs new evidence, not an opinion.
 
 8. `--allow-scripts=openclaw` leaves four **dependency** install scripts unrun,
    two of them native (`koffi`, `tree-sitter-bash`). Unknown whether anything
-   depends on them until a channel exercises it — check alongside (4).
+   depends on them until a channel exercises it — check alongside (2).
 9. `agentDirPrelude`'s creds-subdir is a hand-typed string never checked against
    `credential.cloudSubpath`; `CLAUDE_HOST_BACKUP` resolves to `''` at module
    load if claude ever drops its credential.
