@@ -364,3 +364,55 @@ So the fix has to be ours. Three options, none of them free:
 
 Not decided here. Whichever way it goes, the smoke test must fetch `/`, not
 `/healthz`.
+
+### Why the managed Tailscale listener is not a way in
+
+OpenClaw does have a second listener that expects a proxy in front — the one the
+rate-limiting doc describes:
+
+> OpenClaw-managed Tailscale Serve and Funnel use a separate private loopback
+> listener. Reaching that listener establishes the managed ingress path, and
+> Tailscale's rewritten source address selects a normal non-exempt, resettable
+> per-client bucket. Serve tokenless identity auth additionally requires a
+> matching WhoIs result; Funnel requires its marker and password authentication.
+
+Read in context that passage is about which **rate-limit bucket** a request
+lands in, not about accepting arbitrary proxies. Pointing ctl's forwarder at it
+does not work, for four independent reasons:
+
+- **The port is ephemeral.** Managed Serve/Funnel proxies to a dedicated
+  `127.0.0.1:<ephemeral-port>` listener the Gateway picks at startup. There is
+  no stable target to configure a proxy against.
+- **It only exists with Tailscale on.** The listener is created by OpenClaw's
+  own Tailscale integration; with `gateway.tailscale.mode: off` there is nothing
+  listening.
+- **Sharing it is the thing it is designed to prevent.** "Startup fails closed
+  rather than sharing listener provenance, and the foreground claim releases the
+  route when its Gateway owner disappears."
+- **Reaching it is not enough.** Serve additionally requires a matching
+  `tailscale whois`; Funnel requires its marker plus password auth. Portless can
+  produce neither.
+
+So OpenClaw has exactly one sanctioned "there is a proxy in front of me" path,
+and it is Tailscale-shaped end to end.
+
+### Option 4: let OpenClaw manage its own Tailscale Serve
+
+That does make a fourth option real, and for a gateway it may be the best one —
+it is OpenClaw's own remote-access story, needs no change to our proxy, and ends
+at a genuinely stable HTTPS URL instead of a host-only `.localhost` name. Fully
+scriptable:
+
+```sh
+openclaw config set gateway.bind loopback
+openclaw config set gateway.tailscale.mode serve     # or `funnel` for public
+openclaw gateway restart
+```
+
+Result: `https://<host>.<tailnet>.ts.net`. Serve is tailnet-only and needs no
+password; Funnel is public and OpenClaw requires password auth for it.
+
+Prerequisites put this behind an opt-in rather than making it the default: a
+Tailscale daemon logged in inside the box (so a tailnet auth key has to reach
+it), MagicDNS, and HTTPS certs enabled on the tailnet. Users without a tailnet
+get nothing from it, so the default path still needs option 1 or 2.
