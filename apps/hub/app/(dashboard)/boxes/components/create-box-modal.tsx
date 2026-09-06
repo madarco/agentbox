@@ -26,6 +26,12 @@ import { JobLogStream, type JobLoginState } from './job-log-stream';
 
 type Agent = CreateBoxInput['agent'];
 
+// Select value that swaps the size dropdown for a free-text field. Only offered
+// when the provider declares a `sizeHint` — its absence means the list is closed
+// (vercel's parser throws on anything outside it), so a custom value there could
+// only ever produce a failed create.
+const CUSTOM_SIZE = '__custom__';
+
 // Docker is always available; used when the server sent no provider list (the
 // hosted/Postgres path, where host readiness isn't known).
 const DOCKER_ONLY: ProviderOption[] = [{ id: 'docker', label: 'Docker (local)', configured: true }];
@@ -105,6 +111,15 @@ function CreateBoxModal({
   const [branches, setBranches] = useState<string[] | null>(null);
   const [runSetup, setRunSetup] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // VM size. '' = the provider's own default; CUSTOM_SIZE swaps in a free-text
+  // field. There is no cross-provider size grammar (hetzner takes `cx43`,
+  // vercel a vCPU count, daytona `cpu-mem-disk` GB), so the choices come
+  // entirely from the provider's descriptor and reset when it changes.
+  const [size, setSize] = useState('');
+  const [customSize, setCustomSize] = useState('');
+  // For a provider that fixes resources at bake time (daytona, e2b): whether
+  // THIS size would be discarded by a plain create. Null = not asked yet.
+  const [sizeRebake, setSizeRebake] = useState<{ required: boolean; reason?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string>('streaming');
@@ -191,12 +206,58 @@ function CreateBoxModal({
   // points there rather than leaving the disabled options unexplained.
   const controlBoxUrl = providers.find((p) => p.origin === 'hub' && p.hubUrl)?.hubUrl;
   const providerFreshness = freshness?.[providerId];
+  const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   const bakeNeeded =
     !!providerFreshness &&
     (!!providerFreshness.jobId ||
       providerFreshness.baseStatus === 'unprepared' ||
       providerFreshness.baseStatus === 'stale');
+
+  // A size is a literal value for ONE backend, so carrying `cx43` over to vercel
+  // would only fail at provision. Reset on every provider change.
+  useEffect(() => {
+    setSize('');
+    setCustomSize('');
+    setSizeRebake(null);
+  }, [providerId]);
+
+  // Daytona and e2b fix CPU/memory when the base is baked and discard anything
+  // else at create, so ask the hub whether THIS size needs a re-bake first.
+  // Debounced because a custom value is typed a character at a time.
+  useEffect(() => {
+    if (providerOption?.sizeAppliesAt !== 'bake' || chosenSize.length === 0) {
+      setSizeRebake(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/providers/${encodeURIComponent(providerId)}/size-check`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ size: chosenSize }),
+            },
+          );
+          if (!res.ok || cancelled) return;
+          const j = (await res.json()) as { rebakeRequired?: boolean; reason?: string };
+          if (cancelled) return;
+          setSizeRebake({ required: !!j.rebakeRequired, reason: j.reason });
+        } catch {
+          // Advisory only — a failed check must not block the create. Worst
+          // case the backend warns at provision, exactly as the CLI does.
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [providerId, chosenSize, providerOption?.sizeAppliesAt]);
 
   // Load the selected project's branches for the base-branch picker, and default
   // the base + setup-wizard toggle from the project. Re-runs when the project
@@ -232,6 +293,13 @@ function CreateBoxModal({
       setError('pick a project');
       return;
     }
+    // A size the base has to be re-baked at is the same two-phase flow as a
+    // missing base, minus the stale-base question (the user just asked for
+    // this, so there is nothing to confirm).
+    if (sizeRebake?.required && !bakeNeeded) {
+      startBake();
+      return;
+    }
     if (bakeNeeded) {
       // Docker auto-bakes (its base self-heals — same rule as the CLI); a
       // stale CLOUD base gets the CLI wizard's rebuild-vs-use-existing choice.
@@ -265,9 +333,17 @@ function CreateBoxModal({
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           credentials: 'same-origin',
-          // No force: a fresh-again base becomes a fast no-op job; a stale
-          // fingerprint still triggers the rebuild.
-          body: JSON.stringify({}),
+          // No force by default: a fresh-again base becomes a fast no-op job; a
+          // stale fingerprint still triggers the rebuild.
+          //
+          // A SIZE change is the exception and needs force. It does not move the
+          // build-context fingerprint, so the base still reads as fresh and the
+          // bake would no-op — leaving the box at the old size with nothing to
+          // show for the wait.
+          body: JSON.stringify({
+            ...(chosenSize.length > 0 ? { size: chosenSize } : {}),
+            ...(sizeRebake?.required ? { force: true } : {}),
+          }),
         });
         const j = (await res.json().catch(() => null)) as {
           jobId?: string;
@@ -301,6 +377,11 @@ function CreateBoxModal({
             ? fromBranch.trim()
             : undefined,
         setupWizard: agent !== 'none' && runSetup,
+        // Only for providers that apply a size per create — daytona and e2b
+        // reject it there, and got theirs baked in above.
+        ...(chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake'
+          ? { opts: { size: chosenSize } }
+          : {}),
       });
       if (!res.ok) {
         setError(res.error);
@@ -504,6 +585,54 @@ function CreateBoxModal({
                       </Select>
                     </Field>
                   ) : null}
+                  {/* Size. Entirely descriptor-driven: the choices, the grammar
+                      hint, and whether a change needs a re-bake all come from
+                      the provider, so a community plugin gets the same picker
+                      by declaring `sizes`. Absent for docker, whose knobs are
+                      box.memory / box.cpus. */}
+                  {providerOption?.sizes?.length ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Field label="Size">
+                        <Select
+                          value={size}
+                          onChange={(e) => {
+                            setSize(e.target.value);
+                            if (e.target.value !== CUSTOM_SIZE) setCustomSize('');
+                          }}
+                        >
+                          <option value="">Provider default</option>
+                          {providerOption.sizes.map((s) => (
+                            <option key={s.key} value={s.key}>
+                              {s.label}
+                            </option>
+                          ))}
+                          {providerOption.sizeHint ? (
+                            <option value={CUSTOM_SIZE}>Custom…</option>
+                          ) : null}
+                        </Select>
+                      </Field>
+                      {size === CUSTOM_SIZE ? (
+                        <Input
+                          value={customSize}
+                          onChange={(e) => setCustomSize(e.target.value)}
+                          placeholder={providerOption.sizeHint}
+                          autoFocus
+                        />
+                      ) : null}
+                      {sizeRebake?.required ? (
+                        <p className="font-mono text-xs text-amber-500">
+                          {sizeRebake.reason
+                            ? trimSizeReason(sizeRebake.reason, providerId)
+                            : 'This size is fixed when the base image is built.'}{' '}
+                          The base image is rebuilt at this size first
+                          {providerOption.bake?.approxMinutes
+                            ? ` (about ${providerOption.bake.approxMinutes} min)`
+                            : ''}
+                          , then the box is created.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {agent !== 'none' ? (
                     <Field label="Initial prompt (optional)">
                       <Textarea
@@ -634,6 +763,27 @@ function JobStatusBadge({
       Working…
     </Badge>
   );
+}
+
+/**
+ * `sizeIgnoredReason` is written for a TERMINAL: it names the mismatch, then
+ * tells you to run `agentbox prepare --force`. In the create modal the second
+ * half is wrong advice — the form is about to do exactly that — and the `id: `
+ * prefix restates the provider you just picked. Keep the useful half (which
+ * size is actually baked) and drop the rest.
+ *
+ * Both cuts are optional: an unrecognised sentence falls through unchanged, so
+ * a community provider's wording is shown verbatim rather than mangled.
+ */
+function trimSizeReason(reason: string, providerId: string): string {
+  // providerId can be a `docker:<alias>` spec or a plugin's own name, so escape
+  // it — an alias with a regex metacharacter would otherwise throw here and
+  // blank the note.
+  const id = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return reason
+    .replace(new RegExp(`^${id}:\\s*`, 'i'), '')
+    .replace(/\s*[—-]\s*re-bake with[\s\S]*$/i, '.')
+    .trim();
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
