@@ -25,7 +25,7 @@ import type {
   BoxRecord,
   ResolvedCarryEntry,
 } from '@agentbox/core';
-import { persistentRefusal, resolveCreatePersistent } from '@agentbox/core';
+import { persistentRefusal, resolveCreatePersistent, UserFacingError } from '@agentbox/core';
 import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentbox/cli-kit';
 import { ensureAgentInstalled, readState, resolveBoxRef } from '@agentbox/sandbox-core';
 import { recordLastAgent } from '@agentbox/sandbox-docker';
@@ -88,14 +88,46 @@ function parseTimeout(raw: string | undefined): number {
   return n;
 }
 
-/** Find an existing box for this ref/project without exiting when there is none. */
+/**
+ * Find THIS agent's existing box for the ref/project, without exiting when
+ * there is none.
+ *
+ * An explicit ref is the user naming a box, so it resolves as it does
+ * everywhere else. With NO ref the bare command is create-or-resume, and the
+ * candidate has to be narrowed to boxes this agent owns (`lastAgent`) — a
+ * project's only box is very often somebody else's (a `claude` box), and
+ * adopting it would install the daemon into it and reload its supervisor.
+ * Resolving by project alone also went the other way: with two or more boxes it
+ * matched none and silently built a SECOND gateway, which is the identity split
+ * one-box-per-tenant exists to prevent.
+ *
+ * Two or more of this agent's own boxes is genuinely ambiguous, so it asks for
+ * a ref instead of guessing.
+ */
 async function findExistingBox(
   ref: string | undefined,
   projectRoot: string,
+  agentId: string,
 ): Promise<BoxRecord | null> {
   const state = await readState();
-  const found = resolveBoxRef(ref, state, projectRoot);
-  return found.kind === 'ok' ? found.box : null;
+  if (ref !== undefined) {
+    const found = resolveBoxRef(ref, state, projectRoot);
+    return found.kind === 'ok' ? found.box : null;
+  }
+  const mine = state.boxes.filter(
+    (b) => b.workspacePath === projectRoot && b.lastAgent === agentId,
+  );
+  if (mine.length === 1) return mine[0] ?? null;
+  if (mine.length > 1) {
+    throw new UserFacingError(
+      `this project has ${String(mine.length)} ${agentId} boxes (${mine
+        .map((b) => b.name)
+        .join(
+          ', ',
+        )}) — name the one you mean, e.g. \`agentbox ${agentId} ${mine[0]?.name ?? '<box>'}\``,
+    );
+  }
+  return null;
 }
 
 /**
@@ -113,15 +145,40 @@ export async function waitForService(
 ): Promise<HubApiServiceView> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   let last: HubApiServiceView | undefined;
+  let restarted = false;
   for (;;) {
     let view: HubApiServiceView | undefined;
-    await withOwningHub(box, async (client) => {
+    // Abort on a hub-level failure instead of polling to `--timeout`: an
+    // unreachable hub or a `not-found` box never resolves, and the sibling
+    // commands (`status`, `logs`, `restart`) already stop on it.
+    const outcome = await withOwningHub(box, async (client) => {
       const svc = await client.getServices(box.id);
       view = svc.services.find((s) => s.name === unit);
     });
+    if (outcome !== 'ok') {
+      throw new Error(
+        outcome === 'not-found'
+          ? `box ${box.name} is not known to its hub, so its services cannot be read. ` +
+              'If it was created elsewhere, run `agentbox recover --adopt` first.'
+          : `could not reach the hub that owns box ${box.name}. Run \`agentbox hub status\`.`,
+      );
+    }
     if (view) {
       last = view;
       if (isUp(view)) return view;
+      // `stopped` is the one dead state the caller can fix: `<agent> stop`
+      // leaves the unit down, and the bare command is documented as
+      // create-or-resume. Start it once and keep waiting; a second `stopped`
+      // means the start did not take, and falls through to the error below.
+      if (view.state === 'stopped' && !restarted) {
+        restarted = true;
+        onProgress(`service "${unit}" was stopped; starting it`);
+        await withOwningHub(box, async (client) => {
+          await client.restartService(box.id, unit);
+        });
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        continue;
+      }
       if (DEAD_STATES.has(view.state)) {
         throw new Error(
           `service "${unit}" is ${view.state}` +
@@ -238,7 +295,7 @@ export async function runServiceAgent(
     const cfg = cfgLoaded.effective;
 
     intro(`agentbox ${spec.id}`);
-    const existing = await findExistingBox(boxRef, project.root);
+    const existing = await findExistingBox(boxRef, project.root, spec.id);
     let box: BoxRecord;
 
     if (existing) {
