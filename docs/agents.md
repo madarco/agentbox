@@ -361,9 +361,11 @@ never derived from the id:
 - **`tui`** (the default when absent) — claude, codex, opencode, pi. An
   interactive tool the user attaches to: a tmux session, a wrapped pty,
   `attach` / `start` / `login`, session resume and teleport.
-- **`service`** — openclaw. A daemon the box HOSTS. It has no session to attach
-  to; ctl's supervisor runs it, its state is read from the supervisor rather
-  than a tmux probe, and its CLI command ends at "service ready + URL printed".
+- **`service`** — openclaw. A daemon the box HOSTS. It has no AGENT session;
+  ctl's supervisor runs it, its state is read from the supervisor rather than a
+  tmux probe, and its CLI command ends at "service ready + URL printed". It can
+  still declare `service.repl` — a terminal CLIENT of that daemon, which
+  `attach` opens on demand; the daemon runs whether or not anyone is attached.
 
 Everything that behaves differently for a daemon reads that one field, so a
 second service agent needs no new branch anywhere. What a service agent
@@ -379,6 +381,15 @@ declares instead of the TUI machinery:
 - **`service.urlFields`** — values `<agent> url` prints beside the URL, read out
   of the daemon's own config file (a Control UI's gateway token). Data, because
   the only per-agent parts are which file and which dotted key.
+- **`service.repl`** — argv for an interactive CLIENT of the daemon, opened by
+  `agentbox attach`, `agentbox <agent> attach` and `agentbox open --in <app>`.
+  It does NOT make the agent a TUI one and does NOT get an `attachWrapped`:
+  there is still no agent session, the daemon runs under ctl either way, and
+  because the command is data the attach path implements it once for every
+  service agent (`agents/service-repl.ts`). Point it at a client that talks to
+  the already-running daemon — openclaw's `tui` does; its `chat`/`terminal`
+  aliases are `tui --local` and start a second embedded runtime instead.
+  Without it, `attach` says there is nothing to attach to, as before.
 - **`service.rejectsProxyHeaders`** — the daemon refuses any request carrying
   forwarded headers, so its URL must reach it with no reverse proxy in the path.
   AgentBox honours it by skipping the box's Portless **web** alias, which is the

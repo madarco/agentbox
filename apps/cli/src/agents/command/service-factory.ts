@@ -32,7 +32,8 @@ import type { AgentSyncSpec, BoxRecord } from '@agentbox/core';
 import { renderStatusTable, type ServiceState, type ServiceStatus } from '@agentbox/ctl';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
-import { resolveBoxOrExit } from '../../box-ref.js';
+import { openServiceRepl } from '../service-repl.js';
+import { reattachRef, resolveBoxOrExit } from '../../box-ref.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
 import { reportBoxNotOnAnyHub, withOwningHub } from '../../control-plane/with-hub.js';
@@ -230,6 +231,33 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
         }
       }),
   );
+
+  // `attach` only for a daemon that ships a client to attach TO. A service
+  // agent without one keeps the honest surface it had: nothing to open.
+  const replArgv = service.repl;
+  if (replArgv && replArgv.length > 0) {
+    command.addCommand(
+      new Command('attach')
+        .description(
+          `Open ${spec.id}'s terminal client against the box's running ${service.name} ` +
+            `(starts the session on first use; Control+a d detaches and leaves the daemon up)`,
+        )
+        .argument('[box]', BOX_REF_HELP)
+        .action(async (idOrName: string | undefined) => {
+          try {
+            const box = await resolveBoxOrExit(idOrName);
+            await openServiceRepl({
+              box,
+              spec,
+              argv: replArgv,
+              reattach: reattachRef(box),
+            });
+          } catch (err) {
+            handleLifecycleError(err);
+          }
+        }),
+    );
+  }
 
   return command;
 }
