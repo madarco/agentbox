@@ -345,8 +345,16 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     // title as the box's primary label; else fall back to the session title, then name.
     task: b.displayName?.trim() || firstSessionTitle(b) || b.name,
     displayName: b.displayName?.trim() || null,
-    // Normalize the frozen wire spelling ('claude-code') to the UI label ('claude').
-    agent: normalizeLastAgent(b.lastAgent) ?? 'claude',
+    // Registry FIRST, `normalizeLastAgent` only as the fallback. That helper
+    // validates against `BUILTIN_AGENT_KINDS` — the four agents compiled into
+    // the dependency-free `@agentbox/core`, which cannot read the registry — so
+    // it answers `undefined` for openclaw and every `agentbox agent add` agent,
+    // and the `?? 'claude'` below then reported an OpenClaw box as a Claude one.
+    // `findAgentSpec` resolves ids AND wire aliases ('claude-code') registry-wide.
+    agent:
+      (b.lastAgent ? findAgentSpec(b.lastAgent)?.id : undefined) ??
+      normalizeLastAgent(b.lastAgent) ??
+      'claude',
     status,
     createdAt,
     lastActivity: createdAt,
