@@ -21,6 +21,7 @@ export {
   visibleAgentSpecs,
   isRuntimeAgent,
   agentTuiEnv,
+  agentsRejectProxyHeaders,
   findAgentSpec,
 } from './registry.js';
 export {

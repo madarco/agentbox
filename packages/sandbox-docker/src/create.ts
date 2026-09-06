@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { ConfigError, loadConfig } from '@agentbox/ctl';
+import { skipWebProxyAlias } from './direct-web-url.js';
 import {
   AGENT_SYNC_SPECS,
   makeSyncContext,
@@ -1256,7 +1257,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         if (!portless.installed) {
           log('portless not installed — run `npm install -g portless` for a <name>.localhost URL');
         } else {
-          if (webHostPort) {
+          if (webHostPort && !skipWebProxyAlias(opts.agents, log)) {
             if (await portlessAlias(name, webHostPort)) {
               portlessAliasName = name;
               // Resolve the real URL from the proxy: scheme + port depend on how

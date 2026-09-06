@@ -27,8 +27,13 @@ import type {
 } from '@agentbox/core';
 import { persistentRefusal, resolveCreatePersistent, UserFacingError } from '@agentbox/core';
 import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentbox/cli-kit';
-import { ensureAgentInstalled, readState, resolveBoxRef } from '@agentbox/sandbox-core';
-import { readBoxStatus, recordLastAgent } from '@agentbox/sandbox-docker';
+import {
+  clearBoxPortlessWebAlias,
+  ensureAgentInstalled,
+  readState,
+  resolveBoxRef,
+} from '@agentbox/sandbox-core';
+import { portlessUnalias, readBoxStatus, recordLastAgent } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { runCarryGate } from '../../lib/carry-gate.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
@@ -309,6 +314,18 @@ export async function runServiceAgent(
         throw new Error(`box ${box.name} has no sandbox left; destroy it and run this again`);
       }
       log.info(`using box ${box.name}`);
+      // The box predates this agent, so the create-time skip never ran and it
+      // may still carry a Portless web alias. Every URL producer prefers that
+      // alias, so leaving it would keep publishing a name this daemon answers
+      // with a 403.
+      if (spec.service?.rejectsProxyHeaders === true && box.portlessAlias !== undefined) {
+        log.info(
+          `dropping the ${box.portlessAlias}.localhost alias — ${spec.id} refuses proxied requests`,
+        );
+        await portlessUnalias(box.portlessAlias).catch(() => false);
+        await clearBoxPortlessWebAlias(box.id).catch(() => {});
+        box = { ...box, portlessAlias: undefined, portlessUrl: undefined };
+      }
     } else {
       if (boxRef !== undefined) {
         throw new Error(`no box matched "${boxRef}" — omit the ref to create one`);

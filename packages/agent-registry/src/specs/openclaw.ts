@@ -146,6 +146,20 @@ export const openclawSpec: AgentSyncSpec = {
     // `/healthz` answers 200 and the gateway reaches ready in ~1s (PoC #8).
     readyWhen: { http: `http://127.0.0.1:${String(GATEWAY_PORT)}/healthz` },
     expose: { port: GATEWAY_PORT, as: 80 },
+    // MEASURED on a live box, not assumed: the gateway answers 200 with the
+    // Control UI on a direct connection and `403 proxy_attribution_required`
+    // through Portless. Any ONE forwarded header does it -- `X-Forwarded-For`,
+    // `X-Forwarded-Proto` and `Forwarded` each trigger it independently
+    // (openclaw's `hasForwardedRequestHeaders` matches every `x-forwarded-*`).
+    // `/healthz` is exempt, which is why every smoke test before this passed.
+    //
+    // `gateway.trustedProxies` does not rescue it. Configuring the proxy is
+    // necessary but not sufficient: openclaw also requires the FORWARDED CLIENT
+    // to be non-loopback (`ingress-attribution.ts`), and a browser on the same
+    // machine as the proxy never is. That is deliberate -- it stops a remote
+    // client claiming the loopback auth exemption by hopping through a proxy --
+    // so there is no configuration that makes the proxied path work.
+    rejectsProxyHeaders: true,
     tasks: [
       {
         name: 'openclaw-onboard',

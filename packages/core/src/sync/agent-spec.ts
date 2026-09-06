@@ -263,6 +263,29 @@ export interface AgentServiceSpec {
    * port (80) — it is the only port a box publishes.
    */
   expose?: AgentServiceExpose;
+  /**
+   * The daemon refuses any request carrying forwarded headers, so its URL must
+   * reach it with no reverse proxy in the path.
+   *
+   * A box normally publishes its web service behind Portless, which gives it a
+   * stable `https://<box>.localhost` that resolves the same on the host and
+   * inside the box. Portless always adds `X-Forwarded-*`. A daemon that treats
+   * those headers as a security signal then refuses to serve — OpenClaw answers
+   * `403 proxy_attribution_required`, and no amount of its own configuration
+   * helps, because it additionally requires the FORWARDED CLIENT to be
+   * non-loopback and a browser on the same machine never is.
+   *
+   * Setting this makes AgentBox skip the Portless WEB alias for the box, which
+   * is the whole mechanism: every URL producer already falls back to the
+   * directly published port when no alias is registered, and the in-box browser
+   * falls back to the service's own loopback port. The VNC alias is unaffected.
+   *
+   * The cost is real — the box has no friendly name, its URL carries a host
+   * port that changes on every restart, and host and in-box URLs stop matching
+   * — so set it only for a daemon that has actually been observed rejecting a
+   * proxied request.
+   */
+  rejectsProxyHeaders?: boolean;
   restart?: 'always' | 'on-failure' | 'never';
   /** Other unit names this service waits for. */
   needs?: readonly string[];

@@ -340,16 +340,42 @@ Any one forwarded header is enough. Portless always adds them, so
 is exempt — returns 200. Every smoke test so far checked `/healthz`, which is
 exactly why this was never caught.
 
-OpenClaw offers no way to ignore the headers. `gateway.trustedProxies`
-(CIDR allowlist) is not sufficient on its own: setting it to `127.0.0.1/32` +
-`::1/128` still 403s, because the policy also wants
-`gateway.auth.trustedProxy.userHeader`, which is REQUIRED once that object
-exists (`config patch` rejects the object without it). That whole mode is built
-for an identity proxy that authenticates the user and forwards who they are —
-oauth2-proxy, not a plain reverse proxy. Portless is not one and cannot become
-one. `portless alias` (0.13.0) has no flag to suppress the headers.
+OpenClaw offers no way to ignore the headers, and `gateway.trustedProxies` does
+not rescue it. The reason is in the source, `src/gateway/ingress-attribution.ts`:
 
-So the fix has to be ours. Three options, none of them free:
+```ts
+if (isTrustedProxyAddress(remoteAddress, params.trustedProxies)) {
+  const clientIp = resolveRequestClientIpFromHeaders(req, params.trustedProxies, ...);
+  if (!clientIp || isLoopbackAddress(clientIp)) {
+    return unattributableProxy(remoteAddress);   // -> 403
+  }
+  return { ...attributed("trusted-proxy", clientIp), ... };
+}
+```
+
+Configuring the proxy is **necessary but not sufficient**: the forwarded CLIENT
+must also be non-loopback. Our client is a browser on the same machine as
+Portless, so `X-Forwarded-For` is `::1` — always loopback, always refused. That
+is deliberate, not a bug: it stops a remote client claiming the loopback auth
+exemption by hopping through a proxy. (Adding `::1/128` to the allowlist, as the
+live test did, makes it worse: trusted entries are skipped as proxies when
+resolving the client, leaving none at all.)
+
+The docs are not wrong either — "a plain reverse proxy is supported" holds for a
+proxy carrying traffic from a real client. Reached from ANOTHER machine the
+forwarded IP would be a LAN address and `trustedProxies` would work; that is
+dead for us only because `<box>.localhost` does not resolve off-host.
+
+`portless alias` (0.13.0) has no flag to suppress the headers.
+
+**Resolved: the box publishes its port directly.** `service.rejectsProxyHeaders`
+on the agent's registry row makes AgentBox skip the box's Portless *web* alias,
+and every URL producer then falls back to the published port on its own. Fixes
+docker, hetzner and digitalocean. It does NOT fix vercel, e2b or daytona, whose
+preview URLs are served by the provider's own edge proxy, which will add
+forwarded headers of its own — expected but unverified.
+
+The options that were weighed, kept because two are still live for other cases:
 
 1. **Hand out the direct preview URL for such a service.** The raw SSH-tunnel
    URL already works. Cheapest and it works today, but it drops the symmetric
