@@ -30,6 +30,8 @@ import { Command } from 'commander';
 import { log } from '@agentbox/cli-kit';
 import type { AgentSyncSpec, BoxRecord } from '@agentbox/core';
 import { renderStatusTable, type ServiceState, type ServiceStatus } from '@agentbox/ctl';
+import { readBoxStatus } from '@agentbox/sandbox-docker';
+import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { resolveBoxOrExit } from '../../box-ref.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
@@ -219,6 +221,10 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
           // documented idiom into a node stack trace.
           const extra = await readServiceUrlFields(box, service.urlFields ?? []);
           process.stdout.write([url, ...extra.map((f) => `${f.label}: ${f.value}`), ''].join('\n'));
+          // STDERR on purpose: stdout here is the documented `| head -1` surface,
+          // and a warning printed into it would BE the first line.
+          const warning = webProxyWarning(await readBoxStatus(box));
+          if (warning) process.stderr.write(`warning: ${warning}\n`);
         } catch (err) {
           handleLifecycleError(err);
         }

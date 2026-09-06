@@ -439,7 +439,13 @@ export function createCloudProvider(
     // Preview URLs (and their tokens) can rotate across stop/start — refresh
     // the web + relay preview URLs and persist so `agentbox url` and the
     // host poller see the live values.
-    const webPort = box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT;
+    // BACKEND-first here, unlike every read-only resolver (which trusts the
+    // record). A restart re-launches ctl, re-mints the preview URL and
+    // re-registers the portless alias, so it is the one moment all three can
+    // move together — and the value is written back below. That is what lets a
+    // box created before hetzner/digitalocean moved off :80 heal itself instead
+    // of staying pinned to a port its own portless proxy owns.
+    const webPort = backend.webProxyPort ?? box.cloud?.webPort ?? CLOUD_WEB_PROXY_PORT;
     let webPreview: { url: string; token?: string } | undefined;
     try {
       webPreview = await backend.previewUrl(h, webPort);
@@ -594,7 +600,11 @@ export function createCloudProvider(
       relayUrl: `http://127.0.0.1:${String(8788)}`,
       relayToken: box.relayToken ?? '',
       bridgeToken: box.cloud?.bridgeToken,
-      webProxyPort: backend.webProxyPort,
+      // The SAME port resolved above, minted a preview URL for and written to
+      // the record a few lines up. `box` is the record as it was BEFORE that
+      // refresh, so reading the port off it here is what would let ctl bind one
+      // port while the host forwards another.
+      webProxyPort: webPort,
       launchDockerd: opts.launchDockerd !== false,
       vncPassword: box.vncEnabled ? box.vncPassword : undefined,
       controlPlaneUrl: box.cloud?.controlPlaneUrl,

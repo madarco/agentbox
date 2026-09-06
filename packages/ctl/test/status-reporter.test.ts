@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { StatusReporter } from '../src/status-reporter.js';
-import type { AgentPlanPayload, AgentQuestionPayload } from '../src/types.js';
+import type { AgentPlanPayload, AgentQuestionPayload, BoxStatus } from '../src/types.js';
 
 // The reporter snapshots itself by probing tmux + listing supervisor services.
 // We don't want either side-effect in unit tests, so we fake the supervisor
@@ -19,6 +19,7 @@ interface StubSupervisor extends EventEmitter {
   serviceProbePorts(): Map<string, number>;
   probedServices(): Set<string>;
   serviceExposes(): Map<string, { port: number; as: number }>;
+  webProxyState(): { port: number; target: number | null; error?: string };
 }
 
 function stubSupervisor(): StubSupervisor {
@@ -29,6 +30,7 @@ function stubSupervisor(): StubSupervisor {
     serviceProbePorts: (): Map<string, number> => new Map(),
     probedServices: (): Set<string> => new Set(),
     serviceExposes: (): Map<string, { port: number; as: number }> => new Map(),
+    webProxyState: (): { port: number; target: number | null } => ({ port: 80, target: null }),
   }) as StubSupervisor;
 }
 
@@ -78,6 +80,30 @@ function latestClaude(posted: Posted[]): PaylClaude | undefined {
   }
   return undefined;
 }
+
+describe('StatusReporter web-proxy reporting', () => {
+  it('carries a failed bind into the snapshot', async () => {
+    // The point of the whole field: a bind failure was log-only, so a box whose
+    // reserved port was taken still reported ready and still published a URL.
+    const sup = stubSupervisor();
+    sup.webProxyState = () => ({ port: 80, target: 18789, error: 'listen :80 failed: EADDRINUSE' });
+    const relay = stubRelay();
+    const reporter = new StatusReporter({
+      supervisor: sup as unknown as ConstructorParameters<typeof StatusReporter>[0]['supervisor'],
+      relay: relay as unknown as ConstructorParameters<typeof StatusReporter>[0]['relay'],
+      boxId: 'b1',
+    });
+    await flushDebounce(reporter, relay);
+    reporter.stop();
+
+    const last = relay.posted.at(-1)?.payload as BoxStatus;
+    expect(last.webProxy).toEqual({
+      port: 80,
+      target: 18789,
+      error: 'listen :80 failed: EADDRINUSE',
+    });
+  });
+});
 
 describe('StatusReporter.setAgentState (sticky end-plan / question)', () => {
   function makeReporter(): { reporter: StatusReporter; relay: ReturnType<typeof stubRelay> } {

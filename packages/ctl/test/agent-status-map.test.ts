@@ -38,6 +38,7 @@ function makeReporter(sessions?: { agent: string; sessionName: string }[]): {
     serviceProbePorts: () => new Map<string, number>(),
     probedServices: () => new Set<string>(),
     serviceExposes: () => new Map<string, { port: number; as: number }>(),
+    webProxyState: () => ({ port: 80, target: null }),
   });
   type Opts = ConstructorParameters<typeof StatusReporter>[0];
   const reporter = new StatusReporter({

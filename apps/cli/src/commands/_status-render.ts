@@ -6,6 +6,7 @@ import {
   type StatusReply,
 } from '@agentbox/ctl';
 import { execInBox } from '@agentbox/sandbox-docker';
+import { webProxyWarning } from '../lib/web-proxy-warning.js';
 
 export async function fetchLive(state: string, container: string): Promise<StatusReply | null> {
   // Only a running container is reachable via `docker exec` (macOS can see the
@@ -51,6 +52,12 @@ export function renderPersistedSections(s: BoxStatus): string[] {
         (svc) => `  ${svc.name}  ${svc.state}${svc.port !== null ? `  :${String(svc.port)}` : ''}`,
       ),
     );
+  }
+  const warning = webProxyWarning(s);
+  if (warning) {
+    // Not folded into SERVICES: the service itself is fine, and saying so under
+    // its row would read as the service being broken.
+    out.push('', 'WEB', `  ${warning}`);
   }
   out.push('');
   out.push('PORTS');

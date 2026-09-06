@@ -28,7 +28,8 @@ import type {
 import { persistentRefusal, resolveCreatePersistent, UserFacingError } from '@agentbox/core';
 import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentbox/cli-kit';
 import { ensureAgentInstalled, readState, resolveBoxRef } from '@agentbox/sandbox-core';
-import { recordLastAgent } from '@agentbox/sandbox-docker';
+import { readBoxStatus, recordLastAgent } from '@agentbox/sandbox-docker';
+import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { runCarryGate } from '../../lib/carry-gate.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
@@ -421,6 +422,10 @@ export async function runServiceAgent(
       log.info(`${f.label}: ${f.value}`);
     }
     const url = service.expose ? await resolveServiceUrl(box) : null;
+    // A URL we cannot forward to is worse than no URL: the port is held by
+    // something else, so it answers with the wrong thing rather than failing.
+    const warning = url ? webProxyWarning(await readBoxStatus(box)) : null;
+    if (warning) log.warn(warning);
     if (url) outro(`${spec.id} on ${box.name}: ${url}`);
     else outro(`${spec.id} on ${box.name}`);
   } catch (err) {
