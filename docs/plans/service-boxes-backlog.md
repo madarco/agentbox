@@ -258,3 +258,39 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   (`--include-node-modules`, or a non-git project that simply has one) goes through it. The fix is
   to stream the tar — pipe the `tar` child's stdout straight into the `docker exec` stdin instead of
   materializing it — not to raise a limit. Recorded only; not fixed here.
+
+## From live cloud testing on Hetzner (2026-09-06)
+
+A real `agentbox openclaw --provider hetzner` box, from a freshly baked 0.30.0
+snapshot. The service-agent machinery itself worked — `openclaw-onboard` →
+`openclaw-render` → service `ready`, gateway answering `/healthz` 200 on
+`127.0.0.1:18789`, `persistent: true` on the record, and the `agentbox.yaml`
+overlay applied through `openclaw config patch`. Three integration bugs made the
+box unusable anyway. All three are openclaw/service-agent issues, not phase 1-8
+regressions.
+
+- **The published URL does not serve, and fails silently.** ctl's `WebProxy`
+  cannot bind `:80` because the box's own Portless proxy already owns it
+  (`portless proxy start --port 443 --https` holds 80 for the http→https
+  redirect). `web-proxy.log` records `listen :80 failed: EADDRINUSE` and
+  everything continues: `agentbox openclaw` prints "ready" and a URL that 302s
+  to `https://127.0.0.1/healthz` and 404s (the 302 carries `X-Portless: 1`).
+  Docker never hits this — there Portless runs on the HOST and maps to a host
+  port, leaving the container's `:80` free.
+  Two fixes needed: make `expose:` route THROUGH Portless rather than race it
+  for `:80` (an alternate in-box port already exists — Vercel uses
+  `AGENTBOX_WEB_PROXY_PORT=8080`), and make a failed bind for an exposed
+  service loud instead of log-only.
+- **`spec.boxRunEnv` does not reach the ctl tasks on hetzner**, so
+  `OPENCLAW_WORKSPACE_DIR=/workspace` is absent from `/etc/agentbox/box.env` and
+  onboard logged `Workspace OK: ~/.openclaw/workspace`. openclaw bootstrapped
+  its own default workspace and never saw the project files — the headline
+  "your project dir becomes the openclaw workspace" behaviour is broken on this
+  provider. This is the inverse of the docker bug PR #360 fixed.
+- **macOS AppleDouble junk in a cloud-seeded workspace**: `._.`,
+  `._agentbox.yaml`, `._AGENTS.md`, `._skills` in `/workspace`. The non-git
+  cloud seed (`seedCloudWorkspace`) tars the host dir without
+  `COPYFILE_DISABLE=1`. Fourth instance of this class; the three docker-side
+  call sites were fixed on the sync/clone branch.
+
+Not yet checked on digitalocean, e2b, vercel or daytona.
