@@ -40,9 +40,45 @@ export interface JobAgentPlan {
   startsSession: boolean;
 }
 
-/** Resolve a queued job's agent, or throw naming the agent the registry lacks. */
+/**
+ * The wire kinds the worker's session dispatch actually implements — the `if /
+ * else if` chains in `_run-queued-job.ts` (docker `runDockerJob`, cloud
+ * `runCloudJob`), which end in a `throw`.
+ *
+ * NOT "the agents this build ships", and deliberately not derived from the
+ * registry: it is a statement about the WORKER, and it is narrower than the
+ * registry on purpose. `example` is a real, hidden, built-in TUI agent with a
+ * working CLI module, and it is absent here because those chains have no branch
+ * for it — the canary doing its job. So is every `agentbox agent add` TUI agent.
+ *
+ * Deleting this list is the goal. It goes away when the dispatch drives
+ * `AgentRuntime` (`@agentbox/cli-kit`) instead of branching on the id, which
+ * needs the contract to carry two things it does not today: claude's
+ * `agentSettings` and its `rebuildPluginNativeDeps` pre-step. Tracked in
+ * `docs/plans/service-boxes-backlog.md`.
+ */
+const QUEUE_LAUNCHABLE_KINDS = ['claude', 'codex', 'opencode', 'pi'];
+
+/**
+ * Resolve a queued job's agent, or throw naming what is missing.
+ *
+ * Throwing HERE is the point. Both runners call this before `createBox`, so an
+ * agent the worker cannot finish costs nothing; the dispatch chain's own throw
+ * fires AFTER the box exists, failing the job and leaving that box behind. That
+ * was invisible while the resolution gate was `toSyncKind` — it refused the same
+ * agents, just earlier. Widening resolution to the registry (which is correct,
+ * and what lets `openclaw` through) is what exposed the ordering.
+ */
 export function planJobAgent(job: { noAgent?: boolean; agent: string }): JobAgentPlan {
   if (job.noAgent) return { agents: [], startsSession: false };
   const spec = resolveAgentSpec(job.agent);
-  return { spec, agents: [spec.id], startsSession: !isServiceAgent(spec) };
+  const startsSession = !isServiceAgent(spec);
+  if (startsSession && !QUEUE_LAUNCHABLE_KINDS.includes(spec.id)) {
+    throw new Error(
+      `${spec.id} cannot be started by a queued create: the worker has no session launcher ` +
+        `for it. Make the box with \`agentbox create\`, then start the agent in it with ` +
+        `\`agentbox ${spec.id} <box>\`.`,
+    );
+  }
+  return { spec, agents: [spec.id], startsSession };
 }

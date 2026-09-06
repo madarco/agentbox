@@ -40,11 +40,29 @@ describe('planJobAgent', () => {
     }
   });
 
-  it('still dispatches a session for every TUI agent', () => {
-    const tui = AGENT_SYNC_SPECS.filter((s) => !isServiceAgent(s));
+  it('still dispatches a session for every TUI agent it can launch', () => {
+    const tui = AGENT_SYNC_SPECS.filter((s) => !isServiceAgent(s) && !s.hidden);
     expect(tui.length).toBeGreaterThan(0);
     for (const spec of tui) {
       expect(planJobAgent({ agent: spec.id }).startsSession).toBe(true);
+    }
+  });
+
+  it('refuses a TUI agent the dispatch has no branch for, BEFORE the box exists', () => {
+    // `example` is a real hidden built-in with a working CLI module, and the
+    // worker's dispatch has no branch for it — so does every plugin TUI agent.
+    // Resolution now succeeds where `toSyncKind` used to throw, which moved the
+    // failure to AFTER `createBox` and orphaned the box. The refusal has to stay
+    // on the pre-create side.
+    expect(() => planJobAgent({ agent: 'example' })).toThrow(/no session launcher/);
+    expect(() => planJobAgent({ agent: 'example' })).toThrow(/agentbox create/);
+  });
+
+  it('never refuses a SERVICE agent for want of a launcher', () => {
+    // It has no session leg at all, so the launcher gate must not apply to it —
+    // openclaw is absent from the dispatch chains by design, not by omission.
+    for (const spec of AGENT_SYNC_SPECS.filter(isServiceAgent)) {
+      expect(planJobAgent({ agent: spec.id }).startsSession).toBe(false);
     }
   });
 

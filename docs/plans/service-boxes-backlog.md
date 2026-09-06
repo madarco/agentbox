@@ -293,3 +293,28 @@ regressions.
   call sites were fixed on the sync/clone branch.
 
 Not yet checked on digitalocean, e2b, vercel or daytona.
+
+## The queue worker's session dispatch is still hand-wired (2026-09-06)
+
+`planJobAgent` resolves a job's agent off the registry, so `openclaw` and every
+plugin agent get a box. Starting a TUI session is a different question, and it
+is still an `if / else if` chain on the wire kind in both job runners
+(`_run-queued-job.ts`), ending in a `throw`. Two consequences:
+
+- **`example` cannot be created through the hub.** It is a real, hidden,
+  built-in TUI agent with a working CLI module; the chains simply have no branch
+  for it. The canary is doing exactly what it exists for. Every
+  `agentbox agent add` TUI agent is in the same position.
+- The chain's throw fires **after** `createBox`, so it failed the job and left
+  the box behind. `QUEUE_LAUNCHABLE_KINDS` in `apps/cli/src/lib/queue/job-agent.ts`
+  now refuses those agents at plan time instead, which restores the pre-create
+  refusal `toSyncKind` used to give by accident. That list is a stopgap and says so.
+
+The real fix is to drive `AgentRuntime` (`@agentbox/cli-kit`) instead of
+branching: it already carries `startSession` / `ensureInstalled` /
+`sessionNameOf` / `skipPermissions`, which is most of what each branch does. Two
+things block a straight swap — the contract has no slot for claude's
+`agentSettings` (the worker calls `startClaudeSession` directly to pass it, and
+claude's own `runtime.startSession` adapter drops it), and none for its
+`rebuildPluginNativeDeps` pre-step. Widening the contract with both, then
+deleting the chains and the list, is the whole job.
