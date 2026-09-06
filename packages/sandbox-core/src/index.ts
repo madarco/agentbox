@@ -7,6 +7,7 @@ export {
   mutateState,
   readState,
   recordBox,
+  clearBoxPortlessWebAlias,
   recordBoxSsh,
   recordLastAgent,
   removeBoxRecord,

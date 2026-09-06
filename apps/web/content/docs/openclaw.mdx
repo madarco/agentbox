@@ -19,10 +19,27 @@ $ agentbox openclaw -n claw
 │
 │  token: 5f3c…c1d2
 │
-└  openclaw on claw: https://claw.localhost
+└  openclaw on claw: http://127.0.0.1:54321
 ```
 
 Open that URL and paste the token when the Control UI asks for it.
+
+<Callout title="NO `<box>.localhost` FOR AN OPENCLAW BOX" type="warn">
+  Every other box gets a stable `https://<box>.localhost` from
+  [Portless](/docs/web-apps-and-tunnels). OpenClaw's box does not, and cannot: Portless adds
+  `X-Forwarded-*` headers to every request, and the gateway answers **any** request carrying one
+  with `403 proxy_attribution_required`. `gateway.trustedProxies` does not help — configuring the
+  proxy is necessary but not sufficient, because OpenClaw also requires the forwarded *client* to be
+  non-loopback, and a browser on the same machine as the proxy never is. That is deliberate: it
+  stops a remote client claiming the loopback auth exemption by going through a proxy.
+
+So AgentBox publishes the port directly instead. The consequences are worth knowing: the URL
+carries a host port that **changes every time the box restarts**, and it is not the same URL from
+inside the box (in there the gateway is `http://localhost:18789`). Re-read it with
+`agentbox openclaw url` rather than bookmarking it. The VNC desktop keeps its own
+`vnc-<box>.localhost` name.
+
+</Callout>
 
 <Callout title="ONE BOX PER TENANT">
   OpenClaw does not support multiple tenants in one gateway: two gateways sharing a state directory

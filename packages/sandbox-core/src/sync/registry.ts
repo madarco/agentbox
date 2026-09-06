@@ -59,6 +59,24 @@ export function isRuntimeAgent(name: string): boolean {
 }
 
 /**
+ * True when any of these agents hosts a daemon that refuses proxied requests,
+ * so the box must publish its port directly.
+ *
+ * Answers from the registry rather than from an id, and takes the agents a box
+ * was created FOR (`CreateRequest.agents` / `BoxRecord.agents`) rather than
+ * `lastAgent`: `lastAgent` is whichever agent most recently RAN, is written
+ * after `create` returns, and a later `agentbox claude` in the same box
+ * overwrites it — none of which changes whether the box hosts a gateway.
+ *
+ * Unknown ids are simply not a match: the registry is open (`agentbox agent
+ * add`), and a name this build has never heard of must not make a box lose its
+ * friendly URL.
+ */
+export function agentsRejectProxyHeaders(agents: readonly string[] | undefined): boolean {
+  return (agents ?? []).some((a) => findAgentSpec(a)?.service?.rejectsProxyHeaders === true);
+}
+
+/**
  * The env that pins `binary`'s in-box terminal renderer, for the agent's own
  * resolved settings.
  *

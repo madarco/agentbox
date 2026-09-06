@@ -379,6 +379,15 @@ declares instead of the TUI machinery:
 - **`service.urlFields`** — values `<agent> url` prints beside the URL, read out
   of the daemon's own config file (a Control UI's gateway token). Data, because
   the only per-agent parts are which file and which dotted key.
+- **`service.rejectsProxyHeaders`** — the daemon refuses any request carrying
+  forwarded headers, so its URL must reach it with no reverse proxy in the path.
+  AgentBox honours it by skipping the box's Portless **web** alias, which is the
+  entire mechanism: every producer of a box's web URL already falls back to the
+  directly published port when no alias is registered, and the in-box browser
+  falls back to the service's own loopback port. The VNC alias is untouched.
+  The box then has no `<box>.localhost` and its URL carries a host port that
+  changes on every restart, so declare it only for a daemon actually observed
+  refusing a proxied request — openclaw's row records the measurement.
 - **`configRender: AgentConfigRenderSpec`** — the layered-config descriptor
   `agentbox-ctl agent render <id>` drives; independent of `service`, since a TUI
   agent could want it too. See "Layered config" below.

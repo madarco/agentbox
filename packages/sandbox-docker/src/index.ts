@@ -159,6 +159,7 @@ export {
 // there now. This package only supplies the docker-side Portless hooks the CLI
 // installs into the hub seam.
 export { dockerHubPortlessHooks } from './hub-portless.js';
+export { skipWebProxyAlias } from './direct-web-url.js';
 export { dockerCredentialRefresh } from './credential-refresh.js';
 // The host-config stage producers now live in the provider-neutral sync layer
 // (`@agentbox/sandbox-core`); cloud consumers import them from there. The claude

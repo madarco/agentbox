@@ -207,6 +207,30 @@ export async function setBoxDisplayName(
  * back to regenerate `~/.agentbox/ssh/config` offline, without re-resolving the
  * target from the provider.
  */
+/**
+ * Forget a box's Portless WEB alias, so its URL falls back to the directly
+ * published port. The VNC alias is untouched.
+ *
+ * For the box that already existed when a proxy-refusing agent was added to it:
+ * every URL producer reads `portlessAlias`, so leaving it set would keep handing
+ * out a name that resolves and then 403s. A create-time skip cannot cover this
+ * case because the box was made before the agent was chosen.
+ */
+export async function clearBoxPortlessWebAlias(
+  boxId: string,
+  path: string = STATE_FILE,
+): Promise<void> {
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) =>
+        b.id === boxId ? { ...b, portlessAlias: undefined, portlessUrl: undefined } : b,
+      ),
+    }),
+    path,
+  );
+}
+
 export async function recordBoxSsh(
   boxId: string,
   ssh: { host: string; user: string; identityFile?: string; port?: number; proxyJump?: string },
