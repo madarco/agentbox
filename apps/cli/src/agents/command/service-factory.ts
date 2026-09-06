@@ -33,6 +33,9 @@ import { renderStatusTable, type ServiceState, type ServiceStatus } from '@agent
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { openServiceRepl } from '../service-repl.js';
+import { ATTACH_IN_HELP, INLINE_HELP, resolveAttachInOption } from '../../commands/_attach-in.js';
+import { hostAwareOpenIn } from '../../terminal/host.js';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { reattachRef, resolveBoxOrExit } from '../../box-ref.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox } from '../../provider/registry.js';
@@ -243,19 +246,33 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
             `(starts the session on first use; Control+a d detaches and leaves the daemon up)`,
         )
         .argument('[box]', BOX_REF_HELP)
-        .action(async (idOrName: string | undefined) => {
-          try {
-            const box = await resolveBoxOrExit(idOrName);
-            await openServiceRepl({
-              box,
-              spec,
-              argv: replArgv,
-              reattach: reattachRef(box),
-            });
-          } catch (err) {
-            handleLifecycleError(err);
-          }
-        }),
+        // The same two flags the TUI factory's `attach` carries, and NOT
+        // optional here: `runWrappedAttach` re-invokes this very command as
+        // `<agent> attach <box> --attach-in same` to open a new pane for
+        // `attach.openIn: split|window|tab`. Without them commander rejects its
+        // own re-entry and the pane dies instead of showing the REPL.
+        .option('--attach-in <mode>', ATTACH_IN_HELP)
+        .option('-i, --inline', INLINE_HELP)
+        .action(
+          async (idOrName: string | undefined, opts: { attachIn?: string; inline?: boolean }) => {
+            try {
+              const box = await resolveBoxOrExit(idOrName);
+              const attachIn = resolveAttachInOption(opts);
+              const cfg = await loadEffectiveConfig(box.workspacePath, {
+                cliOverrides: attachIn ? { attach: { openIn: attachIn } } : {},
+              });
+              await openServiceRepl({
+                box,
+                spec,
+                argv: replArgv,
+                reattach: reattachRef(box),
+                openIn: hostAwareOpenIn(cfg),
+              });
+            } catch (err) {
+              handleLifecycleError(err);
+            }
+          },
+        ),
     );
   }
 

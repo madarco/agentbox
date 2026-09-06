@@ -1122,7 +1122,22 @@
             "defaultValue": null
           }
         ],
-        "options": [],
+        "options": [
+          {
+            "flags": "--attach-in <mode>",
+            "description": "where to open the attached session: split | window | tab | same (default from attach.openIn, built-in: split). Only effective when running inside tmux or iTerm2; falls back to inline attach otherwise.",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "-i, --inline",
+            "description": "attach inline in the current terminal (shortcut for --attach-in same; useful when attach.openIn defaults to split/window/tab). The short `-i` form was reassigned to `--initial-prompt` on the create-style commands (claude/codex/opencode).",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
         "subcommands": []
       }
     ]
