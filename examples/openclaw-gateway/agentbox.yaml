@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=../../packages/ctl/schema/agentbox.schema.json
+
+# Smoke fixture for the openclaw SERVICE AGENT.
+#
+# This directory exists mainly so the example is not run from a parent that
+# already has an agentbox.yaml: without one of its own, `agentbox openclaw -w
+# examples/<dir>` walks up and picks the REPO'S file, which declares services
+# that have nothing to do with a gateway.
+#
+# `agentbox openclaw` needs no tasks or services here — the agent's registry row
+# declares its own (`openclaw onboard` -> `agentbox-ctl agent render openclaw`
+# -> `openclaw gateway`, exposed on :80). The only thing this file contributes
+# is the `openclaw:` overlay below.
+
+# Non-secret gateway config, layered onto whatever `openclaw onboard` wrote.
+#
+# ctl sends only the keys that CHANGED since its last render, through openclaw's
+# own `config patch --stdin`, so an edit you make inside the box with `openclaw
+# config set` survives — until you change that same key here.
+#
+# A real secret never belongs in this file: it is committed. Carry it in as a
+# 0600 file (see `carry:` below) and reference it by name.
+openclaw:
+  tools:
+    profile: coding
+  logging:
+    level: info
+
+# How a channel token reaches the box without being committed. Uncomment, put
+# the real value in the host file, and reference it from the `openclaw:` block
+# above as an env-backed secret ref.
+#
+# carry:
+#   - src: ~/.agentbox/openclaw/.env
+#     dest: ~/.openclaw/.env
+#     mode: 0o600
+#     optional: true
