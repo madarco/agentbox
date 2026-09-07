@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_SPECS } from '../src/index.js';
+import { OPENCLAW_CONFIG_MERGE_PROGRAM } from '../src/specs/openclaw.js';
 
 /**
  * The task that tells an OpenClaw box where it is running.
@@ -61,22 +62,19 @@ describe('openclaw-agentbox-env', () => {
     expect(script).toMatch(/mv "\$TMP"/);
   });
 
-  it('asserts both config keys in ONE validated merge', () => {
-    // `config patch --stdin` is openclaw's own validated recursive merge — the
-    // exact payload was dry-run against a live gateway.
+  it("applies both keys through openclaw's own validated merge", () => {
+    // `config patch --stdin` is openclaw's validated recursive merge. What it
+    // is fed is COMPUTED in the box (see `openclaw-config-merge.test.ts` for the
+    // merge itself) because patch replaces an array wholesale — a static payload
+    // would silently drop a user's own extraDirs on the second boot.
     expect(script).toContain('openclaw config patch --stdin');
-    const json = /'(\{"skills".*?\})'/.exec(script)?.[1];
-    expect(json, 'the owned-config payload is not in the script').toBeDefined();
-    const parsed = JSON.parse(json!) as Record<string, unknown>;
-    expect(parsed).toEqual({
-      skills: { load: { extraDirs: ['/opt/agentbox/skills'] } },
-      hooks: {
-        internal: {
-          enabled: true,
-          entries: { 'bootstrap-extra-files': { enabled: true, paths: ['.agentbox/AGENTS.md'] } },
-        },
-      },
-    });
+    expect(script).toContain(OPENCLAW_CONFIG_MERGE_PROGRAM.trim());
+    expect(script).toContain('/opt/agentbox/skills .agentbox/AGENTS.md');
+  });
+
+  it('feeds the merge the box config, and cleans up after itself', () => {
+    expect(script).toContain('/home/vscode/.openclaw/openclaw.json');
+    expect(script).toMatch(/rm -f "\$PROG"/);
   });
 
   it('names a bootstrap basename openclaw actually accepts', () => {
@@ -90,11 +88,9 @@ describe('openclaw-agentbox-env', () => {
       'BOOTSTRAP.md',
       'MEMORY.md',
     ];
-    const json = /'(\{"skills".*?\})'/.exec(script)![1]!;
-    const paths = (
-      JSON.parse(json) as { hooks: { internal: { entries: Record<string, { paths: string[] }> } } }
-    ).hooks.internal.entries['bootstrap-extra-files']!.paths;
-    for (const p of paths) expect(canonical).toContain(p.split('/').pop());
+    const ctxArg = /\/opt\/agentbox\/skills (\S+)/.exec(script)?.[1];
+    expect(ctxArg, 'the context path is not passed to the merge').toBeDefined();
+    expect(canonical).toContain(ctxArg!.split('/').pop());
   });
 
   it('never fails the box: every step is guarded', () => {

@@ -72,24 +72,64 @@ const AGENTBOX_CTX_DIR = '/workspace/.agentbox';
 /** First line of the generated file: makes a re-run idempotent, and says whose it is. */
 const CTX_SENTINEL = '<!-- agentbox:box-facts (generated every boot; edit AGENTS.md instead) -->';
 
+/** openclaw's config file — the same path `configRender` renders into. */
+const OPENCLAW_CONFIG_FILE = `${OPENCLAW_BOX_DIR}/openclaw.json`;
+/** Scratch path for the merge program; removed again as soon as it has run. */
+const MERGE_PROGRAM_PATH = '/tmp/agentbox-openclaw-config-merge.cjs';
+
+/** Workspace-relative path of the generated prompt file, as the hook names it. */
+const CTX_REL_PATH = '.agentbox/AGENTS.md';
+
 /**
- * The keys AgentBox OWNS in openclaw's config, applied through openclaw's own
- * validated merge. Deliberately not the `openclaw:` overlay in agentbox.yaml —
- * that is the user's, and `configRender` reads only from there.
+ * Build the config patch AgentBox applies, as a MEMBERSHIP assertion on the two
+ * arrays rather than a value for them.
  *
- * `openclaw-render` applies the user's overlay afterwards and sends only the
- * keys they CHANGED, so these survive unless the user names the same key, which
- * is the precedence we want.
+ * Both keys are arrays, and `openclaw config patch` replaces an array wholesale
+ * rather than merging it — so sending a literal `[ourDir]` every boot would be a
+ * silent data-loss bug, not merely rude. `openclaw-render` re-sends only the
+ * overlay keys that CHANGED since its last render, so a user value that is
+ * stable (in `agentbox.yaml`, or set in the box with `openclaw config set`)
+ * would not be re-asserted afterwards: it would survive the first boot and
+ * vanish on the second.
+ *
+ * Reading the current value and unioning ours in keeps AgentBox's claim to the
+ * narrowest true one — "our skills dir is on the list, our prompt file is in the
+ * bootstrap set" — and leaves every other entry, and every neighbouring key,
+ * alone. An explicit `enabled: false` on the hook is preserved too: disabling
+ * the box facts is a choice the user is allowed to make and have stick.
+ *
+ * Emitted as a program rather than a static JSON blob because the merge has to
+ * happen IN the box, against that box's live config. node is guaranteed there —
+ * openclaw is a node application.
  */
-const AGENTBOX_OWNED_CONFIG = JSON.stringify({
-  skills: { load: { extraDirs: [AGENTBOX_SKILLS_DIR] } },
-  hooks: {
-    internal: {
-      enabled: true,
-      entries: { 'bootstrap-extra-files': { enabled: true, paths: ['.agentbox/AGENTS.md'] } },
+export const OPENCLAW_CONFIG_MERGE_PROGRAM = `
+const fs = require('fs');
+const [cfgPath, skillDir, ctxPath] = process.argv.slice(2);
+let cur = {};
+try {
+  cur = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+} catch {}
+const withMember = (arr, v) =>
+  Array.isArray(arr) ? (arr.includes(v) ? arr.slice() : [...arr, v]) : [v];
+const entry = cur?.hooks?.internal?.entries?.['bootstrap-extra-files'] ?? {};
+process.stdout.write(
+  JSON.stringify({
+    skills: { load: { extraDirs: withMember(cur?.skills?.load?.extraDirs, skillDir) } },
+    hooks: {
+      internal: {
+        enabled: cur?.hooks?.internal?.enabled === false ? false : true,
+        entries: {
+          'bootstrap-extra-files': {
+            ...entry,
+            enabled: entry.enabled === false ? false : true,
+            paths: withMember(entry.paths, ctxPath),
+          },
+        },
+      },
     },
-  },
-});
+  }),
+);
+`;
 
 /**
  * Teach the box's gateway where it is running.
@@ -128,8 +168,20 @@ function buildAgentboxContextScript(): string {
     `    cat ${BOX_FACTS}`,
     '  } > "$TMP" && mv "$TMP" ' + `${AGENTBOX_CTX_DIR}/AGENTS.md || true`,
     'fi',
-    // One validated merge rather than several `config set` calls.
-    `printf '%s' '${AGENTBOX_OWNED_CONFIG}' | openclaw config patch --stdin >/dev/null || true`,
+    // One validated merge rather than several `config set` calls. The patch is
+    // COMPUTED from the box's live config (see the program's own comment) so the
+    // two arrays gain our entry instead of being replaced by it.
+    //
+    // Written to a file first: a quoted heredoc keeps the program safe from the
+    // shell, and it avoids process substitution, which some provider bases have
+    // no `/dev/fd` for.
+    `PROG=${MERGE_PROGRAM_PATH}`,
+    'cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
+    OPENCLAW_CONFIG_MERGE_PROGRAM.trim(),
+    'AGENTBOX_MERGE_EOF',
+    `node "$PROG" ${OPENCLAW_CONFIG_FILE} ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} |`,
+    '  openclaw config patch --stdin >/dev/null || true',
+    'rm -f "$PROG" || true',
     'exit 0',
   ].join('\n');
 }
