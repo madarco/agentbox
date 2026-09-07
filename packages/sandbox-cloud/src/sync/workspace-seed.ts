@@ -955,7 +955,13 @@ async function seedFromTar(args: SeedFromTarArgs): Promise<void> {
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-tar-'));
   const tarPath = join(stage, 'workspace.tar.gz');
   try {
-    await execa('tar', ['-C', args.hostDir, '-czf', tarPath, '.']);
+    // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs,
+    // which would otherwise land in the box's /workspace. This is the NO-GIT
+    // seed — an OpenClaw workspace is usually exactly that — and a real hetzner
+    // box came up with `._agentbox.yaml`, `._AGENTS.md` and `._skills` in it.
+    await execa('tar', ['-C', args.hostDir, '-czf', tarPath, '.'], {
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
     const remoteTar = '/tmp/agentbox-workspace.tar.gz';
     await args.backend.uploadFile(args.handle, tarPath, remoteTar);
     const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;
