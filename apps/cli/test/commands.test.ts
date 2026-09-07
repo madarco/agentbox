@@ -291,3 +291,16 @@ describe('lifecycle CLI surface', () => {
     expect(longs).toEqual(expect.arrayContaining(['--yes', '--keep-snapshot', '--force']));
   });
 });
+
+it('download can capture a box as a restorable backup', () => {
+  // A backup is a MODE of download, not a second verb: it is the same file
+  // selection pointed at <project>/.agentbox/bots/, so the two cannot drift
+  // about what "the box's workspace" means.
+  const longs = downloadCommand.options.map((o) => o.long);
+  expect(longs).toEqual(expect.arrayContaining(['--backup', '--name', '--keep', '--agent']));
+  const backup = downloadCommand.options.find((o) => o.long === '--backup');
+  expect(backup?.description).toMatch(/\.agentbox\/bots/);
+  // The state dir is the half that makes a restore possible; the help has to
+  // say the identity comes with it, because that is a live secret on disk.
+  expect(backup?.description).toMatch(/identity/i);
+});

@@ -74,6 +74,58 @@ export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
 export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
 
 /**
+ * The same dirs, as `tar --exclude` arguments for a host -> box workspace SEED.
+ *
+ * The invariant this closes: **`.agentbox/` never crosses the box boundary, in
+ * either direction.** The pull half was already true ({@link
+ * GIT_MODE_EXCLUDE_DIRS} and {@link WORKSPACE_EXCLUDE_DIR_NAMES}); the seed half
+ * was not, and `<project>/.agentbox/bots/` — where `download --backup` writes a
+ * bot's workspace AND its gateway identity — would otherwise be copied into
+ * every new box created from that project, growing with each backup.
+ *
+ * Derived from the pull-side list rather than repeated, so the two cannot drift.
+ *
+ * ANY-DEPTH, not root-anchored, and that is forced as well as wanted. Forced:
+ * neither tar anchors an exclude — MEASURED on bsdtar 3.5.3 (macOS) and true of
+ * GNU tar, which defaults to `--no-anchored`, so `--exclude=./.agentbox` drops a
+ * nested `sub/.agentbox` just the same and only a `--anchored` GNU tar could
+ * tell them apart. Wanted: a nested one is ours too — `download --backup` run
+ * from a monorepo sub-project writes `packages/foo/.agentbox/`, which has no
+ * more business in a box than the root one. This matches
+ * {@link WORKSPACE_EXCLUDE_DIR_NAMES}, whose bare names already match at any
+ * depth; the git-mode PULL pathspec stays root-anchored, so the seed refuses
+ * slightly more than the pull brings back, which is the safe direction.
+ */
+export function seedExcludeTarArgs(): string[] {
+  return GIT_MODE_EXCLUDE_DIRS.map((d) => `--exclude=${d}`);
+}
+
+/**
+ * Drop the same dirs from a NUL-joined `git ls-files --others` list — the
+ * untracked carry-over leg of a git-backed seed, which tars a vetted file list
+ * rather than a whole directory.
+ *
+ * Belt-and-braces, and deliberately so: `--exclude-standard` already skips a
+ * gitignored `.agentbox/`, and `download --backup` writes that gitignore entry.
+ * The invariant must not depend on that write having succeeded — in a project
+ * whose `.gitignore` the user has since edited, this is what still holds.
+ *
+ * Matched at any depth, through {@link isExcludedPath}'s bare-name rule, so this
+ * agrees with {@link seedExcludeTarArgs} — the two halves of one seed must not
+ * disagree about what a path list means.
+ *
+ * Tolerates an unterminated tail: `git ls-files -z` NUL-TERMINATES rather than
+ * NUL-separates, and treating the two the same is how the last path in a list
+ * has been dropped here before.
+ */
+export function dropHostOnlyPaths(nulList: string): string {
+  const kept = nulList
+    .split('\0')
+    .filter((p) => p.length > 0 && !isExcludedPath(p, GIT_MODE_EXCLUDE_DIRS));
+  return kept.length > 0 ? `${kept.join('\0')}\0` : '';
+}
+
+/**
  * The git-mode pathspecs, as `git ls-files -- . <these>` arguments.
  *
  * `node_modules` joins `.agentbox` here unless the caller asked to keep it, and

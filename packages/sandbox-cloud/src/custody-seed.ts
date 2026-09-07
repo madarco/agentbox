@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
-import { scanHostEnvFiles } from '@agentbox/sandbox-core';
+import { dropHostOnlyPaths, scanHostEnvFiles } from '@agentbox/sandbox-core';
 import { hostReachable } from './reachability.js';
 
 /** Bound on the seed upload once the control box is known to be up. */
@@ -263,7 +263,9 @@ async function buildUntrackedTar(repo: string): Promise<Buffer | null> {
     },
   );
   if (list.exitCode !== 0 || list.stdout.length === 0) return null;
-  return tarNulList(repo, list.stdout);
+  const paths = dropHostOnlyPaths(list.stdout);
+  if (paths.length === 0) return null;
+  return tarNulList(repo, paths);
 }
 
 /** Tar `relPaths` (repo-relative) out of `repo`, or null when the list is empty. */

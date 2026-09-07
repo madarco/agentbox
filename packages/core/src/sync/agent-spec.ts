@@ -751,6 +751,25 @@ export interface AgentSyncSpec {
    */
   pull?: AgentPullSpec;
   /**
+   * What a FULL state capture (`agentbox download --backup`) must leave behind.
+   *
+   * A backup is the one direction that deliberately keeps the agent's IDENTITY
+   * — for openclaw the gateway token, the config journal key and the live
+   * session state — because a restore that produces a different bot has not
+   * restored anything. So it cannot reuse `staticPaths[].exclude`, which is
+   * push-direction hygiene and is precisely that identity.
+   *
+   * What must still be dropped is anything keyed to the box it came from. The
+   * motivating case is openclaw's `tmp/openclaw-<uid>/` lock databases: the box
+   * user's uid differs per provider (docker 1000, vercel 1001, e2b 1002), so
+   * carrying them across a provider switch restores garbage.
+   *
+   * Live databases are excluded from the tree copy for every agent regardless
+   * ({@link LIVE_DATABASE_EXCLUDES}) and captured separately through SQLite's
+   * online-backup API — a byte copy of a live WAL triple is a torn read.
+   */
+  stateBackup?: AgentStateBackupSpec;
+  /**
    * Extra in-box files ctl should watch, beyond `credential` (which is always
    * watched). This is the hook a custom agent uses to say "sync these back".
    *
@@ -758,6 +777,15 @@ export interface AgentSyncSpec {
    * defaults to `backup` — see `AgentWatchSpec.sync`.
    */
   watch?: readonly AgentWatchSpec[];
+}
+
+/** What a full state capture must leave behind. See `AgentSyncSpec.stateBackup`. */
+export interface AgentStateBackupSpec {
+  /**
+   * Paths under the agent's state root, relative, dropped from the capture.
+   * Read as tar `--exclude` patterns, so a bare name matches at any depth.
+   */
+  exclude?: readonly string[];
 }
 
 /** One extra file an agent asks ctl to watch. */

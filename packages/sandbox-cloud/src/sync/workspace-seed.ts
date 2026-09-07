@@ -3,7 +3,7 @@ import { copyFile, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { CloudBackend, CloudHandle, ResyncResult } from '@agentbox/core';
-import { detectGitRepos } from '@agentbox/sandbox-core';
+import { detectGitRepos, dropHostOnlyPaths, seedExcludeTarArgs } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArgv } from '../shell.js';
 
 /**
@@ -907,12 +907,14 @@ async function maybeBuildUntrackedTar(hostRepo: string, outPath: string): Promis
     { reject: false },
   );
   if (list.exitCode !== 0 || list.stdout.length === 0) return 0;
+  const paths = dropHostOnlyPaths(list.stdout);
+  if (paths.length === 0) return 0;
   // Feed NUL-delimited paths to `tar --null -T -` so spaces / quotes /
   // newlines in filenames survive. Use COPYFILE_DISABLE=1 to suppress
   // macOS' AppleDouble `._<name>` sidecars (same hardening as the
   // agent-credential tarballs).
   const tar = await execa('tar', ['-C', hostRepo, '--null', '-T', '-', '-czf', outPath], {
-    input: list.stdout,
+    input: paths,
     env: { ...process.env, COPYFILE_DISABLE: '1' },
     reject: false,
   });
@@ -955,7 +957,13 @@ async function seedFromTar(args: SeedFromTarArgs): Promise<void> {
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-tar-'));
   const tarPath = join(stage, 'workspace.tar.gz');
   try {
-    await execa('tar', ['-C', args.hostDir, '-czf', tarPath, '.']);
+    await execa('tar', ['-C', args.hostDir, ...seedExcludeTarArgs(), '-czf', tarPath, '.'], {
+      // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
+      // which extract on Linux as literal junk in the box's /workspace. Every
+      // other tar in this file already sets it; this one was the last that
+      // did not.
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
     const remoteTar = '/tmp/agentbox-workspace.tar.gz';
     await args.backend.uploadFile(args.handle, tarPath, remoteTar);
     const SUDO = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`;

@@ -444,6 +444,17 @@ export interface PullOptions {
   includeNodeModules?: boolean;
   /** Paths the user declined; dropped before copying. */
   skipPaths?: readonly string[];
+  /**
+   * Where the files land. Defaults to `record.workspacePath` — the user's own
+   * working dir, which is what a plain `download` means.
+   *
+   * `download --backup` overrides it to point at
+   * `<project>/.agentbox/bots/<bot>/<stamp>/workspace`. The cloud pull
+   * (`pullWorkspaceToHost`) has always taken this as a parameter; this side had
+   * it wired to the record, which is the only reason the two paths could not
+   * share a caller.
+   */
+  destDir?: string;
   /** Default false. Skip the initial refreshExport — pull whatever's already in the scratch dir. */
   noRefresh?: boolean;
   /** Default false. Run rsync with --dry-run; return the change list without writing. */
@@ -459,7 +470,7 @@ export interface PullOptions {
 }
 
 export interface PullResult {
-  /** Absolute host workspace path the pull targeted (record.workspacePath). */
+  /** Absolute host path the pull targeted (`destDir`, else record.workspacePath). */
   hostPath: string;
   /** Per-file rsync change list (itemized `-i` lines, transfers/deletes only). */
   changes: string[];
@@ -551,15 +562,16 @@ export async function pullToHost(
   }
   const fileList = selected.size > 0 ? [...selected].join('\0') : null;
 
+  const destDir = opts.destDir ?? record.workspacePath;
   const { changes, applied, missing } = await rsyncPullToHost({
     scratchDir,
-    destDir: record.workspacePath,
+    destDir,
     fileList,
     excludes,
     dryRun: opts.dryRun,
     skipPaths: opts.skipPaths,
   });
-  return { hostPath: record.workspacePath, changes, applied, usedGitignore, missing };
+  return { hostPath: destDir, changes, applied, usedGitignore, missing };
 }
 
 export interface OpenOptions extends RefreshOptions {

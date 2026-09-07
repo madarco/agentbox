@@ -17,6 +17,7 @@ import {
   pullWorkspaceToHost,
   type PullWorkspaceResult,
 } from '@agentbox/sandbox-core';
+import { runBackup, resolveBackupTarget } from './_backup.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { ensureBoxRunningVia } from '../lib/ensure-running.js';
 import { providerForBox } from '../provider/registry.js';
@@ -38,6 +39,10 @@ interface DownloadOpts {
   refresh: boolean; // commander gives `--no-refresh` => false
   withEnv?: boolean;
   pattern: string[];
+  backup?: boolean;
+  name?: string;
+  keep?: string;
+  agent?: string;
 }
 
 /**
@@ -90,11 +95,24 @@ export const downloadCommand = new Command('download')
     (v: string, acc: string[]) => [...acc, v],
     [] as string[],
   )
+  .option(
+    '--backup',
+    "capture the box into <project>/.agentbox/bots/<bot>/ instead of your working dir: the workspace plus the agent's state dir, identity included",
+  )
+  .option('--name <bot>', 'bot name for --backup (default: the box name)')
+  .option('--keep <n>', 'backups to keep for --backup (default: 3)')
+  .option('--agent <id>', "agent whose state --backup captures (default: the box's)")
   .action(async (idOrName: string | undefined, opts: DownloadOpts) => {
     try {
       let box = await resolveBoxOrExit(idOrName);
       const isCloud = (box.provider ?? 'docker') !== 'docker';
       const envPatterns = opts.withEnv ? [...DEFAULT_ENV_PATTERNS, ...opts.pattern] : undefined;
+
+      // `--backup` is the SAME pull pointed somewhere else. Resolved before the
+      // pull so a bad `--name`/`--keep`/`--agent` fails before the box is
+      // started and a workspace is staged.
+      const target = opts.backup ? resolveBackupTarget(box, opts) : undefined;
+      const destDir = target ? target.workspaceDir : box.workspacePath;
 
       // One pull, two stage-1s. Docker materializes /workspace over its
       // /host-export bind mount; every other provider tars the selected files
@@ -115,7 +133,7 @@ export const downloadCommand = new Command('download')
             provider,
             box,
             scratchDir,
-            destDir: box.workspacePath,
+            destDir,
             respectGitignore: opts.respectGitignore,
             includeNodeModules: opts.includeNodeModules,
             envPatterns,
@@ -138,6 +156,7 @@ export const downloadCommand = new Command('download')
         pull = async (o) => {
           const r = await pullToHost(box, {
             dryRun: o.dryRun,
+            destDir,
             respectGitignore: opts.respectGitignore,
             includeNodeModules: opts.includeNodeModules,
             envPatterns,
@@ -159,14 +178,19 @@ export const downloadCommand = new Command('download')
       // Files an agent generated in /workspace that the project does not have.
       // Keyed on CREATED, not on the name alone, so a file the user already has
       // is never questioned — it is theirs, and this is just an update to it.
+      // A backup takes EVERYTHING — `SOUL.md` and `IDENTITY.md` are the point of
+      // one, not a surprise to be asked about — so the question is skipped
+      // there. It only makes sense when the destination is the user's project.
       const artifactNames = agentWorkspaceArtifactPaths();
-      const newArtifacts = parseItemizedEntries(preview.changes.join('\n'))
-        .filter((e) => e.created && isAgentWorkspaceArtifact(e.path, artifactNames))
-        .map((e) => e.path);
+      const newArtifacts = target
+        ? []
+        : parseItemizedEntries(preview.changes.join('\n'))
+            .filter((e) => e.created && isAgentWorkspaceArtifact(e.path, artifactNames))
+            .map((e) => e.path);
 
       if (preview.changes.length === 0) {
         process.stdout.write(
-          `no changes to download into ${box.workspacePath}` +
+          `no changes to download into ${destDir}` +
             `${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
         );
         return;
@@ -176,7 +200,7 @@ export const downloadCommand = new Command('download')
         for (const line of preview.changes) process.stdout.write(`${line}\n`);
         process.stdout.write(
           `\n[dry-run] ${String(preview.changes.length)} file(s) would change in ` +
-            `${box.workspacePath}${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
+            `${destDir}${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
         );
         if (newArtifacts.length > 0 && !opts.includeAgentFiles) {
           process.stdout.write(
@@ -206,7 +230,11 @@ export const downloadCommand = new Command('download')
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Download ${String(preview.changes.length - skipPaths.length)} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
+          message: target
+            ? `Back up ${String(preview.changes.length)} workspace file(s)` +
+              `${target.agent ? ` and the ${target.agent} state dir (identity included)` : ''} ` +
+              `into ${target.dir}?`
+            : `Download ${String(preview.changes.length - skipPaths.length)} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${destDir}?`,
           initialValue: false,
         });
         if (!ok) {
@@ -219,9 +247,43 @@ export const downloadCommand = new Command('download')
       // scratch dir — don't restage a second time.
       const result = await pull({ dryRun: false, noRefresh: true, skipPaths });
       process.stdout.write(
-        `updated ${String(result.changes.length)} file(s) in ${result.hostPath}` +
+        `${target ? 'backed up' : 'updated'} ${String(result.changes.length)} file(s) ` +
+          `${target ? 'to' : 'in'} ${result.hostPath}` +
           `${result.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
       );
+
+      if (target) {
+        const { manifest, pruned, wroteGitignore } = await runBackup({
+          box,
+          target,
+          includeNodeModules: opts.includeNodeModules,
+        });
+        if (manifest.state) {
+          process.stdout.write(
+            `captured the ${String(manifest.agent)} state dir` +
+              `${manifest.databases?.length ? ` (${String(manifest.databases.length)} database(s) via the SQLite backup API)` : ''}\n`,
+          );
+          // Not a footnote: this is a live gateway token sitting in the user's
+          // project. It is 0600 and gitignored, but they should know it is there.
+          process.stdout.write(
+            `warning: ${join(target.dir, 'state')} holds this bot's IDENTITY (auth token, ` +
+              `channel pairings). Keep it out of git and off shared drives.\n`,
+          );
+        } else if (target.agent) {
+          process.stdout.write(`note: the ${target.agent} state dir was not captured\n`);
+        } else {
+          process.stdout.write('note: this box has no known agent; workspace only\n');
+        }
+        if (wroteGitignore) {
+          process.stdout.write(`added .agentbox/ to ${join(target.projectRoot, '.gitignore')}\n`);
+        }
+        if (pruned.length > 0) {
+          process.stdout.write(
+            `pruned ${String(pruned.length)} older backup(s), keeping ${String(target.keep)}\n`,
+          );
+        }
+        process.stdout.write(`latest -> ${target.stamp}\n`);
+      }
       if (skipPaths.length > 0) {
         process.stdout.write(
           `skipped ${String(skipPaths.length)} agent-generated file(s) ` +

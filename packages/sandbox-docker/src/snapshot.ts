@@ -11,6 +11,11 @@ import { sanitizeMnemonic } from '@agentbox/config';
  * — removing CoW-cloned entries is essentially free.
  */
 export const EXCLUDE_DIRS: ReadonlySet<string> = new Set([
+  // AgentBox's own durable host dir (`download --backup` writes a bot's
+  // workspace and gateway identity under it). The tar seed excludes it too;
+  // pruning it here as well keeps the clone from copying gigabytes of backups
+  // that are then dropped on the way in.
+  '.agentbox',
   'node_modules',
   '.next',
   '.nuxt',

@@ -11,8 +11,10 @@ import { GitWorktreeError } from '../git-worktree.js';
 // re-exported so the docker test is untouched.
 import {
   classifyUntrackedOverlay,
+  dropHostOnlyPaths,
   makeHostGitPorts,
   resyncWorkspace,
+  seedExcludeTarArgs,
 } from '@agentbox/sandbox-core';
 import type { RepoResyncResult, WorkspaceResyncPorts } from '@agentbox/core';
 export { classifyUntrackedOverlay };
@@ -117,7 +119,9 @@ export async function collectRepoCarryOver(
     ['-C', repo.hostMainRepo, 'ls-files', '--others', '--exclude-standard', '-z'],
     { reject: false },
   );
-  const untrackedNul = untracked.exitCode === 0 ? untracked.stdout : '';
+  // Host-only dirs stripped here rather than at the tar: this list is also
+  // replayed by the resync path, and `.agentbox/` is never the box's business.
+  const untrackedNul = untracked.exitCode === 0 ? dropHostOnlyPaths(untracked.stdout) : '';
 
   return {
     repo,
@@ -489,9 +493,9 @@ export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
         input: r.untrackedNul.replace(/\0$/, ''),
         encoding: 'buffer',
         reject: false,
-            // COPYFILE_DISABLE: no macOS `._*` AppleDouble stubs in the box.
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-    });
+        // COPYFILE_DISABLE: no macOS `._*` AppleDouble stubs in the box.
+        env: { ...process.env, COPYFILE_DISABLE: '1' },
+      });
       if (tarOut.exitCode !== 0) {
         log(`warning: tar of untracked files for ${r.repo.hostMainRepo} failed: ${tarOut.stderr}`);
         continue;
@@ -639,6 +643,11 @@ export async function regenerateRestoredWorktrees(opts: {
  *
  * Runs as uid:gid 1000:1000 so extracted files are owned by `vscode` (the
  * in-container user) — same convention as `copyHostEnvFilesToBox`.
+ *
+ * `seedExcludeTarArgs()` keeps the host's `.agentbox/` out: it is AgentBox's own
+ * durable host dir (`download --backup` writes a bot's workspace and its gateway
+ * identity there), and the box regenerates its own `/workspace/.agentbox` every
+ * boot. Neither one is the other's business.
  */
 export async function seedWorkspaceFromDir(opts: {
   container: string;
@@ -646,13 +655,17 @@ export async function seedWorkspaceFromDir(opts: {
   onLog?: (line: string) => void;
 }): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const tarOut = await execa('tar', ['-C', opts.hostSource, '-cf', '-', '.'], {
-    encoding: 'buffer',
-    reject: false,
-    // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
-    // which extract on Linux as literal junk in the box's /workspace.
-    env: { ...process.env, COPYFILE_DISABLE: '1' },
-  });
+  const tarOut = await execa(
+    'tar',
+    ['-C', opts.hostSource, ...seedExcludeTarArgs(), '-cf', '-', '.'],
+    {
+      encoding: 'buffer',
+      reject: false,
+      // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
+      // which extract on Linux as literal junk in the box's /workspace.
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    },
+  );
   if (tarOut.exitCode !== 0) {
     throw new GitWorktreeError(`tar of ${opts.hostSource} failed: ${tarOut.stderr}`);
   }

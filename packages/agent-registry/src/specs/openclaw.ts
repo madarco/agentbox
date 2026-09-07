@@ -391,4 +391,9 @@ export const openclawSpec: AgentSyncSpec = {
   // host, so a file the user already had stays theirs.
   workspaceArtifacts: ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'],
   pull: { categories: ['agents'] },
+  // A backup KEEPS everything the push excludes -- `openclaw.json` IS the bot,
+  // and a restore that mints a new gateway token has restored nothing. Only the
+  // lock dir is dropped, because its name carries the box user's uid and that
+  // differs per provider (docker 1000, vercel 1001, e2b 1002).
+  stateBackup: { exclude: ['tmp'] },
 };

@@ -28,6 +28,7 @@ export type {
   AgentServiceUrlField,
   AgentSettings,
   AgentSettingSpec,
+  AgentStateBackupSpec,
   AgentSyncSpec,
   AgentWatchSpec,
 } from './agent-spec.js';
