@@ -8,7 +8,7 @@ Run agents in a CreateOS cloud sandbox with public HTTPS preview URLs and provid
 Switch per box with `--provider createos`, or pin it project-wide with `box.provider: createos` in [`agentbox.yaml`](/docs/agentbox-yaml). Comparing options? See [Daytona](/docs/daytona), [Vercel](/docs/vercel), [E2B](/docs/e2b), and [local Docker](/docs/local-docker).
 
 <Callout title="Nightly">
-CreateOS support is available in the **nightly** build of AgentBox.
+  CreateOS support is available in the **nightly** build of AgentBox.
 </Callout>
 
 ## Set up
@@ -47,16 +47,17 @@ By default AgentBox boots CreateOS boxes from `devbox:1`. Override that with `--
 
 ## Limits
 
-| Limit | |
-| --- | --- |
-| Runtime install | Per sandbox provision; `prepare` validates only |
-| Default shape | `s-2vcpu-2gb` |
-| Default disk | 20 GiB |
-| Default rootfs | `devbox:1` |
-| Preview URL | Public HTTPS from CreateOS ingress; WebProxy runs on 8080 |
-| Attach | `createos sandbox process run --pty` |
-| SSH | none - AgentBox does not manage SSH keys for CreateOS boxes |
-| Docker-in-Docker | installed in the box and auto-started by AgentBox |
+| Limit            |                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Runtime install  | Per sandbox provision; `prepare` validates only                                                              |
+| Default shape    | `s-2vcpu-2gb`                                                                                                |
+| Default disk     | 20 GiB                                                                                                       |
+| Default rootfs   | `devbox:1`                                                                                                   |
+| Preview URL      | Public HTTPS from CreateOS ingress; WebProxy runs on 8080                                                    |
+| Attach           | `createos sandbox process run --pty`                                                                         |
+| SSH              | none - AgentBox does not manage SSH keys for CreateOS boxes                                                  |
+| Docker-in-Docker | installed in the box and auto-started by AgentBox                                                            |
+| Portless         | CLI installed for projects whose `agentbox.yaml` runs a Portless task; CreateOS previews remain native HTTPS |
 
 ## Pause / Resume
 

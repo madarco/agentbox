@@ -266,7 +266,7 @@ sudo -u vscode -H mkdir -p /home/vscode/.vnc
 done_ "VNC stack"
 
 step "agent CLIs"
-npm_global install -g --force @openai/codex opencode-ai agent-browser 2>&1 | tail -3 || \
+npm_global install -g --force @openai/codex opencode-ai agent-browser portless 2>&1 | tail -3 || \
   echo "install-box.sh: one or more agent npm installs failed (continuing)"
 done_ "agent CLIs"
 

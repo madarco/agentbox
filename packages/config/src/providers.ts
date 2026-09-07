@@ -457,7 +457,42 @@ export const PROVIDERS = [
     kind: 'cloud',
     label: 'CreateOS (cloud microVM)',
     loginHint: 'paste an API key from CreateOS',
-    rebuildMinutes: '0',
+    credentials: {
+      envKeys: ['CREATEOS_API_KEY'],
+      fields: [{ key: 'apiKey', label: 'API key' }],
+    },
+    // No base to bake: AgentBox cannot yet build a reusable CreateOS rootfs, so
+    // `prepare` only validates credentials + runtime assets and each create
+    // installs the runtime into a fresh rootfs.
+    bake: { required: false, approxMinutes: '0' },
+    capabilities: {
+      // The provider composes the cloud scaffold without a `checkpoint`
+      // override, so there is no snapshot to restore from.
+      checkpoints: false,
+      checkpointReboots: false,
+      // No AgentBox-managed SSH transport — attach is a CreateOS CLI managed PTY.
+      ssh: false,
+      persistentSsh: false,
+      directBoxSsh: false,
+      inbound: false,
+      directGit: true,
+      resync: true,
+      prune: true,
+      vnc: true,
+      // Firecracker microVM with full root, so nested containers work.
+      dind: true,
+      // Pause-to-zero keeps the workspace and resumes by sandbox id.
+      pauseSemantics: 'freeze',
+      hubRoutable: true,
+      // Idle timeout, mapped to the API's `auto_pause_after_seconds`.
+      timeoutModel: 'inactivity',
+    },
+    sizes: [
+      { key: '2-2-20', label: '2 vCPU / 2 GB / 20 GB (default)' },
+      { key: '4-8-40', label: '4 vCPU / 8 GB / 40 GB' },
+      { key: '8-16-80', label: '8 vCPU / 16 GB / 80 GB' },
+    ],
+    sizeHint: 'a CreateOS shape slug (e.g. s-2vcpu-2gb), or cpu-memory-disk in GB, e.g. 2-2-20',
     blurb: 'CreateOS Sandboxes',
     sizeDesc:
       'Per-provider override of `box.size` for createos. Shape slug (e.g. `s-2vcpu-2gb`) or `cpu-memory[-disk]` GB spec (e.g. `2-2-20`).',

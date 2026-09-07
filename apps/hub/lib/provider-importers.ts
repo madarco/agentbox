@@ -27,6 +27,7 @@ export const IMPORTERS: Record<ProviderKind, () => Promise<{ providerModule: Pro
   hetzner: () => import('@agentbox/sandbox-hetzner'),
   vercel: () => import('@agentbox/sandbox-vercel'),
   e2b: () => import('@agentbox/sandbox-e2b'),
+  createos: () => import('@agentbox/sandbox-createos'),
   digitalocean: () => import('@agentbox/sandbox-digitalocean'),
   'remote-docker': () => import('@agentbox/sandbox-remote-docker'),
 };
