@@ -51,8 +51,19 @@ mode, and the output says so.
 The list drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and
 every agent's state directory (`.claude`, `.codex`, `.config/opencode`, …). Live databases are never
 safe to copy — the main file without its write-ahead log is a torn read — and an agent's state
-directory belongs to the box, not to your project folder. `--include-node-modules` keeps
-`node_modules`; `--no-respect-gitignore` forces this mode even in a git workspace.
+directory belongs to the box, not to your project folder. `--no-respect-gitignore` forces this mode
+even in a git workspace.
+
+`node_modules` is left in the box in **both** modes, and `--include-node-modules` is the single
+switch that overrides that. It used to be excluded only by your `.gitignore`, so a repo that does
+not ignore it had the box's copy pulled back — a Linux-built `node_modules` landing on a macOS
+checkout, and, because the staged copy never contained it, a download that failed outright.
+
+Files an agent generated in the workspace — openclaw's `AGENTS.md`, `SOUL.md`, `IDENTITY.md` and
+`USER.md`, which it writes because its workspace _is_ your project — are neither dropped nor copied
+silently. If your project does not already have one, `download` **asks** before bringing it in;
+`--include-agent-files` answers yes up front, and with `-y` they are skipped and named. A file you
+already have is never questioned: it is yours, and the download just updates it.
 
 ```bash
 agentbox download --dry-run

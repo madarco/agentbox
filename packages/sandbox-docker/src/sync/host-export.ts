@@ -238,18 +238,37 @@ async function hasContainerPath(container: string, path: string): Promise<boolea
  * back to a `tar | tar` pipe through `docker exec` for boxes that predate the
  * bind.
  */
+/**
+ * What the box→scratch mirror leaves behind, as rsync/tar `--exclude` patterns.
+ *
+ * THE INVARIANT: the mirror must be a SUPERSET of the selection. A superset
+ * costs nothing — `rsync --files-from` simply ignores the extra files — while a
+ * subset is fatal, because a selected path that is not in the mirror makes rsync
+ * exit 23 and takes the whole download with it. That is exactly what happened
+ * when a repo did not gitignore `node_modules`: git listed it, this mirror had
+ * dropped it.
+ *
+ * So the mirror may keep on copying `.git`, `media/`, state dirs and sqlite
+ * files that the selection then drops — but it may only drop `node_modules` when
+ * the selection drops it too, which is why both sides now read the same flag
+ * through this one function.
+ */
+export function exportMirrorExcludes(opts: RefreshOptions = {}): string[] {
+  return opts.includeNodeModules ? [] : ['node_modules'];
+}
+
 export async function refreshExport(
   record: Pick<BoxRecord, 'id' | 'name' | 'projectIndex' | 'container'>,
   opts: RefreshOptions = {},
 ): Promise<RefreshResult> {
   const paths = await getHostPaths(record);
-  const excludeNodeModules = !opts.includeNodeModules;
+  const mirrorExcludes = exportMirrorExcludes(opts);
   await mkdir(paths.mergedExport, { recursive: true });
 
   const bindAvailable = await hasContainerPath(record.container, CONTAINER_EXPORT_MERGED);
   if (bindAvailable) {
     const args = ['rsync', '-a', '--delete'];
-    if (excludeNodeModules) args.push('--exclude=node_modules');
+    for (const e of mirrorExcludes) args.push(`--exclude=${e}`);
     args.push('/workspace/', `${CONTAINER_EXPORT_MERGED}/`);
     const r = await execInBox(record.container, args, { user: 'root' });
     if (r.exitCode !== 0) {
@@ -261,7 +280,7 @@ export async function refreshExport(
   // Fallback for pre-existing boxes: stream a tar through docker exec into the
   // host target. Slower and skips the in-place delete that rsync gives us, but
   // it works without recreating the container.
-  const excludes = excludeNodeModules ? ['--exclude=node_modules'] : [];
+  const excludes = mirrorExcludes.map((e) => `--exclude=${e}`);
   const result = await execa(
     'docker',
     [
@@ -421,8 +440,10 @@ export async function copyHostFilesToBox(opts: CopyHostFilesOptions): Promise<{ 
 export interface PullOptions {
   /** Default true. When false, skip git ls-files and use the static exclude-list. */
   respectGitignore?: boolean;
-  /** Default false. When true, don't filter node_modules even in fallback mode. */
+  /** Default false. When true, keep node_modules — in BOTH git and exclude-list mode. */
   includeNodeModules?: boolean;
+  /** Paths the user declined; dropped before copying. */
+  skipPaths?: readonly string[];
   /** Default false. Skip the initial refreshExport — pull whatever's already in the scratch dir. */
   noRefresh?: boolean;
   /** Default false. Run rsync with --dry-run; return the change list without writing. */
@@ -446,6 +467,8 @@ export interface PullResult {
   applied: boolean;
   /** True when gitignore-mode was used (vs. the fallback exclude-list). */
   usedGitignore: boolean;
+  /** Selected paths that were not in the staged copy — reported, not fatal. */
+  missing: string[];
 }
 
 /**
@@ -458,9 +481,12 @@ export interface PullResult {
  * host-side rsync copies scratch → `workspacePath`.
  *
  * Filtering: by default we ask git *inside the box* which files it would
- * track (`git ls-files --cached --others --exclude-standard`) so node_modules
- * / build dirs / gitignored secrets never leak back. Non-git workspaces (or
+ * track (`git ls-files --cached --others --exclude-standard`) so build dirs and
+ * gitignored secrets never leak back. Non-git workspaces (or
  * `respectGitignore: false`) fall back to a static `--exclude` list.
+ * `node_modules` is dropped in BOTH modes unless `includeNodeModules` says
+ * otherwise — the claim that git mode alone kept it out only held for repos that
+ * gitignore it, and a repo that does not used to fail the pull outright.
  *
  * Never passes `--delete`: files that exist on the host but not in the box
  * are preserved. Removals are the user's call.
@@ -494,7 +520,15 @@ export async function pullToHost(
   const excludes = workspaceExcludes({ includeNodeModules: opts.includeNodeModules });
   const listed = await execInBox(
     record.container,
-    ['bash', '-c', buildWorkspaceListScript({ respectGitignore: opts.respectGitignore, excludes })],
+    [
+      'bash',
+      '-c',
+      buildWorkspaceListScript({
+        respectGitignore: opts.respectGitignore,
+        excludes,
+        includeNodeModules: opts.includeNodeModules,
+      }),
+    ],
     { user: 'root' },
   );
   if (listed.exitCode !== 0) {
@@ -517,14 +551,15 @@ export async function pullToHost(
   }
   const fileList = selected.size > 0 ? [...selected].join('\0') : null;
 
-  const { changes, applied } = await rsyncPullToHost({
+  const { changes, applied, missing } = await rsyncPullToHost({
     scratchDir,
     destDir: record.workspacePath,
     fileList,
     excludes,
     dryRun: opts.dryRun,
+    skipPaths: opts.skipPaths,
   });
-  return { hostPath: record.workspacePath, changes, applied, usedGitignore };
+  return { hostPath: record.workspacePath, changes, applied, usedGitignore, missing };
 }
 
 export interface OpenOptions extends RefreshOptions {

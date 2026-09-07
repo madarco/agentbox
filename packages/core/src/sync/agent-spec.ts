@@ -628,6 +628,18 @@ export interface AgentSyncSpec {
   /** Host→box static-config source map (1 entry for claude/codex, 3 for opencode). */
   staticPaths: AgentPathMap[];
   /**
+   * Workspace-relative paths this agent CREATES inside `/workspace` — its own
+   * scaffolding, not the user's content. openclaw's `onboard` writes `AGENTS.md`,
+   * `SOUL.md`, `IDENTITY.md` and `USER.md` there because its workspace IS the
+   * project dir.
+   *
+   * Deliberately neither excluded nor silently carried: `download` ASKS before
+   * copying one into a project that does not have it (a file the user already
+   * has is never questioned), while `clone` drops them, matching its existing
+   * fresh-identity contract for state dirs.
+   */
+  workspaceArtifacts?: readonly string[];
+  /**
    * Where this agent's login credential lives, when it HAS one.
    *
    * ABSENT MEANS "this agent has no host-side credential to sync". That is a

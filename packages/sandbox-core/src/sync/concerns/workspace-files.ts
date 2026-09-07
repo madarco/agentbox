@@ -26,7 +26,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
@@ -72,6 +72,36 @@ export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
  * user's bind-mounted host repo.
  */
 export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
+
+/**
+ * The git-mode pathspecs, as `git ls-files -- . <these>` arguments.
+ *
+ * `node_modules` joins `.agentbox` here unless the caller asked to keep it, and
+ * the two are anchored DIFFERENTLY on purpose:
+ *
+ *  - `.agentbox` is one dir at the workspace root, so one root-anchored pathspec
+ *    says exactly what is meant.
+ *  - `node_modules` is whatever rsync's `--exclude=node_modules` means in the
+ *    docker mirror, and that matches the basename at ANY depth. A single
+ *    root-anchored `:(exclude)node_modules` would leave a monorepo's
+ *    `packages/x/node_modules` selected but unmirrored — which is the exact
+ *    listed-but-absent failure this whole change exists to remove. Measured
+ *    against git 2.39 in this repo: the root-anchored form alone still lists
+ *    3310 nested paths; all three forms list none.
+ *
+ * Excluding it in git mode at all is a deliberate behaviour choice, not a
+ * mechanical one: a repo that does not gitignore `node_modules` used to have it
+ * pulled back, and `--include-node-modules` is now the single switch in both
+ * modes. Pulling a box-built (Linux) `node_modules` onto the host was never
+ * something to do by accident.
+ */
+export function gitModeExcludePathspecs(opts: WorkspaceExcludeOptions = {}): string[] {
+  const specs = GIT_MODE_EXCLUDE_DIRS.map((d) => `:(exclude)${d}`);
+  if (!opts.includeNodeModules) {
+    specs.push(':(exclude)node_modules', ':(exclude)*/node_modules', ':(exclude)*/node_modules/*');
+  }
+  return specs;
+}
 
 /**
  * Agent state directories, derived from every registered agent's declared
@@ -144,6 +174,12 @@ export interface WorkspaceListScriptOptions {
   respectGitignore?: boolean;
   /** Exclude patterns for the non-git branch (see {@link workspaceExcludes}). */
   excludes: readonly string[];
+  /**
+   * Default false. Keep `node_modules` in the GIT-mode selection too — the
+   * non-git branch reads the same choice out of `excludes`. Both halves must be
+   * told, or the two modes disagree about the one flag the user set.
+   */
+  includeNodeModules?: boolean;
 }
 
 /**
@@ -181,15 +217,37 @@ export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): stri
   const findCmd = `find . ${prune}\\( \\( -type f -o -type l \\) ${fileFilter} -print0 \\)`;
   const gitProbe =
     opts.respectGitignore === false ? 'false' : 'git rev-parse --is-inside-work-tree';
-  // `:(exclude)<dir>` matches the directory and everything under it (verified
-  // against git 2.43 in a box), so one pathspec per name is enough.
-  const gitExcludePathspecs = GIT_MODE_EXCLUDE_DIRS.map((d) => sq(`:(exclude)${d}`)).join(' ');
+  const gitExcludePathspecs = gitModeExcludePathspecs(opts).map(sq).join(' ');
+  // Everything the git branch prints is passed through an existence test, so the
+  // list can only ever name a path that is really there.
+  //
+  // That invariant is the whole point. `git ls-files --cached` happily prints an
+  // index entry whose worktree file was DELETED, and a listed-but-absent path is
+  // fatal on both transports: rsync exits 23 (`link_stat ... No such file`) and
+  // the shared `rsyncPullToHost` throws on its dry run, while the cloud tar dies
+  // with `Cannot stat` under `set -e`. Same bug, two transports.
+  //
+  // `-f`/`-L` mirrors the find branch's `-type f -o -type l`, which also drops a
+  // gitlink (a submodule, which `--cached` prints as a DIRECTORY): tar would
+  // recurse into it and pull its `.git`, while `rsync --files-from` would not
+  // recurse at all, so the two staging paths disagreed in both directions.
+  //
+  // `xargs -0` rather than a `while read -d ''` loop: bash reads a pipe a byte at
+  // a time, measured at 8.6s vs 2.65s over 138k paths. No `-r` (BSD xargs has
+  // none) — with empty input `sh` runs once with no positional args and the loop
+  // prints nothing. No temp file and no process substitution, because a Vercel
+  // box has no `/dev/fd`.
+  const existingOnly = `xargs -0 sh -c 'for f do if [ -f "$f" ] || [ -L "$f" ]; then printf "%s\\0" "$f"; fi; done' _`;
   return [
     `set -u`,
+    // Without pipefail a failing `git ls-files` is invisible: the pipeline exits
+    // 0 and the short list reads as "this workspace has fewer files".
+    `set -o pipefail`,
     `cd ${sq(dir)} 2>/dev/null || exit 3`,
     `if ${gitProbe} >/dev/null 2>&1; then`,
     `  printf 'MODE=git\\n'`,
-    `  git ls-files -z --cached --others --exclude-standard -- . ${gitExcludePathspecs}`,
+    `  git ls-files -z --cached --others --exclude-standard -- . ${gitExcludePathspecs} |`,
+    `    ${existingOnly}`,
     `else`,
     `  printf 'MODE=exclude\\n'`,
     `  ${findCmd}`,
@@ -258,24 +316,84 @@ export function isExcludedPath(relPath: string, patterns: readonly string[]): bo
   return false;
 }
 
+/** One itemized rsync line, split into the parts a caller can act on. */
+export interface ItemizedChange {
+  /** The line as rsync printed it — what `parseItemizedChanges` returns. */
+  raw: string;
+  /** The leading flag word (`>f+++++++`, `*deleting`, ...). */
+  code: string;
+  /** Path relative to the destination, with any ` -> target` suffix removed. */
+  path: string;
+  /** True when this file does not exist at the destination yet. */
+  created: boolean;
+}
+
 /**
- * Keep only itemized lines that represent an actual file transfer or delete.
- * rsync `-i` emits a leading 11-char code: char 0 is the update type
- * (`>`/`<`/`c`/`*` = transfer/change/delete; `.` = attr-only, skipped) and char
- * 1 is the entry type (`f` file, `d` dir, ...). Directory lines (`d`) are
- * pruned: rsync creates parent dirs as a side effect of transferring files, so
- * counting them would overstate "files changed".
+ * Parse the itemized lines that represent an actual file transfer or delete.
+ * rsync `-i` emits a leading code: char 0 is the update type (`>`/`<`/`c`/`*` =
+ * transfer/change/delete; `.` = attr-only, skipped) and char 1 is the entry type
+ * (`f` file, `d` dir, ...). Directory lines (`d`) are pruned: rsync creates
+ * parent dirs as a side effect of transferring files, so counting them would
+ * overstate "files changed".
+ *
+ * `created` is "every attribute slot is `+`", NOT a fixed `+++++++` literal: the
+ * flag word is 9 characters on the rsync macOS still ships (2.6.9, `YXcstpogz`)
+ * and 11 on rsync 3.x (`YXcstpoguax`). Matching a literal would silently report
+ * "nothing is new" on one of the two.
  */
+export function parseItemizedEntries(stdout: string): ItemizedChange[] {
+  const out: ItemizedChange[] = [];
+  for (const line of stdout.split('\n')) {
+    const raw = line.trimEnd();
+    if (raw.length === 0) continue;
+    const code = raw.slice(0, raw.indexOf(' ') === -1 ? raw.length : raw.indexOf(' '));
+    const kind = raw[1];
+    const type = raw[0];
+    if (!(type === '>' || type === '<' || type === 'c' || type === '*') || kind === 'd') continue;
+    const rest = raw.slice(code.length).trimStart();
+    // `%i %n%L`: a symlink line carries ` -> target`, which is not part of the name.
+    const arrow = rest.indexOf(' -> ');
+    const path = arrow === -1 ? rest : rest.slice(0, arrow);
+    const attrs = code.slice(2);
+    const created =
+      (type === '>' || type === '<' || type === 'c') &&
+      kind === 'f' &&
+      attrs.length > 0 &&
+      [...attrs].every((c) => c === '+');
+    out.push({ raw, code, path, created });
+  }
+  return out;
+}
+
+/** The itemized lines that count as a change, as rsync printed them. */
 export function parseItemizedChanges(stdout: string): string[] {
-  return stdout
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .filter((l) => l.length > 0)
-    .filter((l) => {
-      const code = l[0];
-      const kind = l[1];
-      return (code === '>' || code === '<' || code === 'c' || code === '*') && kind !== 'd';
-    });
+  return parseItemizedEntries(stdout).map((e) => e.raw);
+}
+
+/**
+ * Workspace-relative paths the registered agents CREATE inside `/workspace` —
+ * their own scaffolding rather than the user's content.
+ *
+ * Derived from the registry (`workspaceArtifacts`) rather than listed, for the
+ * same reason `agentStateExcludePaths` is: an agent's files are the agent's to
+ * declare. Unlike that one these are NOT excluded — `download` asks about them
+ * when they would be new to the project.
+ */
+export function agentWorkspaceArtifactPaths(): string[] {
+  const out = new Set<string>();
+  for (const spec of AGENT_SYNC_SPECS) {
+    for (const rel of spec.workspaceArtifacts ?? []) out.add(rel);
+  }
+  return [...out].sort();
+}
+
+/**
+ * Exact, root-anchored match — deliberately NOT {@link isExcludedPath}, whose
+ * bare-name rule matches a basename at any depth and would sweep up a
+ * `docs/AGENTS.md` the user wrote themselves.
+ */
+export function isAgentWorkspaceArtifact(relPath: string, artifacts: readonly string[]): boolean {
+  return artifacts.includes(relPath);
 }
 
 export interface RsyncPullArgs {
@@ -292,6 +410,40 @@ export interface RsyncPullArgs {
   excludes?: readonly string[];
   /** When true, run the dry-run pass only and return the change list. */
   dryRun?: boolean;
+  /**
+   * Paths to drop from `fileList` before copying — the user declined them.
+   * Exact, root-anchored matches.
+   */
+  skipPaths?: readonly string[];
+}
+
+/**
+ * Which of `paths` actually exist under `scratchDir`.
+ *
+ * `lstat`, so a symlink counts as present without following it, and the cost is
+ * nothing next to `--checksum`, which already reads every byte of every file.
+ */
+export async function existingPathsIn(
+  scratchDir: string,
+  paths: readonly string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  const LIMIT = 64;
+  for (let i = 0; i < paths.length; i += LIMIT) {
+    const batch = paths.slice(i, i + LIMIT);
+    const found = await Promise.all(
+      batch.map(async (rel) => {
+        try {
+          await lstat(join(scratchDir, rel));
+          return rel;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const rel of found) if (rel !== null) out.push(rel);
+  }
+  return out;
 }
 
 /**
@@ -308,7 +460,7 @@ export interface RsyncPullArgs {
  */
 export async function rsyncPullToHost(
   args: RsyncPullArgs,
-): Promise<{ changes: string[]; applied: boolean }> {
+): Promise<{ changes: string[]; applied: boolean; missing: string[] }> {
   const baseArgs = ['-a', '--checksum'];
   if (args.fileList === null) {
     for (const e of args.excludes ?? []) baseArgs.push(`--exclude=${e}`);
@@ -317,7 +469,34 @@ export async function rsyncPullToHost(
   }
   const src = `${args.scratchDir}/`;
   const dst = `${args.destDir}/`;
-  const input = args.fileList !== null ? args.fileList : undefined;
+
+  // A path in `--files-from` that is not in the scratch dir makes rsync exit 23
+  // and takes the whole pull down with it, and the rsync macOS ships (2.6.9)
+  // does not have `--ignore-missing-args` to soften that. So the list is
+  // reconciled with the staged copy here instead.
+  //
+  // A pull is additive — never `--delete` — so a file that vanished between the
+  // listing and the staging is reported and skipped, not fatal. Failing on it
+  // would let one racing temp file from a live agent kill a 5000-file download,
+  // which is the bug this change removes, wearing a different hat.
+  let missing: string[] = [];
+  let input = args.fileList !== null ? args.fileList : undefined;
+  if (args.fileList !== null) {
+    const requested = args.fileList.split('\0').filter((p) => p.length > 0);
+    const skip = new Set(args.skipPaths ?? []);
+    const wanted = requested.filter((p) => !skip.has(p));
+    const present = await existingPathsIn(args.scratchDir, wanted);
+    missing = wanted.filter((p) => !present.includes(p));
+    // Nothing at all surviving is not a race, it is broken staging — a stale
+    // `--no-refresh` scratch dir, or one wiped underneath us. Say so.
+    if (present.length === 0 && wanted.length > 0) {
+      throw new Error(
+        `none of the ${String(wanted.length)} selected file(s) are in the staged copy at ` +
+          `${args.scratchDir} — the staging is stale or empty; re-run without --no-refresh`,
+      );
+    }
+    input = present.join('\0');
+  }
 
   const dry = await execa('rsync', [...baseArgs, '--dry-run', '-i', src, dst], {
     reject: false,
@@ -327,13 +506,13 @@ export async function rsyncPullToHost(
     throw new Error(`rsync dry-run failed: ${dry.stderr || dry.stdout}`);
   }
   const changes = parseItemizedChanges(dry.stdout);
-  if (args.dryRun) return { changes, applied: false };
+  if (args.dryRun) return { changes, applied: false, missing };
 
   const real = await execa('rsync', [...baseArgs, src, dst], { reject: false, input });
   if (real.exitCode !== 0) {
     throw new Error(`rsync into ${args.destDir} failed: ${real.stderr || real.stdout}`);
   }
-  return { changes, applied: true };
+  return { changes, applied: true, missing };
 }
 
 // ── host → live box (the non-git leg of `agentbox sync`) ──────────────────────
