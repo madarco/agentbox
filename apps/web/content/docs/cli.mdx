@@ -247,6 +247,11 @@ agentbox download 1 --with-env
 agentbox download --backup ada       # capture the bot into .agentbox/bots/
 agentbox download --backup --keep 5 ada
 
+# Put a backed-up bot back into a new box, identity and all
+agentbox openclaw --restore ada
+agentbox openclaw --restore ada --provider hetzner -n ada-hz
+agentbox create --restore ada        # the workspace half only (no agent)
+
 # Push the host workspace INTO a live box (the box wins every conflict)
 agentbox upload
 agentbox upload 1
@@ -297,6 +302,8 @@ agentbox services restart 1 web            # restart one service
 When `/workspace` is not a git repo, `download` and `upload` select files with an **exclude list** rather than `.gitignore` — the normal mode for a service box, not a fallback, and the output labels it. It drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and every agent's state directory.
 
 `download --backup` writes to `<project>/.agentbox/bots/<bot>/<timestamp>/` instead of your working dir, and captures the agent's **state directory with its identity** alongside the workspace — the portable, cross-provider alternative to a checkpoint. `--name <bot>` sets the bot name (default: the box name), `--keep <n>` how many backups to retain (default 3), `--agent <id>` which agent's state to take. It never asks about agent-generated files. See [sync and git](/docs/sync-and-git#back-a-bot-up).
+
+`--restore <bot>` is the other direction: it creates a **new** box seeded from that bot's backup. On a service-agent command (`agentbox openclaw --restore ada`) it also puts the captured state directory back, so the bot keeps its gateway identity, pairings and history — the same bot on a new box, and on a different provider if you pass one. On `agentbox create` it restores the workspace only, because an agentless box has no agent state directory to restore into. `--stamp <t>` picks a backup other than the newest, `--into <dir>` where the restored workspace lives (default `<project>/.agentbox/bots/<bot>/workspace`), and `--force` proceeds when the backed-up box is still running or the destination is not empty. See [sync and git](/docs/sync-and-git#bring-a-bot-back).
 
 Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore` (force exclude-list mode), `--include-node-modules` (keep `node_modules`, in both modes), `--include-agent-files` (take agent-generated files like `AGENTS.md` without being asked), `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 

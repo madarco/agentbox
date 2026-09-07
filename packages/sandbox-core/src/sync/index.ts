@@ -172,9 +172,14 @@ export {
   linkLatest,
   listBackups,
   pruneBackups,
+  readBackupManifest,
+  resolveBotBundle,
+  restoreAgentState,
   writeBackupManifest,
   type AgentStateBackupResult,
+  type AgentStateRestoreResult,
   type BackupManifest,
+  type BotBundle,
 } from './concerns/bot-backup.js';
 export {
   GIT_MODE_EXCLUDE_DIRS,

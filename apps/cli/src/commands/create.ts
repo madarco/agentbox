@@ -45,6 +45,13 @@ import { withHubClient } from '../control-plane/with-hub.js';
 import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 import { resolveBoxOrExit } from '../box-ref.js';
+import {
+  assertSourceBoxNotRunning,
+  resolveRestoreRequest,
+  RestoreSourceRunningError,
+  stageRestoreWorkspace,
+  type RestoreRequest,
+} from './_restore.js';
 
 interface CreateOptions {
   workspace: string;
@@ -84,6 +91,14 @@ interface CreateOptions {
   inbound?: string;
   /** --remote-host <dest>: SSH destination whose docker engine runs the box. remote-docker-only. */
   remoteHost?: string;
+  /** --restore <bot>: seed the box from that bot's backup under <project>/.agentbox/bots/. */
+  restore?: string;
+  /** --stamp <s>: which backup to restore (default: `latest`). */
+  stamp?: string;
+  /** --into <dir>: where the restored workspace lives (default: the bot's own dir). */
+  into?: string;
+  /** --force: restore even when the source box still runs / the destination is not empty. */
+  force?: boolean;
   /** --from-branch <ref>: base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. */
   fromBranch?: string;
   /** -b / --use-branch <name>: reuse an existing branch directly instead of forking agentbox/<name>. */
@@ -386,14 +401,59 @@ export const createCommand = new Command('create')
     'force building the box on this machine even when a control box is configured (the opposite of --via-hub; cloud.viaHub=false makes this the default). Docker boxes are always local.',
   )
   .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
+  .option(
+    '--restore <bot>',
+    "recreate a bot from its backup under <project>/.agentbox/bots/<bot>/. The box runs on a copy of the backed-up workspace; the agent's state dir is NOT restored here (see `agentbox <agent> --restore` for that)",
+  )
+  .option('--stamp <stamp>', 'which --restore backup to use (default: the `latest` link)')
+  .option(
+    '--into <dir>',
+    'dir the restored workspace lives in (default: <project>/.agentbox/bots/<bot>/workspace)',
+  )
+  .option(
+    '--force',
+    'with --restore: proceed even when the backed-up box still runs, or the destination is not empty',
+  )
   .action(async (opts: CreateOptions) => {
     const cmdLog = openCommandLog('create');
     intro('Setting up a new box...');
 
+    // `--restore` resolves and stages BEFORE the config load: the restored tree
+    // becomes the box's workspace, so its own `agentbox.yaml` is the one that
+    // must be read. `projectRoot` is then that directory verbatim rather than
+    // `findProjectRoot`'s answer — the restore dir sits under the ORIGINAL
+    // project's `.agentbox/`, so walking up would silently pick the template
+    // project and seed the box from it instead.
+    let restored: RestoreRequest | undefined;
+    if (opts.restore) {
+      try {
+        restored = await resolveRestoreRequest(opts.workspace, opts);
+        await assertSourceBoxNotRunning(restored.bundle, opts.force);
+      } catch (err) {
+        // Exit 2 for "you asked for something this box cannot be", as
+        // `--from-branch` and `destroy`'s persistent guard already do; a stack
+        // trace here would bury the one line that says what to do next.
+        log.error(err instanceof Error ? err.message : String(err));
+        cmdLog.close();
+        process.exit(err instanceof RestoreSourceRunningError ? 2 : 1);
+      }
+      const staged = await stageRestoreWorkspace(restored, opts.force);
+      log.info(
+        `restored ${restored.bundle.bot} @ ${restored.bundle.stamp}: ` +
+          `${String(staged.files)} entr(ies) -> ${restored.workspaceDir}`,
+      );
+      if (restored.agent) {
+        log.warn(
+          `this backup also holds ${restored.agent} state; \`agentbox create\` restores the workspace only — ` +
+            `use \`agentbox ${restored.agent} --restore ${restored.bundle.bot}\` to bring the identity back too`,
+        );
+      }
+      opts.workspace = restored.workspaceDir;
+    }
     const cfg = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: buildCliOverrides(opts),
     });
-    const projectRoot = (await findProjectRoot(opts.workspace)).root;
+    const projectRoot = restored?.workspaceDir ?? (await findProjectRoot(opts.workspace)).root;
     // Register the project in the on-disk registry so the hub / web UI can list
     // it (even before it has any box). Best-effort: never block or fail create.
     // Other create entry points (agent commands, queue worker) are covered by

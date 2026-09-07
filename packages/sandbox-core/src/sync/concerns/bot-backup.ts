@@ -34,6 +34,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Dirent } from 'node:fs';
 import type { AgentId, SyncTransport } from '@agentbox/core';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
@@ -58,6 +59,18 @@ export function backupStamp(at: Date = new Date()): string {
     .replace(/\.\d+Z$/, 'Z')
     .replace(/:/g, '-');
 }
+
+/**
+ * What {@link backupStamp} produces, and the only directory name under a bot
+ * that IS a backup.
+ *
+ * Matched rather than assumed, because the bot dir is not backups-only: a
+ * restore writes its live `workspace/` tree there as a sibling of the stamps.
+ * Treating "any dir that is not `latest`" as a backup would let that tree take a
+ * slot in the prune's ordering and, since `workspace` sorts after every stamp,
+ * silently make it the newest "backup" nothing may delete.
+ */
+const STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;
 
 /** `<project>/.agentbox/bots/<bot>`. */
 export function botDir(projectRoot: string, bot: string): string {
@@ -106,7 +119,12 @@ export async function linkLatest(projectRoot: string, bot: string, stamp: string
   await symlink(stamp, link);
 }
 
-/** The backup directory names under `<bot>`, newest first. */
+/**
+ * The backup directory names under `<bot>`, newest first.
+ *
+ * Stamp-shaped names only ({@link STAMP_RE}) — `latest` and a restore's live
+ * `workspace/` are siblings, not backups.
+ */
 export async function listBackups(projectRoot: string, bot: string): Promise<string[]> {
   let entries: string[];
   try {
@@ -116,7 +134,7 @@ export async function listBackups(projectRoot: string, bot: string): Promise<str
   }
   const dirs: string[] = [];
   for (const name of entries) {
-    if (name === 'latest') continue;
+    if (!STAMP_RE.test(name)) continue;
     const st = await lstat(join(botDir(projectRoot, bot), name)).catch(() => null);
     if (st?.isDirectory()) dirs.push(name);
   }
@@ -271,4 +289,153 @@ async function backupStateDatabases(
 
 function quote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** A bundle resolved on disk, ready to restore from. */
+export interface BotBundle {
+  /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
+  dir: string;
+  bot: string;
+  stamp: string;
+  manifest: BackupManifest;
+  /** The workspace half. */
+  workspaceDir: string;
+  /** The state half; absent when the backup captured only the workspace. */
+  stateDir?: string;
+}
+
+/** Read and shape-check a bundle's manifest. */
+export async function readBackupManifest(dir: string): Promise<BackupManifest> {
+  const path = join(dir, 'manifest.json');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'));
+  } catch (err) {
+    throw new Error(
+      `${path}: not a readable backup manifest (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  const m = parsed as Partial<BackupManifest>;
+  // Version first: a bundle from a newer AgentBox may hold a layout this code
+  // would half-restore, and half a bot is worse than a refusal.
+  if (m.version !== 1) {
+    throw new Error(
+      `${path}: manifest version ${String(m.version)} is not one this build restores`,
+    );
+  }
+  if (typeof m.bot !== 'string' || typeof m.stamp !== 'string') {
+    throw new Error(`${path}: manifest is missing 'bot' or 'stamp'`);
+  }
+  return m as BackupManifest;
+}
+
+/**
+ * Resolve which backup of `bot` to restore.
+ *
+ * `stamp` absent follows the `latest` symlink, and falls back to the newest
+ * stamped dir when the link is missing — a bundle copied with a tool that drops
+ * symlinks is still restorable, which is the whole point of a relative link.
+ */
+export async function resolveBotBundle(
+  projectRoot: string,
+  bot: string,
+  stamp?: string,
+): Promise<BotBundle> {
+  const base = botDir(projectRoot, bot);
+  let chosen = stamp;
+  if (!chosen) {
+    chosen = (await readlink(join(base, 'latest')).catch(() => null)) ?? undefined;
+    if (chosen === undefined) chosen = (await listBackups(projectRoot, bot))[0];
+  }
+  if (!chosen) {
+    throw new Error(
+      `no backup of '${bot}' under ${base} — run \`agentbox download --backup\` first`,
+    );
+  }
+  const dir = join(base, chosen);
+  const manifest = await readBackupManifest(dir);
+  const workspaceDir = join(dir, 'workspace');
+  if (!(await lstat(workspaceDir).catch(() => null))?.isDirectory()) {
+    throw new Error(`${dir}: the backup has no workspace/ directory`);
+  }
+  const stateDir = join(dir, 'state');
+  const hasState = (await lstat(stateDir).catch(() => null))?.isDirectory() === true;
+  return {
+    dir,
+    bot: manifest.bot,
+    stamp: chosen,
+    manifest,
+    workspaceDir,
+    ...(hasState ? { stateDir } : {}),
+  };
+}
+
+export interface AgentStateRestoreResult {
+  /** Box paths whose stale write-ahead log / shared-memory file was removed. */
+  clearedSidecars: string[];
+}
+
+/**
+ * Push a captured state dir back into a box, IDENTITY INCLUDED — the inverse of
+ * {@link backupAgentState}.
+ *
+ * The caller must have stopped the agent first. Two things this does that a
+ * plain "copy the directory in" does not, both of them load-bearing:
+ *
+ * 1. **The stale write-ahead logs go first.** MEASURED, and it is not a corner
+ *    case: a fresh openclaw box has already onboarded, so its `state/` holds a
+ *    live `openclaw.sqlite` with its own `-wal`/`-shm`. Copying the backup's
+ *    main file over it leaves that WAL in place, pointing at a database it no
+ *    longer describes, and the gateway then refuses to start —
+ *    `SQLite integrity_check failed … row 1 missing from index` — in a restart
+ *    loop. Only the sidecars of a database the bundle actually replaces are
+ *    removed: one belonging to a database we are not overwriting may hold the
+ *    only copy of committed rows.
+ * 2. **Modes are preserved** (`noSamePerms` left off), because the gateway token
+ *    file is 0600 and a restore that widened it would be a downgrade the user
+ *    never asked for.
+ *
+ * NOT routed through `agentPushExcludes`: that helper adds
+ * `LIVE_DATABASE_EXCLUDES` unconditionally, which matches `*.sqlite*` — exactly
+ * the gateway state a restore exists to put back. The bundle was already
+ * filtered when it was captured.
+ */
+export async function restoreAgentState(args: {
+  agent: AgentId;
+  transport: SyncTransport;
+  srcDir: string;
+}): Promise<AgentStateRestoreResult> {
+  const boxDir = agentPullBoxDir(args.agent);
+  const clearedSidecars = await clearStaleSidecars(args, boxDir);
+  await args.transport.pushTree(args.srcDir, boxDir);
+  return { clearedSidecars };
+}
+
+/** Remove the box's `-wal`/`-shm` for every database this bundle replaces. */
+async function clearStaleSidecars(
+  args: { transport: SyncTransport; srcDir: string },
+  boxDir: string,
+): Promise<string[]> {
+  const rels = await findLocalDatabases(args.srcDir);
+  if (rels.length === 0) return [];
+  const paths = rels.flatMap((rel) => [`${boxDir}/${rel}-wal`, `${boxDir}/${rel}-shm`]);
+  await args.transport.exec(['sh', '-c', `rm -f ${paths.map(quote).join(' ')}`]);
+  return paths;
+}
+
+/** Host-side twin of the backup's `find`: the databases the bundle carries. */
+async function findLocalDatabases(root: string, prefix = ''): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(join(root, prefix), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    const rel = prefix ? join(prefix, e.name) : e.name;
+    if (e.isDirectory()) out.push(...(await findLocalDatabases(root, rel)));
+    else if (e.isFile() && (e.name.endsWith('.sqlite') || e.name.endsWith('.db'))) out.push(rel);
+  }
+  return out;
 }

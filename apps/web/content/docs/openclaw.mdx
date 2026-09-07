@@ -169,8 +169,8 @@ cloned box from inheriting the facts of the box it was cloned from.
 
 | Path in the box                   | What it is                      | Travels?                         |
 | --------------------------------- | ------------------------------- | -------------------------------- |
-| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | Only into a `--backup`           |
-| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | Only into a `--backup`           |
+| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | `--backup` / `--restore` only    |
+| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | `--backup` / `--restore` only    |
 | `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                            |
 | `~/.openclaw/agents/`             | Your agent definitions          | Both directions                  |
 | `~/.config/openclaw`              | Auth-profile key                | Stays in the box's config volume |
@@ -178,6 +178,8 @@ cloned box from inheriting the facts of the box it was cloned from.
 `agentbox download openclaw [box]` pulls the agent definitions back to your host, additively — an item the host already has is never overwritten. There is deliberately no `--propagate`: an OpenClaw box is a tenant, and copying one tenant's definitions into another's gateway is not a sensible default.
 
 **One exception, and it is opt-in: `agentbox download --backup`.** A backup is the one operation that keeps the identity, because a restore that mints a new gateway token has not restored the bot. It writes `openclaw.json`, the config-journal key and the live `state/` into `<project>/.agentbox/bots/<bot>/<timestamp>/state/` — gitignored and `0700` — while still dropping `tmp/openclaw-<uid>/`, whose name carries the box user's uid and differs per provider. The gateway databases go through SQLite's online-backup API, not a byte copy. See [back a bot up](/docs/sync-and-git#back-a-bot-up).
+
+A backup is restorable, and `agentbox openclaw --restore <bot>` is how: a new box, seeded from the backed-up workspace, with the captured state directory pushed back in once the gateway has come up on its own — same token, same pairings, same history, on whichever provider you point it at. It refuses while the backed-up box is still running, because two gateways holding one identity is the failure the per-box state directory exists to prevent. See [bring a bot back](/docs/sync-and-git#bring-a-bot-back).
 
 If your host happens to run OpenClaw itself, its config and state are excluded from everything pushed into a box, for the same identity reason.
 

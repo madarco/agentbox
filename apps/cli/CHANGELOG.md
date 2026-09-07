@@ -25,6 +25,11 @@ CLI, not the raw commits.
   `<project>/.agentbox/bots/<bot>/<timestamp>/`, so a bot can be recreated later or
   on a different provider. The newest three are kept (`--keep`), and live databases
   are captured through SQLite's online-backup API, not copied byte for byte.
+- **`--restore <bot>` puts a backed-up bot back into a new box.** On a
+  service-agent command (`agentbox openclaw --restore ada`) it restores the state
+  dir too, so the bot keeps its identity, pairings and history — on a different
+  provider if you pass one. `agentbox create --restore` takes the workspace only.
+  Refused while the backed-up box is still running, unless `--force`.
 
 ### Fixed
 

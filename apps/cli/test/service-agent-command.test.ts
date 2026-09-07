@@ -88,6 +88,14 @@ describe('buildServiceAgentCommand', () => {
     expect(command.opts().persistent).toBeUndefined();
   });
 
+  it('offers the restore flags, and names the agent whose state comes back', () => {
+    expect(flags).toEqual(expect.arrayContaining(['--restore', '--stamp', '--into', '--force']));
+    // This is the surface that restores the IDENTITY (unlike `create --restore`),
+    // so its help has to say which agent's state dir it is putting back.
+    const restore = command.options.find((o) => o.long === '--restore');
+    expect(restore?.description).toContain('demosvc state dir');
+  });
+
   it('refuses to build a command for an agent with no service block', () => {
     const noService = { ...spec, service: undefined } as unknown as AgentSyncSpec;
     expect(() => buildServiceAgentCommand(noService)).toThrow(/declares no service block/);

@@ -1,7 +1,8 @@
 # Bot backup, restore and spawn — plan
 
-Status: **not started.** Written 2026-09-07 after the `download` fix (#372)
-and the openclaw box-context task (#371) landed on `nightly`.
+Status: **Phases 1 and 2 done** (backup, restore). Written 2026-09-07 after the
+`download` fix (#372) and the openclaw box-context task (#371) landed on
+`nightly`.
 
 One session per phase. Keep the findings of each phase in
 [`bot-clone-spawn-backlog.md`](./bot-clone-spawn-backlog.md) as they appear,
@@ -49,16 +50,16 @@ Measured against the code (and, where marked, a live box) on 2026-09-07.
 | Channel tokens ride `carry:` into a 0600 `~/.openclaw/.env` and are referenced by name in the overlay | `examples/openclaw-gateway/agentbox.yaml` | A per-bot token is a per-bot **source path**, not a new secret channel. |
 | The box already gets a setup skill (`/opt/agentbox/skills/agentbox-setup/SKILL.md`, copied from `/usr/local/share/agentbox/setup-guide.md`) | `openclaw.ts:66-172`; sources under `apps/cli/runtime/_shared/agentbox-setup-skill.md` | The identity wizard is a second skill of the same shape. |
 
-### To verify live before Phase 2 (PoC gate)
+### The PoC gate — measured 2026-09-07
 
-These are assumed, not measured. Each is cheap to check on a docker box and
-changes the design if wrong.
-
-- Restoring `openclaw.json` + `state/` into a **fresh** box revives the channel
-  pairings and sessions, with nothing else (no `migration`, no `tmp`).
-- A restored bot with the **same** identity as a still-running box is actually
-  refused by openclaw (or misbehaves) — this decides whether "refuse restore
-  while the source runs" is a hard error or a warning.
+- **Restoring `openclaw.json` + `state/` into a fresh box revives the identity.**
+  Verified: same gateway token, the same automation row (same id) back in the
+  restored database, `openclaw config validate` clean. **But only after the
+  target's stale `-wal`/`-shm` are removed** — see the Phase 2 notes.
+- A restored bot with the **same** identity as a still-running box: **not
+  answerable locally.** Two gateways on one host with no channel configured never
+  collide, and the collision that matters is at the channel provider. The guard
+  stays a hard error with `--force`, chosen rather than measured.
 - `agentbox-ctl render --env` substitutes `{{AGENTBOX_BOX_NAME}}` with the box
   name ctl sees (not the container name) on every provider.
 - hermes' state dir and identity files, so its row can be written alongside
@@ -193,7 +194,41 @@ it (gitless project — copy `examples/openclaw-gateway` without `.git`).
 
 </details>
 
-### Phase 2 — restore
+### Phase 2 — restore — **DONE**
+
+Shipped as `--restore <bot>` on `agentbox create` and on the service-agent
+commands. What the implementation found that the plan had not:
+
+- **The PoC's real answer was a bug, not a yes.** Pushing the bundle's `state/`
+  into a fresh box and restarting the gateway does revive the identity — but only
+  after the target's own `-wal`/`-shm` are removed. Leaving them produced
+  `SQLite integrity_check failed … row 1 missing from index` and a permanent
+  restart loop. That deletion is now the first thing `restoreAgentState` does,
+  scoped to the databases the bundle actually replaces.
+- **No create-path surgery was needed at all.** The plan expected to write the
+  state in before onboard. `run_once: 'marker'` makes that impossible *and*
+  unnecessary: the marker lives on the box rootfs, not in the config volume, so
+  onboard runs once on every fresh box regardless — and, having run, never
+  touches the restored identity again. Restore therefore runs after the service
+  is up: stop, push, restart. One order, every provider, no provider code.
+- **The state push must NOT go through `agentPushExcludes`.** It adds
+  `LIVE_DATABASE_EXCLUDES` unconditionally, which matches `*.sqlite*` — precisely
+  what a restore exists to put back.
+- **The workspace half is a create with no new plumbing.** The restored tree is
+  the box's project, so it rides the ordinary create exactly as `clone`'s export
+  dir does. `projectRoot` is that directory verbatim, never `findProjectRoot`'s
+  answer — the restore dir lives under the ORIGINAL project's `.agentbox/`, so
+  walking up would have seeded the box from the template project instead.
+- **Phase 1 had a latent bug this exposed**: `listBackups` counted a restore's
+  live `workspace/` as a backup, and it sorts after every stamp.
+
+Live-verified on docker end to end: same gateway token, the same automation row
+(same id) in the restored database, `openclaw config validate` clean, and all of
+it surviving a full box `stop`/`start`. Findings and what is still open are in
+[`bot-clone-spawn-backlog.md`](./bot-clone-spawn-backlog.md).
+
+<details>
+<summary>Original plan</summary>
 
 PoC gate first (see above). Then:
 
@@ -215,6 +250,8 @@ PoC gate first (see above). Then:
 token, channel still paired, memory intact; then `--restore --provider e2b`.
 A box reaching `ready` proves nothing here — send a message through the
 channel.
+
+</details>
 
 ### Phase 3 — the `clone:` spec field and per-bot carry
 

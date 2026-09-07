@@ -28,7 +28,7 @@
 
 import { Command } from 'commander';
 import { log } from '@agentbox/cli-kit';
-import type { AgentSyncSpec, BoxRecord } from '@agentbox/core';
+import type { AgentSyncSpec } from '@agentbox/core';
 import { renderStatusTable, type ServiceState, type ServiceStatus } from '@agentbox/ctl';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
@@ -40,7 +40,6 @@ import { reattachRef, resolveBoxOrExit } from '../../box-ref.js';
 import { findProjectRoot } from '@agentbox/config';
 import { UserFacingError } from '@agentbox/core';
 import { handleLifecycleError } from '../../commands/_errors.js';
-import { providerForBox } from '../../provider/registry.js';
 import { reportBoxNotOnAnyHub, withOwningHub } from '../../control-plane/with-hub.js';
 import type { HubApiServiceView } from '../../control-plane/hub-api-client.js';
 import {
@@ -48,6 +47,7 @@ import {
   readServiceUrlFields,
   resolveServiceUrl,
   runServiceAgent,
+  stopUnit,
   type ServiceAgentOptions,
 } from './service-action.js';
 
@@ -101,6 +101,19 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
     )
     .option('--timeout <seconds>', 'how long to wait for the service to report ready', '180')
     .option('--verbose', 'stream create progress instead of a spinner')
+    .option(
+      '--restore <bot>',
+      `recreate a bot from its backup under <project>/.agentbox/bots/<bot>/: the box runs on a copy of the backed-up workspace AND gets the captured ${spec.id} state dir back, identity included. Always creates a new box`,
+    )
+    .option('--stamp <stamp>', 'which --restore backup to use (default: the `latest` link)')
+    .option(
+      '--into <dir>',
+      'dir the restored workspace lives in (default: <project>/.agentbox/bots/<bot>/workspace)',
+    )
+    .option(
+      '--force',
+      'with --restore: proceed even when the backed-up box still runs, or the destination is not empty',
+    )
     .action(async (boxRef: string | undefined, opts: ServiceAgentOptions) => {
       await runServiceAgent(spec, boxRef, opts);
     });
@@ -293,14 +306,4 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
   }
 
   return command;
-}
-
-async function stopUnit(box: BoxRecord, unit: string): Promise<void> {
-  const provider = await providerForBox(box);
-  const r = await provider.exec(box, ['agentbox-ctl', 'stop', unit], { user: 'vscode' });
-  if (r.exitCode !== 0) {
-    throw new Error(
-      `agentbox-ctl stop ${unit} failed: ${r.stderr.trim() || `exit ${String(r.exitCode)}`}`,
-    );
-  }
 }

@@ -38,6 +38,13 @@ import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { runCarryGate } from '../../lib/carry-gate.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
+import {
+  assertSourceBoxNotRunning,
+  resolveRestoreRequest,
+  restoreStateIntoBox,
+  stageRestoreWorkspace,
+  type RestoreRequest,
+} from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
 import { withOwningHub } from '../../control-plane/with-hub.js';
@@ -61,6 +68,14 @@ export interface ServiceAgentOptions {
   persistent?: boolean;
   /** Seconds to wait for the service to report ready. */
   timeout?: string;
+  /** `--restore <bot>`: recreate that bot from its backup, identity included. */
+  restore?: string;
+  /** `--stamp <s>`: which backup (default: the `latest` link). */
+  stamp?: string;
+  /** `--into <dir>`: where the restored workspace lives. */
+  into?: string;
+  /** `--force`: restore even when the source box runs / the destination is not empty. */
+  force?: boolean;
 }
 
 /**
@@ -276,6 +291,24 @@ export async function readServiceUrlFields(
 }
 
 /**
+ * Stop one supervisor unit in a box.
+ *
+ * Still a `provider.exec` rather than an API call: the hub's services routes
+ * expose `restart` but not `stop` (recorded in the service-boxes backlog). Lives
+ * here rather than in the factory because both callers — `<agent> stop` and the
+ * restore below — need it, and the factory already imports this module.
+ */
+export async function stopUnit(box: BoxRecord, unit: string): Promise<void> {
+  const provider = await providerForBox(box);
+  const r = await provider.exec(box, ['agentbox-ctl', 'stop', unit], { user: 'vscode' });
+  if (r.exitCode !== 0) {
+    throw new Error(
+      `agentbox-ctl stop ${unit} failed: ${r.stderr.trim() || `exit ${String(r.exitCode)}`}`,
+    );
+  }
+}
+
+/**
  * `agentbox <agent> [box]` — create the box if it is missing, start it if it is
  * down, then wait for the service and print its URL.
  *
@@ -294,7 +327,25 @@ export async function runServiceAgent(
   const cmdLog = openCommandLog(spec.id);
 
   try {
-    const project = await findProjectRoot(opts.workspace);
+    // `--restore` is resolved and staged first: the restored tree becomes the
+    // box's workspace, so its own `agentbox.yaml` is the one to load, and the
+    // project root is that directory verbatim — it lives under the ORIGINAL
+    // project's `.agentbox/`, so walking up would seed from the template.
+    let restored: RestoreRequest | undefined;
+    if (opts.restore) {
+      restored = await resolveRestoreRequest(opts.workspace, opts);
+      if (restored.agent && restored.agent !== spec.id) {
+        throw new Error(
+          `${restored.bundle.dir} holds ${restored.agent} state, not ${spec.id} — ` +
+            `restore it with \`agentbox ${restored.agent} --restore ${restored.bundle.bot}\``,
+        );
+      }
+      await assertSourceBoxNotRunning(restored.bundle, opts.force);
+      opts.workspace = restored.workspaceDir;
+    }
+    const project = restored
+      ? { root: restored.workspaceDir }
+      : await findProjectRoot(opts.workspace);
     const cfgLoaded = await loadEffectiveConfig(opts.workspace, {
       cliOverrides: opts.image ? { box: { image: opts.image } } : {},
     });
@@ -302,6 +353,22 @@ export async function runServiceAgent(
 
     intro(`agentbox ${spec.id}`);
     const existing = await findExistingBox(boxRef, project.root, spec.id);
+    // A restore always makes a NEW box. The bare command is create-or-resume, so
+    // without this a second `--restore` would push a bundle's identity over a
+    // running bot's — the one thing this feature must never do by accident.
+    if (restored && existing) {
+      throw new Error(
+        `box ${existing.name} already exists for this restore dir; ` +
+          `pass --into <dir> or -n <name> to restore alongside it`,
+      );
+    }
+    if (restored) {
+      const staged = await stageRestoreWorkspace(restored, opts.force);
+      log.info(
+        `restoring ${restored.bundle.bot} @ ${restored.bundle.stamp}: ` +
+          `${String(staged.files)} entr(ies) -> ${restored.workspaceDir}`,
+      );
+    }
     let box: BoxRecord;
 
     if (existing) {
@@ -430,6 +497,35 @@ export async function runServiceAgent(
       // genuinely up. `handleLifecycleError` turns this into a non-zero exit.
       s.stop(`${service.name} failed`);
       throw err;
+    }
+
+    // The identity goes in only once the service has come up on its own.
+    //
+    // That ordering is deliberate, not a convenience. `openclaw onboard` is a
+    // `run_once: marker` task whose marker lives on the box ROOTFS, not in the
+    // agent's config volume, so it runs on every fresh box no matter what the
+    // volume holds — there is no "write the state in before onboard" that works.
+    // Letting it run first, then replacing what it wrote, means the marker is
+    // already down and onboard never touches the restored identity again, on
+    // this boot or any later one.
+    if (restored) {
+      s.start(`restoring ${spec.id} state into ${box.name}`);
+      try {
+        await stopUnit(box, service.name);
+        const r = await restoreStateIntoBox({ box, agent: spec.id, bundle: restored.bundle });
+        cmdLog.write(`cleared ${String(r.clearedSidecars.length)} stale db sidecar(s)`);
+        await withOwningHub(box, async (client) => {
+          await client.restartService(box.id, service.name);
+        });
+        view = await waitForService(box, service.name, timeoutSeconds, (line) => {
+          s.message(line);
+          cmdLog.write(line);
+        });
+        s.stop(`${spec.id} restored from ${restored.bundle.bot} @ ${restored.bundle.stamp}`);
+      } catch (err) {
+        s.stop('restore failed');
+        throw err;
+      }
     }
 
     // Printed BEFORE the outro so the outro stays the one line a script greps

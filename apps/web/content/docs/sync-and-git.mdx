@@ -73,6 +73,28 @@ Live databases are captured through SQLite's own online-backup API rather than c
 
 Unlike a plain `download`, a backup never asks about agent-generated files: `SOUL.md` and `IDENTITY.md` are the point of one.
 
+## Bring a bot back
+
+`--restore <bot>` is the other half. It creates a **new** box from a backup:
+
+```bash
+agentbox openclaw --restore ada                       # the newest backup
+agentbox openclaw --restore ada --stamp 2026-09-07T15-09-16Z
+agentbox openclaw --restore ada --provider hetzner    # and on another provider
+```
+
+On a service-agent command the restore covers both halves — the workspace _and_ the captured state directory — so the bot comes back as itself: same gateway token, same channel pairings, same history. On `agentbox create --restore ada` you get the workspace only, and the command says so, because a box created without an agent has no agent state directory to restore into.
+
+The restored box does not run on the backup itself. That copy is immutable, and `--keep` may prune it, so a box writing into it would eventually lose its workspace to a later backup. It runs on a live sibling, `<project>/.agentbox/bots/<bot>/workspace`, which `--into <dir>` overrides.
+
+<Callout type="warn" title="Two boxes cannot share one identity">
+  A restore is refused while the box the backup came from is still running: two live gateways
+  holding one identity is exactly what a per-box state directory exists to prevent. Stop or destroy
+  the old box first, or pass `--force` if you know what you are doing.
+</Callout>
+
+The identity goes in **after** the box has come up on its own, not before. A service agent's onboarding is a run-once task whose marker lives on the box's root filesystem rather than in the agent's config volume, so it runs on every fresh box no matter what that volume holds — there is no "write the state in first" that works. Letting it run and then replacing what it wrote means the marker is already down, and onboarding never touches the restored identity again, on that boot or any later one.
+
 <Callout title="`.agentbox/` never crosses the box boundary">
   Your project's `.agentbox/` is yours and stays on the host — it is never seeded into a box. The
   box's own `/workspace/.agentbox/` is generated fresh every boot and is never pulled back. Same

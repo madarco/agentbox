@@ -1011,6 +1011,34 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": false
+      },
+      {
+        "flags": "--restore <bot>",
+        "description": "recreate a bot from its backup under <project>/.agentbox/bots/<bot>/: the box runs on a copy of the backed-up workspace AND gets the captured openclaw state dir back, identity included. Always creates a new box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--stamp <stamp>",
+        "description": "which --restore backup to use (default: the `latest` link)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--into <dir>",
+        "description": "dir the restored workspace lives in (default: <project>/.agentbox/bots/<bot>/workspace)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--force",
+        "description": "with --restore: proceed even when the backed-up box still runs, or the destination is not empty",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       }
     ],
     "subcommands": [
