@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   CloudExecOptions,
   CloudExecResult,
@@ -21,6 +23,15 @@ const DEFAULT_SHAPE = 's-2vcpu-2gb';
 const DEFAULT_ROOTFS = 'devbox:1';
 const DEFAULT_DISK_MIB = 20_480;
 const CREATEOS_WEB_PORT = 8080;
+const CREATEOS_SANDBOX_NAME_MAX_LENGTH = 22;
+
+export function createosSandboxName(name: string): string {
+  if (name.length <= CREATEOS_SANDBOX_NAME_MAX_LENGTH) return name;
+
+  const boxIdSuffix = /(-b[0-9a-f]{8})$/.exec(name)?.[1];
+  const suffix = boxIdSuffix ?? `-${createHash('sha256').update(name).digest('hex').slice(0, 8)}`;
+  return `${name.slice(0, CREATEOS_SANDBOX_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
+}
 
 function mapState(status: string | undefined): CloudState {
   switch (status) {
@@ -176,11 +187,15 @@ export const createosBackend = {
     const client = makeCreateOsClient();
     const parsed = parseCreateosSize(req.size);
     const log = req.onLog ?? (() => {});
+    const sandboxName = createosSandboxName(req.name);
+    if (sandboxName !== req.name) {
+      log(`createos: provider name ${sandboxName} (shortened from ${req.name})`);
+    }
     const created = await withCreateOsRetry(
       { method: 'provision', retryOnAmbiguous: false, attemptTimeoutMs: 120_000, backoffMs: [] },
       () =>
         client.createSandbox({
-          name: req.name,
+          name: sandboxName,
           shape: parsed.shape,
           rootfs: rootfsFor(req),
           disk_mib: diskMibFor(req, parsed.resources?.disk),

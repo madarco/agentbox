@@ -63,6 +63,9 @@ By default AgentBox boots CreateOS boxes from `devbox:1`. Override that with `--
 | Docker-in-Docker | installed in the box and auto-started by AgentBox                                                            |
 | Portless         | CLI installed for projects whose `agentbox.yaml` runs a Portless task; CreateOS previews remain native HTTPS |
 
+CreateOS limits its provider-side sandbox name to 22 characters. AgentBox shortens only that
+provider resource name when necessary while keeping the full box name and git branch in AgentBox.
+
 ## Pause / Resume
 
 CreateOS boxes use the provider API for pause and resume:
