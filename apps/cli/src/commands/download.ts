@@ -1,4 +1,4 @@
-import { confirm, log } from '@agentbox/cli-kit';
+import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
@@ -10,7 +10,13 @@ import {
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
-import { pullWorkspaceToHost, type PullWorkspaceResult } from '@agentbox/sandbox-core';
+import {
+  agentWorkspaceArtifactPaths,
+  isAgentWorkspaceArtifact,
+  parseItemizedEntries,
+  pullWorkspaceToHost,
+  type PullWorkspaceResult,
+} from '@agentbox/sandbox-core';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { ensureBoxRunningVia } from '../lib/ensure-running.js';
 import { providerForBox } from '../provider/registry.js';
@@ -28,6 +34,7 @@ interface DownloadOpts {
   dryRun?: boolean;
   respectGitignore: boolean; // commander gives `--no-respect-gitignore` => false
   includeNodeModules?: boolean;
+  includeAgentFiles?: boolean;
   refresh: boolean; // commander gives `--no-refresh` => false
   withEnv?: boolean;
   pattern: string[];
@@ -66,7 +73,11 @@ export const downloadCommand = new Command('download')
   )
   .option(
     '--include-node-modules',
-    'keep node_modules in exclude-list mode (no effect in gitignore mode)',
+    'keep node_modules in the selection (both gitignore and exclude-list mode)',
+  )
+  .option(
+    '--include-agent-files',
+    "copy agent-generated workspace files (AGENTS.md, SOUL.md, ...) your project doesn't have",
   )
   .option('--no-refresh', "skip the box->scratch-dir staging step (use whatever's already there)")
   .option(
@@ -90,7 +101,11 @@ export const downloadCommand = new Command('download')
       // out over the provider seam. Both then run the SAME host-side rsync
       // (`rsyncPullToHost`), which is what gives a cloud box `--dry-run`, the
       // itemized change list, and gitignore/exclude selection.
-      let pull: (o: { dryRun: boolean; noRefresh: boolean }) => Promise<PullWorkspaceResult>;
+      let pull: (o: {
+        dryRun: boolean;
+        noRefresh: boolean;
+        skipPaths?: readonly string[];
+      }) => Promise<PullWorkspaceResult>;
       if (isCloud) {
         const provider = await providerForBox(box);
         box = await ensureBoxRunningVia(provider, box);
@@ -106,6 +121,7 @@ export const downloadCommand = new Command('download')
             envPatterns,
             dryRun: o.dryRun,
             noRefresh: o.noRefresh,
+            skipPaths: o.skipPaths,
           });
       } else {
         const insp = await inspectBox(box.id);
@@ -126,17 +142,27 @@ export const downloadCommand = new Command('download')
             includeNodeModules: opts.includeNodeModules,
             envPatterns,
             noRefresh: o.noRefresh,
+            skipPaths: o.skipPaths,
           });
           return {
             hostPath: r.hostPath,
             changes: r.changes,
             applied: r.applied,
             usedGitignore: r.usedGitignore,
+            missing: r.missing,
           };
         };
       }
 
       const preview = await pull({ dryRun: true, noRefresh: !opts.refresh });
+
+      // Files an agent generated in /workspace that the project does not have.
+      // Keyed on CREATED, not on the name alone, so a file the user already has
+      // is never questioned — it is theirs, and this is just an update to it.
+      const artifactNames = agentWorkspaceArtifactPaths();
+      const newArtifacts = parseItemizedEntries(preview.changes.join('\n'))
+        .filter((e) => e.created && isAgentWorkspaceArtifact(e.path, artifactNames))
+        .map((e) => e.path);
 
       if (preview.changes.length === 0) {
         process.stdout.write(
@@ -152,12 +178,35 @@ export const downloadCommand = new Command('download')
           `\n[dry-run] ${String(preview.changes.length)} file(s) would change in ` +
             `${box.workspacePath}${preview.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
         );
+        if (newArtifacts.length > 0 && !opts.includeAgentFiles) {
+          process.stdout.write(
+            `[dry-run] ${String(newArtifacts.length)} of them are agent-generated and ` +
+              `you would be asked about them: ${newArtifacts.join(', ')}\n`,
+          );
+        }
         return;
+      }
+
+      // Asked BEFORE the main confirm, so the count the user approves is the
+      // count that gets written.
+      let skipPaths: string[] = [];
+      if (newArtifacts.length > 0 && !opts.includeAgentFiles) {
+        if (opts.yes) {
+          skipPaths = newArtifacts;
+        } else {
+          const take = await confirm({
+            message:
+              `${String(newArtifacts.length)} file(s) your project doesn't have were generated ` +
+              `by the agent (${newArtifacts.join(', ')}). Copy them in too?`,
+            initialValue: false,
+          });
+          if (isCancel(take) || !take) skipPaths = newArtifacts;
+        }
       }
 
       if (!opts.yes) {
         const ok = await confirm({
-          message: `Download ${String(preview.changes.length)} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
+          message: `Download ${String(preview.changes.length - skipPaths.length)} changed file(s)${opts.withEnv ? ' (incl. env/config)' : ''} into ${box.workspacePath}?`,
           initialValue: false,
         });
         if (!ok) {
@@ -168,11 +217,25 @@ export const downloadCommand = new Command('download')
 
       // The preview pass already refreshed (or intentionally skipped) the
       // scratch dir — don't restage a second time.
-      const result = await pull({ dryRun: false, noRefresh: true });
+      const result = await pull({ dryRun: false, noRefresh: true, skipPaths });
       process.stdout.write(
         `updated ${String(result.changes.length)} file(s) in ${result.hostPath}` +
           `${result.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
       );
+      if (skipPaths.length > 0) {
+        process.stdout.write(
+          `skipped ${String(skipPaths.length)} agent-generated file(s) ` +
+            `(${skipPaths.join(', ')}); --include-agent-files to take them\n`,
+        );
+      }
+      // Selected but not staged: something changed in the box between the
+      // listing and the staging, or the scratch dir is stale. Named, not fatal.
+      if (result.missing.length > 0) {
+        process.stdout.write(
+          `note: ${String(result.missing.length)} selected file(s) were not in the staged copy ` +
+            `(raced, or a stale --no-refresh scratch dir)\n`,
+        );
+      }
     } catch (err) {
       handleLifecycleError(err);
     }

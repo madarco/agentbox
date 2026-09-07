@@ -365,6 +365,19 @@ box: they live in the half neither provider owns. Writing a second cloud pull
 instead is what produced the original bulk-overwrite behaviour, where `--dry-run`
 threw and every filter flag was silently ignored.
 
+**The invariant the split rests on: stage 1 must be a superset of the selection.**
+A superset is free — `rsync --files-from` ignores files it was not asked for —
+while a subset is fatal, because a selected path that stage 1 never materialized
+makes rsync exit 23, and one bad path used to take the whole download with it.
+The cloud half satisfies this by construction (it tars exactly the selection);
+docker's mirror satisfies it by deriving its one exclude from the same flag the
+selection reads (`exportMirrorExcludes`, with a drift test). Two further guards
+make a residual mismatch survivable: the selection can only name paths that
+exist in the box (`git ls-files --cached` happily prints a deleted file, which
+killed the cloud tar the same way), and stage 2 reconciles the list with the
+staged copy — skipping and reporting what raced, failing only when *nothing*
+selected was staged, which means the staging itself is stale.
+
 `BoxFilePorts` (`sandbox-core/src/sync/concerns/box-files.ts`) is the seam that
 makes that possible without a new provider method: whole-tree file movement needs
 only `exec` + `uploadPath` + `downloadPath`, which every provider already

@@ -25,6 +25,8 @@ import { providerBoxFilePorts } from './box-files.js';
 import { buildHostEnvFindArgs } from './env.js';
 import {
   buildWorkspaceListScript,
+  agentWorkspaceArtifactPaths,
+  isAgentWorkspaceArtifact,
   isExcludedPath,
   parseWorkspaceList,
   rsyncPullToHost,
@@ -49,7 +51,7 @@ export interface StageWorkspaceArgs {
   scratchDir: string;
   /** Default true. When false, always use the exclude list. */
   respectGitignore?: boolean;
-  /** Default false. Keep `node_modules` in exclude-list mode. */
+  /** Default false. Keep `node_modules` — in BOTH git and exclude-list mode. */
   includeNodeModules?: boolean;
   /**
    * Extra env/config basename globs pulled regardless of gitignore (the
@@ -102,6 +104,7 @@ export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<Stage
       workspaceDir: boxDir,
       respectGitignore: args.respectGitignore,
       excludes,
+      includeNodeModules: args.includeNodeModules,
     }),
     { asRoot: true },
   );
@@ -109,11 +112,19 @@ export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<Stage
     throw new Error(`listing ${boxDir} in the box failed: ${listed.stderr || listed.stdout}`);
   }
   const primary = parseWorkspaceList(listed.stdout);
+  // `clone` also drops the agents' own workspace scaffolding. Carrying the
+  // SOURCE box's IDENTITY.md/SOUL.md into a clone contradicts the same
+  // fresh-identity contract that already drops the state dirs.
+  const artifacts = args.dropExcludedInGitMode ? agentWorkspaceArtifactPaths() : [];
   const selected =
     primary.mode === 'git' && args.dropExcludedInGitMode
       ? primary.paths.filter((p) => !isExcludedPath(p, excludes))
       : primary.paths;
-  const paths = new Set(selected);
+  const kept =
+    artifacts.length > 0
+      ? selected.filter((p) => !isAgentWorkspaceArtifact(p, artifacts))
+      : selected;
+  const paths = new Set(kept);
 
   if (args.envPatterns && args.envPatterns.length > 0) {
     const envArgv = buildHostEnvFindArgs(args.envPatterns).map(sq).join(' ');
@@ -178,6 +189,8 @@ export async function readStagedWorkspace(scratchDir: string): Promise<StagedWor
 export interface PullWorkspaceArgs extends StageWorkspaceArgs {
   /** The user's working dir the files land in (`box.workspacePath`). */
   destDir: string;
+  /** Paths the user declined; dropped before copying. */
+  skipPaths?: readonly string[];
   /** Default false. Preview only — return the change list without writing. */
   dryRun?: boolean;
   /** Default false. Reuse whatever is already in `scratchDir` (and its sidecar). */
@@ -190,6 +203,8 @@ export interface PullWorkspaceResult {
   applied: boolean;
   /** True when git decided the selection; false means exclude-list mode. */
   usedGitignore: boolean;
+  /** Selected paths that were not in the staged copy — reported, not fatal. */
+  missing: string[];
 }
 
 /**
@@ -203,17 +218,19 @@ export async function pullWorkspaceToHost(args: PullWorkspaceArgs): Promise<Pull
     ? ((await readStagedWorkspace(args.scratchDir)) ?? (await stageBoxWorkspace(args)))
     : await stageBoxWorkspace(args);
 
-  const { changes, applied } = await rsyncPullToHost({
+  const { changes, applied, missing } = await rsyncPullToHost({
     scratchDir: staged.scratchDir,
     destDir: args.destDir,
     fileList: staged.fileList,
     excludes: workspaceExcludes({ includeNodeModules: args.includeNodeModules }),
     dryRun: args.dryRun,
+    skipPaths: args.skipPaths,
   });
   return {
     hostPath: args.destDir,
     changes,
     applied,
     usedGitignore: staged.mode === 'git',
+    missing,
   };
 }

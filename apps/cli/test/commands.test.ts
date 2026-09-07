@@ -8,6 +8,7 @@ import { installCommand } from '../src/commands/install.js';
 import { daytonaCommand } from '@agentbox/sandbox-daytona/cli';
 import { dockerCommand } from '../src/commands/docker.js';
 import { destroyCommand } from '../src/commands/destroy.js';
+import { downloadCommand } from '../src/commands/download.js';
 import { statusCommand } from '../src/commands/status.js';
 import { runInspect } from '../src/commands/inspect.js';
 import { listCommand } from '../src/commands/list.js';
@@ -93,6 +94,19 @@ describe('lifecycle CLI surface', () => {
     ]);
     const longs = installCommand.options.map((o) => o.long);
     expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
+  });
+
+  it('download can be told about node_modules and agent-generated files', () => {
+    const longs = downloadCommand.options.map((o) => o.long);
+    expect(longs).toEqual(
+      expect.arrayContaining(['--include-node-modules', '--include-agent-files']),
+    );
+    // node_modules is now one switch for BOTH modes. The old text promised the
+    // opposite ("no effect in gitignore mode"), which is what made a repo that
+    // does not gitignore it fail the pull outright.
+    const nm = downloadCommand.options.find((o) => o.long === '--include-node-modules');
+    expect(nm?.description).not.toMatch(/no effect/i);
+    expect(nm?.description).toMatch(/both/i);
   });
 
   it('open is files-only (Finder + --path), no --browser/--loopback/--upper', () => {

@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest';
 import {
   agentStateExcludePaths,
   GIT_MODE_EXCLUDE_DIRS,
+  agentWorkspaceArtifactPaths,
   buildWorkspaceListScript,
+  gitModeExcludePathspecs,
+  isAgentWorkspaceArtifact,
+  parseItemizedEntries,
   isExcludedPath,
   overlayHostDirIntoBox,
   parseItemizedChanges,
@@ -175,5 +179,81 @@ describe('overlayHostDirIntoBox', () => {
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('gitModeExcludePathspecs', () => {
+  it('anchors .agentbox at the root but node_modules at every depth', () => {
+    // Not a stylistic difference. `.agentbox` is one dir at the workspace root,
+    // while `node_modules` has to mean what the docker mirror's
+    // `--exclude=node_modules` means — a basename at ANY depth. Measured against
+    // git 2.39: the root-anchored form alone still lists 3310 nested paths in
+    // this repo, so a monorepo would select files the mirror never wrote.
+    const specs = gitModeExcludePathspecs();
+    expect(specs).toContain(':(exclude).agentbox');
+    expect(specs).toContain(':(exclude)node_modules');
+    expect(specs).toContain(':(exclude)*/node_modules');
+    expect(specs).toContain(':(exclude)*/node_modules/*');
+  });
+
+  it('keeps node_modules when the user asked for it, and still drops .agentbox', () => {
+    const specs = gitModeExcludePathspecs({ includeNodeModules: true });
+    expect(specs).toEqual([':(exclude).agentbox']);
+  });
+
+  it('is what the script actually passes to git', () => {
+    const script = buildWorkspaceListScript({ excludes: [] });
+    const gitLine = script.split('\n').find((l) => l.includes('git ls-files'))!;
+    for (const spec of gitModeExcludePathspecs()) expect(gitLine).toContain(`'${spec}'`);
+    // The positive `.` must survive: on git 2.39 a DIRECTORY positive pathspec
+    // plus any exclude returns nothing at all.
+    expect(gitLine).toContain('-- . ');
+  });
+});
+
+describe('parseItemizedEntries', () => {
+  it('reads `created` from the attribute slots, not a fixed literal', () => {
+    // rsync's flag word is 9 chars on the 2.6.9 macOS ships and 11 on rsync 3.x.
+    // Matching `+++++++` literally would report "nothing is new" on one of them.
+    expect(parseItemizedEntries('>f+++++++ new.txt')[0]?.created).toBe(true);
+    expect(parseItemizedEntries('>f+++++++++ new.txt')[0]?.created).toBe(true);
+    expect(parseItemizedEntries('>fcst...... changed.txt')[0]?.created).toBe(false);
+  });
+
+  it('strips the symlink target from the path', () => {
+    // rsync prints `%i %n%L`, so a symlink line carries ` -> target`.
+    expect(parseItemizedEntries('cL+++++++ link.txt -> sub/b.txt')[0]?.path).toBe('link.txt');
+  });
+
+  it('drops directory, attr-only AND *deleting lines, exactly as before', () => {
+    // `*deleting` is dropped by the same `kind !== 'd'` rule that prunes
+    // directories, because its second character is a `d`. That predates this
+    // change and is harmless — a pull never passes `--delete`, so the line
+    // cannot occur — but the refactor must not quietly alter it either.
+    const entries = parseItemizedEntries(
+      ['*deleting  old.txt', 'cd+++++++ somedir/', '.f....og.. attrs.txt', '>f+++++++ a.txt'].join(
+        '\n',
+      ),
+    );
+    expect(entries.map((e) => e.path)).toEqual(['a.txt']);
+  });
+});
+
+describe('isAgentWorkspaceArtifact', () => {
+  it('matches at the root only', () => {
+    // Deliberately not `isExcludedPath`, whose bare-name rule matches any depth
+    // and would sweep up a `docs/AGENTS.md` the user wrote.
+    const artifacts = ['AGENTS.md', 'SOUL.md'];
+    expect(isAgentWorkspaceArtifact('AGENTS.md', artifacts)).toBe(true);
+    expect(isAgentWorkspaceArtifact('docs/AGENTS.md', artifacts)).toBe(false);
+  });
+
+  it('is derived from the registry, and openclaw declares its four', () => {
+    expect(agentWorkspaceArtifactPaths()).toEqual([
+      'AGENTS.md',
+      'IDENTITY.md',
+      'SOUL.md',
+      'USER.md',
+    ]);
   });
 });

@@ -386,5 +386,9 @@ export const openclawSpec: AgentSyncSpec = {
   // and never overwrites. Everything else under the state root is identity
   // (`openclaw.json`, the journal key) or live state (`state/*.sqlite*`), and
   // pulling either onto the host would mix one gateway's identity into another.
+  // `onboard --mode local` writes these into OPENCLAW_WORKSPACE_DIR, which is the
+  // project workspace — verified live. It does NOT overwrite one seeded from the
+  // host, so a file the user already had stays theirs.
+  workspaceArtifacts: ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'],
   pull: { categories: ['agents'] },
 };
