@@ -1,11 +1,23 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import type { ActionResult, BoxOpResult, BranchList, BrowseDirResult, CreateBoxInput, CreateBoxResult } from './backend-types';
+import type {
+  ActionResult,
+  BoxOpResult,
+  BranchList,
+  BrowseDirResult,
+  CreateBoxInput,
+  CreateBoxResult,
+  CreateProjectInput,
+  ProjectResult,
+} from './backend-types';
 
 // Thin server actions. The lifecycle work runs in the Node-only backend on
 // globalThis (set by the custom server); here we just dispatch and revalidate.
-async function dispatch(op: 'pause' | 'resume' | 'stop' | 'destroy', id: string): Promise<ActionResult> {
+async function dispatch(
+  op: 'pause' | 'resume' | 'stop' | 'destroy',
+  id: string,
+): Promise<ActionResult> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
   const res = await backend[op](id);
@@ -63,10 +75,20 @@ export async function listBranchesAction(projectId: string): Promise<BranchList>
 }
 
 // Register a folder (absolute path) as a project so boxes can be created in it.
-export async function addProjectAction(absPath: string): Promise<ActionResult> {
+export async function addProjectAction(absPath: string): Promise<ProjectResult> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
   const res = await backend.addProject(absPath);
+  if (res.ok) revalidatePath('/', 'layout');
+  return res;
+}
+
+// Create `<parent>/<name>` (empty, or `git: true` for a fresh repo) and register
+// it — the "I have no workspace yet" path, e.g. hosting a service bot.
+export async function createProjectAction(input: CreateProjectInput): Promise<ProjectResult> {
+  const backend = globalThis.__AGENTBOX_HUB_BACKEND;
+  if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
+  const res = await backend.createProject(input);
   if (res.ok) revalidatePath('/', 'layout');
   return res;
 }
@@ -92,7 +114,9 @@ export async function browseDirAction(dir?: string): Promise<BrowseDirResult> {
 // ── box git + service mutations (thin, over the same backend the REST API uses) ──
 // revalidate on success so a branch change / restart is reflected in the next
 // dashboard snapshot; the git + services panels also refresh via their own fetch.
-async function opDispatch(fn: (backend: NonNullable<typeof globalThis.__AGENTBOX_HUB_BACKEND>) => Promise<BoxOpResult>): Promise<BoxOpResult> {
+async function opDispatch(
+  fn: (backend: NonNullable<typeof globalThis.__AGENTBOX_HUB_BACKEND>) => Promise<BoxOpResult>,
+): Promise<BoxOpResult> {
   const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   if (!backend) return { ok: false, error: 'hub backend unavailable (run the hub server)' };
   const res = await fn(backend);
@@ -103,16 +127,29 @@ async function opDispatch(fn: (backend: NonNullable<typeof globalThis.__AGENTBOX
 export async function gitCheckoutAction(id: string, branch: string): Promise<BoxOpResult> {
   return opDispatch((b) => b.gitCheckout(id, branch));
 }
-export async function gitBranchAction(id: string, name: string, from?: string): Promise<BoxOpResult> {
+export async function gitBranchAction(
+  id: string,
+  name: string,
+  from?: string,
+): Promise<BoxOpResult> {
   return opDispatch((b) => b.gitNewBranch(id, { name, from }));
 }
-export async function gitPushAction(id: string, input?: { remote?: string; force?: boolean }): Promise<BoxOpResult> {
+export async function gitPushAction(
+  id: string,
+  input?: { remote?: string; force?: boolean },
+): Promise<BoxOpResult> {
   return opDispatch((b) => b.gitPush(id, input));
 }
-export async function gitPullAction(id: string, input?: { remote?: string; ffOnly?: boolean }): Promise<BoxOpResult> {
+export async function gitPullAction(
+  id: string,
+  input?: { remote?: string; ffOnly?: boolean },
+): Promise<BoxOpResult> {
   return opDispatch((b) => b.gitPull(id, input));
 }
-export async function gitPushHostAction(id: string, input?: { as?: string; force?: boolean }): Promise<BoxOpResult> {
+export async function gitPushHostAction(
+  id: string,
+  input?: { as?: string; force?: boolean },
+): Promise<BoxOpResult> {
   return opDispatch((b) => b.gitPushHost(id, input));
 }
 export async function restartServiceAction(id: string, name?: string): Promise<ActionResult> {

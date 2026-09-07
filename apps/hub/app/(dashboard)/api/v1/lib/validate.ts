@@ -243,13 +243,46 @@ export function parseLoginCode(body: unknown): Parsed<{ code: string }> {
   return { ok: true, value: { code: code.trim() } };
 }
 
-export function parseProject(body: unknown): Parsed<{ path: string }> {
+// `POST /projects` takes exactly one of two bodies: `{ path }` registers a folder
+// that already exists; `{ parent, name, git? }` creates `<parent>/<name>` first.
+export type ProjectRequest =
+  | { kind: 'register'; path: string }
+  | { kind: 'create'; parent: string; name: string; git: boolean };
+
+// One path segment: letters, digits, `.`, `_`, `-`; no leading dot; max 100 chars.
+// Duplicated from `lib/boxes/create-project.ts` on purpose — this module imports
+// nothing (see the header) so the client-side modal can share it.
+export const PROJECT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+export function parseProject(body: unknown): Parsed<ProjectRequest> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { path } = body;
-  if (typeof path !== 'string' || path.length === 0) {
-    return { ok: false, message: 'path is required (absolute directory path)' };
+  const { path, parent, name, git } = body;
+  const hasPath = typeof path === 'string' && path.length > 0;
+  const hasCreate = parent !== undefined || name !== undefined || git !== undefined;
+  // Exactly one shape: `path` would otherwise win and silently skip the create.
+  if (hasPath && hasCreate) {
+    return { ok: false, message: 'send either { path } or { parent, name }, not both' };
   }
-  return { ok: true, value: { path } };
+  if (hasPath) return { ok: true, value: { kind: 'register', path } };
+  if (!hasCreate) {
+    return {
+      ok: false,
+      message: 'path (register a folder) or parent + name (create one) is required',
+    };
+  }
+  if (typeof parent !== 'string' || parent.length === 0) {
+    return { ok: false, message: 'parent is required (absolute directory path)' };
+  }
+  if (typeof name !== 'string' || !PROJECT_NAME_RE.test(name)) {
+    return {
+      ok: false,
+      message:
+        'name must be a single folder name (letters, digits, . _ -; no leading dot, no slashes)',
+    };
+  }
+  const g = optionalBool(git, 'git');
+  if (!g.ok) return g;
+  return { ok: true, value: { kind: 'create', parent, name, git: g.value ?? false } };
 }
 
 /**

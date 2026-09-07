@@ -499,3 +499,36 @@ spec-declared base overlay would provide. Not built.
 then reports the same "Browser origin not allowed". Only daytona is still
 untested.
 
+
+## From "create a new project" in the hub and the tray (2026-09-07)
+
+`POST /api/v1/projects` now also takes `{ parent, name, git? }` and makes the
+folder (empty, or `git init` + `.gitignore` + one commit on `main`). It exists
+because a service bot has no workspace until onboarding writes one, so the tray
+and the hub UI had nothing to point a create at. The folder is deliberately
+**empty**: a stub `agentbox.yaml` would flip `needsSetup` to false and silence
+the setup wizard. Instead a create is refused when the parent resolves inside
+another project (`findProjectRoot(parent).hasAgentboxYaml`), which is the only
+case a stub would have protected against.
+
+### Open: a post-onboarding step for a service bot
+
+The setup wizard is a TUI-agent concept (seed the first turn to write an
+`agentbox.yaml`). A bot's equivalent is **after onboarding**: once the gateway
+is up and the operator has paired a channel, take a checkpoint and a
+`download --backup`, so the box is recoverable from the moment it has an
+identity. What is missing is the "the bot is set up" signal — `openclaw-onboard`
+finishing is too early (no channel yet). Candidates: the onboard task's run-once
+marker **plus** a non-empty channel list read through the `agents.list` RPC, or
+an explicit "Finish setup" action on the box page / tray that runs both. Not
+designed; see `bot-clone-spawn-plan.md` (on the bot-backup branch) for the
+backup half.
+
+### Open: a new project on a control box
+
+The create path above is **local-hub only**. A control box holds no folders and
+its projects are repos (`registrationProjectKey` falls through to
+slug/origin/name), so "create a new project" there means a repo-less create job:
+`CreateJobRequest.repoUrl` would have to become optional, the hub worker would
+build from an empty temp dir, and the project's durable identity would need a
+decision (the box's `projectSlug`, presumably). Not started.

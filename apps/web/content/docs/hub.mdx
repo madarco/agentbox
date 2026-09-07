@@ -80,7 +80,11 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   `agentbox.yaml`.
 
 - **Manage projects** — register a folder as a project (a folder picker browses
-  your machine), and remove an **empty** project (0 boxes) with the **Delete**
+  your machine), or **create a new one** from the same dialog: pick the parent
+  folder, type a name and the hub makes the empty folder for you (optionally
+  `git init` with an initial commit). That is the path for a project with no
+  workspace yet — hosting an [OpenClaw](/docs/openclaw) bot, say — whose files
+  are born inside the box. Remove an **empty** project (0 boxes) with the **Delete**
   button on its dashboard/detail header. Deleting only unregisters the folder from
   the hub — its files, git repo, and checkpoints are untouched.
 

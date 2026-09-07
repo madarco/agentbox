@@ -4,8 +4,57 @@ import {
   parseCloneBox,
   parseCreateBox,
   parseHostUpsert,
+  parseProject,
   parsePrune,
 } from '../app/(dashboard)/api/v1/lib/validate';
+
+describe('parseProject', () => {
+  it('accepts { path } as a register request', () => {
+    const r = parseProject({ path: '/Users/me/app' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value).toEqual({ kind: 'register', path: '/Users/me/app' });
+  });
+
+  it('accepts { parent, name } as a create request, git defaulting to false', () => {
+    const r = parseProject({ parent: '/Users/me', name: 'my-bot' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value).toEqual({ kind: 'create', parent: '/Users/me', name: 'my-bot', git: false });
+  });
+
+  it('carries git: true', () => {
+    const r = parseProject({ parent: '/Users/me', name: 'app', git: true });
+    expect(r.ok && r.value.kind === 'create' && r.value.git).toBe(true);
+  });
+
+  it('rejects BOTH path and parent/name (ambiguous)', () => {
+    expect(parseProject({ path: '/a', parent: '/b', name: 'c' }).ok).toBe(false);
+    expect(parseProject({ path: '/a', git: true }).ok).toBe(false);
+  });
+
+  it('rejects neither', () => {
+    expect(parseProject({}).ok).toBe(false);
+    expect(parseProject({ path: '' }).ok).toBe(false);
+  });
+
+  it('rejects a create with no parent', () => {
+    expect(parseProject({ name: 'x' }).ok).toBe(false);
+  });
+
+  it('rejects names that are not a single plain folder name', () => {
+    for (const name of ['', '.', '..', '.hidden', 'a/b', 'a\\b', ' x', 'a'.repeat(101)]) {
+      expect(parseProject({ parent: '/p', name }).ok, JSON.stringify(name)).toBe(false);
+    }
+    for (const name of ['a', 'my-bot', 'v1.2_rc', 'A'.repeat(100)]) {
+      expect(parseProject({ parent: '/p', name }).ok, name).toBe(true);
+    }
+  });
+
+  it('rejects a non-boolean git', () => {
+    expect(parseProject({ parent: '/p', name: 'x', git: 'yes' }).ok).toBe(false);
+  });
+});
 
 describe('parseCreateBox', () => {
   it('accepts a projectId (local file-queue path)', () => {

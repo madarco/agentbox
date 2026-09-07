@@ -144,6 +144,7 @@ import type {
   CloudOrphanView,
   CreateBoxInput,
   CreateBoxResult,
+  CreateProjectInput,
   DirEntry,
   GitInfo,
   HubBackend,
@@ -153,6 +154,7 @@ import type {
   OpenTargetsReport,
   BoxWebUrlResult,
   PrepareCloneResult,
+  ProjectResult,
   PruneView,
   RemoteDockerHostView,
   ServicesResult,
@@ -163,6 +165,7 @@ import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
+import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
 
 /**
@@ -2489,7 +2492,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       if (!repo) return { ok: false, error: `unknown project ${projectId}` };
       return branchListHost(repo);
     },
-    async addProject(absPath: string): Promise<ActionResult> {
+    async addProject(absPath: string): Promise<ProjectResult> {
       try {
         if (!absPath || !path.isAbsolute(absPath)) {
           return { ok: false, error: 'an absolute path is required' };
@@ -2500,10 +2503,21 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // matching how create resolves the workspace.
         const root = (await findProjectRoot(absPath)).root;
         await registerProject(root);
-        return { ok: true };
+        return { ok: true, id: hashProjectPath(root), path: root };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+    },
+    async createProject(input: CreateProjectInput): Promise<ProjectResult> {
+      // The folder work is the pure module's; only the registry write is here.
+      const made = await createProjectDir(input);
+      if (!made.ok) return made;
+      try {
+        await registerProject(made.root);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      return { ok: true, id: hashProjectPath(made.root), path: made.root };
     },
     async removeProject(projectId: string): Promise<ActionResult> {
       try {

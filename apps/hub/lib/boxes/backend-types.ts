@@ -4,6 +4,20 @@ import type { AgentId } from '@agentbox/core';
 // Result of a lifecycle server action.
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+// Result of registering or creating a project: the registry id (hash of the
+// canonical root) and that root, so a client can select the project without a
+// second `GET /projects`.
+export type ProjectResult = { ok: true; id: string; path: string } | { ok: false; error: string };
+
+// `POST /projects` create shape: make `<parent>/<name>` and register it.
+export interface CreateProjectInput {
+  parent: string;
+  name: string;
+  // `git init` + a `.gitignore` (`.agentbox/`) + an initial commit on `main`, so
+  // an in-container worktree has a HEAD to branch from. Off = an empty folder.
+  git: boolean;
+}
+
 // Result of a box git/service operation that runs a command in the box. On
 // success it carries the command's stdout/stderr so the UI can surface git's
 // output; on failure `error` is the trimmed stderr (or a resolve error).
@@ -483,7 +497,10 @@ export interface HubBackend {
   // create-box base-branch picker. Resolves the project by id server-side.
   listBranches(projectId: string): Promise<BranchList>;
   // Register a folder (absolute path) as a project so it can host boxes.
-  addProject(absPath: string): Promise<ActionResult>;
+  addProject(absPath: string): Promise<ProjectResult>;
+  // Create `<parent>/<name>` (empty, or a fresh git repo) and register it.
+  // Refuses an existing target and a parent that sits inside another project.
+  createProject(input: CreateProjectInput): Promise<ProjectResult>;
   // Unregister a project by id (hash). Refuses if the project still has boxes or
   // in-flight create jobs — only an empty project can be removed.
   removeProject(projectId: string): Promise<ActionResult>;

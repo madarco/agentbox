@@ -764,27 +764,69 @@ export function buildOpenApi(): Record<string, unknown> {
         },
         post: {
           tags: ['Projects'],
-          summary: 'Register a folder as a project',
+          summary: 'Register a folder as a project, or create a new one',
+          description:
+            'Exactly one body shape. `{ path }` registers a folder that already exists. ' +
+            '`{ parent, name, git? }` creates `<parent>/<name>` (empty, or with `git: true` a repo on `main` ' +
+            'with a `.gitignore` and an initial commit) and registers it; refused when the target exists ' +
+            'or the parent sits inside another project.',
           requestBody: {
             required: true,
             content: {
               'application/json': {
                 schema: {
-                  type: 'object',
-                  properties: {
-                    path: { type: 'string', description: 'Absolute path to the folder.' },
-                  },
-                  required: ['path'],
+                  oneOf: [
+                    {
+                      type: 'object',
+                      title: 'RegisterProject',
+                      properties: {
+                        path: { type: 'string', description: 'Absolute path to the folder.' },
+                      },
+                      required: ['path'],
+                    },
+                    {
+                      type: 'object',
+                      title: 'CreateProject',
+                      properties: {
+                        parent: {
+                          type: 'string',
+                          description: 'Absolute path of the existing folder to create into.',
+                        },
+                        name: {
+                          type: 'string',
+                          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$',
+                          description: 'New folder name (one path segment, no leading dot).',
+                        },
+                        git: {
+                          type: 'boolean',
+                          default: false,
+                          description: 'Initialize a git repository with an initial commit.',
+                        },
+                      },
+                      required: ['parent', 'name'],
+                    },
+                  ],
                 },
               },
             },
           },
           responses: {
             '200': {
-              description: 'Registered',
+              description: 'Registered (or created and registered)',
               content: {
                 'application/json': {
-                  schema: { type: 'object', properties: { ok: { const: true } }, required: ['ok'] },
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { const: true },
+                      id: {
+                        type: 'string',
+                        description: 'Project id (hash of the canonical root).',
+                      },
+                      path: { type: 'string', description: 'Canonical project root.' },
+                    },
+                    required: ['ok', 'id', 'path'],
+                  },
                 },
               },
             },
