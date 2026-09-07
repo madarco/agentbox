@@ -158,9 +158,9 @@ Two things, both AgentBox's rather than yours, refreshed on every boot:
   description Claude and Codex get, so the gateway's agent knows it is in a
   sandbox, that `/workspace` is box-local, and how to reach your machine. It has
   to live inside the workspace because OpenClaw reads a system prompt from
-  nowhere else, so AgentBox adds `.agentbox/` to the box's own
-  `.git/info/exclude` — it will not follow an `agentbox download` into your repo,
-  and your own `AGENTS.md` is never touched.
+  nowhere else, but `agentbox download` and `agentbox clone` both skip
+  `.agentbox/` — it will not follow a pull into your repo, and your own
+  `AGENTS.md` is never touched.
 
 Both are regenerated each time the supervisor starts, which is what keeps a
 cloned box from inheriting the facts of the box it was cloned from.

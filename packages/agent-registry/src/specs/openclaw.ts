@@ -128,16 +128,6 @@ function buildAgentboxContextScript(): string {
     `    cat ${BOX_FACTS}`,
     '  } > "$TMP" && mv "$TMP" ' + `${AGENTBOX_CTX_DIR}/AGENTS.md || true`,
     'fi',
-    // Keep it out of the user's repo. `agentbox download` selects with
-    // `git ls-files --others --exclude-standard` and deliberately does NOT apply
-    // the exclude list in git mode, so the only thing that hides an untracked
-    // file there is git itself. `.git/info/exclude` is per-clone and in the BOX,
-    // so the user's own .gitignore is never touched.
-    'if [ -d /workspace/.git ]; then',
-    '  mkdir -p /workspace/.git/info || true',
-    "  grep -qxF '.agentbox/' /workspace/.git/info/exclude 2>/dev/null ||",
-    "    printf '%s\\n' '.agentbox/' >> /workspace/.git/info/exclude || true",
-    'fi',
     // One validated merge rather than several `config set` calls.
     `printf '%s' '${AGENTBOX_OWNED_CONFIG}' | openclaw config patch --stdin >/dev/null || true`,
     'exit 0',

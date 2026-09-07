@@ -43,12 +43,14 @@ describe('openclaw-agentbox-env', () => {
     expect(script).toContain('install -m 0644');
   });
 
-  it('keeps the generated file out of the user repo via git itself', () => {
-    // `agentbox download` selects with `git ls-files --others
-    // --exclude-standard` and does not apply the exclude list in git mode, so
-    // the box's own .git/info/exclude is the only thing that hides it there.
-    expect(script).toContain('/workspace/.git/info/exclude');
-    expect(script).toContain('.agentbox/');
+  it('does not try to hide itself by editing the box repo', () => {
+    // Keeping the generated file out of the user's project is the PULL layer's
+    // job (`GIT_MODE_EXCLUDE_DIRS`), not this script's. Writing an exclude here
+    // cannot work and is not harmless: in a docker box `/workspace/.git` is a
+    // linked-worktree FILE whose per-worktree `info/exclude` git ignores, and
+    // the common dir it does read is the user's bind-mounted host repo.
+    expect(script).not.toContain('info/exclude');
+    expect(script).not.toMatch(/\.git\b/);
   });
 
   it('writes the prompt file atomically, behind a sentinel', () => {

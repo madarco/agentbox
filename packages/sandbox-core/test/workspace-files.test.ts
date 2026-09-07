@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   agentStateExcludePaths,
+  GIT_MODE_EXCLUDE_DIRS,
   buildWorkspaceListScript,
   isExcludedPath,
   overlayHostDirIntoBox,
@@ -60,6 +61,26 @@ describe('buildWorkspaceListScript', () => {
     expect(script).toContain('MODE=git');
     expect(script).toContain('MODE=exclude');
     expect(script).toContain("-name 'node_modules'");
+  });
+
+  it('drops the box-local .agentbox dir from the GIT selection too', () => {
+    // Git mode otherwise carries everything `ls-files --cached --others` reports
+    // on purpose (a tracked `.claude/` there is the user's own content). The one
+    // exception is the dir AgentBox itself generates in the box every boot:
+    // pulling it back writes a file describing THIS box into the user's project.
+    //
+    // The pathspec is the only mechanism that works everywhere. `.git/info/exclude`
+    // does not: in a docker box `/workspace/.git` is a linked-worktree FILE whose
+    // per-worktree `info/exclude` git does not read (verified in a live box), and
+    // the common dir it does read is the user's bind-mounted host repo.
+    const script = buildWorkspaceListScript({ excludes: [] });
+    for (const dir of GIT_MODE_EXCLUDE_DIRS) {
+      expect(script).toContain(`':(exclude)${dir}'`);
+    }
+    expect(GIT_MODE_EXCLUDE_DIRS).toContain('.agentbox');
+    // …and it is on the ls-files line, not merely somewhere in the script.
+    const gitLine = script.split('\n').find((l) => l.includes('git ls-files'))!;
+    expect(gitLine).toContain("':(exclude).agentbox'");
   });
 
   it('skips the git probe entirely when gitignore is off', () => {

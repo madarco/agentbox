@@ -44,10 +44,9 @@ import { AGENT_SYNC_SPECS } from '../registry.js';
  * only read a system prompt from inside its own workspace). Pulling it back
  * would put a generated file describing THIS box into the user's project.
  *
- * Note this covers exclude-list mode and `clone` only. `download` on a git
- * workspace deliberately does not apply these (see `dropExcludedInGitMode`), so
- * git has to be told separately — the openclaw task adds `.agentbox/` to the
- * box's own `.git/info/exclude`.
+ * This list covers exclude-list mode and `clone` only, since `download` on a
+ * git workspace deliberately does not apply it (see `dropExcludedInGitMode`).
+ * `.agentbox` is dropped in git mode too, by {@link GIT_MODE_EXCLUDE_DIRS}.
  */
 export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
   '.git',
@@ -55,6 +54,24 @@ export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
   'media',
   '.agentbox',
 ];
+
+/**
+ * Directories dropped from the GIT-mode selection as well, by pathspec.
+ *
+ * Git mode otherwise carries everything `git ls-files --cached --others
+ * --exclude-standard` reports, on purpose: a tracked `.claude/` there is the
+ * user's own content and dropping it would be a regression. `.agentbox` is the
+ * one thing that is never the user's content — AgentBox generates it in the box
+ * every boot (openclaw's derived box facts, which have to live inside the
+ * workspace because openclaw will not read a system prompt from outside it), so
+ * pulling it back would write a file describing THIS box into the project.
+ *
+ * A pathspec rather than the box's `.git/info/exclude`, which cannot do the job:
+ * in a docker box `/workspace/.git` is a linked-worktree FILE whose per-worktree
+ * `info/exclude` git does not read, and the common dir it does read is the
+ * user's bind-mounted host repo.
+ */
+export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
 
 /**
  * Agent state directories, derived from every registered agent's declared
@@ -164,12 +181,15 @@ export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): stri
   const findCmd = `find . ${prune}\\( \\( -type f -o -type l \\) ${fileFilter} -print0 \\)`;
   const gitProbe =
     opts.respectGitignore === false ? 'false' : 'git rev-parse --is-inside-work-tree';
+  // `:(exclude)<dir>` matches the directory and everything under it (verified
+  // against git 2.43 in a box), so one pathspec per name is enough.
+  const gitExcludePathspecs = GIT_MODE_EXCLUDE_DIRS.map((d) => sq(`:(exclude)${d}`)).join(' ');
   return [
     `set -u`,
     `cd ${sq(dir)} 2>/dev/null || exit 3`,
     `if ${gitProbe} >/dev/null 2>&1; then`,
     `  printf 'MODE=git\\n'`,
-    `  git ls-files -z --cached --others --exclude-standard`,
+    `  git ls-files -z --cached --others --exclude-standard -- . ${gitExcludePathspecs}`,
     `else`,
     `  printf 'MODE=exclude\\n'`,
     `  ${findCmd}`,
