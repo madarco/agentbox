@@ -178,10 +178,13 @@ agentbox clone svc --name svc2
 agentbox clone svc --name svc-hz --provider hetzner --into ~/projects/svc-hz
 ```
 
-The clone gets its own host workspace directory (`~/.agentbox/clones/<name>` by default, or
-`--into <dir>`), exported from the source box with the same gitignore/exclude rules `download` uses.
-That directory is a real project: `agentbox upload` pushes into the clone and `agentbox download`
-pulls back out of it, like any other box.
+The clone gets its own host workspace directory, exported from the source box with the same
+gitignore/exclude rules `download` uses. When the source box belongs to a project, that directory is
+`<project>/.agentbox/bots/<name>/workspace/` — beside the source bot's own backups, in the same
+gitignored tree — so a project is the template and its bots are instances of it. A box with no
+project falls back to `~/.agentbox/clones/<name>`, and `--into <dir>` overrides either. That
+directory is a real project: `agentbox upload` pushes into the clone and `agentbox download` pulls
+back out of it, like any other box.
 
 What is **not** copied is the agent's config volume and its credential. The new box onboards from
 scratch, so it generates its own identity and carries no pairings or sessions from the source. There
@@ -192,11 +195,49 @@ exists to prevent. To move a box's full state somewhere else, use a
 `.git` is not exported either — the clone is a template, not a second checkout. If you want a
 git-backed second box on the same project, that is what `agentbox create` already gives you.
 
-<Callout title="NOTE">
-  Today the clone is created **without an agent** — it is a box holding the workspace files and the
-  `agentbox.yaml`, which is what a service box needs (its services are declared in that file). Start
-  a coding agent in it with `agentbox claude <clone>` and it logs in as its own box.
-</Callout>
+A clone of a box running a **service agent** — a bot, like [OpenClaw](/docs/openclaw) — runs that
+same agent, because a bot's box _is_ the bot and an agentless copy of its workspace is just a
+directory. A clone of a coding-agent box is still created **without an agent**: there is no identity
+to reproduce, so start one with `agentbox claude <clone>` and it logs in as its own box.
+
+### What a spawned bot gets of its own
+
+An agent declares three things about its own clones, and AgentBox applies them:
+
+| Declared      | What the clone does                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `drop`        | Files the agent regenerates are not copied (OpenClaw's `AGENTS.md`, `USER.md`)                |
+| `render`      | Files that name the bot are copied, then rewritten for the new box (`SOUL.md`, `IDENTITY.md`) |
+| `perBoxCarry` | A per-box secrets file the clone will not start without                                       |
+
+The rewrite uses a [`replacements:`](/docs/agentbox-yaml#replacements) rule-set named `identity` in
+the workspace's own `agentbox.yaml`, so _you_ decide which words are the bot's name:
+
+```yaml
+replacements:
+  identity:
+    - from: '\bAda\b'
+      to: '{{AGENTBOX_BOX_NAME}}'
+      regex: true
+```
+
+The bot can write this itself — an OpenClaw box is nudged, on its first turn, to follow its
+`agentbox-identity` skill and propose the rules for you to review. Without a rule-set the files are
+copied verbatim, and the clone says so.
+
+The per-box file is the part that refuses. OpenClaw declares
+`~/.agentbox/openclaw/<box-name>.env`, so each bot reads its own channel tokens:
+
+```bash
+agentbox clone ada -n bea
+# clone: bea needs its own secrets before it can be a separate bot —
+#   create /Users/you/.agentbox/openclaw/bea.env (0600) and run this again
+```
+
+Nothing is created when it refuses — no directory, no box. On an ordinary
+`agentbox openclaw -n <name>` the same file is optional (a first bot has nobody to collide with) and
+its absence is only logged. A clone is where the collision would actually happen, so there it is a
+refusal: two bots sharing one Telegram token means the copy answers as the original.
 
 ## Sync agent settings between boxes
 

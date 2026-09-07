@@ -174,12 +174,23 @@ cloned box from inheriting the facts of the box it was cloned from.
 | `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                            |
 | `~/.openclaw/agents/`             | Your agent definitions          | Both directions                  |
 | `~/.config/openclaw`              | Auth-profile key                | Stays in the box's config volume |
+| `~/.openclaw/.env`                | Channel tokens                  | Carried per box, never copied    |
 
 `agentbox download openclaw [box]` pulls the agent definitions back to your host, additively — an item the host already has is never overwritten. There is deliberately no `--propagate`: an OpenClaw box is a tenant, and copying one tenant's definitions into another's gateway is not a sensible default.
 
 **One exception, and it is opt-in: `agentbox download --backup`.** A backup is the one operation that keeps the identity, because a restore that mints a new gateway token has not restored the bot. It writes `openclaw.json`, the config-journal key and the live `state/` into `<project>/.agentbox/bots/<bot>/<timestamp>/state/` — gitignored and `0700` — while still dropping `tmp/openclaw-<uid>/`, whose name carries the box user's uid and differs per provider. The gateway databases go through SQLite's online-backup API, not a byte copy. See [back a bot up](/docs/sync-and-git#back-a-bot-up).
 
 A backup is restorable, and `agentbox openclaw --restore <bot>` is how: a new box, seeded from the backed-up workspace, with the captured state directory pushed back in once the gateway has come up on its own — same token, same pairings, same history, on whichever provider you point it at. It refuses while the backed-up box is still running, because two gateways holding one identity is the failure the per-box state directory exists to prevent. See [bring a bot back](/docs/sync-and-git#bring-a-bot-back).
+
+### Spawning a second bot
+
+`agentbox clone <bot> -n <name>` makes another bot from the same workspace. It runs OpenClaw, with its own gateway identity, and three things are handled for it:
+
+- `AGENTS.md` and `USER.md` are **not** copied — onboarding regenerates them for the new box.
+- `SOUL.md` and `IDENTITY.md` **are** copied, then rewritten through the workspace's `identity` [rule-set](/docs/agentbox-yaml#replacements) so the copy stops introducing itself with the source bot's name.
+- `~/.agentbox/openclaw/<name>.env` is carried in as a 0600 `~/.openclaw/.env`. The clone **refuses** until that file exists, because two bots sharing one channel token means the new one answers as the old one. On a first `agentbox openclaw -n <name>` the same file is optional and merely logged.
+
+A bot writes its own `identity` rule-set: while `agentbox.yaml` declares none, the box facts nudge the bot to follow its `agentbox-identity` skill once, and the nudge disappears as soon as the rules are there. Review the rules it proposes like any other edit to your yaml — a name that is also a common word is the case worth checking.
 
 If your host happens to run OpenClaw itself, its config and state are excluded from everything pushed into a box, for the same identity reason.
 

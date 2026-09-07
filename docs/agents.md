@@ -489,6 +489,24 @@ name; the render lints for a secret-shaped literal and warns.
    credential watch, no host-backup probe and no entry in the relay fan-out;
    everything else about it is unchanged. Absent is not a placeholder for "not
    wired up yet" — if the agent has a host-side login, declare it.
+
+   **`clone` is optional, and only a SERVICE agent has ever needed it.** It
+   answers "what must differ when a second instance of this agent is spawned
+   from the same workspace?", in three lists:
+
+   | field | meaning |
+   |---|---|
+   | `drop` | workspace files the agent regenerates; a clone does not copy them |
+   | `render` | workspace files that name the instance; copied, then rewritten through the workspace's `identity` rule-set |
+   | `perBoxCarry` | host files the agent needs a per-box copy of, `src` keyed by `{{AGENTBOX_BOX_NAME}}` |
+
+   The split between `drop` and `render` is the judgement: `drop` is for what the
+   agent wrote about the box, `render` for what the USER wrote about the bot —
+   throwing the latter away loses their work, and copying it verbatim gives two
+   bots one identity. `perBoxCarry` is `optional` on an ordinary create (a first
+   box has nobody to collide with) and NEVER optional on a clone, which refuses
+   until the file exists. A TUI agent leaves the whole field out: its box has no
+   identity to reproduce.
 2. **Add the agent's package** — `packages/agent-<id>/`, with its CLI surface
    under `src/cli/` — and its arm in the `AGENT_MODULES` table
    (`apps/cli/src/agents/index.ts`): the guided-login detector, and a

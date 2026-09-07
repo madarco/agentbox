@@ -67,3 +67,46 @@ load-bearing.
   routine.
 - **Hermes' shape is still unmeasured.** Its state dir and identity files need
   the same table row openclaw has before a `clone:`/restore story can cover it.
+
+## From Phases 3 and 4 (spawn + the identity wizard, 2026-09-07)
+
+### Measured, and now encoded
+
+- **A clone of a service-agent box has to RUN that agent.** Keeping
+  `agent: 'none'` (the historical clone contract) meant the per-box secrets had
+  no create to ride into, and no later step would ever carry them: the second
+  "bot" was a directory. `prepareClone` reads `caps.surface` and sets the agent
+  itself, so the ordinary create applies `perBoxCarry` on every provider.
+- **The identity render cannot be an in-box `run_once: { check }` task.** The
+  only available check is "does `SOUL.md` exist", and the clone has just copied
+  one — so it would never fire. Host-side it is a five-line pass over the
+  exported dir, before the box exists.
+- **`optional` was the vocabulary `required:` was reaching for.** Same field,
+  read differently by the two callers: honoured on a create, ignored on a clone.
+  Worth remembering the next time a spec field looks like it needs a new flag.
+- **The clone refusal runs before the export**, so a missing secrets file leaves
+  no directory, no registered project and no box. Tested by mutation.
+
+### Open
+
+- **`agentbox clone` has no `--with-secrets` or equivalent**, so the per-box file
+  must be created by hand before the clone. A prompt (the carry gate's shape)
+  or a `--secrets-from <file>` would close it, but neither is worth building
+  until someone has spawned bots often enough to be annoyed.
+- **The nudge assumes the bot reads its bootstrap files on the first turn.**
+  True for openclaw's `bootstrap-extra-files`, unverified for anything else. An
+  agent whose surface ignores them gets no nudge and no error.
+- **A rule-set is only as good as the bot's judgement of its own name.** The
+  skill refuses literals under three characters and warns on common words, but a
+  bot named "Max" will still produce a rule the user has to review. There is no
+  dry-run that shows what a rule WOULD rewrite before a clone applies it —
+  `agentbox clone --dry-run` would be the natural home.
+- **The identity skill needs a re-bake to reach existing snapshots.** Cloud bases
+  pick it up through the `_shared` upload fallback on the next `prepare`; a
+  docker base rebuilds locally. Until then the task's `[ -f ]` guard means the
+  nudge is simply absent — never an error, but also never a prompt.
+- **Neither phase is live-verified end to end.** Phase 3's refusal, render and
+  per-box carry are unit- and mutation-tested, and Phase 4's script was executed
+  against a scratch workspace, but no real `agentbox clone ada -n bea` has run on
+  docker or hetzner. That is the next session's first job, and the plan's
+  verification section has the exact sequence.

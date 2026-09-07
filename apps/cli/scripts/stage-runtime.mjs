@@ -52,6 +52,7 @@ const execBitFiles = new Set([
 const contextFiles = [
   'packages/ctl/dist/bin.cjs',
   'apps/cli/share/agentbox-setup/SKILL.md',
+  'apps/cli/share/agentbox-identity/SKILL.md',
   'packages/sandbox-docker/scripts/agentbox-vnc-start',
   'packages/sandbox-docker/scripts/agentbox-dockerd-start',
   'packages/sandbox-docker/scripts/agentbox-sshd-start',

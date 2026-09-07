@@ -324,6 +324,10 @@ export const DOCKER_CONTEXT_FILE_MAP: Record<string, { staged: string; dev: stri
     staged: 'apps/cli/share/agentbox-setup/SKILL.md',
     dev: '../../apps/cli/share/agentbox-setup/SKILL.md',
   },
+  'share/agentbox-identity/SKILL.md': {
+    staged: 'apps/cli/share/agentbox-identity/SKILL.md',
+    dev: '../../apps/cli/share/agentbox-identity/SKILL.md',
+  },
   'scripts/agentbox-vnc-start': {
     staged: 'packages/sandbox-docker/scripts/agentbox-vnc-start',
     dev: 'scripts/agentbox-vnc-start',

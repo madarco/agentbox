@@ -36,7 +36,9 @@ describe('renderCloneIdentity', () => {
 
     expect(r.rendered).toEqual(['SOUL.md']);
     expect(r.hadRules).toBe(true);
-    expect(await readFile(join(dir, 'SOUL.md'), 'utf8')).toBe('# bea\n\nbea is careful and terse.\n');
+    expect(await readFile(join(dir, 'SOUL.md'), 'utf8')).toBe(
+      '# bea\n\nbea is careful and terse.\n',
+    );
   });
 
   it('leaves a word that merely CONTAINS the name alone (the rule is anchored)', async () => {

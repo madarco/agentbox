@@ -36,9 +36,9 @@ afterEach(async () => {
 
 describe('perBoxCarrySrc', () => {
   it('substitutes the box name and expands ~', () => {
-    expect(perBoxCarrySrc('~/.agentbox/openclaw/{{AGENTBOX_BOX_NAME}}.env', { boxName: 'bea', home })).toBe(
-      join(home, '.agentbox/openclaw/bea.env'),
-    );
+    expect(
+      perBoxCarrySrc('~/.agentbox/openclaw/{{AGENTBOX_BOX_NAME}}.env', { boxName: 'bea', home }),
+    ).toBe(join(home, '.agentbox/openclaw/bea.env'));
   });
 
   it('is what makes two bots differ — the same spec resolves per box', () => {
@@ -123,8 +123,7 @@ describe('withPerBoxCarry', () => {
     ];
     const out = await withPerBoxCarry(approved, [spec], { boxName: 'bea', home });
     expect(out).toHaveLength(2);
-    expect(out[0].absSrc).toBe('/h/a');
-    expect(out[1].absSrc).toBe(join(home, '.agentbox/openclaw/bea.env'));
+    expect(out.map((e) => e.absSrc)).toEqual(['/h/a', join(home, '.agentbox/openclaw/bea.env')]);
   });
 
   it('continues past an OPTIONAL miss on an ordinary create, and says which path', async () => {
@@ -137,7 +136,13 @@ describe('withPerBoxCarry', () => {
   });
 
   it('throws on a NON-optional miss, naming the file to create', async () => {
-    const required = { clone: { perBoxCarry: [{ src: '~/.agentbox/openclaw/{{AGENTBOX_BOX_NAME}}.env', dest: '~/.openclaw/.env' }] } };
+    const required = {
+      clone: {
+        perBoxCarry: [
+          { src: '~/.agentbox/openclaw/{{AGENTBOX_BOX_NAME}}.env', dest: '~/.openclaw/.env' },
+        ],
+      },
+    };
     await expect(withPerBoxCarry(undefined, [required], { boxName: 'bea', home })).rejects.toThrow(
       join(home, '.agentbox/openclaw/bea.env'),
     );

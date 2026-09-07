@@ -12,6 +12,7 @@ function makeFakeRepo(): string {
   mkdirSync(join(root, 'packages/ctl/dist'), { recursive: true });
   mkdirSync(join(root, 'packages/sandbox-docker/scripts'), { recursive: true });
   mkdirSync(join(root, 'apps/cli/share/agentbox-setup'), { recursive: true });
+  mkdirSync(join(root, 'apps/cli/share/agentbox-identity'), { recursive: true });
   const files = [
     'packages/sandbox-digitalocean/scripts/install-box.sh',
     'packages/ctl/dist/bin.cjs',
@@ -27,6 +28,7 @@ function makeFakeRepo(): string {
     'packages/sandbox-docker/scripts/claude-managed-settings.json',
     'packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
     'apps/cli/share/agentbox-setup/SKILL.md',
+    'apps/cli/share/agentbox-identity/SKILL.md',
   ];
   for (const rel of files) writeFileSync(join(root, rel), 'stub');
   // Marker so `guessRepoRoot()` (the resolver's default walk-up) can find it.

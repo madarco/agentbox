@@ -13,6 +13,14 @@ CLI, not the raw commits.
 
 ### Added
 
+- **`agentbox clone` of a bot gives you a second bot, not a copy of the first.**
+  A clone of a service-agent box runs that agent, drops the files it regenerates,
+  rewrites the ones naming the bot through an `identity` rule-set, and requires a
+  per-box secrets file (`~/.agentbox/openclaw/<name>.env`) before it will proceed.
+  Its workspace lands beside the source's backups, in `<project>/.agentbox/bots/`.
+- **An OpenClaw bot can write its own identity rules.** A new `agentbox-identity`
+  skill, and a nudge in the box facts while `agentbox.yaml` declares no rule-set.
+
 - **Pick a box size when you create one, in the web hub and the macOS tray.** The
   choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`
   on Daytona — there is no common grammar), with a custom-value field where the

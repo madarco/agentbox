@@ -1,6 +1,7 @@
 # Bot backup, restore and spawn — plan
 
-Status: **Phases 1 and 2 done** (backup, restore). Written 2026-09-07 after the
+Status: **all four phases done** (backup, restore, spawn, the identity wizard).
+Written 2026-09-07 after the
 `download` fix (#372) and the openclaw box-context task (#371) landed on
 `nightly`.
 
@@ -257,7 +258,38 @@ channel.
 
 </details>
 
-### Phase 3 — the `clone:` spec field and per-bot carry
+### Phase 3 — the `clone:` spec field and per-bot carry — **DONE**
+
+Shipped. What the implementation found that the plan had not:
+
+- **The clone had to start running the agent.** The plan kept `clone`'s
+  `agent: 'none'` and left `perBoxCarry` to be applied by whatever added the
+  agent later. But a bot's box IS the bot: an agentless copy of an openclaw
+  workspace is a directory, and there was no second step that would ever carry
+  the secrets in. `prepareClone` now picks the source's agent when its
+  `caps.surface === 'service'`, and the ordinary create applies the per-box
+  entries — one path, every provider.
+- **The render belongs on the host, not in the box.** The plan preferred an
+  in-box `run_once: { check }` task. It cannot work as written: the check would
+  have to be "does `SOUL.md` exist", and the clone has just copied one, so it
+  never fires. Host-side in `prepareClone` the exported `agentbox.yaml` is
+  already on disk, the box name is known, and Decision 6 becomes true by
+  construction — after the clone these are ordinary files nothing rewrites again.
+- **`required: true` was not needed.** carry already has `optional`, so the rule
+  is a sentence rather than a field: `optional` is honoured on a create and
+  ignored on a clone. A first bot has nobody to collide with; a clone is the
+  collision, and it refuses BEFORE the export, so nothing is left behind.
+- **No `word: true` on `ReplaceRule` either.** `regex: true` with `\bAda\b`
+  already gives whole-word matching, and the wizard writes exactly that — one
+  less thing in the schema, the engine and the ctl CLI.
+- **`dropExcludedInGitMode` was carrying two jobs.** It both applied the exclude
+  list in git mode and sourced the artifact drop. The drop is now
+  `clone.drop`, scoped to the box's own agent rather than the registry-wide
+  union — a claude rule can no longer shape an openclaw box's clone.
+
+<details>
+<summary>Original plan</summary>
+
 
 - `AgentSyncSpec.clone` as in Decision 4; `workspaceArtifacts` folds into
   `clone.drop` + `clone.render` (delete the old field; AgentBox is unreleased).
@@ -283,7 +315,30 @@ channel.
 `~/.agentbox/openclaw/bea.env`; create the file → clone succeeds, `bea`'s
 `SOUL.md` names Bea, `openclaw.json` differs, `ada`'s channel is untouched.
 
-### Phase 4 — the identity wizard skill
+</details>
+
+### Phase 4 — the identity wizard skill — **DONE**
+
+Shipped as the `agentbox-identity` skill, baked beside the setup guide on every
+provider. What the implementation found:
+
+- **There was no "run once, ever" sentinel to copy.** `openclaw-agentbox-env`
+  deliberately has no `runOnce`, and the only marker in play is
+  `openclaw-onboard`'s. Rather than introduce the first one, the nudge is a
+  paragraph appended to the box facts *while* `agentbox.yaml` declares no
+  `identity` rule-set. The yaml is the only state: the file is regenerated every
+  boot, so the nudge disappears by itself and nothing can go stale.
+- **A supervisor task could not do this job.** Writing the rules means reading
+  your own `SOUL.md` and deciding which words are your name — a judgement, on a
+  turn. Driving `openclaw agent` from a task would also need a model credential
+  in the box at boot, which is a separate unshipped thing.
+- Verified by running the generated script against a scratch workspace: the
+  nudge appears without the sentinel, is gone after it, and the box facts
+  survive both.
+
+<details>
+<summary>Original plan</summary>
+
 
 - New `agentbox-identity` skill beside `agentbox-setup` in
   `apps/cli/runtime/_shared/`, staged into the image like the setup guide, and
@@ -301,6 +356,8 @@ channel.
 **Verify:** fresh openclaw box, let it onboard and name itself; the yaml gains
 the rule-set; clone → the clone's `SOUL.md` carries the new name and nothing
 else changed (diff the two files).
+
+</details>
 
 ---
 

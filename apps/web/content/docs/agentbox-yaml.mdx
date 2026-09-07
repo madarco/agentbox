@@ -403,7 +403,7 @@ replacements:
       regex: true
 ```
 
-Two ways to apply substitutions:
+Three ways to apply substitutions:
 
 **1. Carry-time (host→box files).** A `carry:` file entry can opt into `replaceEnvs: true` (placeholder substitution) and/or `replace:` (inline rules) and/or `rules:` (named refs). The file is rendered host-side into a temp copy before the copy — the original host file is never modified, and the box name is known by then:
 
@@ -414,6 +414,18 @@ carry:
     replaceEnvs: true
     rules: [box-host]
 ```
+
+**3. Clone-time (a spawned bot's identity files).** A rule-set named exactly `identity` is applied by `agentbox clone` to the files the box's agent declares as its identity — OpenClaw's `SOUL.md` and `IDENTITY.md` — so the new bot stops introducing itself with the source bot's name. It is applied once, on the host, to the copy on its way into the new box; your own files are never touched. Use `\b` word boundaries so a name does not rewrite words that merely contain it:
+
+```yaml
+replacements:
+  identity:
+    - from: '\bAda\b'
+      to: '{{AGENTBOX_BOX_NAME}}'
+      regex: true
+```
+
+An OpenClaw bot can write this block itself — see [spawning a second bot](/docs/openclaw#spawning-a-second-bot).
 
 **2. In-box (files already in the workspace).** `agentbox-ctl render` is a declarative `sed` replacement — handy for rendering a gitignored `.env` from a committed `env.example` on every boot. The render is itself idempotent (the regex rules re-pin the same lines on every boot), so this task needs no `run_once:` guard:
 
