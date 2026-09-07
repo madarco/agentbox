@@ -147,6 +147,24 @@ The unit names (`openclaw`, `openclaw-onboard`, `openclaw-render`) are public su
 
 Only one unit may `expose:`. If your `agentbox.yaml` already publishes the box's web port, OpenClaw's `expose:` is dropped with a warning rather than silently taking it over.
 
+## What AgentBox adds to the box
+
+Two things, both AgentBox's rather than yours, refreshed on every boot:
+
+- **A skill** at `/opt/agentbox/skills/` — outside your workspace, registered
+  through OpenClaw's `skills.load.extraDirs` at its lowest precedence, so a skill
+  of your own with the same name wins. It never travels with `agentbox clone`.
+- **The box facts** at `/workspace/.agentbox/AGENTS.md` — the same sandbox
+  description Claude and Codex get, so the gateway's agent knows it is in a
+  sandbox, that `/workspace` is box-local, and how to reach your machine. It has
+  to live inside the workspace because OpenClaw reads a system prompt from
+  nowhere else, so AgentBox adds `.agentbox/` to the box's own
+  `.git/info/exclude` — it will not follow an `agentbox download` into your repo,
+  and your own `AGENTS.md` is never touched.
+
+Both are regenerated each time the supervisor starts, which is what keeps a
+cloned box from inheriting the facts of the box it was cloned from.
+
 ## State, sync and clones
 
 | Path in the box                   | What it is                      | Travels?                         |

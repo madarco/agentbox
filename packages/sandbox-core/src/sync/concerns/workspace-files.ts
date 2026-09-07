@@ -38,8 +38,23 @@ import { AGENT_SYNC_SPECS } from '../registry.js';
  * at any depth. `.git` and `node_modules` are the historical pair; `media` is
  * new — a service agent (an AI gateway, a chat backend) accumulates uploaded
  * attachments under `media/` and they are not source.
+ *
+ * `.agentbox` is ours, not the user's: a box-local dir AgentBox regenerates
+ * every boot (openclaw's derived box facts live there, because openclaw will
+ * only read a system prompt from inside its own workspace). Pulling it back
+ * would put a generated file describing THIS box into the user's project.
+ *
+ * Note this covers exclude-list mode and `clone` only. `download` on a git
+ * workspace deliberately does not apply these (see `dropExcludedInGitMode`), so
+ * git has to be told separately — the openclaw task adds `.agentbox/` to the
+ * box's own `.git/info/exclude`.
  */
-export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = ['.git', 'node_modules', 'media'];
+export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
+  '.git',
+  'node_modules',
+  'media',
+  '.agentbox',
+];
 
 /**
  * Agent state directories, derived from every registered agent's declared

@@ -49,6 +49,101 @@ const OPENCLAW_XDG_LINK = `${BOX_HOME}/.config/openclaw`;
 /** Loopback port the gateway binds. Named once — probe, expose and URL all read it. */
 const GATEWAY_PORT = 18789;
 
+/**
+ * Where AgentBox keeps the skills it owns, and the box "system prompt" it
+ * derives. Both are AgentBox's, not the user's.
+ *
+ * The skill lives OUTSIDE the workspace on purpose: `skills.load.extraDirs` is
+ * documented for exactly this ("shared skill packs ... without copying them
+ * into the OpenClaw workspace"), at LOWEST precedence, so a user skill of the
+ * same name wins. Nothing about it travels with `agentbox clone`.
+ *
+ * The prompt file cannot do the same. openclaw's `bootstrap-extra-files` hook
+ * resolves every path from the workspace and REALPATH-CHECKS it, so a symlink
+ * out is refused, and only the six canonical bootstrap basenames are accepted —
+ * hence a real `AGENTS.md`, inside `/workspace`, under a namespaced dir.
+ */
+const AGENTBOX_SKILLS_DIR = '/opt/agentbox/skills';
+/** Baked into every provider's base image; see each `install-box.sh`. */
+const BAKED_SETUP_SKILL = '/usr/local/share/agentbox/setup-guide.md';
+/** The per-provider box facts. Claude reads it directly; codex folds it in too. */
+const BOX_FACTS = '/etc/claude-code/CLAUDE.md';
+const AGENTBOX_CTX_DIR = '/workspace/.agentbox';
+/** First line of the generated file: makes a re-run idempotent, and says whose it is. */
+const CTX_SENTINEL = '<!-- agentbox:box-facts (generated every boot; edit AGENTS.md instead) -->';
+
+/**
+ * The keys AgentBox OWNS in openclaw's config, applied through openclaw's own
+ * validated merge. Deliberately not the `openclaw:` overlay in agentbox.yaml —
+ * that is the user's, and `configRender` reads only from there.
+ *
+ * `openclaw-render` applies the user's overlay afterwards and sends only the
+ * keys they CHANGED, so these survive unless the user names the same key, which
+ * is the precedence we want.
+ */
+const AGENTBOX_OWNED_CONFIG = JSON.stringify({
+  skills: { load: { extraDirs: [AGENTBOX_SKILLS_DIR] } },
+  hooks: {
+    internal: {
+      enabled: true,
+      entries: { 'bootstrap-extra-files': { enabled: true, paths: ['.agentbox/AGENTS.md'] } },
+    },
+  },
+});
+
+/**
+ * Teach the box's gateway where it is running.
+ *
+ * Runs on EVERY supervisor start, not once: the prompt file sits in the
+ * workspace, so `agentbox clone` carries a copy of the SOURCE box's facts into
+ * the new one. Regenerating overwrites it from this box's own `/etc/claude-code`
+ * before the gateway ever reads it — which is what makes a clone, a re-provision
+ * or a move to another provider self-correcting rather than quietly wrong.
+ *
+ * Best-effort throughout: none of this is worth failing a box over, so every
+ * step is guarded and the task still exits 0 on a base too old to carry the
+ * baked files.
+ */
+function buildAgentboxContextScript(): string {
+  return [
+    'set -u',
+    // The skill. COPIED, not symlinked, and as `<name>/SKILL.md` rather than a
+    // flat `.md` — both measured against openclaw 2026.9.2, which discovered
+    // neither other shape: it takes skills as directories, and rejects a symlink
+    // whose real target sits outside the source root unless that target is in
+    // `skills.load.allowSymlinkTargets`. Re-copied every boot, so a re-baked
+    // base image still propagates.
+    `if [ -f ${BAKED_SETUP_SKILL} ]; then`,
+    `  D=${AGENTBOX_SKILLS_DIR}/agentbox-setup`,
+    '  (sudo -n mkdir -p "$D" 2>/dev/null || mkdir -p "$D") || true',
+    `  (sudo -n install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md" 2>/dev/null ||`,
+    `   install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md") || true`,
+    'fi',
+    // The box facts, written atomically so a reader never sees a half file.
+    `if [ -f ${BOX_FACTS} ]; then`,
+    `  mkdir -p ${AGENTBOX_CTX_DIR} || true`,
+    `  TMP=${AGENTBOX_CTX_DIR}/AGENTS.md.agentbox.tmp`,
+    '  {',
+    `    printf '%s\\n\\n' '${CTX_SENTINEL}'`,
+    `    cat ${BOX_FACTS}`,
+    '  } > "$TMP" && mv "$TMP" ' + `${AGENTBOX_CTX_DIR}/AGENTS.md || true`,
+    'fi',
+    // Keep it out of the user's repo. `agentbox download` selects with
+    // `git ls-files --others --exclude-standard` and deliberately does NOT apply
+    // the exclude list in git mode, so the only thing that hides an untracked
+    // file there is git itself. `.git/info/exclude` is per-clone and in the BOX,
+    // so the user's own .gitignore is never touched.
+    'if [ -d /workspace/.git ]; then',
+    '  mkdir -p /workspace/.git/info || true',
+    "  grep -qxF '.agentbox/' /workspace/.git/info/exclude 2>/dev/null ||",
+    "    printf '%s\\n' '.agentbox/' >> /workspace/.git/info/exclude || true",
+    'fi',
+    // One validated merge rather than several `config set` calls.
+    `printf '%s' '${AGENTBOX_OWNED_CONFIG}' | openclaw config patch --stdin >/dev/null || true`,
+    'exit 0',
+  ].join('\n');
+}
+
 export const openclawSpec: AgentSyncSpec = {
   id: 'openclaw',
   aliases: [],
@@ -178,9 +273,19 @@ export const openclawSpec: AgentSyncSpec = {
           '--skip-channels --skip-health --no-install-daemon',
       },
       {
+        // Everything AgentBox owns in this box: the skill root outside the
+        // workspace, the derived box facts inside it, and the two config keys
+        // that make openclaw read both. No `runOnce` — see the builder's doc.
+        name: 'openclaw-agentbox-env',
+        command: buildAgentboxContextScript(),
+        needs: ['openclaw-onboard'],
+      },
+      {
         name: 'openclaw-render',
         command: 'agentbox-ctl agent render openclaw',
-        needs: ['openclaw-onboard'],
+        // After the AgentBox keys, so the user's overlay is the last word on any
+        // key they and we both name.
+        needs: ['openclaw-agentbox-env'],
       },
     ],
     // The Control UI asks for the gateway token on first load, and openclaw's

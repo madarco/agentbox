@@ -381,6 +381,17 @@ declares instead of the TUI machinery:
 - **`service.urlFields`** — values `<agent> url` prints beside the URL, read out
   of the daemon's own config file (a Control UI's gateway token). Data, because
   the only per-agent parts are which file and which dotted key.
+- **`service.tasks`** is also where AgentBox asserts config it OWNS. openclaw's
+  `openclaw-agentbox-env` task installs the AgentBox skill under
+  `/opt/agentbox/skills` (registered via `skills.load.extraDirs`, outside the
+  workspace so a clone never carries it) and writes the box facts to
+  `/workspace/.agentbox/AGENTS.md` (registered via the `bootstrap-extra-files`
+  hook, which refuses any path outside the workspace and any name that is not
+  one of openclaw's six canonical bootstrap basenames). It runs on EVERY boot,
+  because the workspace file travels with `agentbox clone` and would otherwise
+  describe the box it came from. `configRender` is not the seam for this: it
+  reads only the user's `agentbox.yaml` block, and the render runs after this
+  task so the user still has the last word on any key both name.
 - **`service.repl`** — argv for an interactive CLIENT of the daemon, opened by
   `agentbox attach`, `agentbox <agent> attach` and `agentbox open --in <app>`.
   It does NOT make the agent a TUI one and does NOT get an `attachWrapped`:
