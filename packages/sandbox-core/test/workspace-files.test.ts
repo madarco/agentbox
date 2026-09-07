@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentStateExcludePaths,
   GIT_MODE_EXCLUDE_DIRS,
+  agentCloneDropPaths,
   agentWorkspaceArtifactPaths,
   buildWorkspaceListScript,
   gitModeExcludePathspecs,
@@ -255,5 +256,25 @@ describe('isAgentWorkspaceArtifact', () => {
       'SOUL.md',
       'USER.md',
     ]);
+  });
+});
+
+describe('agentCloneDropPaths', () => {
+  it('drops only what the agent regenerates — NOT the files a clone rewrites', () => {
+    // The distinction the whole spawn feature turns on: a clone must not carry
+    // the source bot's `AGENTS.md`, but `SOUL.md` is the user's own writing and
+    // is rendered for the new bot instead of thrown away.
+    const drop = agentCloneDropPaths('openclaw');
+    expect(drop).toEqual(['AGENTS.md', 'USER.md']);
+    expect(drop).not.toContain('SOUL.md');
+    expect(drop).not.toContain('IDENTITY.md');
+  });
+
+  it('is empty for an agent that declares no clone rules', () => {
+    expect(agentCloneDropPaths('claude')).toEqual([]);
+  });
+
+  it('falls back to the registry-wide union when the caller knows no agent', () => {
+    expect(agentCloneDropPaths()).toContain('AGENTS.md');
   });
 });

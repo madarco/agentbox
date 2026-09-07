@@ -62,6 +62,7 @@ import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
 import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
 import type { BoxGitDeps } from '@agentbox/sandbox-core';
 import {
+  BOTS_DIR_REL,
   BOX_WORKSPACE,
   autoWriteSshConfig,
   boxGitCheckout,
@@ -74,8 +75,12 @@ import {
   boxRestartServices,
   boxServicesStatusRaw,
   boxSshDirForProvider,
+  botWorkspaceRoot,
+  clonePerBoxCarryRefusal,
+  ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
+  resolvePerBoxCarry,
   mutateState,
   readPreparedStateRaw,
   readState,
@@ -90,6 +95,7 @@ import {
   resolveProviderDescriptor,
   type FileManifest,
 } from '@agentbox/sandbox-core';
+import { IDENTITY_RULE_SET, renderCloneIdentity } from './boxes/clone-render.js';
 import {
   baseFreshnessFromFingerprints,
   currentCloudBaseFingerprint,
@@ -3162,9 +3168,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (rawInto !== undefined && rawInto.length > 0 && !path.isAbsolute(rawInto)) {
           return { ok: false, error: `into must be an absolute path (got "${rawInto}")` };
         }
+        // Decision 7: a bot spawned from a project lives beside its template,
+        // under the project's own (gitignored, never-seeded) `.agentbox/bots/`.
+        // Only a box with no project root falls back to the home dir.
         const workspace = rawInto
           ? path.normalize(rawInto)
-          : path.join(os.homedir(), '.agentbox', 'clones', name);
+          : rp.box.projectRoot
+            ? path.join(botWorkspaceRoot(rp.box.projectRoot), BOTS_DIR_REL, name, 'workspace')
+            : path.join(os.homedir(), '.agentbox', 'clones', name);
         const provider = input?.provider ?? rp.box.provider ?? 'docker';
         // An always-on source gives an always-on clone unless the caller says
         // otherwise — a clone of a service box is the same kind of thing the
@@ -3175,18 +3186,62 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const refusal = persistentRefusal(provider);
           if (refusal) return { ok: false, error: refusal };
         }
+        // A SERVICE agent (a bot) is what the box IS, so its clone runs the same
+        // agent: an agentless copy of an openclaw workspace is not a second bot,
+        // it is a directory. A TUI agent keeps the historical `agent: 'none'` —
+        // there is no identity to reproduce, and `agentbox claude <box>` adds it.
+        const sourceSpec = findAgentSpec(rp.box.lastAgent ?? rp.box.agents?.[0] ?? '');
+        const agent = sourceSpec?.caps.surface === 'service' ? sourceSpec.id : undefined;
+
+        // Before the export, so a refusal leaves NOTHING behind: no directory,
+        // no registered project, no box. The per-box secrets are what make the
+        // clone a separate bot rather than a second copy of the source's
+        // identity, so a missing one is a refusal even when the spec marked it
+        // optional (which only ever covers a first box, with nobody to collide
+        // with).
+        const perBox = await resolvePerBoxCarry(sourceSpec, { boxName: name });
+        const secretsRefusal = clonePerBoxCarryRefusal(perBox.missing, name);
+        if (secretsRefusal) return { ok: false, error: secretsRefusal };
+
         const exported = await exportBoxWorkspace({
           provider: rp.provider,
           box: rp.box,
           destDir: workspace,
           includeNodeModules: input?.includeNodeModules,
+          ...(sourceSpec ? { agent: sourceSpec.id } : {}),
           onLog: (line) => {
             console.log(`[hub] ${line}`);
           },
         });
+        // The identity half: the source bot's name still appears in the files it
+        // wrote about itself, and they were just copied verbatim.
+        const renderPaths = sourceSpec?.clone?.render ?? [];
+        if (renderPaths.length > 0) {
+          const r = await renderCloneIdentity({
+            dir: workspace,
+            paths: renderPaths,
+            boxName: name,
+            onLog: (line) => {
+              console.log(`[hub] ${line}`);
+            },
+          });
+          if (r.rendered.length > 0) {
+            console.log(`[hub] rendered ${r.rendered.join(', ')} for ${name}`);
+          } else if (!r.hadRules) {
+            console.log(
+              `[hub] no "${IDENTITY_RULE_SET}" rule-set in agentbox.yaml — ` +
+                `${renderPaths.join(', ')} copied as-is; the bot writes one with /agentbox-identity`,
+            );
+          }
+        }
         // The clone's workspace dir is its own project: register it so the
         // create below can resolve it by id (never by a client-supplied path).
         await registerProject(workspace);
+        // A bot's tree lives under the project's `.agentbox/`, which must never
+        // reach the repo — the same entry `download --backup` writes.
+        if (!rawInto && rp.box.projectRoot) {
+          await ensureBackupGitignored(botWorkspaceRoot(rp.box.projectRoot)).catch(() => false);
+        }
         return {
           ok: true,
           projectId: hashProjectPath(workspace),
@@ -3194,6 +3249,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           name,
           provider,
           files: exported.files,
+          ...(agent ? { agent } : {}),
           ...(persistent !== undefined ? { persistent } : {}),
         };
       } catch (err) {

@@ -33,7 +33,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Dirent } from 'node:fs';
 import type { AgentId, SyncTransport } from '@agentbox/core';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
@@ -75,6 +75,30 @@ const STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;
 /** `<project>/.agentbox/bots/<bot>`. */
 export function botDir(projectRoot: string, bot: string): string {
   return join(projectRoot, BOTS_DIR_REL, bot);
+}
+
+/**
+ * Where a bot spawned from this box should live: a sibling of the source bot
+ * under the SAME project, `<project>/.agentbox/bots/<name>/workspace`.
+ *
+ * Decision 7 of the bot plan — the project is the template and its bots are
+ * instances of it, so they share one tree and one `.gitignore` entry instead of
+ * scattering under `~/.agentbox/clones/`. A box with no project root (one
+ * created from a bare directory) keeps the old home-dir default, which is the
+ * only answer available.
+ *
+ * The trailing-segment strip is what stops bots nesting: a box created BY a
+ * restore or a clone already runs on `.../.agentbox/bots/<x>/workspace`, and
+ * cloning that one must produce a sibling of `<x>`, not
+ * `.../bots/<x>/workspace/.agentbox/bots/<y>/workspace`.
+ */
+export function botWorkspaceRoot(projectRoot: string): string {
+  const parts = projectRoot.split(sep);
+  const n = parts.length;
+  if (n >= 4 && parts[n - 1] === 'workspace' && parts[n - 3] === 'bots' && parts[n - 4] === '.agentbox') {
+    return parts.slice(0, n - 4).join(sep);
+  }
+  return projectRoot;
 }
 
 /** `<project>/.agentbox/bots/<bot>/<stamp>`. */

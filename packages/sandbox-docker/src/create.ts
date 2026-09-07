@@ -6,9 +6,11 @@ import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { skipWebProxyAlias } from './direct-web-url.js';
 import {
   AGENT_SYNC_SPECS,
+  findAgentSpec,
   makeSyncContext,
   relayPort,
   syncAgentboxSshConfig,
+  withPerBoxCarry,
   type AgentSyncSpec,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
@@ -1193,10 +1195,19 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // threaded in here. Runs after the env-file copies and before the supervisor
   // launches so the first task can already see e.g. ~/.agentbox/secrets.env.
   let carrySummary: BoxRecord['carry'] | undefined;
-  if (opts.carry && opts.carry.length > 0) {
-    log(`carry: copying ${String(opts.carry.length)} host path(s) into the box`);
-    const result = await sync.applyCarry(syncCtx, opts.carry);
-    log(`carry: copied ${String(result.copied)}/${String(opts.carry.length)} entry/entries`);
+  // The agent's own per-box files (a bot's channel tokens) join the user's
+  // approved entries here, where the final box name exists — the source path is
+  // keyed by it, which is what keeps two bots from sharing one token.
+  const carryEntries = await withPerBoxCarry(
+    opts.carry,
+    (opts.agents ?? []).map((a) => findAgentSpec(a)),
+    { boxName: syncCtx.boxName },
+    log,
+  );
+  if (carryEntries.length > 0) {
+    log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
+    const result = await sync.applyCarry(syncCtx, carryEntries);
+    log(`carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`);
     for (const err of result.errors) log(`carry: ${err}`);
     if (result.applied.length > 0) {
       carrySummary = { count: result.applied.length, entries: result.applied };

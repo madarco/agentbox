@@ -426,15 +426,36 @@ export function parseItemizedChanges(stdout: string): string[] {
  * Workspace-relative paths the registered agents CREATE inside `/workspace` —
  * their own scaffolding rather than the user's content.
  *
- * Derived from the registry (`workspaceArtifacts`) rather than listed, for the
- * same reason `agentStateExcludePaths` is: an agent's files are the agent's to
- * declare. Unlike that one these are NOT excluded — `download` asks about them
- * when they would be new to the project.
+ * Derived from the registry (every agent's `clone.drop` and `clone.render`)
+ * rather than listed, for the same reason `agentStateExcludePaths` is: an
+ * agent's files are the agent's to declare. Unlike that one these are NOT
+ * excluded — `download` asks about them when they would be new to the project,
+ * and it asks about BOTH halves because both are the agent's scaffolding; only
+ * a clone treats them differently.
  */
 export function agentWorkspaceArtifactPaths(): string[] {
   const out = new Set<string>();
   for (const spec of AGENT_SYNC_SPECS) {
-    for (const rel of spec.workspaceArtifacts ?? []) out.add(rel);
+    for (const rel of spec.clone?.drop ?? []) out.add(rel);
+    for (const rel of spec.clone?.render ?? []) out.add(rel);
+  }
+  return [...out].sort();
+}
+
+/**
+ * The subset a CLONE drops outright, because the agent regenerates it for the
+ * new box. `clone.render` files are deliberately absent: they carry the user's
+ * own words and are rewritten for the new bot, not thrown away.
+ *
+ * Scoped to one agent when the caller knows which one the box runs, so a box's
+ * clone is shaped by ITS agent rather than by every agent in the registry.
+ * Falls back to the union, which is what an agentless clone can know.
+ */
+export function agentCloneDropPaths(agentId?: string): string[] {
+  const specs = agentId ? AGENT_SYNC_SPECS.filter((s) => s.id === agentId) : AGENT_SYNC_SPECS;
+  const out = new Set<string>();
+  for (const spec of specs) {
+    for (const rel of spec.clone?.drop ?? []) out.add(rel);
   }
   return [...out].sort();
 }

@@ -47,6 +47,7 @@ import {
   DEFAULT_ENV_PATTERNS,
   describeInbound,
   detectGitRepos,
+  findAgentSpec,
   makeSyncContext,
   parseInboundSpec,
   projectSlugFromOriginUrl,
@@ -54,6 +55,7 @@ import {
   readState,
   recordBox,
   removeBoxRecord,
+  withPerBoxCarry,
 } from '@agentbox/sandbox-core';
 import { makeCloudSync } from './sync/cloud-sync.js';
 import { createCloudSyncTransport } from './sync/sync-transport.js';
@@ -1047,10 +1049,18 @@ export function createCloudProvider(
         let carrySummary:
           | { count: number; entries: Array<{ src: string; dest: string; bytes: number }> }
           | undefined;
-        if (req.carry && req.carry.length > 0) {
-          log(`carry: copying ${String(req.carry.length)} host path(s) into the box`);
-          const result = await sync.applyCarry(syncCtx, req.carry);
-          log(`carry: copied ${String(result.copied)}/${String(req.carry.length)} entry/entries`);
+        // Plus the agent's own per-box files, resolved against the final box
+        // name so two bots from one workspace never share a channel token.
+        const carryEntries = await withPerBoxCarry(
+          req.carry,
+          [req.agent ? findAgentSpec(req.agent) : undefined],
+          { boxName: syncCtx.boxName },
+          log,
+        );
+        if (carryEntries.length > 0) {
+          log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
+          const result = await sync.applyCarry(syncCtx, carryEntries);
+          log(`carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`);
           for (const err of result.errors) log(`carry: ${err}`);
           if (result.applied.length > 0) {
             carrySummary = { count: result.applied.length, entries: result.applied };

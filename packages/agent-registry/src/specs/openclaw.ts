@@ -389,7 +389,25 @@ export const openclawSpec: AgentSyncSpec = {
   // `onboard --mode local` writes these into OPENCLAW_WORKSPACE_DIR, which is the
   // project workspace — verified live. It does NOT overwrite one seeded from the
   // host, so a file the user already had stays theirs.
-  workspaceArtifacts: ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'],
+  clone: {
+    // `onboard` writes all four, so a clone would otherwise carry the SOURCE
+    // bot's scaffolding. These two are regenerated for the new box as-is.
+    drop: ['AGENTS.md', 'USER.md'],
+    // These two ARE the bot's character, and the user wrote most of them. A
+    // clone keeps the text and swaps the name through the `identity` rule-set.
+    render: ['SOUL.md', 'IDENTITY.md'],
+    // The channel tokens. Keyed by box name so two bots from one workspace
+    // never share a Telegram/Discord identity -- which is the failure that
+    // makes a spawned bot answer as the bot it was spawned from.
+    perBoxCarry: [
+      {
+        src: '~/.agentbox/openclaw/{{AGENTBOX_BOX_NAME}}.env',
+        dest: '~/.openclaw/.env',
+        mode: 0o600,
+        optional: true,
+      },
+    ],
+  },
   pull: { categories: ['agents'] },
   // A backup KEEPS everything the push excludes -- `openclaw.json` IS the bot,
   // and a restore that mints a new gateway token has restored nothing. Only the

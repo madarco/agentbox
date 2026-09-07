@@ -628,17 +628,15 @@ export interface AgentSyncSpec {
   /** Host→box static-config source map (1 entry for claude/codex, 3 for opencode). */
   staticPaths: AgentPathMap[];
   /**
-   * Workspace-relative paths this agent CREATES inside `/workspace` — its own
-   * scaffolding, not the user's content. openclaw's `onboard` writes `AGENTS.md`,
-   * `SOUL.md`, `IDENTITY.md` and `USER.md` there because its workspace IS the
-   * project dir.
+   * What a CLONE of a box running this agent has to do differently — the files
+   * it must not copy, the ones it must rewrite for the new box, and the
+   * per-box secrets it needs before it can be a separate instance at all.
    *
-   * Deliberately neither excluded nor silently carried: `download` ASKS before
-   * copying one into a project that does not have it (a file the user already
-   * has is never questioned), while `clone` drops them, matching its existing
-   * fresh-identity contract for state dirs.
+   * Data, not a hook: the hub runs the clone, and a package-provided agent
+   * reaches it as JSON in `~/.agentbox/agents.json` — neither can call a
+   * function (`spec-purity.test.ts` forbids one).
    */
-  workspaceArtifacts?: readonly string[];
+  clone?: AgentCloneSpec;
   /**
    * Where this agent's login credential lives, when it HAS one.
    *
@@ -777,6 +775,47 @@ export interface AgentSyncSpec {
    * defaults to `backup` — see `AgentWatchSpec.sync`.
    */
   watch?: readonly AgentWatchSpec[];
+}
+
+/**
+ * One host file a clone needs a PER-BOX copy of. The point is that two bots
+ * cloned from one workspace must not share a channel token: the source path is
+ * keyed by box name, so each instance reads its own file.
+ *
+ * `optional` is honoured on an ordinary create (a first box has nobody to
+ * collide with, and refusing would make the agent's own example unrunnable) and
+ * NEVER on a clone, where a missing file is the whole failure being prevented.
+ */
+export interface AgentPerBoxCarry {
+  /** Host path. `~/` and `{{AGENTBOX_BOX_NAME}}` are expanded. */
+  src: string;
+  /** In-box destination; `~/` is the box user's home. */
+  dest: string;
+  /** Octal mode for the copy in the box, e.g. `0o600`. */
+  mode?: number;
+  /** Skip silently when `src` is missing. Ignored on a clone. */
+  optional?: boolean;
+}
+
+/** How a clone of a box running this agent differs. See `AgentSyncSpec.clone`. */
+export interface AgentCloneSpec {
+  /**
+   * Workspace-relative files a clone does NOT copy, because the agent
+   * regenerates them for the new box (openclaw's `AGENTS.md`, `USER.md`).
+   * Matched at the workspace ROOT only, so a user's `docs/AGENTS.md` survives.
+   */
+  drop?: readonly string[];
+  /**
+   * Workspace-relative files a clone copies and then RENDERS with the
+   * workspace's `identity` replacements rule-set, so the new bot's own name
+   * replaces the source bot's (openclaw's `SOUL.md`, `IDENTITY.md`).
+   *
+   * Rendered once, at clone time, on the host: the file is a normal workspace
+   * file afterwards and a bot that edits its own `SOUL.md` is never reset.
+   */
+  render?: readonly string[];
+  /** Host files this agent needs a per-box copy of. */
+  perBoxCarry?: readonly AgentPerBoxCarry[];
 }
 
 /** What a full state capture must leave behind. See `AgentSyncSpec.stateBackup`. */

@@ -12,9 +12,15 @@
  * failure mode this design exists to prevent, and box→box migration is the
  * checkpoint path's job.
  *
- * So the only real work is the export, and it is the Phase-4b staging pass with
- * one extra rule: exclude patterns apply in git mode too, so an agent state dir
- * cannot ride along even if the source box committed one.
+ * So the gateway identity needs no code. What DOES need code is everything
+ * downstream of it: a bot's workspace files still name the source bot, and its
+ * channel tokens are per-bot secrets a second instance must not share. Both are
+ * declared by the agent (`AgentSyncSpec.clone`) and applied by the hub's clone
+ * path -- see `clone.drop` / `clone.render` / `clone.perBoxCarry`.
+ *
+ * The export itself is the Phase-4b staging pass with one extra rule: exclude
+ * patterns apply in git mode too, so an agent state dir cannot ride along even
+ * if the source box committed one.
  */
 
 import { lstat, readdir } from 'node:fs/promises';
@@ -30,6 +36,8 @@ export interface ExportWorkspaceArgs {
   boxWorkspaceDir?: string;
   /** Default false. Carry `node_modules` into the clone as well. */
   includeNodeModules?: boolean;
+  /** The agent the source box runs, so the drop is scoped to its `clone.drop`. */
+  agent?: string;
   onLog?: (line: string) => void;
 }
 
@@ -96,6 +104,7 @@ export async function exportBoxWorkspace(
     includeNodeModules: args.includeNodeModules,
     dropExcludedInGitMode: true,
     writeSidecar: false,
+    agent: args.agent,
   });
   const files = staged.fileList === null ? 0 : staged.fileList.split('\0').length;
   log(`exported ${String(files)} file(s)${staged.mode === 'git' ? '' : ' (exclude-list mode)'}`);

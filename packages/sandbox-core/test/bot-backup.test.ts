@@ -15,6 +15,7 @@ import {
   backupAgentState,
   backupStamp,
   botBackupDir,
+  botWorkspaceRoot,
   ensureBackupGitignored,
   linkLatest,
   listBackups,
@@ -247,5 +248,21 @@ describe('writeBackupManifest', () => {
     expect(m.provider).toBe('docker');
     expect(m.state).toBe(true);
     expect(m.agent).toBe('openclaw');
+  });
+});
+
+describe('botWorkspaceRoot', () => {
+  it('is the project itself for an ordinary box', () => {
+    expect(botWorkspaceRoot('/home/u/proj')).toBe('/home/u/proj');
+  });
+
+  it('climbs out of a bot tree, so a clone of a clone is a SIBLING not a nesting', () => {
+    expect(botWorkspaceRoot('/home/u/proj/.agentbox/bots/ada/workspace')).toBe('/home/u/proj');
+  });
+
+  it('leaves a lookalike path alone', () => {
+    // `workspace` under a DIFFERENT parent is somebody's real directory.
+    expect(botWorkspaceRoot('/home/u/proj/bots/ada/workspace')).toBe('/home/u/proj/bots/ada/workspace');
+    expect(botWorkspaceRoot('/home/u/proj/.agentbox/bots/ada')).toBe('/home/u/proj/.agentbox/bots/ada');
   });
 });

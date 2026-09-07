@@ -183,6 +183,15 @@ export {
   renderCarryEntries,
   type CarryBoxContext,
 } from './carry-render.js';
+export {
+  clonePerBoxCarryRefusal,
+  withPerBoxCarry,
+  perBoxCarrySrc,
+  resolvePerBoxCarry,
+  type MissingPerBoxCarry,
+  type PerBoxCarryContext,
+  type PerBoxCarryResolution,
+} from './per-box-carry.js';
 export * from './sync/index.js';
 export * from './sync/agent-pull-module.js';
 export {

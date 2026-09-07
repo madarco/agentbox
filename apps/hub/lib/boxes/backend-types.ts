@@ -666,6 +666,12 @@ export type PrepareCloneResult =
       /** Files exported. */
       files: number;
       /**
+       * The agent the clone should run — set only when the source box runs a
+       * SERVICE agent, whose identity IS the box. Absent means the historical
+       * agentless clone.
+       */
+      agent?: string;
+      /**
        * Resolved always-on flag for the create, or undefined to leave it to the
        * hub's config layers. Explicit input wins; else the source box's.
        */

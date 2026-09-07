@@ -28,6 +28,13 @@ describe('cloneCreateInput', () => {
     });
   });
 
+  it('runs the SERVICE agent the source box ran, when prepareClone named one', () => {
+    // A bot's box is the bot: an agentless copy of an openclaw workspace is a
+    // directory, not a second bot. `prepareClone` sets this only for a service
+    // agent, so a claude box's clone still comes back agentless above.
+    expect(cloneCreateInput({ ...staged, agent: 'openclaw' }).agent).toBe('openclaw');
+  });
+
   it('forwards the resolved persistent, and only when the hub has an opinion', () => {
     expect(cloneCreateInput({ ...staged, persistent: true }).opts).toEqual({ persistent: true });
     expect(cloneCreateInput({ ...staged, persistent: false }).opts).toEqual({ persistent: false });

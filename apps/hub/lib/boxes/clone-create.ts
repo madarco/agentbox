@@ -17,9 +17,13 @@ export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
   return {
     projectId: prepared.projectId,
     provider: prepared.provider,
-    // A clone carries the workspace files, never the agent's config volume or
-    // credential — the new box onboards fresh. Nothing to start, so no agent.
-    agent: 'none',
+    // A clone never carries the agent's config volume or credential — the new
+    // box onboards fresh either way. What it DOES carry is the agent itself,
+    // when that agent is a service: a bot's box is the bot, so an agentless
+    // copy of its workspace is a directory rather than a second bot. A TUI
+    // agent stays 'none' — there is no identity to reproduce, and the user
+    // runs `agentbox claude <box>` when they want one.
+    agent: prepared.agent ?? 'none',
     name: prepared.name,
     // FOREGROUND, always. A clone is one caller-initiated action whose caller is
     // blocked on the job stream this route hands back, so it belongs in the

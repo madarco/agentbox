@@ -25,7 +25,7 @@ import { providerBoxFilePorts } from './box-files.js';
 import { buildHostEnvFindArgs } from './env.js';
 import {
   buildWorkspaceListScript,
-  agentWorkspaceArtifactPaths,
+  agentCloneDropPaths,
   isAgentWorkspaceArtifact,
   isExcludedPath,
   parseWorkspaceList,
@@ -73,6 +73,13 @@ export interface StageWorkspaceArgs {
    * bookkeeping, not something to leave beside someone's new project folder.
    */
   writeSidecar?: boolean;
+  /**
+   * The agent the source box runs, when the caller knows it. Scopes the clone
+   * drop (`dropExcludedInGitMode`) to THAT agent's `clone.drop` rather than
+   * every registered agent's — an openclaw box's clone should not be shaped by
+   * a rule claude declared.
+   */
+  agent?: string;
 }
 
 export interface StagedWorkspace {
@@ -112,10 +119,10 @@ export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<Stage
     throw new Error(`listing ${boxDir} in the box failed: ${listed.stderr || listed.stdout}`);
   }
   const primary = parseWorkspaceList(listed.stdout);
-  // `clone` also drops the agents' own workspace scaffolding. Carrying the
-  // SOURCE box's IDENTITY.md/SOUL.md into a clone contradicts the same
-  // fresh-identity contract that already drops the state dirs.
-  const artifacts = args.dropExcludedInGitMode ? agentWorkspaceArtifactPaths() : [];
+  // `clone` also drops the scaffolding the agent regenerates for the new box.
+  // Only `clone.drop` — the `clone.render` half (SOUL.md, IDENTITY.md) is the
+  // user's own writing and is rewritten for the new bot by the clone instead.
+  const artifacts = args.dropExcludedInGitMode ? agentCloneDropPaths(args.agent) : [];
   const selected =
     primary.mode === 'git' && args.dropExcludedInGitMode
       ? primary.paths.filter((p) => !isExcludedPath(p, excludes))
