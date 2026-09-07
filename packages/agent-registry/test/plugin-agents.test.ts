@@ -115,6 +115,52 @@ describe('agentSpecProblem', () => {
     expect(agentSpecProblem({ ...exampleSpec, credential: undefined })).toBeNull();
   });
 
+  it('accepts a spec that declares how its clones differ', () => {
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        clone: {
+          drop: ['AGENTS.md'],
+          render: ['SOUL.md'],
+          perBoxCarry: [
+            { src: '~/.agentbox/x/{{AGENTBOX_BOX_NAME}}.env', dest: '~/.x/.env', mode: 0o600 },
+          ],
+        },
+      }),
+    ).toBeNull();
+    // Absent is a legitimate declaration: most agents have no per-box identity.
+    expect(agentSpecProblem({ ...exampleSpec, clone: undefined })).toBeNull();
+  });
+
+  it('rejects a clone path that escapes the workspace', () => {
+    // These are matched against a root-anchored relative listing, so an absolute
+    // path silently matches nothing and a `..` names a file the clone has no
+    // business rewriting.
+    expect(agentSpecProblem({ ...exampleSpec, clone: { drop: ['/etc/passwd'] } })).toMatch(
+      /workspace-relative/,
+    );
+    expect(agentSpecProblem({ ...exampleSpec, clone: { render: ['../SOUL.md'] } })).toMatch(
+      /workspace-relative/,
+    );
+  });
+
+  it('rejects a per-box carry source with nothing to resolve against', () => {
+    // A relative src would be refused at CREATE time, after a box has been
+    // built; catching it at `agent add` is the point of the gate.
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        clone: { perBoxCarry: [{ src: 'secrets/.env', dest: '~/.x/.env' }] },
+      }),
+    ).toMatch(/perBoxCarry\[0\]\.src/);
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        clone: { perBoxCarry: [{ src: '~/x.env', dest: '.x/.env' }] },
+      }),
+    ).toMatch(/perBoxCarry\[0\]\.dest/);
+  });
+
   it('still rejects a malformed credential when one IS declared', () => {
     // Optional is not unchecked: a present credential is the fan-out's write
     // target, so it is shape-checked exactly as before.

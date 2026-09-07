@@ -39,6 +39,7 @@ export async function POST(
     workspace: prepared.workspace,
     provider: prepared.provider,
     files: prepared.files,
+    ...(prepared.agent ? { agent: prepared.agent } : {}),
     ...(prepared.persistent !== undefined ? { persistent: prepared.persistent } : {}),
   });
 }

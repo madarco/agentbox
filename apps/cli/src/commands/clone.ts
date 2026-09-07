@@ -4,7 +4,8 @@ import { Command } from 'commander';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { boxOwningHubIsLocal, withHubClient } from '../control-plane/with-hub.js';
-import { isAbsolute, resolve } from 'node:path';
+import { BOTS_DIR_REL, botWorkspaceRoot } from '@agentbox/sandbox-core';
+import { isAbsolute, join, resolve } from 'node:path';
 import { handleLifecycleError } from './_errors.js';
 
 /**
@@ -40,6 +41,23 @@ export function resolveIntoDir(
     );
   }
   return isAbsolute(t) ? t : resolve(cwd, t);
+}
+
+/**
+ * What the confirm prompt shows when `--into` is absent.
+ *
+ * DISPLAY ONLY, and deliberately a second copy of the hub's rule rather than a
+ * shared one: the hub resolves the real path against ITS own home and project
+ * registry, and its answer is what the command reports when the clone lands. A
+ * divergence therefore shows up as a prompt that disagrees with the result,
+ * which is visible, instead of a wrong path the CLI talked the hub into.
+ */
+export function defaultCloneDisplay(
+  source: { projectRoot?: string },
+  cloneName: string,
+): string {
+  if (!source.projectRoot) return `~/.agentbox/clones/${cloneName}`;
+  return join(botWorkspaceRoot(source.projectRoot), BOTS_DIR_REL, cloneName, 'workspace');
 }
 
 interface CloneOpts {
@@ -108,7 +126,7 @@ export const cloneCommand = new Command('clone')
         const ok = await confirm({
           message:
             `Clone ${source.name} into a new ${providerName} box "${cloneName}"?\n` +
-            `  workspace files -> ${into ?? `~/.agentbox/clones/${cloneName}`} (on the hub's machine)\n` +
+            `  workspace files -> ${into ?? defaultCloneDisplay(source, cloneName)} (on the hub's machine)\n` +
             `  the agent onboards fresh (no credential, no state dir carried over)`,
           initialValue: true,
         });
@@ -164,7 +182,9 @@ export const cloneCommand = new Command('clone')
       process.stdout.write(
         `cloned ${source.name} -> ${staged.name}\n` +
           `  workspace: ${staged.workspace} (${String(staged.files)} file(s))\n` +
-          `  the agent has NOT been logged in or onboarded — it starts fresh\n`,
+          (staged.agent
+            ? `  runs ${staged.agent} with a FRESH identity — its own gateway token and its own secrets\n`
+            : `  the agent has NOT been logged in or onboarded — it starts fresh\n`),
       );
     } catch (err) {
       handleLifecycleError(err);

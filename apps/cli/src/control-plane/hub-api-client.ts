@@ -264,6 +264,11 @@ export interface HubApiCloneResult {
   provider: string;
   /** Files exported out of the source box. */
   files: number;
+  /**
+   * The agent the clone runs. Set only when the source box ran a SERVICE agent,
+   * whose identity IS the box; a TUI box's clone is agentless as before.
+   */
+  agent?: string;
   /** Always-on flag the hub resolved for the clone, when it had an opinion. */
   persistent?: boolean;
 }

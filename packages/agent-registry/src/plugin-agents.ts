@@ -177,6 +177,55 @@ function credentialProblem(raw: unknown): string | null {
   return null;
 }
 
+function cloneProblem(raw: unknown): string | null {
+  if (raw === null || typeof raw !== 'object') return '`clone` must be an object';
+  const clone = raw as Record<string, unknown>;
+  for (const key of ['drop', 'render'] as const) {
+    const list = clone[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.some((v) => typeof v !== 'string' || v.length === 0)) {
+      return `\`clone.${key}\` must be an array of non-empty workspace-relative paths`;
+    }
+    // Root-anchored and workspace-relative. An absolute path would be compared
+    // against a relative listing and silently match nothing; a `..` would name
+    // a file outside the workspace, which the clone has no business rewriting.
+    for (const rel of list as string[]) {
+      if (rel.startsWith('/') || rel.split('/').includes('..')) {
+        return `\`clone.${key}\` entries must be workspace-relative, without '..' (got "${rel}")`;
+      }
+    }
+  }
+  const perBox = clone.perBoxCarry;
+  if (perBox !== undefined) {
+    if (!Array.isArray(perBox)) return '`clone.perBoxCarry` must be an array';
+    for (const [i, entry] of perBox.entries()) {
+      if (entry === null || typeof entry !== 'object') {
+        return `\`clone.perBoxCarry[${i}]\` must be an object`;
+      }
+      const item = entry as Record<string, unknown>;
+      // Absolute or `~/`: resolution happens with no project dir in scope, so a
+      // relative source has nothing to resolve against and would be refused at
+      // create time — after a box has been built. Catch it at `agent add`.
+      if (
+        typeof item.src !== 'string' ||
+        !(item.src.startsWith('/') || item.src.startsWith('~/'))
+      ) {
+        return `\`clone.perBoxCarry[${i}].src\` must be an absolute host path or start with '~/'`;
+      }
+      if (
+        typeof item.dest !== 'string' ||
+        !(item.dest.startsWith('/') || item.dest.startsWith('~/'))
+      ) {
+        return `\`clone.perBoxCarry[${i}].dest\` must be an absolute in-box path or start with '~/'`;
+      }
+      if (item.mode !== undefined && typeof item.mode !== 'number') {
+        return `\`clone.perBoxCarry[${i}].mode\` must be a number (e.g. 0o600)`;
+      }
+    }
+  }
+  return null;
+}
+
 function staticPathsProblem(raw: unknown): string | null {
   if (!Array.isArray(raw)) return '`staticPaths` must be an array';
   for (const [i, entry] of raw.entries()) {
@@ -213,6 +262,7 @@ export function agentSpecProblem(raw: unknown): string | null {
     installProblem(spec.install) ??
     // Optional field: absent is a legitimate declaration, malformed is not.
     (spec.credential === undefined ? null : credentialProblem(spec.credential)) ??
+    (spec.clone === undefined ? null : cloneProblem(spec.clone)) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to
