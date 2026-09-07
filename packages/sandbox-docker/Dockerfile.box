@@ -491,7 +491,8 @@ RUN chmod +x /usr/local/bin/agentbox-tool-shim
 # skill to the host's ~/.claude. The stable path also lets the wizard's
 # initial prompt reference the guide directly.
 COPY apps/cli/share/agentbox-setup/SKILL.md /usr/local/share/agentbox/setup-guide.md
-RUN chmod 0644 /usr/local/share/agentbox/setup-guide.md
+COPY apps/cli/share/agentbox-identity/SKILL.md /usr/local/share/agentbox/identity-skill.md
+RUN chmod 0644 /usr/local/share/agentbox/setup-guide.md /usr/local/share/agentbox/identity-skill.md
 
 # /usr/local/bin/chromium is a resolver (not a baked binary): on first launch it
 # reuses the project's Playwright Chromium or installs one on demand, then execs

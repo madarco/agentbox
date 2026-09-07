@@ -35,6 +35,7 @@ export const SHARED_RUNTIME_ASSETS = [
   'agentbox-codex-hooks.json',
   'opencode-agentbox-plugin.js',
   'agentbox-setup-skill.md',
+  'agentbox-identity-skill.md',
 ] as const;
 
 export type SharedRuntimeAsset = (typeof SHARED_RUNTIME_ASSETS)[number];

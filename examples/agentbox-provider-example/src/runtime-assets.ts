@@ -63,6 +63,7 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'claude-managed-settings.json', remotePath: '/tmp/agentbox-managed-settings.json', remoteMode: 0o644, source: { shared: 'claude-managed-settings.json' } },
   { name: 'agentbox-codex-hooks.json', remotePath: '/tmp/agentbox-codex-hooks.json', remoteMode: 0o644, source: { shared: 'agentbox-codex-hooks.json' } },
   { name: 'agentbox-setup-skill.md', remotePath: '/tmp/agentbox-setup-skill.md', remoteMode: 0o644, source: { shared: 'agentbox-setup-skill.md' } },
+  { name: 'agentbox-identity-skill.md', remotePath: '/tmp/agentbox-identity-skill.md', remoteMode: 0o644, source: { shared: 'agentbox-identity-skill.md' } },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {

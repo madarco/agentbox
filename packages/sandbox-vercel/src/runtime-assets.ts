@@ -72,6 +72,11 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
     remotePath: '/tmp/agentbox-setup-skill.md',
     remoteMode: 0o644,
   },
+  {
+    name: 'agentbox-identity-skill.md',
+    remotePath: '/tmp/agentbox-identity-skill.md',
+    remoteMode: 0o644,
+  },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {
@@ -101,6 +106,7 @@ export function candidatesFor(
     ],
     'agentbox-codex-hooks.json': ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['apps/cli/share/agentbox-setup/SKILL.md'],
+    'agentbox-identity-skill.md': ['apps/cli/share/agentbox-identity/SKILL.md'],
   };
 
   const cliRelative: Record<string, string[]> = {
@@ -140,6 +146,10 @@ export function candidatesFor(
     'agentbox-setup-skill.md': [
       'vercel/agentbox-setup-skill.md',
       'docker/apps/cli/share/agentbox-setup/SKILL.md',
+    ],
+    'agentbox-identity-skill.md': [
+      'vercel/agentbox-identity-skill.md',
+      'docker/apps/cli/share/agentbox-identity/SKILL.md',
     ],
   };
 

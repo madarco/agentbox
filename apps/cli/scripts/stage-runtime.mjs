@@ -142,6 +142,7 @@ const hetznerFiles = [
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+  ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of hetznerFiles) {
   copy(srcRel, join(hetznerCtx, destRel), exec);
@@ -169,6 +170,7 @@ const sharedFiles = [
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+  ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of sharedFiles) {
   copy(srcRel, join(sharedCtx, destRel), exec);
@@ -195,6 +197,7 @@ const digitaloceanFiles = [
   ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+  ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of digitaloceanFiles) {
   copy(srcRel, join(digitaloceanCtx, destRel), exec);
@@ -232,6 +235,7 @@ const vercelFiles = [
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+  ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of vercelFiles) {
   copy(srcRel, join(vercelCtx, destRel), exec);
@@ -259,6 +263,7 @@ const e2bFiles = [
   ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
+  ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
 ];
 for (const [srcRel, destRel, exec] of e2bFiles) {
   copy(srcRel, join(e2bCtx, destRel), exec);

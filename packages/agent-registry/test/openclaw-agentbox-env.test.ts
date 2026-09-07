@@ -111,3 +111,38 @@ describe('openclaw-agentbox-env', () => {
     expect(script.trimEnd().endsWith('exit 0')).toBe(true);
   });
 });
+
+describe('the identity nudge', () => {
+  it('installs the identity skill beside the setup one', () => {
+    expect(script).toContain('/opt/agentbox/skills/agentbox-identity');
+    expect(script).toContain('/usr/local/share/agentbox/identity-skill.md');
+  });
+
+  it('guards both skills on the baked file existing', () => {
+    // A base image baked before a skill existed simply lacks the file. The task
+    // must still exit 0 there — it is best-effort, and a box is not worth
+    // failing over a missing prompt.
+    for (const p of [
+      '/usr/local/share/agentbox/setup-guide.md',
+      '/usr/local/share/agentbox/identity-skill.md',
+    ]) {
+      expect(script).toContain(`if [ -f ${p} ]; then`);
+    }
+  });
+
+  it('nudges ONLY while the workspace declares no identity rules', () => {
+    // The yaml sentinel is the only state. No marker file, so nothing can go
+    // stale: the nudge is regenerated every boot and stops appearing the moment
+    // the bot writes the rule-set. Mutating either half of this condition brings
+    // back a prompt that never leaves, or one that never arrives.
+    expect(script).toMatch(
+      /!\s*grep -qs 'agentbox:identity-rules' \/workspace\/agentbox\.yaml/,
+    );
+    expect(script).toContain('$IDENTITY_NUDGE');
+  });
+
+  it('names the skill the bot should follow, so the nudge is actionable', () => {
+    expect(script).toContain('agentbox-identity');
+    expect(script).toMatch(/identity is not portable/);
+  });
+});

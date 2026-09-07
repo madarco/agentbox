@@ -66,6 +66,17 @@ const GATEWAY_PORT = 18789;
 const AGENTBOX_SKILLS_DIR = '/opt/agentbox/skills';
 /** Baked into every provider's base image; see each `install-box.sh`. */
 const BAKED_SETUP_SKILL = '/usr/local/share/agentbox/setup-guide.md';
+/** The identity wizard, baked the same way. Absent on a base baked before it. */
+const BAKED_IDENTITY_SKILL = '/usr/local/share/agentbox/identity-skill.md';
+/**
+ * What the identity wizard writes into `agentbox.yaml`, and therefore how we ask
+ * "has this bot done it yet?". A comment rather than a key so the check is a
+ * plain grep and needs no yaml parser inside a shell script — and so the user
+ * can see, in their own file, what wrote it.
+ */
+const IDENTITY_SENTINEL = 'agentbox:identity-rules';
+/** The workspace file the sentinel lives in. */
+const WORKSPACE_YAML = '/workspace/agentbox.yaml';
 /** The per-provider box facts. Claude reads it directly; codex folds it in too. */
 const BOX_FACTS = '/etc/claude-code/CLAUDE.md';
 const AGENTBOX_CTX_DIR = '/workspace/.agentbox';
@@ -143,6 +154,27 @@ process.stdout.write(
 );
 `;
 
+/** Single-quote a value for the POSIX shell. */
+function sq(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Appended to the generated box facts while this workspace has no identity
+ * rule-set. It is a prompt, so it says what is at stake rather than naming a
+ * command: the agent decides when to act on it.
+ */
+const IDENTITY_NUDGE_TEXT = [
+  '',
+  '## Your identity is not portable yet',
+  '',
+  'This workspace declares no `identity` replacement rules, so a bot spawned',
+  'from it with `agentbox clone` would introduce itself with YOUR name and',
+  'answer to YOUR handle. On your first turn, follow the `agentbox-identity`',
+  'skill once to write them, then carry on with whatever you were asked.',
+  '',
+].join('\n');
+
 /**
  * Teach the box's gateway where it is running.
  *
@@ -165,19 +197,36 @@ function buildAgentboxContextScript(): string {
     // whose real target sits outside the source root unless that target is in
     // `skills.load.allowSymlinkTargets`. Re-copied every boot, so a re-baked
     // base image still propagates.
-    `if [ -f ${BAKED_SETUP_SKILL} ]; then`,
-    `  D=${AGENTBOX_SKILLS_DIR}/agentbox-setup`,
-    '  (sudo -n mkdir -p "$D" 2>/dev/null || mkdir -p "$D") || true',
-    `  (sudo -n install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md" 2>/dev/null ||`,
-    `   install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md") || true`,
-    'fi',
+    ...[
+      [BAKED_SETUP_SKILL, 'agentbox-setup'],
+      [BAKED_IDENTITY_SKILL, 'agentbox-identity'],
+    ].flatMap(([src, name]) => [
+      `if [ -f ${src} ]; then`,
+      `  D=${AGENTBOX_SKILLS_DIR}/${name}`,
+      '  (sudo -n mkdir -p "$D" 2>/dev/null || mkdir -p "$D") || true',
+      `  (sudo -n install -m 0644 ${src} "$D/SKILL.md" 2>/dev/null ||`,
+      `   install -m 0644 ${src} "$D/SKILL.md") || true`,
+      'fi',
+    ]),
     // The box facts, written atomically so a reader never sees a half file.
+    // The nudge text, as a shell variable so the printf below stays a single
+    // short line and the prose can carry the punctuation it needs.
+    `IDENTITY_NUDGE=${sq(IDENTITY_NUDGE_TEXT)}`,
     `if [ -f ${BOX_FACTS} ]; then`,
     `  mkdir -p ${AGENTBOX_CTX_DIR} || true`,
     `  TMP=${AGENTBOX_CTX_DIR}/AGENTS.md.agentbox.tmp`,
     '  {',
     `    printf '%s\\n\\n' '${CTX_SENTINEL}'`,
     `    cat ${BOX_FACTS}`,
+    // The identity nudge. Conditional on the workspace NOT already declaring the
+    // rule-set, and regenerated every boot, so it disappears by itself once the
+    // bot has written one -- the yaml is the only state, and there is no marker
+    // to go stale. A supervisor task cannot do this job: writing these rules
+    // means reading your own SOUL.md and deciding which words are you, which is
+    // a judgement only the agent can make, on a turn only the agent can take.
+    `    if [ -f ${BAKED_IDENTITY_SKILL} ] && ! grep -qs '${IDENTITY_SENTINEL}' ${WORKSPACE_YAML} 2>/dev/null; then`,
+    `      printf '%s' "$IDENTITY_NUDGE"`,
+    '    fi',
     '  } > "$TMP" && mv "$TMP" ' + `${AGENTBOX_CTX_DIR}/AGENTS.md || true`,
     'fi',
     // One validated merge rather than several `config set` calls. The patch is

@@ -53,6 +53,7 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'claude-managed-settings.json', remotePath: '/tmp/agentbox-managed-settings.json', remoteMode: 0o644 },
   { name: 'agentbox-codex-hooks.json', remotePath: '/tmp/agentbox-codex-hooks.json', remoteMode: 0o644 },
   { name: 'agentbox-setup-skill.md', remotePath: '/tmp/agentbox-setup-skill.md', remoteMode: 0o644 },
+  { name: 'agentbox-identity-skill.md', remotePath: '/tmp/agentbox-identity-skill.md', remoteMode: 0o644 },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {
@@ -80,6 +81,7 @@ export function candidatesFor(
     'claude-managed-settings.json': ['packages/sandbox-docker/scripts/claude-managed-settings.json'],
     'agentbox-codex-hooks.json': ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['apps/cli/share/agentbox-setup/SKILL.md'],
+    'agentbox-identity-skill.md': ['apps/cli/share/agentbox-identity/SKILL.md'],
   };
 
   const cliRelative: Record<string, string[]> = {
@@ -96,6 +98,7 @@ export function candidatesFor(
     'claude-managed-settings.json': ['e2b/claude-managed-settings.json', 'docker/packages/sandbox-docker/scripts/claude-managed-settings.json'],
     'agentbox-codex-hooks.json': ['e2b/agentbox-codex-hooks.json', 'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['e2b/agentbox-setup-skill.md', 'docker/apps/cli/share/agentbox-setup/SKILL.md'],
+    'agentbox-identity-skill.md': ['e2b/agentbox-identity-skill.md', 'docker/apps/cli/share/agentbox-identity/SKILL.md'],
   };
 
   const out: string[] = [];

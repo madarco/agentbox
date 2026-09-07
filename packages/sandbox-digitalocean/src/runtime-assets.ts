@@ -68,6 +68,7 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'claude-managed-settings.json', remoteBasename: 'agentbox-managed-settings.json', remoteMode: 0o644 },
   { name: 'agentbox-codex-hooks.json', remoteBasename: 'agentbox-codex-hooks.json', remoteMode: 0o644 },
   { name: 'agentbox-setup-skill.md', remoteBasename: 'agentbox-setup-skill.md', remoteMode: 0o644 },
+  { name: 'agentbox-identity-skill.md', remoteBasename: 'agentbox-identity-skill.md', remoteMode: 0o644 },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {
@@ -107,6 +108,7 @@ export function candidatesFor(
     'claude-managed-settings.json': ['packages/sandbox-docker/scripts/claude-managed-settings.json'],
     'agentbox-codex-hooks.json': ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['apps/cli/share/agentbox-setup/SKILL.md'],
+    'agentbox-identity-skill.md': ['apps/cli/share/agentbox-identity/SKILL.md'],
   };
 
   // CLI-runtime-tree relative paths (mirrors the staging layout).
@@ -125,6 +127,7 @@ export function candidatesFor(
     'claude-managed-settings.json': ['digitalocean/claude-managed-settings.json', 'docker/packages/sandbox-docker/scripts/claude-managed-settings.json'],
     'agentbox-codex-hooks.json': ['digitalocean/agentbox-codex-hooks.json', 'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['digitalocean/agentbox-setup-skill.md', 'docker/apps/cli/share/agentbox-setup/SKILL.md'],
+    'agentbox-identity-skill.md': ['digitalocean/agentbox-identity-skill.md', 'docker/apps/cli/share/agentbox-identity/SKILL.md'],
   };
 
   const out: string[] = [];

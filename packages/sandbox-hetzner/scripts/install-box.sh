@@ -20,6 +20,7 @@
 #   /tmp/agentbox-managed-settings.json -- /etc/claude-code/managed-settings.json
 #   /tmp/agentbox-codex-hooks.json     -- /usr/local/share/agentbox/codex-hooks.json
 #   /tmp/agentbox-setup-skill.md       -- /usr/local/share/agentbox/setup-guide.md
+#   /tmp/agentbox-identity-skill.md    -- /usr/local/share/agentbox/identity-skill.md
 #
 # Output: noisy progress to stdout (the host streams it into
 # ~/.agentbox/logs/prepare.log via the ssh exec). Each major step prints
@@ -217,6 +218,7 @@ install -m 0644 /tmp/agentbox-custom-CLAUDE.md      /etc/claude-code/CLAUDE.md
 install -m 0644 /tmp/agentbox-managed-settings.json /etc/claude-code/managed-settings.json
 install -m 0644 /tmp/agentbox-codex-hooks.json      /usr/local/share/agentbox/codex-hooks.json
 install -m 0644 /tmp/agentbox-setup-skill.md        /usr/local/share/agentbox/setup-guide.md
+install -m 0644 /tmp/agentbox-identity-skill.md     /usr/local/share/agentbox/identity-skill.md
 
 # tmux.conf — verbatim from Dockerfile.box.
 cat > /etc/tmux.conf <<'TMUX'
@@ -405,7 +407,7 @@ rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start /tmp/agentbox-dockerd-start \
       /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-tool-shim \
       /tmp/agentbox-custom-CLAUDE.md /tmp/agentbox-managed-settings.json \
-      /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md
+      /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md /tmp/agentbox-identity-skill.md
 # Move install-box.sh into the persistent location for diagnostics.
 mv /tmp/agentbox-install.sh /var/log/agentbox/install-box.sh 2>/dev/null || true
 done_ "trim /tmp/agentbox-*"
