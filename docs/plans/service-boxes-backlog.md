@@ -499,3 +499,25 @@ spec-declared base overlay would provide. Not built.
 then reports the same "Browser origin not allowed". Only daytona is still
 untested.
 
+## A fresh box needs `openclaw doctor --fix` before exec approvals work (2026-09-07)
+
+On a brand-new hetzner box, straight after `openclaw onboard`:
+
+```
+$ openclaw skills list
+ExecApprovalsMigrationRequiredError: Legacy exec approvals exist at
+/home/vscode/.openclaw/exec-approvals.json. Run `openclaw doctor --fix`
+before using exec approvals.
+```
+
+The gateway itself is fine — the service reaches `ready`, `/healthz` answers,
+the Control UI serves, and `agents.defaults.workspace` is correct. But an
+openclaw CLI command that touches exec approvals refuses until `doctor --fix`
+has run, on a box where nothing legacy could plausibly exist.
+
+Unclear whether this only affects the CLI or also the gateway's own exec
+approvals at runtime — the latter would matter for anything a channel actually
+asks the agent to do, so check it alongside the channel-pairing work. If it is
+just onboard leaving a stale-shaped file, the fix is probably a
+`openclaw doctor --fix` step in the agent's `tasks`, after onboard.
+

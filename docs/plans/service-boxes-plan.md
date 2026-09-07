@@ -30,36 +30,27 @@ closes a design question, so re-opening one needs new evidence, not an opinion.
 
 ## What is left
 
-Re-checked against the code and a live Hetzner box on 2026-09-07. The URL
-blocker and the hub-create blocker are **done**; what follows is what actually
-remains.
+Re-checked against the code and live Hetzner boxes on 2026-09-07. The URL, the
+hub-create, the cloud workspace-env and the AppleDouble blockers are **done**;
+what follows is what actually remains.
 
 ### Blocking — OpenClaw is not usable without these
 
-1. **Cloud boxes ignore the workspace.** `spec.boxRunEnv` reaches the sandbox's
-   provision env but not `/etc/agentbox/box.env`, which is what ctl's tasks
-   read — so `OPENCLAW_WORKSPACE_DIR` is absent and onboard runs against
-   `~/.openclaw/workspace`. Verified live: a Hetzner box has the user's
-   `AGENTS.md` / `skills` / `memory` in `/workspace` and
-   `agents.defaults.workspace` pointing somewhere else entirely. "Your project
-   dir is the agent's workspace" — the headline behaviour — is broken off
-   docker. Hetzner/DO only; vercel and e2b carry the env through the SDK exec.
-2. **Channel pairing has never been verified.** Every smoke stops at a healthy
+1. **Channel pairing has never been verified.** Every smoke stops at a healthy
    gateway with **zero channels**. Until a real token goes through
    `openclaw channels add --use-env`, we do not know openclaw does anything
    useful in a box. This is the last open question about whether the feature
    works, not a polish item — do it first.
-3. **The Control UI cannot connect on a public-preview provider.** e2b and
+2. **The Control UI cannot connect on a public-preview provider.** e2b and
    vercel serve `/` fine (their edges add no forwarded headers), but the WS
    connect is refused with "Browser origin not allowed" until the box's own
    origin is in `gateway.controlUi.allowedOrigins`. AgentBox knows that origin
    at create; it needs somewhere to assert a config key it owns. Setting it by
    hand reaches the normal "paste the gateway token" state, so nothing else is
    wrong. See the backlog for the measurement.
-4. **The non-git cloud seed still writes AppleDouble sidecars.** `seedFromTar`
-   (`sandbox-cloud/src/sync/workspace-seed.ts`, the `tar -C … -czf` with no
-   `env`) is the fourth call site of this bug; the other three are fixed. One
-   line.
+3. **A fresh box needs `openclaw doctor --fix`** before any CLI command that
+   touches exec approvals works. The gateway is unaffected; whether the runtime
+   approvals path is too is unknown — check it alongside (1). See the backlog.
 
 ### Rough edges
 
