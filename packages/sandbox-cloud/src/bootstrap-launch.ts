@@ -72,6 +72,18 @@ export interface KickCloudBootstrapArgs {
    * Omitted = `gh`, matching the config default.
    */
   hubGitAuth?: HubGitAuthMode;
+  /**
+   * The selected agents' declared `spec.boxRunEnv`, merged
+   * (`buildCloudBoxRunEnv`). Docker delivers the same field through `docker run
+   * -e`, where one container env serves the daemon and every login shell; a VPS
+   * has no such store, so on cloud it has to ride BOTH surfaces below.
+   *
+   * Safe in the 0644 box.env, unlike the rest of `CloudProvisionRequest.env`:
+   * this is only what a registry row declares — committed to the repo,
+   * non-secret by construction — never the forwarded provider API keys that
+   * `buildForwardedEnv` adds on top.
+   */
+  agentRunEnv?: Record<string, string>;
   onLog?: (line: string) => void;
 }
 
@@ -158,6 +170,19 @@ export function buildBootstrapEnv(args: KickCloudBootstrapArgs): {
   // (gh/PR ops still route through the relay in v1: the box has no real gh.)
   if (pushMode === 'direct') {
     boxEnvFile.push(`AGENTBOX_GIT_DIRECT=1`);
+  }
+
+  // The agents' declared run-env, on BOTH surfaces. `env` is the one that fixes
+  // the units: the daemon is spawned with `env: process.env` and the supervisor
+  // hands each task `{ ...process.env }`, so without this openclaw's onboard
+  // never sees `OPENCLAW_WORKSPACE_DIR` and writes `~/.openclaw/workspace`
+  // instead of `/workspace`. `boxEnvFile` covers the other half a cloud box has
+  // and docker does not: the interactive tmux login shell does NOT inherit the
+  // daemon's env, so a hand-run `openclaw` would otherwise disagree with the
+  // service unit — which is exactly what the field's own doc asks for.
+  for (const [k, v] of Object.entries(args.agentRunEnv ?? {})) {
+    env.push(`${k}=${quoteShellArgv([v])}`);
+    boxEnvFile.push(`${k}=${quoteShellArgv([v])}`);
   }
 
   return { env, boxEnvFile };

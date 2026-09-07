@@ -71,6 +71,7 @@ import {
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
 import {
+  buildCloudBoxRunEnv,
   cloudVolumesUsable,
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
@@ -607,6 +608,9 @@ export function createCloudProvider(
       // refresh, so reading the port off it here is what would let ctl bind one
       // port while the host forwards another.
       webProxyPort: webPort,
+      // Re-sent on every kick: the kick REWRITES box.env with `tee`, so a value
+      // it omits is gone for the rest of the box's life, not merely stale.
+      agentRunEnv: buildCloudBoxRunEnv(box.agents ?? []),
       launchDockerd: opts.launchDockerd !== false,
       vncPassword: box.vncEnabled ? box.vncPassword : undefined,
       controlPlaneUrl: box.cloud?.controlPlaneUrl,
@@ -1115,6 +1119,10 @@ export function createCloudProvider(
           gitPushMode: req.gitPushMode,
           hubGitAuth: req.hubGitAuth,
           boxHost: deriveCloudBoxHost(name, webPreview?.url),
+          // `agentVolumes.env` also carries the forwarded provider API keys —
+          // take the declared run-env alone, since this half is written to the
+          // world-readable box.env.
+          agentRunEnv: buildCloudBoxRunEnv(agentVolumes.agents),
           onLog: log,
         });
 

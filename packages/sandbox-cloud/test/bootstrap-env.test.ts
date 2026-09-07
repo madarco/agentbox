@@ -76,3 +76,61 @@ describe('buildBootstrapEnv control-plane threading', () => {
     });
   });
 });
+
+/**
+ * The agents' declared run-env has to reach BOTH surfaces on a cloud box.
+ *
+ * Docker delivers `spec.boxRunEnv` through `docker run -e`, where one container
+ * env serves the ctl daemon and every login shell alike. A VPS has no such
+ * store, and the two halves are reached differently:
+ *
+ *  - `env` is exported before `agentbox-ctl bootstrap`; the daemon is spawned
+ *    with `env: process.env` and hands each task `{ ...process.env }`, so this
+ *    is what the units see. Without it openclaw's onboard never saw
+ *    `OPENCLAW_WORKSPACE_DIR` and wrote `~/.openclaw/workspace` — measured on a
+ *    real hetzner box whose /workspace held the user's files all along.
+ *  - `boxEnvFile` becomes /etc/agentbox/box.env, which the interactive tmux
+ *    login shell sources. It does NOT inherit the daemon's env, so without this
+ *    a hand-run `openclaw` would disagree with the service unit.
+ *
+ * The kick REWRITES box.env with `tee` on every create and resume, so a value
+ * omitted here is gone for the life of the box, not merely stale.
+ */
+describe('buildBootstrapEnv agent run-env', () => {
+  it('puts a declared run-env var on both surfaces', () => {
+    const { env, boxEnvFile } = buildBootstrapEnv({
+      ...base,
+      agentRunEnv: { OPENCLAW_WORKSPACE_DIR: '/workspace' },
+    });
+    expect(env).toContain('OPENCLAW_WORKSPACE_DIR=/workspace');
+    expect(boxEnvFile).toContain('OPENCLAW_WORKSPACE_DIR=/workspace');
+  });
+
+  it('adds nothing when no agent declares one', () => {
+    const withNone = buildBootstrapEnv(base);
+    const withEmpty = buildBootstrapEnv({ ...base, agentRunEnv: {} });
+    expect(withEmpty.env).toEqual(withNone.env);
+    expect(withEmpty.boxEnvFile).toEqual(withNone.boxEnvFile);
+  });
+
+  it('shell-quotes a value so box.env survives `set -a; . box.env`', () => {
+    // box.env is sourced, not parsed: an unquoted space would split the value.
+    const { boxEnvFile } = buildBootstrapEnv({
+      ...base,
+      agentRunEnv: { SOME_DIR: '/a b/c' },
+    });
+    const line = boxEnvFile.find((l) => l.startsWith('SOME_DIR='));
+    expect(line).toBeDefined();
+    expect(line).not.toBe('SOME_DIR=/a b/c');
+    expect(line).toContain("'");
+  });
+
+  it('merges several agents without dropping either', () => {
+    const { env } = buildBootstrapEnv({
+      ...base,
+      agentRunEnv: { A_ONE: '1', B_TWO: '2' },
+    });
+    expect(env).toContain('A_ONE=1');
+    expect(env).toContain('B_TWO=2');
+  });
+});
