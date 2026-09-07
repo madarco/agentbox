@@ -287,6 +287,17 @@ Shipped. What the implementation found that the plan had not:
   `clone.drop`, scoped to the box's own agent rather than the registry-wide
   union — a claude rule can no longer shape an openclaw box's clone.
 
+Live-verified on docker, `ada` -> `bea`: the clone refuses with no
+`~/.agentbox/openclaw/bea.env` and leaves NOTHING behind (no dir, no container,
+no box record); with the file present `bea` runs openclaw with its own gateway
+token (`272e0674…` vs ada's `402d973d…`), its own 0600 `~/.openclaw/.env`,
+`SOUL.md`/`IDENTITY.md` naming bea while `Adafruit` survives the word-boundary
+rule, a regenerated `USER.md` carrying no trace of ada, a workspace at
+`<project>/.agentbox/bots/bea/workspace`, `openclaw config validate` clean and
+`/healthz` 200 on both — with ada untouched. On an ordinary create the same
+entry is optional: ada came up with `carry: no …/ada.env — ada starts without
+it` and no refusal.
+
 <details>
 <summary>Original plan</summary>
 
@@ -332,9 +343,12 @@ provider. What the implementation found:
   your own `SOUL.md` and deciding which words are your name — a judgement, on a
   turn. Driving `openclaw agent` from a task would also need a model credential
   in the box at boot, which is a separate unshipped thing.
-- Verified by running the generated script against a scratch workspace: the
-  nudge appears without the sentinel, is gone after it, and the box facts
-  survive both.
+- Verified against a scratch workspace and then on a live docker box: with the
+  sentinel removed from `agentbox.yaml` the regenerated `.agentbox/AGENTS.md`
+  carries the nudge; with it restored the nudge is gone and the box facts are
+  still there. The skill is baked (`/usr/local/share/agentbox/identity-skill.md`),
+  installed at `/opt/agentbox/skills/agentbox-identity/SKILL.md`, and
+  `skills.load.extraDirs` already points at that root.
 
 <details>
 <summary>Original plan</summary>

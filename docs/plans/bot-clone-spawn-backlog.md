@@ -105,8 +105,13 @@ load-bearing.
   pick it up through the `_shared` upload fallback on the next `prepare`; a
   docker base rebuilds locally. Until then the task's `[ -f ]` guard means the
   nudge is simply absent — never an error, but also never a prompt.
-- **Neither phase is live-verified end to end.** Phase 3's refusal, render and
-  per-box carry are unit- and mutation-tested, and Phase 4's script was executed
-  against a scratch workspace, but no real `agentbox clone ada -n bea` has run on
-  docker or hetzner. That is the next session's first job, and the plan's
-  verification section has the exact sequence.
+- **Only docker is live-verified.** The full `ada` -> `bea` sequence ran on
+  docker (see the plan's Phase 3 notes). The cloud `applyCarry` leg carries the
+  per-box entry through the same `withPerBoxCarry` call, but no cloud clone has
+  actually run — hetzner is the one worth doing, since it is the other provider
+  a bot is meant to live on.
+- **`agentbox-ctl run-task --force` returns as soon as the task is RUNNING.**
+  Not a bug, but it cost a false negative while verifying the nudge: a check that
+  greps the regenerated file immediately reads the previous content. Wait for the
+  task to leave `running` (this one takes ~10-15s, most of it the openclaw config
+  patch) before asserting on its output.
