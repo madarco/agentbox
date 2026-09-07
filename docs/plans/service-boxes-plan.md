@@ -36,14 +36,27 @@ remains.
 
 ### Blocking — OpenClaw is not usable without these
 
-1. **Cloud boxes ignore the workspace.** `spec.boxRunEnv` reaches the sandbox's
-   provision env but not `/etc/agentbox/box.env`, which is what ctl's tasks
-   read — so `OPENCLAW_WORKSPACE_DIR` is absent and onboard runs against
-   `~/.openclaw/workspace`. Verified live: a Hetzner box has the user's
-   `AGENTS.md` / `skills` / `memory` in `/workspace` and
-   `agents.defaults.workspace` pointing somewhere else entirely. "Your project
-   dir is the agent's workspace" — the headline behaviour — is broken off
-   docker. Hetzner/DO only; vercel and e2b carry the env through the SDK exec.
+1. ~~**Cloud boxes ignore the workspace.**~~ **FIXED 2026-09-07.** `spec.boxRunEnv`
+   reached the sandbox's provision env but not `/etc/agentbox/box.env`, which is
+   what ctl's tasks read — so `OPENCLAW_WORKSPACE_DIR` was absent and onboard ran
+   against `~/.openclaw/workspace`. Hetzner/DO only; vercel and e2b carry the env
+   through the SDK exec.
+
+   The filter that dropped it (`cloudInitBoxEnv`, both VPS backends) is not a bug:
+   `box.env` is world-readable and the `AGENTBOX_*` prefix rule is what keeps the
+   relay and bridge tokens out of it. So the fix went the other way —
+   `buildAgentDescriptors` now folds `boxRunEnv` into the service **and each of
+   its tasks**, so the values ride `agents.list` alongside the units that need
+   them. One rule for all five providers, no provider implements anything, no
+   re-bake, and non-secret paths stay out of a world-readable file.
+
+   Verified live on a fresh Hetzner box: `box.env` still carries only `AGENTBOX_*`
+   keys, and `openclaw config get agents.defaults.workspace` answers `/workspace`.
+   `~/.openclaw/workspace` does not exist.
+
+   **Still open, deliberately:** a shell you open yourself does not get these keys,
+   so a hand-run `openclaw` on a VPS box disagrees with the service. Widening
+   `box.env` is the fix, and it needs a rule for which keys may enter a 0644 file.
 2. **Channel pairing has never been verified.** Every smoke stops at a healthy
    gateway with **zero channels**. Until a real token goes through
    `openclaw channels add --use-env`, we do not know openclaw does anything

@@ -147,8 +147,13 @@ Shipped. What the implementation found that the plan had not:
   command that has not moved behind `/api/v1`. The orchestration lives in
   `sandbox-core` so a hub route reuses it rather than reimplementing.
 
-Live-verified on docker (git and gitless) and e2b; the state half is docker-only
-for the reason the verification section gives.
+Live-verified on docker (git and gitless), e2b and **hetzner** — the state half
+included. Hetzner needed its own fix first: `boxRunEnv` never reached a VPS box
+(blocker 1 in [`service-boxes-plan.md`](./service-boxes-plan.md)), so openclaw
+onboarded against `~/.openclaw/workspace` and a backup taken there would have
+captured a bot that was not working on the project at all. An agent's run-env now
+rides the units it contributes, which fixes every provider with one rule and
+needs no re-bake.
 
 <details>
 <summary>Original plan</summary>

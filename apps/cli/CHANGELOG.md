@@ -28,6 +28,11 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **OpenClaw on Hetzner and DigitalOcean worked in the wrong directory.** The
+  agent's declared run-env never reached the box on a VPS, so onboarding ran
+  against `~/.openclaw/workspace` instead of your project — silently, since the
+  gateway still started and passed its health check. An agent's run-env now
+  travels with the units it contributes, on every provider. No re-bake needed.
 - **A host `.agentbox/` was copied into every new box.** The workspace seed applied
   no exclude, so a bot backup sitting in your project — gateway token and all —
   was seeded into each box created from it. `.agentbox/` now stays on the host.
