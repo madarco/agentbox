@@ -341,7 +341,27 @@ export async function runServiceAgent(
         );
       }
       await assertSourceBoxNotRunning(restored.bundle, opts.force);
+      // A restore always makes a NEW box. The bare command is create-or-resume,
+      // so without this a second `--restore` into the same directory would push
+      // a bundle's identity over a running bot's — the one thing this must never
+      // do by accident. Checked BEFORE the copy, or `--force` would overwrite
+      // that box's workspace on its way to being refused.
+      const already = await findExistingBox(undefined, restored.workspaceDir, spec.id);
+      if (already) {
+        throw new Error(
+          `box ${already.name} already runs on ${restored.workspaceDir} — ` +
+            `pass --into <dir> to restore alongside it`,
+        );
+      }
+      // Staged BEFORE the config load below, which reads the workspace: on a
+      // first restore the destination does not exist yet, and a config loaded
+      // from a missing directory silently falls back to the defaults.
+      const staged = await stageRestoreWorkspace(restored, opts.force);
       opts.workspace = restored.workspaceDir;
+      log.info(
+        `restoring ${restored.bundle.bot} @ ${restored.bundle.stamp}: ` +
+          `${String(staged.files)} entr(ies) -> ${restored.workspaceDir}`,
+      );
     }
     const project = restored
       ? { root: restored.workspaceDir }
@@ -353,22 +373,6 @@ export async function runServiceAgent(
 
     intro(`agentbox ${spec.id}`);
     const existing = await findExistingBox(boxRef, project.root, spec.id);
-    // A restore always makes a NEW box. The bare command is create-or-resume, so
-    // without this a second `--restore` would push a bundle's identity over a
-    // running bot's — the one thing this feature must never do by accident.
-    if (restored && existing) {
-      throw new Error(
-        `box ${existing.name} already exists for this restore dir; ` +
-          `pass --into <dir> or -n <name> to restore alongside it`,
-      );
-    }
-    if (restored) {
-      const staged = await stageRestoreWorkspace(restored, opts.force);
-      log.info(
-        `restoring ${restored.bundle.bot} @ ${restored.bundle.stamp}: ` +
-          `${String(staged.files)} entr(ies) -> ${restored.workspaceDir}`,
-      );
-    }
     let box: BoxRecord;
 
     if (existing) {
