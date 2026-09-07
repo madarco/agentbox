@@ -244,6 +244,8 @@ See [Checkpoints & pausing](/docs/checkpoints-and-pausing) and the provider page
 agentbox download 1
 agentbox download 1 --dry-run
 agentbox download 1 --with-env
+agentbox download --backup ada       # capture the bot into .agentbox/bots/
+agentbox download --backup --keep 5 ada
 
 # Push the host workspace INTO a live box (the box wins every conflict)
 agentbox upload
@@ -293,6 +295,8 @@ agentbox services restart 1 web            # restart one service
 `cp` drops heavy, regenerable directories by default (`.git`, `node_modules`, `bin`, `obj`, `packages`, `dist`, `.next`, `target`) — keep them with `--no-default-excludes`, or add more with repeatable `--exclude=<glob|name>`. An upload whose size (after excludes) exceeds `box.cpMaxBytes` (default 100 MB) is **blocked** and prints a `du`-style tree of the biggest remaining folders so you can decide what to drop; trim it with `--exclude`, copy the heavy folders one at a time, or pass `--yes` to copy it all anyway. The limit is checked per source.
 
 When `/workspace` is not a git repo, `download` and `upload` select files with an **exclude list** rather than `.gitignore` — the normal mode for a service box, not a fallback, and the output labels it. It drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and every agent's state directory.
+
+`download --backup` writes to `<project>/.agentbox/bots/<bot>/<timestamp>/` instead of your working dir, and captures the agent's **state directory with its identity** alongside the workspace — the portable, cross-provider alternative to a checkpoint. `--name <bot>` sets the bot name (default: the box name), `--keep <n>` how many backups to retain (default 3), `--agent <id>` which agent's state to take. It never asks about agent-generated files. See [sync and git](/docs/sync-and-git#back-a-bot-up).
 
 Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore` (force exclude-list mode), `--include-node-modules` (keep `node_modules`, in both modes), `--include-agent-files` (take agent-generated files like `AGENTS.md` without being asked), `--with-env`, `--pattern <glob>`; `git push`/`fetch` take `--remote <name>` (default `origin`) and forward extra args like `--force-with-lease`. `git push --host-only` lands the box's branch in your **local** repo without pushing to any remote (nothing is published online) — `--as <branch>` picks the host branch name (default: the box's branch) and `--force` allows a non-fast-forward overwrite. Because nothing leaves the host, `--host-only` skips the push-approval prompt.
 

@@ -12,6 +12,7 @@
  */
 
 import { log } from '@agentbox/cli-kit';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentId, BoxRecord } from '@agentbox/core';
 import {
@@ -81,6 +82,18 @@ export function resolveBackupTarget(
   const stamp = backupStamp();
   const dir = botBackupDir(projectRoot, bot, stamp);
   return { projectRoot, bot, stamp, dir, workspaceDir: join(dir, 'workspace'), keep, agent };
+}
+
+/**
+ * Create the bundle's directories before the pull runs.
+ *
+ * rsync creates the LAST component of its destination and no more, so a fresh
+ * `<project>/.agentbox/bots/<bot>/<stamp>/workspace` is several levels too deep
+ * for it and the transfer dies with "No such file or directory". The dry-run
+ * pass hits it too, so this cannot wait until the write.
+ */
+export async function prepareBackupDir(target: BackupTarget): Promise<void> {
+  await mkdir(target.workspaceDir, { recursive: true });
 }
 
 /**

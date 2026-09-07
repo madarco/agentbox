@@ -68,16 +68,19 @@ changes the design if wrong.
 
 ## Decisions
 
-1. **Backups live in the project: `<project>/.agentbox/bots/<box-name>/`.**
-   Two halves with different git fates:
-   - `workspace/` — the pulled workspace. Committable; a bot's `SOUL.md` and
-     memory get history for free.
-   - `state/` — the agent state dir with the identity kept. Always gitignored
-     (AgentBox writes the entry on first backup), 0600, never leaves the machine
-     through git.
-   `manifest.json` beside them records agent id, provider, box name, and time.
-   One backup per bot, rotated 1-deep (`state.prev/`), like the logs. History
-   of the workspace half is git's job.
+1. **Backups live in the project: `<project>/.agentbox/bots/<bot>/<stamp>/`,
+   and the whole of `<project>/.agentbox/` is gitignored** — AgentBox appends
+   the entry on the first backup. `manifest.json`, `workspace/` and `state/`
+   sit inside each timestamped dir; backups are timestamped and the newest
+   `--keep <n>` (default 3) are kept, with a relative `latest` symlink.
+
+   The earlier idea of committing `workspace/` while ignoring `state/` was
+   **rejected on evidence**: the git seed is a worktree checkout of *tracked*
+   files, so a committed backup is checked out into every new box and no
+   tar-level exclude can stop it. A user who wants history runs `git init`
+   inside a bot's dir; a nested repo in an ignored dir is invisible to the
+   project repo. Rotation was rejected for timestamps because a backup taken
+   while a bot was broken must not destroy the last good one.
 2. **`agentbox download --backup`** is the backup command. Not a new verb: it
    is the same staging with a different destination, no agent-file prompt
    (a backup takes everything), and the state half added.
@@ -120,6 +123,36 @@ identity files (`replacements:` already exists); timestamped backup dirs
 
 ## Phases
 
+### Phase 1 — `.agentbox/` never crosses; `download --backup` — **DONE**
+
+Shipped. What the implementation found that the plan had not:
+
+- **The leak was bigger than the two no-git seeds.** The `git ls-files --others`
+  carry-over lists (docker, cloud, and the hub's custody seed) ship an untracked
+  `.agentbox/` too, so a project whose gitignore entry was missing or edited
+  still leaked. Reproduced live: a box created before the fix had the host's
+  gateway token at `/workspace/.agentbox/bots/ada/*/state/openclaw.json`.
+- **Neither tar can anchor an exclude.** Measured on bsdtar 3.5.3;
+  `--exclude=./.agentbox` still drops `sub/.agentbox`. The seed matches at any
+  depth, which is also what a monorepo sub-project's backup wants.
+- **`git check-ignore .agentbox` exits 1 against a `.agentbox/` rule** — a
+  trailing-slash pattern matches directories only and the path does not exist
+  yet. The probe has to be a path *inside* the dir.
+- **rsync creates only the last component of its destination**, so the bundle's
+  directories must exist before the pull, dry-run included.
+- **`find` discovered a database nobody would have listed by hand**:
+  `agents/main/agent/openclaw-agent.sqlite`, beside the expected
+  `state/openclaw.sqlite`.
+- The `--backup` path is a mode of `download`, which is still the one CLI
+  command that has not moved behind `/api/v1`. The orchestration lives in
+  `sandbox-core` so a hub route reuses it rather than reimplementing.
+
+Live-verified on docker (git and gitless) and e2b; the state half is docker-only
+for the reason the verification section gives.
+
+<details>
+<summary>Original plan</summary>
+
 ### Phase 1 — `.agentbox/` never crosses; `download --backup`
 
 **Seed exclude.** Both gitless seeds gain `--exclude=./.agentbox` (docker
@@ -152,6 +185,8 @@ or a new `agent-state.ts` for the backup path derivation, both seeds, docs
 shows `workspace/` as new files and `state/` ignored; create a new box from
 the same project and confirm `/workspace/.agentbox/bots` does **not** exist in
 it (gitless project — copy `examples/openclaw-gateway` without `.git`).
+
+</details>
 
 ### Phase 2 — restore
 

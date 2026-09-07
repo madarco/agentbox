@@ -17,7 +17,7 @@ import {
   pullWorkspaceToHost,
   type PullWorkspaceResult,
 } from '@agentbox/sandbox-core';
-import { runBackup, resolveBackupTarget } from './_backup.js';
+import { prepareBackupDir, runBackup, resolveBackupTarget } from './_backup.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { ensureBoxRunningVia } from '../lib/ensure-running.js';
 import { providerForBox } from '../provider/registry.js';
@@ -113,6 +113,7 @@ export const downloadCommand = new Command('download')
       // started and a workspace is staged.
       const target = opts.backup ? resolveBackupTarget(box, opts) : undefined;
       const destDir = target ? target.workspaceDir : box.workspacePath;
+      if (target) await prepareBackupDir(target);
 
       // One pull, two stage-1s. Docker materializes /workspace over its
       // /host-export bind mount; every other provider tars the selected files
@@ -152,7 +153,7 @@ export const downloadCommand = new Command('download')
         } else if (insp.state === 'missing') {
           throw new Error(`box ${box.name} has no container; was it destroyed?`);
         }
-        warnAboutRootWorktree(box);
+        if (!target) warnAboutRootWorktree(box);
         pull = async (o) => {
           const r = await pullToHost(box, {
             dryRun: o.dryRun,

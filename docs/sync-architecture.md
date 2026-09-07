@@ -378,6 +378,43 @@ killed the cloud tar the same way), and stage 2 reconciles the list with the
 staged copy — skipping and reporting what raced, failing only when *nothing*
 selected was staged, which means the staging itself is stale.
 
+### `.agentbox/` never crosses the boundary, in either direction
+
+The second invariant of the workspace layer, and the one that makes
+`download --backup` safe to write into a user's project.
+
+Two different directories share the name. The **box's** `/workspace/.agentbox/`
+is generated every boot (openclaw's derived box facts, which have to live inside
+the workspace because openclaw will not read a system prompt from outside it).
+The **host's** `<project>/.agentbox/` is durable and the user's: `bots/<bot>/`
+holds each backup's workspace and the agent's state dir, gateway token included.
+
+The pull half was already true — `GIT_MODE_EXCLUDE_DIRS` and
+`WORKSPACE_EXCLUDE_DIR_NAMES` both drop it, so a generated file describing THIS
+box never lands in the project. The seed half was not, and that was a real leak:
+a host backup was copied into every new box created from that project, secret
+and all, growing with each backup. Reproduced live before the fix.
+
+Every host→box workspace path now drops it, from the one list the pull reads
+(`seedExcludeTarArgs` / `dropHostOnlyPaths`, both derived from
+`GIT_MODE_EXCLUDE_DIRS`): the docker and cloud no-git tar seeds, the three
+`git ls-files --others` carry-over lists (docker, cloud, custody), and the APFS
+snapshot's prune set. `overlayHostDirIntoBox` — the `upload` leg — already
+applied `workspaceExcludes()` and needed nothing.
+
+The seed matches at ANY DEPTH while the git-mode pull pathspec stays
+root-anchored. That asymmetry is forced and wanted. Forced: neither tar anchors
+an exclude (measured on bsdtar 3.5.3; GNU tar defaults to `--no-anchored`), so
+`--exclude=./.agentbox` is not the guarantee it looks like. Wanted: a
+`packages/foo/.agentbox/` written by a backup taken from a monorepo sub-project
+is ours too. The seed therefore refuses slightly more than the pull brings back,
+which is the safe direction.
+
+The gitignore entry `download --backup` writes is a second guard, not the
+mechanism. The invariant must hold in a project whose `.gitignore` the user has
+since edited, which is why the carry-over lists are filtered even though
+`--exclude-standard` would usually have done it.
+
 `BoxFilePorts` (`sandbox-core/src/sync/concerns/box-files.ts`) is the seam that
 makes that possible without a new provider method: whole-tree file movement needs
 only `exec` + `uploadPath` + `downloadPath`, which every provider already

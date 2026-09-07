@@ -20,6 +20,17 @@ CLI, not the raw commits.
   when the base is baked, choosing a different one rebuilds the base first and the
   form says so. A community provider gets the same picker by declaring `sizes` on
   its descriptor.
+- **`agentbox download --backup` captures a box as a restorable bundle.** It writes
+  the workspace plus the agent's state dir — identity included — to
+  `<project>/.agentbox/bots/<bot>/<timestamp>/`, so a bot can be recreated later or
+  on a different provider. The newest three are kept (`--keep`), and live databases
+  are captured through SQLite's online-backup API, not copied byte for byte.
+
+### Fixed
+
+- **A host `.agentbox/` was copied into every new box.** The workspace seed applied
+  no exclude, so a bot backup sitting in your project — gateway token and all —
+  was seeded into each box created from it. `.agentbox/` now stays on the host.
 
 ## [0.30.0] - 2026-09-05
 

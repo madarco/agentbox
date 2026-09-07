@@ -41,6 +41,44 @@ agentbox download --with-env
   committing to the copy.
 </Callout>
 
+## Back a bot up
+
+`agentbox download --backup [box]` captures a box as a set of files that can recreate it — on any provider. A [checkpoint](/docs/checkpoints-and-pausing) cannot do this: it is a provider-native snapshot and does not travel from E2B to Hetzner.
+
+The bundle lands in your project, under `.agentbox/bots/`, and holds both halves of what a bot is:
+
+```bash
+agentbox download --backup ada
+```
+
+```
+<project>/.agentbox/bots/ada/
+  latest -> 2026-09-07T15-09-16Z
+  2026-09-07T15-09-16Z/
+    manifest.json     # agent, provider, box, and what was captured
+    workspace/        # the box's /workspace, same selection a normal download uses
+    state/            # the agent's state dir, IDENTITY INCLUDED
+```
+
+Backups are timestamped and the newest three are kept; `--keep <n>` changes that. `--name <bot>` names the bot when it differs from the box name, and `--agent <id>` picks the agent when the box's own is not what you want captured.
+
+<Callout type="warn" title="A backup holds the bot's identity">
+  `state/` contains the gateway auth token and channel pairings — everything that makes this bot
+  *this* bot, which is exactly what a restore needs and exactly what must not be shared. AgentBox
+  adds `.agentbox/` to your `.gitignore` on the first backup and writes the directory `0700`. Do not
+  commit it, and do not put it on a shared drive.
+</Callout>
+
+Live databases are captured through SQLite's own online-backup API rather than copied byte for byte, because a copy of a database with an active write-ahead log is a torn read. On a real gateway that is the difference between a 3.2 MB file that opens and a 1.5 MB one that has lost the last 1.9 MB of writes.
+
+Unlike a plain `download`, a backup never asks about agent-generated files: `SOUL.md` and `IDENTITY.md` are the point of one.
+
+<Callout title="`.agentbox/` never crosses the box boundary">
+  Your project's `.agentbox/` is yours and stays on the host — it is never seeded into a box. The
+  box's own `/workspace/.agentbox/` is generated fresh every boot and is never pulled back. Same
+  name, opposite direction, deliberately.
+</Callout>
+
 ### Exclude-list mode
 
 When `/workspace` is **not** a git repo — a service box, a scratch folder, anything you created with

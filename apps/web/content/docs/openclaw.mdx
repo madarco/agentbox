@@ -169,13 +169,15 @@ cloned box from inheriting the facts of the box it was cloned from.
 
 | Path in the box                   | What it is                      | Travels?                         |
 | --------------------------------- | ------------------------------- | -------------------------------- |
-| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | Never leaves the box             |
-| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | Never                            |
+| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | Only into a `--backup`           |
+| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | Only into a `--backup`           |
 | `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                            |
 | `~/.openclaw/agents/`             | Your agent definitions          | Both directions                  |
 | `~/.config/openclaw`              | Auth-profile key                | Stays in the box's config volume |
 
 `agentbox download openclaw [box]` pulls the agent definitions back to your host, additively — an item the host already has is never overwritten. There is deliberately no `--propagate`: an OpenClaw box is a tenant, and copying one tenant's definitions into another's gateway is not a sensible default.
+
+**One exception, and it is opt-in: `agentbox download --backup`.** A backup is the one operation that keeps the identity, because a restore that mints a new gateway token has not restored the bot. It writes `openclaw.json`, the config-journal key and the live `state/` into `<project>/.agentbox/bots/<bot>/<timestamp>/state/` — gitignored and `0700` — while still dropping `tmp/openclaw-<uid>/`, whose name carries the box user's uid and differs per provider. The gateway databases go through SQLite's online-backup API, not a byte copy. See [back a bot up](/docs/sync-and-git#back-a-bot-up).
 
 If your host happens to run OpenClaw itself, its config and state are excluded from everything pushed into a box, for the same identity reason.
 
