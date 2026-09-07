@@ -20,32 +20,30 @@ interface Merged {
 }
 
 /**
- * Run it exactly as the box does: written to a FILE and invoked as `node
- * <file> …`. Not `node -e`, which shifts argv by one — a test that used `-e`
- * passed while the real box read the config path as the skills dir.
+ * Run it exactly as the box does: written to a FILE and invoked as `node <file>
+ * …`. Not `node -e`, which shifts argv by one — a test that used `-e` passed
+ * while the real box read its first argument as the wrong parameter.
+ *
+ * The three raw arguments are `openclaw config get` output verbatim, which is
+ * what the task pipes in: JSON when the value is set, empty when it is not.
  */
-function run(cfgPath: string): Merged {
-  const dir = mkdtempSync(join(tmpdir(), 'openclaw-merge-prog-'));
+function run(rawDirs: string, rawEntry = '', rawHooksEnabled = ''): Merged {
+  const dir = mkdtempSync(join(tmpdir(), 'openclaw-merge-'));
   const prog = join(dir, 'merge.cjs');
   writeFileSync(prog, OPENCLAW_CONFIG_MERGE_PROGRAM, 'utf8');
-  const out = execFileSync(process.execPath, [prog, cfgPath, SKILL_DIR, CTX_PATH], {
-    encoding: 'utf8',
-  });
+  const out = execFileSync(
+    process.execPath,
+    [prog, SKILL_DIR, CTX_PATH, rawDirs, rawEntry, rawHooksEnabled],
+    { encoding: 'utf8' },
+  );
   return JSON.parse(out) as Merged;
-}
-
-function merge(config: unknown): Merged {
-  const dir = mkdtempSync(join(tmpdir(), 'openclaw-merge-'));
-  const cfg = join(dir, 'openclaw.json');
-  writeFileSync(cfg, JSON.stringify(config), 'utf8');
-  return run(cfg);
 }
 
 const entryOf = (r: Merged) => r.hooks.internal.entries['bootstrap-extra-files']!;
 
 describe('the openclaw config merge', () => {
-  it('asserts both keys on a config that has neither', () => {
-    const r = merge({});
+  it('asserts both keys on a box where neither is set', () => {
+    const r = run('');
     expect(r.skills.load.extraDirs).toEqual([SKILL_DIR]);
     expect(entryOf(r).paths).toEqual([CTX_PATH]);
     expect(entryOf(r).enabled).toBe(true);
@@ -56,50 +54,45 @@ describe('the openclaw config merge', () => {
     // an array wholesale, and `openclaw-render` re-sends only the overlay keys
     // that CHANGED — so a stable user value would survive the first boot and be
     // silently reverted on the second.
-    const r = merge({
-      skills: { load: { extraDirs: ['/home/vscode/my-skills'] } },
-      hooks: {
-        internal: { entries: { 'bootstrap-extra-files': { paths: ['NOTES.md'] } } },
-      },
-    });
+    const r = run(
+      JSON.stringify(['/home/vscode/my-skills']),
+      JSON.stringify({ paths: ['NOTES.md'] }),
+    );
     expect(r.skills.load.extraDirs).toEqual(['/home/vscode/my-skills', SKILL_DIR]);
     expect(entryOf(r).paths).toEqual(['NOTES.md', CTX_PATH]);
   });
 
+  it('reads the pretty-printed shape `config get` actually prints', () => {
+    // Not a JSON formatting detail: the task pipes this output in verbatim.
+    const r = run('[\n  "/home/vscode/my-skills"\n]\n');
+    expect(r.skills.load.extraDirs).toEqual(['/home/vscode/my-skills', SKILL_DIR]);
+  });
+
   it('is idempotent — a second boot adds nothing', () => {
-    const twice = merge(merge({}));
+    const once = run('');
+    const twice = run(JSON.stringify(once.skills.load.extraDirs), JSON.stringify(entryOf(once)));
     expect(twice.skills.load.extraDirs).toEqual([SKILL_DIR]);
     expect(entryOf(twice).paths).toEqual([CTX_PATH]);
   });
 
   it('leaves the rest of the hook entry alone', () => {
-    const r = merge({
-      hooks: {
-        internal: {
-          entries: { 'bootstrap-extra-files': { paths: [], maxCharsPerFile: 1234 } },
-        },
-      },
-    });
+    const r = run('', JSON.stringify({ paths: [], maxCharsPerFile: 1234 }));
     expect(entryOf(r).maxCharsPerFile).toBe(1234);
   });
 
   it('lets the user turn the box facts OFF and have it stick', () => {
     // Disabling the injection is a choice they are allowed to make. Re-enabling
     // it every boot would be the same class of bug as clobbering the array.
-    const offEntry = merge({
-      hooks: { internal: { entries: { 'bootstrap-extra-files': { enabled: false } } } },
-    });
-    expect(entryOf(offEntry).enabled).toBe(false);
-    expect(merge({ hooks: { internal: { enabled: false } } }).hooks.internal.enabled).toBe(false);
+    expect(entryOf(run('', JSON.stringify({ enabled: false }))).enabled).toBe(false);
+    expect(run('', '', 'false').hooks.internal.enabled).toBe(false);
   });
 
-  it('survives a config file that is missing or corrupt', () => {
-    // Best-effort: the task must not fail a box over this.
-    const dir = mkdtempSync(join(tmpdir(), 'openclaw-merge-'));
-    const bad = join(dir, 'openclaw.json');
-    writeFileSync(bad, '{not json', 'utf8');
-    for (const path of [bad, join(dir, 'absent.json')]) {
-      expect(run(path).skills.load.extraDirs).toEqual([SKILL_DIR]);
+  it('never crashes on output it cannot parse', () => {
+    // `config get` prints a human sentence for a valid-but-unset path, and
+    // nothing at all when it fails. Neither may take the task down; the caller's
+    // `config validate` gate is what makes treating these as "unset" safe.
+    for (const raw of ['', 'Config path is valid but unset: skills.load.extraDirs.', '{not json']) {
+      expect(run(raw).skills.load.extraDirs).toEqual([SKILL_DIR]);
     }
   });
 });

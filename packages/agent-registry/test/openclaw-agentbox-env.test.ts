@@ -72,9 +72,20 @@ describe('openclaw-agentbox-env', () => {
     expect(script).toContain('/opt/agentbox/skills .agentbox/AGENTS.md');
   });
 
-  it('feeds the merge the box config, and cleans up after itself', () => {
-    expect(script).toContain('/home/vscode/.openclaw/openclaw.json');
+  it("reads the current values through openclaw's own reader, not the file", () => {
+    // The config is JSON5 — openclaw reads one with a `//` comment in it and
+    // `JSON.parse` throws on the same file (both verified in a box) — so parsing
+    // it here would see nothing and clobber the arrays the merge exists to keep.
+    expect(script).toContain('openclaw config get');
+    expect(script).not.toContain('openclaw.json');
     expect(script).toMatch(/rm -f "\$PROG"/);
+  });
+
+  it('only touches the config when openclaw says the config is good', () => {
+    // `config get` prints nothing and exits 1 both for an unset value and for
+    // one it cannot read, so without this gate a broken config looks exactly
+    // like a fresh box — and would be overwritten with our entry alone.
+    expect(script).toContain('if openclaw config validate');
   });
 
   it('names a bootstrap basename openclaw actually accepts', () => {

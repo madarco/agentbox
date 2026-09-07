@@ -72,8 +72,6 @@ const AGENTBOX_CTX_DIR = '/workspace/.agentbox';
 /** First line of the generated file: makes a re-run idempotent, and says whose it is. */
 const CTX_SENTINEL = '<!-- agentbox:box-facts (generated every boot; edit AGENTS.md instead) -->';
 
-/** openclaw's config file — the same path `configRender` renders into. */
-const OPENCLAW_CONFIG_FILE = `${OPENCLAW_BOX_DIR}/openclaw.json`;
 /** Scratch path for the merge program; removed again as soon as it has run. */
 const MERGE_PROGRAM_PATH = '/tmp/agentbox-openclaw-config-merge.cjs';
 
@@ -101,23 +99,37 @@ const CTX_REL_PATH = '.agentbox/AGENTS.md';
  * Emitted as a program rather than a static JSON blob because the merge has to
  * happen IN the box, against that box's live config. node is guaranteed there —
  * openclaw is a node application.
+ *
+ * It is handed the current values rather than reading `openclaw.json` itself.
+ * That file is JSON5 — openclaw reads a config with a `//` comment in it quite
+ * happily, and `JSON.parse` throws on the same file (both verified in a box) —
+ * so parsing it here would see `{}` for a commented config and clobber exactly
+ * the arrays this program exists to preserve. `openclaw config get` is the
+ * tool's own reader, and it also resolves defaults, profiles and env overrides.
+ *
+ * An unreadable value is treated as UNSET, which is only safe because the caller
+ * gates the whole step on `openclaw config validate`: openclaw prints nothing
+ * and exits 1 both for a path that is merely unset and for one it cannot read,
+ * so the exit code alone cannot separate a fresh box from a broken config.
  */
 export const OPENCLAW_CONFIG_MERGE_PROGRAM = `
-const fs = require('fs');
-const [cfgPath, skillDir, ctxPath] = process.argv.slice(2);
-let cur = {};
-try {
-  cur = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-} catch {}
+const [skillDir, ctxPath, rawDirs, rawEntry, rawHooksEnabled] = process.argv.slice(2);
+const read = (s) => {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
+};
 const withMember = (arr, v) =>
   Array.isArray(arr) ? (arr.includes(v) ? arr.slice() : [...arr, v]) : [v];
-const entry = cur?.hooks?.internal?.entries?.['bootstrap-extra-files'] ?? {};
+const entry = read(rawEntry) ?? {};
 process.stdout.write(
   JSON.stringify({
-    skills: { load: { extraDirs: withMember(cur?.skills?.load?.extraDirs, skillDir) } },
+    skills: { load: { extraDirs: withMember(read(rawDirs), skillDir) } },
     hooks: {
       internal: {
-        enabled: cur?.hooks?.internal?.enabled === false ? false : true,
+        enabled: read(rawHooksEnabled) === false ? false : true,
         entries: {
           'bootstrap-extra-files': {
             ...entry,
@@ -172,16 +184,27 @@ function buildAgentboxContextScript(): string {
     // COMPUTED from the box's live config (see the program's own comment) so the
     // two arrays gain our entry instead of being replaced by it.
     //
+    // Gated on openclaw's own validator. A `config get` prints nothing and exits
+    // 1 both for a value that is merely unset and for one it cannot read, so
+    // without this gate a broken config would look like a fresh box and be
+    // overwritten with just our entry. With the config known good, an empty read
+    // means genuinely unset, which is the one case where writing ours alone is
+    // right.
+    'if openclaw config validate >/dev/null 2>&1; then',
+    `  DIRS=$(openclaw config get 'skills.load.extraDirs' 2>/dev/null || true)`,
+    `  ENTRY=$(openclaw config get "hooks.internal.entries['bootstrap-extra-files']" 2>/dev/null || true)`,
+    `  HOOKS=$(openclaw config get 'hooks.internal.enabled' 2>/dev/null || true)`,
     // Written to a file first: a quoted heredoc keeps the program safe from the
     // shell, and it avoids process substitution, which some provider bases have
     // no `/dev/fd` for.
-    `PROG=${MERGE_PROGRAM_PATH}`,
-    'cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
+    `  PROG=${MERGE_PROGRAM_PATH}`,
+    '  cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
     OPENCLAW_CONFIG_MERGE_PROGRAM.trim(),
     'AGENTBOX_MERGE_EOF',
-    `node "$PROG" ${OPENCLAW_CONFIG_FILE} ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} |`,
-    '  openclaw config patch --stdin >/dev/null || true',
-    'rm -f "$PROG" || true',
+    `  node "$PROG" ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRY" "$HOOKS" |`,
+    '    openclaw config patch --stdin >/dev/null || true',
+    '  rm -f "$PROG" || true',
+    'fi',
     'exit 0',
   ].join('\n');
 }
