@@ -40,15 +40,20 @@ describe('openclaw registry row', () => {
     expect(text).not.toContain('AGENTBOX_AUTO_SECRET');
   });
 
-  it('onboards once, then renders the overlay, then starts', () => {
+  it('onboards once, seeds the box context, renders the overlay, then starts', () => {
     const tasks = SPEC.service?.tasks ?? [];
     const onboard = tasks.find((t) => t.name === 'openclaw-onboard');
+    const env = tasks.find((t) => t.name === 'openclaw-agentbox-env');
     const render = tasks.find((t) => t.name === 'openclaw-render');
     // `runOnce` is what keeps a warm boot from re-onboarding and replacing the
     // identity the box already has.
     expect(onboard?.runOnce).toBe('marker');
     expect(onboard?.command).toContain('--non-interactive');
-    expect(render?.needs).toEqual(['openclaw-onboard']);
+    // The AgentBox-owned keys go in BETWEEN: after onboard wrote the config file
+    // they patch, and before the render, so the user's own overlay is the last
+    // word on any key both of them name.
+    expect(env?.needs).toEqual(['openclaw-onboard']);
+    expect(render?.needs).toEqual(['openclaw-agentbox-env']);
     expect(SPEC.service?.needs).toEqual(['openclaw-render']);
   });
 

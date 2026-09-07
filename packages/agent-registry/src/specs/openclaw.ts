@@ -49,6 +49,171 @@ const OPENCLAW_XDG_LINK = `${BOX_HOME}/.config/openclaw`;
 /** Loopback port the gateway binds. Named once — probe, expose and URL all read it. */
 const GATEWAY_PORT = 18789;
 
+/**
+ * Where AgentBox keeps the skills it owns, and the box "system prompt" it
+ * derives. Both are AgentBox's, not the user's.
+ *
+ * The skill lives OUTSIDE the workspace on purpose: `skills.load.extraDirs` is
+ * documented for exactly this ("shared skill packs ... without copying them
+ * into the OpenClaw workspace"), at LOWEST precedence, so a user skill of the
+ * same name wins. Nothing about it travels with `agentbox clone`.
+ *
+ * The prompt file cannot do the same. openclaw's `bootstrap-extra-files` hook
+ * resolves every path from the workspace and REALPATH-CHECKS it, so a symlink
+ * out is refused, and only the six canonical bootstrap basenames are accepted —
+ * hence a real `AGENTS.md`, inside `/workspace`, under a namespaced dir.
+ */
+const AGENTBOX_SKILLS_DIR = '/opt/agentbox/skills';
+/** Baked into every provider's base image; see each `install-box.sh`. */
+const BAKED_SETUP_SKILL = '/usr/local/share/agentbox/setup-guide.md';
+/** The per-provider box facts. Claude reads it directly; codex folds it in too. */
+const BOX_FACTS = '/etc/claude-code/CLAUDE.md';
+const AGENTBOX_CTX_DIR = '/workspace/.agentbox';
+/** First line of the generated file: makes a re-run idempotent, and says whose it is. */
+const CTX_SENTINEL = '<!-- agentbox:box-facts (generated every boot; edit AGENTS.md instead) -->';
+
+/** Scratch path for the merge program; removed again as soon as it has run. */
+const MERGE_PROGRAM_PATH = '/tmp/agentbox-openclaw-config-merge.cjs';
+
+/** Workspace-relative path of the generated prompt file, as the hook names it. */
+const CTX_REL_PATH = '.agentbox/AGENTS.md';
+
+/**
+ * Build the config patch AgentBox applies, as a MEMBERSHIP assertion on the two
+ * arrays rather than a value for them.
+ *
+ * Both keys are arrays, and `openclaw config patch` replaces an array wholesale
+ * rather than merging it — so sending a literal `[ourDir]` every boot would be a
+ * silent data-loss bug, not merely rude. `openclaw-render` re-sends only the
+ * overlay keys that CHANGED since its last render, so a user value that is
+ * stable (in `agentbox.yaml`, or set in the box with `openclaw config set`)
+ * would not be re-asserted afterwards: it would survive the first boot and
+ * vanish on the second.
+ *
+ * Reading the current value and unioning ours in keeps AgentBox's claim to the
+ * narrowest true one — "our skills dir is on the list, our prompt file is in the
+ * bootstrap set" — and leaves every other entry, and every neighbouring key,
+ * alone. An explicit `enabled: false` on the hook is preserved too: disabling
+ * the box facts is a choice the user is allowed to make and have stick.
+ *
+ * Emitted as a program rather than a static JSON blob because the merge has to
+ * happen IN the box, against that box's live config. node is guaranteed there —
+ * openclaw is a node application.
+ *
+ * It is handed the current values rather than reading `openclaw.json` itself.
+ * That file is JSON5 — openclaw reads a config with a `//` comment in it quite
+ * happily, and `JSON.parse` throws on the same file (both verified in a box) —
+ * so parsing it here would see `{}` for a commented config and clobber exactly
+ * the arrays this program exists to preserve. `openclaw config get` is the
+ * tool's own reader, and it also resolves defaults, profiles and env overrides.
+ *
+ * An unreadable value is treated as UNSET, which is only safe because the caller
+ * gates the whole step on `openclaw config validate`: openclaw prints nothing
+ * and exits 1 both for a path that is merely unset and for one it cannot read,
+ * so the exit code alone cannot separate a fresh box from a broken config.
+ */
+export const OPENCLAW_CONFIG_MERGE_PROGRAM = `
+const [skillDir, ctxPath, rawDirs, rawEntries, rawHooksEnabled] = process.argv.slice(2);
+const read = (s) => {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
+};
+const withMember = (arr, v) =>
+  Array.isArray(arr) ? (arr.includes(v) ? arr.slice() : [...arr, v]) : [v];
+const entry = read(rawEntries)?.['bootstrap-extra-files'] ?? {};
+process.stdout.write(
+  JSON.stringify({
+    skills: { load: { extraDirs: withMember(read(rawDirs), skillDir) } },
+    hooks: {
+      internal: {
+        enabled: read(rawHooksEnabled) === false ? false : true,
+        entries: {
+          'bootstrap-extra-files': {
+            ...entry,
+            enabled: entry.enabled === false ? false : true,
+            paths: withMember(entry.paths, ctxPath),
+          },
+        },
+      },
+    },
+  }),
+);
+`;
+
+/**
+ * Teach the box's gateway where it is running.
+ *
+ * Runs on EVERY supervisor start, not once: the prompt file sits in the
+ * workspace, so `agentbox clone` carries a copy of the SOURCE box's facts into
+ * the new one. Regenerating overwrites it from this box's own `/etc/claude-code`
+ * before the gateway ever reads it — which is what makes a clone, a re-provision
+ * or a move to another provider self-correcting rather than quietly wrong.
+ *
+ * Best-effort throughout: none of this is worth failing a box over, so every
+ * step is guarded and the task still exits 0 on a base too old to carry the
+ * baked files.
+ */
+function buildAgentboxContextScript(): string {
+  return [
+    'set -u',
+    // The skill. COPIED, not symlinked, and as `<name>/SKILL.md` rather than a
+    // flat `.md` — both measured against openclaw 2026.9.2, which discovered
+    // neither other shape: it takes skills as directories, and rejects a symlink
+    // whose real target sits outside the source root unless that target is in
+    // `skills.load.allowSymlinkTargets`. Re-copied every boot, so a re-baked
+    // base image still propagates.
+    `if [ -f ${BAKED_SETUP_SKILL} ]; then`,
+    `  D=${AGENTBOX_SKILLS_DIR}/agentbox-setup`,
+    '  (sudo -n mkdir -p "$D" 2>/dev/null || mkdir -p "$D") || true',
+    `  (sudo -n install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md" 2>/dev/null ||`,
+    `   install -m 0644 ${BAKED_SETUP_SKILL} "$D/SKILL.md") || true`,
+    'fi',
+    // The box facts, written atomically so a reader never sees a half file.
+    `if [ -f ${BOX_FACTS} ]; then`,
+    `  mkdir -p ${AGENTBOX_CTX_DIR} || true`,
+    `  TMP=${AGENTBOX_CTX_DIR}/AGENTS.md.agentbox.tmp`,
+    '  {',
+    `    printf '%s\\n\\n' '${CTX_SENTINEL}'`,
+    `    cat ${BOX_FACTS}`,
+    '  } > "$TMP" && mv "$TMP" ' + `${AGENTBOX_CTX_DIR}/AGENTS.md || true`,
+    'fi',
+    // One validated merge rather than several `config set` calls. The patch is
+    // COMPUTED from the box's live config (see the program's own comment) so the
+    // two arrays gain our entry instead of being replaced by it.
+    //
+    // Gated on openclaw's own validator. A `config get` prints nothing and exits
+    // 1 both for a value that is merely unset and for one it cannot read, so
+    // without this gate a broken config would look like a fresh box and be
+    // overwritten with just our entry. With the config known good, an empty read
+    // means genuinely unset, which is the one case where writing ours alone is
+    // right.
+    'if openclaw config validate >/dev/null 2>&1; then',
+    `  DIRS=$(openclaw config get 'skills.load.extraDirs' 2>/dev/null || true)`,
+    // The whole `entries` object, by plain dot path, and the one key is picked out
+    // in the program. Reading `entries['bootstrap-extra-files']` directly does
+    // work on 2026.9.2, but it leans on the CLI's bracket-and-quote parsing for a
+    // key with a hyphen in it — and a get that fails here is indistinguishable
+    // from unset, which would silently replace the user's `paths`.
+    `  ENTRIES=$(openclaw config get 'hooks.internal.entries' 2>/dev/null || true)`,
+    `  HOOKS=$(openclaw config get 'hooks.internal.enabled' 2>/dev/null || true)`,
+    // Written to a file first: a quoted heredoc keeps the program safe from the
+    // shell, and it avoids process substitution, which some provider bases have
+    // no `/dev/fd` for.
+    `  PROG=${MERGE_PROGRAM_PATH}`,
+    '  cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
+    OPENCLAW_CONFIG_MERGE_PROGRAM.trim(),
+    'AGENTBOX_MERGE_EOF',
+    `  node "$PROG" ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRIES" "$HOOKS" |`,
+    '    openclaw config patch --stdin >/dev/null || true',
+    '  rm -f "$PROG" || true',
+    'fi',
+    'exit 0',
+  ].join('\n');
+}
+
 export const openclawSpec: AgentSyncSpec = {
   id: 'openclaw',
   aliases: [],
@@ -178,9 +343,19 @@ export const openclawSpec: AgentSyncSpec = {
           '--skip-channels --skip-health --no-install-daemon',
       },
       {
+        // Everything AgentBox owns in this box: the skill root outside the
+        // workspace, the derived box facts inside it, and the two config keys
+        // that make openclaw read both. No `runOnce` — see the builder's doc.
+        name: 'openclaw-agentbox-env',
+        command: buildAgentboxContextScript(),
+        needs: ['openclaw-onboard'],
+      },
+      {
         name: 'openclaw-render',
         command: 'agentbox-ctl agent render openclaw',
-        needs: ['openclaw-onboard'],
+        // After the AgentBox keys, so the user's overlay is the last word on any
+        // key they and we both name.
+        needs: ['openclaw-agentbox-env'],
       },
     ],
     // The Control UI asks for the gateway token on first load, and openclaw's

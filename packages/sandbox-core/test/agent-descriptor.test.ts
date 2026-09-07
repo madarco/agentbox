@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { buildAgentDescriptors } from '../src/sync/agent-descriptor.js';
 import { AGENT_SYNC_SPECS } from '../src/sync/registry.js';
@@ -74,7 +75,16 @@ describe('buildAgentDescriptors', () => {
       expect(json, spec.id).not.toContain(spec.credential.hostBackup);
     }
     expect(json).not.toContain('/Users/');
-    expect(json).not.toContain('.agentbox/');
+    expect(json).not.toContain(homedir());
+    // An ABSOLUTE `/.agentbox` is the cross-platform tell for a host path, since
+    // the host backup lives under `$HOME/.agentbox`. It is not banned outright:
+    // openclaw's box-context task names `/workspace/.agentbox/AGENTS.md`, a path
+    // in the BOX. So every absolute one has to be rooted at /workspace. (The
+    // workspace-RELATIVE `.agentbox/AGENTS.md` in its config payload has no
+    // leading slash and is never a host path.)
+    for (let i = json.indexOf('/.agentbox/'); i !== -1; i = json.indexOf('/.agentbox/', i + 1)) {
+      expect(json.slice(0, i), `unrooted /.agentbox/ at ${i}`).toMatch(/\/workspace$/);
+    }
   });
 
   it('is JSON round-trippable — it crosses a wire', () => {
