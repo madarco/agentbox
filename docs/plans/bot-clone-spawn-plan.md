@@ -222,9 +222,13 @@ commands. What the implementation found that the plan had not:
 - **Phase 1 had a latent bug this exposed**: `listBackups` counted a restore's
   live `workspace/` as a backup, and it sorts after every stamp.
 
-Live-verified on docker end to end: same gateway token, the same automation row
-(same id) in the restored database, `openclaw config validate` clean, and all of
-it surviving a full box `stop`/`start`. Findings and what is still open are in
+Live-verified end to end. On **docker**: same gateway token, the same automation
+row (same id) in the restored database, `openclaw config validate` clean, and all
+of it surviving a full box `stop`/`start`. On **hetzner**, which is the
+acceptance test the plan named — a bundle captured on docker, restored onto a
+VPS: same token, same automation, config valid, workspace intact. And
+`create --restore` gives the workspace half alone, naming the agent whose
+identity it did not bring. Findings and what is still open are in
 [`bot-clone-spawn-backlog.md`](./bot-clone-spawn-backlog.md).
 
 <details>

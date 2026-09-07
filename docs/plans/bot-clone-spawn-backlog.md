@@ -29,6 +29,11 @@ load-bearing.
   `workspace` sorts after every stamp, so it would have become the newest
   "backup" the prune must keep. Now matched against the stamp shape.
 
+- **The cross-provider claim is now measured, not argued.** A bundle captured on
+  a docker box restored onto a Hetzner VPS with the same gateway token, the same
+  automation row and a clean `openclaw config validate` — which is what a
+  file-shaped backup is for and what a provider snapshot cannot do.
+
 ### Open
 
 - **PoC question 4 is not answerable locally.** "Does OpenClaw refuse when a
@@ -50,5 +55,15 @@ load-bearing.
 - **`agentbox <agent> stop` still bypasses the hub** (the services routes expose
   `restart` but not `stop`), so the restore's stop step is a `provider.exec`.
   Same item as in the service-boxes backlog; the restore is now a second caller.
+- **The source-box guard only knows the box the bundle came from.** It reads
+  `manifest.boxId`, so a *second* restore of the same bundle into a different
+  `--into` directory is not refused — the two live bots would share an identity.
+  Restoring twice into the SAME directory is refused (a box already runs on it).
+  Recording the bundle on the box record would close the gap.
+- **Hetzner `nbg1` had no `cx23` capacity** during this work, and the
+  service-agent command has no `--location` flag (it carries a deliberately small
+  subset of the create flags), so the retry went through
+  `config set box.hetznerLocation fsn1`. Worth adding if VPS restores become
+  routine.
 - **Hermes' shape is still unmeasured.** Its state dir and identity files need
   the same table row openclaw has before a `clone:`/restore story can cover it.
