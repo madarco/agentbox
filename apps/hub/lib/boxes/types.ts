@@ -206,7 +206,9 @@ export interface Approval {
 }
 
 // A provider the box could be created on. `configured` = usable on this host
-// (docker always; a cloud provider needs its base baked — see hub-backend). The
+// (docker always; a snapshot-backed cloud provider needs its base baked;
+// CreateOS only needs credentials, since it installs its runtime per sandbox —
+// see hub-backend). The
 // modal disables unconfigured options and shows `reason`.
 /** Answer to `POST /api/v1/providers/{id}/size-check`. */
 export interface ProviderSizeCheck {

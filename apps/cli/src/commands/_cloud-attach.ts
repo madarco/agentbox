@@ -184,7 +184,14 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // session detached here with the full command; the re-invoked attach then
   // finds it via `tmux has-session` and just attaches. (Inline attach runs the
   // full command itself, so it doesn't need this.)
-  if (safeOpenIn && safeOpenIn !== 'same' && extraArgs && extraArgs.length > 0) {
+  // CreateOS additionally pre-starts unconditionally: its managed PTY can close
+  // during the first tmux paint when session creation and attach happen in one
+  // remote command, so the detached start gives tmux a stable server before the
+  // interactive PTY connects.
+  const needsPrestart =
+    (box.provider ?? 'docker') === 'createos' ||
+    Boolean(safeOpenIn && safeOpenIn !== 'same' && extraArgs && extraArgs.length > 0);
+  if (needsPrestart) {
     await startDetachedSession(provider, box, args.sessionName, command);
   }
 

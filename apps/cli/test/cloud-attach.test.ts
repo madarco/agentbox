@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
 import {
   buildCloudAttachInnerCommand,
+  shouldPrestartCloudSession,
   verifyDetachedSession,
 } from '../src/commands/_cloud-attach.js';
 import { buildPromptArgs } from '../src/lib/queue/build-prompt-args.js';
@@ -171,6 +172,19 @@ describe('buildCloudAttachInnerCommand', () => {
   });
 });
 
+describe('shouldPrestartCloudSession', () => {
+  it('always pre-starts CreateOS sessions before its managed PTY attaches', () => {
+    expect(shouldPrestartCloudSession('createos', undefined, undefined)).toBe(true);
+    expect(shouldPrestartCloudSession('createos', 'same', [])).toBe(true);
+  });
+
+  it('keeps the existing extra-args new-terminal behavior for other providers', () => {
+    expect(shouldPrestartCloudSession('e2b', 'window', ['prompt'])).toBe(true);
+    expect(shouldPrestartCloudSession('e2b', 'same', ['prompt'])).toBe(false);
+    expect(shouldPrestartCloudSession('e2b', 'window', undefined)).toBe(false);
+  });
+});
+
 /**
  * `verifyDetachedSession` is what turns a silent cloud `-i` failure (box created,
  * job reports "done", but the seeded agent session never came up) into a thrown,
@@ -201,6 +215,20 @@ describe('verifyDetachedSession', () => {
     await expect(
       verifyDetachedSession(provider, box, 'claude', 'claude', { windowMs: 0 }),
     ).rejects.toThrow(/credentials were rejected.*agentbox claude login/s);
+  });
+
+  it('accepts an auth prompt when the caller expects in-box login', async () => {
+    const provider = fakeProvider(() => ({
+      exitCode: 0,
+      stdout: 'Please run /login · API Error: 401 Invalid authentication credentials',
+      stderr: '',
+    }));
+    await expect(
+      verifyDetachedSession(provider, box, 'claude', 'claude', {
+        windowMs: 0,
+        allowAuthPrompt: true,
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it('resolves for a live, authenticated session', async () => {

@@ -47,6 +47,7 @@ const PLACEHOLDERS: Record<string, string> = {
   'vercel.projectId': 'prj_… (optional)',
   'digitalocean.token': 'personal access token (read+write)',
   'digitalocean.project': 'name or UUID — blank leaves it unchanged',
+  'createos.apiKey': 'CreateOS API key',
 };
 
 function credFields(p: ProviderOption): CredField[] {
@@ -174,6 +175,9 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   // of SSH host aliases, each baked on its own. The row nests that UI instead of
   // the credential form + provider Bake button, and its badge counts hosts.
   const isRD = p.id === 'remote-docker';
+  // Providers whose descriptor declares no bake (remote-docker, createos) have
+  // nothing to build: credentials alone make them ready.
+  const noBake = p.bake?.required === false;
   const [hostCount, setHostCount] = useState<number | null>(null);
 
   const saveCreds = async (): Promise<void> => {
@@ -287,7 +291,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
           >
             Manage on the control box ↗
           </a>
-        ) : isRD ? null : (
+        ) : isRD || noBake ? null : (
           <div className="flex flex-none items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <Button
               type="button"

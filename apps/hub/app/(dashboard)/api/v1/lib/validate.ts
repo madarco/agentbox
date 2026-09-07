@@ -33,6 +33,7 @@ const PROVIDERS = [
   'vercel',
   'e2b',
   'digitalocean',
+  'createos',
   'remote-docker',
 ] as const;
 // `screen` isn't lifecycle strictly speaking — it's the open-VNC prep step

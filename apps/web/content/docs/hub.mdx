@@ -112,7 +112,9 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   `~/.agentbox/secrets.env`) and **Bake** its base image, with the build log
   streaming live just like a box create. Once baked, the provider flips to
   **ready** and becomes selectable in the create dialog. Docker needs no
-  credentials (its base self-heals); the rest is the same [`login` +
+  credentials (its base self-heals). CreateOS has no bake action either: valid
+  credentials make it ready immediately, and AgentBox installs its runtime into
+  each new sandbox. The rest is the same [`login` +
   `prepare`](/docs/cli) the CLI does, driven from the browser. Provider install
   - bake run on the host that owns Docker/SSH, so they need the local or
     full-host hub (not the serverless plane).

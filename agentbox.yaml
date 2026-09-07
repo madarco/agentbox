@@ -159,9 +159,9 @@ tasks:
   # `node apps/cli/dist/index.js …` verification path documented in
   # CLAUDE.md. Idempotent: turbo skips unchanged inputs on rerun.
   build:
-    # The default CreateOS shape has 2 GiB RAM; Turbo's default parallelism can
-    # exhaust it while Next and the package DTS builds overlap.
-    command: pnpm exec turbo run build --concurrency=2
+    # The default CreateOS shape has 2 GiB RAM and no swap; even two concurrent
+    # builds can overlap Next with a package DTS build and trigger the OOM killer.
+    command: pnpm exec turbo run build --concurrency=1
     needs: [install]
 
   # Drop a tiny `agentbox` wrapper into ~/.local/bin (already in PATH via
