@@ -27,13 +27,13 @@ interface Merged {
  * The three raw arguments are `openclaw config get` output verbatim, which is
  * what the task pipes in: JSON when the value is set, empty when it is not.
  */
-function run(rawDirs: string, rawEntry = '', rawHooksEnabled = ''): Merged {
+function run(rawDirs: string, rawEntries = '', rawHooksEnabled = ''): Merged {
   const dir = mkdtempSync(join(tmpdir(), 'openclaw-merge-'));
   const prog = join(dir, 'merge.cjs');
   writeFileSync(prog, OPENCLAW_CONFIG_MERGE_PROGRAM, 'utf8');
   const out = execFileSync(
     process.execPath,
-    [prog, SKILL_DIR, CTX_PATH, rawDirs, rawEntry, rawHooksEnabled],
+    [prog, SKILL_DIR, CTX_PATH, rawDirs, rawEntries, rawHooksEnabled],
     { encoding: 'utf8' },
   );
   return JSON.parse(out) as Merged;
@@ -56,7 +56,7 @@ describe('the openclaw config merge', () => {
     // silently reverted on the second.
     const r = run(
       JSON.stringify(['/home/vscode/my-skills']),
-      JSON.stringify({ paths: ['NOTES.md'] }),
+      JSON.stringify({ 'bootstrap-extra-files': { paths: ['NOTES.md'] } }),
     );
     expect(r.skills.load.extraDirs).toEqual(['/home/vscode/my-skills', SKILL_DIR]);
     expect(entryOf(r).paths).toEqual(['NOTES.md', CTX_PATH]);
@@ -76,15 +76,30 @@ describe('the openclaw config merge', () => {
   });
 
   it('leaves the rest of the hook entry alone', () => {
-    const r = run('', JSON.stringify({ paths: [], maxCharsPerFile: 1234 }));
+    const r = run(
+      '',
+      JSON.stringify({ 'bootstrap-extra-files': { paths: [], maxCharsPerFile: 1234 } }),
+    );
     expect(entryOf(r).maxCharsPerFile).toBe(1234);
   });
 
   it('lets the user turn the box facts OFF and have it stick', () => {
     // Disabling the injection is a choice they are allowed to make. Re-enabling
     // it every boot would be the same class of bug as clobbering the array.
-    expect(entryOf(run('', JSON.stringify({ enabled: false }))).enabled).toBe(false);
+    expect(
+      entryOf(run('', JSON.stringify({ 'bootstrap-extra-files': { enabled: false } }))).enabled,
+    ).toBe(false);
     expect(run('', '', 'false').hooks.internal.enabled).toBe(false);
+  });
+
+  it('leaves a neighbouring hook entry untouched', () => {
+    // `session-memory` is enabled on every box. Reading the whole `entries`
+    // object and naming only our key keeps it out of the patch entirely.
+    const r = run(
+      '',
+      JSON.stringify({ 'session-memory': { enabled: true }, 'bootstrap-extra-files': {} }),
+    );
+    expect(Object.keys(r.hooks.internal.entries)).toEqual(['bootstrap-extra-files']);
   });
 
   it('never crashes on output it cannot parse', () => {

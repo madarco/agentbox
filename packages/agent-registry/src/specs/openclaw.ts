@@ -113,7 +113,7 @@ const CTX_REL_PATH = '.agentbox/AGENTS.md';
  * so the exit code alone cannot separate a fresh box from a broken config.
  */
 export const OPENCLAW_CONFIG_MERGE_PROGRAM = `
-const [skillDir, ctxPath, rawDirs, rawEntry, rawHooksEnabled] = process.argv.slice(2);
+const [skillDir, ctxPath, rawDirs, rawEntries, rawHooksEnabled] = process.argv.slice(2);
 const read = (s) => {
   try {
     return JSON.parse(s);
@@ -123,7 +123,7 @@ const read = (s) => {
 };
 const withMember = (arr, v) =>
   Array.isArray(arr) ? (arr.includes(v) ? arr.slice() : [...arr, v]) : [v];
-const entry = read(rawEntry) ?? {};
+const entry = read(rawEntries)?.['bootstrap-extra-files'] ?? {};
 process.stdout.write(
   JSON.stringify({
     skills: { load: { extraDirs: withMember(read(rawDirs), skillDir) } },
@@ -192,7 +192,12 @@ function buildAgentboxContextScript(): string {
     // right.
     'if openclaw config validate >/dev/null 2>&1; then',
     `  DIRS=$(openclaw config get 'skills.load.extraDirs' 2>/dev/null || true)`,
-    `  ENTRY=$(openclaw config get "hooks.internal.entries['bootstrap-extra-files']" 2>/dev/null || true)`,
+    // The whole `entries` object, by plain dot path, and the one key is picked out
+    // in the program. Reading `entries['bootstrap-extra-files']` directly does
+    // work on 2026.9.2, but it leans on the CLI's bracket-and-quote parsing for a
+    // key with a hyphen in it — and a get that fails here is indistinguishable
+    // from unset, which would silently replace the user's `paths`.
+    `  ENTRIES=$(openclaw config get 'hooks.internal.entries' 2>/dev/null || true)`,
     `  HOOKS=$(openclaw config get 'hooks.internal.enabled' 2>/dev/null || true)`,
     // Written to a file first: a quoted heredoc keeps the program safe from the
     // shell, and it avoids process substitution, which some provider bases have
@@ -201,7 +206,7 @@ function buildAgentboxContextScript(): string {
     '  cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
     OPENCLAW_CONFIG_MERGE_PROGRAM.trim(),
     'AGENTBOX_MERGE_EOF',
-    `  node "$PROG" ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRY" "$HOOKS" |`,
+    `  node "$PROG" ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRIES" "$HOOKS" |`,
     '    openclaw config patch --stdin >/dev/null || true',
     '  rm -f "$PROG" || true',
     'fi',
