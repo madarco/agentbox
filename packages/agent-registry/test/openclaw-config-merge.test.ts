@@ -70,7 +70,14 @@ describe('the openclaw config merge', () => {
 
   it('is idempotent — a second boot adds nothing', () => {
     const once = run('');
-    const twice = run(JSON.stringify(once.skills.load.extraDirs), JSON.stringify(entryOf(once)));
+    // The second boot is fed exactly what `config get` would print AFTER the
+    // first: the whole entries map, not the inner hook object. Passing the inner
+    // object here made the lookup miss and quietly re-tested the unset path,
+    // where a duplicate `paths` entry could never show up.
+    const twice = run(
+      JSON.stringify(once.skills.load.extraDirs),
+      JSON.stringify(once.hooks.internal.entries),
+    );
     expect(twice.skills.load.extraDirs).toEqual([SKILL_DIR]);
     expect(entryOf(twice).paths).toEqual([CTX_PATH]);
   });
