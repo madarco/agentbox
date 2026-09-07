@@ -116,6 +116,50 @@ export interface AgentDescriptorPayload {
  * An agent that declares NO `credential` emits no credential watch at all: this
  * watch is fanout, so a file named here is copied into every other box.
  */
+/**
+ * Fold the agent's declared `boxRunEnv` into the units it contributes.
+ *
+ * WHY THIS IS NOT THE PROVIDER'S JOB. `boxRunEnv` reaches a box's processes
+ * differently on every provider, and on two of them it did not arrive at all:
+ * docker sets it on `docker run`, Vercel and E2B hand it to the SDK as a
+ * sandbox-wide env, but a VPS has no such primitive, so Hetzner and
+ * DigitalOcean carry it by writing `/etc/agentbox/box.env` — which both filter
+ * to `AGENTBOX_*` keys, because that file is world-readable and the filter is
+ * what keeps the relay and bridge tokens out of it. openclaw's
+ * `OPENCLAW_WORKSPACE_DIR` was silently dropped there, so `openclaw onboard`
+ * ran against `~/.openclaw/workspace` and "your project dir is the agent's
+ * workspace" — the headline behaviour — was quietly false on both VPS
+ * providers. Nothing failed: the gateway still bound its port and passed its
+ * health check, so every smoke test called the box ready.
+ *
+ * Carrying it on the UNITS fixes all five providers with one rule, needs no
+ * provider to implement anything, and keeps non-secret paths out of a
+ * world-readable file. The supervisor already applies a unit's `env` on top of
+ * what it inherited, so this is the channel the values should always have used.
+ *
+ * A unit's own `env` still wins: `boxRunEnv` is the agent-wide default and a
+ * task that sets the same key meant to.
+ *
+ * This does NOT reach a shell you open yourself, where `box.env` is still the
+ * only channel — a hand-run `openclaw` on a VPS box will disagree with the
+ * service until that is widened too.
+ */
+export function serviceWithRunEnv(
+  service: AgentServiceSpec,
+  runEnv: Record<string, string>,
+): AgentServiceSpec {
+  if (Object.keys(runEnv).length === 0) return service;
+  return {
+    ...service,
+    env: { ...runEnv, ...(service.env ?? {}) },
+    ...(service.tasks
+      ? {
+          tasks: service.tasks.map((t) => ({ ...t, env: { ...runEnv, ...(t.env ?? {}) } })),
+        }
+      : {}),
+  };
+}
+
 export function buildAgentDescriptors(): AgentDescriptorPayload {
   return {
     schema: 2,
@@ -124,7 +168,7 @@ export function buildAgentDescriptors(): AgentDescriptorPayload {
       sessionName: spec.sessionName,
       activitySource: spec.caps.activitySource,
       surface: spec.caps.surface ?? ('tui' as const),
-      ...(spec.service ? { service: spec.service } : {}),
+      ...(spec.service ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) } : {}),
       ...(spec.configRender ? { configRender: spec.configRender } : {}),
       watch: [
         ...(spec.credential
