@@ -114,6 +114,23 @@ describe('restoreAgentState', () => {
     expect(opts?.exclude ?? []).toEqual([]);
   });
 
+  it('FAILS rather than pushing databases onto write-ahead logs it could not remove', async () => {
+    // The two outcomes are not close: stopping here leaves a box with its own
+    // working identity, continuing leaves one that never boots.
+    const root = project();
+    const dir = await makeBundle(root, '2026-09-07T14-03-11Z', {
+      databases: [join('state', 'openclaw.sqlite')],
+    });
+    const t = makeRecordingTransport({
+      execResult: () => ({ exitCode: 1, stdout: '', stderr: 'read-only file system' }),
+    });
+
+    await expect(
+      restoreAgentState({ agent: 'openclaw', transport: t, srcDir: join(dir, 'state') }),
+    ).rejects.toThrow(/could not clear stale write-ahead logs/);
+    expect(t.ops.map((o) => o.op)).not.toContain('pushTree');
+  });
+
   it('runs no removal when the bundle carries no database', async () => {
     const root = project();
     const dir = await makeBundle(root, '2026-09-07T14-03-11Z');

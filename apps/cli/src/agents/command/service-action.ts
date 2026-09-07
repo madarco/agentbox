@@ -40,7 +40,10 @@ import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
 import {
   assertSourceBoxNotRunning,
+  boxRefWithRestoreRefusal,
+  existingBoxRefusal,
   resolveRestoreRequest,
+  restoreScope,
   restoreStateIntoBox,
   stageRestoreWorkspace,
   type RestoreRequest,
@@ -333,6 +336,8 @@ export async function runServiceAgent(
     // project's `.agentbox/`, so walking up would seed from the template.
     let restored: RestoreRequest | undefined;
     if (opts.restore) {
+      const refRefusal = boxRefWithRestoreRefusal(boxRef);
+      if (refRefusal) throw new Error(refRefusal);
       restored = await resolveRestoreRequest(opts.workspace, opts);
       if (restored.agent && restored.agent !== spec.id) {
         throw new Error(
@@ -347,12 +352,8 @@ export async function runServiceAgent(
       // do by accident. Checked BEFORE the copy, or `--force` would overwrite
       // that box's workspace on its way to being refused.
       const already = await findExistingBox(undefined, restored.workspaceDir, spec.id);
-      if (already) {
-        throw new Error(
-          `box ${already.name} already runs on ${restored.workspaceDir} — ` +
-            `pass --into <dir> to restore alongside it`,
-        );
-      }
+      const alreadyRefusal = existingBoxRefusal(already, restored.workspaceDir);
+      if (alreadyRefusal) throw new Error(alreadyRefusal);
       // Staged BEFORE the config load below, which reads the workspace: on a
       // first restore the destination does not exist yet, and a config loaded
       // from a missing directory silently falls back to the defaults.
@@ -373,6 +374,14 @@ export async function runServiceAgent(
 
     intro(`agentbox ${spec.id}`);
     const existing = await findExistingBox(boxRef, project.root, spec.id);
+    // Belt to the pre-copy guard's braces. That one runs before the workspace is
+    // written (so `--force` cannot clobber a live box on its way to a refusal);
+    // this one is the last word before the resume branch below would hand the
+    // restore an existing box to overwrite.
+    if (restored) {
+      const refusal = existingBoxRefusal(existing, project.root);
+      if (refusal) throw new Error(refusal);
+    }
     let box: BoxRecord;
 
     if (existing) {
@@ -512,7 +521,16 @@ export async function runServiceAgent(
     // Letting it run first, then replacing what it wrote, means the marker is
     // already down and onboard never touches the restored identity again, on
     // this boot or any later one.
-    if (restored) {
+    if (restored && restoreScope(restored.bundle) === 'workspace') {
+      // `download --backup` on a box with no agent captures the workspace alone.
+      // Restoring it is still useful; pretending it brought an identity is not,
+      // and throwing here would leave a perfectly good fresh box behind a
+      // failed command. `create --restore` already says the same thing.
+      log.warn(
+        `${restored.bundle.dir} captured no ${spec.id} state — the workspace is restored, ` +
+          `but ${box.name} has a fresh identity`,
+      );
+    } else if (restored) {
       s.start(`restoring ${spec.id} state into ${box.name}`);
       try {
         await stopUnit(box, service.name);

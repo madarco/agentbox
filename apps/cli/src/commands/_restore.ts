@@ -84,6 +84,44 @@ export async function resolveRestoreRequest(
 }
 
 /**
+ * What this bundle can put back: both halves, or the workspace alone.
+ *
+ * A backup of a box with no agent — or one whose state capture failed — carries
+ * a `workspace/` and nothing else. Restoring it is still worth doing; claiming
+ * it brought an identity is not, and *failing* over it would throw away a
+ * perfectly good box that the command had already created.
+ */
+export function restoreScope(bundle: BotBundle): 'workspace' | 'workspace+state' {
+  return bundle.stateDir ? 'workspace+state' : 'workspace';
+}
+
+/**
+ * Why `--restore` cannot also take a positional box ref, or null when there is
+ * no ref.
+ *
+ * A ref means "use THIS box", and the service command is create-or-resume — so
+ * the two together resume a named box and then write a backup's identity over
+ * it. No reading of `agentbox <agent> foo --restore bar` is safe, so it is
+ * refused before anything is resolved rather than reinterpreted.
+ */
+export function boxRefWithRestoreRefusal(boxRef: string | undefined): string | null {
+  if (boxRef === undefined) return null;
+  return (
+    `--restore always creates a new box, so it cannot also take the box ref "${boxRef}" — ` +
+    'drop the ref, or name the new box with -n <name>'
+  );
+}
+
+/** Why a restore cannot proceed into a directory a box already runs on. */
+export function existingBoxRefusal(
+  existing: { name: string } | null | undefined,
+  dir: string,
+): string | null {
+  if (!existing) return null;
+  return `box ${existing.name} already runs on ${dir} — pass --into <dir> to restore alongside it`;
+}
+
+/**
  * Refuse while the box this bundle came from is still running.
  *
  * Two live gateways holding one identity is the multi-tenancy failure OpenClaw's

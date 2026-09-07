@@ -419,7 +419,19 @@ async function clearStaleSidecars(
   const rels = await findLocalDatabases(args.srcDir);
   if (rels.length === 0) return [];
   const paths = rels.flatMap((rel) => [`${boxDir}/${rel}-wal`, `${boxDir}/${rel}-shm`]);
-  await args.transport.exec(['sh', '-c', `rm -f ${paths.map(quote).join(' ')}`]);
+  const r = await args.transport.exec(['sh', '-c', `rm -f ${paths.map(quote).join(' ')}`]);
+  // FAIL, do not continue. `rm -f` is silent about a file that was not there, so
+  // a non-zero exit means the removal itself did not happen — and pushing the
+  // databases anyway lands them on the leftover logs, which is precisely the
+  // integrity-check restart loop this step exists to prevent. A restore that
+  // stops here leaves a box with its own working identity; one that continues
+  // leaves a box that never boots.
+  if (r.exitCode !== 0) {
+    throw new Error(
+      `could not clear stale write-ahead logs under ${boxDir}: ` +
+        `${r.stderr.trim() || `exit ${String(r.exitCode)}`}`,
+    );
+  }
   return paths;
 }
 
