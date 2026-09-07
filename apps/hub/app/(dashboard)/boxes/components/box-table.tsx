@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
+import { PersistentMark } from '@/components/persistent-mark';
 import { StatusBadge } from '@/components/status-badge';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -26,7 +27,10 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
           {boxes.map((box) => (
             <TableRow key={box.id} className="cursor-pointer" onClick={() => router.push('/boxes/' + box.id)}>
               <TableCell>
-                <div className="truncate text-[13.5px] font-medium">{box.task}</div>
+                <div className="flex min-w-0 items-center gap-1.5 text-[13.5px] font-medium">
+                  <span className="truncate">{box.task}</span>
+                  {box.persistent ? <PersistentMark /> : null}
+                </div>
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
                   {box.id} · {box.host}
                 </div>

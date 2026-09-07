@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
+import { PersistentMark } from '@/components/persistent-mark';
 import { StatusBadge } from '@/components/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
@@ -42,6 +43,7 @@ export default function BoxDetailPage() {
         <div className="min-w-0">
           <h1 className="flex flex-wrap items-center gap-3 text-[25px] font-semibold leading-tight tracking-[-0.025em]">
             {box.task}
+            {box.persistent ? <PersistentMark className="size-4" /> : null}
             <StatusBadge status={box.status} />
           </h1>
           <div className="mt-1.5 text-sm text-muted-foreground">
