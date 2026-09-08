@@ -407,15 +407,25 @@ export const openclawSpec: AgentSyncSpec = {
         needs: ['openclaw-agentbox-env'],
       },
     ],
-    // The Control UI asks for the gateway token on first load, and openclaw's
-    // own `config get` redacts it (PoC), so it is read from the raw JSON.
+    // The Control UI asks for the gateway token on first load. `openclaw config
+    // get gateway.auth.token` redacts it (PoC), so this used to read the raw
+    // `openclaw.json` -- which meant depending on where openclaw keeps its
+    // secrets. `dashboard --json` is the interface it offers for exactly this,
+    // and it prints the whole sign-in URL:
+    //
+    //   {"ok":true,"url":"http://127.0.0.1:18789/#token=…","httpUrl":…}
+    //
+    // `--no-open` because the daemon would otherwise try to launch a browser
+    // INSIDE the box; no `--yes`, because a read must never be the thing that
+    // installs or starts the gateway. Only the fragment is kept: the rest of
+    // that URL is the gateway's own loopback address, and the host reaches this
+    // box on a different one.
     urlFields: [
       {
         label: 'token',
-        file: `${OPENCLAW_BOX_DIR}/openclaw.json`,
-        jsonPath: 'gateway.auth.token',
-        // The Control UI reads it from the fragment, so `<agent> url` can hand
-        // over a link that opens signed in instead of one that asks for a paste.
+        command: ['openclaw', 'dashboard', '--json', '--no-open'],
+        jsonPath: 'url',
+        fromUrlFragment: 'token',
         fragmentKey: 'token',
       },
     ],

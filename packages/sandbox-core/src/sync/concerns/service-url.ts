@@ -6,6 +6,12 @@
  * enough to reach the dashboard: it lands on a token prompt, and the value it
  * wants is in a file only the box can read.
  *
+ * The value is read through the daemon's OWN command where it has one
+ * (`openclaw dashboard --json --no-open`) rather than out of its config file:
+ * that is the interface it supports, so it survives a config-layout change, and
+ * it means AgentBox never has to know how a third-party daemon stores its
+ * secrets.
+ *
  * Lives here, in `sandbox-core`, rather than in the CLI because three surfaces
  * need the same answer -- `agentbox <agent> url`, the hub's REST API (and so
  * the web UI and the macOS tray through it), and any future client. Two
@@ -37,13 +43,29 @@ function atJsonPath(doc: unknown, path: string): unknown {
   return cur;
 }
 
+/** The argv that produces one field's JSON, and a cache key for it. */
+function sourceArgv(field: AgentServiceUrlField): string[] | null {
+  if (field.command && field.command.length > 0) return [...field.command];
+  if (field.file) return ['cat', field.file];
+  return null;
+}
+
+/** Lift `token` out of `http://127.0.0.1:18789/#token=abc&x=y`. */
+function fragmentParam(raw: string, key: string): string | undefined {
+  const hash = raw.indexOf('#');
+  if (hash < 0) return undefined;
+  const params = new URLSearchParams(raw.slice(hash + 1));
+  return params.get(key) ?? undefined;
+}
+
 /**
  * Read an agent's declared url fields out of the running box.
  *
- * One read per distinct FILE, not per field: two fields out of one config would
- * otherwise be two exec round-trips into the box. A file that cannot be read is
- * not an error — a box that has not finished onboarding simply has no token
- * yet, and the caller falls back to the bare URL.
+ * One read per distinct SOURCE, not per field: two fields out of one config (or
+ * one command) would otherwise be two round-trips into the box. A source that
+ * fails is not an error — a box whose daemon has not finished onboarding simply
+ * has no token yet, and the caller falls back to the bare URL rather than
+ * refusing to open anything.
  */
 export async function readServiceUrlFields(
   provider: Provider,
@@ -54,24 +76,31 @@ export async function readServiceUrlFields(
   const out: ServiceUrlFieldValue[] = [];
   const docs = new Map<string, unknown>();
   for (const field of fields) {
-    if (!docs.has(field.file)) {
+    const argv = sourceArgv(field);
+    if (!argv) continue;
+    const key = argv.join('\u0000');
+    if (!docs.has(key)) {
       let parsed: unknown;
       try {
-        const r = await provider.exec(box, ['cat', field.file], { user: 'vscode' });
-        parsed = r.exitCode === 0 ? JSON.parse(r.stdout) : undefined;
+        const r = await provider.exec(box, argv, { user: 'vscode' });
+        // A daemon's CLI may print a banner before its JSON, so parse from the
+        // first `{` rather than requiring the whole of stdout to be the payload.
+        const body = r.stdout.slice(r.stdout.indexOf('{'));
+        parsed = r.exitCode === 0 && body.startsWith('{') ? JSON.parse(body) : undefined;
       } catch {
         parsed = undefined;
       }
-      docs.set(field.file, parsed);
+      docs.set(key, parsed);
     }
-    const value = atJsonPath(docs.get(field.file), field.jsonPath);
-    if (typeof value === 'string' && value.length > 0) {
-      out.push({
-        label: field.label,
-        value,
-        ...(field.fragmentKey ? { fragmentKey: field.fragmentKey } : {}),
-      });
-    }
+    const raw = atJsonPath(docs.get(key), field.jsonPath);
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    const value = field.fromUrlFragment ? fragmentParam(raw, field.fromUrlFragment) : raw;
+    if (value === undefined || value.length === 0) continue;
+    out.push({
+      label: field.label,
+      value,
+      ...(field.fragmentKey ? { fragmentKey: field.fragmentKey } : {}),
+    });
   }
   return out;
 }

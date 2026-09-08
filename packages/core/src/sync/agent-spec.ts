@@ -330,14 +330,40 @@ export interface AgentServiceSpec {
   urlFields?: readonly AgentServiceUrlField[];
 }
 
-/** One value `<agent> url` reads out of the daemon's config file. */
+/**
+ * One value `<agent> url` reads out of the running box — typically the auth
+ * token a daemon generated for itself, which the host cannot know any other way.
+ *
+ * Two sources, and `command` is the one to reach for. A daemon that can print
+ * its own connection details (`openclaw dashboard --json`) is offering a
+ * SUPPORTED interface; reading its config file instead means depending on a
+ * private layout that can move under us, and the failure when it does is a link
+ * that silently opens to a login prompt. `file` stays for a daemon that offers
+ * no such command.
+ */
 export interface AgentServiceUrlField {
   /** Printed before the value (`token`). */
   label: string;
-  /** Absolute in-box path of a JSON file to read. */
-  file: string;
-  /** Dotted path into that JSON — `gateway.auth.token`. */
+  /** Absolute in-box path of a JSON file to read. Mutually exclusive with `command`. */
+  file?: string;
+  /**
+   * A command run IN THE BOX whose stdout is JSON. Preferred over `file`.
+   * Must not need a TTY, must not open anything (pass the daemon's own
+   * `--no-open`-style flag), and must not be the one that starts the service.
+   */
+  command?: readonly string[];
+  /** Dotted path into that JSON — `gateway.auth.token`, or `url`. */
   jsonPath: string;
+  /**
+   * When the value at `jsonPath` is itself a URL carrying the token in its
+   * FRAGMENT (openclaw's `dashboard` prints `http://127.0.0.1:18789/#token=…`),
+   * this names the fragment parameter to lift out of it.
+   *
+   * The rest of that URL is deliberately discarded: it is the daemon's own
+   * loopback address inside the box, and the host reaches the box on a
+   * different one.
+   */
+  fromUrlFragment?: string;
   /**
    * When set, this value also belongs in the URL's FRAGMENT under this key, and
    * `<agent> url` prints a ready-to-open link alongside the bare URL —

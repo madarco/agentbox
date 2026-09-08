@@ -67,19 +67,32 @@ describe('openclaw registry row', () => {
     });
   });
 
-  it('reads the Control UI token from the raw config, not from `config get`', () => {
-    // `openclaw config get gateway.auth.token` answers `__OPENCLAW_REDACTED__`.
+  it("gets the Control UI token from openclaw's own command, not from its config file", () => {
+    // `openclaw config get gateway.auth.token` answers `__OPENCLAW_REDACTED__`,
+    // and reading `openclaw.json` directly means depending on where openclaw
+    // keeps its secrets. `dashboard --json` is the interface it offers, and it
+    // prints `{"url":"http://127.0.0.1:18789/#token=…"}`.
     expect(SPEC.service?.urlFields).toEqual([
       {
         label: 'token',
-        file: SPEC.configRender!.file,
-        jsonPath: 'gateway.auth.token',
-        // The Control UI reads the token from the URL fragment, so `url` can
-        // print a link that opens signed in rather than one that asks for a
-        // paste. Dropping this puts the user back to assembling it by hand.
+        command: ['openclaw', 'dashboard', '--json', '--no-open'],
+        jsonPath: 'url',
+        // Only the fragment survives: the rest of that URL is the gateway's own
+        // loopback address, which the host cannot reach.
+        fromUrlFragment: 'token',
+        // ...and it goes back into the fragment of the HOST's URL, which is
+        // where the Control UI reads it.
         fragmentKey: 'token',
       },
     ]);
+  });
+
+  it('never lets the token read start or install the gateway, or open a browser', () => {
+    // `--no-open` or the daemon launches a browser INSIDE the box; and `--yes`
+    // would make a read the thing that installs the gateway.
+    const argv = SPEC.service!.urlFields![0]!.command!;
+    expect(argv).toContain('--no-open');
+    expect(argv).not.toContain('--yes');
   });
 
   it('never pushes the host gateway identity into a box', () => {

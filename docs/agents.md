@@ -378,9 +378,19 @@ declares instead of the TUI machinery:
   the supervisor folds them in through its normal reload diff — which is what
   lets a box booted from a snapshot baked before the agent existed still run it.
   A unit of the same name in `/workspace/agentbox.yaml` **wins**.
-- **`service.urlFields`** — values `<agent> url` prints beside the URL, read out
-  of the daemon's own config file (a Control UI's gateway token). Data, because
-  the only per-agent parts are which file and which dotted key.
+- **`service.urlFields`** — values `<agent> url` prints beside the URL, and
+  which of them belong IN it: a daemon generates its own auth token inside the
+  box, so the host cannot know it any other way. Two sources, and `command` is
+  the one to prefer — a daemon that can print its connection details
+  (`openclaw dashboard --json --no-open`) is offering a supported interface,
+  while its config `file` is a private layout that can move under us, and the
+  failure when it does is a link that silently opens to a login prompt. The
+  command must not need a TTY, must not open a browser (the box has none), and
+  must never be the one that starts the service. `fromUrlFragment` lifts a token
+  out of a URL the command printed, and `fragmentKey` puts it into the fragment
+  of the HOST's URL — only the fragment carries over, because the daemon's URL
+  names its own loopback address inside the box. Still data: the per-agent parts
+  are the argv, a dotted key, and two names.
 - **`service.tasks`** is also where AgentBox asserts config it OWNS. openclaw's
   `openclaw-agentbox-env` task installs the AgentBox skill under
   `/opt/agentbox/skills` (registered via `skills.load.extraDirs`, outside the
