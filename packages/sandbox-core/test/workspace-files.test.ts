@@ -274,7 +274,10 @@ describe('agentCloneDropPaths', () => {
     expect(agentCloneDropPaths('claude')).toEqual([]);
   });
 
-  it('falls back to the registry-wide union when the caller knows no agent', () => {
-    expect(agentCloneDropPaths()).toContain('AGENTS.md');
+  it('drops NOTHING when the caller cannot say which agent, rather than everything', () => {
+    // The two mistakes are not symmetric: keeping a file the agent regenerates
+    // costs nothing, while dropping one it does not is silent data loss — and
+    // `AGENTS.md` / `USER.md` are exactly what a user writes for themselves.
+    expect(agentCloneDropPaths()).toEqual([]);
   });
 });

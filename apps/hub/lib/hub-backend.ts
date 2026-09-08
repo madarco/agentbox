@@ -3231,6 +3231,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // there is no identity to reproduce, and `agentbox claude <box>` adds it.
         const sourceSpec = serviceAgentForBox(rp.box);
         const agent = sourceSpec?.id;
+        // What the EXPORT is scoped by is a different question: a coding-agent
+        // box has no service spec, and leaving this undefined would fall back to
+        // every agent's drop list and take `AGENTS.md` / `USER.md` -- the
+        // project's own instructions -- out of a claude box's clone.
+        const boxAgent = sourceSpec?.id ?? rp.box.lastAgent ?? rp.box.agents?.[0];
 
         // Before the export, so a refusal leaves NOTHING behind: no directory,
         // no registered project, no box. The per-box secrets are what make the
@@ -3247,7 +3252,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           box: rp.box,
           destDir: workspace,
           includeNodeModules: input?.includeNodeModules,
-          ...(sourceSpec ? { agent: sourceSpec.id } : {}),
+          ...(boxAgent ? { agent: boxAgent } : {}),
           onLog: (line) => {
             console.log(`[hub] ${line}`);
           },

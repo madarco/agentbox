@@ -447,12 +447,15 @@ export function agentWorkspaceArtifactPaths(): string[] {
  * new box. `clone.render` files are deliberately absent: they carry the user's
  * own words and are rewritten for the new bot, not thrown away.
  *
- * Scoped to one agent when the caller knows which one the box runs, so a box's
- * clone is shaped by ITS agent rather than by every agent in the registry.
- * Falls back to the union, which is what an agentless clone can know.
+ * Scoped to one agent, and EMPTY when the caller cannot say which: the two
+ * mistakes are not symmetric. Keeping a file the agent would regenerate costs
+ * nothing -- it regenerates. Dropping one it would not is silent data loss, and
+ * the names at stake (`AGENTS.md`, `USER.md`) are exactly what a user writes for
+ * themselves. So an unidentified agent drops nothing rather than everything.
  */
 export function agentCloneDropPaths(agentId?: string): string[] {
-  const specs = agentId ? AGENT_SYNC_SPECS.filter((s) => s.id === agentId) : AGENT_SYNC_SPECS;
+  if (!agentId) return [];
+  const specs = AGENT_SYNC_SPECS.filter((s) => s.id === agentId);
   const out = new Set<string>();
   for (const spec of specs) {
     for (const rel of spec.clone?.drop ?? []) out.add(rel);
