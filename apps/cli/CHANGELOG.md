@@ -24,6 +24,9 @@ CLI, not the raw commits.
   in.** The gateway reads its token from the URL fragment, so the URL and the
   token on separate lines meant assembling `<url>/#token=…` by hand. The bare URL
   stays on line one for `| head -1`.
+- **`agentbox url` resolves live and opens a bot signed in.** It goes through
+  the hub for every provider now, instead of reading the box list's recorded
+  URL for docker boxes. `--print` still writes the bare URL to stdout.
 - **`GET /api/v1/boxes/{id}/web` resolves a box's web URL at click time**
   (`{ url, signInUrl }`), so the hub UI and the tray open a bot's dashboard
   signed in rather than landing on a token prompt — and open the URL the box

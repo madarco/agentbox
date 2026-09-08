@@ -506,6 +506,21 @@ export class HubApiClient {
   }
 
   /**
+   * Resolve the box's web URL live, plus the sign-in link when its agent's UI
+   * takes a token the box generated for itself (a service agent's daemon).
+   *
+   * Preferred over the Box payload's `webUrl`, which is a recorded value: where
+   * the URL is an SSH forward the live port differs once that session has been
+   * re-established. Throws HubApiError 'conflict' when the box is not running.
+   */
+  webUrl(id: string): Promise<{ url: string; signInUrl: string | null }> {
+    return this.request<{ url: string; signInUrl: string | null }>(
+      'GET',
+      `/boxes/${encodeURIComponent(id)}/web`,
+    );
+  }
+
+  /**
    * Mint the box's ready-to-open noVNC viewer URL. Resolves live rather than
    * reading the Box payload's `vncUrl`, which is null for daytona/vercel/e2b:
    * their signed preview URLs expire, so they can't ride a listing. Throws

@@ -1,7 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
-import { hostOpenCommand } from '@agentbox/sandbox-core';
+import {
+  findAgentSpec,
+  hostOpenCommand,
+  readServiceUrlFields,
+  serviceSignInUrl,
+} from '@agentbox/sandbox-core';
 import {
   detectEngine,
   getBoxHostPaths,
@@ -112,16 +117,49 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
   return p.resolveUrl(box, { kind: 'web', ttl, ...(opts.loopback ? { loopback: true } : {}) });
 }
 
-function emitUrl(url: string, opts: UrlOptions): void {
+/**
+ * Open (or print) a box's web URL.
+ *
+ * When the box runs a service agent whose UI wants a token the box generated
+ * for itself, `signInUrl` is the one that actually gets you IN, so that is what
+ * the browser is handed. `--print` still prints the BARE url: it is the
+ * pipeable surface, and a fragment on it would break anything that appends a
+ * path — the sign-in link goes to stderr beside it, where this command already
+ * puts its notices.
+ */
+function emitUrl(url: string, signInUrl: string | null, opts: UrlOptions): void {
   if (opts.print) {
     process.stdout.write(`${url}\n`);
+    if (signInUrl) process.stderr.write(`open: ${signInUrl}\n`);
     return;
   }
-  const opened = spawnSync(hostOpenCommand(), [url], { stdio: 'inherit' });
+  const target = signInUrl ?? url;
+  const opened = spawnSync(hostOpenCommand(), [target], { stdio: 'inherit' });
   if (opened.status !== 0) {
-    throw new Error(`open ${url} failed (exit ${String(opened.status ?? 'n/a')})`);
+    throw new Error(`open ${target} failed (exit ${String(opened.status ?? 'n/a')})`);
   }
-  process.stdout.write(`opened ${url}\n`);
+  process.stdout.write(`opened ${target}\n`);
+}
+
+/**
+ * The sign-in link for a box resolved through the PROVIDER path (`--loopback`
+ * / `--ttl`, which the hub route cannot express).
+ *
+ * The hub answers this itself on the ordinary path; here the CLI holds the
+ * provider already, so it reads the agent's declared url fields the same way
+ * the hub would. Never fatal: a daemon that is down has no token, and the plain
+ * URL plus its own prompt is a better answer than a failed command.
+ */
+async function signInUrlViaProvider(box: BoxRecord, url: string): Promise<string | null> {
+  try {
+    const spec = findAgentSpec(box.lastAgent ?? box.agents?.[0] ?? '');
+    const fields = spec?.service?.urlFields ?? [];
+    if (fields.length === 0) return null;
+    const provider = await providerForBox(box);
+    return serviceSignInUrl(url, await readServiceUrlFields(provider, box, fields));
+  } catch {
+    return null;
+  }
 }
 
 export const urlCommand = new Command('url')
@@ -149,38 +187,44 @@ export const urlCommand = new Command('url')
       // Daytona — not openable from a browser click), while `resolveUrl` mints a
       // browser-safe SIGNED URL. `--loopback` / `--ttl` also need provider-level
       // URL computation the payload can't express, so they take the provider path.
-      if (!opts.loopback && opts.ttl === undefined && (box.provider ?? 'docker') === 'docker') {
+      // The hub resolves this LIVE (`GET /boxes/:id/web`) and reads a service
+      // agent's own token while it is in there, so every provider takes this
+      // path — not just docker, and never the Box payload's recorded `webUrl`,
+      // whose port belongs to whatever forward existed when it was written.
+      //
+      // `--loopback` / `--ttl` are the exception: they need provider-level URL
+      // computation the route does not express, so they fall through below.
+      if (!opts.loopback && opts.ttl === undefined) {
         // Box-scoped, so it goes to the box's OWNING hub (withOwningHub); a plain
-        // withHubClient would send a docker box's `getBox` to a configured remote
-        // control box that never owned it → `not_found`. Capture the payload URL
-        // via closure (the op returns void); `null` means "no web endpoint, fall
-        // through to the provider", and a `not-found` outcome falls through too.
-        let payloadUrl: string | null = null;
+        // withHubClient would send a docker box's request to a configured remote
+        // control box that never owned it → `not_found`. Captured via closure
+        // (the op returns void); `null` falls through to the provider path, as
+        // does a `not-found` outcome.
+        let resolved: { url: string; signInUrl: string | null } | null = null;
         const r = await withOwningHub(box, async (client) => {
-          let b = await client.getBox(box.id);
+          const b = await client.getBox(box.id);
           if (b.state && b.state !== 'running') {
-            // A paused/stopped box serves nothing and a cached preview URL can be
-            // stale, so start it (idempotent) — the hub's start refreshes the
-            // box's endpoints server-side. Notice on STDERR so `--print` stays
+            // The route refuses a box that is not running, and this command's
+            // contract is to auto-start. Notice on STDERR so `--print` stays
             // pipeable while the side effect stays visible.
             process.stderr.write(
               `box ${box.name} was ${b.state}; started it to resolve a live URL\n`,
             );
             await client.lifecycle(box.id, 'start');
-            b = await client.getBox(box.id);
           }
-          payloadUrl = b.webUrl ?? null;
+          resolved = await client.webUrl(box.id);
         });
         if (r === undefined) return; // hub error; withOwningHub set the exit code
-        if (payloadUrl) {
-          emitUrl(payloadUrl, opts);
+        if (resolved) {
+          const { url, signInUrl } = resolved as { url: string; signInUrl: string | null };
+          emitUrl(url, signInUrl, opts);
           return;
         }
-        // The payload carried no web endpoint (or no hub owns the box) — fall
-        // through to the provider path.
+        // No hub owns this box — fall through to the provider path.
       }
 
-      emitUrl(await resolveViaProvider(box, opts), opts);
+      const url = await resolveViaProvider(box, opts);
+      emitUrl(url, await signInUrlViaProvider(box, url), opts);
     } catch (err) {
       handleLifecycleError(err);
     }
