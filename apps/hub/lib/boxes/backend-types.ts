@@ -88,6 +88,18 @@ export interface ServicesResult {
 // Box payload — which is why its `vncUrl` is null for daytona/vercel/e2b.
 export type VncUrlResult = { ok: true; url: string; ttl?: number } | { ok: false; error: string };
 
+/**
+ * A service agent's web URL, plus the sign-in link when its UI takes an auth
+ * token from the URL fragment.
+ *
+ * `signInUrl` is null for a box whose agent declares no such field, and for one
+ * whose daemon has not written its token yet — the caller opens `url` and the
+ * user is asked for the token, which is exactly the old behaviour.
+ */
+export type BoxWebUrlResult =
+  | { ok: true; url: string; signInUrl: string | null }
+  | { ok: false; error: string };
+
 // Live git summary for the box detail panel. `box.branch` from getData() goes
 // stale after a checkout, so the panel reads this instead.
 export interface GitInfo {
@@ -420,6 +432,12 @@ export interface HubBackend {
   // ride the Box payload. Read-only: it never starts or resumes the box, so a
   // non-running box is refused rather than silently woken.
   vncUrl(id: string, opts?: { ttl?: number; loopback?: boolean }): Promise<VncUrlResult>;
+  // The box's web URL and, for a service agent whose UI reads a token from the
+  // URL fragment (openclaw's Control UI), a link that opens it already signed
+  // in. Minted at CLICK TIME like `vncUrl`, and for the same two reasons: the
+  // token is an exec into the box, and it is a live credential that has no
+  // business on every poll of every box.
+  webUrl(id: string): Promise<BoxWebUrlResult>;
   // Answer a pending host-action approval; resolves the parked in-box RPC.
   // `cancelled` marks a dismissal distinctly from a plain deny in the audit
   // trail (the `agent approve --cancel` capability); both resolve as not-approved.

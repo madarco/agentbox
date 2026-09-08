@@ -30,8 +30,11 @@ import { intro, log, outro, makeProgressReporter, openCommandLog } from '@agentb
 import {
   clearBoxPortlessWebAlias,
   ensureAgentInstalled,
+  readServiceUrlFields as readServiceUrlFieldsWith,
   readState,
   resolveBoxRef,
+  serviceSignInUrl,
+  type ServiceUrlFieldValue,
 } from '@agentbox/sandbox-core';
 import { portlessUnalias, readBoxStatus, recordLastAgent } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
@@ -244,61 +247,6 @@ export async function resolveServiceUrl(box: BoxRecord): Promise<string | null> 
 }
 
 /** Walk a dotted path into a parsed JSON document. */
-function atJsonPath(doc: unknown, path: string): unknown {
-  let cur = doc;
-  for (const seg of path.split('.')) {
-    if (typeof cur !== 'object' || cur === null || Array.isArray(cur)) return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-/**
- * The extra values `<agent> url` prints beside the URL — a Control UI's gateway
- * token, read out of the daemon's own config file.
- *
- * Read on demand and never persisted: these are secrets, so they are fetched
- * when the user asks for them and are not written to the box record or the
- * command log.
- *
- * Best-effort per field. The service can be up before it has written the file
- * (or the tool may rename the key across a version), and a missing token must
- * not turn a working `url` into a failure — the URL is the thing the user
- * asked for.
- */
-export async function readServiceUrlFields(
-  box: BoxRecord,
-  fields: readonly AgentServiceUrlField[],
-): Promise<{ label: string; value: string; fragmentKey?: string }[]> {
-  if (fields.length === 0) return [];
-  const provider = await providerForBox(box);
-  const out: { label: string; value: string; fragmentKey?: string }[] = [];
-  // One read per distinct file, not per field: two fields out of one config
-  // would otherwise be two `exec` round-trips into the box.
-  const docs = new Map<string, unknown>();
-  for (const field of fields) {
-    if (!docs.has(field.file)) {
-      let parsed: unknown;
-      try {
-        const r = await provider.exec(box, ['cat', field.file], { user: 'vscode' });
-        parsed = r.exitCode === 0 ? JSON.parse(r.stdout) : undefined;
-      } catch {
-        parsed = undefined;
-      }
-      docs.set(field.file, parsed);
-    }
-    const value = atJsonPath(docs.get(field.file), field.jsonPath);
-    if (typeof value === 'string' && value.length > 0) {
-      out.push({
-        label: field.label,
-        value,
-        ...(field.fragmentKey ? { fragmentKey: field.fragmentKey } : {}),
-      });
-    }
-  }
-  return out;
-}
-
 /**
  * Stop one supervisor unit in a box.
  *
@@ -318,30 +266,21 @@ export async function stopUnit(box: BoxRecord, unit: string): Promise<void> {
 }
 
 /**
- * The URL that opens a daemon's own UI already signed in.
+ * `readServiceUrlFields` with the provider resolved from the box record.
  *
- * Some daemons take their auth token from the URL FRAGMENT (openclaw's Control
- * UI reads `#token=`), so the token and the URL on two separate lines is a link
- * the user has to assemble by hand — the reason `<agent> url` alone could not
- * get you into a gateway. Fields opt in with `fragmentKey`; an agent that
- * declares none gets its URL back unchanged and prints no extra line.
- *
- * Returns null when there is nothing to add, so callers can print this only
- * when it says something the bare URL does not.
+ * The shared implementation takes a provider so the hub (which already holds
+ * one) can call it too; CLI callers only ever have a box, so the lookup lives
+ * here rather than in every call site.
  */
-export function serviceSignInUrl(
-  url: string,
-  fields: readonly { label: string; value: string; fragmentKey?: string }[],
-): string | null {
-  const parts = fields
-    .filter((f) => f.fragmentKey)
-    .map((f) => `${encodeURIComponent(f.fragmentKey as string)}=${encodeURIComponent(f.value)}`);
-  if (parts.length === 0) return null;
-  // The UI is served from the root, and a fragment on a bare authority (no
-  // path) is not a URL a browser will open predictably — hence the explicit `/`.
-  const base = url.endsWith('/') ? url : `${url}/`;
-  return `${base}#${parts.join('&')}`;
+export async function readServiceUrlFields(
+  box: BoxRecord,
+  fields: readonly AgentServiceUrlField[],
+): Promise<ServiceUrlFieldValue[]> {
+  if (fields.length === 0) return [];
+  return readServiceUrlFieldsWith(await providerForBox(box), box, fields);
 }
+
+export { serviceSignInUrl };
 
 /**
  * `agentbox <agent> [box]` — create the box if it is missing, start it if it is

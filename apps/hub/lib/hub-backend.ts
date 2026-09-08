@@ -81,7 +81,9 @@ import {
   ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
+  readServiceUrlFields,
   resolvePerBoxCarry,
+  serviceSignInUrl,
   mutateState,
   readPreparedStateRaw,
   readState,
@@ -148,6 +150,7 @@ import type {
   OpenInApp,
   OpenTargets,
   OpenTargetsReport,
+  BoxWebUrlResult,
   PrepareCloneResult,
   PruneView,
   RemoteDockerHostView,
@@ -338,6 +341,12 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
+/** True when the box runs an agent that IS a daemon with a UI of its own. */
+function isServiceAgentBox(b: ListedBox): boolean {
+  const spec = findAgentSpec(b.lastAgent ?? b.agents?.[0] ?? '');
+  return spec?.caps.surface === 'service';
+}
+
 function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
@@ -371,6 +380,12 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     filesTouched: null,
     error: status === 'error' ? (firstSessionTitle(b) ?? 'Agent reported an error') : null,
     webUrl: eps.find((e) => e.kind === 'web')?.url ?? null,
+    // Whether this box's web URL leads to an agent's OWN UI, which may want a
+    // token the box generated for itself — the signal a client needs to know it
+    // should ask `GET /boxes/:id/web` for a sign-in link instead of opening
+    // `webUrl` straight. A spec lookup, so it costs nothing per box; the token
+    // itself is never on this payload.
+    serviceAgent: isServiceAgentBox(b),
     vncUrl: eps.find((e) => e.kind === 'vnc')?.url ?? null,
     // Raw host-side fields for native clients (tray) — see Box for semantics.
     state: b.state,
@@ -2675,6 +2690,30 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
     },
 
+    async webUrl(id): Promise<BoxWebUrlResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        // Probe rather than trust the record: a URL minted against a stopped
+        // box answers with a connection error, and the token read below would
+        // be an exec into a box that is not there.
+        const state = await rp.provider.probeState(rp.box);
+        if (state !== 'running') {
+          return { ok: false, error: `box ${rp.box.name} is ${state}; start it first` };
+        }
+        const url = await rp.provider.resolveUrl(rp.box, { kind: 'web' });
+        if (!url) return { ok: false, error: `box ${rp.box.name} publishes no web URL` };
+        // Only a service agent has a UI of its own to sign in to. Everything
+        // else gets its plain URL back, which is what every client already had.
+        const spec = findAgentSpec(rp.box.lastAgent ?? rp.box.agents?.[0] ?? '');
+        const fields = spec?.service?.urlFields ?? [];
+        if (fields.length === 0) return { ok: true, url, signInUrl: null };
+        const values = await readServiceUrlFields(rp.provider, rp.box, fields);
+        return { ok: true, url, signInUrl: serviceSignInUrl(url, values) };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
     async vncUrl(id, opts): Promise<VncUrlResult> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);

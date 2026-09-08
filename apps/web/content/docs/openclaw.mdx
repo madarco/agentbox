@@ -76,6 +76,8 @@ The create form takes the box flags you already know — `-w`, `-n`, `-p/--provi
 
 The token rides the fragment rather than a query string because a browser never sends a fragment to the server — it stays out of access logs and `Referer` headers.
 
+The web hub and the macOS tray get the same link without the CLI: **Open Web** on a bot calls `GET /api/v1/boxes/{id}/web`, which answers `{ url, signInUrl }`. It is resolved when you click rather than carried on the box list, because reading the token is an exec into the box — and, on a box reached over an SSH forward, that also re-resolves a port the list may have cached.
+
 ## What happens on create
 
 Nothing here is OpenClaw-specific code. The units below are declared on OpenClaw's catalog row and folded into the box's supervisor through the same reload diff an edit to your `agentbox.yaml` uses — which is why a box booted from a snapshot baked before OpenClaw existed still runs it.

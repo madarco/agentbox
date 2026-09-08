@@ -183,6 +183,11 @@ export {
   type BotBundle,
 } from './concerns/bot-backup.js';
 export {
+  readServiceUrlFields,
+  serviceSignInUrl,
+  type ServiceUrlFieldValue,
+} from './concerns/service-url.js';
+export {
   GIT_MODE_EXCLUDE_DIRS,
   WORKSPACE_EXCLUDE_DIR_NAMES,
   agentStateExcludePaths,

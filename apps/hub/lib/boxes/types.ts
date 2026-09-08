@@ -29,6 +29,14 @@ export interface Box {
   // Host-openable URLs for the box's web service / VNC desktop. Null when the
   // box has no such endpoint or it isn't reachable (e.g. paused/stopped).
   webUrl?: string | null;
+  /**
+   * True when `webUrl` leads to the agent's OWN UI (a service agent's daemon).
+   * Such a UI may want an auth token the box generated for itself, so a client
+   * should ask `GET /api/v1/boxes/:id/web` for a sign-in link at click time
+   * rather than opening `webUrl` directly. Cheap (a spec lookup); the token
+   * itself never rides this payload.
+   */
+  serviceAgent?: boolean;
   vncUrl?: string | null;
   // ── Raw host-side fields (host/localhost topology only; the hosted/Postgres
   // source leaves them all undefined). Native clients (the tray app) key off

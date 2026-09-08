@@ -343,6 +343,36 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/web': {
+        get: {
+          tags: ['Boxes'],
+          summary: "Resolve the box's web URL, and a sign-in link for a service agent",
+          description:
+            "The box's web URL plus, for a SERVICE agent (openclaw), a link that opens the agent's own UI already signed in. Such a daemon generates its auth token inside the box and its UI reads that token from the URL FRAGMENT, so `signInUrl` is `<url>/#token=…`; it is null when the agent declares no such field or the daemon has not written one yet, and the caller opens `url` instead (the UI then asks for the token). Resolved at CLICK TIME rather than carried on the Box payload for two reasons: reading the token is an exec into the box, and it is a live credential. The list payload's `serviceAgent: true` is how a client knows to call this. Read-only: refused with 409 when the box is not running.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: 'Web URL, and the sign-in link when there is one',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      url: { type: 'string' },
+                      signInUrl: { type: 'string', nullable: true },
+                    },
+                    required: ['url', 'signInUrl'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/boxes/{id}/rename': {
         post: {
           tags: ['Boxes'],
