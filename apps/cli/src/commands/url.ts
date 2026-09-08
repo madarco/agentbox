@@ -180,13 +180,6 @@ export const urlCommand = new Command('url')
     try {
       const box = await resolveBoxOrExit(idOrName);
 
-      // The default docker URL comes off the enriched Box payload the hub already
-      // computes (the same field the web UI links to), so `url` doesn't probe the
-      // provider from the laptop. Cloud stays on the provider path: a cloud box's
-      // payload `webUrl` is the NON-signed `previewUrl` (a header-token URL for
-      // Daytona — not openable from a browser click), while `resolveUrl` mints a
-      // browser-safe SIGNED URL. `--loopback` / `--ttl` also need provider-level
-      // URL computation the payload can't express, so they take the provider path.
       // The hub resolves this LIVE (`GET /boxes/:id/web`) and reads a service
       // agent's own token while it is in there, so every provider takes this
       // path — not just docker, and never the Box payload's recorded `webUrl`,
