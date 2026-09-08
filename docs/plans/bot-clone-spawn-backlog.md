@@ -115,3 +115,18 @@ load-bearing.
   greps the regenerated file immediately reads the previous content. Wait for the
   task to leave `running` (this one takes ~10-15s, most of it the openclaw config
   patch) before asserting on its output.
+
+### From Bugbot's review (2026-09-08)
+
+- **A clone kept the SOURCE bot's identity rules.** `SOUL.md` was rewritten but
+  `agentbox.yaml` was copied verbatim, so the clone carried
+  `from: '\bAda\b'` while its own files said `bea` — a clone OF that clone
+  matched nothing and kept introducing itself as its grandparent, with the
+  `agentbox:identity-rules` sentinel suppressing the nudge that would have
+  fixed it. The clone now strips the rule-set and the sentinel, so the new bot
+  is asked to write rules for its own name. Found by review, not by a test: the
+  first generation looks perfect, and only the second is wrong.
+- **`parseDocument` does not throw on malformed yaml.** It collects `.errors`
+  and then refuses to stringify — so the naive "parse, edit, serialize" would
+  have taken a clone down over a file the user broke. Caught by writing the
+  test for it.

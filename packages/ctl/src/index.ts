@@ -106,6 +106,7 @@ export {
   parseReplaceRules,
   parseReplacements,
   parseReplacementsSection,
+  removeReplacementsSet,
   loadReplacementsSection,
   resolveRuleRefs,
   parseRuleArg,

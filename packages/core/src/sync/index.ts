@@ -46,6 +46,8 @@ export {
   isServiceAgent,
   BOX_ASSET_DIR,
   SETUP_GUIDE_PATH,
+  IDENTITY_RULE_SET,
+  IDENTITY_RULES_SENTINEL,
 } from './agent-spec.js';
 export type {
   AgentActivityState,

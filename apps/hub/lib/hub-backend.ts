@@ -25,6 +25,7 @@ import {
   type ProviderKind,
 } from '@agentbox/config';
 import {
+  IDENTITY_RULE_SET,
   LEGACY_AGENT_STATUS_KEYS,
   normalizeAgentStatus,
   normalizeLastAgent,
@@ -95,7 +96,7 @@ import {
   resolveProviderDescriptor,
   type FileManifest,
 } from '@agentbox/sandbox-core';
-import { IDENTITY_RULE_SET, renderCloneIdentity } from './boxes/clone-render.js';
+import { renderCloneIdentity } from './boxes/clone-render.js';
 import {
   baseFreshnessFromFingerprints,
   currentCloudBaseFingerprint,

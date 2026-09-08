@@ -17,11 +17,14 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { applyReplacements, resolveRuleRefs, type ReplaceRule } from '@agentbox/core';
-import { parseReplacementsSection } from '@agentbox/ctl';
-
-/** The `replacements:` set a clone renders with. */
-export const IDENTITY_RULE_SET = 'identity';
+import {
+  applyReplacements,
+  resolveRuleRefs,
+  IDENTITY_RULE_SET,
+  IDENTITY_RULES_SENTINEL,
+  type ReplaceRule,
+} from '@agentbox/core';
+import { parseReplacementsSection, removeReplacementsSet } from '@agentbox/ctl';
 
 export interface CloneRenderArgs {
   /** The exported workspace (the clone's project root). */
@@ -40,6 +43,8 @@ export interface CloneRenderResult {
   skipped: string[];
   /** True when the workspace declared an `identity` rule-set. */
   hadRules: boolean;
+  /** True when that rule-set was stripped from the clone's own yaml. */
+  clearedRules: boolean;
 }
 
 /**
@@ -69,6 +74,29 @@ async function identityRules(dir: string, onLog?: (line: string) => void): Promi
 }
 
 /**
+ * Take the source bot's identity rules OUT of the clone's own `agentbox.yaml`.
+ *
+ * They say "rewrite Ada to this box's name". Once this clone's files say `bea`,
+ * that rule matches nothing — so a clone OF the clone would rewrite nothing and
+ * keep introducing itself as its grandparent, and the sentinel would stop the
+ * box facts from ever nudging it to write rules of its own. Removing both is
+ * what makes the next generation self-correcting.
+ */
+async function clearIdentityRules(dir: string): Promise<boolean> {
+  const path_ = path.join(dir, 'agentbox.yaml');
+  let before: string;
+  try {
+    before = await readFile(path_, 'utf8');
+  } catch {
+    return false;
+  }
+  const after = removeReplacementsSet(before, IDENTITY_RULE_SET, IDENTITY_RULES_SENTINEL);
+  if (after === before) return false;
+  await writeFile(path_, after, 'utf8');
+  return true;
+}
+
+/**
  * Render the agent's identity files for the new box.
  *
  * Runs the placeholder pass even with no rule-set, so a workspace that writes
@@ -77,10 +105,11 @@ async function identityRules(dir: string, onLog?: (line: string) => void): Promi
 export async function renderCloneIdentity(args: CloneRenderArgs): Promise<CloneRenderResult> {
   const rendered: string[] = [];
   const skipped: string[] = [];
-  if (args.paths.length === 0) return { rendered, skipped, hadRules: false };
+  if (args.paths.length === 0) return { rendered, skipped, hadRules: false, clearedRules: false };
 
   const rules = await identityRules(args.dir, args.onLog);
   const context = { AGENTBOX_BOX_NAME: args.boxName };
+  const clearedRules = rules.length > 0 ? await clearIdentityRules(args.dir) : false;
 
   for (const rel of args.paths) {
     const abs = path.join(args.dir, rel);
@@ -96,5 +125,5 @@ export async function renderCloneIdentity(args: CloneRenderArgs): Promise<CloneR
     await writeFile(abs, after, 'utf8');
     rendered.push(rel);
   }
-  return { rendered, skipped, hadRules: rules.length > 0 };
+  return { rendered, skipped, hadRules: rules.length > 0, clearedRules };
 }

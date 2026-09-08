@@ -29,7 +29,7 @@
  * fingerprint and stale every provider's base snapshot.
  */
 
-import { BOX_HOME, BOX_USER, agentDirPrelude } from '@agentbox/core';
+import { BOX_HOME, BOX_USER, IDENTITY_RULES_SENTINEL, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 
 /** OpenClaw's state root: config, sqlite state, per-agent dirs, migrations. */
@@ -74,7 +74,7 @@ const BAKED_IDENTITY_SKILL = '/usr/local/share/agentbox/identity-skill.md';
  * plain grep and needs no yaml parser inside a shell script — and so the user
  * can see, in their own file, what wrote it.
  */
-const IDENTITY_SENTINEL = 'agentbox:identity-rules';
+const IDENTITY_SENTINEL = IDENTITY_RULES_SENTINEL;
 /** The workspace file the sentinel lives in. */
 const WORKSPACE_YAML = '/workspace/agentbox.yaml';
 /** The per-provider box facts. Claude reads it directly; codex folds it in too. */

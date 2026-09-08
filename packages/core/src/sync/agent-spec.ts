@@ -942,6 +942,17 @@ export const BOX_ASSET_DIR = '/usr/local/share/agentbox';
 
 /** Baked into every provider's base image; the source for the wizard skill. */
 export const SETUP_GUIDE_PATH = `${BOX_ASSET_DIR}/setup-guide.md`;
+/**
+ * The `replacements:` rule-set a clone renders an agent's identity files with,
+ * and the comment that marks it as written by the identity wizard.
+ *
+ * One definition because three places have to agree: the wizard skill writes
+ * them, the box facts stop nudging once the sentinel is present, and a CLONE
+ * strips both — the rules describe the SOURCE bot's name, so leaving them in
+ * the copy makes the NEXT clone rewrite a name that is no longer there.
+ */
+export const IDENTITY_RULE_SET = 'identity';
+export const IDENTITY_RULES_SENTINEL = 'agentbox:identity-rules';
 
 /**
  * Does this agent run as a ctl service rather than a tmux TUI?
