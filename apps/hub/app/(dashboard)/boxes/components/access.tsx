@@ -153,8 +153,12 @@ export function Access({ box }: { box: Box }) {
   // "is there a web service" signal and the label. Same reason as the VNC link
   // below: an <a href> navigates synchronously, while a fetch-then-window.open
   // would lose the user-activation token across the await and be popup-blocked.
-  const webHref =
-    box.status === 'running' ? `/boxes/${encodeURIComponent(box.id)}/web` : (webUrl ?? null);
+  // Keyed off `webUrl` alone, NOT `status`: an agent error leaves the box
+  // running but maps it to `status: 'error'`, which is precisely when someone
+  // opens the dashboard to look. `webUrl` already encodes reachability (it is
+  // null for a paused/stopped box, which disables the button below), and the
+  // route itself refuses a box that is not running.
+  const webHref = webUrl ? `/boxes/${encodeURIComponent(box.id)}/web` : null;
 
   // A cloud box carries no static vncUrl — its signed preview URL expires — so
   // link at the hub's own redirect, which mints one server-side on navigation.
