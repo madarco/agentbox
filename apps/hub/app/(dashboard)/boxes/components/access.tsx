@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { OpenInApp, OpenTargets } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
+import { webOpenTarget } from '@/lib/boxes/web-open';
 import { SectionLabel } from './section-label';
 
 // Display order + labels for the host "open in" apps (mirrors the tray's Open In
@@ -146,19 +147,14 @@ export function Access({ box }: { box: Box }) {
       : box.status === 'stopped'
         ? 'Box is stopped — start to access'
         : null;
-  const webReason = webUrl ? null : (unreachableReason ?? 'No web service exposed');
-
   // Open web goes through the hub's own redirect, which resolves the URL at
-  // click time and adds a service agent's sign-in token. `webUrl` stays the
-  // "is there a web service" signal and the label. Same reason as the VNC link
-  // below: an <a href> navigates synchronously, while a fetch-then-window.open
-  // would lose the user-activation token across the await and be popup-blocked.
-  // Keyed off `webUrl` alone, NOT `status`: an agent error leaves the box
-  // running but maps it to `status: 'error'`, which is precisely when someone
-  // opens the dashboard to look. `webUrl` already encodes reachability (it is
-  // null for a paused/stopped box, which disables the button below), and the
-  // route itself refuses a box that is not running.
-  const webHref = webUrl ? `/boxes/${encodeURIComponent(box.id)}/web` : null;
+  // click time and adds a service agent's sign-in token. Same reason as the VNC
+  // link below: an <a href> navigates synchronously, while a fetch-then-
+  // window.open would lose the user-activation token across the await and be
+  // popup-blocked. The two things that are easy to get wrong here -- an agent
+  // error is not a dead box, and `webUrl` is populated even when paused -- live
+  // in `webOpenTarget`, with tests.
+  const { href: webHref, reason: webReason } = webOpenTarget(box);
 
   // A cloud box carries no static vncUrl — its signed preview URL expires — so
   // link at the hub's own redirect, which mints one server-side on navigation.
@@ -189,7 +185,7 @@ export function Access({ box }: { box: Box }) {
             </div>
           </div>
           <div className="flex flex-none flex-wrap gap-1.5">
-            {webUrl && webHref ? (
+            {webHref ? (
               <Button variant="outline" size="sm" href={webHref} target="_blank" rel="noreferrer">
                 <Icons.ext />
                 Open web
