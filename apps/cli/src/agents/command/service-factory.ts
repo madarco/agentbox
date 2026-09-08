@@ -46,6 +46,7 @@ import {
   findExistingBox,
   readServiceUrlFields,
   resolveServiceUrl,
+  serviceSignInUrl,
   runServiceAgent,
   stopUnit,
   type ServiceAgentOptions,
@@ -240,7 +241,18 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
           // after `head` has closed the pipe raises EPIPE and would turn that
           // documented idiom into a node stack trace.
           const extra = await readServiceUrlFields(box, service.urlFields ?? []);
-          process.stdout.write([url, ...extra.map((f) => `${f.label}: ${f.value}`), ''].join('\n'));
+          // The ready-to-open link goes AFTER the bare URL, not in place of it:
+          // line 1 is the documented `| head -1` surface, and a fragment on it
+          // would break anything that appends a path to what it reads.
+          const signIn = serviceSignInUrl(url, extra);
+          process.stdout.write(
+            [
+              url,
+              ...extra.map((f) => `${f.label}: ${f.value}`),
+              ...(signIn ? [`open: ${signIn}`] : []),
+              '',
+            ].join('\n'),
+          );
           // STDERR on purpose: stdout here is the documented `| head -1` surface,
           // and a warning printed into it would BE the first line.
           const warning = webProxyWarning(await readBoxStatus(box));

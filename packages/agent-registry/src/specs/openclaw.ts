@@ -410,7 +410,14 @@ export const openclawSpec: AgentSyncSpec = {
     // The Control UI asks for the gateway token on first load, and openclaw's
     // own `config get` redacts it (PoC), so it is read from the raw JSON.
     urlFields: [
-      { label: 'token', file: `${OPENCLAW_BOX_DIR}/openclaw.json`, jsonPath: 'gateway.auth.token' },
+      {
+        label: 'token',
+        file: `${OPENCLAW_BOX_DIR}/openclaw.json`,
+        jsonPath: 'gateway.auth.token',
+        // The Control UI reads it from the fragment, so `<agent> url` can hand
+        // over a link that opens signed in instead of one that asks for a paste.
+        fragmentKey: 'token',
+      },
     ],
   },
   configRender: {

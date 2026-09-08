@@ -54,7 +54,7 @@ inside the box (in there the gateway is `http://localhost:18789`). Re-read it wi
 | Command                           | What it does                                                                                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `agentbox openclaw [box]`         | Create the box if it is missing, start it if it is down, wait for the gateway, print the URL and token  |
-| `agentbox openclaw url [box]`     | Print the URL and the gateway token                                                                     |
+| `agentbox openclaw url [box]`     | Print the URL, the gateway token, and a link that opens the Control UI signed in                        |
 | `agentbox openclaw attach [box]`  | Open OpenClaw's terminal UI against the running gateway (`Control+a d` detaches, gateway keeps running) |
 | `agentbox openclaw status [box]`  | The supervisor's view of the `openclaw` unit                                                            |
 | `agentbox openclaw logs [box]`    | Tail the gateway's log (`-f` to follow)                                                                 |
@@ -72,7 +72,9 @@ The create form takes the box flags you already know — `-w`, `-n`, `-p/--provi
   impossible, so the box would lapse on its own.
 </Callout>
 
-`agentbox openclaw url` prints the URL on the first line and the token on the second, so `agentbox openclaw url | head -1` still yields just the URL. The token is read out of the gateway's own config file on demand: OpenClaw's `config get gateway.auth.token` deliberately answers `__OPENCLAW_REDACTED__`.
+`agentbox openclaw url` prints three lines: the URL, the token, and an `open:` link with the token in the URL fragment (`<url>/#token=…`) — which is where the Control UI reads it, so that link opens the dashboard already signed in. The bare URL stays on the first line, so `agentbox openclaw url | head -1` still yields just the URL. The token is read out of the gateway's own config file on demand: OpenClaw's `config get gateway.auth.token` deliberately answers `__OPENCLAW_REDACTED__`.
+
+The token rides the fragment rather than a query string because a browser never sends a fragment to the server — it stays out of access logs and `Referer` headers.
 
 ## What happens on create
 
@@ -205,4 +207,4 @@ Nothing provider-specific had to be written for it: the install recipe, the unit
 - **`service "openclaw" did not report ready`** — `agentbox openclaw logs claw` first. On a cold box the first run also installs ~893 MB from npm, so raise `--timeout` on a slow link.
 - **The unit never appears** — it arrives with the agent catalog over the host relay. `agentbox-ctl reload` inside the box re-applies it; check `agentbox relay status` on the host.
 - **`config validate` failed** — the render prints OpenClaw's own message and leaves the config untouched. Fix the `openclaw:` block and reload.
-- **The Control UI asks for a token you do not have** — `agentbox openclaw url` prints it.
+- **The Control UI asks for a token you do not have** — `agentbox openclaw url` prints it, and its `open:` line is a link that skips the prompt entirely.

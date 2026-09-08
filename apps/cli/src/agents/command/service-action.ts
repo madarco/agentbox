@@ -269,10 +269,10 @@ function atJsonPath(doc: unknown, path: string): unknown {
 export async function readServiceUrlFields(
   box: BoxRecord,
   fields: readonly AgentServiceUrlField[],
-): Promise<{ label: string; value: string }[]> {
+): Promise<{ label: string; value: string; fragmentKey?: string }[]> {
   if (fields.length === 0) return [];
   const provider = await providerForBox(box);
-  const out: { label: string; value: string }[] = [];
+  const out: { label: string; value: string; fragmentKey?: string }[] = [];
   // One read per distinct file, not per field: two fields out of one config
   // would otherwise be two `exec` round-trips into the box.
   const docs = new Map<string, unknown>();
@@ -288,7 +288,13 @@ export async function readServiceUrlFields(
       docs.set(field.file, parsed);
     }
     const value = atJsonPath(docs.get(field.file), field.jsonPath);
-    if (typeof value === 'string' && value.length > 0) out.push({ label: field.label, value });
+    if (typeof value === 'string' && value.length > 0) {
+      out.push({
+        label: field.label,
+        value,
+        ...(field.fragmentKey ? { fragmentKey: field.fragmentKey } : {}),
+      });
+    }
   }
   return out;
 }
@@ -309,6 +315,32 @@ export async function stopUnit(box: BoxRecord, unit: string): Promise<void> {
       `agentbox-ctl stop ${unit} failed: ${r.stderr.trim() || `exit ${String(r.exitCode)}`}`,
     );
   }
+}
+
+/**
+ * The URL that opens a daemon's own UI already signed in.
+ *
+ * Some daemons take their auth token from the URL FRAGMENT (openclaw's Control
+ * UI reads `#token=`), so the token and the URL on two separate lines is a link
+ * the user has to assemble by hand — the reason `<agent> url` alone could not
+ * get you into a gateway. Fields opt in with `fragmentKey`; an agent that
+ * declares none gets its URL back unchanged and prints no extra line.
+ *
+ * Returns null when there is nothing to add, so callers can print this only
+ * when it says something the bare URL does not.
+ */
+export function serviceSignInUrl(
+  url: string,
+  fields: readonly { label: string; value: string; fragmentKey?: string }[],
+): string | null {
+  const parts = fields
+    .filter((f) => f.fragmentKey)
+    .map((f) => `${encodeURIComponent(f.fragmentKey as string)}=${encodeURIComponent(f.value)}`);
+  if (parts.length === 0) return null;
+  // The UI is served from the root, and a fragment on a bare authority (no
+  // path) is not a URL a browser will open predictably — hence the explicit `/`.
+  const base = url.endsWith('/') ? url : `${url}/`;
+  return `${base}#${parts.join('&')}`;
 }
 
 /**
@@ -553,10 +585,15 @@ export async function runServiceAgent(
     // Printed BEFORE the outro so the outro stays the one line a script greps
     // for the URL. The Control UI asks for the token on first load, so a launch
     // that prints only the URL sends the user straight back to the CLI.
-    for (const f of await readServiceUrlFields(box, service.urlFields ?? [])) {
+    const urlFieldValues = await readServiceUrlFields(box, service.urlFields ?? []);
+    for (const f of urlFieldValues) {
       log.info(`${f.label}: ${f.value}`);
     }
     const url = service.expose ? await resolveServiceUrl(box) : null;
+    // The one line that actually gets you in: the token belongs in the URL's
+    // fragment, and pasting it by hand is the step people were stuck on.
+    const signIn = url ? serviceSignInUrl(url, urlFieldValues) : null;
+    if (signIn) log.info(`open: ${signIn}`);
     // A URL we cannot forward to is worse than no URL: the port is held by
     // something else, so it answers with the wrong thing rather than failing.
     const warning = url ? webProxyWarning(await readBoxStatus(box)) : null;

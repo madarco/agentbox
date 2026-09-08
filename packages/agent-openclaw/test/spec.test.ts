@@ -70,7 +70,15 @@ describe('openclaw registry row', () => {
   it('reads the Control UI token from the raw config, not from `config get`', () => {
     // `openclaw config get gateway.auth.token` answers `__OPENCLAW_REDACTED__`.
     expect(SPEC.service?.urlFields).toEqual([
-      { label: 'token', file: SPEC.configRender!.file, jsonPath: 'gateway.auth.token' },
+      {
+        label: 'token',
+        file: SPEC.configRender!.file,
+        jsonPath: 'gateway.auth.token',
+        // The Control UI reads the token from the URL fragment, so `url` can
+        // print a link that opens signed in rather than one that asks for a
+        // paste. Dropping this puts the user back to assembling it by hand.
+        fragmentKey: 'token',
+      },
     ]);
   });
 

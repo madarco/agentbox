@@ -338,6 +338,17 @@ export interface AgentServiceUrlField {
   file: string;
   /** Dotted path into that JSON — `gateway.auth.token`. */
   jsonPath: string;
+  /**
+   * When set, this value also belongs in the URL's FRAGMENT under this key, and
+   * `<agent> url` prints a ready-to-open link alongside the bare URL —
+   * `<url>/#token=<value>`.
+   *
+   * A fragment rather than a query string because that is where these daemons
+   * put it (openclaw's Control UI reads `#token=`), and it is the half of a URL
+   * a browser never sends to the server, so the secret stays out of access logs
+   * and `Referer` headers.
+   */
+  fragmentKey?: string;
 }
 
 /** A ready probe, one of three kinds. Mirrors ctl's `ReadyProbe` inputs. */

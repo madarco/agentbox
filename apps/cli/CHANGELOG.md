@@ -20,6 +20,10 @@ CLI, not the raw commits.
   Its workspace lands beside the source's backups, in `<project>/.agentbox/bots/`.
 - **An OpenClaw bot can write its own identity rules.** A new `agentbox-identity`
   skill, and a nudge in the box facts while `agentbox.yaml` declares no rule-set.
+- **`agentbox openclaw url` now prints a link that opens the Control UI signed
+  in.** The gateway reads its token from the URL fragment, so the URL and the
+  token on separate lines meant assembling `<url>/#token=…` by hand. The bare URL
+  stays on line one for `| head -1`.
 
 - **Pick a box size when you create one, in the web hub and the macOS tray.** The
   choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`
