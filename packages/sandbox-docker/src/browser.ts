@@ -1,3 +1,5 @@
+import type { BoxRecord, Provider } from '@agentbox/core';
+import { withServiceSignIn } from '@agentbox/sandbox-core';
 import { execInBox } from './docker.js';
 import { readBoxStatus } from './sync/host-export.js';
 
@@ -117,19 +119,22 @@ export interface BoxBrowserAppResult extends BoxBrowserResult {
  * `agentbox screen`, the dashboard, and the hub's open-VNC action so every
  * surface that opens the VNC viewer gets a populated desktop.
  */
-export async function ensureBoxBrowserShowingApp(box: {
-  container: string;
-  id: string;
-  name: string;
-  projectIndex?: number;
-  portlessUrl?: string;
-}): Promise<BoxBrowserAppResult> {
+export async function ensureBoxBrowserShowingApp(
+  box: BoxRecord & { portlessUrl?: string },
+  provider?: Provider,
+): Promise<BoxBrowserAppResult> {
   const persisted = await readBoxStatus(box);
   const exposePort = persisted?.services.find((s) => s.expose)?.expose?.port;
-  const target =
+  const base =
     exposePort !== undefined
       ? (box.portlessUrl ?? `http://localhost:${String(exposePort)}`)
       : 'about:blank';
+  // A service agent's UI wants its token in the fragment, and the in-box
+  // browser is as much a client of that as the host's is. Needs the provider to
+  // read the token out of the box, so a caller that has none still gets the old
+  // bare URL rather than an error.
+  const target =
+    provider && base !== 'about:blank' ? await withServiceSignIn(provider, box, base) : base;
   const res = await ensureBoxBrowser(box.container, undefined, target);
   return { ...res, target };
 }

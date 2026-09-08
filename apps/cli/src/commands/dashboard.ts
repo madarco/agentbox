@@ -40,11 +40,7 @@ import {
   ensureOpencodeInstalled,
   startOpencodeSession,
 } from '@agentbox/agent-opencode';
-import {
-  DEFAULT_PI_SESSION,
-  ensurePiInstalled,
-  startPiSession,
-} from '@agentbox/agent-pi';
+import { DEFAULT_PI_SESSION, ensurePiInstalled, startPiSession } from '@agentbox/agent-pi';
 import {
   DEFAULT_CODEX_SESSION,
   ensureCodexInstalled,
@@ -57,6 +53,7 @@ import {
   readState,
   removeBoxRecord,
   resolveAgentSpec,
+  withServiceSignIn,
 } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiTarget } from './control-plane.js';
@@ -662,13 +659,20 @@ export const dashboardCommand = new Command('dashboard')
         try {
           const box = await findBox(boxId);
           const web = webTarget(box);
-          if (web.exposed) exposedWebUrl = web.url;
+          // A service agent's UI takes its token from the URL fragment, so both
+          // browsers need the signed form or they open on its sign-in prompt.
+          let webUrl = web.url;
+          if (web.exposed) {
+            const record = await loadBoxRecord(boxId);
+            webUrl = await withServiceSignIn(await providerForBox(record), record, web.url);
+            exposedWebUrl = webUrl;
+          }
           // Show the app inside the VNC desktop on the same URL the host uses;
           // ensureBoxBrowser routes a Portless `.localhost` URL via the host proxy.
           const br = await ensureBoxBrowser(
             box.container,
             undefined,
-            web.exposed ? web.url : 'about:blank',
+            web.exposed ? webUrl : 'about:blank',
           );
           if (!br.up) return `VNC: in-box browser unavailable (${br.reason ?? 'box not running?'})`;
         } catch {

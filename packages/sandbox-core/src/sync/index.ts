@@ -186,6 +186,7 @@ export {
   readServiceUrlFields,
   serviceAgentForBox,
   serviceSignInUrl,
+  withServiceSignIn,
   type ServiceUrlFieldValue,
 } from './concerns/service-url.js';
 export {

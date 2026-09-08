@@ -1,4 +1,5 @@
 import type { BoxRecord, Provider } from '@agentbox/core';
+import { withServiceSignIn } from '@agentbox/sandbox-core';
 import { desktopOpenCommand, readBoxStatus } from '@agentbox/sandbox-docker';
 
 export interface CloudVncBrowserResult {
@@ -29,7 +30,13 @@ export async function openWebAppOnVncScreen(
   const exposed = persisted?.services.find((s) => s.expose);
   if (!exposed) return { opened: false, reason: 'no web service' };
   try {
-    const target = inBoxReachable(await provider.resolveUrl(box, { kind: 'web' }), exposed);
+    // Sign-in fragment LAST: `inBoxReachable` rebuilds the URL from the
+    // service's own port, which would drop a fragment resolved before it.
+    const target = await withServiceSignIn(
+      provider,
+      box,
+      inBoxReachable(await provider.resolveUrl(box, { kind: 'web' }), exposed),
+    );
     const br = await provider.exec(box, ['bash', '-lc', desktopOpenCommand(target)], {
       user: 'vscode',
     });

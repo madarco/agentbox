@@ -49,7 +49,9 @@ function parseTtlOrExit(raw: string | undefined): number | undefined {
  * provider even when the VNC URL comes off the hub payload.
  */
 async function dockerBrowserPrep(box: BoxRecord): Promise<void> {
-  const br = await ensureBoxBrowserShowingApp(box);
+  // The provider is what reads a service agent's token out of the box, so the
+  // in-box browser lands on the dashboard rather than its sign-in prompt.
+  const br = await ensureBoxBrowserShowingApp(box, await providerForBox(box));
   if (br.up && !br.alreadyRunning) {
     log.info(
       br.target !== 'about:blank'

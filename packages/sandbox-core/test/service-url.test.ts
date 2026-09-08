@@ -4,6 +4,7 @@ import {
   readServiceUrlFields,
   serviceAgentForBox,
   serviceSignInUrl,
+  withServiceSignIn,
 } from '../src/sync/concerns/service-url.js';
 
 const box = { id: 'b1', name: 'ada' } as unknown as BoxRecord;
@@ -131,5 +132,45 @@ describe('serviceAgentForBox', () => {
 
   it('ignores an agent id nothing in the registry knows', () => {
     expect(serviceAgentForBox({ lastAgent: 'ghost', agents: ['openclaw'] })?.id).toBe('openclaw');
+  });
+});
+
+describe('withServiceSignIn', () => {
+  const bot = { id: 'b1', name: 'ada', lastAgent: 'openclaw' } as unknown as BoxRecord;
+
+  it("signs the URL the VNC desktop's own browser is pointed at", async () => {
+    // The in-box browser resolves its own target (the host's forwarded port is
+    // nothing inside the box), which is how it ended up as the one surface
+    // still opening openclaw on its token prompt.
+    const { provider } = fakeProvider(() => ({ stdout: DASHBOARD_JSON }));
+    expect(await withServiceSignIn(provider, bot, 'http://localhost:18789')).toBe(
+      'http://localhost:18789/#token=09c33b1dcf0bdcde',
+    );
+  });
+
+  it("leaves an ordinary box's URL alone, without exec'ing into it", async () => {
+    const claudeBox = { id: 'b2', name: 'bob', lastAgent: 'claude' } as unknown as BoxRecord;
+    const { provider, calls } = fakeProvider(() => ({ stdout: DASHBOARD_JSON }));
+    expect(await withServiceSignIn(provider, claudeBox, 'http://localhost:3000')).toBe(
+      'http://localhost:3000',
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it('falls back to the bare URL when the daemon has no token yet', async () => {
+    // Mid-onboard: a sign-in prompt still beats opening nothing.
+    const { provider } = fakeProvider(() => ({ stdout: '', exitCode: 1 }));
+    expect(await withServiceSignIn(provider, bot, 'http://localhost:18789')).toBe(
+      'http://localhost:18789',
+    );
+  });
+
+  it('falls back to the bare URL when the exec itself throws', async () => {
+    const provider = {
+      exec: () => Promise.reject(new Error('box is paused')),
+    } as unknown as Provider;
+    expect(await withServiceSignIn(provider, bot, 'http://localhost:18789')).toBe(
+      'http://localhost:18789',
+    );
   });
 });

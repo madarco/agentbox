@@ -2152,7 +2152,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           // the box's web app, not a blank X desktop. Browser-launch failures are
           // logged, not thrown — the viewer URL still works without it.
           if ((box.provider ?? 'docker') === 'docker') {
-            const br = await ensureBoxBrowserShowingApp(box);
+            const br = await ensureBoxBrowserShowingApp(box, provider);
             if (!br.up)
               console.warn(
                 `[hub] screen ${box.name}: in-box browser failed: ${br.reason ?? 'unknown'}`,

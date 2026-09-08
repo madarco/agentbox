@@ -147,3 +147,32 @@ export function serviceSignInUrl(
   const base = url.endsWith('/') ? url : `${url}/`;
   return `${base}#${parts.join('&')}`;
 }
+
+/**
+ * `baseUrl` carrying the box's service agent's sign-in fields, or `baseUrl`
+ * unchanged when the box hosts no service agent and when the daemon has no
+ * token to give yet.
+ *
+ * The browser INSIDE the box needs this for exactly the reason the host's does:
+ * point it at the bare web URL and openclaw's Control UI opens on its token
+ * prompt, so the VNC desktop shows a login screen instead of the dashboard. The
+ * VNC path resolves its own target (it must — the host's `127.0.0.1:<forward>`
+ * is nothing inside the box), which is what left it as the one surface still
+ * handing out an unsigned URL.
+ *
+ * Best-effort by contract, like every other producer here: a daemon mid-onboard
+ * has no token, and the plain URL plus its own prompt beats opening nothing.
+ */
+export async function withServiceSignIn(
+  provider: Provider,
+  box: BoxRecord,
+  baseUrl: string,
+): Promise<string> {
+  try {
+    const fields = serviceAgentForBox(box)?.service?.urlFields ?? [];
+    if (fields.length === 0) return baseUrl;
+    return serviceSignInUrl(baseUrl, await readServiceUrlFields(provider, box, fields)) ?? baseUrl;
+  } catch {
+    return baseUrl;
+  }
+}
