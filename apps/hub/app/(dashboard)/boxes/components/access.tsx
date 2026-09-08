@@ -148,10 +148,16 @@ export function Access({ box }: { box: Box }) {
         : null;
   const webReason = webUrl ? null : (unreachableReason ?? 'No web service exposed');
 
+  // Open web goes through the hub's own redirect, which resolves the URL at
+  // click time and adds a service agent's sign-in token. `webUrl` stays the
+  // "is there a web service" signal and the label. Same reason as the VNC link
+  // below: an <a href> navigates synchronously, while a fetch-then-window.open
+  // would lose the user-activation token across the await and be popup-blocked.
+  const webHref =
+    box.status === 'running' ? `/boxes/${encodeURIComponent(box.id)}/web` : (webUrl ?? null);
+
   // A cloud box carries no static vncUrl — its signed preview URL expires — so
   // link at the hub's own redirect, which mints one server-side on navigation.
-  // An <a href> navigates synchronously; a fetch-then-window.open would lose the
-  // user-activation token across the await and be popup-blocked.
   const vncHref =
     vncUrl ??
     (box.vncEnabled && box.status === 'running'
@@ -179,8 +185,8 @@ export function Access({ box }: { box: Box }) {
             </div>
           </div>
           <div className="flex flex-none flex-wrap gap-1.5">
-            {webUrl ? (
-              <Button variant="outline" size="sm" href={webUrl} target="_blank" rel="noreferrer">
+            {webUrl && webHref ? (
+              <Button variant="outline" size="sm" href={webHref} target="_blank" rel="noreferrer">
                 <Icons.ext />
                 Open web
               </Button>

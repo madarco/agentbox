@@ -205,7 +205,19 @@ export const urlCommand = new Command('url')
             );
             await client.lifecycle(box.id, 'start');
           }
-          resolved = await client.webUrl(box.id);
+          try {
+            resolved = await client.webUrl(box.id);
+          } catch {
+            // An OLDER hub has no `/web` route, and its 404 is not JSON — which
+            // would abort a command that used to work for every docker box.
+            // Fall back to what that hub CAN answer: the recorded URL, and
+            // failing that the provider path below. Deliberately swallows more
+            // than a 404 (a box that stopped between the two calls, say): every
+            // fallback still produces a URL, and none of them is worse than
+            // refusing to open anything.
+            const b = await client.getBox(box.id).catch(() => null);
+            resolved = b?.webUrl ? { url: b.webUrl, signInUrl: null } : null;
+          }
         });
         if (r === undefined) return; // hub error; withOwningHub set the exit code
         if (resolved) {
