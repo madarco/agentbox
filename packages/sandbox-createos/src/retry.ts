@@ -60,7 +60,7 @@ export function isRetriable(err: unknown, allowAmbiguous: boolean): boolean {
 
 export async function withCreateOsRetry<T>(
   opts: WithRetryOptions,
-  fn: () => Promise<T>,
+  fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const backoff = opts.backoffMs ?? DEFAULT_BACKOFF;
   const maxAttempts = backoff.length + 1;
@@ -68,8 +68,14 @@ export async function withCreateOsRetry<T>(
   const log = opts.onRetry ?? defaultRetryLog;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // One controller per attempt: on timeout we abort the in-flight HTTP
+    // request before starting the next attempt, so retries can't stack up
+    // concurrent requests against the same sandbox. Aborting the socket does
+    // NOT prove the guest command stopped — that's why exec no longer retries
+    // ambiguous failures by default (see backend.ts `exec`).
+    const controller = new AbortController();
     try {
-      return await raceTimeout(fn(), timeoutMs, opts.method);
+      return await raceTimeout(fn(controller.signal), timeoutMs, opts.method, controller);
     } catch (err) {
       const last = attempt === maxAttempts;
       if (last || !isRetriable(err, opts.retryOnAmbiguous)) throw err;
@@ -91,17 +97,28 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function raceTimeout<T>(p: Promise<T>, ms: number, method: string): Promise<T> {
+async function raceTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  method: string,
+  controller: AbortController,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new AttemptTimeoutError(method, ms)), ms);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new AttemptTimeoutError(method, ms));
+        }, ms);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    // The losing branch of the race is still pending; without this its
+    // rejection surfaces as an unhandled rejection once the abort lands.
+    p.catch(() => {});
   }
 }
 

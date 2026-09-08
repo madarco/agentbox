@@ -19,6 +19,16 @@ import { withCreateOsRetry } from './retry.js';
 export const CREATEOS_DEFAULT_BOX_IMAGE_REF = 'agentbox/box:dev';
 export const CREATEOS_DEFAULT_RESOURCES = { cpu: 2, memory: 2, disk: 20 } as const;
 
+/**
+ * Ownership marker stamped into the sandbox's persistent env map at create
+ * time. The CreateOS API returns env KEYS (never values) on the sandbox view,
+ * which makes this the one create-time field we can both set and read back —
+ * CreateOS has no tags/labels/metadata primitive the way vercel and e2b do.
+ * `list()` filters on it so `agentbox prune` can never offer a sandbox the user
+ * created through CreateOS itself as a deletion candidate.
+ */
+const OWNED_ENV_KEY = 'AGENTBOX_OWNED';
+
 const DEFAULT_SHAPE = 's-2vcpu-2gb';
 const DEFAULT_ROOTFS = 'devbox:1';
 const DEFAULT_DISK_MIB = 20_480;
@@ -41,6 +51,12 @@ function mapState(status: string | undefined): CloudState {
       return 'running';
     case 'paused':
     case 'pausing':
+      return 'paused';
+    // `error` is CreateOS's "resume exhausted RESUME_MAX_HOSTS; user can retry"
+    // state, not a tombstone: the service accepts resume from it and clears the
+    // failed flag (fc pause_handlers.go). Mapping it to `missing` presented a
+    // recoverable box as deleted. `failed`/`destroyed` are the terminal ones.
+    case 'error':
       return 'paused';
     case 'destroyed':
     case 'destroying':
@@ -71,8 +87,16 @@ function rootfsFor(req: CloudProvisionRequest): string {
   return image;
 }
 
+/**
+ * `--size 4-8-50` must win over the provider default. `req.resources` is NOT a
+ * user signal here — the shared cloud scaffold always fills it from
+ * `defaultResources`, so it is never undefined and reading it first pinned
+ * every box to the default 20 GiB. The parsed `--size` disk is the only
+ * explicit request, so it takes precedence; `req.resources.disk` stays the
+ * fallback for a bare shape name (`--size s-4vcpu-8gb`), which parses no disk.
+ */
 function diskMibFor(req: CloudProvisionRequest, parsedDiskGb: number | undefined): number {
-  const requested = req.resources?.disk ?? parsedDiskGb;
+  const requested = parsedDiskGb ?? req.resources?.disk;
   if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
     return Math.round(requested * 1024);
   }
@@ -94,11 +118,17 @@ function execScript(cmd: string, opts?: CloudExecOptions): string {
   const parts: string[] = ['set -e'];
   if (opts?.cwd) parts.push(`cd ${quoteShellArgv([opts.cwd])}`);
   const env = envAssignments(opts?.env);
-  if (env) parts.push(`export ${env}`);
   const user = opts?.user ?? 'vscode';
   if (user !== 'root') {
-    parts.push(`exec sudo -n -u ${quoteShellArgv([user])} bash -lc ${shellSingle(cmd)}`);
+    // The env goes INSIDE the target-user shell, not the outer root one. sudo's
+    // default `env_reset` drops arbitrary exported values, so exporting first
+    // and dropping privileges after silently lost every per-command override.
+    // Prefixing the assignments onto the inner `bash -lc` keeps them without
+    // needing `-E` or an env_keep sudoers rule.
+    const inner = env ? `export ${env}\n${cmd}` : cmd;
+    parts.push(`exec sudo -n -u ${quoteShellArgv([user])} bash -lc ${shellSingle(inner)}`);
   } else {
+    if (env) parts.push(`export ${env}`);
     parts.push(cmd);
   }
   return parts.join('\n');
@@ -114,7 +144,7 @@ async function waitForState(
   for (;;) {
     const view = await withCreateOsRetry(
       { method: 'get', retryOnAmbiguous: true, attemptTimeoutMs: 15_000 },
-      () => client.getSandbox(sandboxId),
+      (signal) => client.getSandbox(sandboxId, signal),
     );
     if (target === 'running' && view?.status === 'running') return;
     if (target === 'paused' && view?.status === 'paused') return;
@@ -127,27 +157,30 @@ async function waitForState(
   }
 }
 
-async function installRuntime(h: CloudHandle, log: (line: string) => void): Promise<void> {
+async function installRuntime(
+  h: CloudHandle,
+  assets: ReturnType<typeof resolveRuntimeAssets>,
+  log: (line: string) => void,
+): Promise<void> {
   const client = makeCreateOsClient();
-  const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
   for (const asset of assets) {
     const remote = `/tmp/${asset.remoteBasename}`;
     log(`createos: upload ${asset.name} -> ${remote}`);
     await withCreateOsRetry(
       { method: 'uploadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
-      () => client.uploadFile(h.sandboxId, asset.localPath, remote),
+      (signal) => client.uploadFile(h.sandboxId, asset.localPath, remote, signal),
     );
     const mode = asset.remoteMode;
     if (mode !== undefined) {
       await withCreateOsRetry(
         { method: 'chmod', retryOnAmbiguous: true, attemptTimeoutMs: 30_000 },
-        () => client.exec(h.sandboxId, 'chmod', [mode.toString(8), remote]),
+        (signal) => client.exec(h.sandboxId, 'chmod', [mode.toString(8), remote], signal),
       );
     }
   }
   const res = await withCreateOsRetry(
     { method: 'installRuntime', retryOnAmbiguous: false, attemptTimeoutMs: 1_800_000, backoffMs: [] },
-    () => client.exec(h.sandboxId, 'bash', ['/tmp/agentbox-install.sh']),
+    (signal) => client.exec(h.sandboxId, 'bash', ['/tmp/agentbox-install.sh'], signal),
   );
   if ((res.result?.exit_code ?? 0) !== 0) {
     const stdout = res.result?.stdout?.trim();
@@ -191,21 +224,28 @@ export const createosBackend = {
     if (sandboxName !== req.name) {
       log(`createos: provider name ${sandboxName} (shortened from ${req.name})`);
     }
+    // Resolve local runtime assets BEFORE allocating compute: a missing staged
+    // asset is the most common post-create failure and there is no reason to
+    // pay for a VM to discover it.
+    const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
     const created = await withCreateOsRetry(
       { method: 'provision', retryOnAmbiguous: false, attemptTimeoutMs: 120_000, backoffMs: [] },
-      () =>
-        client.createSandbox({
-          name: sandboxName,
-          shape: parsed.shape,
-          rootfs: rootfsFor(req),
-          disk_mib: diskMibFor(req, parsed.resources?.disk),
-          ingress_enabled: true,
-          auto_pause_after_seconds: req.timeoutMs
-            ? Math.max(60, Math.round(req.timeoutMs / 1000))
-            : undefined,
-          envs: req.env,
-          egress: ['*'],
-        }),
+      (signal) =>
+        client.createSandbox(
+          {
+            name: sandboxName,
+            shape: parsed.shape,
+            rootfs: rootfsFor(req),
+            disk_mib: diskMibFor(req, parsed.resources?.disk),
+            ingress_enabled: true,
+            auto_pause_after_seconds: req.timeoutMs
+              ? Math.max(60, Math.round(req.timeoutMs / 1000))
+              : undefined,
+            envs: { ...req.env, [OWNED_ENV_KEY]: '1' },
+            egress: ['*'],
+          },
+          signal,
+        ),
     );
     const handle: CloudHandle = {
       sandboxId: created.id,
@@ -215,8 +255,30 @@ export const createosBackend = {
         disk: created.disk_mib ? created.disk_mib / 1024 : parsed.resources?.disk,
       },
     };
-    await waitForState(handle.sandboxId, 'running', 120_000);
-    await installRuntime(handle, log);
+    // Everything past this point owns a billable sandbox the shared cloud
+    // scaffold cannot see yet — it only receives a handle once `provision`
+    // RETURNS, so its own cleanup covers the later bootstrap phase, not this
+    // one. A readiness timeout or a failed install would otherwise leak the VM.
+    try {
+      await waitForState(handle.sandboxId, 'running', 120_000);
+      await installRuntime(handle, assets, log);
+    } catch (err) {
+      try {
+        await withCreateOsRetry(
+          { method: 'destroy', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
+          (signal) => makeCreateOsClient().destroySandbox(handle.sandboxId, signal),
+        );
+      } catch (cleanupErr) {
+        // Surface the id rather than swallowing it: the user now has to delete
+        // this by hand, and losing the id is the worst outcome available here.
+        log(
+          `createos: WARNING could not clean up sandbox ${handle.sandboxId} after a failed create ` +
+            `(${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}). ` +
+            `Delete it manually: createos sandbox delete ${handle.sandboxId}`,
+        );
+      }
+      throw err;
+    }
     log(`createos: created sandbox ${handle.sandboxId}`);
     return handle;
   },
@@ -224,7 +286,7 @@ export const createosBackend = {
   async get(sandboxId: string): Promise<CloudHandle | null> {
     const view = await withCreateOsRetry(
       { method: 'get', retryOnAmbiguous: true },
-      () => makeCreateOsClient().getSandbox(sandboxId),
+      (signal) => makeCreateOsClient().getSandbox(sandboxId, signal),
     );
     return view ? { sandboxId } : null;
   },
@@ -232,10 +294,15 @@ export const createosBackend = {
   async list(): Promise<CloudSandboxSummary[]> {
     const items = await withCreateOsRetry(
       { method: 'list', retryOnAmbiguous: true },
-      () => makeCreateOsClient().listSandboxes(),
+      (signal) => makeCreateOsClient().listSandboxes(signal),
     );
     return items
-      .filter((s) => s.name?.startsWith('agentbox-') || s.name !== undefined)
+      // Ownership, not "has a name". The old `|| s.name !== undefined` made the
+      // prefix test dead code and admitted EVERY named sandbox, so `agentbox
+      // prune --provider createos -y` offered the user's own unrelated CreateOS
+      // sandboxes as deletion candidates. Fails closed: a box created before
+      // the marker existed is simply never pruned.
+      .filter((s) => s.envs?.includes(OWNED_ENV_KEY))
       .filter((s) => mapState(s.status) !== 'missing')
       .map((s) => ({
         sandboxId: s.id,
@@ -257,7 +324,7 @@ export const createosBackend = {
     try {
       await withCreateOsRetry(
         { method: 'pause', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
-        () => makeCreateOsClient().pauseSandbox(h.sandboxId),
+        (signal) => makeCreateOsClient().pauseSandbox(h.sandboxId, signal),
       );
     } catch (err) {
       if (!isLifecycleInProgress(err, ['sandbox is pausing', 'sandbox is paused'])) throw err;
@@ -269,7 +336,7 @@ export const createosBackend = {
     try {
       await withCreateOsRetry(
         { method: 'resume', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
-        () => makeCreateOsClient().resumeSandbox(h.sandboxId),
+        (signal) => makeCreateOsClient().resumeSandbox(h.sandboxId, signal),
       );
     } catch (err) {
       if (!isLifecycleInProgress(err, ['sandbox is resuming', 'sandbox is running'])) throw err;
@@ -280,28 +347,34 @@ export const createosBackend = {
   async destroy(h: CloudHandle): Promise<void> {
     await withCreateOsRetry(
       { method: 'destroy', retryOnAmbiguous: true, attemptTimeoutMs: 120_000 },
-      () => makeCreateOsClient().destroySandbox(h.sandboxId),
+      (signal) => makeCreateOsClient().destroySandbox(h.sandboxId, signal),
     );
   },
 
   async state(h: CloudHandle): Promise<CloudState> {
     const view = await withCreateOsRetry(
       { method: 'state', retryOnAmbiguous: true },
-      () => makeCreateOsClient().getSandbox(h.sandboxId),
+      (signal) => makeCreateOsClient().getSandbox(h.sandboxId, signal),
     );
     return mapState(view?.status);
   },
 
   async exec(h: CloudHandle, cmd: string, opts?: CloudExecOptions): Promise<CloudExecResult> {
     const script = execScript(cmd, opts);
+    // Never retry an ambiguous exec. A per-attempt timeout means "no response
+    // yet", not "did not run": the guest command may still be live, so a second
+    // attempt could replay a file mutation, a migration, or a process launch.
+    // We abort the socket on timeout (see retry.ts) but cancelling HTTP proves
+    // nothing about the guest — only a managed process id could, and CreateOS's
+    // buffered /exec doesn't return one. Explicit 429s are still retried.
     const res = await withCreateOsRetry(
       {
         method: 'exec',
-        retryOnAmbiguous: opts?.noRetry ? false : true,
+        retryOnAmbiguous: false,
         attemptTimeoutMs: opts?.attemptTimeoutMs ?? 300_000,
         backoffMs: opts?.noRetry ? [] : undefined,
       },
-      () => makeCreateOsClient().exec(h.sandboxId, 'bash', ['-lc', script]),
+      (signal) => makeCreateOsClient().exec(h.sandboxId, 'bash', ['-lc', script], signal),
     );
     const result = res.result;
     return {
@@ -314,7 +387,7 @@ export const createosBackend = {
   async uploadFile(h: CloudHandle, localPath: string, remotePath: string): Promise<void> {
     await withCreateOsRetry(
       { method: 'uploadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
-      () => makeCreateOsClient().uploadFile(h.sandboxId, localPath, remotePath),
+      (signal) => makeCreateOsClient().uploadFile(h.sandboxId, localPath, remotePath, signal),
     );
     await this.exec(h, `chown vscode:vscode ${quoteShellArgv([remotePath])}`, { user: 'root' }).catch(() => {});
   },
@@ -322,7 +395,7 @@ export const createosBackend = {
   async downloadFile(h: CloudHandle, remotePath: string, localPath: string): Promise<void> {
     await withCreateOsRetry(
       { method: 'downloadFile', retryOnAmbiguous: true, attemptTimeoutMs: 300_000 },
-      () => makeCreateOsClient().downloadFile(h.sandboxId, remotePath, localPath),
+      (signal) => makeCreateOsClient().downloadFile(h.sandboxId, remotePath, localPath, signal),
     );
   },
 
@@ -338,7 +411,7 @@ export const createosBackend = {
   async previewUrl(h: CloudHandle, port: number): Promise<CloudPreviewUrl> {
     const view = await withCreateOsRetry(
       { method: 'previewUrl', retryOnAmbiguous: true },
-      () => makeCreateOsClient().getSandbox(h.sandboxId),
+      (signal) => makeCreateOsClient().getSandbox(h.sandboxId, signal),
     );
     return { url: ingressUrl(view, port, h.sandboxId) };
   },
@@ -351,7 +424,8 @@ export const createosBackend = {
     const seconds = Math.max(60, Math.round((targetDeadlineEpochMs - Date.now()) / 1000));
     await withCreateOsRetry(
       { method: 'renewTimeout', retryOnAmbiguous: true },
-      () => makeCreateOsClient().patchSandbox(h.sandboxId, { auto_pause_after_seconds: seconds }),
+      (signal) =>
+        makeCreateOsClient().patchSandbox(h.sandboxId, { auto_pause_after_seconds: seconds }, signal),
     );
   },
 } satisfies Parameters<typeof createCloudProvider>[0];

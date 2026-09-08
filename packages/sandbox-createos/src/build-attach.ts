@@ -15,6 +15,7 @@ import {
   type BuildAttachOptions,
 } from '@agentbox/core';
 import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
+import { resolveCreateOsSandboxEndpoint } from './client.js';
 import { detectCreateosCli } from './createos-cli.js';
 import { readCreateOsCredStatus } from './credentials.js';
 
@@ -79,7 +80,16 @@ export async function buildCreateosAttach(
       inner,
       detached: opts?.detached,
     }),
-    env: { CREATEOS_API_KEY: cred.token },
+    // Forward the endpoint we actually provisioned against, not just the key.
+    // The CLI defaults to the public sandbox API, so against a staging/private
+    // control plane `create` succeeded while `attach` looked for the resulting
+    // sandbox id somewhere else entirely. `CREATEOS_SANDBOX_URL` is the CLI's
+    // own name for this (`--sandbox-api-url`) — see client.ts on why it is NOT
+    // `CREATEOS_API_URL`.
+    env: {
+      CREATEOS_API_KEY: cred.token,
+      CREATEOS_SANDBOX_URL: resolveCreateOsSandboxEndpoint(),
+    },
   };
 }
 

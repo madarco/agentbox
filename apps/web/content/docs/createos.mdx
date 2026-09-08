@@ -22,6 +22,8 @@ agentbox prepare --provider createos
 
 Paste a CreateOS API key when prompted. AgentBox stores it as `CREATEOS_API_KEY` in `~/.agentbox/secrets.env`. For scripted setup, set `CREATEOS_API_KEY` directly.
 
+To target a private or staging control plane, set `CREATEOS_SANDBOX_URL` (default `https://api.sb.createos.sh`). This is the same variable the `createos` CLI uses for its `--sandbox-api-url` flag, and AgentBox forwards it to the CLI when attaching, so `create` and `attach` always agree on the endpoint. Note that `CREATEOS_API_URL` is a **different** endpoint — the CreateOS project/plan API — and AgentBox does not read it.
+
 `prepare --provider createos` validates credentials, confirms the `createos` CLI is installed, and checks that the AgentBox runtime assets are present. Unlike E2B, CreateOS does not currently bake AgentBox's local runtime files into a reusable base template; each new sandbox installs the runtime into the selected rootfs during provision.
 
 In Hub Settings, saving CreateOS credentials is sufficient: the provider becomes **ready** immediately and has no **Bake image** action. The CLI `prepare` command remains available as an explicit readiness check.
