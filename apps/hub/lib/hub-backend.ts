@@ -341,12 +341,6 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
-/** True when the box runs an agent that IS a daemon with a UI of its own. */
-function isServiceAgentBox(b: ListedBox): boolean {
-  const spec = findAgentSpec(b.lastAgent ?? b.agents?.[0] ?? '');
-  return spec?.caps.surface === 'service';
-}
-
 function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
@@ -379,13 +373,14 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (firstSessionTitle(b) ?? 'Agent reported an error') : null,
+    // A RECORDED value, not the live URL: where the URL is an SSH forward
+    // (hetzner/DO), the port belongs to the forward that existed when this was
+    // written, and re-establishing the session mints a different one — measured
+    // drifting across hub restarts while the list kept the old port. Good enough
+    // to render a link and to gate "has a web service"; anything that OPENS it
+    // should ask `GET /boxes/:id/web`, which resolves live — the same rule that
+    // makes `vncUrl` null for signed-URL clouds.
     webUrl: eps.find((e) => e.kind === 'web')?.url ?? null,
-    // Whether this box's web URL leads to an agent's OWN UI, which may want a
-    // token the box generated for itself — the signal a client needs to know it
-    // should ask `GET /boxes/:id/web` for a sign-in link instead of opening
-    // `webUrl` straight. A spec lookup, so it costs nothing per box; the token
-    // itself is never on this payload.
-    serviceAgent: isServiceAgentBox(b),
     vncUrl: eps.find((e) => e.kind === 'vnc')?.url ?? null,
     // Raw host-side fields for native clients (tray) — see Box for semantics.
     state: b.state,

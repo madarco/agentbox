@@ -24,10 +24,11 @@ CLI, not the raw commits.
   in.** The gateway reads its token from the URL fragment, so the URL and the
   token on separate lines meant assembling `<url>/#token=…` by hand. The bare URL
   stays on line one for `| head -1`.
-- **The same link is available to the hub, the web UI and the tray** through
-  `GET /api/v1/boxes/{id}/web` (`{ url, signInUrl }`), so **Open Web** on a bot
-  lands in its dashboard rather than on a token prompt. Minted at click time; the
-  box list carries only a `serviceAgent` flag, never the token.
+- **`GET /api/v1/boxes/{id}/web` resolves a box's web URL at click time**
+  (`{ url, signInUrl }`), so the hub UI and the tray open a bot's dashboard
+  signed in rather than landing on a token prompt — and open the URL the box
+  actually serves, rather than the one recorded when it started. Same rule the
+  desktop already follows via `GET …/vnc`.
 
 - **Pick a box size when you create one, in the web hub and the macOS tray.** The
   choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`

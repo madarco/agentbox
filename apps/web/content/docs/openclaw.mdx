@@ -76,7 +76,7 @@ The create form takes the box flags you already know — `-w`, `-n`, `-p/--provi
 
 The token rides the fragment rather than a query string because a browser never sends a fragment to the server — it stays out of access logs and `Referer` headers.
 
-The web hub and the macOS tray get the same link without the CLI: **Open Web** on a bot calls `GET /api/v1/boxes/{id}/web`, which answers `{ url, signInUrl }`. It is resolved when you click rather than carried on the box list, because reading the token is an exec into the box — and, on a box reached over an SSH forward, that also re-resolves a port the list may have cached.
+The web hub and the macOS tray get the same link without the CLI: **Open Web** on a bot calls `GET /api/v1/boxes/{id}/web`, which answers `{ url, signInUrl }`. It is resolved when you click rather than carried on the box list, because reading the token is an exec into the box — and it re-resolves the URL at the same time, which matters on a box reached over an SSH forward, where the listed port can differ from the live one.
 
 ## What happens on create
 

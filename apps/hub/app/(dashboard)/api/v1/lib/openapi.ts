@@ -346,9 +346,9 @@ export function buildOpenApi(): Record<string, unknown> {
       '/boxes/{id}/web': {
         get: {
           tags: ['Boxes'],
-          summary: "Resolve the box's web URL, and a sign-in link for a service agent",
+          summary: "Resolve a box's web URL at click time, with a sign-in link when one applies",
           description:
-            "The box's web URL plus, for a SERVICE agent (openclaw), a link that opens the agent's own UI already signed in. Such a daemon generates its auth token inside the box and its UI reads that token from the URL FRAGMENT, so `signInUrl` is `<url>/#token=…`; it is null when the agent declares no such field or the daemon has not written one yet, and the caller opens `url` instead (the UI then asks for the token). Resolved at CLICK TIME rather than carried on the Box payload for two reasons: reading the token is an exec into the box, and it is a live credential. The list payload's `serviceAgent: true` is how a client knows to call this. Read-only: refused with 409 when the box is not running.",
+            "The live web URL for the box, plus — for a SERVICE agent (openclaw) — a link that opens the agent's own UI already signed in. Call this before opening a box's web UI instead of using the Box payload's `webUrl`: that field is a recorded value, and where the URL is an SSH forward (hetzner/DO) the live port differs once the session has been re-established — the same class of reason `vncUrl` is null for signed-URL clouds. `signInUrl` is `<url>/#token=…` (the daemon generates its token inside the box and its UI reads it from the URL FRAGMENT), and null when the agent declares no such field or has not written one yet — open `url` then, and the UI asks for the token. Read-only: refused with 409 when the box is not running.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': {
