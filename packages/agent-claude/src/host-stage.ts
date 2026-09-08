@@ -24,6 +24,7 @@ import {
   mkStageDir,
   pathExists,
   resolveAgentSpec,
+  STAGE_NO_SPECIALS,
   STAGE_WRITABLE_CHMOD,
   stageSingleFileTarball,
   tarballFromDir,
@@ -194,6 +195,7 @@ export async function stageClaudeStaticForUpload(
     await execa('rsync', [
       '-a',
       STAGE_WRITABLE_CHMOD,
+      STAGE_NO_SPECIALS,
       '--copy-unsafe-links',
       ...excludes,
       `${hostClaude}/`,

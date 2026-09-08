@@ -103,6 +103,16 @@ export async function mkStageDir(prefix: string): Promise<string> {
 // hit the read-only-source case in practice), so it's a safe no-op there.
 export const STAGE_WRITABLE_CHMOD = '--chmod=Du+rwx,Fu+rw';
 
+// `rsync -a` implies `-D` (devices + specials), so a unix socket in the source
+// tree — codex's `~/.codex/ipc/ipc.sock`, live whenever the desktop app has run
+// — makes rsync try to recreate it in the stage dir. On macOS that bind() fails
+// with EINVAL once the destination path exceeds sockaddr_un's 104-byte limit
+// (`/var/folders/.../agentbox-<agent>-static-stage-XXXXXX/ipc/.ipc.sock.XXXXXX`
+// clears it easily), aborting the whole stage with exit 23. A socket is dead
+// weight in a snapshot anyway — nothing in the box can connect to the host's
+// end — so skip specials and devices outright.
+export const STAGE_NO_SPECIALS = '--no-D';
+
 export function emptyResult(warnings: string[] = []): StageResult {
   return { tarballPath: null, cleanup: async () => {}, warnings };
 }
@@ -200,6 +210,7 @@ export async function stageAgentStaticForUpload(
       await execa('rsync', [
         '-a',
         STAGE_WRITABLE_CHMOD,
+        STAGE_NO_SPECIALS,
         '-L',
         ...broken.map((r) => `--exclude=/${r}`),
         ...(path.include ?? []).map((pat) => `--include=${pat}`),
@@ -240,6 +251,7 @@ export async function stageAgentsStaticForUpload(
     await execa('rsync', [
       '-a',
       STAGE_WRITABLE_CHMOD,
+      STAGE_NO_SPECIALS,
       '-L',
       ...broken.map((r) => `--exclude=/${r}`),
       `${hostAgents}/`,

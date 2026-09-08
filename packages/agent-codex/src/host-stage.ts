@@ -24,6 +24,7 @@ import {
   mkStageDir,
   pathExists,
   resolveAgentSpec,
+  STAGE_NO_SPECIALS,
   STAGE_WRITABLE_CHMOD,
   stageSingleFileTarball,
   tarballFromDir,
@@ -146,6 +147,7 @@ export async function stageCodexStaticForUpload(
     await execa('rsync', [
       '-a',
       STAGE_WRITABLE_CHMOD,
+      STAGE_NO_SPECIALS,
       '-L',
       ...codexBroken.map((r) => `--exclude=/${r}`),
       ...CODEX_STATIC_INCLUDES.map((p) => `--include=${p}`),

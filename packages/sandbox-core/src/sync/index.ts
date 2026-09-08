@@ -276,6 +276,7 @@ export {
   tarballFromDir,
   makeCleanup,
   stageSingleFileTarball,
+  STAGE_NO_SPECIALS,
   STAGE_WRITABLE_CHMOD,
   type AgentStaticStage,
   type StageResult,
