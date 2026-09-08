@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { BoxRecord, Provider } from '@agentbox/core';
-import { readServiceUrlFields, serviceSignInUrl } from '../src/sync/concerns/service-url.js';
+import {
+  readServiceUrlFields,
+  serviceAgentForBox,
+  serviceSignInUrl,
+} from '../src/sync/concerns/service-url.js';
 
 const box = { id: 'b1', name: 'ada' } as unknown as BoxRecord;
 
@@ -105,5 +109,27 @@ describe('the two halves together', () => {
     expect(serviceSignInUrl('http://127.0.0.1:49870', values)).toBe(
       'http://127.0.0.1:49870/#token=09c33b1dcf0bdcde',
     );
+  });
+});
+
+describe('serviceAgentForBox', () => {
+  it('finds the gateway even when another agent ran last', () => {
+    // `agentbox claude` in a bot's box moves `lastAgent` while the gateway keeps
+    // running. Reading only that field decides the box has no UI to sign in to,
+    // and the dashboard silently goes back to asking for a token.
+    expect(serviceAgentForBox({ lastAgent: 'claude', agents: ['openclaw'] })?.id).toBe('openclaw');
+  });
+
+  it('finds it from lastAgent alone', () => {
+    expect(serviceAgentForBox({ lastAgent: 'openclaw' })?.id).toBe('openclaw');
+  });
+
+  it('is undefined for a box that runs no service agent', () => {
+    expect(serviceAgentForBox({ lastAgent: 'claude', agents: ['codex'] })).toBeUndefined();
+    expect(serviceAgentForBox({})).toBeUndefined();
+  });
+
+  it('ignores an agent id nothing in the registry knows', () => {
+    expect(serviceAgentForBox({ lastAgent: 'ghost', agents: ['openclaw'] })?.id).toBe('openclaw');
   });
 });

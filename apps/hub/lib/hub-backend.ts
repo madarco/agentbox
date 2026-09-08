@@ -82,6 +82,7 @@ import {
   exportBoxWorkspace,
   findAgentSpec,
   readServiceUrlFields,
+  serviceAgentForBox,
   resolvePerBoxCarry,
   serviceSignInUrl,
   mutateState,
@@ -2700,7 +2701,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (!url) return { ok: false, error: `box ${rp.box.name} publishes no web URL` };
         // Only a service agent has a UI of its own to sign in to. Everything
         // else gets its plain URL back, which is what every client already had.
-        const spec = findAgentSpec(rp.box.lastAgent ?? rp.box.agents?.[0] ?? '');
+        // Scanned across the box's agents, not read off `lastAgent`: running
+        // `agentbox claude` in a bot's box moves that field while the gateway
+        // keeps running, and the dashboard would silently go back to prompting.
+        const spec = serviceAgentForBox(rp.box);
         const fields = spec?.service?.urlFields ?? [];
         if (fields.length === 0) return { ok: true, url, signInUrl: null };
         const values = await readServiceUrlFields(rp.provider, rp.box, fields);
@@ -3225,8 +3229,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // agent: an agentless copy of an openclaw workspace is not a second bot,
         // it is a directory. A TUI agent keeps the historical `agent: 'none'` —
         // there is no identity to reproduce, and `agentbox claude <box>` adds it.
-        const sourceSpec = findAgentSpec(rp.box.lastAgent ?? rp.box.agents?.[0] ?? '');
-        const agent = sourceSpec?.caps.surface === 'service' ? sourceSpec.id : undefined;
+        const sourceSpec = serviceAgentForBox(rp.box);
+        const agent = sourceSpec?.id;
 
         // Before the export, so a refusal leaves NOTHING behind: no directory,
         // no registered project, no box. The per-box secrets are what make the

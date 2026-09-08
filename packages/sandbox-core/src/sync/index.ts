@@ -184,6 +184,7 @@ export {
 } from './concerns/bot-backup.js';
 export {
   readServiceUrlFields,
+  serviceAgentForBox,
   serviceSignInUrl,
   type ServiceUrlFieldValue,
 } from './concerns/service-url.js';

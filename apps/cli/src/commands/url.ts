@@ -2,9 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
 import {
-  findAgentSpec,
   hostOpenCommand,
   readServiceUrlFields,
+  serviceAgentForBox,
   serviceSignInUrl,
 } from '@agentbox/sandbox-core';
 import {
@@ -152,8 +152,7 @@ function emitUrl(url: string, signInUrl: string | null, opts: UrlOptions): void 
  */
 async function signInUrlViaProvider(box: BoxRecord, url: string): Promise<string | null> {
   try {
-    const spec = findAgentSpec(box.lastAgent ?? box.agents?.[0] ?? '');
-    const fields = spec?.service?.urlFields ?? [];
+    const fields = serviceAgentForBox(box)?.service?.urlFields ?? [];
     if (fields.length === 0) return null;
     const provider = await providerForBox(box);
     return serviceSignInUrl(url, await readServiceUrlFields(provider, box, fields));
@@ -209,14 +208,12 @@ export const urlCommand = new Command('url')
             resolved = await client.webUrl(box.id);
           } catch {
             // An OLDER hub has no `/web` route, and its 404 is not JSON — which
-            // would abort a command that used to work for every docker box.
-            // Fall back to what that hub CAN answer: the recorded URL, and
-            // failing that the provider path below. Deliberately swallows more
-            // than a 404 (a box that stopped between the two calls, say): every
-            // fallback still produces a URL, and none of them is worse than
-            // refusing to open anything.
-            const b = await client.getBox(box.id).catch(() => null);
-            resolved = b?.webUrl ? { url: b.webUrl, signInUrl: null } : null;
+            // would abort a command that used to work. Fall through to the
+            // PROVIDER path rather than to that hub's recorded `webUrl`: for a
+            // cloud box the recorded value is the non-signed preview URL, which
+            // a browser cannot open, while `resolveUrl` mints a signed one. That
+            // is what this command did for cloud boxes before the route existed.
+            resolved = null;
           }
         });
         if (r === undefined) return; // hub error; withOwningHub set the exit code

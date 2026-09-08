@@ -23,7 +23,28 @@
  * every poll of every box.
  */
 
-import type { AgentServiceUrlField, BoxRecord, Provider } from '@agentbox/core';
+import type { AgentServiceUrlField, AgentSyncSpec, BoxRecord, Provider } from '@agentbox/core';
+import { findAgentSpec } from '../registry.js';
+
+/**
+ * The SERVICE agent a box hosts, if any — the daemon whose UI has a token.
+ *
+ * Scans every agent the box knows about rather than trusting `lastAgent`, which
+ * is "whichever agent ran most recently" and is overwritten by a later
+ * `agentbox claude` in the same box. The gateway is still running there; reading
+ * only `lastAgent` would decide the box has no UI to sign in to and hand the
+ * user a token prompt.
+ */
+export function serviceAgentForBox(
+  box: Pick<BoxRecord, 'lastAgent' | 'agents'>,
+): AgentSyncSpec | undefined {
+  const ids = [box.lastAgent, ...(box.agents ?? [])].filter((v): v is string => !!v);
+  for (const id of ids) {
+    const spec = findAgentSpec(id);
+    if (spec?.caps.surface === 'service') return spec;
+  }
+  return undefined;
+}
 
 /** One resolved url field: what it is called, its value, and where it belongs. */
 export interface ServiceUrlFieldValue {
