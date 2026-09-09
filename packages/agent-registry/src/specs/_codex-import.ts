@@ -119,7 +119,16 @@ export function buildCodexImportScript(o: CodexImportOptions): string {
   ].join('\n');
 }
 
-/** Where a consumer keeps the hash of the seed it last imported. */
-export function codexImportMarker(agentBoxDir: string): string {
-  return `${agentBoxDir}/.agentbox-model-auth.sha256`;
+/**
+ * Where a consumer keeps the hash of the seed it last imported.
+ *
+ * PER BOX (`/run/agentbox` is a bind to `~/.agentbox/boxes/<box>/run`), not in
+ * the agent's own config dir. That dir is a SHARED docker volume —
+ * `agentbox-pi-config` is mounted at `~/.pi/agent` in every pi box — so a marker
+ * written there made the import run once per HOST: box #2 read box #1's hash,
+ * logged "already imported", and came up with whatever credential the shared
+ * volume happened to hold. Measured, not theorised.
+ */
+export function codexImportMarker(agentId: string): string {
+  return `/run/agentbox/model-auth-${agentId}.sha256`;
 }

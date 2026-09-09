@@ -143,7 +143,7 @@ export const opencodeSpec: AgentSyncSpec = {
         agentId: 'opencode',
         storePath: `${OPENCODE_BOX_DIR}/auth.json`,
         providerKey: 'openai',
-        marker: codexImportMarker(OPENCODE_BOX_DIR),
+        marker: codexImportMarker('opencode'),
       }),
     },
   },

@@ -126,6 +126,26 @@ describe('AgentSyncSpec.modelAuth', () => {
     }
   });
 
+  it('keeps a command ingest`s idempotence marker OUT of the agent`s shared volume', () => {
+    // `dockerVolume` is mounted at the agent's own dir in EVERY box of that
+    // agent, so a marker written there makes the import run once per HOST: the
+    // second box reads the first box's hash, says "already imported", and comes
+    // up with whatever that shared volume happens to hold. Measured, not
+    // theorised — it is why a pi box silently had the wrong credential.
+    for (const spec of declaring) {
+      const ingest = spec.modelAuth!.ingest;
+      if (ingest?.kind !== 'command') continue;
+      const marker = /marker=(\S+)/.exec(ingest.command)?.[1]?.replace(/'/g, '');
+      expect(marker, `${spec.id} ingest has no marker= line`).toBeDefined();
+      expect(marker, `${spec.id} marker must be per-box`).toMatch(/^\/run\/agentbox\//);
+      for (const p of spec.staticPaths) {
+        expect(marker!.startsWith(`${p.boxDir}/`), `${spec.id} marker is inside ${p.boxDir}`).toBe(
+          false,
+        );
+      }
+    }
+  });
+
   it('stays JSON-serializable, like the rest of the row', () => {
     for (const spec of declaring) {
       expect(JSON.parse(JSON.stringify(spec.modelAuth))).toEqual(spec.modelAuth);

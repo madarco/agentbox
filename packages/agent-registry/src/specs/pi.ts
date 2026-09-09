@@ -165,7 +165,7 @@ export const piSpec: AgentSyncSpec = {
         agentId: 'pi',
         storePath: `${PI_BOX_DIR}/auth.json`,
         providerKey: 'openai-codex',
-        marker: codexImportMarker(PI_BOX_DIR),
+        marker: codexImportMarker('pi'),
       }),
     },
   },
