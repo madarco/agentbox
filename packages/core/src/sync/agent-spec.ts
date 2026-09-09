@@ -715,6 +715,16 @@ export type AgentModelAuthIngest =
 export interface AgentModelAuthSpec {
   sources: readonly AgentModelAuthSource[];
   ingest?: AgentModelAuthIngest;
+  /**
+   * Ask at create time when nothing else decided.
+   *
+   * Opt-IN, and absent means the row is only ever driven by `--model-auth` or
+   * its `<agent>.modelAuth` key. A coding agent already has its own sign-in and
+   * usually its own login, so a question on every create would be noise for a
+   * capability most boxes do not want; a service agent has no TUI to log in
+   * through, which is why openclaw asks.
+   */
+  promptOnCreate?: boolean;
 }
 
 /**

@@ -510,9 +510,18 @@ name; the render lints for a secret-shaped literal and warns.
    key the host holds in its environment). `modelAuthSourceId` gives each a
    stable id — an agent id bare (`codex`), an env key prefixed
    (`env:XAI_API_KEY`) — and that id is what `--model-auth`, the generated
-   `<agent>.modelAuth` key and `BoxRecord.modelAuthSources` all carry. The
+   `<agent>.modelAuth` key and `BoxRecord.borrowedCredentials` all carry. The
    host's whole job is deciding WHICH may enter the box (`--model-auth`, the
    config key, or a prompt) and putting it there.
+
+   **Asking is opt-in per row** — `promptOnCreate`, set by openclaw alone. A
+   coding agent has its own sign-in, so a question on every create would be
+   noise for a capability most of its boxes do not want; a service agent has no
+   TUI to sign in through, which is why it is the one that asks. Not asking is
+   not the same as not supported: the flag and the config key drive every row.
+   The question itself is a LIST of the logins the host can lend plus "None",
+   with one pick — a yes/no only reads correctly while there is exactly one
+   thing to say yes to, and a box runs on one model provider.
 
    AgentBox never learns the consuming agent's auth format. **`ingest`** names
    how the row turns a seeded FILE into its own store, in one of two shapes:

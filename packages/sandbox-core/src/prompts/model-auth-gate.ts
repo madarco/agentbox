@@ -19,7 +19,6 @@
 
 import {
   decodeMultiAnswer,
-  encodeMultiAnswer,
   modelAuthSourceId,
   promptId,
   type AgentModelAuthSource,
@@ -66,11 +65,6 @@ export interface ModelAuthGateArgs {
   listAvailable?: (spec: ModelAuthGateArgs['spec']) => Promise<AvailableSource[]>;
 }
 
-/** The env-backed sources, which are granted unless the user says otherwise. */
-function defaultGranted(available: readonly AvailableSource[]): string[] {
-  return available.filter((s) => s.kind === 'env').map((s) => s.id);
-}
-
 function detailRow(s: AvailableSource): PromptCredentialRow {
   return {
     value: s.id,
@@ -99,82 +93,61 @@ function listSummary(available: readonly AvailableSource[]): string {
 /**
  * Build the question for a set of satisfiable sources.
  *
- * A single `agent` source keeps the plain yes/no it has always had — that is
- * openclaw's whole surface, and a checkbox list of one would be worse. Anything
- * else is a multi-select, because a box may genuinely use several providers.
+ * One shape: a LIST of the logins the host can actually lend, plus "None", and
+ * exactly one pick. Not a yes/no, because that only reads correctly while there
+ * is one source to say yes TO — and not a multi-select, because a box runs on
+ * one model provider. `multiple` stays in the schema for a prompt that genuinely
+ * wants several; this one does not.
+ *
+ * Declining is the default: copying a subscription login into a box should
+ * never be the answer you get by not reading.
  */
 export function buildModelAuthPrompt(agentId: string, available: AvailableSource[]): PromptRequest {
   const id = promptId(MODEL_AUTH_TOPIC, {
     agent: agentId,
     sources: available.map((s) => ({ id: s.id, hostPath: s.hostPath, envVar: s.envVar })),
   });
-  const hint =
-    `Use --model-auth <source...|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <sources>\` ` +
-    'to decide this once.';
-  const first = available[0];
-
-  if (available.length === 1 && first?.kind === 'agent') {
-    return {
-      id,
-      topic: MODEL_AUTH_TOPIC,
-      kind: 'select',
-      heading: 'Copy credentials',
-      title: 'Copy your model provider logins?',
-      choices: [
-        { value: first.id, label: 'Yes' },
-        { value: MODEL_AUTH_NONE, label: 'No' },
-      ],
-      // Declining stays the default: copying a subscription login into a box
-      // should never be the answer you get by not reading.
-      defaultValue: MODEL_AUTH_NONE,
-      detail: {
-        type: 'credential' as const,
-        summary: `${first.hostPath ?? ''} -> ${first.boxPath ?? ''}`,
-        agent: first.id,
-        label: first.label,
-        ...(first.caveat ? { caveat: first.caveat } : {}),
-        hostPath: first.hostPath ?? '',
-        boxPath: first.boxPath ?? '',
-        ...(first.bytes !== undefined ? { bytes: first.bytes } : {}),
-      },
-      fallback: { value: MODEL_AUTH_NONE, reason: 'not asked - the box starts without it' },
-      nonInteractiveHint: hint,
-    };
-  }
-
   const choices: PromptChoice[] = [
     ...available.map((s) => ({
       value: s.id,
       label: s.label,
       ...((s.caveat ?? s.provider) ? { hint: s.caveat ?? s.provider } : {}),
     })),
-    { value: MODEL_AUTH_NONE, label: 'None of these', exclusive: true },
+    { value: MODEL_AUTH_NONE, label: 'None' },
   ];
-  // Env keys already reach every box today; the grant makes that visible and
-  // revocable rather than silently removing it. A login FILE stays opt-in.
-  const granted = encodeMultiAnswer(defaultGranted(available));
+  const first = available[0];
   return {
     id,
     topic: MODEL_AUTH_TOPIC,
     kind: 'select',
-    multiple: true,
-    heading: 'Model provider logins',
-    title: 'Which of these should this box be able to use?',
+    heading: 'Model provider',
+    title: 'Which login should this box use as its model provider?',
     choices,
-    defaultValue: granted,
-    detail: {
-      type: 'credential-list' as const,
-      summary: listSummary(available),
-      rows: available.map(detailRow),
-    },
-    fallback: {
-      value: granted,
-      reason:
-        granted.length > 0
-          ? 'not asked - the box gets your provider API keys, as it does today'
-          : 'not asked - the box starts without one',
-    },
-    nonInteractiveHint: hint,
+    defaultValue: MODEL_AUTH_NONE,
+    // One `agent` source still gets the richer single-credential card, which
+    // every shipped client already draws properly. Several get the list, whose
+    // `summary` is what an older client falls back to.
+    detail:
+      available.length === 1 && first?.kind === 'agent'
+        ? {
+            type: 'credential' as const,
+            summary: `${first.hostPath ?? ''} -> ${first.boxPath ?? ''}`,
+            agent: first.id,
+            label: first.label,
+            ...(first.caveat ? { caveat: first.caveat } : {}),
+            hostPath: first.hostPath ?? '',
+            boxPath: first.boxPath ?? '',
+            ...(first.bytes !== undefined ? { bytes: first.bytes } : {}),
+          }
+        : {
+            type: 'credential-list' as const,
+            summary: listSummary(available),
+            rows: available.map(detailRow),
+          },
+    fallback: { value: MODEL_AUTH_NONE, reason: 'not asked - the box starts without it' },
+    nonInteractiveHint:
+      `Use --model-auth <source|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <source>\` ` +
+      'to decide this once.',
   };
 }
 
@@ -215,6 +188,11 @@ export async function resolveModelAuth(args: ModelAuthGateArgs): Promise<string[
   if (args.configuredExplicitly || configuredIds.length > 0) {
     return resolveModelAuthSources(spec, configuredIds);
   }
+
+  // Asking is opt-in per row. A coding agent has its own sign-in and usually
+  // its own login, so a question on every create would be noise; it is still
+  // fully drivable by `--model-auth` and the config key above.
+  if (!spec.modelAuth?.promptOnCreate) return [];
 
   const available = await (args.listAvailable ?? listAvailableSources)(spec);
   // Nothing to offer: the host holds none of the declared logins.

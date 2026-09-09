@@ -127,8 +127,9 @@ agentbox config set pi.modelAuth codex   # every box; `none` to stop being asked
 ```
 
 The host copies your Codex login into the box at Codex's own path, and the agent
-imports it into its own store before its session starts. On an interactive
-create with nothing configured, you are asked once.
+imports it into its own store before its session starts. Coding agents never
+prompt for this — they have their own sign-in, so it happens only when you ask
+for it with the flag or the config key.
 
 <Callout type="warn">
 A box **cannot refresh a borrowed login by itself** — the provider rejects a

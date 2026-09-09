@@ -105,15 +105,55 @@ describe('resolveModelAuth', () => {
   });
 });
 
+describe('who gets asked', () => {
+  it('never asks for an agent whose row does not opt in', async () => {
+    // pi and opencode CAN be seeded, but they have their own sign-in; a
+    // question on every create would be noise. Only openclaw opts in.
+    const pi = resolveAgentSpec('pi');
+    expect(pi.modelAuth?.sources.length, 'pi should still declare a source').toBeGreaterThan(0);
+    expect(
+      await resolveModelAuth(
+        args({
+          spec: pi,
+          listAvailable: async () => [CODEX_BORROW],
+          ask: () => {
+            throw new Error('must not ask an agent that did not opt in');
+          },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('still honours the flag and the config key for that agent', async () => {
+    // Not asking is not the same as not supported.
+    const pi = resolveAgentSpec('pi');
+    expect(await resolveModelAuth(args({ spec: pi, flags: ['codex'] }))).toEqual(['codex']);
+    expect(
+      await resolveModelAuth(
+        args({ spec: pi, settings: { modelAuth: 'codex' }, configuredExplicitly: true }),
+      ),
+    ).toEqual(['codex']);
+  });
+
+  it('asks for openclaw, which has no TUI to sign in through', async () => {
+    const seen: PromptRequest[] = [];
+    expect(await resolveModelAuth(args({ ask: picks('codex', seen) }))).toEqual(['codex']);
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe('buildModelAuthPrompt', () => {
-  it('is a plain yes/no for the single-borrow case, with the credential detail', () => {
+  it('lists the logins and asks for ONE, defaulting to none', () => {
     const req = buildModelAuthPrompt('openclaw', [CODEX_BORROW]);
-    // Yes carries the borrow; the card below already names which login it is,
-    // so repeating it on the button would only overflow the row.
+    // A list, not a yes/no: "yes" only reads correctly while there is exactly
+    // one thing to say it to. Not a multi-select either — a box runs on one
+    // model provider.
+    expect(req.multiple).toBeUndefined();
     expect(req.choices).toEqual([
-      { value: 'codex', label: 'Yes' },
-      { value: 'none', label: 'No' },
+      { value: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' },
+      { value: 'none', label: 'None' },
     ]);
+    // One agent source still gets the richer card every shipped client draws.
     expect(req.detail).toMatchObject({
       type: 'credential',
       agent: 'codex',
@@ -123,6 +163,7 @@ describe('buildModelAuthPrompt', () => {
     // Declining is safe, so an asker that cannot reach a human takes it.
     expect(req.required).toBeUndefined();
     expect(req.fallback.value).toBe('none');
+    expect(req.defaultValue).toBe('none');
   });
 
   it('is content-addressed: the same offer is the same id, a different one is not', () => {

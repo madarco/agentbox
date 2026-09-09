@@ -66,7 +66,7 @@ skipped by every box built from an existing image or snapshot.
 | 2 | ingest runner + the three launch seams | **done** |
 | 5a | `--model-auth <source...>` on every declaring agent; `enum-list` config | **done** |
 | 3 | ~~env sources~~ | **dropped** — copying an API key by hand is not a real burden, and it is not worth rewiring ~10 forwarding sites for |
-| 4 | multi-select through the front-ends | **CLI done** (schema + clack renderer, drive-verified); web/tray renderers not started |
+| 4 | multi-select through the front-ends | **schema + CLI renderer done and drive-verified, but UNREACHED** — the model-auth prompt is a one-pick list; web/tray renderers not started |
 | 5b | `--model-auth` on `agentbox create` (box-wide) | **not started** |
 
 Phases 1, 2 and 5a are live-verified: `agentbox pi --model-auth codex` seeds the
@@ -88,29 +88,34 @@ ONE source (`codex`), so the gate always takes the single-`agent`-source branch
 and asks a plain yes/no. The multi-select is reachable only once a row declares
 a second source.
 
-## Phase 4 — the remaining work
+## Phase 4 — done, and currently unreached
 
-The schema is in place: `multiple?: boolean` on a `select` (not a fourth
+The schema carries `multiple?: boolean` on a `select` (not a fourth
 `PromptKind`, so a client that has never heard of it renders a plain single
 select and posts one value — the n=1 encoding of the same answer),
-`exclusive?: boolean` on a choice, `credential-list` detail, and
-`encodeMultiAnswer`/`decodeMultiAnswer`.
+`exclusive?: boolean` on a choice, a `credential-list` detail, and
+`encodeMultiAnswer`/`decodeMultiAnswer`. `ask-clack.ts` renders it, verified
+through `pnpm drive`: ticking two options yields `codex,claude`, an empty
+submit yields `none`.
 
-`buildModelAuthPrompt` already emits a `multiple` select with a
-`credential-list` once a row has two or more satisfiable sources; with exactly
-one `agent` source it emits the yes/no it always did, so openclaw's surface is
-untouched and no renderer needs to change until Phase 3 lands.
+**Nothing emits it.** The model-auth question is deliberately a one-pick list —
+a box runs on one model provider — so `multiple` waits for a prompt that
+genuinely wants several. It is tested, so it will not rot.
 
-`ask-clack.ts` is DONE and drive-verified: ticking both options yields
-`codex,claude`, and submitting an empty selection yields `none`. Renderers still
-to do: `prompt-view.tsx` (checkboxes + confirm; and a `key` on `<PromptView>` in
-`create-box-modal.tsx`, or React reuses the instance across the queue and the
-second prompt opens with the first's boxes ticked), and the tray's
-`Prompt.swift` / `PromptCard.swift` / `CreateBoxPanel.swift`.
+If something does emit one, the web and tray renderers have the degradation the
+CLI just lost: they answer immediately on click, so the user could pick only
+one. Valid, but not what was asked.
 
-**The hard constraint**: the shipped tray decodes the existing `credential`
-detail with a plain `try` over non-optional `hostPath`/`boxPath`
-(`Prompt.swift:128`). An env-backed source has neither, so it must never be sent
-through that variant — a shipped tray would fail the whole preflight decode and
-show NO prompts. Hence `credential-list` is a new `type`, and the n=1 `agent`
+**The hard constraint if that day comes**: the shipped tray decodes the existing
+`credential` detail with a plain `try` over non-optional `hostPath`/`boxPath`
+(`Prompt.swift:128`). A source with neither must never be sent through that
+variant — a shipped tray would fail the whole preflight decode and show NO
+prompts. Hence `credential-list` is a separate `type`, and the single-`agent`
 case keeps emitting `credential`.
+
+## Who asks
+
+`promptOnCreate` on the row, opt-in, set by **openclaw alone**. A coding agent
+has its own sign-in; a service agent has no TUI to sign in through. `pi` and
+`opencode` keep the full capability — `--model-auth codex`, `pi.modelAuth`, the
+ingest, the fan-out — they simply never prompt.

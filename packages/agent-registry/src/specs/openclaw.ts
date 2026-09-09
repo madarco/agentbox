@@ -442,6 +442,9 @@ export const openclawSpec: AgentSyncSpec = {
       { kind: 'agent', agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' },
     ],
     ingest: { kind: 'serviceTask', task: 'openclaw-model-auth' },
+    // The one row that asks: a service agent has no TUI to sign in through, so
+    // an unanswered create leaves a daemon with no model provider at all.
+    promptOnCreate: true,
   },
   settings: [
     {
