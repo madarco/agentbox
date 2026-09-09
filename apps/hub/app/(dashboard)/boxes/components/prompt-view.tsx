@@ -35,8 +35,23 @@ export interface PromptFileRow {
   warn?: boolean;
 }
 
+/** One host login offered by a `credential-list` detail. */
+export interface PromptCredentialRow {
+  value: string;
+  source: 'file' | 'env';
+  label: string;
+  provider?: string;
+  caveat?: string;
+  hostPath?: string;
+  boxPath?: string;
+  bytes?: number;
+  envVar?: string;
+  warn?: boolean;
+}
+
 export type PromptDetail =
   | { type: 'file-table'; summary: string; rows: PromptFileRow[]; totalBytes: number }
+  | { type: 'credential-list'; summary: string; rows: PromptCredentialRow[] }
   | {
       type: 'credential';
       summary: string;
@@ -138,6 +153,35 @@ function DetailView({ detail }: { detail?: PromptDetail }) {
             ))}
           </tbody>
         </table>
+      </div>
+    );
+  }
+
+  if (detail.type === 'credential-list' && 'rows' in detail) {
+    return (
+      <div className="space-y-2">
+        {(detail.rows as PromptCredentialRow[]).map((r) => (
+          <div
+            key={r.value}
+            className={cn(
+              'space-y-1 rounded border border-border/60 bg-muted/20 p-3 text-xs',
+              r.warn && 'border-red-500/40 bg-red-500/10',
+            )}
+          >
+            <div className="font-medium">
+              {r.label}
+              {r.provider ? (
+                <span className="pl-2 font-normal text-muted-foreground">{r.provider}</span>
+              ) : null}
+            </div>
+            <div className="font-mono break-all text-muted-foreground">
+              {r.source === 'env' ? r.envVar : `${r.hostPath ?? ''} → ${r.boxPath ?? ''}`}
+            </div>
+            {/* Inline, not a tooltip: for a credential the caveat IS the
+                deciding information. */}
+            {r.caveat ? <div className="pt-1 text-amber-300">{r.caveat}</div> : null}
+          </div>
+        ))}
       </div>
     );
   }

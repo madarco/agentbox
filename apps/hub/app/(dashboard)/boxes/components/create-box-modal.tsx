@@ -591,7 +591,15 @@ function CreateBoxModal({
         ) : null}
         {prompts.length > 0 ? (
           // One question at a time: answering the last one starts the create.
-          <PromptView request={prompts[0]!} onAnswer={answerPrompt} disabled={pending} />
+          <PromptView
+            // Keyed so a queued second prompt gets a FRESH component
+            // rather than inheriting the first one's state; harmless
+            // while PromptView is stateless, required the moment it is not.
+            key={prompts[0]!.id}
+            request={prompts[0]!}
+            onAnswer={answerPrompt}
+            disabled={pending}
+          />
         ) : jobId ? (
           <JobLogStream
             jobId={jobId}

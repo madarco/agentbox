@@ -2134,14 +2134,24 @@ export function buildOpenApi(): Record<string, unknown> {
                   label: { type: 'string' },
                   hint: { type: 'string' },
                   danger: { type: 'boolean' },
+                  exclusive: {
+                    type: 'boolean',
+                    description:
+                      'In a `multiple` select, means "none of the others". Ignored otherwise.',
+                  },
                 },
               },
+            },
+            multiple: {
+              type: 'boolean',
+              description:
+                '`select` only: several choices may be picked, and the answer is their values joined by `,`. A client that does not know the flag renders a plain single select and posts ONE value, which is the n=1 encoding of the same answer.',
             },
             defaultValue: { type: 'string' },
             detail: {
               type: 'object',
               description:
-                'Typed extra content, discriminated by `type` (`file-table` | `credential` | `text`). Every variant carries `summary`, so an unknown one still renders.',
+                'Typed extra content, discriminated by `type` (`file-table` | `credential` | `credential-list` | `text`). Every variant carries `summary`, so an unknown one still renders.',
               required: ['type', 'summary'],
               properties: { type: { type: 'string' }, summary: { type: 'string' } },
               additionalProperties: true,
