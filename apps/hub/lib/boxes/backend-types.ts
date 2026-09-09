@@ -196,6 +196,26 @@ export interface CreateBoxOpts {
    * `required` prompt is refused rather than silently defaulted.
    */
   promptAnswers?: unknown[];
+  /**
+   * Put a backed-up bot's IDENTITY back after the box is up — set only by
+   * `POST /projects/:id/restore`, never by a plain create.
+   *
+   * The workspace half needs nothing here: the staged tree IS the new box's
+   * project, so it rides the ordinary create. The state half cannot, because it
+   * belongs inside the agent's own config dir and the daemon must already own
+   * that dir — so the worker waits for the service to come up ON ITS OWN, stops
+   * it, pushes `<bundleDir>/state` in, and restarts. That ordering is forced by
+   * openclaw's `run_once: marker` onboard task, whose marker lives on the box
+   * ROOTFS and therefore fires on every fresh box whatever the volume holds:
+   * letting it run and then replacing what it wrote is the only sequence that
+   * survives later boots.
+   */
+  restore?: {
+    /** Absolute bundle dir on the HUB's machine (`…/bots/<bot>/<stamp>`). */
+    bundleDir: string;
+    /** The agent whose state dir the bundle carries. */
+    agent: string;
+  };
 }
 
 // What a create would ask the user, before anything is provisioned. `prompts`
@@ -700,7 +720,86 @@ export interface HubBackend {
   // workspace bundle, and the manifest records `state: false` so a later restore
   // knows what it holds rather than discovering it halfway through.
   backupBox(id: string, input?: BackupBoxInput): Promise<BackupBoxResult>;
+  // Every bot a project holds a backup of, each with its stamps newest first and
+  // its manifest folded in — the restore picker's source. Read-only.
+  listBots(projectId: string): Promise<BotsResult>;
+  // Stage a restore: resolve the bundle, refuse when it would produce two live
+  // gateways on one identity, and copy the workspace half into the live dir the
+  // new box will run on. Returns what `create` needs; the STATE half rides
+  // `CreateBoxOpts.restore` and is applied by the worker once the box is up.
+  prepareRestore(projectId: string, input: RestoreProjectInput): Promise<PrepareRestoreResult>;
 }
+
+export type BotsResult =
+  | {
+      ok: true;
+      bots: Array<{
+        bot: string;
+        /** The stamp `latest` resolves to, when the link is there and intact. */
+        latest?: string;
+        backups: Array<{
+          stamp: string;
+          agent?: string;
+          /**
+           * False when the bundle carries only a workspace. A picker must show
+           * this: restoring one gives a working box with a FRESH identity, which
+           * is not what "restore this bot" promises.
+           */
+          state: boolean;
+          boxName?: string;
+          provider?: string;
+        }>;
+      }>;
+    }
+  | { ok: false; error: string };
+
+// Options for POST /projects/:id/restore.
+export interface RestoreProjectInput {
+  /** Which bot to bring back. Required. */
+  bot: string;
+  /** Which backup (default: whatever `latest` points at). */
+  stamp?: string;
+  /** Name for the new box (default: the bot name). */
+  name?: string;
+  /** Provider for the new box (default: the one the bundle was captured on). */
+  provider?: string;
+  /**
+   * Dir for the restored workspace ON THE HUB'S MACHINE (default
+   * `<project>/.agentbox/bots/<bot>/workspace`). MUST be absolute, for the same
+   * reason clone's `into` must be: this process's cwd is wherever the hub daemon
+   * was started, so a relative path has no defensible meaning.
+   */
+  into?: string;
+  /**
+   * Proceed even when the source box is still running, or the destination dir is
+   * not empty. Both defaults refuse — the first because two live gateways cannot
+   * share one identity, the second because a non-empty destination is usually an
+   * earlier restore still in use.
+   */
+  force?: boolean;
+  persistent?: boolean;
+}
+
+export type PrepareRestoreResult =
+  | {
+      ok: true;
+      /** Registered project id for the staged dir — feed straight to create. */
+      projectId: string;
+      /** Absolute host dir the bundle's workspace was staged into. */
+      workspace: string;
+      /** Absolute bundle dir, so the worker can find the state half. */
+      bundleDir: string;
+      name: string;
+      provider: string;
+      bot: string;
+      stamp: string;
+      /** Files staged from the bundle's workspace half. */
+      files: number;
+      /** The agent whose identity this restores. */
+      agent: string;
+      persistent?: boolean;
+    }
+  | { ok: false; error: string };
 
 // Options for POST /boxes/:id/backup.
 export interface BackupBoxInput {

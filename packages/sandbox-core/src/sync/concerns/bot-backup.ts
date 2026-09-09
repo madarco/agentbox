@@ -24,6 +24,7 @@
 import { execa } from 'execa';
 import {
   chmod,
+  cp,
   lstat,
   mkdir,
   readdir,
@@ -254,6 +255,71 @@ export async function listBackups(projectRoot: string, bot: string): Promise<str
   return dirs.sort().reverse();
 }
 
+/** One bot's backups, newest first, as a project page or a restore picker needs them. */
+export interface BotListing {
+  bot: string;
+  /** The stamp `latest` resolves to, when the link is there and intact. */
+  latest?: string;
+  /** Every backup this bot has, newest first, with its manifest folded in. */
+  backups: Array<{
+    stamp: string;
+    /** Absent when the bundle predates the field or its manifest is unreadable. */
+    agent?: AgentId;
+    /** False when the bundle carries only a workspace — no identity to restore. */
+    state: boolean;
+    boxName?: string;
+    provider?: string;
+  }>;
+}
+
+/**
+ * Every bot this project holds a backup of, alphabetically, each with its own
+ * backups newest first.
+ *
+ * The manifest is folded in here rather than left to the caller because the one
+ * fact a restore picker must show — does this bundle carry an identity, or only
+ * a workspace? — lives in it, and a UI that offered a `state: false` bundle as
+ * "restore this bot" would be lying about what it is about to do.
+ *
+ * A bot directory whose manifests are all unreadable still lists: the stamps are
+ * real directories, and hiding them would make a half-written backup invisible
+ * rather than visibly suspect.
+ */
+export async function listBots(projectRoot: string): Promise<BotListing[]> {
+  let names: Dirent[];
+  try {
+    names = await readdir(join(projectRoot, BOTS_DIR_REL), { withFileTypes: true });
+  } catch {
+    return []; // no bots dir is the normal case, not an error
+  }
+  const out: BotListing[] = [];
+  for (const e of names.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!e.isDirectory()) continue;
+    const stamps = await listBackups(projectRoot, e.name);
+    if (stamps.length === 0) continue;
+    const backups: BotListing['backups'] = [];
+    for (const stamp of stamps) {
+      const m = await readBackupManifest(botBackupDir(projectRoot, e.name, stamp)).catch(
+        () => null,
+      );
+      backups.push({
+        stamp,
+        ...(m?.agent ? { agent: m.agent } : {}),
+        state: m?.state === true,
+        ...(m?.boxName ? { boxName: m.boxName } : {}),
+        ...(m?.provider ? { provider: m.provider } : {}),
+      });
+    }
+    const latest = await readlink(join(botDir(projectRoot, e.name), 'latest')).catch(() => null);
+    out.push({
+      bot: e.name,
+      ...(latest && stamps.includes(latest) ? { latest } : {}),
+      backups,
+    });
+  }
+  return out;
+}
+
 /**
  * Keep the `keep` newest backups, remove the rest. Returns what was removed.
  *
@@ -402,6 +468,102 @@ async function backupStateDatabases(
 
 function quote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Why `--restore` cannot also take a box ref, or null when there is no ref.
+ *
+ * A ref means "use THIS box", and the service command is create-or-resume — so
+ * the two together resume a named box and then write a backup's identity over
+ * it. No reading of `agentbox <agent> foo --restore bar` is safe, so it is
+ * refused before anything is resolved rather than reinterpreted.
+ */
+export function boxRefWithRestoreRefusal(boxRef: string | undefined): string | null {
+  if (boxRef === undefined) return null;
+  return (
+    `--restore always creates a new box, so it cannot also take the box ref "${boxRef}" — ` +
+    'drop the ref, or name the new box with -n <name>'
+  );
+}
+
+/** Why a restore cannot proceed into a directory a box already runs on. */
+export function existingBoxRefusal(
+  existing: { name: string } | null | undefined,
+  dir: string,
+): string | null {
+  if (!existing) return null;
+  return `box ${existing.name} already runs on ${dir} — pass --into <dir> to restore alongside it`;
+}
+
+/**
+ * Why a restore cannot proceed while the box this bundle came from is still
+ * running, or null when it may.
+ *
+ * Two live gateways holding one identity is the multi-tenancy failure a per-box
+ * state dir exists to prevent, and a restore is the one operation that can
+ * produce it. The box being GONE is the normal case — that is what a restore is
+ * for — so an unknown or unprobeable record proceeds silently; only a record we
+ * can still see running stops it.
+ *
+ * Takes the live state rather than probing, so the CLI and the hub can each ask
+ * their own provider and share this one rule about the answer.
+ */
+export function sourceBoxRunningRefusal(
+  source: { name: string } | null | undefined,
+  liveState: string | null,
+  bot: string,
+): string | null {
+  if (!source || liveState !== 'running') return null;
+  return (
+    `box ${source.name} is still running and holds ${bot}'s identity — ` +
+    'two live gateways cannot share one. Stop or destroy it, or pass --force.'
+  );
+}
+
+/**
+ * Where a restored box's LIVE workspace goes: `<project>/.agentbox/bots/<bot>/workspace`.
+ *
+ * Deliberately not the bundle's own `workspace/`. That copy is immutable and
+ * `keep` may prune it, so a box writing into it would lose its workspace to a
+ * later backup.
+ */
+export function restoreWorkspaceDir(projectRoot: string, bot: string): string {
+  return join(botDir(projectRoot, bot), 'workspace');
+}
+
+/**
+ * Copy a bundle's workspace half to the live directory the restored box runs on.
+ *
+ * Refuses a non-empty destination unless `force`: the usual reason it is
+ * non-empty is an earlier restore of the same bot that is still in use, and
+ * overwriting it in place would take the running box's files out from under it.
+ */
+export async function stageRestoreWorkspace(args: {
+  bundle: BotBundle;
+  workspaceDir: string;
+  force?: boolean;
+}): Promise<{ files: number }> {
+  await mkdir(args.workspaceDir, { recursive: true });
+  const existing = await readdir(args.workspaceDir);
+  if (existing.length > 0 && !args.force) {
+    throw new Error(
+      `${args.workspaceDir} is not empty — pass a different destination, or force to overwrite it`,
+    );
+  }
+  await cp(args.bundle.workspaceDir, args.workspaceDir, { recursive: true, force: true });
+  return { files: (await readdir(args.workspaceDir)).length };
+}
+
+/**
+ * What a bundle can put back: both halves, or the workspace alone.
+ *
+ * A backup of a box with no agent — or one whose state capture failed — carries
+ * a `workspace/` and nothing else. Restoring it is still worth doing; claiming
+ * it brought an identity is not, and *failing* over it would throw away a
+ * perfectly good box the caller had already created.
+ */
+export function restoreScope(bundle: BotBundle): 'workspace' | 'workspace+state' {
+  return bundle.stateDir ? 'workspace+state' : 'workspace';
 }
 
 /** A bundle resolved on disk, ready to restore from. */

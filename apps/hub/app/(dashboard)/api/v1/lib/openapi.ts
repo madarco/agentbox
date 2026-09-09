@@ -935,6 +935,134 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/projects/{id}/bots': {
+        get: {
+          tags: ['Projects'],
+          summary: 'Bots this project holds a backup of',
+          description:
+            'Every bot under `<project>/.agentbox/bots/`, alphabetically, each with its backups newest first and its manifest folded in. The source for a restore picker. `latest` is the stamp the bot\'s `latest` link resolves to, omitted when the link is missing or dangling. `state: false` on a backup means it captured only a workspace — restoring one gives a working box with a FRESH identity, which is not what "restore this bot" promises, so a picker must surface it. Read-only, but host-backed: the bundles are on the hub\'s own disk.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: 'Bots and their backups',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      bots: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            bot: { type: 'string' },
+                            latest: { type: 'string' },
+                            backups: {
+                              type: 'array',
+                              items: {
+                                type: 'object',
+                                properties: {
+                                  stamp: { type: 'string' },
+                                  agent: { type: 'string' },
+                                  state: { type: 'boolean' },
+                                  boxName: { type: 'string' },
+                                  provider: { type: 'string' },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/projects/{id}/restore': {
+        post: {
+          tags: ['Projects'],
+          summary: 'Bring a backed-up bot back as a new box, identity included',
+          description:
+            "The inverse of `POST /boxes/{id}/backup`, and the opposite of `clone`: a clone deliberately starts a SECOND bot with a fresh identity, a restore puts the ORIGINAL one back — same gateway token, same channel pairings, same history, on whichever provider you point it at. Project-scoped because a bundle outlives the box it came from, which is what a backup is for; the project is what still exists. Two steps behind one call, exactly like `clone`: the bundle's workspace half is staged into `<project>/.agentbox/bots/{bot}/workspace` (or `into`) and registered as a project, then a normal create is enqueued in the ungated foreground lane; the STATE half is applied by the queue worker once the box's service has come up on its own. REFUSALS, both before anything is written: the source box still running (two live gateways cannot share one identity — the failure a per-box state dir exists to prevent), and a destination another box already runs on. `force` overrides both. A bundle with `state: false` is refused by name rather than half-delivered. Returns the create job — stream it through `GET /jobs/{jobId}/logs`. Backs `agentbox <service-agent> --restore <bot>`.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['bot'],
+                  properties: {
+                    bot: { type: 'string', description: 'Which bot to bring back.' },
+                    stamp: {
+                      type: 'string',
+                      description: "Which backup. Default: whatever the bot's `latest` points at.",
+                    },
+                    name: {
+                      type: 'string',
+                      description: 'Name for the new box (default: the bot name).',
+                    },
+                    provider: {
+                      type: 'string',
+                      description:
+                        'Provider for the new box (default: the one the bundle was captured on). A bundle is provider-neutral files, so this may differ.',
+                    },
+                    into: {
+                      type: 'string',
+                      description:
+                        "Where the restored workspace lives, on the HUB's machine. MUST be absolute — a working directory is client state that does not travel over an API.",
+                    },
+                    force: {
+                      type: 'boolean',
+                      description:
+                        'Proceed even when the source box is still running, or the destination is not empty.',
+                    },
+                    persistent: {
+                      type: 'boolean',
+                      description:
+                        'Always-on flag for the restored box. Defaults to true — a bot is an always-on box, and a restored one is the same bot.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Workspace staged; create job enqueued',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      jobId: { type: 'string' },
+                      name: { type: 'string' },
+                      workspace: { type: 'string' },
+                      provider: { type: 'string' },
+                      bot: { type: 'string' },
+                      stamp: { type: 'string' },
+                      agent: { type: 'string' },
+                      files: { type: 'number' },
+                      persistent: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/projects/{id}/branches': {
         get: {
           tags: ['Projects'],

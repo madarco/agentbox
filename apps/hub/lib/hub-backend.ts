@@ -87,10 +87,17 @@ import {
   ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
+  existingBoxRefusal,
   linkLatest,
+  listBots,
   prepareBackupDir,
   pruneBackups,
   resolveBackupTarget,
+  resolveBotBundle,
+  restoreScope,
+  restoreWorkspaceDir,
+  sourceBoxRunningRefusal,
+  stageRestoreWorkspace,
   writeBackupManifest,
   readServiceUrlFields,
   serviceAgentForBox,
@@ -167,6 +174,8 @@ import type {
   BoxWebUrlResult,
   PrepareCloneResult,
   BackupBoxResult,
+  BotsResult,
+  PrepareRestoreResult,
   ProjectResult,
   PruneView,
   RemoteDockerHostView,
@@ -2542,6 +2551,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             // resolution is ours.
             carry: gated.carry as QueueJobCreateOpts['carry'],
             borrowCredentials: gated.borrowCredentials,
+            // Restore only. Not reachable from the wire — `parseCreateBox` does
+            // not accept it — so a plain create cannot ask the worker to push an
+            // arbitrary directory into a box's agent config dir.
+            ...(o.restore ? { restore: o.restore } : {}),
           },
         });
         handle.pokeQueue();
@@ -3475,6 +3488,115 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           files: exported.files,
           pruned,
           wroteGitignore,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async listBots(projectId): Promise<BotsResult> {
+      const root = await resolveProjectPath(projectId);
+      if (!root) return { ok: false, error: `unknown project ${projectId}` };
+      try {
+        return { ok: true, bots: await listBots(root) };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async prepareRestore(projectId, input): Promise<PrepareRestoreResult> {
+      try {
+        const root = await resolveProjectPath(projectId);
+        if (!root) return { ok: false, error: `unknown project ${projectId}` };
+        const bot = input.bot.trim();
+        if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
+          return { ok: false, error: 'bot must be a single path segment' };
+        }
+        const bundle = await resolveBotBundle(root, bot, input.stamp?.trim() || undefined);
+        // A bundle with no state half restores a workspace and a FRESH identity,
+        // which is what clone already does and is not what this route promises.
+        // Refused by name rather than half-delivered.
+        if (restoreScope(bundle) === 'workspace') {
+          return {
+            ok: false,
+            error:
+              `${bundle.dir} captured no agent state — there is no identity in it to restore. ` +
+              `Use POST /boxes/{id}/clone to start a fresh bot from these files.`,
+          };
+        }
+        const declared = bundle.manifest.agent;
+        const agent = declared ? findAgentSpec(declared)?.id : undefined;
+        if (!agent) {
+          return {
+            ok: false,
+            error:
+              `${bundle.dir} holds ${declared ?? 'unknown'} state, and this hub has no such agent ` +
+              `installed — install it (\`agentbox agent add\`) and try again`,
+          };
+        }
+
+        // Absolute by contract, like clone's `into`: this process's cwd is
+        // wherever the hub daemon was started and has nothing to do with the
+        // caller's.
+        const rawInto = input.into?.trim();
+        if (rawInto !== undefined && rawInto.length > 0 && !path.isAbsolute(rawInto)) {
+          return { ok: false, error: `into must be an absolute path (got "${rawInto}")` };
+        }
+        const workspace = rawInto
+          ? path.normalize(rawInto)
+          : restoreWorkspaceDir(botWorkspaceRoot(root), bundle.bot);
+
+        // Both refusals run BEFORE the copy, so a rejected restore leaves the
+        // filesystem exactly as it found it — `force` must never be able to
+        // clobber a live box's workspace on its way to being refused.
+        const boxes = (await readState().catch(() => null))?.boxes ?? [];
+        const source = boxes.find((b) => b.id === bundle.manifest.boxId);
+        if (source && !input.force) {
+          let live: string | null = null;
+          try {
+            live = await (await providerForBox(source)).probeState(source);
+          } catch {
+            live = null; // unprobeable is the normal case for a box that is gone
+          }
+          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
+          if (refusal) return { ok: false, error: refusal };
+        }
+        const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
+        const occupied = existingBoxRefusal(occupant, workspace);
+        if (occupied) return { ok: false, error: occupied };
+
+        const staged = await stageRestoreWorkspace({
+          bundle,
+          workspaceDir: workspace,
+          ...(input.force ? { force: true } : {}),
+        });
+
+        const name = sanitizeMnemonic(input.name?.trim() || bundle.bot);
+        const provider = input.provider ?? bundle.manifest.provider ?? 'docker';
+        // A bot is an always-on box, and a restored one is the same bot. Refused
+        // here rather than in the worker so a capped provider fails the request
+        // instead of leaving a failed create job behind.
+        const persistent = input.persistent ?? true;
+        if (persistent) {
+          const refusal = persistentRefusal(provider);
+          if (refusal) return { ok: false, error: refusal };
+        }
+
+        // The staged dir is its own project, so the create below resolves it by
+        // id and never by a client-supplied path.
+        await registerProject(workspace);
+        if (!rawInto) await ensureBackupGitignored(botWorkspaceRoot(root)).catch(() => false);
+
+        return {
+          ok: true,
+          projectId: hashProjectPath(workspace),
+          workspace,
+          bundleDir: bundle.dir,
+          name,
+          provider,
+          bot: bundle.bot,
+          stamp: bundle.stamp,
+          files: staged.files,
+          agent,
+          persistent,
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
