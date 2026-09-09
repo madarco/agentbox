@@ -92,7 +92,7 @@ export default function ProjectDetailPage() {
       {/* Restore lives on the project, not on a box: a bundle outlives the box it
           came from, so there is usually no box left to click. Self-hides when the
           project holds no bots. */}
-      <ProjectBots projectId={id} />
+      <ProjectBots project={proj} />
 
       <SectionLabel>Boxes</SectionLabel>
       {boxes.length ? (

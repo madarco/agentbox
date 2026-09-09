@@ -48,17 +48,22 @@ actions, and hide git UI when there is no repo.
 | 2 | Hide git UI when `hasGit === false` (hub + tray) | **done** |
 | 3 | Hub API: `POST /boxes/{id}/backup` | **done** |
 | 4 | Hub API: `GET /projects/{id}/bots`, `POST /projects/{id}/restore` | **done** |
-| 5 | Hub web UI: bot panel (backup + clone), project bots card (restore) | **done** |
+| 5 | Hub web UI: bot panel (backup + clone), Start-from restore in the create modal | **done** |
 | 6 | Tray: backup action, clone in the detail window, restore in the New Box panel | **done** |
 
 ### What changed from the plan, and why
 
-- **The tray's restore is a "Start from" row in the New Box panel**, as planned.
+- **Restore is a "Start from" row in the create form, in BOTH GUIs**, as planned.
   It first shipped as a footer item; that was wrong. Restore is the same decision
   as a create — which project, which provider, what to call it — with a different
-  starting point, so it belongs in that form and not in a menu of its own. Picking
+  starting point, so it belongs in that form and not in a flow of its own. Picking
   a backup hides the rows the bundle decides (Branch, Agent, the setup wizard) and
-  the bake note, since `beginRestore` runs no bake phase.
+  the bake note, since neither GUI runs a bake phase for a restore. The web's
+  project-page card keeps the LISTING but hands off to that one form
+  (`initialRestore`) rather than carrying a second restore modal.
+- **One select, not two.** A backup is identified by bot AND stamp, so a bot
+  picker plus a backup picker made the common case — one bot, one recent backup —
+  two decisions where there is none.
 - **Clone is in the tray's detail window only, not the box submenu.** It is a
   rare, considered action that opens a naming dialog, and next to Back Up Now in a
   menu the two read as a pair when they are opposites.

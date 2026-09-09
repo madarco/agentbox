@@ -102,7 +102,7 @@ The restored box does not run on the backup itself. That copy is immutable, and 
   the old box first, or pass `--force` if you know what you are doing.
 </Callout>
 
-From the hub, restore lives on the **project** page rather than a box page — a bundle outlives the box it came from, so by the time you want one there is usually no box left to click. The menu-bar app puts **Restore a Bot…** in its footer for the same reason. Both list every bot the project holds and offer only the backups that carry an identity; a workspace-only bundle would start a *fresh* bot, which is what [clone](/docs/openclaw) already does.
+Both GUIs put this in their **Create box** form rather than on a box: a bundle outlives the box it came from, so by the time you want one there is usually no box left to click. Pick a project that holds a backup and a **Start from** row appears; choosing one drops the rows the bundle decides (base branch, agent, the setup wizard) and turns the button into **Restore**. Only backups that carry an identity are offered — a workspace-only bundle would start a *fresh* bot, which is what [clone](/docs/openclaw) already does.
 
 The identity goes in **after** the box has come up on its own, not before. A service agent's onboarding is a run-once task whose marker lives on the box's root filesystem rather than in the agent's config volume, so it runs on every fresh box no matter what that volume holds — there is no "write the state in first" that works. Letting it run and then replacing what it wrote means the marker is already down, and onboarding never touches the restored identity again, on that boot or any later one.
 

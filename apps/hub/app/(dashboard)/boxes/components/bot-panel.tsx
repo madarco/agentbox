@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { Box } from '@/lib/boxes/types';
 import { cn } from '@/lib/utils';
+import { preferredBackup, readableStamp, type BotBackups } from './bots';
 import { JobLogStream } from './job-log-stream';
 import { SectionLabel } from './section-label';
 import { useToasts, ToastStack, type OnToast } from './toasts';
@@ -45,17 +46,6 @@ interface BackupAnswer {
   state: boolean;
   files: number;
   pruned: string[];
-}
-
-interface BotsAnswer {
-  bots: Array<{ bot: string; latest?: string; backups: Array<{ stamp: string; state: boolean }> }>;
-}
-
-/** `2026-09-09T08-14-03Z` -> something a human reads. */
-function readableStamp(stamp: string): string {
-  const iso = stamp.replace(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})Z$/, '$1T$2:$3:$4Z');
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? stamp : d.toLocaleString();
 }
 
 /** Read the `{ error: { message } }` envelope, or fall back to the status. */
@@ -133,13 +123,15 @@ export function BotPanel({ box }: { box: Box }) {
         credentials: 'same-origin',
       });
       if (!r.ok) return;
-      const { bots } = (await r.json()) as BotsAnswer;
+      const { bots } = (await r.json()) as { bots: BotBackups[] };
       // Match on the box's own name, which is what `backup` files a bundle under
       // by default. A bundle the user named something else is the project page's
       // business, not this box's.
       const mine = bots.find((b) => b.bot === (box.name ?? ''));
-      const stamp = mine?.latest ?? mine?.backups[0]?.stamp;
-      const found = stamp ? mine?.backups.find((b) => b.stamp === stamp) : undefined;
+      // `preferredBackup` answers with a RESTORABLE one; fall back to the newest
+      // of any kind, so a bot whose only backups are workspace-only still shows
+      // when it was last captured rather than reading as never backed up.
+      const found = mine ? (preferredBackup(mine) ?? mine.backups[0]) : undefined;
       setLatest(found ? { stamp: found.stamp, state: found.state } : null);
     } catch {
       setLatest(null);
