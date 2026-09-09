@@ -180,6 +180,18 @@ export interface ProjectEntry {
    * would have read `git remote` from is gone.
    */
   originUrl?: string;
+  /**
+   * The provider the last box for this project was created with — a bare kind
+   * or a `docker:<alias>` host spec, exactly as the user picked it. Advisory:
+   * a pre-selection for a create picker, never a contract. The named provider
+   * may not be configured (or may not exist) on the machine reading it, so
+   * clamp it against the live provider list before use.
+   */
+  lastProvider?: string;
+  /** The agent that box was created for. Advisory, same caveats as {@link lastProvider}. */
+  lastAgent?: string;
+  /** ISO timestamp of the last create recorded here. */
+  lastUsedAt?: string;
 }
 
 /**
@@ -214,6 +226,9 @@ export async function listProjectsConfigured(): Promise<ProjectEntry[]> {
       configPath: cfgPath,
       hasConfigFile: hasConfig,
       ...(meta.originUrl ? { originUrl: meta.originUrl } : {}),
+      ...(meta.lastProvider ? { lastProvider: meta.lastProvider } : {}),
+      ...(meta.lastAgent ? { lastAgent: meta.lastAgent } : {}),
+      ...(meta.lastUsedAt ? { lastUsedAt: meta.lastUsedAt } : {}),
     });
   }
   out.sort((a, b) => a.originalPath.localeCompare(b.originalPath));
@@ -303,6 +318,9 @@ async function readMeta(dirName: string): Promise<{
   createdAt: string | null;
   lastSeenAt: string | null;
   originUrl: string | null;
+  lastProvider: string | null;
+  lastAgent: string | null;
+  lastUsedAt: string | null;
 } | null> {
   const metaPath = `${PROJECTS_DIR}/${dirName}/meta.json`;
   try {
@@ -314,6 +332,9 @@ async function readMeta(dirName: string): Promise<{
       createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : null,
       lastSeenAt: typeof parsed['lastSeenAt'] === 'string' ? parsed['lastSeenAt'] : null,
       originUrl: typeof parsed['originUrl'] === 'string' ? parsed['originUrl'] : null,
+      lastProvider: typeof parsed['lastProvider'] === 'string' ? parsed['lastProvider'] : null,
+      lastAgent: typeof parsed['lastAgent'] === 'string' ? parsed['lastAgent'] : null,
+      lastUsedAt: typeof parsed['lastUsedAt'] === 'string' ? parsed['lastUsedAt'] : null,
     };
   } catch {
     return null;
@@ -459,29 +480,93 @@ export async function unregisterProject(hash: string): Promise<boolean> {
 }
 
 async function touchProjectMeta(absPath: string, originUrl?: string): Promise<void> {
-  const dir = dirname(projectMetaFile(absPath));
-  await mkdir(dir, { recursive: true });
   const metaPath = projectMetaFile(absPath);
-  let prior: { originalPath?: string; createdAt?: string; originUrl?: string } = {};
+  await mkdir(dirname(metaPath), { recursive: true });
+  // Locked: the hub touches this on every dashboard poll while a create records
+  // last-used fields into the same file, and an unlocked read-modify-write drops
+  // whichever writer read first.
+  await withFileLock(metaPath, async () => {
+    const prior = await readMetaFile(metaPath);
+    const now = new Date().toISOString();
+    // A caller that didn't read an origin (the folder may be gone) must not erase
+    // the one recorded when it was there.
+    const origin =
+      originUrl ?? (typeof prior['originUrl'] === 'string' ? prior['originUrl'] : undefined);
+    const createdAt = typeof prior['createdAt'] === 'string' ? prior['createdAt'] : now;
+    // Spread `prior` first: every field this function does not own (the
+    // last-used create defaults) has to survive a touch, and the hub touches
+    // this file on every poll.
+    await writeMetaFile(metaPath, {
+      ...prior,
+      originalPath: absPath,
+      hash: hashProjectPath(absPath),
+      createdAt,
+      lastSeenAt: now,
+      ...(origin ? { originUrl: origin } : {}),
+    });
+  });
+}
+
+/** Parse a meta.json into a plain bag; a missing or corrupt file reads as empty. */
+async function readMetaFile(metaPath: string): Promise<Record<string, unknown>> {
   try {
-    prior = JSON.parse(await readFile(metaPath, 'utf8')) as typeof prior;
+    const parsed = JSON.parse(await readFile(metaPath, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch {
-    /* fresh file */
+    return {};
   }
-  const now = new Date().toISOString();
-  // A caller that didn't read an origin (the folder may be gone) must not erase
-  // the one recorded when it was there.
-  const origin = originUrl ?? prior.originUrl;
-  const next = {
-    originalPath: absPath,
-    hash: hashProjectPath(absPath),
-    createdAt: prior.createdAt ?? now,
-    lastSeenAt: now,
-    ...(origin ? { originUrl: origin } : {}),
-  };
+}
+
+async function writeMetaFile(metaPath: string, doc: Record<string, unknown>): Promise<void> {
   const tmp = `${metaPath}.tmp-${process.pid.toString()}-${Date.now().toString(36)}`;
-  await writeFile(tmp, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });
+  await writeFile(tmp, JSON.stringify(doc, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });
   await rename(tmp, metaPath);
+}
+
+/** What a create picked, for {@link recordProjectLastUsed}. */
+export interface ProjectLastUsed {
+  /** Provider SPEC as chosen — a bare kind, or a `docker:<alias>` host spec. */
+  provider?: string;
+  /**
+   * Canonical agent id. Omit for an agentless create: "I once made a bare box"
+   * says nothing about which agent to pre-select, so it must not erase what the
+   * project's last real agent was.
+   */
+  agent?: string;
+}
+
+/**
+ * Record the provider/agent a create just used for a project, so the hub's and
+ * the tray's create pickers can pre-select them next time. Advisory UI memory —
+ * it never feeds `loadEffectiveConfig`, so it cannot change what the CLI does.
+ *
+ * **Update-only**: returns `false` without writing anything when the project is
+ * not already registered. That single rule is what keeps a hub worker's
+ * throwaway clone (a control box builds every box in one) — or any other
+ * arbitrary path a create resolves — from minting a project card.
+ */
+export async function recordProjectLastUsed(
+  absPath: string,
+  used: ProjectLastUsed,
+): Promise<boolean> {
+  const provider = used.provider?.trim();
+  const agent = used.agent?.trim();
+  if (!provider && !agent) return false;
+  const metaPath = projectMetaFile(absPath);
+  // Checked BEFORE the lock: `withFileLock` mkdirs the parent, which would
+  // create the very project dir this must not create.
+  if (!(await fileExists(metaPath))) return false;
+  return withFileLock(metaPath, async () => {
+    const prior = await readMetaFile(metaPath);
+    if (typeof prior['originalPath'] !== 'string') return false;
+    await writeMetaFile(metaPath, {
+      ...prior,
+      ...(provider ? { lastProvider: provider } : {}),
+      ...(agent ? { lastAgent: agent } : {}),
+      lastUsedAt: new Date().toISOString(),
+    });
+    return true;
+  });
 }
 
 // Re-export for ergonomics; same path resolution as the loader uses.

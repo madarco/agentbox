@@ -5,6 +5,7 @@ import {
   hashProjectPath,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  recordProjectLastUsed,
   registerProject,
   resolveBoxImage,
   resolveDefaultCheckpoint,
@@ -470,6 +471,18 @@ export const createCommand = new Command('create')
       provider: opts.provider,
       remoteHost: opts.remoteHost,
     });
+    // Remember the provider for the create pickers (hub web, tray). No agent:
+    // `agentbox create` builds a plain box, and "I once made a bare box" is no
+    // evidence about which agent to pre-select. Recorded here rather than left
+    // to the hub seam because the REMOTE control-box route below never touches
+    // this machine's registry, and the pickers run on this machine.
+    try {
+      await recordProjectLastUsed(projectRoot, {
+        provider: providerSpecFor(providerName, remoteHost),
+      });
+    } catch {
+      /* best-effort UI memory */
+    }
 
     // Docker off under a remote hub (Step 12): with a control box configured a
     // docker box built here can't run with the laptop off, so it's refused unless

@@ -2107,6 +2107,23 @@ export function buildOpenApi(): Record<string, unknown> {
               nullable: true,
               description: 'Custody projects/<slug> key (hosted source only)',
             },
+            lastProvider: {
+              type: 'string',
+              nullable: true,
+              description:
+                "The provider this project's last box was created with — the pre-selection a create picker should open on. Advisory, not a contract: it may be a `docker:<alias>` remote-docker spec, and it may name a provider that is not configured (or no longer exists) on this host, so clamp it against GET /providers and fall back to docker. Absent until a create has been recorded.",
+            },
+            lastAgent: {
+              type: 'string',
+              nullable: true,
+              description:
+                'The agent that box was created for, as a create-picker default. Same caveats as lastProvider — clamp against GET /agents. Never `none`: an agentless create records only the provider.',
+            },
+            lastUsedAt: {
+              type: 'number',
+              nullable: true,
+              description: 'Epoch ms of the create those two fields describe.',
+            },
           },
           required: ['id', 'name'],
         },

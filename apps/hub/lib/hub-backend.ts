@@ -15,6 +15,7 @@ import {
   listProjectsConfigured,
   loadEffectiveConfig,
   pruneOrphanProjectConfigs,
+  recordProjectLastUsed,
   registerProject,
   resolveDefaultCheckpoint,
   setConfigValue,
@@ -576,6 +577,12 @@ async function readControlPlane(): Promise<{ url: string } | null> {
 async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
   // Per-root metadata from live boxes: provider + earliest createdAt.
   const boxByRoot = new Map<string, { root: string; provider: string; createdAt: number }>();
+  // Newest box per root, for the create-picker defaults of a project registered
+  // before the registry started recording them.
+  const newestByRoot = new Map<
+    string,
+    { provider: string; agent: string | undefined; createdAt: number }
+  >();
   for (const b of boxes) {
     const root = projectRootOf(b);
     // A box whose recorded root is gone has no project FOLDER — a control box
@@ -590,6 +597,13 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
     const existing = boxByRoot.get(root);
     if (!existing) boxByRoot.set(root, { root, provider: b.provider ?? 'docker', createdAt });
     else if (createdAt < existing.createdAt) existing.createdAt = createdAt;
+    // Tracked separately from `boxByRoot` (which keeps the FIRST-seen provider
+    // and the EARLIEST createdAt — the project's age): the create-picker default
+    // wants the most recent box, not the oldest.
+    const newest = newestByRoot.get(root);
+    if (!newest || createdAt > newest.createdAt) {
+      newestByRoot.set(root, { provider: b.provider ?? 'docker', agent: b.lastAgent, createdAt });
+    }
   }
   // Self-heal: register any box root missing from the registry (best-effort).
   await Promise.all([...boxByRoot.keys()].map((r) => registerProject(r).catch(() => {})));
@@ -607,6 +621,16 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
     (e) => !isHubWorkerClone(e.originalPath) && existsSync(e.originalPath),
   )) {
     const box = boxByRoot.get(e.originalPath);
+    // The create defaults come from the registry (they outlive every box). A
+    // project registered before this existed has none, so fall back to the
+    // NEWEST box on that root — `provider` below stays the first-seen one, which
+    // is what `computeNeedsSetup` reads.
+    const newest = newestByRoot.get(e.originalPath);
+    const lastProvider = e.lastProvider ?? newest?.provider;
+    const lastAgent = e.lastAgent ?? newest?.agent;
+    const lastUsedAt = e.lastUsedAt
+      ? Date.parse(e.lastUsedAt) || null
+      : (newest?.createdAt ?? null);
     byId.set(e.hash, {
       id: e.hash,
       name: path.basename(e.originalPath),
@@ -615,6 +639,9 @@ async function listProjects(boxes: ListedBox[]): Promise<Project[]> {
       provider: box?.provider ?? 'docker',
       createdAt:
         box?.createdAt ?? (e.createdAt ? Date.parse(e.createdAt) || Date.now() : Date.now()),
+      ...(lastProvider ? { lastProvider } : {}),
+      ...(lastAgent ? { lastAgent } : {}),
+      ...(lastUsedAt ? { lastUsedAt } : {}),
     });
     pathById.set(e.hash, e.originalPath);
     if (e.originUrl) recordedOrigin.set(e.hash, e.originUrl);
@@ -2329,6 +2356,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             }
             return { ok: false, error: `provider ${provider} is not set up on this host` };
           }
+        }
+        // Remember what this create picked, so the next open of a create picker
+        // (web, tray) starts from it. Past the gates above, so a refused create
+        // records nothing; at ENQUEUE rather than on the worker's success,
+        // because it is a UI default and the provider the user just chose is the
+        // right pre-selection even if that build later fails. Update-only, so a
+        // control box's per-job clone can never register itself as a project.
+        // An agentless create records only the provider: "I once made a bare
+        // box" is no evidence about which agent to pre-select.
+        if (!isHubWorkerClone(workspace)) {
+          void recordProjectLastUsed(workspace, {
+            provider,
+            ...(noAgent ? {} : { agent: input.agent }),
+          }).catch(() => {});
         }
         // For a no-agent box `agent` is inert (the worker ignores it when noAgent);
         // keep a valid placeholder so the closed QueueAgentKind union holds.

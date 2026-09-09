@@ -66,7 +66,10 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   `agentbox create`); attach later with `agentbox shell`. The **Provider** picker
   offers docker plus any cloud provider set up on this host — providers you haven't
   configured yet show up disabled (set them up under **Settings → Sandbox
-  providers**, below). Pick a **Base branch** to fork the box from a ref other than
+  providers**, below). The **Provider** and **Agent** pickers open on whatever that
+  project's last box was created with — from here, the tray, or the CLI — falling
+  back to Docker and Claude, and to Docker again when the remembered provider isn't
+  set up on this host. Pick a **Base branch** to fork the box from a ref other than
   the project's current HEAD (like `--from-branch`). Under **Advanced**, pick a
   **Size** to give the box
   more CPU and RAM than the provider's default — the choices come from the provider

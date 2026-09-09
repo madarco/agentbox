@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hashProjectPath, projectMetaFile } from '../src/paths.js';
-import { listProjectsConfigured, setConfigValue, unsetConfigValue } from '../src/write.js';
+import {
+  listProjectsConfigured,
+  recordProjectLastUsed,
+  registerProject,
+  setConfigValue,
+  unsetConfigValue,
+} from '../src/write.js';
 import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 
 let tmpCwd: string;
@@ -25,6 +31,9 @@ interface Meta {
   hash: string;
   createdAt: string;
   lastSeenAt: string;
+  lastProvider?: string;
+  lastAgent?: string;
+  lastUsedAt?: string;
 }
 
 async function readMeta(absPath: string): Promise<Meta> {
@@ -81,5 +90,52 @@ describe('per-project meta.json', () => {
     // mnemonic just makes the dir self-describing on disk.
     expect(entries[0]?.dirName).toMatch(/^[0-9a-f]{16}-[a-z0-9_]+$/);
     expect(entries[0]?.dirName.startsWith(entries[0]!.hash + '-')).toBe(true);
+  });
+});
+
+describe('recordProjectLastUsed', () => {
+  it('records the create defaults on a registered project', async () => {
+    await registerProject(tmpCwd);
+    expect(await recordProjectLastUsed(tmpCwd, { provider: 'hetzner', agent: 'codex' })).toBe(true);
+    const meta = await readMeta(tmpCwd);
+    expect(meta.lastProvider).toBe('hetzner');
+    expect(meta.lastAgent).toBe('codex');
+    expect(typeof meta.lastUsedAt).toBe('string');
+    const entries = await listProjectsConfigured();
+    expect(entries[0]?.lastProvider).toBe('hetzner');
+    expect(entries[0]?.lastAgent).toBe('codex');
+    expect(entries[0]?.lastUsedAt).toBe(meta.lastUsedAt);
+  });
+
+  it('writes nothing for an unregistered project', async () => {
+    expect(await recordProjectLastUsed(tmpCwd, { provider: 'docker', agent: 'claude' })).toBe(
+      false,
+    );
+    expect(await listProjectsConfigured()).toEqual([]);
+  });
+
+  it('an agentless create leaves the remembered agent alone', async () => {
+    await registerProject(tmpCwd);
+    await recordProjectLastUsed(tmpCwd, { provider: 'hetzner', agent: 'codex' });
+    await recordProjectLastUsed(tmpCwd, { provider: 'docker' });
+    const meta = await readMeta(tmpCwd);
+    expect(meta.lastProvider).toBe('docker');
+    expect(meta.lastAgent).toBe('codex');
+  });
+
+  it('survives the registerProject the hub runs on every poll', async () => {
+    await registerProject(tmpCwd);
+    await recordProjectLastUsed(tmpCwd, { provider: 'vercel', agent: 'claude' });
+    await registerProject(tmpCwd, { originUrl: 'git@github.com:madarco/x.git' });
+    const meta = await readMeta(tmpCwd);
+    expect(meta.lastProvider).toBe('vercel');
+    expect(meta.lastAgent).toBe('claude');
+    expect((meta as { originUrl?: string }).originUrl).toBe('git@github.com:madarco/x.git');
+  });
+
+  it('is a no-op when nothing was picked', async () => {
+    await registerProject(tmpCwd);
+    expect(await recordProjectLastUsed(tmpCwd, {})).toBe(false);
+    expect((await readMeta(tmpCwd)).lastUsedAt).toBeUndefined();
   });
 });

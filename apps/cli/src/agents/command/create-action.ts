@@ -11,6 +11,8 @@ import {
   findProjectRoot,
   agentSettings,
   loadEffectiveConfig,
+  recordProjectLastUsed,
+  registerProject,
   resolveBoxImage,
   resolveDefaultCheckpoint,
   type UserConfig,
@@ -53,7 +55,7 @@ import { runToolsGate } from '../../lib/tools-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../../lib/from-branch.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
-import { resolveProviderChoice } from '../../provider/spec.js';
+import { providerSpecFor, resolveProviderChoice } from '../../provider/spec.js';
 import {
   prepareTeleport,
   TeleportError,
@@ -304,6 +306,23 @@ export async function runAgentCreate(
     projectRoot,
     yes: !!opts.yes,
   });
+
+  // Remember what this create picked, for the hub/tray create pickers. Placed
+  // after every hard refusal above (so a refused create records nothing) and
+  // above ALL the branches below — `-i` local, `-i` via hub, cloud via hub,
+  // cloud local, docker inline — so no path is missed. `registerProject` runs
+  // first because the record is update-only: this command never registered the
+  // project, so the first `agentbox <agent>` in a fresh folder would otherwise
+  // have nothing to write to.
+  try {
+    await registerProject(projectRoot);
+    await recordProjectLastUsed(projectRoot, {
+      provider: providerSpecFor(providerName, remoteHost),
+      agent: a.id,
+    });
+  } catch {
+    /* best-effort UI memory */
+  }
 
   const providerDefault = resolveDefaultCheckpoint(cfg, providerName);
   const checkpointRef =

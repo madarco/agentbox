@@ -4,6 +4,7 @@ import type { PostgresStore } from '@agentbox/relay/control-plane';
 import { LEGACY_AGENT_STATUS_KEYS, normalizeAgentStatus } from '@agentbox/core';
 import type { AgentStatusEntry, AgentStatusMap } from '@agentbox/core';
 import { repoNameFromRegistration } from './project-name';
+import { lastUsedFromRegistrations, type LastUsedRegistration } from './project-defaults';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
 /*
@@ -37,7 +38,13 @@ interface Registration {
 type Snapshot = Record<string, unknown>;
 type AgentState = AgentStatusEntry;
 interface PromptRow {
-  ev: { id: string; message: string; detail?: string; defaultAnswer?: 'y' | 'n'; context?: { command?: string; cwd?: string; argv?: string[] } };
+  ev: {
+    id: string;
+    message: string;
+    detail?: string;
+    defaultAnswer?: 'y' | 'n';
+    context?: { command?: string; cwd?: string; argv?: string[] };
+  };
   createdAt: string;
 }
 
@@ -124,8 +131,7 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     filesTouched: null,
     error:
       deriveStatus(s) === 'error'
-        ? (ordered.find(([, a]) => a.sessionTitle)?.[1].sessionTitle ??
-          'Agent reported an error')
+        ? (ordered.find(([, a]) => a.sessionTitle)?.[1].sessionTitle ?? 'Agent reported an error')
         : null,
     // Hosted source has no endpoint data yet — cloud preview URLs are a follow-up.
     webUrl: null,
@@ -156,18 +162,30 @@ function deriveProjects(regs: Registration[]): Project[] {
     string,
     { key: string; name: string; createdAt: number; originUrl?: string; projectSlug?: string }
   >();
+  // This surface has no local project registry to read the create defaults from,
+  // so they come from the registrations themselves — newest per project wins.
+  const regsByKey = new Map<string, LastUsedRegistration[]>();
   for (const r of regs) {
     const key = projectKey(r);
     const createdAt = Date.parse(r.createdAt ?? r.registeredAt) || Date.now();
     const existing = byKey.get(key);
     if (!existing) {
-      byKey.set(key, { key, name: repoName(r), createdAt, originUrl: r.originUrl, projectSlug: r.projectSlug });
+      byKey.set(key, {
+        key,
+        name: repoName(r),
+        createdAt,
+        originUrl: r.originUrl,
+        projectSlug: r.projectSlug,
+      });
     } else {
       if (createdAt < existing.createdAt) existing.createdAt = createdAt;
       // A later registration may carry the git identity an earlier one lacked.
       existing.originUrl ??= r.originUrl;
       existing.projectSlug ??= r.projectSlug;
     }
+    const bucket = regsByKey.get(key);
+    if (bucket) bucket.push(r);
+    else regsByKey.set(key, [r]);
   }
   return [...byKey.values()]
     .map((p) => ({
@@ -179,6 +197,7 @@ function deriveProjects(regs: Registration[]): Project[] {
       createdAt: p.createdAt,
       originUrl: p.originUrl ?? null,
       projectSlug: p.projectSlug ?? null,
+      ...lastUsedFromRegistrations(regsByKey.get(p.key) ?? []),
     }))
     .sort((a, b) => b.createdAt - a.createdAt);
 }
@@ -239,7 +258,14 @@ export async function getPostgresDashboardData(): Promise<Omit<HubState, 'authMo
 
   return {
     user: { login: 'hub', name: 'hub' },
-    github: { available: false, installed: false, appName: 'GitHub App', account: '', installedAt: 0, repos: [] },
+    github: {
+      available: false,
+      installed: false,
+      appName: 'GitHub App',
+      account: '',
+      installedAt: 0,
+      repos: [],
+    },
     projects: deriveProjects(regs),
     boxes: regs.map((r) => mapBox(r, statusByBox.get(r.boxId))),
     approvals,

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition, type ReactNode } from 'react';
+import { defaultAgentFor, defaultProviderFor, usableProvider } from '@/lib/boxes/project-defaults';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -112,6 +113,11 @@ function CreateBoxModal({
   const [pending, startTransition] = useTransition();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const [agent, setAgent] = useState<Agent>('claude');
+  // Whether the user has touched the picker for the CURRENTLY selected project.
+  // Until they do, the field tracks what that project last created with; both
+  // pins reset on a project switch so the new project's memory applies.
+  const [agentPinned, setAgentPinned] = useState(false);
+  const [providerPinned, setProviderPinned] = useState(false);
   // The agent catalog (GET /api/v1/agents). Null until it lands — the built-ins
   // paint meanwhile so the form doesn't flash an empty picker.
   const [fetchedAgents, setFetchedAgents] = useState<AgentOption[] | null>(null);
@@ -209,12 +215,10 @@ function CreateBoxModal({
         if (!res.ok) return;
         const j = (await res.json()) as { agents?: AgentOption[] };
         if (cancelled || !j.agents?.length) return;
+        // The selection is clamped against this catalog by the defaults effect
+        // below — 'claude' is only a guess until the catalog arrives, and a host
+        // can run a build that doesn't ship it.
         setFetchedAgents(j.agents);
-        // Keep the selection valid: 'claude' is only a guess until the catalog
-        // arrives, and a host can run a build that doesn't ship it.
-        setAgent((cur) =>
-          cur === 'none' || j.agents!.some((a) => a.id === cur) ? cur : j.agents![0]!.id,
-        );
       } catch {
         // Best-effort: the built-in list still lets the user create a box.
       }
@@ -225,6 +229,27 @@ function CreateBoxModal({
   }, []);
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
+  // The create defaults for THIS project, clamped to what the live catalogs
+  // offer (a remembered provider can be unconfigured or gone, a remembered
+  // plugin agent can be uninstalled). Plain strings, deliberately: the store
+  // hands us a fresh `projects` array on every SSE tick, so an effect keyed on
+  // the array would re-run — and re-seed over the user's pick — every poll.
+  const desiredProvider = defaultProviderFor(selected, providers);
+  const desiredAgent = defaultAgentFor(selected, agents);
+  const providerUsable = usableProvider(provider, providers);
+  const agentUsable = agent === 'none' || agents.some((a) => a.id === agent);
+
+  // Seed the two pickers from the project, and re-seed whenever the current
+  // value stops being selectable (the catalogs arrive after the first paint).
+  // `setState` with an unchanged value bails out, so an unusable `desired*`
+  // cannot loop.
+  useEffect(() => {
+    if (!providerPinned || !providerUsable) setProvider(desiredProvider);
+  }, [providerPinned, providerUsable, desiredProvider]);
+  useEffect(() => {
+    if (!agentPinned || !agentUsable) setAgent(desiredAgent as Agent);
+  }, [agentPinned, agentUsable, desiredAgent]);
+
   // `provider` state always holds a concrete id (init 'docker'), but its TYPE is optional.
   const providerId = provider ?? 'docker';
   const providerOption = providers.find((p) => p.id === providerId);
@@ -300,9 +325,12 @@ function CreateBoxModal({
   useEffect(() => {
     if (!projectId || jobId) return;
     setRunSetup(selected?.needsSetup ?? false);
-    // Reset the provider to the default on a project switch (like branch/setup) so
-    // a cloud provider picked for one project doesn't silently carry to the next.
-    setProvider('docker');
+    // Unpin on a project switch (like branch/setup) so a cloud provider picked
+    // for one project doesn't silently carry to the next — the effect above then
+    // applies what the project being switched TO last used, or docker when it
+    // has no memory.
+    setProviderPinned(false);
+    setAgentPinned(false);
     let cancelled = false;
     setBranches(null);
     setFromBranch(selected?.currentBranch ?? '');
@@ -642,7 +670,13 @@ function CreateBoxModal({
               </Field>
             ) : null}
             <Field label="Provider">
-              <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <Select
+                value={provider}
+                onChange={(e) => {
+                  setProviderPinned(true);
+                  setProvider(e.target.value);
+                }}
+              >
                 {providers.map((p) => (
                   <option
                     key={p.id}
@@ -718,7 +752,13 @@ function CreateBoxModal({
               </Field>
             ) : null}
             <Field label="Agent">
-              <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
+              <Select
+                value={agent}
+                onChange={(e) => {
+                  setAgentPinned(true);
+                  setAgent(e.target.value as Agent);
+                }}
+              >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
                     {/* Flag an agent this machine has no config or saved login for.

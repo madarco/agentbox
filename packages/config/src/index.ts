@@ -112,11 +112,13 @@ export {
   listProjectsConfigured,
   mergeConfigYaml,
   pruneOrphanProjectConfigs,
+  recordProjectLastUsed,
   registerProject,
   setConfigValue,
   unregisterProject,
   unsetConfigValue,
   type ProjectEntry,
+  type ProjectLastUsed,
   type PruneOrphanProjectConfigsOptions,
   type PruneOrphanProjectConfigsResult,
 } from './write.js';

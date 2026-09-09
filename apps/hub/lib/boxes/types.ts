@@ -131,6 +131,17 @@ export interface Project {
    * the seed/custody status. Hosted source only.
    */
   projectSlug?: string | null;
+  /**
+   * What the last create for this project picked — the pre-selection a create
+   * picker should open on. Advisory, never a contract: `lastProvider` may be a
+   * `docker:<alias>` host spec and either may name a provider/agent this host no
+   * longer offers, so clamp both against the live catalogs (see
+   * `project-defaults.ts`). Absent when nothing has been recorded yet.
+   */
+  lastProvider?: string | null;
+  lastAgent?: string | null;
+  /** Epoch ms of that create (`createdAt` is epoch ms too). */
+  lastUsedAt?: number | null;
 }
 
 export interface Repo {
