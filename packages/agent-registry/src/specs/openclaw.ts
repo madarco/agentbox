@@ -31,6 +31,7 @@
 
 import { BOX_HOME, BOX_USER, IDENTITY_RULES_SENTINEL, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
+import { codexSpec } from './codex.js';
 
 /** OpenClaw's state root: config, sqlite state, per-agent dirs, migrations. */
 const OPENCLAW_BOX_DIR = `${BOX_HOME}/.openclaw`;
@@ -174,6 +175,95 @@ const IDENTITY_NUDGE_TEXT = [
   'skill once to write them, then carry on with whatever you were asked.',
   '',
 ].join('\n');
+
+/**
+ * The model-auth task: turn a borrowed Codex login into OpenClaw's own OpenAI
+ * OAuth profile. Reads the file the host seeded at codex's OWN credential path
+ * (`AgentSyncSpec.modelAuth.borrows`), so nothing here knows how the host chose
+ * or moved it.
+ *
+ * Every step below was measured on openclaw 2026.9.3, not read from the plan:
+ *
+ *  - The auth store is SQLite (`agents/<id>/agent/openclaw-agent.sqlite`); the
+ *    retired `auth-profiles.json` / `credentials/oauth.json` are never read at
+ *    runtime, so writing one is not a seam.
+ *  - `openclaw migrate apply codex ... --item auth:openai` is the supported,
+ *    non-interactive import of a Codex CLI home. It lives in the official
+ *    `@openclaw/codex` plugin (ClawHub), which is also the harness the fresh
+ *    onboard's default model (`openai/gpt-5.6-sol`) runs on — so installing it
+ *    completes the default rather than changing it. The install is ~17s and
+ *    lands in the config volume, so it is paid once per box.
+ *  - A bare `~/.codex/auth.json` is enough for `models status` to SHOW a
+ *    bootstrapped `openai:default`, but a turn then fails with
+ *    `selected_auth_profile_unavailable`: the run path wants a stored row. The
+ *    import is what makes it real.
+ *  - After import OpenClaw owns the profile and refreshes it in its own store.
+ *    OpenAI does not invalidate the prior refresh token on rotation (two boxes
+ *    seeded from one host file refreshed independently and every chain, the
+ *    host's included, stayed valid), so the box is an independent session from
+ *    here and the seed is never re-read — which is why the import is skipped
+ *    while a usable OpenAI OAuth profile exists.
+ *
+ * Idempotent and exit 0 on every "nothing to do": no seeded file, a file that
+ * is not a Codex login, or a profile already in place. The gateway is ordered
+ * after this task (`needs`), so the plugin it installs is loaded on the
+ * gateway's first start rather than needing a restart.
+ */
+function buildModelAuthScript(): string {
+  const auth = codexSpec.credential!.boxAbsPath;
+  const home = auth.slice(0, auth.lastIndexOf('/'));
+  return [
+    'set -u',
+    `auth=${sq(auth)}`,
+    'if [ ! -s "$auth" ]; then echo "openclaw-model-auth: no borrowed Codex login at $auth"; exit 0; fi',
+    // Shape gate, so a half-written or API-key-only file is "nothing to
+    // ingest" rather than a failed import.
+    `if ! node -e ${sq(MODEL_AUTH_IS_CODEX_LOGIN)} "$auth"; then echo "openclaw-model-auth: $auth is not a Codex ChatGPT login"; exit 0; fi`,
+    // The plugin owns both the import command and the harness the default
+    // model runs on; without it `models status` still SHOWS a bootstrapped
+    // profile the daemon cannot use.
+    `if [ ! -d ${sq(`${OPENCLAW_BOX_DIR}/extensions/codex`)} ]; then`,
+    '  echo "openclaw-model-auth: installing the @openclaw/codex plugin"',
+    '  openclaw plugins install clawhub:@openclaw/codex',
+    'fi',
+    `if openclaw models status --json 2>/dev/null | node -e ${sq(MODEL_AUTH_HAS_USABLE_PROFILE)}; then`,
+    '  echo "openclaw-model-auth: a usable OpenAI OAuth profile is already in place"',
+    '  exit 0',
+    'fi',
+    'echo "openclaw-model-auth: importing the Codex login into the OpenClaw auth store"',
+    // `--no-backup --force`: the pre-migration archive would snapshot a state
+    // dir that is fresh on the only boot this runs, and the migration report
+    // is still written. `--item auth:openai` keeps skills/plugins/config out.
+    `openclaw migrate apply codex --from ${sq(home)} --include-secrets --item auth:openai --yes --no-backup --force`,
+  ].join('\n');
+}
+
+/** argv[1] is the file. Exit 0 iff it is a Codex ChatGPT login with a refresh token. */
+const MODEL_AUTH_IS_CODEX_LOGIN = `
+const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+process.exit(typeof j?.tokens?.refresh_token === 'string' && j.tokens.refresh_token.length > 0 ? 0 : 1);
+`;
+
+/**
+ * stdin is `openclaw models status --json`. Exit 0 iff an OpenAI OAuth profile
+ * exists that OpenClaw itself does not report as unusable or expired-without-
+ * refresh. Missing or unparsable input exits 1, which means "import".
+ */
+const MODEL_AUTH_HAS_USABLE_PROFILE = `
+let s = '';
+process.stdin.on('data', (d) => (s += d)).on('end', () => {
+  try {
+    const a = JSON.parse(s).auth;
+    const bad = new Set(a.unusableProfiles ?? []);
+    const ok = (a.oauth?.profiles ?? []).some(
+      (p) => p.provider === 'openai' && p.type === 'oauth' && p.status !== 'expired' && !bad.has(p.profileId),
+    );
+    process.exit(ok ? 0 : 1);
+  } catch {
+    process.exit(1);
+  }
+});
+`;
 
 /**
  * Teach the box's gateway where it is running.
@@ -346,6 +436,26 @@ export const openclawSpec: AgentSyncSpec = {
   //
   // Channel tokens are real secrets, but they ride a `carry:` entry into a 0600
   // env file and the overlay references them by name; AgentBox never holds them.
+  //
+  // A MODEL-PROVIDER login is the one host secret it does consume, and that is
+  // `modelAuth`, not `credential`: the host seeds codex's file at codex's own
+  // path and the `openclaw-model-auth` task below imports it. Absent
+  // `credential` plus present `modelAuth.borrows` is the shape for a consumer.
+  modelAuth: {
+    borrows: [{ agent: 'codex', label: 'your Codex login (ChatGPT subscription OAuth)' }],
+    ingestTask: 'openclaw-model-auth',
+  },
+  settings: [
+    {
+      key: 'modelAuth',
+      type: 'enum',
+      enumValues: ['none', 'codex'],
+      default: 'none',
+      description:
+        'Which host login a new OpenClaw box is seeded with as its model provider. `codex` copies your Codex (ChatGPT) OAuth login into the box, where OpenClaw imports it and refreshes it independently from then on. `none` leaves model auth for you to configure in the box. `--model-auth` overrides per create.',
+      // Seeded at create, never baked: the file rides the carry step.
+    },
+  ],
   forwardedEnvKeys: [],
   boxRunEnv: {
     // Honoured by `onboard`, which writes it to `agents.defaults.workspace`
@@ -392,12 +502,21 @@ export const openclawSpec: AgentSyncSpec = {
           '--skip-channels --skip-health --no-install-daemon',
       },
       {
+        // The borrowed model login, if the host seeded one. After onboard so
+        // the agent dir and default model exist; before the gateway so the
+        // plugin it may install is loaded on the first start. No `runOnce`:
+        // it decides for itself, and a re-run is a no-op once imported.
+        name: 'openclaw-model-auth',
+        command: buildModelAuthScript(),
+        needs: ['openclaw-onboard'],
+      },
+      {
         // Everything AgentBox owns in this box: the skill root outside the
         // workspace, the derived box facts inside it, and the two config keys
         // that make openclaw read both. No `runOnce` — see the builder's doc.
         name: 'openclaw-agentbox-env',
         command: buildAgentboxContextScript(),
-        needs: ['openclaw-onboard'],
+        needs: ['openclaw-model-auth'],
       },
       {
         name: 'openclaw-render',

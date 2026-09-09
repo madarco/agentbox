@@ -56,6 +56,7 @@ import {
   recordBox,
   removeBoxRecord,
   withPerBoxCarry,
+  borrowedCredentialCarry,
 } from '@agentbox/sandbox-core';
 import { makeCloudSync } from './sync/cloud-sync.js';
 import { createCloudSyncTransport } from './sync/sync-transport.js';
@@ -1057,10 +1058,15 @@ export function createCloudProvider(
           { boxName: syncCtx.boxName },
           log,
         );
+        // A borrowed model login lands the same way, 0600 at the lending
+        // agent's own path, before the in-box bootstrap starts the supervisor.
+        carryEntries.push(...(await borrowedCredentialCarry(req.borrowCredentials ?? [], log)));
         if (carryEntries.length > 0) {
           log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
           const result = await sync.applyCarry(syncCtx, carryEntries);
-          log(`carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`);
+          log(
+            `carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`,
+          );
           for (const err of result.errors) log(`carry: ${err}`);
           if (result.applied.length > 0) {
             carrySummary = { count: result.applied.length, entries: result.applied };
@@ -1403,6 +1409,9 @@ export function createCloudProvider(
           // start and needs to know which agents this box is for, or it would
           // re-acquire the others and undo the isolation.
           ...(req.agents ? { agents: req.agents } : {}),
+          ...(req.borrowCredentials && req.borrowCredentials.length > 0
+            ? { borrowedCredentials: [...req.borrowCredentials] }
+            : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,

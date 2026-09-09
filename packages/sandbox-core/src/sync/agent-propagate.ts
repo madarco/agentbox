@@ -233,6 +233,8 @@ export interface PropagateBoxLike {
   agentConfigVolumes?: Record<string, string>;
   /** Agents the box was created for. Absent = created before per-agent selection. */
   agents?: string[];
+  /** Other agents' logins the box consumes as model auth (`borrowCredentials`). */
+  borrowedCredentials?: string[];
 }
 
 export interface PropagatePlan<B extends PropagateBoxLike> {
@@ -244,6 +246,14 @@ export interface PropagatePlan<B extends PropagateBoxLike> {
   dockerVolumes: Array<{ volume: string; boxNames: string[]; shared: boolean }>;
   /** Cloud boxes to push to (caller checks each is running / resumable). */
   cloudBoxes: B[];
+  /**
+   * Boxes that BORROW this agent's login as model auth (any provider). They
+   * mount no config volume for it, so the push goes over the box's transport
+   * to the agent's canonical path, and the consuming agent's ingest task is
+   * re-run afterwards. A box that both runs and borrows the agent is listed
+   * once, under the running set.
+   */
+  borrowingBoxes: B[];
 }
 
 /**
@@ -283,13 +293,19 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   );
   const volumes = new Map<string, { boxNames: string[]; shared: boolean }>();
   const cloudBoxes: B[] = [];
+  const borrowingBoxes: B[] = [];
   for (const box of inScope) {
     // A box created for a specific agent set must not be handed another agent's
     // credential. This is the fan-out's own gate: it pushes STRAIGHT INTO a
     // cloud box, so without it a resume re-seeds every agent's token and
     // silently undoes the create-time isolation. Docker is unaffected — its
     // push targets a volume the box doesn't mount.
-    if (box.agents && !box.agents.includes(opts.agent)) continue;
+    if (box.agents && !box.agents.includes(opts.agent)) {
+      // Unless the box consumes that login as model auth, in which case the
+      // fresh blob goes to the canonical path its ingest task reads.
+      if (box.borrowedCredentials?.includes(opts.agent)) borrowingBoxes.push(box);
+      continue;
+    }
     if ((box.provider ?? 'docker') !== 'docker') {
       cloudBoxes.push(box);
       continue;
@@ -303,5 +319,6 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   return {
     dockerVolumes: [...volumes.entries()].map(([volume, v]) => ({ volume, ...v })),
     cloudBoxes,
+    borrowingBoxes,
   };
 }

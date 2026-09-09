@@ -1013,6 +1013,13 @@
         "negate": false
       },
       {
+        "flags": "--model-auth <source>",
+        "description": "which host login to seed as the model provider (none|codex; default: openclaw.modelAuth, else ask). codex: your Codex login (ChatGPT subscription OAuth)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--restore <bot>",
         "description": "recreate a bot from its backup under <project>/.agentbox/bots/<bot>/: the box runs on a copy of the backed-up workspace AND gets the captured openclaw state dir back, identity included. Always creates a new box",
         "defaultValue": null,

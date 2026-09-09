@@ -134,6 +134,16 @@ export const AGENT_KINDS = [
     // A gateway has no tool-approval prompts to bypass.
     hasSkipPermissions: false,
     surface: 'service',
+    settings: [
+      {
+        key: 'modelAuth',
+        type: 'enum',
+        enumValues: ['none', 'codex'],
+        default: 'none',
+        description:
+          'Which host login a new OpenClaw box is seeded with as its model provider. `codex` copies your Codex (ChatGPT) OAuth login into the box, where OpenClaw imports it and refreshes it independently from then on. `none` leaves model auth for you to configure in the box. `--model-auth` overrides per create.',
+      },
+    ],
   },
   // The hidden demo agent (see `@agentbox/agent-example`). Present so the
   // generated keys cover it too — an agent absent from this table would be the

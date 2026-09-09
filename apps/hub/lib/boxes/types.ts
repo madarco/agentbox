@@ -91,6 +91,8 @@ export interface Box {
   previewUrls?: Record<number, string>;
   // The agent the box was created for → BoxRecord.lastAgent.
   lastAgent?: AgentId;
+  /** Other agents' logins this box borrows as model auth (`--model-auth`). Read-only. */
+  borrowedCredentials?: string[];
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
   // 'control-plane'. Absent for docker.
   topology?: string;

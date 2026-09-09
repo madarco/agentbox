@@ -18,7 +18,12 @@
  * host involvement at all. This command only waits for it.
  */
 
-import { findProjectRoot, loadEffectiveConfig, resolveBoxImage } from '@agentbox/config';
+import {
+  agentSettings,
+  findProjectRoot,
+  loadEffectiveConfig,
+  resolveBoxImage,
+} from '@agentbox/config';
 import type {
   AgentServiceUrlField,
   AgentSyncSpec,
@@ -39,6 +44,7 @@ import {
 import { portlessUnalias, readBoxStatus, recordLastAgent } from '@agentbox/sandbox-docker';
 import { webProxyWarning } from '../../lib/web-proxy-warning.js';
 import { runCarryGate } from '../../lib/carry-gate.js';
+import { resolveModelAuth } from '../../lib/model-auth-gate.js';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { providerForBox, providerForCreate } from '../../provider/registry.js';
 import {
@@ -74,6 +80,8 @@ export interface ServiceAgentOptions {
   persistent?: boolean;
   /** Seconds to wait for the service to report ready. */
   timeout?: string;
+  /** `--model-auth <source>`: which host login to seed as the model provider. */
+  modelAuth?: string;
   /** `--restore <bot>`: recreate that bot from its backup, identity included. */
   restore?: string;
   /** `--stamp <s>`: which backup (default: the `latest` link). */
@@ -402,6 +410,19 @@ export async function runServiceAgent(
       // derived from the registry row's `caps.surface`, exactly like the
       // config-volume isolation below, never from an agent id. `--no-persistent`
       // is the opt-out; `undefined` leaves the call to `box.persistent`.
+      // Which host login, if any, the box borrows as its model provider.
+      // Decided here, at the host boundary, before anything is created: a
+      // refused value must not cost a box, and a prompt must not appear
+      // under a spinner.
+      const borrowCredentials = await resolveModelAuth({
+        spec,
+        flag: opts.modelAuth,
+        settings: agentSettings(cfg, spec.id),
+        sources: cfgLoaded.sources,
+        yes: !!opts.yes,
+      });
+      for (const a of borrowCredentials) cmdLog.write(`model auth: borrowing the ${a} login`);
+
       const persistent = resolveCreatePersistent({ spec, flag: opts.persistent });
       if (persistent ?? cfg.box.persistent) {
         // Refused off the provider NAME, before the provider module is loaded —
@@ -424,6 +445,7 @@ export async function runServiceAgent(
           // This box is FOR this agent: only its credentials and config are
           // wired in.
           agents: [spec.id],
+          ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
           image: resolveBoxImage(cfg, provider.name),
           checkpointRef: opts.snapshot,
           withPlaywright: cfg.box.withPlaywright,

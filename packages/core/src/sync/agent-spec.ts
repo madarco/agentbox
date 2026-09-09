@@ -632,6 +632,42 @@ export interface AgentSettingSpec {
   affectsBake?: boolean;
 }
 
+/**
+ * One host-held login of ANOTHER agent that this agent may consume as
+ * model-provider auth — the Codex (ChatGPT OAuth) login an OpenClaw box runs
+ * its model calls on.
+ */
+export interface AgentBorrowSpec {
+  /** The agent whose `credential` is borrowed. Must declare one. */
+  agent: AgentId;
+  /** Shown by the opt-in prompt and `--model-auth`'s help. */
+  label: string;
+  /** Printed beside the prompt when consuming this login carries a caveat. */
+  caveat?: string;
+}
+
+/**
+ * How a service agent gets a model-provider login from the host.
+ *
+ * AgentBox learns only WHICH host credential a box may consume and moves it
+ * there over the machinery it already has: the borrowed agent's file lands at
+ * that agent's own `credential.boxAbsPath`, 0600, exactly where a runtime
+ * install would put it. It never learns the consuming agent's auth format —
+ * `ingestTask` names the `service.tasks` entry that reads the file and writes
+ * the agent's own store, the same way `openclaw-agentbox-env` asserts config
+ * through the tool's own patch command.
+ *
+ * Borrowing is ONE-WAY. The box is a consumer of that credential, never a
+ * source: `box.agents` still gates box->host extraction, the resume reconcile
+ * and the credential watch, so a copy that the consuming daemon has since
+ * refreshed in its own store is never read back over the host's.
+ */
+export interface AgentModelAuthSpec {
+  borrows: readonly AgentBorrowSpec[];
+  /** The `service.tasks` entry that ingests whatever borrowed files are present. */
+  ingestTask: string;
+}
+
 export interface AgentSyncSpec {
   id: AgentId;
   /** Alternate spellings that resolve to this spec (reconciles the wire `'claude-code'`). */
@@ -804,6 +840,12 @@ export interface AgentSyncSpec {
    * online-backup API — a byte copy of a live WAL triple is a torn read.
    */
   stateBackup?: AgentStateBackupSpec;
+  /**
+   * Other agents' host-held logins this agent may consume as model-provider
+   * auth, and the in-box task that ingests them. See {@link AgentModelAuthSpec}.
+   * Absent means the agent authenticates to its model providers by itself.
+   */
+  modelAuth?: AgentModelAuthSpec;
   /**
    * Extra in-box files ctl should watch, beyond `credential` (which is always
    * watched). This is the hook a custom agent uses to say "sync these back".

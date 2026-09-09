@@ -420,6 +420,7 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     webPort: b.cloud?.webPort,
     previewUrls: b.cloud?.previewUrls,
     lastAgent: b.lastAgent,
+    borrowedCredentials: b.borrowedCredentials,
     topology: b.cloud?.topology,
   };
 }
@@ -2378,6 +2379,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             envFiles: o.envFiles,
             vnc: o.vnc,
             persistent,
+            borrowCredentials: o.borrowCredentials,
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,
@@ -3309,6 +3311,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           files: exported.files,
           ...(agent ? { agent } : {}),
           ...(persistent !== undefined ? { persistent } : {}),
+          ...(rp.box.borrowedCredentials?.length
+            ? { borrowedCredentials: [...rp.box.borrowedCredentials] }
+            : {}),
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };

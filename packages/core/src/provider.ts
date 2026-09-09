@@ -104,6 +104,14 @@ export interface CreateBoxRequest {
    * left out is not lost: `ensureAgentInstalled` adds it to a live box.
    */
   agents?: string[];
+  /**
+   * Other agents' host-held logins to seed into this box for the agent to
+   * consume as model-provider auth (`AgentSyncSpec.modelAuth.borrows`). Each
+   * lands at the borrowed agent's own credential path, 0600, before the first
+   * supervisor task runs. Validated against the agent's `modelAuth` by
+   * `resolveBorrowedCredentials`; an id the agent does not declare is refused.
+   */
+  borrowCredentials?: string[];
   /** Override the base image / snapshot. */
   image?: string;
   /**

@@ -25,7 +25,7 @@
  * same call carry's apply mechanism and skills' box→host pull already made.
  */
 
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SyncTransport } from '@agentbox/core';
@@ -319,6 +319,53 @@ export async function resolveHostCredential(agent: CredentialAgentKind): Promise
   } catch {
     return null;
   }
+}
+
+/**
+ * The host FILE an agent's credential should be read from, with its text.
+ *
+ * `resolveHostCredential` prefers the backup unconditionally, which is right
+ * for the fan-out (a rotating agent keeps the backup newest) but wrong for a
+ * seed of a codex-shaped login: the host's own `codex` refreshes its real file
+ * and nothing copies that into the backup, so the backup can be days older.
+ * Candidates that pass the shape gate are ordered by the agent's `freshness`
+ * rule when it declares one, and by mtime otherwise — the closest generic proxy
+ * for "most recently refreshed".
+ */
+export async function resolveHostCredentialFile(
+  agent: CredentialAgentKind,
+  /** Injectable for tests: the files to consider, in place of backup + real path. */
+  opts: { candidates?: readonly string[] } = {},
+): Promise<{ path: string; text: string } | null> {
+  const spec = resolveAgentSpec(agent);
+  if (!spec.credential) return null;
+  const source = spec.staticPaths[0];
+  const candidates = opts.candidates ?? [
+    spec.credential.hostBackup,
+    ...(source ? [join(homedir(), ...source.hostHomeRel, spec.credential.boxRelPath)] : []),
+  ];
+  const valid: { path: string; text: string; mtimeMs: number }[] = [];
+  for (const path of candidates) {
+    try {
+      const text = await readFile(path, 'utf8');
+      if (!isRealAgentCredential(agent, text)) continue;
+      valid.push({ path, text, mtimeMs: (await stat(path)).mtimeMs });
+    } catch {
+      // absent or unreadable: not a candidate
+    }
+  }
+  if (valid.length === 0) return null;
+  const freshness = spec.credential.freshness?.jsonPath;
+  valid.sort((a, b) => {
+    if (freshness) {
+      const fa = jsonNumberAt(a.text, freshness) ?? -Infinity;
+      const fb = jsonNumberAt(b.text, freshness) ?? -Infinity;
+      if (fa !== fb) return fb - fa;
+    }
+    return b.mtimeMs - a.mtimeMs;
+  });
+  const best = valid[0]!;
+  return { path: best.path, text: best.text };
 }
 
 export async function pushCredentialToBox(

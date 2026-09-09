@@ -74,6 +74,21 @@ function toStatusRow(s: HubApiServiceView): ServiceStatus {
   };
 }
 
+/**
+ * Help for `--model-auth`, rendered from the row: the accepted values are the
+ * agents it declares it can borrow, so the text cannot drift from the data.
+ */
+function modelAuthHelp(spec: AgentSyncSpec): string {
+  const borrows = spec.modelAuth?.borrows ?? [];
+  if (borrows.length === 0) return `not applicable: ${spec.id} borrows no host login`;
+  const values = ['none', ...borrows.map((b) => b.agent)].join('|');
+  return (
+    `which host login to seed as the model provider (${values}; default: ${spec.id}.modelAuth, ` +
+    `else ask). ` +
+    borrows.map((b) => `${b.agent}: ${b.label}`).join('; ')
+  );
+}
+
 export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
   const service = spec.service;
   if (!service) {
@@ -102,6 +117,7 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
     )
     .option('--timeout <seconds>', 'how long to wait for the service to report ready', '180')
     .option('--verbose', 'stream create progress instead of a spinner')
+    .option('--model-auth <source>', modelAuthHelp(spec))
     .option(
       '--restore <bot>',
       `recreate a bot from its backup under <project>/.agentbox/bots/<bot>/: the box runs on a copy of the backed-up workspace AND gets the captured ${spec.id} state dir back, identity included. Always creates a new box`,

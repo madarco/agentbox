@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import {
+  borrowIngestTask,
+  findAgentSpec,
   isRealAgentCredential,
   planPropagateTargets,
   pushCredentialToBox,
@@ -105,6 +107,43 @@ const propagateCommand = new Command('propagate')
           await pushCredentialToBox(provider.syncTransport(target), agent, content);
           pushed += 1;
           process.stdout.write(`pushed ${agent} credential to ${target.name}\n`);
+        } catch (err) {
+          failed += 1;
+          process.stderr.write(
+            `${target.name}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      }
+
+      // Boxes that BORROW this login as model auth (an OpenClaw box on the
+      // user's Codex account). No volume to write: the blob goes to the
+      // canonical path over the transport, then the consuming agent's ingest
+      // task re-runs — a no-op while its own imported profile is still usable,
+      // a re-import once that profile has died.
+      for (const target of plan.borrowingBoxes) {
+        try {
+          const provider = await providerForBox(target);
+          if (!provider.syncTransport) {
+            process.stdout.write(`${target.name}: no transport; skipped\n`);
+            continue;
+          }
+          const insp = await provider.inspect(target);
+          if (insp.state !== 'running') {
+            process.stdout.write(`${target.name}: ${insp.state}; skipped (borrowed login)\n`);
+            continue;
+          }
+          await pushCredentialToBox(provider.syncTransport(target), agent, content);
+          pushed += 1;
+          process.stdout.write(`pushed ${agent} credential to ${target.name} (borrowed)\n`);
+          const ingest = (target.agents ?? [])
+            .map((a) => findAgentSpec(a))
+            .map((spec) => (spec ? borrowIngestTask(spec) : undefined))
+            .find((task) => task !== undefined);
+          if (ingest) {
+            await provider.exec(target, ['agentbox-ctl', 'run-task', ingest, '--force'], {
+              user: 'vscode',
+            });
+          }
         } catch (err) {
           failed += 1;
           process.stderr.write(

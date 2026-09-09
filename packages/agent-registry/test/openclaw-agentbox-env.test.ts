@@ -14,10 +14,15 @@ const task = spec.service!.tasks!.find((t) => t.name === 'openclaw-agentbox-env'
 const script = task.command as string;
 
 describe('openclaw-agentbox-env', () => {
-  it('runs after onboard and before the render', () => {
+  it('runs after onboard (via the model-auth import) and before the render', () => {
     // onboard writes the config file this task patches; the render applies the
     // USER's overlay afterwards, so the user has the last word on a shared key.
-    expect(task.needs).toEqual(['openclaw-onboard']);
+    // The model-auth import sits between onboard and this task rather than
+    // beside it: both write openclaw.json through openclaw's own commands, and
+    // two read-modify-writes in parallel can drop one another's key.
+    const modelAuth = spec.service!.tasks!.find((t) => t.name === 'openclaw-model-auth')!;
+    expect(modelAuth.needs).toEqual(['openclaw-onboard']);
+    expect(task.needs).toEqual(['openclaw-model-auth']);
     const render = spec.service!.tasks!.find((t) => t.name === 'openclaw-render')!;
     expect(render.needs).toEqual(['openclaw-agentbox-env']);
   });
@@ -135,9 +140,7 @@ describe('the identity nudge', () => {
     // stale: the nudge is regenerated every boot and stops appearing the moment
     // the bot writes the rule-set. Mutating either half of this condition brings
     // back a prompt that never leaves, or one that never arrives.
-    expect(script).toMatch(
-      /!\s*grep -qs 'agentbox:identity-rules' \/workspace\/agentbox\.yaml/,
-    );
+    expect(script).toMatch(/!\s*grep -qs 'agentbox:identity-rules' \/workspace\/agentbox\.yaml/);
     expect(script).toContain('$IDENTITY_NUDGE');
   });
 

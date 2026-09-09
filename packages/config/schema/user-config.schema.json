@@ -134,7 +134,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 }
+        "sessionName": { "type": "string", "minLength": 1 },
+        "modelAuth": { "enum": ["none", "codex"] }
       }
     },
     "example": {

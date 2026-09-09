@@ -40,19 +40,24 @@ describe('openclaw registry row', () => {
     expect(text).not.toContain('AGENTBOX_AUTO_SECRET');
   });
 
-  it('onboards once, seeds the box context, renders the overlay, then starts', () => {
+  it('onboards once, imports model auth, seeds the box context, renders the overlay, then starts', () => {
     const tasks = SPEC.service?.tasks ?? [];
     const onboard = tasks.find((t) => t.name === 'openclaw-onboard');
+    const modelAuth = tasks.find((t) => t.name === 'openclaw-model-auth');
     const env = tasks.find((t) => t.name === 'openclaw-agentbox-env');
     const render = tasks.find((t) => t.name === 'openclaw-render');
     // `runOnce` is what keeps a warm boot from re-onboarding and replacing the
     // identity the box already has.
     expect(onboard?.runOnce).toBe('marker');
     expect(onboard?.command).toContain('--non-interactive');
-    // The AgentBox-owned keys go in BETWEEN: after onboard wrote the config file
-    // they patch, and before the render, so the user's own overlay is the last
-    // word on any key both of them name.
-    expect(env?.needs).toEqual(['openclaw-onboard']);
+    // The borrowed-login import and the AgentBox-owned keys go in BETWEEN, in
+    // that order: after onboard wrote the config file they patch, serialized
+    // with one another (both read-modify-write openclaw.json through openclaw's
+    // own commands), and before the render, so the user's own overlay is the
+    // last word on any key they name.
+    expect(modelAuth?.needs).toEqual(['openclaw-onboard']);
+    expect(modelAuth?.runOnce).toBeUndefined();
+    expect(env?.needs).toEqual(['openclaw-model-auth']);
     expect(render?.needs).toEqual(['openclaw-agentbox-env']);
     expect(SPEC.service?.needs).toEqual(['openclaw-render']);
   });

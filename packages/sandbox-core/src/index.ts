@@ -192,6 +192,11 @@ export {
   type PerBoxCarryContext,
   type PerBoxCarryResolution,
 } from './per-box-carry.js';
+export {
+  borrowedCredentialCarry,
+  borrowIngestTask,
+  resolveBorrowedCredentials,
+} from './borrowed-credentials.js';
 export * from './sync/index.js';
 export * from './sync/agent-pull-module.js';
 export {

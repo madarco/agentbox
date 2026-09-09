@@ -486,6 +486,13 @@ export interface BoxRecord {
    * boxes created before per-agent selection, which correctly means "all".
    */
   agents?: string[];
+  /**
+   * Other agents' logins seeded into this box as model-provider auth, as
+   * passed to `create` (`borrowCredentials`). Durable so the credential
+   * fan-out can reach a box that consumes a login it does not run, and so a
+   * clone can borrow the same set. One-way: never a source for extraction.
+   */
+  borrowedCredentials?: string[];
   createdAt: string; // ISO-8601
 }
 

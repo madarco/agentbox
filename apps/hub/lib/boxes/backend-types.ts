@@ -143,6 +143,8 @@ export interface CreateBoxOpts {
   vnc?: boolean;
   /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
   persistent?: boolean;
+  /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
+  borrowCredentials?: string[];
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -711,6 +713,8 @@ export type PrepareCloneResult =
        * hub's config layers. Explicit input wins; else the source box's.
        */
       persistent?: boolean;
+      /** The source box's borrowed model logins, so the clone borrows the same. */
+      borrowedCredentials?: string[];
     }
   | { ok: false; error: string };
 

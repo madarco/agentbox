@@ -77,6 +77,8 @@ export interface HubApiBox {
   webPort?: number;
   previewUrls?: Record<number, string>;
   lastAgent?: AgentId;
+  /** Other agents' logins this box borrows as model auth. */
+  borrowedCredentials?: string[];
   topology?: string;
 }
 

@@ -224,6 +224,8 @@ export interface QueueJobCreateOpts {
   vnc?: boolean;
   /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
   persistent?: boolean;
+  /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
+  borrowCredentials?: string[];
   /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */
   resync?: boolean;
   sharedDockerCache?: boolean;

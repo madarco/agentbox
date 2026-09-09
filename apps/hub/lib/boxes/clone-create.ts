@@ -34,6 +34,17 @@ export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
     // Only when the hub HAS an opinion: `prepareClone` returns undefined when
     // neither the request nor the source box said anything, and sending `false`
     // there would override the hub's own `box.persistent`.
-    ...(prepared.persistent !== undefined ? { opts: { persistent: prepared.persistent } } : {}),
+    ...(prepared.persistent !== undefined || prepared.borrowedCredentials?.length
+      ? {
+          opts: {
+            ...(prepared.persistent !== undefined ? { persistent: prepared.persistent } : {}),
+            // A bot on the user's Codex account stays on it when spawned: the
+            // seed is re-read from the host, never copied from the source box.
+            ...(prepared.borrowedCredentials?.length
+              ? { borrowCredentials: [...prepared.borrowedCredentials] }
+              : {}),
+          },
+        }
+      : {}),
   };
 }

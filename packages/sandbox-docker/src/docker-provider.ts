@@ -78,6 +78,7 @@ export const dockerProvider: Provider = {
       // hub / control-plane create only ever arrives as a CreateBoxRequest —
       // so without this those boxes silently keep the all-agents behaviour.
       ...(req.agents ? { agents: req.agents } : {}),
+      ...(req.borrowCredentials ? { borrowCredentials: req.borrowCredentials } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

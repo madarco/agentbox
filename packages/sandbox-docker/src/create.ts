@@ -6,6 +6,7 @@ import { ConfigError, loadConfig } from '@agentbox/ctl';
 import { skipWebProxyAlias } from './direct-web-url.js';
 import {
   AGENT_SYNC_SPECS,
+  borrowedCredentialCarry,
   findAgentSpec,
   makeSyncContext,
   relayPort,
@@ -169,6 +170,12 @@ export interface CreateBoxOptions {
    * a live box on demand.
    */
   agents?: string[];
+  /**
+   * Other agents' host logins seeded as model auth for a service agent, at
+   * each lender's own credential path (`AgentSyncSpec.modelAuth`). Already
+   * validated against the agent's declaration by the caller.
+   */
+  borrowCredentials?: string[];
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -965,6 +972,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // create` record which agent the checkpoint carries. Distinct from
     // `lastAgent`, which tracks whichever agent most recently ran.
     ...(opts.agents && opts.agents.length > 0 ? { agents: [...opts.agents] } : {}),
+    ...(opts.borrowCredentials && opts.borrowCredentials.length > 0
+      ? { borrowedCredentials: [...opts.borrowCredentials] }
+      : {}),
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
@@ -1122,6 +1132,58 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   await repairIdeOwnership(containerName);
   log('.vscode-server + .cursor-server ownership verified');
 
+  if (opts.withEnv) {
+    log('copying host env/config files into /workspace (--with-env)');
+    const { copied } = await sync.seedEnvFiles(syncCtx, DEFAULT_ENV_PATTERNS);
+    log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
+  }
+
+  if (opts.envFilesToImport && opts.envFilesToImport.length > 0) {
+    log(
+      `copying ${String(opts.envFilesToImport.length)} selected env/config file(s) into /workspace`,
+    );
+    const { copied } = await copyHostFilesToBox({
+      container: containerName,
+      workspaceDir: workspace,
+      files: opts.envFilesToImport,
+      onLog: log,
+    });
+    if (copied !== opts.envFilesToImport.length) {
+      log(
+        `copied ${String(copied)}/${String(opts.envFilesToImport.length)} selected env/config file(s)`,
+      );
+    }
+  }
+
+  // carry: from agentbox.yaml — resolved and approved by the host CLI, then
+  // threaded in here. Runs after the env-file copies and BEFORE the ctl daemon
+  // launches, so the first supervisor task can already see e.g.
+  // ~/.agentbox/secrets.env or a borrowed model login. It used to run after
+  // the daemon, which raced a task that reads a carried file on first boot.
+  let carrySummary: BoxRecord['carry'] | undefined;
+  // The agent's own per-box files (a bot's channel tokens) join the user's
+  // approved entries here, where the final box name exists — the source path is
+  // keyed by it, which is what keeps two bots from sharing one token.
+  const carryEntries = await withPerBoxCarry(
+    opts.carry,
+    (opts.agents ?? []).map((a) => findAgentSpec(a)),
+    { boxName: syncCtx.boxName },
+    log,
+  );
+  // A borrowed model login (`borrowCredentials`) is the same kind of thing as
+  // a per-box channel token — a host file the agent asked for, landing 0600 at
+  // a path it named — so it rides the same step. Validated by the caller.
+  carryEntries.push(...(await borrowedCredentialCarry(opts.borrowCredentials ?? [], log)));
+  if (carryEntries.length > 0) {
+    log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
+    const result = await sync.applyCarry(syncCtx, carryEntries);
+    log(`carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`);
+    for (const err of result.errors) log(`carry: ${err}`);
+    if (result.applied.length > 0) {
+      carrySummary = { count: result.applied.length, entries: result.applied };
+    }
+  }
+
   // dockerd: always-on, mirrors launchVncDaemon. Launched (and awaited ready)
   // BEFORE the ctl supervisor: the supervisor starts agentbox.yaml services as
   // soon as it's up, so a `docker run`/`docker compose` service must not race a
@@ -1166,52 +1228,6 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       );
     }
     log('@playwright/cli installed');
-  }
-
-  if (opts.withEnv) {
-    log('copying host env/config files into /workspace (--with-env)');
-    const { copied } = await sync.seedEnvFiles(syncCtx, DEFAULT_ENV_PATTERNS);
-    log(copied > 0 ? `copied ${String(copied)} env/config file(s)` : 'no env/config files found');
-  }
-
-  if (opts.envFilesToImport && opts.envFilesToImport.length > 0) {
-    log(
-      `copying ${String(opts.envFilesToImport.length)} selected env/config file(s) into /workspace`,
-    );
-    const { copied } = await copyHostFilesToBox({
-      container: containerName,
-      workspaceDir: workspace,
-      files: opts.envFilesToImport,
-      onLog: log,
-    });
-    if (copied !== opts.envFilesToImport.length) {
-      log(
-        `copied ${String(copied)}/${String(opts.envFilesToImport.length)} selected env/config file(s)`,
-      );
-    }
-  }
-
-  // carry: from agentbox.yaml — resolved and approved by the host CLI, then
-  // threaded in here. Runs after the env-file copies and before the supervisor
-  // launches so the first task can already see e.g. ~/.agentbox/secrets.env.
-  let carrySummary: BoxRecord['carry'] | undefined;
-  // The agent's own per-box files (a bot's channel tokens) join the user's
-  // approved entries here, where the final box name exists — the source path is
-  // keyed by it, which is what keeps two bots from sharing one token.
-  const carryEntries = await withPerBoxCarry(
-    opts.carry,
-    (opts.agents ?? []).map((a) => findAgentSpec(a)),
-    { boxName: syncCtx.boxName },
-    log,
-  );
-  if (carryEntries.length > 0) {
-    log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
-    const result = await sync.applyCarry(syncCtx, carryEntries);
-    log(`carry: copied ${String(result.copied)}/${String(carryEntries.length)} entry/entries`);
-    for (const err of result.errors) log(`carry: ${err}`);
-    if (result.applied.length > 0) {
-      carrySummary = { count: result.applied.length, entries: result.applied };
-    }
   }
 
   // VNC daemon (Xvnc + websockify). Best-effort, like launchCtlDaemon. The
