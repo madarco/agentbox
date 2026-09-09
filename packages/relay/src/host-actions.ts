@@ -39,7 +39,6 @@ import type { CloudBackend, CloudHandle, Provider } from '@agentbox/core';
 import {
   buildAgentDescriptors,
   findBox,
-  hostOpenCommand,
   isSupportedApiVersion,
   pluginForProvider,
   readState,
@@ -82,7 +81,7 @@ import {
   toolRequestsEnabled,
 } from './host-tools.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
-import { browserOpenBudget } from './browser-open-budget.js';
+import { offerBrowserOpen } from './open-link.js';
 import type {
   CheckpointRpcParams,
   CpRpcParams,
@@ -112,6 +111,12 @@ export interface CloudActionExecutorDeps {
    * treated as enabled so callers that don't know the flag stay relaxed.
    */
   autoApproveSafeHostActions?: boolean;
+  /**
+   * True when this relay is a control box rather than the human's own machine.
+   * `browser.open` reads it: a link must never be opened on the VPS, only
+   * handed to an attached surface. See ./open-link.ts.
+   */
+  controlPlane?: boolean;
   /**
    * The box's REGISTERED origin URL (`BoxRegistration.originUrl`). Two uses:
    * pushing from a scratch repo when this host has no working checkout for the
@@ -639,16 +644,15 @@ async function runToolRpc(
 }
 
 /**
- * Mirror an in-box `browser.open` notification on the host. Part of the safe
- * host-action subset (`box.autoApproveSafeHostActions`), so it normally opens
- * straight away and only leaves an audit event; `browserOpenBudget` is what
- * keeps a looping agent from spraying host tabs now that no prompt gates it.
+ * Mirror an in-box `browser.open` notification on the human's machine. Part of
+ * the safe host-action subset (`box.autoApproveSafeHostActions`), so no human
+ * approves it; `offerBrowserOpen` decides whether it opens here or is handed to
+ * an attached surface (footer / dashboard / tray / hub web), and the budget is
+ * what keeps a looping agent from spraying tabs.
  *
- * Over budget (or in strict mode) it falls back to the old confirm. The action
- * runs detached from the box's `/rpc` (the in-box handler responded 200 long
- * before queuing this), so blocking on that verdict ties up no agent. Any
- * non-`y` verdict (deny / TTL timeout / no subscribers) silently drops the
- * link. Always resolves exit 0 because the box doesn't observe the result.
+ * The action runs detached from the box's `/rpc` (the in-box handler responded
+ * 200 long before queuing this), so waiting for a surface to claim it ties up
+ * no agent. Always resolves exit 0 because the box doesn't observe the result.
  */
 async function runBrowserOpenMirror(
   action: HostAction,
@@ -663,41 +667,19 @@ async function runBrowserOpenMirror(
   if (process.env['AGENTBOX_PROMPT'] === 'off') {
     return { exitCode: 0, stdout: '', stderr: '' };
   }
-  const openOnHost = async (): Promise<void> => {
-    // Open on the host's default handler (`open` on macOS, `xdg-open` on
-    // Linux). Spawn detached so the relay loop isn't blocked; the box never
-    // observes the outcome.
-    browserOpenBudget.record(deps.boxId, url);
-    const { spawn } = await import('node:child_process');
-    const child = spawn(hostOpenCommand(), [url], { stdio: 'ignore', detached: true });
-    child.unref();
-  };
-  const promptEvent = {
-    kind: 'confirm' as const,
-    message: `Open link from cloud box ${deps.boxName ?? deps.boxId} on the host?`,
-    detail: url,
-    defaultAnswer: 'n' as const,
-    context: { command: 'browser.open', argv: [url] },
-  };
-  // 90s TTL matches the docker browser.open behavior closely enough that an
-  // attached user has plenty of time to answer without leaving a stale
-  // prompt indefinitely.
-  const TTL_MS = 90_000;
   try {
-    const decision = browserOpenBudget.decide(
-      deps.boxId,
+    await offerBrowserOpen(
+      {
+        prompts: deps.prompts,
+        subscribers: deps.subscribers,
+        boxId: deps.boxId,
+        boxName: deps.boxName,
+        autoApproveSafe: deps.autoApproveSafeHostActions !== false,
+        controlPlane: deps.controlPlane === true,
+        log: deps.log,
+      },
       url,
-      deps.autoApproveSafeHostActions !== false,
     );
-    if (decision.action === 'open') {
-      deps.prompts.noteAutoApprove(deps.boxId, promptEvent, decision.reason);
-      await openOnHost();
-    } else if (decision.action === 'prompt') {
-      const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, promptEvent, {
-        ttlMs: TTL_MS,
-      });
-      if (verdict.answer === 'y' && !verdict.cancelled) await openOnHost();
-    }
   } catch (err) {
     deps.log?.(`browser.open.mirror failed: ${err instanceof Error ? err.message : String(err)}`);
   }

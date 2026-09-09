@@ -127,6 +127,10 @@ describe('executeCloudAction routing', () => {
     });
     const parked = prompts.all()[0];
     expect(parked?.ev.context?.command).toBe('browser.open');
+    expect(parked?.ev.kind).toBe('open-link');
+    expect(parked?.ev.url).toBe(url);
+    // Strict mode: no autoOpen, so a human has to act on it.
+    expect(parked?.ev.autoOpen).toBeUndefined();
     prompts.resolve(parked?.ev.id ?? '', 'n');
     expect((await pending).exitCode).toBe(0);
   });

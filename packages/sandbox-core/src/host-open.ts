@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+
 /**
  * The host command that opens a URL or file path in the OS default handler.
  *
@@ -10,4 +12,24 @@
  */
 export function hostOpenCommand(): string {
   return process.platform === 'linux' ? 'xdg-open' : 'open';
+}
+
+/**
+ * Fire-and-forget open of `target` in the host's default handler. Detached +
+ * `unref`ed so the caller's event loop isn't held by a browser process, and
+ * never throws: every call site has already printed or logged the target, so a
+ * missing `xdg-open` degrades to "nothing popped up" rather than an error.
+ *
+ * The single copy of the spawn semantics for the several places that want
+ * exactly this (hub setup, control-plane deploy, the relay's browser-open, the
+ * attach footer); {@link hostOpenCommand} stays the primitive for callers that
+ * need the exit code.
+ */
+export function openOnHost(target: string): void {
+  try {
+    const child = spawn(hostOpenCommand(), [target], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch {
+    /* the caller has already surfaced the target */
+  }
 }

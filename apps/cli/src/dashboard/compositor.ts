@@ -26,6 +26,7 @@ import { popTerminalTitle, pushTerminalTitle, setTerminalTitle } from '../termin
 import { postAnswer, subscribePrompts, type PromptStream } from '../wrapped-pty/prompt-client.js';
 import type { BoxNoticeEvent, PromptAskEvent } from '@agentbox/relay';
 import type { AgentId, AgentMode } from '@agentbox/core';
+import { openOnHost } from '@agentbox/sandbox-core';
 
 // Sidebar panel styling (256-color, portable). Each sidebar line is already
 // padded to the panel width, so wrapping it in a bg SGR tints the full column.
@@ -130,6 +131,10 @@ export interface CompositorDeps {
   openScreen: (boxId: string) => Promise<string>;
   openCode: (boxId: string) => Promise<string>;
   openUrl: (boxId: string) => Promise<string>;
+  /** Open a raw URL on THIS machine (an `open-link` offer from a box). Distinct
+   *  from `openUrl`, which resolves a box's own web endpoint first. Optional so
+   *  tests can observe it; defaults to the host's URL handler. */
+  openRawUrl?: (url: string) => void;
 }
 
 const POLL_MS = 1000;
@@ -463,6 +468,15 @@ export class Compositor {
       boxId,
       onPrompt: (ev) => {
         if (this.tornDown) return;
+        // A link the host already cleared: claim it and open it here, on the
+        // machine the human is looking at. No alert row — it isn't a question.
+        // The dashboard subscribes to EVERY visible box, so an attach footer on
+        // the same box is a live competitor: claim-then-open is what stops the
+        // two of them opening a tab each.
+        if (ev.kind === 'open-link' && ev.autoOpen === true) {
+          void this.claimAndOpenLink(boxId, ev);
+          return;
+        }
         this.activePrompts.set(boxId, ev);
         this.redrawForAlert();
       },
@@ -1016,6 +1030,10 @@ export class Compositor {
       // Answer on the hub this box actually registered with — the same one the
       // prompt was streamed from, not necessarily this laptop's.
       const boxId = this.selectedId;
+      if (ev.kind === 'open-link' && answer === 'y' && !cancelled) {
+        void this.claimAndOpenLink(boxId, ev);
+        return true;
+      }
       void (async () => {
         const source = await this.deps.hubSourceFor?.(boxId).catch(() => null);
         await postAnswer({
@@ -1127,6 +1145,32 @@ export class Compositor {
       msg = err instanceof Error ? err.message : String(err);
     }
     this.flash(msg);
+  }
+
+  /**
+   * Claim an `open-link` offer and, only if we won the claim, open it here.
+   * Every surface watching this box sees the same offer; the hub answers 200 to
+   * exactly one of them and 404 to the rest, so opening before claiming would
+   * put a duplicate tab on screen for each extra surface.
+   */
+  private async claimAndOpenLink(boxId: string, ev: PromptAskEvent): Promise<void> {
+    const url = ev.url;
+    if (url === undefined || url.length === 0) return;
+    const base = this.deps.hubBaseUrl;
+    if (!base) return;
+    try {
+      const source = await this.deps.hubSourceFor?.(boxId).catch(() => null);
+      const res = await postAnswer({
+        hubBaseUrl: source?.baseUrl ?? base,
+        hubApiKey: source?.apiKey ?? this.deps.hubApiKey,
+        body: { id: ev.id, answer: 'y', openedByClient: true },
+      });
+      if (!res.claimed || this.tornDown) return;
+      (this.deps.openRawUrl ?? openOnHost)(url);
+      this.flash('Opened link');
+    } catch {
+      /* best-effort: a link that fails to open is not worth an alert */
+    }
   }
 
   /** Briefly show `msg` in the status row, then revert. */

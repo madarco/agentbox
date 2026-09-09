@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { readBoxStatus } from '@agentbox/sandbox-docker';
 import { isServiceAgent } from '@agentbox/core';
-import { findAgentSpec } from '@agentbox/sandbox-core';
+import { findAgentSpec, openOnHost } from '@agentbox/sandbox-core';
 import { serviceStatusLabel } from './service-status.js';
 import type { AttachOpenIn } from '@agentbox/config';
 import { loadPtyBackend } from '@agentbox/cli-kit';
@@ -877,12 +877,24 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
       pty.write(b.toString('utf8'));
     },
     onAnswer: (body) => {
+      // An over-budget link the user just approved: open it here rather than
+      // wherever the relay runs (a control box would open it on the VPS).
+      const link =
+        capturingPrompt?.id === body.id && capturingPrompt.kind === 'open-link'
+          ? capturingPrompt
+          : undefined;
       // Fire-and-forget; the relay-side route is idempotent. We don't
       // block the input flow on the network roundtrip. `local:` ids are
       // synthetic local confirms (e.g. Ctrl+a k) the relay never issued — skip
       // the POST so we don't 404 the relay with an unknown prompt id.
       if (!body.id.startsWith('local:')) {
-        void postAnswer({ hubBaseUrl: opts.hubBaseUrl, hubApiKey: opts.hubApiKey, body });
+        if (link && body.answer === 'y' && body.cancelled !== true) {
+          void claimAndOpenLink(link).catch(() => {
+            /* best-effort */
+          });
+        } else {
+          void postAnswer({ hubBaseUrl: opts.hubBaseUrl, hubApiKey: opts.hubApiKey, body });
+        }
       }
       capturingPrompt = null;
       applyBandChange();
@@ -949,12 +961,56 @@ export async function runWrappedAttach(opts: WrappedAttachOptions): Promise<numb
     herdrOn = await herdrStatusEnabled();
   }
 
+  /** Same 2s footer toast the leader actions use. */
+  const flash = (message: string): void => {
+    flashMessage = message;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      flashMessage = null;
+      recomputeFooter();
+      redrawChrome();
+    }, FLASH_DURATION_MS);
+    if (typeof flashTimer.unref === 'function') flashTimer.unref();
+    recomputeFooter();
+    redrawChrome();
+  };
+
+  /**
+   * Take an `open-link` offer and open it HERE, on the machine the human is
+   * typing on. Claim first, open second: several surfaces (this footer, the
+   * dashboard, the tray, the hub web UI) see the same offer, and only the one
+   * whose answer returns 200 may open it — anyone else would pop a duplicate
+   * tab. That ordering is also what makes the stream's backlog replay after a
+   * reconnect harmless.
+   */
+  const claimAndOpenLink = async (ev: PromptAskEvent): Promise<void> => {
+    const url = ev.url;
+    if (url === undefined || url.length === 0) return;
+    const res = await postAnswer({
+      hubBaseUrl: opts.hubBaseUrl,
+      hubApiKey: opts.hubApiKey,
+      body: { id: ev.id, answer: 'y', openedByClient: true },
+    });
+    if (!res.claimed) return;
+    openOnHost(url);
+    flash('Opened link');
+  };
+
   // SSE: subscribe to the relay's prompt stream for this box.
   const stream: PromptStream = subscribePrompts({
     hubBaseUrl: opts.hubBaseUrl,
     hubApiKey: opts.hubApiKey,
     boxId: opts.boxId,
     onPrompt: (ev: PromptAskEvent) => {
+      // A link the host already cleared (safe subset + rate budget): no band,
+      // no question — claim it and open it on this machine.
+      if (ev.kind === 'open-link' && ev.autoOpen === true) {
+        void claimAndOpenLink(ev).catch(() => {
+          /* best-effort: a link that fails to open is not worth a band */
+        });
+        return;
+      }
       capturingPrompt = ev;
       applyBandChange();
       // Special highlight for AgentBox's own host-relay approval prompts: Herdr

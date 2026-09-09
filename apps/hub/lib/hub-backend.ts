@@ -1131,6 +1131,7 @@ function mapApproval(p: PendingApproval): Approval {
   return {
     id: p.id,
     boxId: p.boxId,
+    kind: p.ev.kind,
     message: p.ev.message,
     detail: p.ev.detail,
     command: p.ev.context?.command,
@@ -1138,6 +1139,8 @@ function mapApproval(p: PendingApproval): Approval {
     argv: p.ev.context?.argv,
     defaultAnswer: p.ev.defaultAnswer ?? 'n',
     createdAt: Date.parse(p.createdAt) || Date.now(),
+    ...(p.ev.url !== undefined ? { url: p.ev.url } : {}),
+    ...(p.ev.autoOpen === true ? { autoOpen: true } : {}),
   };
 }
 
@@ -2242,10 +2245,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     // Mirror POST /admin/prompts/answer's block branch, in-process: resolving
     // the entry fulfills the Promise the /rpc handler is awaiting (box unblocks),
     // and the broadcast clears any attached-terminal footer.
-    answerApproval(id, answer, cancelled): Promise<ActionResult> {
+    answerApproval(id, answer, cancelled, openedByClient): Promise<ActionResult> {
       const boxId = handle.prompts.boxFor(id);
       if (!boxId) return Promise.resolve({ ok: false, error: 'no pending approval' });
-      if (!handle.prompts.resolve(id, answer, cancelled)) {
+      // The bool is the claim: several surfaces may race to open the same
+      // `open-link`, and only the first one through here gets `ok: true`.
+      if (!handle.prompts.resolve(id, answer, cancelled, openedByClient)) {
         return Promise.resolve({ ok: false, error: 'no pending approval' });
       }
       handle.subscribers.broadcast(boxId, 'prompt-resolved', { id });

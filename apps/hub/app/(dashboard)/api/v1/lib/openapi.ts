@@ -1470,6 +1470,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         'Mark a dismissal distinctly from a plain deny in the audit trail (the `agent approve --cancel` capability). Still leaves the action unapproved.',
                     },
+                    openedByClient: {
+                      type: 'boolean',
+                      description:
+                        '`open-link` only: this client already opened the URL on its own machine, so the host must not open it again. Answering is also the CLAIM — several surfaces see the same link and only the first gets 200; a 404 means someone else opened it, so open nothing.',
+                    },
                   },
                   required: ['answer'],
                 },
@@ -2249,6 +2254,12 @@ export function buildOpenApi(): Record<string, unknown> {
           properties: {
             id: { type: 'string' },
             boxId: { type: 'string' },
+            kind: {
+              type: 'string',
+              enum: ['confirm', 'select', 'text', 'open-link'],
+              description:
+                'Which widget to draw; absent means `confirm`. `open-link` is not a question: it carries a `url` the client is asked to open on ITS OWN machine, answering with `openedByClient: true` so the host does not open a second copy (on a control box that would be a tab nobody can see). A client that cannot open URLs may answer a plain `y` and let the host try.',
+            },
             message: { type: 'string' },
             detail: { type: 'string' },
             command: { type: 'string' },
@@ -2256,6 +2267,12 @@ export function buildOpenApi(): Record<string, unknown> {
             argv: { type: 'array', items: { type: 'string' } },
             defaultAnswer: { type: 'string', enum: ['y', 'n'] },
             createdAt: { type: 'number' },
+            url: { type: 'string', description: '`open-link` only: the http(s) URL to open.' },
+            autoOpen: {
+              type: 'boolean',
+              description:
+                '`open-link` only: the host already approved this link (safe subset + rate budget), so a client that can open URLs should claim it and open it without asking. Absent means a human has to act.',
+            },
           },
           required: ['id', 'boxId', 'message', 'defaultAnswer'],
         },

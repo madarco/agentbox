@@ -10,6 +10,11 @@ import type { PromptAnswerBody, PromptAskEvent } from './types.js';
 export interface PromptResolution {
   answer: 'y' | 'n';
   cancelled?: boolean;
+  /**
+   * `kind: 'open-link'` only: the answering client opened the URL itself, so
+   * the host must not open it again. See {@link PromptAnswerBody.openedByClient}.
+   */
+  openedByClient?: boolean;
 }
 
 interface PendingPromptEntry {
@@ -105,12 +110,17 @@ export class PendingPrompts {
    * Idempotent: returns true if a pending entry was found + resolved, false
    * otherwise. The /admin/prompts/answer handler uses the bool to decide
    * 204 vs 404 — the wrapper treats both as "we're done."
+   *
+   * This bool is also the CLAIM primitive for `open-link` prompts: several
+   * surfaces (footer, dashboard, tray, hub web) may race to open the same
+   * link, and only the first `resolve` wins. Every client therefore claims
+   * BEFORE it opens — a loser sees 404 and opens nothing.
    */
-  resolve(id: string, answer: 'y' | 'n', cancelled?: boolean): boolean {
+  resolve(id: string, answer: 'y' | 'n', cancelled?: boolean, openedByClient?: boolean): boolean {
     const entry = this.entries.get(id);
     if (!entry) return false;
     this.entries.delete(id);
-    entry.resolve({ answer, cancelled });
+    entry.resolve({ answer, cancelled, openedByClient });
     this.onChange?.();
     return true;
   }
@@ -324,5 +334,6 @@ export function isPromptAnswerBody(v: unknown): v is PromptAnswerBody {
   if (typeof o.id !== 'string' || o.id.length === 0) return false;
   if (o.answer !== 'y' && o.answer !== 'n') return false;
   if (o.cancelled !== undefined && typeof o.cancelled !== 'boolean') return false;
+  if (o.openedByClient !== undefined && typeof o.openedByClient !== 'boolean') return false;
   return true;
 }

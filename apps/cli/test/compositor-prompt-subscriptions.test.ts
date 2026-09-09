@@ -14,20 +14,34 @@ const closed: string[] = [];
 const opened: Array<{ boxId: string; baseUrl: string; apiKey?: string }> = [];
 /** Boxes whose subscription should immediately fail permanently (a non-200). */
 const failWith = new Map<string, string>();
+/** Each live subscription's `onPrompt`, so a test can push an event at it. */
+const onPromptFor = new Map<string, (ev: unknown) => void>();
+/** Answers the compositor POSTed, and whether the mock lets it win the claim. */
+const answers: Array<Record<string, unknown>> = [];
+let claimWins = true;
 
 vi.mock('../src/wrapped-pty/prompt-client.js', () => ({
   subscribePrompts: (opts: {
     boxId: string;
     hubBaseUrl: string;
     hubApiKey?: string;
+    onPrompt?: (ev: unknown) => void;
     onError?: (e: Error) => void;
   }) => {
     opened.push({ boxId: opts.boxId, baseUrl: opts.hubBaseUrl, apiKey: opts.hubApiKey });
+    if (opts.onPrompt) onPromptFor.set(opts.boxId, opts.onPrompt);
     const msg = failWith.get(opts.boxId);
     if (msg) queueMicrotask(() => opts.onError?.(new Error(msg)));
     return { close: () => closed.push(opts.boxId) };
   },
-  postAnswer: () => Promise.resolve({ ok: true, status: 204 }),
+  postAnswer: (o: { body: Record<string, unknown> }) => {
+    answers.push(o.body);
+    return Promise.resolve({
+      ok: true,
+      status: claimWins ? 200 : 404,
+      claimed: claimWins,
+    });
+  },
 }));
 
 /** Minimal deps — the compositor does no terminal I/O until `run()`. */
@@ -71,6 +85,8 @@ const setBoxes = (c: Compositor, ids: string[]): void => {
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const streams = (c: Compositor): Map<string, unknown> => (c as any).promptStreams;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const alerts = (c: Compositor): Map<string, unknown> => (c as any).activePrompts;
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -213,5 +229,66 @@ describe('compositor prompt subscriptions', () => {
 
     expect(streams(c).has('transient')).toBe(false);
     expect(opened).toEqual([]); // never opened a stream for a box that left
+  });
+
+  // An `open-link` offer is not an approval to render: the dashboard claims it
+  // and opens it on this machine. It watches EVERY visible box, so an attach
+  // footer on the same box is a live competitor for the same link — hence
+  // claim-then-open, and open only on a win.
+  it('claims an auto open-link and opens it on this machine', async () => {
+    opened.length = 0;
+    answers.length = 0;
+    onPromptFor.clear();
+    claimWins = true;
+    const urls: string[] = [];
+    const c = makeCompositor({
+      hubSourceFor: () => Promise.resolve(null),
+      openRawUrl: (u: string) => urls.push(u),
+    });
+    setBoxes(c, ['b1']);
+    sync(c);
+    await flush();
+
+    onPromptFor.get('b1')?.({
+      id: 'p1',
+      kind: 'open-link',
+      message: 'Open link from box b1?',
+      url: 'https://a.test',
+      autoOpen: true,
+    });
+    await flush();
+    await flush();
+
+    expect(answers).toEqual([{ id: 'p1', answer: 'y', openedByClient: true }]);
+    expect(urls).toEqual(['https://a.test']);
+    // Not an alert row: it was never a question.
+    expect(alerts(c).has('b1')).toBe(false);
+  });
+
+  it('opens nothing when another surface claimed the link first', async () => {
+    answers.length = 0;
+    onPromptFor.clear();
+    claimWins = false;
+    const urls: string[] = [];
+    const c = makeCompositor({
+      hubSourceFor: () => Promise.resolve(null),
+      openRawUrl: (u: string) => urls.push(u),
+    });
+    setBoxes(c, ['b1']);
+    sync(c);
+    await flush();
+
+    onPromptFor.get('b1')?.({
+      id: 'p1',
+      kind: 'open-link',
+      message: 'Open link from box b1?',
+      url: 'https://a.test',
+      autoOpen: true,
+    });
+    await flush();
+    await flush();
+
+    expect(answers).toHaveLength(1);
+    expect(urls).toEqual([]);
   });
 });

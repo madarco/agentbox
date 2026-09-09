@@ -341,6 +341,20 @@ export interface PromptAskEvent {
   defaultAnswer?: 'y' | 'n';
   context?: PromptContext;
   /**
+   * `kind: 'open-link'` only: the http(s) URL to open. The client that claims
+   * the prompt opens THIS on its own machine and answers with
+   * `openedByClient: true`; the relay opens it host-side only for a plain `y`
+   * (an older client that rendered a confirm).
+   */
+  url?: string;
+  /**
+   * `kind: 'open-link'` only: no human needed — the host already decided this
+   * link may open (safe subset + rate budget), so a client that can open a URL
+   * should claim it and open it straight away instead of showing a card. Absent
+   * means a human has to act (over budget, or strict mode).
+   */
+  autoOpen?: boolean;
+  /**
    * Structured content a client MAY render richly (a file table, a credential
    * card) instead of the flat `detail` line. Shared with the create-time prompt
    * schema so the hub web and the tray need ONE renderer for both surfaces. No
@@ -356,6 +370,13 @@ export interface PromptAnswerBody {
   answer: 'y' | 'n';
   /** Set when the user dismissed the prompt (Esc / Ctrl-c); treated as 'n'. */
   cancelled?: boolean;
+  /**
+   * `kind: 'open-link'` only: "I already opened this URL on my own machine."
+   * Suppresses the relay's host-side fallback opener — without it a `y` opens
+   * the link on whatever machine the relay runs on, which is the control box
+   * rather than the human's laptop on a remote hub.
+   */
+  openedByClient?: boolean;
 }
 
 /**

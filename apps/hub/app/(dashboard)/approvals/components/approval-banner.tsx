@@ -43,7 +43,7 @@ export function ApprovalBanner() {
             </Link>
           </div>
         ) : null}
-        <ApprovalActions id={a.id} />
+        <ApprovalActions id={a.id} url={a.url} />
       </div>
     </div>
   );

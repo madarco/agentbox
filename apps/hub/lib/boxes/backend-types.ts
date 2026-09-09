@@ -486,7 +486,15 @@ export interface HubBackend {
   // Answer a pending host-action approval; resolves the parked in-box RPC.
   // `cancelled` marks a dismissal distinctly from a plain deny in the audit
   // trail (the `agent approve --cancel` capability); both resolve as not-approved.
-  answerApproval(id: string, answer: 'y' | 'n', cancelled?: boolean): Promise<ActionResult>;
+  // `openedByClient` is for `open-link` only: the caller already opened the URL
+  // on its own machine, so the host must not open it again. Answering is also
+  // the CLAIM — `ok: false` means another surface got there first.
+  answerApproval(
+    id: string,
+    answer: 'y' | 'n',
+    cancelled?: boolean,
+    openedByClient?: boolean,
+  ): Promise<ActionResult>;
   // Provider list enriched with base-image freshness (`baseStatus`/
   // `baseStaleReason`). Off the getData() hot path — computing it loads provider
   // code + hashes the runtime build context (memoized with a short TTL). Backs

@@ -20,7 +20,12 @@ export async function POST(
   const parsed = parseAnswer(parsedBody.value);
   if (!parsed.ok) return fail('invalid_request', parsed.message);
 
-  const res = await backend.answerApproval(id, parsed.value.answer, parsed.value.cancelled);
+  const res = await backend.answerApproval(
+    id,
+    parsed.value.answer,
+    parsed.value.cancelled,
+    parsed.value.openedByClient,
+  );
   if (!res.ok) return failFromAction(res.error);
   return ok({ ok: true });
 }

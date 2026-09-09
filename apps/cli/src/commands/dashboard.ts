@@ -874,6 +874,7 @@ export const dashboardCommand = new Command('dashboard')
           openScreen,
           openCode,
           openUrl,
+          openRawUrl: (url: string) => detach(hostOpenCommand(), [url]),
         },
         initialId,
       );

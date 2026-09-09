@@ -259,17 +259,31 @@ export function parseRenameBox(body: unknown): Parsed<{ displayName: string }> {
   return { ok: true, value: { displayName } };
 }
 
-export function parseAnswer(body: unknown): Parsed<{ answer: 'y' | 'n'; cancelled?: boolean }> {
+export function parseAnswer(
+  body: unknown,
+): Parsed<{ answer: 'y' | 'n'; cancelled?: boolean; openedByClient?: boolean }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { answer, cancelled } = body;
+  const { answer, cancelled, openedByClient } = body;
   if (answer !== 'y' && answer !== 'n') return { ok: false, message: "answer must be 'y' or 'n'" };
+  // `open-link` only: the client opened the URL itself, so the host must not
+  // open it again (on a control box that would pop a tab nobody can see).
+  if (openedByClient !== undefined && typeof openedByClient !== 'boolean') {
+    return { ok: false, message: 'openedByClient must be a boolean when present' };
+  }
   // `cancelled` marks a *dismissal* distinctly from a plain deny in the audit
   // trail (the `agent approve --cancel` capability). Optional; still resolves the
   // parked action as not-approved, so a missing/false value is a normal deny/allow.
   if (cancelled !== undefined && typeof cancelled !== 'boolean') {
     return { ok: false, message: 'cancelled must be a boolean when present' };
   }
-  return { ok: true, value: { answer, ...(cancelled === true ? { cancelled: true } : {}) } };
+  return {
+    ok: true,
+    value: {
+      answer,
+      ...(cancelled === true ? { cancelled: true } : {}),
+      ...(openedByClient === true ? { openedByClient: true } : {}),
+    },
+  };
 }
 
 export function parseLoginCode(body: unknown): Parsed<{ code: string }> {

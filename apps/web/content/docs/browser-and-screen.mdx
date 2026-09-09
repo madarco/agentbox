@@ -28,6 +28,16 @@ $ agent-browser open --headed https://example.com
   `agentbox destroy`.
 </Callout>
 
+## Links the box opens
+
+When something inside the box opens a URL — `agentbox-ctl open`, or anything that goes through `xdg-open` / `$BROWSER` (an agent's OAuth sign-in, `gh`, `git web--browse`) — it lands in the box's own browser **and** in yours.
+
+That second half needs no approval: opening a link is part of the safe host-action subset (`box.autoApproveSafeHostActions`, on by default), so the tab just appears. It is rate-limited instead of gated — 2 links per 30s and 10 per 10 minutes per box, and an identical link repeated within 30s is dropped — so a looping agent can't bury you in tabs. Past that budget the link arrives as an **Open link** card in the attach footer, `agentbox dashboard`, the hub UI, or the menu-bar app, and opens when you take it.
+
+The link opens on **your** machine, not on whatever machine the relay runs on. With a [remote hub](/docs/deployed-hub) the two are different computers, so the link is offered to whichever surface you're actually at; exactly one of them opens it, however many are watching. With nothing attached and the hub running locally, it just opens.
+
+Set `box.autoApproveSafeHostActions=false` to be asked about every link (and every other host action).
+
 ## Playwright
 
 The Playwright runtime ships in the image; the Chromium itself is installed on first browser use (reusing the project's pinned Playwright build when present, so `agent-browser` and the project's tests share one binary — no version-mismatched, baked-in browser to go stale). Add `--with-playwright` to also install the standalone Playwright CLI in the box:

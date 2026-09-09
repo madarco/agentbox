@@ -161,6 +161,12 @@ export interface User {
 export interface Approval {
   id: string;
   boxId: string;
+  /**
+   * Which widget to draw. Absent means `confirm` (older hubs). `open-link` is
+   * not a question: it carries a `url` the client is asked to open on ITS own
+   * machine, answering with `openedByClient` so the host doesn't open it too.
+   */
+  kind?: 'confirm' | 'select' | 'text' | 'open-link';
   message: string;
   detail?: string;
   command?: string;
@@ -168,6 +174,10 @@ export interface Approval {
   argv?: string[];
   defaultAnswer: 'y' | 'n';
   createdAt: number;
+  /** `open-link` only: the http(s) URL to open. */
+  url?: string;
+  /** `open-link` only: the host already approved it — open without asking. */
+  autoOpen?: boolean;
 }
 
 // A provider the box could be created on. `configured` = usable on this host

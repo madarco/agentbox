@@ -294,6 +294,12 @@ export interface PostAnswerOptions {
 export interface PostAnswerResult {
   ok: boolean;
   status: number;
+  /**
+   * We are the one who resolved it (HTTP 200), rather than a surface that lost
+   * the race (404 = already answered). Only meaningful for `open-link`, where
+   * several surfaces claim the same link and exactly one may open it.
+   */
+  claimed: boolean;
 }
 
 export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
@@ -302,7 +308,7 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
     try {
       url = new URL(opts.hubBaseUrl);
     } catch {
-      resolve({ ok: false, status: 0 });
+      resolve({ ok: false, status: 0, claimed: false });
       return;
     }
     const isHttps = url.protocol === 'https:';
@@ -314,6 +320,9 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
     const json = JSON.stringify({
       answer: opts.body.answer,
       ...(opts.body.cancelled ? { cancelled: true } : {}),
+      // `open-link` only: we opened the URL here, so the relay must not open a
+      // second copy on whatever machine it happens to run on.
+      ...(opts.body.openedByClient ? { openedByClient: true } : {}),
     });
     const req = transport(
       {
@@ -333,14 +342,15 @@ export function postAnswer(opts: PostAnswerOptions): Promise<PostAnswerResult> {
       (res) => {
         res.resume();
         const status = res.statusCode ?? 0;
-        // 200 = accepted; 404 = already answered (idempotent). Both are "done".
-        resolve({ ok: status === 200 || status === 404, status });
+        // 200 = accepted; 404 = already answered (idempotent). Both are "done",
+        // but only 200 means WE claimed it — see PostAnswerResult.claimed.
+        resolve({ ok: status === 200 || status === 404, status, claimed: status === 200 });
       },
     );
-    req.on('error', () => resolve({ ok: false, status: 0 }));
+    req.on('error', () => resolve({ ok: false, status: 0, claimed: false }));
     req.on('timeout', () => {
       req.destroy();
-      resolve({ ok: false, status: 0 });
+      resolve({ ok: false, status: 0, claimed: false });
     });
     req.write(json);
     req.end();

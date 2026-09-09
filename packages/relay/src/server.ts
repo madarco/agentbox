@@ -9,7 +9,7 @@ import {
   resolveHostPath,
 } from './host-actions.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
-import { browserOpenBudget } from './browser-open-budget.js';
+import { offerBrowserOpen } from './open-link.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
 import { cpCachePrefix } from './cp-cache.js';
@@ -17,11 +17,7 @@ import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-ca
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import {
-  buildAgentDescriptors,
-  hostOpenCommand,
-  projectSlugFromOriginUrl,
-} from '@agentbox/sandbox-core';
+import { buildAgentDescriptors, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import {
   isSanctionedPushBranch,
   isScratchBranch,
@@ -272,8 +268,6 @@ const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
 const CHECKPOINT_RPC_TIMEOUT_MS = 600_000; // capturing node_modules/build trees can be slow.
 const DOWNLOAD_RPC_TIMEOUT_MS = 600_000; // claude/workspace pulls over rsync can take minutes.
 const CP_RPC_TIMEOUT_MS = 300_000; // single-file/dir cp; tar pipe through docker exec.
-const BROWSER_OPEN_RPC_TIMEOUT_MS = 15_000; // `open` hands off to the browser and returns at once.
-const BROWSER_OPEN_PROMPT_TTL_MS = 25_000; // the "open on host too?" offer auto-dismisses if ignored.
 const SSE_HEARTBEAT_MS = 15_000; // every 15s; wrapper reconnects if it sees no traffic for ~30s.
 /** Default hold for an idle `/admin/hostreach/poll` — under Caddy's 30s idle default. */
 const DEFAULT_HOSTREACH_WAIT_MS = 25_000;
@@ -984,6 +978,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             subscribers,
             hostInitiatedTokens,
             autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
+            controlPlane: opts.controlPlane === true,
             originUrl: reg.originUrl,
             log,
           });
@@ -1427,38 +1422,23 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             // and `HostActionQueue.maxAgeMs` GCs the entry if it lingers.
             void hostActions.enqueue(reg.boxId, 'browser.open.mirror', { url });
           } else {
-            const promptEvent = {
-              kind: 'confirm' as const,
-              message: `Open link from box ${reg.name} on the host?`,
-              detail: url,
-              defaultAnswer: 'n' as const,
-              context: { command: 'browser.open', argv: [url] },
-            };
-            const decision = browserOpenBudget.decide(
-              reg.boxId,
+            // Offer it to whichever surface the human is at (footer, dashboard,
+            // tray, hub web); only when nothing is attached AND this relay is
+            // the human's own machine does it open here. See ./open-link.ts.
+            void offerBrowserOpen(
+              {
+                prompts,
+                subscribers,
+                boxId: reg.boxId,
+                boxName: reg.name,
+                autoApproveSafe: reg.autoApproveSafeHostActions !== false,
+                controlPlane: opts.controlPlane === true,
+                log,
+              },
               url,
-              reg.autoApproveSafeHostActions !== false,
-            );
-            if (decision.action === 'open') {
-              prompts.noteAutoApprove(reg.boxId, promptEvent, decision.reason);
-              browserOpenBudget.record(reg.boxId, url);
-              void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
-            } else if (decision.action === 'prompt') {
-              // Over budget (or strict mode): fall back to the non-blocking,
-              // auto-expiring confirm in the footer/dashboard.
-              void askPrompt(prompts, subscribers, reg.boxId, promptEvent, {
-                ttlMs: BROWSER_OPEN_PROMPT_TTL_MS,
-              })
-                .then((verdict) => {
-                  if (verdict.answer === 'y' && !verdict.cancelled) {
-                    browserOpenBudget.record(reg.boxId, url);
-                    void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
-                  }
-                })
-                .catch(() => {
-                  /* best-effort */
-                });
-            }
+            ).catch(() => {
+              /* best-effort: the box never observes the outcome */
+            });
           }
         }
         return;
@@ -1648,6 +1628,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       subscribers,
                       hostInitiatedTokens,
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
+                      controlPlane: opts.controlPlane === true,
                       originUrl: reg.originUrl,
                       log,
                     });
@@ -1836,7 +1817,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // can target the prompt-resolved broadcast (other wrappers clear their
       // stale footer).
       const targetBox = prompts.boxFor(body.id);
-      const hit = prompts.resolve(body.id, body.answer, body.cancelled);
+      const hit = prompts.resolve(body.id, body.answer, body.cancelled, body.openedByClient);
       if (!hit) {
         // Already answered (idempotent) or never existed.
         send(res, 404, { error: 'no pending prompt with that id' });

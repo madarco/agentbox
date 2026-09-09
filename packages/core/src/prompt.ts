@@ -17,8 +17,14 @@
 
 import { createHash } from 'node:crypto';
 
-/** Which widget a client must render. */
-export type PromptKind = 'confirm' | 'select' | 'text';
+/**
+ * Which widget a client must render. `open-link` is the odd one out: it is not a
+ * question but a link the box wants opened on the human's own machine, so a
+ * client answers it by opening the URL itself and reporting `openedByClient`.
+ * A client that doesn't know the kind falls back to a confirm, and a plain `y`
+ * makes the host open it — the pre-`open-link` behavior.
+ */
+export type PromptKind = 'confirm' | 'select' | 'text' | 'open-link';
 
 /** One option of a `select`. */
 export interface PromptChoice {
