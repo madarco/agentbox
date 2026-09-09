@@ -3556,11 +3556,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           } catch {
             live = null; // unprobeable is the normal case for a box that is gone
           }
-          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
+          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot, 'tick force');
           if (refusal) return { ok: false, error: refusal };
         }
         const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
-        const occupied = existingBoxRefusal(occupant, workspace);
+        const occupied = existingBoxRefusal(occupant, workspace, 'set a different destination');
         if (occupied) return { ok: false, error: occupied };
 
         const staged = await stageRestoreWorkspace({

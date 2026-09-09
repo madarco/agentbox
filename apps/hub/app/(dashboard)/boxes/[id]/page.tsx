@@ -11,6 +11,7 @@ import { useStore } from '@/lib/boxes/store';
 import { BoxApprovals } from '../../approvals/components/box-approvals';
 import { Access } from '../components/access';
 import { BackLink } from '../components/back-link';
+import { BotPanel } from '../components/bot-panel';
 import { BoxActions } from '../components/box-actions';
 import { DRow } from '../components/d-row';
 import { EmptyBox } from '../components/empty-box';
@@ -81,6 +82,10 @@ export default function BoxDetailPage() {
           web/VNC endpoint and no launchable host app. */}
       <Access box={box} />
 
+      {/* Backup + clone. Self-hides for a synthetic create-job row; the Backup
+          row itself only appears when the box's agent has an identity to keep. */}
+      <BotPanel box={box} />
+
       {/* A box created from a plain directory has no worktree and no remote, so
           every button in this card would fail. `undefined` means the source did
           not say (hosted plane, older hub) — show it, as before. */}
@@ -102,7 +107,10 @@ export default function BoxDetailPage() {
           link={proj ? '/projects/' + box.projectId : null}
         />
         <DRow k="Repository" v={box.repo} mono />
-        <DRow k="Branch" v={box.branch} mono />
+        {/* A cloud box is minted an `agentbox/<name>` branch name whether or not
+            its workspace is a repo, so on a repo-less box this row named a branch
+            that does not exist anywhere. */}
+        {box.hasGit === false ? null : <DRow k="Branch" v={box.branch} mono />}
         <DRow k="Host" v={box.host} mono />
         <DRow k="Created" v={new Date(box.createdAt).toLocaleString()} mono />
       </Card>

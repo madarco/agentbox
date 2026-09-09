@@ -486,13 +486,21 @@ export function boxRefWithRestoreRefusal(boxRef: string | undefined): string | n
   );
 }
 
-/** Why a restore cannot proceed into a directory a box already runs on. */
+/**
+ * Why a restore cannot proceed into a directory a box already runs on.
+ *
+ * `escape` is the caller's own spelling of the way out — a CLI flag, a checkbox
+ * label — because the rule is shared but the escape hatch is not, and a web UI
+ * that tells the user to "pass --into <dir>" is telling them to use a different
+ * program.
+ */
 export function existingBoxRefusal(
   existing: { name: string } | null | undefined,
   dir: string,
+  escape = 'restore it somewhere else',
 ): string | null {
   if (!existing) return null;
-  return `box ${existing.name} already runs on ${dir} — pass --into <dir> to restore alongside it`;
+  return `box ${existing.name} already runs on ${dir} — ${escape} to restore alongside it`;
 }
 
 /**
@@ -506,17 +514,20 @@ export function existingBoxRefusal(
  * can still see running stops it.
  *
  * Takes the live state rather than probing, so the CLI and the hub can each ask
- * their own provider and share this one rule about the answer.
+ * their own provider and share this one rule about the answer — and `escape` for
+ * the same reason as {@link existingBoxRefusal}: the rule is shared, the way out
+ * is spelled differently in a CLI flag and a web UI checkbox.
  */
 export function sourceBoxRunningRefusal(
   source: { name: string } | null | undefined,
   liveState: string | null,
   bot: string,
+  escape = 'force the restore',
 ): string | null {
   if (!source || liveState !== 'running') return null;
   return (
     `box ${source.name} is still running and holds ${bot}'s identity — ` +
-    'two live gateways cannot share one. Stop or destroy it, or pass --force.'
+    `two live gateways cannot share one. Stop or destroy it, or ${escape}.`
   );
 }
 

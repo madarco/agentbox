@@ -11,6 +11,7 @@ import { DeleteProjectButton } from '../../boxes/components/delete-project-butto
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 import { Stat, StatGrid } from '../../boxes/components/stat-grid';
+import { ProjectBots } from './components/project-bots';
 import { ProjectSeed } from './components/project-seed';
 
 /** An https(s) origin is clickable; an scp/ssh remote is shown as plain text. */
@@ -87,6 +88,11 @@ export default function ProjectDetailPage() {
       </div>
 
       <ProjectSeed projectId={id} />
+
+      {/* Restore lives on the project, not on a box: a bundle outlives the box it
+          came from, so there is usually no box left to click. Self-hides when the
+          project holds no bots. */}
+      <ProjectBots projectId={id} />
 
       <SectionLabel>Boxes</SectionLabel>
       {boxes.length ? (

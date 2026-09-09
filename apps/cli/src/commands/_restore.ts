@@ -105,7 +105,7 @@ export async function assertSourceBoxNotRunning(
   } catch {
     return;
   }
-  const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
+  const refusal = sourceBoxRunningRefusal(source, live, bundle.bot, 'pass --force');
   if (!refusal) return;
   if (force) {
     log.warn(`${source.name} is still running and holds this identity; --force given, continuing`);

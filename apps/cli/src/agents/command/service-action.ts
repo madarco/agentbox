@@ -331,7 +331,11 @@ export async function runServiceAgent(
       // do by accident. Checked BEFORE the copy, or `--force` would overwrite
       // that box's workspace on its way to being refused.
       const already = await findExistingBox(undefined, restored.workspaceDir, spec.id);
-      const alreadyRefusal = existingBoxRefusal(already, restored.workspaceDir);
+      const alreadyRefusal = existingBoxRefusal(
+        already,
+        restored.workspaceDir,
+        'pass --into <dir>',
+      );
       if (alreadyRefusal) throw new Error(alreadyRefusal);
       // Staged BEFORE the config load below, which reads the workspace: on a
       // first restore the destination does not exist yet, and a config loaded
@@ -358,7 +362,7 @@ export async function runServiceAgent(
     // this one is the last word before the resume branch below would hand the
     // restore an existing box to overwrite.
     if (restored) {
-      const refusal = existingBoxRefusal(existing, project.root);
+      const refusal = existingBoxRefusal(existing, project.root, 'pass --into <dir>');
       if (refusal) throw new Error(refusal);
     }
     let box: BoxRecord;

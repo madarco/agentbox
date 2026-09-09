@@ -17,72 +17,27 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { gitBranchAction, gitCheckoutAction, gitPullAction, gitPushAction, gitPushHostAction } from '@/lib/boxes/actions';
+import {
+  gitBranchAction,
+  gitCheckoutAction,
+  gitPullAction,
+  gitPushAction,
+  gitPushHostAction,
+} from '@/lib/boxes/actions';
 import type { BoxOpResult, GitInfo } from '@/lib/boxes/backend-types';
 import type { Box } from '@/lib/boxes/types';
 import { cn } from '@/lib/utils';
+import { useToasts, ToastStack, type Toast } from './toasts';
 
-// ── toast stack (shadcn toast styling, AgentBox tokens) ──
-interface Toast {
-  id: number;
-  title: string;
-  detail?: string;
-  variant?: 'error';
-}
-let _toastId = 0;
-
-function useToasts() {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const dismiss = useCallback((id: number) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
-  const push = useCallback(
-    (t: Omit<Toast, 'id'>) => {
-      const id = ++_toastId;
-      setToasts((ts) => [...ts, { id, ...t }]);
-      setTimeout(() => dismiss(id), 4200);
-    },
-    [dismiss],
-  );
-  return { toasts, push, dismiss };
-}
-
-function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
-  return (
-    <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[340px] max-w-[calc(100vw-40px)] flex-col gap-2">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className="anim-pop pointer-events-auto relative flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 pr-9 shadow-[0_16px_40px_-18px_rgba(20,24,30,.35)]"
-        >
-          <span
-            className={cn(
-              'mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md border',
-              t.variant === 'error'
-                ? 'border-[var(--red-line)] bg-[var(--red-soft)] text-[var(--red)]'
-                : 'border-[var(--green-line)] bg-accent text-primary',
-            )}
-          >
-            {t.variant === 'error' ? <Icons.warn className="size-3.5" /> : <Icons.check className="size-3.5" />}
-          </span>
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold leading-tight">{t.title}</div>
-            {t.detail ? (
-              <div className="mt-0.5 break-words font-mono text-[11.5px] leading-normal text-muted-foreground">{t.detail}</div>
-            ) : null}
-          </div>
-          <button
-            className="absolute right-2.5 top-2.5 grid h-5 w-5 cursor-pointer place-items-center rounded border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"
-            onClick={() => dismiss(t.id)}
-            aria-label="Dismiss"
-          >
-            <Icons.x className="size-3" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function GitOpRow({ label, desc, children }: { label: string; desc: ReactNode; children: ReactNode }) {
+function GitOpRow({
+  label,
+  desc,
+  children,
+}: {
+  label: string;
+  desc: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-3 px-4.5 p-3.5">
       <div className="min-w-[150px] flex-1">
@@ -139,7 +94,9 @@ export function GitActions({ box }: { box: Box }) {
 
   const loadGit = useCallback(async () => {
     try {
-      const r = await fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/git`, { credentials: 'same-origin' });
+      const r = await fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/git`, {
+        credentials: 'same-origin',
+      });
       setGit(r.ok ? ((await r.json()) as GitInfo) : null);
     } catch {
       setGit(null);
@@ -170,7 +127,9 @@ export function GitActions({ box }: { box: Box }) {
 
   return (
     <>
-      <Card className={cn('divide-y divide-border/60 overflow-hidden', offline ? 'opacity-90' : '')}>
+      <Card
+        className={cn('divide-y divide-border/60 overflow-hidden', offline ? 'opacity-90' : '')}
+      >
         {offline ? (
           <div className="flex items-center gap-2.5 bg-[var(--amber-soft)] px-4.5 p-2.5 text-[12.5px] text-[var(--amber)]">
             <Icons.warn className="size-3.5 flex-none" />
@@ -178,10 +137,18 @@ export function GitActions({ box }: { box: Box }) {
           </div>
         ) : null}
         <GitOpRow label="Sync" desc={`origin ↔ ${branch}`}>
-          <OpButton icon={Icons.arrowL} disabled={offline} onRun={() => runOp('Pulled from origin', () => gitPullAction(box.id))}>
+          <OpButton
+            icon={Icons.arrowL}
+            disabled={offline}
+            onRun={() => runOp('Pulled from origin', () => gitPullAction(box.id))}
+          >
             Pull
           </OpButton>
-          <OpButton icon={Icons.ext} disabled={offline} onRun={() => runOp('Pushed to origin', () => gitPushAction(box.id))}>
+          <OpButton
+            icon={Icons.ext}
+            disabled={offline}
+            onRun={() => runOp('Pushed to origin', () => gitPushAction(box.id))}
+          >
             Push
           </OpButton>
           <OpButton
@@ -205,10 +172,21 @@ export function GitActions({ box }: { box: Box }) {
       </Card>
 
       {modal === 'change' ? (
-        <ChangeBranchModal box={box} branch={branch} onClose={() => setModal(null)} onDone={push} onRefresh={refresh} />
+        <ChangeBranchModal
+          box={box}
+          branch={branch}
+          onClose={() => setModal(null)}
+          onDone={push}
+          onRefresh={refresh}
+        />
       ) : null}
       {modal === 'new' ? (
-        <NewBranchModal box={box} onClose={() => setModal(null)} onDone={push} onRefresh={refresh} />
+        <NewBranchModal
+          box={box}
+          onClose={() => setModal(null)}
+          onDone={push}
+          onRefresh={refresh}
+        />
       ) : null}
       <ToastStack toasts={toasts} dismiss={dismiss} />
     </>
@@ -251,8 +229,12 @@ function BranchField({
     let cancelled = false;
     void (async () => {
       try {
-        const r = await fetch(`/api/v1/boxes/${encodeURIComponent(boxId)}/branches`, { credentials: 'same-origin' });
-        const j = r.ok ? ((await r.json()) as { current?: string | null; branches?: string[] }) : null;
+        const r = await fetch(`/api/v1/boxes/${encodeURIComponent(boxId)}/branches`, {
+          credentials: 'same-origin',
+        });
+        const j = r.ok
+          ? ((await r.json()) as { current?: string | null; branches?: string[] })
+          : null;
         if (cancelled) return;
         if (j && Array.isArray(j.branches) && j.branches.length > 0) {
           setBranches(j.branches);
@@ -394,11 +376,19 @@ function ChangeBranchModal({
       </DialogHeader>
       <DialogBody>
         <Label htmlFor="gb-branch">Branch</Label>
-        <BranchField boxId={box.id} id="gb-branch" value={value} onChange={setValue} currentBranch={branch} />
+        <BranchField
+          boxId={box.id}
+          id="gb-branch"
+          value={value}
+          onChange={setValue}
+          currentBranch={branch}
+        />
         <p className="mt-1.5 text-xs text-muted-foreground">
           The branch must exist and not be checked out in another worktree.
         </p>
-        {error ? <p className="mt-2 break-words font-mono text-xs text-destructive">{error}</p> : null}
+        {error ? (
+          <p className="mt-2 break-words font-mono text-xs text-destructive">{error}</p>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         <Button variant="outline" onClick={onClose} disabled={busy}>
@@ -479,9 +469,17 @@ function NewBranchModal({
         <Label htmlFor="nb-from">
           Base ref <span className="font-normal text-[#a4a9b0]">(optional)</span>
         </Label>
-        <BranchField boxId={box.id} id="nb-from" value={from} onChange={setFrom} headLabel="Current HEAD (default)" />
+        <BranchField
+          boxId={box.id}
+          id="nb-from"
+          value={from}
+          onChange={setFrom}
+          headLabel="Current HEAD (default)"
+        />
         <p className="mt-1.5 text-xs text-muted-foreground">Defaults to the box's current HEAD.</p>
-        {error ? <p className="mt-2 break-words font-mono text-xs text-destructive">{error}</p> : null}
+        {error ? (
+          <p className="mt-2 break-words font-mono text-xs text-destructive">{error}</p>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         <Button variant="outline" onClick={onClose} disabled={busy}>
