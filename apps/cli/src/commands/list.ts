@@ -1,8 +1,8 @@
 import { log } from '@clack/prompts';
-import { isServiceAgent, LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
+import { LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
 import { execa } from 'execa';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
-import { deriveRepoLabel, findAgentSpec, isHubWorkerClone } from '@agentbox/sandbox-core';
+import { deriveRepoLabel, isHubWorkerClone, serviceAgentForBox } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -78,14 +78,14 @@ function urlCell(b: HubApiBox, stream: NodeJS.WriteStream, hub: HubLinkTarget | 
   const primaryHref = (web ? webLinkTarget(b, hub) : undefined) ?? primary;
 
   const parts: Cell[] = [];
-  if (primary && primaryHref) {
+  if (primary) {
     let display: string;
     try {
       display = new URL(primary).host;
     } catch {
       display = primary;
     }
-    parts.push({ text: hyperlink(display, primaryHref, stream), width: display.length });
+    parts.push({ text: hyperlink(display, primaryHref ?? primary, stream), width: display.length });
   }
   if (vnc && vnc !== primary) {
     const label = '(VNC)';
@@ -150,13 +150,25 @@ export function vncLinkTarget(b: HubApiBox, hub: HubLinkTarget | undefined): str
 export function webLinkTarget(b: HubApiBox, hub: HubLinkTarget | undefined): string | null {
   const web = b.webUrl ?? null;
   if (!web) return null;
-  const spec = b.agent ? findAgentSpec(b.agent) : undefined;
-  if (!spec || !isServiceAgent(spec)) return web;
-  if (!hub || effectiveState(b) !== 'running') return web;
-  // Same `?token=` rule as the VNC link: it authorizes the click on a
-  // token-gated localhost hub, and buys nothing on a password profile.
+  // NOT `b.agent` alone: the hub fills that from `lastAgent`, which is
+  // "whichever agent ran most recently" and is overwritten by an `agentbox
+  // claude` inside an OpenClaw box while its gateway keeps serving. Reading only
+  // that would decide the box has no UI to sign in to — the exact failure
+  // `serviceAgentForBox` exists to prevent, so use it, over every agent the
+  // payload knows about.
+  const agents = Object.keys(hubBoxAgentStatus(b));
+  const service = serviceAgentForBox({ lastAgent: b.agent, agents });
+  if (!service) return web;
+  // LOCAL hubs only. `/boxes/:id/web` landed 2026-09-08, two weeks after
+  // `/boxes/:id/vnc`, so a control box deployed in between serves the VNC
+  // redirect but 404s this one — and unlike `agentbox url`, a printed link
+  // cannot catch that and fall back. A local hub is spawned from this CLI's own
+  // bundle, so it always has the route. A remote hub keeps the direct URL,
+  // which is what it had before this change.
+  if (!hub || hub.mode !== 'local' || effectiveState(b) !== 'running') return web;
+  // `?token=` is how proxy.ts authorizes a click on a token-gated localhost hub.
   const base = hub.url.replace(/\/+$/, '');
-  const q = hub.mode === 'local' && hub.apiKey ? `?token=${encodeURIComponent(hub.apiKey)}` : '';
+  const q = hub.apiKey ? `?token=${encodeURIComponent(hub.apiKey)}` : '';
   return `${base}/boxes/${encodeURIComponent(b.id)}/web${q}`;
 }
 

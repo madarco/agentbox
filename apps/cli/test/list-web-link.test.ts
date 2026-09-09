@@ -49,12 +49,23 @@ describe('webLinkTarget', () => {
     );
   });
 
-  it('omits the token on a remote hub, where it buys nothing', () => {
-    // Same rule as the VNC link: a password profile gates only /api/v1, so a
-    // token in the URL would be a printed secret with no effect.
-    expect(webLinkTarget(box({ agent: 'openclaw' }), REMOTE)).toBe(
-      'https://hub.example.com/boxes/b1/web',
-    );
+  it('finds the service agent even when lastAgent has been overwritten', () => {
+    // `b.agent` is lastAgent: run `agentbox claude` inside an OpenClaw box and
+    // it flips to claude while the gateway keeps serving. Reading only that
+    // would hand the user an unauthenticated token prompt — which is why
+    // `serviceAgentForBox` scans every agent the box knows.
+    const b = box({
+      agent: 'claude',
+      agentStatus: { openclaw: { state: 'idle' }, claude: { state: 'idle' } },
+    });
+    expect(webLinkTarget(b, LOCAL)).toBe('http://127.0.0.1:8787/boxes/b1/web?token=tok%20en');
+  });
+
+  it('leaves a REMOTE hub on the direct URL, which may predate the /web route', () => {
+    // `/boxes/:id/web` landed two weeks after `/boxes/:id/vnc`, so a control box
+    // deployed in between 404s it — and a printed link cannot catch that the way
+    // `agentbox url` does. Direct URL is what a remote hub had before.
+    expect(webLinkTarget(box({ agent: 'openclaw' }), REMOTE)).toBe(WEB);
   });
 
   it('falls back to the direct URL with no live hub, or a box that is not running', () => {
