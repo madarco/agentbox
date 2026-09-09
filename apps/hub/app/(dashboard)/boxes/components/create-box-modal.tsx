@@ -322,12 +322,67 @@ function CreateBoxModal({
     // the effect on projectId/jobId is sufficient.
   }, [projectId, jobId]);
 
+  /**
+   * Create was pressed. Ask the host-boundary questions FIRST — before any bake
+   * — then run the normal bake-or-create decision. Asking after the bake would
+   * put a required `carry:` question minutes into a build the user has been
+   * watching, under a card that still says "Building base image".
+   */
   const submit = () => {
     setError(null);
     if (!projectId) {
       setError('pick a project');
       return;
     }
+    startTransition(async () => {
+      const asked = await askPreflight();
+      // Questions shown: `answerPrompt` calls `proceed()` once they are answered.
+      if (!asked) proceed();
+    });
+  };
+
+  /**
+   * Fetch the create-time questions. Returns true when there are some to show.
+   * Advisory: a hub too old to serve the route still creates boxes, and a
+   * `required` prompt is refused by the create itself rather than slipping
+   * through silently.
+   */
+  const askPreflight = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(
+        `/api/v1/projects/${encodeURIComponent(projectId)}/create-preflight`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent, provider }),
+        },
+      );
+      const j = (await res.json()) as {
+        prompts?: PromptRequest[];
+        unavailable?: { topic: string; reason: string }[];
+      } | null;
+      setUnavailable(j?.unavailable ?? []);
+      if (res.ok && j?.prompts?.length) {
+        setPrompts(j.prompts);
+        setAnswers([]);
+        return true;
+      }
+    } catch {
+      /* advisory; fall through to creating */
+    }
+    return false;
+  };
+
+  /**
+   * Everything after the questions: bake first when needed, else create.
+   *
+   * `collected` is threaded rather than read from state because the no-bake path
+   * runs in the SAME tick as the `setAnswers` that produced it, and would
+   * otherwise post the create with the previous render's answers. The bake path
+   * re-enters through `startCreate` a job later, by which time state has caught
+   * up — so its default is the state value.
+   */
+  const proceed = (collected: PromptAnswer[] = answers) => {
     // A size the base has to be re-baked at is the same two-phase flow as a
     // missing base, minus the stale-base question (the user just asked for
     // this, so there is nothing to confirm).
@@ -353,7 +408,7 @@ function CreateBoxModal({
       startBake();
       return;
     }
-    startCreate();
+    startCreate(collected);
   };
 
   // Phase 1: bake the provider's base image (or attach to an in-flight bake).
@@ -399,40 +454,14 @@ function CreateBoxModal({
   };
 
   /**
-   * Ask the hub what this create would need approved, then either show those
-   * questions or go straight to creating. Runs on Create rather than on every
-   * form change: the answer depends on the agent, and the walk touches the disk.
+   * Post the create. The questions were already asked and answered in `submit`,
+   * so this fires straight after a bake (from the bake stream's `end: done`)
+   * without stopping to prompt.
    */
-  const startCreate = () => {
+  const startCreate = (collected: PromptAnswer[] = answers) => {
     setError(null);
     startTransition(async () => {
-      try {
-        const res = await fetch(
-          `/api/v1/projects/${encodeURIComponent(projectId)}/create-preflight`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ agent, provider }),
-          },
-        );
-        const j = (await res.json()) as {
-          prompts?: PromptRequest[];
-          unavailable?: { topic: string; reason: string }[];
-          error?: { message?: string };
-        } | null;
-        if (res.ok && j?.prompts?.length) {
-          setPrompts(j.prompts);
-          setAnswers([]);
-          setUnavailable(j.unavailable ?? []);
-          return;
-        }
-        setUnavailable(j?.unavailable ?? []);
-      } catch {
-        // The preflight is advisory: a hub too old to serve it still creates
-        // boxes, and a `required` prompt is refused by the create itself rather
-        // than slipping through silently.
-      }
-      await submitCreate([]);
+      await submitCreate(collected);
     });
   };
 
@@ -515,7 +544,9 @@ function CreateBoxModal({
     }
     setAnswers(next);
     setPrompts(remaining);
-    if (remaining.length === 0) startTransition(() => submitCreate(next));
+    // Threaded, not read back from state: this runs in the same tick as the
+    // `setAnswers` above.
+    if (remaining.length === 0) proceed(next);
   };
 
   return (
@@ -526,7 +557,13 @@ function CreateBoxModal({
           <Icons.box />
         </DialogIcon>
         <div>
-          <DialogTitle>{!jobId && bakeJobId ? 'Building base image' : 'Create box'}</DialogTitle>
+          <DialogTitle>
+            {prompts.length > 0
+              ? 'Create box'
+              : !jobId && bakeJobId
+                ? 'Building base image'
+                : 'Create box'}
+          </DialogTitle>
           <DialogDescription>
             {selected ? selected.name : 'Start a box in a project'}
           </DialogDescription>
@@ -552,7 +589,7 @@ function CreateBoxModal({
             ))}
           </div>
         ) : null}
-        {prompts.length > 0 && !jobId ? (
+        {prompts.length > 0 ? (
           // One question at a time: answering the last one starts the create.
           <PromptView request={prompts[0]!} onAnswer={answerPrompt} disabled={pending} />
         ) : jobId ? (
@@ -820,7 +857,7 @@ function CreateBoxModal({
         )}
       </DialogBody>
       <DialogFooter>
-        {prompts.length > 0 && !jobId ? (
+        {prompts.length > 0 ? (
           // The prompt's own choice buttons are the action here; a second
           // "Create" would let the user skip the question it is asking.
           <>

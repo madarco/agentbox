@@ -171,8 +171,12 @@ export function toFileRow(e: ResolvedCarryEntry): PromptFileRow {
 
 /**
  * The plain-text table, for a client that renders no typed detail (and for the
- * CLI, which renders exactly this). Kept beside `toFileRow` so the columns and
- * the flags can never disagree.
+ * CLI, which renders exactly this).
+ *
+ * Unlike the GUI tables, this one DOES show `mode` and `user`. A permission bit
+ * is noise on a card someone is glancing at, but this is the terminal gate — the
+ * one surface where an entry landing 0644 or root-owned is worth seeing before
+ * you approve it.
  */
 export function renderCarryTable(rows: PromptFileRow[]): string {
   if (rows.length === 0) return '';
@@ -181,6 +185,8 @@ export function renderCarryTable(rows: PromptFileRow[]): string {
   const out = [`${pad('from', srcW)}  ->  ${pad('to', destW)}  size       notes`];
   for (const r of rows) {
     const flags = [...r.flags];
+    if (r.mode !== undefined) flags.push(`mode ${r.mode}`);
+    if (r.user !== undefined) flags.push(`user ${String(r.user)}`);
     const size = r.kind === 'missing' ? '-' : formatBytes(r.bytes ?? 0);
     out.push(
       `${pad(r.src, srcW)}  ->  ${pad(r.dest, destW)}  ${pad(size, 9)}  ${flags.join(', ')}`,

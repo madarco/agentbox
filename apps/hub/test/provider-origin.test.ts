@@ -8,13 +8,18 @@ function local(): ProviderOption[] {
     { id: 'remote-docker', label: 'Remote Docker', configured: true },
     // This host has hetzner baked and e2b not — neither of which a create on the
     // control box would consult.
-    { id: 'hetzner', label: 'Hetzner', configured: true, hasCredentials: true, baseStatus: 'stale' },
+    {
+      id: 'hetzner',
+      label: 'Hetzner',
+      configured: true,
+      hasCredentials: true,
+      baseStatus: 'stale',
+    },
     { id: 'e2b', label: 'E2B', configured: false, hasCredentials: false },
   ];
 }
 
-const byId = (rows: ProviderOption[], id: string): ProviderOption =>
-  rows.find((r) => r.id === id)!;
+const byId = (rows: ProviderOption[], id: string): ProviderOption => rows.find((r) => r.id === id)!;
 
 describe('mergeRemoteProviders', () => {
   it('leaves everything local when no control box is configured', () => {
@@ -41,7 +46,11 @@ describe('mergeRemoteProviders', () => {
       configured: false,
     });
     expect(byId(rows, 'hetzner').baseStatus).toBeUndefined();
-    expect(byId(rows, 'e2b')).toMatchObject({ origin: 'hub', configured: true, baseStatus: 'fresh' });
+    expect(byId(rows, 'e2b')).toMatchObject({
+      origin: 'hub',
+      configured: true,
+      baseStatus: 'fresh',
+    });
   });
 
   it('keeps the local label so the picker reads consistently', () => {
@@ -53,7 +62,11 @@ describe('mergeRemoteProviders', () => {
   });
 
   it('reports unknown — never this host’s state — when the control box is unreachable', () => {
-    const rows = mergeRemoteProviders({ local: local(), remote: null, hubUrl: 'https://hub.example' });
+    const rows = mergeRemoteProviders({
+      local: local(),
+      remote: null,
+      hubUrl: 'https://hub.example',
+    });
     const hetzner = byId(rows, 'hetzner');
     // Locally this row is `configured: true`. Showing that under a "control box"
     // label would be a claim about a machine we did not reach.

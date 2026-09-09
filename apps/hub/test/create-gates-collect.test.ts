@@ -52,6 +52,45 @@ describe('runCreateGates in collecting mode', () => {
     expect(res.carry).toEqual([]);
   });
 
+  it('an explicit borrowCredentials wins, empty array included', async () => {
+    const refuses = () => {
+      throw new Error('must not ask when the answer was given up front');
+    };
+    // The API equivalent of `--model-auth`. An empty array is a deliberate
+    // "none" and must not fall through to anything else — it used to lose to a
+    // client-supplied list because the merge happened after the gate.
+    const chosen = await runCreateGates({
+      workspace: root,
+      agent: 'openclaw',
+      ask: refuses,
+      carryYes: true,
+      borrowCredentials: ['codex'],
+    });
+    expect(chosen.borrowCredentials).toEqual(['codex']);
+
+    const declined = await runCreateGates({
+      workspace: root,
+      agent: 'openclaw',
+      ask: refuses,
+      carryYes: true,
+      borrowCredentials: [],
+    });
+    expect(declined.borrowCredentials).toEqual([]);
+  });
+
+  it('carryYes approves without asking - the clone path', async () => {
+    const res = await runCreateGates({
+      workspace: root,
+      agent: 'none',
+      ask: () => {
+        throw new Error('must not ask when carryYes was set');
+      },
+      carryYes: true,
+    });
+    expect(res.cancelled).toBe(false);
+    expect(res.carry).toHaveLength(1);
+  });
+
   it('asks nothing for a project with no carry block and no borrowing agent', async () => {
     const bare = await mkdtemp(join(tmpdir(), 'agentbox-preflight-bare-'));
     const asker = collectAsker();

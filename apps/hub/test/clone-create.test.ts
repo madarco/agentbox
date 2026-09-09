@@ -11,6 +11,14 @@ const staged: StagedClone = {
 };
 
 describe('cloneCreateInput', () => {
+  it('approves carry, so a project that declares one can still be cloned', () => {
+    // `carry:` is a `required` prompt with no safe fallback, and a clone has no
+    // human to ask — without this every clone of a project with a carry block is
+    // refused. The grant is inherited, not invented: the source box was approved
+    // for this same project's block.
+    expect(cloneCreateInput(staged).opts?.carryYes).toBe(true);
+  });
+
   it('enqueues the follow-on create in the FOREGROUND lane', () => {
     // The regression: the create moved from the CLI (which passed
     // `foreground: true`) into the route, which did not. A clone then queued
@@ -36,9 +44,11 @@ describe('cloneCreateInput', () => {
   });
 
   it('forwards the resolved persistent, and only when the hub has an opinion', () => {
-    expect(cloneCreateInput({ ...staged, persistent: true }).opts).toEqual({ persistent: true });
-    expect(cloneCreateInput({ ...staged, persistent: false }).opts).toEqual({ persistent: false });
-    // Absent: sending `false` here would override the hub's own box.persistent.
-    expect(cloneCreateInput(staged).opts).toBeUndefined();
+    expect(cloneCreateInput({ ...staged, persistent: true }).opts?.persistent).toBe(true);
+    expect(cloneCreateInput({ ...staged, persistent: false }).opts?.persistent).toBe(false);
+    // Absent, not `false`: sending `false` here would override the hub's own
+    // box.persistent. (`opts` itself is always present now — it carries
+    // `carryYes` — so this asserts the KEY, not the object.)
+    expect(cloneCreateInput(staged).opts).not.toHaveProperty('persistent');
   });
 });

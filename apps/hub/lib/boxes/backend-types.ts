@@ -184,6 +184,12 @@ export interface CreateBoxOpts {
    */
   carry?: unknown[];
   /**
+   * Approve the project's `carry:` block without asking — the API equivalent of
+   * the CLI's `--carry-yes`. `clone` sets it: it has no human to ask, and it
+   * inherits the grant the source box already holds for this project.
+   */
+  carryYes?: boolean;
+  /**
    * Answers to the questions GET/POST create-preflight returned
    * (`PromptAnswer[]` from @agentbox/core — typed `unknown[]` here to keep that
    * package out of the Next bundle). A create that omits an answer to a

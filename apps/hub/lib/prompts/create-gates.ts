@@ -31,6 +31,20 @@ export interface CreateGateInput {
   agent: string;
   ask: PromptAsker;
   /**
+   * The carry decision, already made without asking — the API equivalent of the
+   * CLI's `--carry-yes`. Used by `clone`, which has no human to ask and inherits
+   * the grant the source box already holds for this project (the same rule
+   * `resyncCarryFiles` applies when it re-copies within an existing grant).
+   */
+  carryYes?: boolean;
+  /**
+   * Model-auth chosen up front, the API equivalent of `--model-auth`. Takes
+   * precedence over asking, exactly as the flag does; an empty array means an
+   * explicit "none", which is why it is threaded here rather than merged with
+   * the gate's answer afterwards.
+   */
+  borrowCredentials?: string[];
+  /**
    * Dry run: ask every gate its question and DECIDE nothing.
    *
    * Load-bearing for the preflight. A collecting asker answers each prompt with
@@ -65,6 +79,7 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     replacements,
     maxBytes: cfg.effective.box.cpMaxBytes,
     ask: input.ask,
+    ...(input.carryYes ? { carryYes: true } : {}),
     onLog: emit,
   });
   if (gate.decision === 'cancel' && !input.collecting) {
@@ -74,7 +89,11 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
 
   const spec = input.agent === 'none' ? undefined : findAgentSpec(input.agent);
   let borrowCredentials: string[] = [];
-  if (spec?.modelAuth) {
+  if (input.borrowCredentials !== undefined) {
+    // Chosen up front — don't ask, and don't let an empty array (an explicit
+    // "none") fall through to anything else.
+    borrowCredentials = input.borrowCredentials;
+  } else if (spec?.modelAuth) {
     // `sources` says whether the user set `<agent>.modelAuth` themselves; a hub
     // create reads the hub's own effective config, the same way a bake does.
     const sources = cfg.sources as Record<string, ConfigSource>;

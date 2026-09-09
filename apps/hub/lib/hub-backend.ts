@@ -2373,6 +2373,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             workspace,
             agent: input.agent,
             ask: answerMapAsker(o.promptAnswers as PromptAnswer[] | undefined),
+            // Both are the API equivalents of a CLI flag, so they are threaded
+            // INTO the gate rather than merged with its answer afterwards —
+            // precedence lives in one place, and an explicit empty
+            // `borrowCredentials` (a deliberate "none") cannot lose to a
+            // fall-through.
+            ...(o.carryYes ? { carryYes: true } : {}),
+            ...(o.borrowCredentials !== undefined
+              ? { borrowCredentials: o.borrowCredentials }
+              : {}),
           });
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -2423,9 +2432,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             // These win over any client echo: the answer is the client's, the
             // resolution is ours.
             carry: gated.carry as QueueJobCreateOpts['carry'],
-            borrowCredentials: gated.borrowCredentials.length
-              ? gated.borrowCredentials
-              : o.borrowCredentials,
+            borrowCredentials: gated.borrowCredentials,
           },
         });
         handle.pokeQueue();

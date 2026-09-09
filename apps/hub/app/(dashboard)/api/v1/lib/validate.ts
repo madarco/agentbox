@@ -176,6 +176,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     'build',
     'credentialSync',
     'dangerouslySkipPermissions',
+    'carryYes',
   ] as const;
   for (const f of boolFields) {
     const r = optionalBool(v[f], `opts.${f}`);
