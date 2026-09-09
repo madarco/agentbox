@@ -1,7 +1,7 @@
 // DownloadKind's canonical decision home is `@agentbox/core`'s sync/files.ts;
 // imported here so DownloadRpcParams below can reference it, re-exported below
 // so existing `./types.js` importers stay unchanged.
-import type { DownloadKind } from '@agentbox/core';
+import type { DownloadKind, PromptDetail, PromptKind as CorePromptKind } from '@agentbox/core';
 
 export const DEFAULT_RELAY_PORT = 8787;
 /**
@@ -304,13 +304,14 @@ export interface CheckpointRpcParams {
 }
 
 /**
- * First-cut prompt UX is a y/N confirmation in the host wrapper's footer.
- * `select` / `text` are reserved for a follow-up that grows the footer to
- * two rows; keeping the kind in the wire from day one means the host
- * wrapper can ignore unknown kinds gracefully when an older box hits a
- * newer relay (and vice-versa).
+ * Host-action prompt UX is a y/N confirmation in the host wrapper's footer.
+ * `select` / `text` exist because {@link PromptRequest} — the create-time
+ * prompt schema every front-end renders — shares this union; no host-action
+ * gate emits them today. A wrapper that meets a kind it cannot render falls
+ * back to the confirm shape, so an older box against a newer relay degrades
+ * rather than breaks (and vice-versa).
  */
-export type PromptKind = 'confirm';
+export type PromptKind = CorePromptKind;
 
 export interface PromptContext {
   /** Short label, e.g. "git push" or "cp toHost: /workspace/x -> ~/dl/x". */
@@ -338,6 +339,14 @@ export interface PromptAskEvent {
   /** Default when the user just hits Enter; default 'n' so y/N is the safe shape. */
   defaultAnswer?: 'y' | 'n';
   context?: PromptContext;
+  /**
+   * Structured content a client MAY render richly (a file table, a credential
+   * card) instead of the flat `detail` line. Shared with the create-time prompt
+   * schema so the hub web and the tray need ONE renderer for both surfaces. No
+   * host-action gate sets it yet; a client that meets an unknown variant renders
+   * its `summary`.
+   */
+  richDetail?: PromptDetail;
 }
 
 /** Body of `POST /admin/prompts/answer`. */

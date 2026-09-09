@@ -34,6 +34,44 @@ export interface CreateBoxLimits {
  * `~/` expanded against the in-box `$HOME` at copy time). Kept on `core` so the
  * Provider seam doesn't depend on apps/cli.
  */
+/**
+ * One entry from the host-side `carry:` block in `agentbox.yaml`.
+ *
+ * Paths are kept user-facing (still containing `~/` or `./`) — resolution to
+ * absolute paths, project-root anchoring, and safety checks happen in the
+ * apps/cli resolver, not here. This package is shipped inside the box and
+ * must stay free of host-only assumptions.
+ */
+export interface CarryItem {
+  src: string;
+  dest: string;
+  mode?: number;
+  /**
+   * Numeric uid that should own the carried file inside the box. When unset,
+   * the copy step resolves the `vscode` user every box runs as, so the carried
+   * files are always agent-readable — its uid is 1000 on some providers and
+   * provider-assigned on others, so leave this unset unless you mean a literal
+   * uid. Set 0 to keep root-owned.
+   */
+  user?: number;
+  /**
+   * Extra paths to drop when carrying a directory (tar glob like `*​/cache` or a
+   * bare dir name). Additive on top of the host CLI's default heavy-dir excludes
+   * (`.git`, `node_modules`, ...). Ignored for file entries.
+   */
+  exclude?: string[];
+  optional: boolean;
+  /**
+   * Substitute `{{AGENTBOX_*}}` whitelist placeholders in the file content
+   * host-side before copying. File entries only.
+   */
+  replaceEnvs?: boolean;
+  /** Inline replacement rules applied (in order) before copying. File only. */
+  replace?: ReplaceRule[];
+  /** Names of top-level `replacements:` rule-sets to apply. File only. */
+  rules?: string[];
+}
+
 export interface ResolvedCarryEntry {
   rawSrc: string;
   rawDest: string;

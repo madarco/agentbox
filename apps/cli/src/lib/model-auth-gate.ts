@@ -1,23 +1,23 @@
 /**
- * The create-time decision "which host login does this service box borrow as
- * its model provider?" — the host-boundary gate for `AgentSyncSpec.modelAuth`.
+ * CLI-side wrapper over the shared model-auth gate.
  *
- * Precedence: `--model-auth` > the agent's `<agent>.modelAuth` config key >
- * a prompt. The prompt only appears when nothing chose, stdin is a TTY, the
- * host actually holds one of the declared logins, and `--yes` was not passed —
- * so a scripted create never hands a subscription token to a daemon by
- * default. Declining, `--yes` and a non-TTY all resolve to "none", which is
- * also the config default: a box that comes up without model auth says so in
- * its ingest task's log, it does not fail.
+ * The decision (flag > config > ask) lives in `@agentbox/sandbox-core` so the
+ * hub can run it for a tray/web create. What stays here is the CLI's context:
+ * where "the user set this explicitly" comes from, and a terminal asker that
+ * declines on a non-TTY.
  */
 
-import { confirm, isCancel, log } from '@clack/prompts';
-import type { AgentSyncSpec, AgentSettings } from '@agentbox/core';
+import type { AgentSettings, AgentSyncSpec } from '@agentbox/core';
 import type { ConfigSource } from '@agentbox/config';
-import { resolveBorrowedCredentials, resolveHostCredentialFile } from '@agentbox/sandbox-core';
+import {
+  MODEL_AUTH_NONE,
+  MODEL_AUTH_SETTING,
+  resolveModelAuth as resolveSharedModelAuth,
+  type AvailableBorrow,
+} from '@agentbox/sandbox-core';
+import { clackAsker } from './ask-clack.js';
 
-export const MODEL_AUTH_SETTING = 'modelAuth';
-export const MODEL_AUTH_NONE = 'none';
+export { MODEL_AUTH_NONE, MODEL_AUTH_SETTING };
 
 export interface ModelAuthGateArgs {
   spec: Pick<AgentSyncSpec, 'id' | 'modelAuth'>;
@@ -29,55 +29,23 @@ export interface ModelAuthGateArgs {
   sources: Record<string, ConfigSource>;
   yes?: boolean;
   isTTY?: boolean;
-  /** Injectable for tests: does the host hold a usable login for this agent? */
-  hostHasLogin?: (agent: string) => Promise<boolean>;
-  /** Injectable for tests: the prompt. */
-  ask?: (message: string) => Promise<boolean>;
+  /** Injectable for tests: which borrows this host can satisfy. */
+  listAvailable?: (spec: ModelAuthGateArgs['spec']) => Promise<AvailableBorrow[]>;
 }
 
 /** The agents whose logins the create should seed, in declaration order. */
 export async function resolveModelAuth(args: ModelAuthGateArgs): Promise<string[]> {
-  const { spec } = args;
-  const borrows = spec.modelAuth?.borrows ?? [];
-  if (borrows.length === 0) {
-    if (args.flag !== undefined && args.flag !== MODEL_AUTH_NONE) {
-      throw new Error(`${spec.id} borrows no host login — --model-auth does not apply to it`);
-    }
-    return [];
-  }
-
-  const flag = args.flag?.trim();
-  if (flag !== undefined) {
-    return flag === MODEL_AUTH_NONE ? [] : resolveBorrowedCredentials(spec, [flag]);
-  }
-
-  const configured = args.settings[MODEL_AUTH_SETTING];
-  const explicit = (args.sources[`${spec.id}.${MODEL_AUTH_SETTING}`] ?? 'default') !== 'default';
-  if (explicit || (typeof configured === 'string' && configured !== MODEL_AUTH_NONE)) {
-    return typeof configured === 'string' && configured !== MODEL_AUTH_NONE
-      ? resolveBorrowedCredentials(spec, [configured])
-      : [];
-  }
-
-  if (args.yes || !(args.isTTY ?? process.stdin.isTTY)) return [];
-
-  const hasLogin =
-    args.hostHasLogin ??
-    (async (agent: string) => (await resolveHostCredentialFile(agent)) !== null);
-  const ask =
-    args.ask ??
-    (async (message: string) => {
-      const answer = await confirm({ message, initialValue: false });
-      return !isCancel(answer) && answer === true;
-    });
-  const chosen: string[] = [];
-  for (const b of borrows) {
-    if (!(await hasLogin(b.agent))) continue;
-    if (b.caveat) log.warn(b.caveat);
-    const yes = await ask(
-      `Seed this ${spec.id} box with ${b.label} as its model provider? (--model-auth ${b.agent}, or \`agentbox config set ${spec.id}.${MODEL_AUTH_SETTING} ${b.agent}\` to stop asking)`,
-    );
-    if (yes) chosen.push(b.agent);
-  }
-  return resolveBorrowedCredentials(spec, chosen);
+  const tty = args.isTTY ?? process.stdin.isTTY;
+  return resolveSharedModelAuth({
+    spec: args.spec,
+    ...(args.flag !== undefined ? { flag: args.flag } : {}),
+    settings: args.settings,
+    configuredExplicitly:
+      (args.sources[`${args.spec.id}.${MODEL_AUTH_SETTING}`] ?? 'default') !== 'default',
+    // `-y` and a non-TTY both mean "don't ask" — the asker's fallback is
+    // `none`, which is also the config default, so the box comes up without
+    // model auth rather than silently holding a subscription token.
+    ask: clackAsker({ isTTY: !args.yes && !!tty }),
+    ...(args.listAvailable ? { listAvailable: args.listAvailable } : {}),
+  });
 }

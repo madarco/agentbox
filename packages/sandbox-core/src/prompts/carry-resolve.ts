@@ -2,41 +2,19 @@ import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { BUILT_IN_DEFAULTS } from '@agentbox/config';
-import { isInside, realpathSafe } from '@agentbox/core';
-import { resolveRuleRefs, type CarryItem, type ReplaceRule } from '@agentbox/ctl';
+import {
+  isInside,
+  realpathSafe,
+  resolveRuleRefs,
+  type CarryItem,
+  type ReplaceRule,
+  type ResolvedCarryEntry,
+} from '@agentbox/core';
+
 import { effectiveExcludes, isPathExcluded, toTarExcludes } from './dir-breakdown.js';
 
-/**
- * One fully resolved carry entry, ready for the prompt and the per-provider
- * copy step. `rawSrc` / `rawDest` preserve what the user typed (for the prompt
- * to display); `absSrc` is the host-resolved path, `absDest` is the box-side
- * path with `~/` left intact (expanded inside the container at execute time
- * against the in-box `$HOME`).
- */
-export interface ResolvedCarryEntry {
-  rawSrc: string;
-  rawDest: string;
-  absSrc: string;
-  absDest: string;
-  kind: 'file' | 'dir' | 'missing';
-  bytes?: number;
-  mode?: number;
-  /**
-   * Numeric uid that should own the carried file inside the box. Mirrors
-   * the field on `@agentbox/core`'s `ResolvedCarryEntry`. `resolveOne()`
-   * below already forwards `item.user` into the result; this field made
-   * the contract explicit so `carry-prompt.ts` can render the flag.
-   */
-  user?: number;
-  optional: boolean;
-  symlinkInfo?: 'safe' | 'outside-home';
-  /** tar `--exclude` patterns applied when packing a dir entry. */
-  exclude?: string[];
-  /** Substitute `{{AGENTBOX_*}}` placeholders host-side before copy (file only). */
-  replaceEnvs?: boolean;
-  /** Final replacement rules (named refs already expanded). File only. */
-  replace?: ReplaceRule[];
-}
+// `ResolvedCarryEntry` is @agentbox/core's — this module used to declare a
+// structurally identical copy, which was one drift away from a silent bug.
 
 export interface ResolveOptions {
   /** Absolute path to the dir holding `agentbox.yaml`. `./` srcs anchor here. */

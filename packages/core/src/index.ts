@@ -41,6 +41,7 @@ export type {
   InspectedBox,
   PrepareOptions,
   PrepareResult,
+  CarryItem,
   Provider,
   ProviderCheckpoint,
   ResolvedCarryEntry,
@@ -76,4 +77,18 @@ export type {
 } from './cloud-backend.js';
 export { AmbiguousBoxError, BoxNotFoundError, UserFacingError } from './errors.js';
 export { BOX_ID_PREFIX, generateBoxId } from './identity.js';
+export { promptId, promptTopicOf } from './prompt.js';
+export type {
+  PromptAnswer,
+  PromptAsker,
+  PromptChoice,
+  PromptCredentialDetail,
+  PromptDetail,
+  PromptFallback,
+  PromptFileRow,
+  PromptFileTableDetail,
+  PromptKind,
+  PromptRequest,
+  PromptTextDetail,
+} from './prompt.js';
 export * from './sync/index.js';

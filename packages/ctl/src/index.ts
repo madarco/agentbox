@@ -71,9 +71,12 @@ export {
   parseCarryRaw,
   parseCarrySection,
   loadCarrySection,
+  loadCarrySpec,
   CarryConfigError,
-  type CarryItem,
 } from './carry.js';
+// The type itself lives in @agentbox/core now; re-exported here so existing
+// `@agentbox/ctl` importers are unchanged.
+export type { CarryItem } from '@agentbox/core';
 export { agentUnitsFromWire, mergeAgentUnits, type AgentUnits } from './agent-units.js';
 export {
   deepEqual,

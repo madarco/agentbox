@@ -3,81 +3,48 @@ import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { resolveModelAuth } from '../src/lib/model-auth-gate.js';
 
 /**
- * The host-boundary decision for a borrowed model login. Pure: the host-login
- * probe and the prompt are injected, so nothing here touches ~/.agentbox.
+ * The CLI wrapper's only job beyond the shared gate: turn `--yes` / a missing
+ * TTY into "don't ask". The decision itself (flag > config > ask) is covered in
+ * packages/sandbox-core/test/model-auth-gate.test.ts.
  */
 const openclaw = resolveAgentSpec('openclaw');
-const codex = resolveAgentSpec('codex');
-const none = { modelAuth: 'none' } as const;
+const available = async () => [
+  {
+    agent: 'codex',
+    label: 'your Codex login',
+    hostPath: '/home/u/.codex/auth.json',
+    boxPath: '/home/vscode/.codex/auth.json',
+  },
+];
 
 function args(over: Partial<Parameters<typeof resolveModelAuth>[0]> = {}) {
   return {
     spec: openclaw,
-    settings: none,
+    settings: { modelAuth: 'none' } as const,
     sources: {},
-    hostHasLogin: async () => true,
-    ask: async () => {
-      throw new Error('prompt must not be shown');
-    },
+    listAvailable: available,
     ...over,
-  };
+  } as Parameters<typeof resolveModelAuth>[0];
 }
 
-describe('resolveModelAuth', () => {
-  it('--model-auth wins outright, and none means none', async () => {
-    expect(await resolveModelAuth(args({ flag: 'codex' }))).toEqual(['codex']);
-    expect(await resolveModelAuth(args({ flag: 'none' }))).toEqual([]);
+describe('resolveModelAuth (CLI wrapper)', () => {
+  it('declines rather than asks without a TTY or under --yes', async () => {
+    // The asker's fallback for this prompt is `none`, which is also the config
+    // default — a scripted create must not hand a subscription token to a daemon.
+    expect(await resolveModelAuth(args({ isTTY: false }))).toEqual([]);
+    expect(await resolveModelAuth(args({ isTTY: true, yes: true }))).toEqual([]);
   });
 
-  it('refuses a flag value the row does not declare', async () => {
-    await expect(resolveModelAuth(args({ flag: 'claude' }))).rejects.toThrow(/declares codex/);
-  });
-
-  it('refuses the flag on an agent that borrows nothing', async () => {
-    await expect(resolveModelAuth(args({ spec: codex, flag: 'codex' }))).rejects.toThrow(
-      /borrows no host login/,
-    );
-    expect(await resolveModelAuth(args({ spec: codex }))).toEqual([]);
-  });
-
-  it('reads the config key when the user set it', async () => {
-    expect(
-      await resolveModelAuth(
-        args({ settings: { modelAuth: 'codex' }, sources: { 'openclaw.modelAuth': 'global' } }),
-      ),
-    ).toEqual(['codex']);
-  });
-
-  it('an explicit `none` in config silences the prompt', async () => {
-    expect(await resolveModelAuth(args({ sources: { 'openclaw.modelAuth': 'project' } }))).toEqual(
-      [],
-    );
-  });
-
-  it('with nothing chosen: asks on a TTY when the host holds the login, defaulting to no', async () => {
-    const asked: string[] = [];
+  it('still honours the flag and the config key with no TTY', async () => {
+    expect(await resolveModelAuth(args({ isTTY: false, flag: 'codex' }))).toEqual(['codex']);
     expect(
       await resolveModelAuth(
         args({
-          isTTY: true,
-          ask: async (m) => {
-            asked.push(m);
-            return false;
-          },
+          isTTY: false,
+          settings: { modelAuth: 'codex' },
+          sources: { 'openclaw.modelAuth': 'global' },
         }),
       ),
-    ).toEqual([]);
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/--model-auth codex/);
-    expect(asked[0]).toMatch(/config set openclaw\.modelAuth codex/);
-    expect(await resolveModelAuth(args({ isTTY: true, ask: async () => true }))).toEqual(['codex']);
-  });
-
-  it('never asks without a TTY, under --yes, or when the host has no such login', async () => {
-    expect(await resolveModelAuth(args({ isTTY: false }))).toEqual([]);
-    expect(await resolveModelAuth(args({ isTTY: true, yes: true }))).toEqual([]);
-    expect(await resolveModelAuth(args({ isTTY: true, hostHasLogin: async () => false }))).toEqual(
-      [],
-    );
+    ).toEqual(['codex']);
   });
 });

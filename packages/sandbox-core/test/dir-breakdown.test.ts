@@ -9,7 +9,7 @@ import {
   isPathExcluded,
   measureCopy,
   toTarExcludes,
-} from '../src/lib/dir-breakdown.js';
+} from '../src/prompts/dir-breakdown.js';
 
 describe('effectiveExcludes', () => {
   it('prepends defaults then user tokens, de-duped', () => {

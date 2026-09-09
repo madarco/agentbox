@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { effectiveExcludes, fmtBytes, measureCopy, toTarExcludes } from '@agentbox/sandbox-core';
 import {
   downloadFromBox,
   inspectBox,
@@ -11,7 +12,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
-import { effectiveExcludes, fmtBytes, measureCopy, toTarExcludes } from '../lib/dir-breakdown.js';
+
 import { handleLifecycleError } from './_errors.js';
 
 interface CpOptions {

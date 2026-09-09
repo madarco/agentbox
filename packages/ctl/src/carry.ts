@@ -1,44 +1,14 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { parseReplaceRules, type ReplaceRule } from './replace.js';
+import type { CarryItem } from '@agentbox/core';
+import { parseReplacementsSection, parseReplaceRules, type ReplaceRule } from './replace.js';
 
-/**
- * One entry from the host-side `carry:` block in `agentbox.yaml`.
- *
- * Paths are kept user-facing (still containing `~/` or `./`) — resolution to
- * absolute paths, project-root anchoring, and safety checks happen in the
- * apps/cli resolver, not here. This package is shipped inside the box and
- * must stay free of host-only assumptions.
- */
-export interface CarryItem {
-  src: string;
-  dest: string;
-  mode?: number;
-  /**
-   * Numeric uid that should own the carried file inside the box. When unset,
-   * the copy step resolves the `vscode` user every box runs as, so the carried
-   * files are always agent-readable — its uid is 1000 on some providers and
-   * provider-assigned on others, so leave this unset unless you mean a literal
-   * uid. Set 0 to keep root-owned.
-   */
-  user?: number;
-  /**
-   * Extra paths to drop when carrying a directory (tar glob like `*​/cache` or a
-   * bare dir name). Additive on top of the host CLI's default heavy-dir excludes
-   * (`.git`, `node_modules`, ...). Ignored for file entries.
-   */
-  exclude?: string[];
-  optional: boolean;
-  /**
-   * Substitute `{{AGENTBOX_*}}` whitelist placeholders in the file content
-   * host-side before copying. File entries only.
-   */
-  replaceEnvs?: boolean;
-  /** Inline replacement rules applied (in order) before copying. File only. */
-  replace?: ReplaceRule[];
-  /** Names of top-level `replacements:` rule-sets to apply. File only. */
-  rules?: string[];
-}
+// Re-exported so `@agentbox/ctl`'s existing importers are unchanged; the type
+// itself moved to @agentbox/core because the host-side carry resolver lives in
+// @agentbox/sandbox-core, which this package cannot be imported by (ctl ->
+// relay -> sandbox-core would cycle).
+export type { CarryItem };
 
 export class CarryConfigError extends Error {
   constructor(message: string) {
@@ -304,4 +274,23 @@ export async function loadCarrySection(path: string): Promise<CarryItem[]> {
     throw err;
   }
   return parseCarrySection(text);
+}
+
+/**
+ * Both halves the carry gate needs, from one read of `<projectRoot>/agentbox.yaml`.
+ *
+ * The gate itself lives in `@agentbox/sandbox-core`, which cannot import this
+ * package (ctl -> relay -> sandbox-core would cycle), so parsing stays here and
+ * the gate takes the result. A missing file is not an error: it means no carry.
+ */
+export async function loadCarrySpec(
+  projectRoot: string,
+): Promise<{ items: CarryItem[]; replacements: Record<string, ReplaceRule[]> }> {
+  let text = '';
+  try {
+    text = await readFile(join(projectRoot, 'agentbox.yaml'), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  return { items: parseCarrySection(text), replacements: parseReplacementsSection(text) };
 }

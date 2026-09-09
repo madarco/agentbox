@@ -1,11 +1,21 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+/**
+ * CLI-side wrapper over the shared `carry:` gate.
+ *
+ * The gate itself (resolve, safety-check, ask) lives in
+ * `@agentbox/sandbox-core` so the hub can run the identical decision for a box
+ * created from the tray or the web UI. What stays here is the CLI's own
+ * context: reading `agentbox.yaml`, the effective size cap, the `--carry-yes` /
+ * `AGENTBOX_CARRY` escape hatches, and a terminal asker.
+ */
+
 import { log } from '@clack/prompts';
 import { loadEffectiveConfig } from '@agentbox/config';
-import { parseCarrySection, parseReplacementsSection } from '@agentbox/ctl';
 import type { ResolvedCarryEntry } from '@agentbox/core';
-import { promptForCarry } from '../carry-prompt.js';
-import { resolveCarry } from './carry-resolve.js';
+import { loadCarrySpec } from '@agentbox/ctl';
+import { runCarryGate as runSharedCarryGate, type CarryGateResult } from '@agentbox/sandbox-core';
+import { clackAsker } from './ask-clack.js';
+
+export type { CarryGateResult };
 
 export interface CarryGateArgs {
   /** Absolute project root (dir holding agentbox.yaml). */
@@ -19,70 +29,32 @@ export interface CarryGateArgs {
   onLog?: (line: string) => void;
 }
 
-export type CarryGateResult =
-  | { decision: 'approve'; entries: ResolvedCarryEntry[] }
-  | { decision: 'skip'; entries: [] }
-  | { decision: 'cancel' };
-
 /**
- * Run the host-side carry gate once for a `create`-style command:
- * 1. read `<projectRoot>/agentbox.yaml`'s `carry:` block (empty when missing),
- * 2. resolve + safety-check each entry,
- * 3. prompt the user (or honor --carry-yes / --carry=skip / env vars),
- * 4. return the approved entries (or signal cancel).
+ * Run the host-side carry gate once for a `create`-style command.
  *
  * Throws on hard resolver errors (non-optional missing src, denylist hit, size
- * cap, etc.) so the caller can abort *before* the box is created.
+ * cap, ...) so the caller can abort *before* the box is created — and, on a
+ * non-TTY without an explicit opt-in, because a silent approval would move host
+ * secrets. `-y` alone deliberately does not answer this question.
  */
 export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult> {
-  const emit = args.onLog ?? (() => {});
-  const yamlPath = join(args.projectRoot, 'agentbox.yaml');
-
-  // Read agentbox.yaml once; parse both the carry and replacements sections
-  // from the same text (a single readFile + parse).
-  let yamlText = '';
-  try {
-    yamlText = await readFile(yamlPath, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
-  const items = parseCarrySection(yamlText);
+  const { items, replacements } = await loadCarrySpec(args.projectRoot);
   if (items.length === 0) return { decision: 'approve', entries: [] };
 
   const cfg = await loadEffectiveConfig(args.projectRoot);
-  const replacements = parseReplacementsSection(yamlText);
-  const resolved = await resolveCarry(items, {
+  const carryYes = args.carryYesFlag ?? process.env.AGENTBOX_CARRY_YES === '1';
+  const carrySkip = args.carrySkipFlag ?? process.env.AGENTBOX_CARRY === 'skip';
+
+  return runSharedCarryGate({
     projectRoot: args.projectRoot,
-    maxBytes: cfg.effective.box.cpMaxBytes,
+    items,
     replacements,
-  });
-  if (resolved.errors.length > 0) {
-    const msg = ['carry: refused to proceed:', ...resolved.errors.map((e) => `  - ${e}`)].join(
-      '\n',
-    );
-    throw new Error(msg);
-  }
-
-  const carryYesEnv = process.env.AGENTBOX_CARRY_YES === '1';
-  const carrySkipEnv = process.env.AGENTBOX_CARRY === 'skip';
-  const carryYes = args.carryYesFlag ?? carryYesEnv;
-  const carrySkip = args.carrySkipFlag ?? carrySkipEnv;
-
-  const decision = await promptForCarry({
-    resolved: resolved.entries,
-    yes: args.yes,
+    maxBytes: cfg.effective.box.cpMaxBytes,
+    ask: clackAsker({ ...(args.onLog ? { onLog: args.onLog } : {}) }),
     carryYes,
     carrySkip,
+    ...(args.onLog ? { onLog: args.onLog } : {}),
   });
-
-  if (decision === 'cancel') return { decision: 'cancel' };
-  if (decision === 'skip-this-run') {
-    emit(
-      `carry: skipped for this box (${String(resolved.entries.length)} entry/entries not copied)`,
-    );
-    return { decision: 'skip', entries: [] };
-  }
-  return { decision: 'approve', entries: resolved.entries };
 }
 
 /**
@@ -104,7 +76,7 @@ export async function runQueuedCarryGate(args: {
       yes: !!args.opts.yes,
       carryYesFlag: args.opts.carryYes ? true : undefined,
       carrySkipFlag: args.opts.carry === 'skip' ? true : undefined,
-      onLog: args.onLog,
+      ...(args.onLog ? { onLog: args.onLog } : {}),
     });
     if (gate.decision === 'cancel') {
       log.warn('carry: cancelled — not queuing the job');

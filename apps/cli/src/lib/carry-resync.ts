@@ -1,13 +1,13 @@
 import { join } from 'node:path';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { loadCarrySection } from '@agentbox/ctl';
+import { resolveCarry } from '@agentbox/sandbox-core';
 import {
   carrySourceHash,
   copyCarryPathsToBox,
   recordBox,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
-import { resolveCarry } from './carry-resolve.js';
 
 export interface ResyncCarryResult {
   /** Approved carry entries whose host source changed and were re-copied. */
