@@ -506,20 +506,42 @@ function mapBox(
  * already exist and follows a project that gains a repo later.
  */
 function boxHasGitResolver(): (b: ListedBox) => Promise<boolean | undefined> {
-  const byRoot = new Map<string, Promise<boolean>>();
   return async (b) => {
     if ((b.gitWorktrees?.length ?? 0) > 0) return true;
     const root = b.projectRoot ?? b.workspacePath;
     if (!root) return undefined;
-    let probe = byRoot.get(root);
-    if (!probe) {
-      probe = detectGitRepos(root)
-        .then((repos) => repos.length > 0)
-        .catch(() => false);
-      byRoot.set(root, probe);
-    }
-    return probe;
+    return hasGitAt(root);
   };
+}
+
+/**
+ * `detectGitRepos(root).length > 0`, cached briefly across calls.
+ *
+ * `getData()` backs the hottest endpoint in the hub — every `/api/v1/boxes` read
+ * and every SSE-driven refetch — and the probe is a `readdir` of the project root
+ * plus a `stat` per top-level entry. On a monorepo root, or a root on a slow or
+ * absent mount, doing that per read is real latency for an answer that changes
+ * about never. The TTL is short enough that `git init` in a project shows up
+ * within seconds.
+ */
+const HAS_GIT_TTL_MS = 30_000;
+const hasGitCache = new Map<string, { at: number; value: Promise<boolean> }>();
+
+function hasGitAt(root: string): Promise<boolean> {
+  const hit = hasGitCache.get(root);
+  if (hit && Date.now() - hit.at < HAS_GIT_TTL_MS) return hit.value;
+  const value = detectGitRepos(root)
+    .then((repos) => repos.length > 0)
+    .catch(() => false);
+  hasGitCache.set(root, { at: Date.now(), value });
+  // Unbounded growth would be a leak in a long-lived daemon; projects are few,
+  // but a control box churns per-job clone paths.
+  if (hasGitCache.size > 256) {
+    for (const [k, v] of hasGitCache) {
+      if (Date.now() - v.at >= HAS_GIT_TTL_MS) hasGitCache.delete(k);
+    }
+  }
+  return value;
 }
 
 function mapRegistrationToBox(reg: BoxRegistration): Box {
@@ -530,10 +552,14 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     projectId,
     repo: repoKey,
     branch: reg.worktrees?.[0]?.branch ?? '',
-    // The registration's own answer: `BoxWorktree[]` is documented "Empty when
-    // the box has no git repos", and it is all a control box has for a box whose
-    // project folder lives on someone else's machine.
-    hasGit: (reg.worktrees?.length ?? 0) > 0,
+    // TRUE or UNDEFINED, never false. A registration records worktrees only when
+    // the registering host had a local clone — on a control box `projectRoot` is
+    // undefined, so a cloud box whose workspace IS a real git clone registers
+    // with none (`registrationToBoxRecord`). Answering `false` there stripped the
+    // Git card off every reverse-adopted box, whose pull/push/checkout all work
+    // through the relay. Silence is the honest answer, and clients read it as
+    // "show" by contract.
+    hasGit: (reg.worktrees?.length ?? 0) > 0 ? true : undefined,
     supportsBackup: findAgentSpec(reg.agent ?? '')?.stateBackup !== undefined ? true : undefined,
     task: reg.name,
     displayName: null,
@@ -3497,7 +3523,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const root = await resolveProjectPath(projectId);
       if (!root) return { ok: false, error: `unknown project ${projectId}` };
       try {
-        return { ok: true, bots: await listBots(root) };
+        // `botWorkspaceRoot`, not the raw root: a RESTORED bot's box runs on
+        // `<proj>/.agentbox/bots/<bot>/workspace`, and `prepareRestore` registers
+        // that directory as its own project. Looking for bundles under it would
+        // find none, so the box page would report a bot that has been backed up
+        // for weeks as never backed up.
+        return { ok: true, bots: await listBots(botWorkspaceRoot(root)) };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }
@@ -3510,7 +3541,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
           return { ok: false, error: 'bot must be a single path segment' };
         }
-        const bundle = await resolveBotBundle(root, bot, input.stamp?.trim() || undefined);
+        // Same normalization as `listBots` and the destination below — all three
+        // must agree, or a restore resolves a bundle from one tree and stages it
+        // into another.
+        const botsRoot = botWorkspaceRoot(root);
+        const bundle = await resolveBotBundle(botsRoot, bot, input.stamp?.trim() || undefined);
         // A bundle with no state half restores a workspace and a FRESH identity,
         // which is what clone already does and is not what this route promises.
         // Refused by name rather than half-delivered.
@@ -3542,7 +3577,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         }
         const workspace = rawInto
           ? path.normalize(rawInto)
-          : restoreWorkspaceDir(botWorkspaceRoot(root), bundle.bot);
+          : restoreWorkspaceDir(botsRoot, bundle.bot);
 
         // Both refusals run BEFORE the copy, so a rejected restore leaves the
         // filesystem exactly as it found it — `force` must never be able to
@@ -3563,9 +3598,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
           if (refusal) return { ok: false, error: refusal };
         }
-        const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
-        const occupied = existingBoxRefusal(occupant, workspace, 'set a different destination');
-        if (occupied) return { ok: false, error: occupied };
+        // Gated on `force` like the running-source check above it. It was not,
+        // which made the API's own "force overrides both" a lie and left the web
+        // UI with no way past a destination its previous attempt had staged.
+        if (!input.force) {
+          const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
+          const occupied = existingBoxRefusal(occupant, workspace, 'set a different destination');
+          if (occupied) return { ok: false, error: occupied };
+        }
 
         const staged = await stageRestoreWorkspace({
           bundle,
@@ -3587,7 +3627,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // The staged dir is its own project, so the create below resolves it by
         // id and never by a client-supplied path.
         await registerProject(workspace);
-        if (!rawInto) await ensureBackupGitignored(botWorkspaceRoot(root)).catch(() => false);
+        if (!rawInto) await ensureBackupGitignored(botsRoot).catch(() => false);
 
         return {
           ok: true,

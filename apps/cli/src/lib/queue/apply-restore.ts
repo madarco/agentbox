@@ -39,6 +39,40 @@ export interface QueuedRestore {
 }
 
 /**
+ * The agent spec a restore must run through, or a thrown error naming why there
+ * isn't one.
+ *
+ * The two ways there is none both used to be silent `if` guards, and both ended
+ * the same way: a job reported DONE, and a box running a **fresh** identity that
+ * looks exactly like a restored one until someone tries to use it.
+ *
+ *  - no `spec`: the bundle's agent was removed from the registry between the
+ *    enqueue and the run.
+ *  - `startsSession`: a TUI agent that declares `stateBackup`. None does today,
+ *    but `prepareRestore` would happily enqueue one, and this function is where
+ *    that assumption is actually load-bearing — `applyQueuedRestore` needs a
+ *    service to stop and restart.
+ */
+export function requireRestoreSpec(
+  plan: { spec?: AgentSyncSpec; startsSession: boolean },
+  restore: QueuedRestore,
+): AgentSyncSpec {
+  if (!plan.spec) {
+    throw new Error(
+      `cannot restore ${restore.agent} state: this host has no such agent installed, ` +
+        `so the box was created with a fresh identity. Install it and restore again.`,
+    );
+  }
+  if (plan.startsSession) {
+    throw new Error(
+      `cannot restore into a ${plan.spec.id} box: restore stops and restarts the agent's ` +
+        `service, and ${plan.spec.id} runs as a session rather than a service.`,
+    );
+  }
+  return plan.spec;
+}
+
+/**
  * Apply a restore to a freshly-created box. Throws on failure, so the job fails
  * loudly rather than reporting a box that came up with the WRONG identity —
  * which looks identical to a working one until someone tries to use it.

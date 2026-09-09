@@ -145,12 +145,25 @@ export function BotPanel({ box }: { box: Box }) {
   if (synthetic) return null;
 
   const runBackup = async () => {
-    const res = await fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/backup`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/backup`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+    } catch (err) {
+      // A hub restart mid-backup rejects the fetch. Without this the rejection
+      // went unhandled and the user saw only the spinner stop — no toast, no
+      // way to tell a failure from a success.
+      push({
+        variant: 'error',
+        title: 'Backup failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
     if (!res.ok) {
       push({ variant: 'error', title: 'Backup failed', detail: await errorOf(res) });
       return;
@@ -233,7 +246,8 @@ function CloneModal({ box, onClose, onDone }: { box: Box; onClose: () => void; o
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
-  const submit = async () => {
+  /** Returns whether the clone actually started, for the caller's toast. */
+  const submit = async (): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
@@ -245,11 +259,15 @@ function CloneModal({ box, onClose, onDone }: { box: Box; onClose: () => void; o
       });
       if (!res.ok) {
         setError(await errorOf(res));
-        return;
+        return false;
       }
       const body = (await res.json()) as { jobId: string };
       setJobId(body.jobId);
       router.refresh();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -304,8 +322,11 @@ function CloneModal({ box, onClose, onDone }: { box: Box; onClose: () => void; o
             size="sm"
             disabled={busy || name.trim().length === 0}
             onClick={() => {
-              void submit().then(() => {
-                if (!error) onDone({ title: 'Clone started' });
+              // The RETURNED value, not the `error` state: that one is the render's
+              // closure, still null on the first attempt, so a refused clone showed
+              // the red box AND a green "Clone started" toast.
+              void submit().then((started) => {
+                if (started) onDone({ title: 'Clone started' });
               });
             }}
           >

@@ -150,10 +150,18 @@ export interface BackupTargetOptions {
  * CLI's `--restore` reads back what either of them wrote.
  */
 export function resolveBackupTarget(box: BoxRecord, opts: BackupTargetOptions): BackupTarget {
-  const projectRoot = box.projectRoot ?? box.workspacePath;
+  // `botWorkspaceRoot`, not the raw root. A box created BY a restore (or a clone)
+  // already runs on `<proj>/.agentbox/bots/<x>/workspace`, so filing its backups
+  // under its own project root would nest a second bundle tree inside the live
+  // workspace — with its own `latest` and its own prune, invisible from the
+  // project the bot actually belongs to. `prepareClone` has always normalized
+  // here; backup could not reach the case until the hub exposed both halves.
+  const projectRoot = botWorkspaceRoot(box.projectRoot ?? box.workspacePath);
   const bot = (opts.name ?? box.name).trim();
+  // Messages here reach an HTTP client as well as a CLI one, so they name the
+  // FIELD rather than a flag of a program the caller may not be running.
   if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
-    throw new Error(`--name ${opts.name ?? ''}: a bot name must be a single path segment`);
+    throw new Error(`name "${opts.name ?? ''}": a bot name must be a single path segment`);
   }
 
   const keep =
@@ -163,7 +171,7 @@ export function resolveBackupTarget(box: BoxRecord, opts: BackupTargetOptions): 
         ? opts.keep
         : Number.parseInt(opts.keep, 10);
   if (!Number.isInteger(keep) || keep < 1) {
-    throw new Error(`--keep ${String(opts.keep ?? '')}: expected a positive integer`);
+    throw new Error(`keep "${String(opts.keep ?? '')}": expected a positive integer`);
   }
 
   // An explicit `--agent` is checked; a guess off the record is not, because a
@@ -172,7 +180,7 @@ export function resolveBackupTarget(box: BoxRecord, opts: BackupTargetOptions): 
   let agent: AgentId | undefined;
   if (opts.agent) {
     const spec = findAgentSpec(opts.agent);
-    if (!spec) throw new Error(`--agent ${opts.agent}: no such agent`);
+    if (!spec) throw new Error(`agent "${opts.agent}": no such agent`);
     agent = spec.id;
   } else {
     const guess = box.lastAgent ?? box.agents?.[0];

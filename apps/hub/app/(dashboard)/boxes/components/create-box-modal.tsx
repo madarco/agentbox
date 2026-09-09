@@ -164,8 +164,18 @@ function CreateBoxModal({
   const [bots, setBots] = useState<BotBackups[]>([]);
   // `"<bot>/<stamp>"` (see `restoreKeyOf`), or '' for a plain create.
   const [restoreKey, setRestoreKey] = useState(initialRestore ?? '');
-  /** False until the per-project bots effect has run once. See its body. */
-  const seededRestore = useRef(false);
+  // Overrides the two refusals a restore can hit: the source box still running,
+  // and a destination another box (or an earlier attempt) already occupies. Off
+  // by default and shown only once a backup is picked — it is an override, not a
+  // setting, so it should never sit on a plain create.
+  const [restoreForce, setRestoreForce] = useState(false);
+  /**
+   * The project the `initialRestore` seed belongs to. The bots effect clears the
+   * selection when it runs for a DIFFERENT project, so a bare "has run once"
+   * boolean broke under React StrictMode, whose dev-only mount→cleanup→mount
+   * wiped the seed on the second run and opened the modal on "New workspace".
+   */
+  const seededRestoreFor = useRef(initialRestore ? (project?.id ?? projects[0]?.id ?? '') : null);
   // Always-on box, as a TRI-STATE: null means "no opinion", which is what the
   // API wants for the common case. It matters because the default is not a
   // constant — a service agent's box is always-on (`resolveCreatePersistent`),
@@ -251,11 +261,14 @@ function CreateBoxModal({
     // project's bots for the round-trip would offer a backup belonging to a
     // different project, and picking it would restore into this one.
     //
-    // The FIRST run is the exception: it must not wipe an `initialRestore` the
-    // caller opened this modal with, which is the whole point of that prop.
+    // The seeded project is the exception: it must not wipe an `initialRestore`
+    // the caller opened this modal with, which is the whole point of that prop.
     setBots([]);
-    if (seededRestore.current) setRestoreKey('');
-    seededRestore.current = true;
+    if (seededRestoreFor.current === projectId) {
+      seededRestoreFor.current = null; // honoured once; a later revisit clears as normal
+    } else {
+      setRestoreKey('');
+    }
     if (!projectId) return;
     void (async () => {
       try {
@@ -475,10 +488,11 @@ function CreateBoxModal({
    * uses — the hub stages the bundle's workspace and enqueues an ordinary create,
    * so from here on the two are the same thing.
    *
-   * `force` is deliberately not offered: the refusals it overrides — the source
-   * box still running, a destination another box occupies — are ones a user must
-   * resolve deliberately, and a checkbox beside Create is not a deliberate enough
-   * place for it. The project page's own Restore modal has one.
+   * `force` is off by default and opt-in per attempt. Without it there was no way
+   * out of the browser at all: `stageRestoreWorkspace` refuses a non-empty
+   * destination, and ANY failed create after a successful stage — a capped
+   * `persistent`, a bad provider — leaves one behind, so every later attempt at
+   * the same bot died on "is not empty".
    */
   const submitRestore = async (target: { bot: string; stamp: string }) => {
     try {
@@ -491,6 +505,7 @@ function CreateBoxModal({
           stamp: target.stamp,
           name: name.trim() || undefined,
           provider,
+          ...(restoreForce ? { force: true } : {}),
         }),
       });
       if (!res.ok) {
@@ -824,12 +839,26 @@ function CreateBoxModal({
                   )}
                 </Select>
                 {restoring ? (
-                  <p className="mt-1.5 text-[11.5px] leading-normal text-muted-foreground">
-                    Restores <span className="font-mono">{restoring.bot}</span> with{' '}
-                    <strong>the same identity</strong> &mdash; same auth token, same pairings, same
-                    history. Refused while the box this backup came from is still running: two live
-                    gateways cannot share one identity.
-                  </p>
+                  <>
+                    <p className="mt-1.5 text-[11.5px] leading-normal text-muted-foreground">
+                      Restores <span className="font-mono">{restoring.bot}</span> with{' '}
+                      <strong>the same identity</strong> &mdash; same auth token, same pairings,
+                      same history. Refused while the box this backup came from is still running:
+                      two live gateways cannot share one identity.
+                    </p>
+                    <label className="mt-2 flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={restoreForce}
+                        onChange={(e) => setRestoreForce(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 flex-none accent-primary"
+                      />
+                      <span className="text-[11.5px] leading-normal text-muted-foreground">
+                        Restore anyway if the source box is still running, or the destination is not
+                        empty
+                      </span>
+                    </label>
+                  </>
                 ) : null}
               </Field>
             ) : null}

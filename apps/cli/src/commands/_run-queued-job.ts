@@ -57,7 +57,7 @@ import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
 import { planJobAgent } from '../lib/queue/job-agent.js';
-import { applyQueuedRestore } from '../lib/queue/apply-restore.js';
+import { applyQueuedRestore, requireRestoreSpec } from '../lib/queue/apply-restore.js';
 import { loadAgentModuleOrNull } from '../agents/index.js';
 import { buildResyncWarning, prependResyncWarning } from '../lib/resync-warning.js';
 import { claudeRuntime } from '@agentbox/agent-claude/cli';
@@ -438,12 +438,11 @@ async function runDockerJob(
     log.write(`${plan.spec?.id ?? 'agent'} runs as a box service; no session to start`);
     // ...unless the job is a restore, in which case the box is only half of the
     // deliverable: it is up with a FRESH identity, and the bot's own is still
-    // sitting in the bundle. Throws on failure — a restore that silently didn't
-    // land looks exactly like one that did.
-    if (opts.restore && plan.spec) {
+    // sitting in the bundle.
+    if (opts.restore) {
       await applyQueuedRestore({
         box: result.record,
-        spec: plan.spec,
+        spec: requireRestoreSpec(plan, opts.restore),
         restore: opts.restore,
         log: (line) => log.write(line),
       });
@@ -718,10 +717,10 @@ async function runCloudJob(
   // reason as the docker runner, gated on the same registry capability.
   if (!plan.spec || !plan.startsSession) {
     log.write(`${plan.spec?.id ?? 'agent'} runs as a box service; no session to start`);
-    if (opts.restore && plan.spec) {
+    if (opts.restore) {
       await applyQueuedRestore({
         box: result.record,
-        spec: plan.spec,
+        spec: requireRestoreSpec(plan, opts.restore),
         restore: opts.restore,
         log: (line) => log.write(line),
       });
