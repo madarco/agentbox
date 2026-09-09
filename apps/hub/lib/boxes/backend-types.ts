@@ -690,7 +690,50 @@ export interface HubBackend {
   // new box; the agent's config volume and credential are deliberately NOT
   // copied, so the clone onboards with its own identity.
   prepareClone(id: string, input?: CloneBoxInput): Promise<PrepareCloneResult>;
+
+  // ── bot backups (a service bot's workspace + its identity) ──
+
+  // Capture a box into `<project>/.agentbox/bots/<bot>/<stamp>/`: the workspace
+  // half, plus — when the box's agent declares a state backup — its whole state
+  // dir, IDENTITY INCLUDED (gateway token, pairings, history). The state half is
+  // best-effort: a box whose agent cannot be reached still yields a usable
+  // workspace bundle, and the manifest records `state: false` so a later restore
+  // knows what it holds rather than discovering it halfway through.
+  backupBox(id: string, input?: BackupBoxInput): Promise<BackupBoxResult>;
 }
+
+// Options for POST /boxes/:id/backup.
+export interface BackupBoxInput {
+  /** Bot name the bundle is filed under (default: the box name). */
+  name?: string;
+  /** Backups to keep for this bot; older ones are pruned (default 3). */
+  keep?: number;
+  /** Whose state to capture (default: the box's own recorded agent). */
+  agent?: string;
+  includeNodeModules?: boolean;
+}
+
+export type BackupBoxResult =
+  | {
+      ok: true;
+      bot: string;
+      stamp: string;
+      /** Absolute host dir of the bundle, on the HUB's machine. */
+      dir: string;
+      /** The agent whose state was targeted; absent when the box has none. */
+      agent?: string;
+      /** False when only the workspace was captured — no identity in this bundle. */
+      state: boolean;
+      /** Relative paths taken through SQLite's online-backup API. */
+      databases?: string[];
+      /** Workspace files exported. */
+      files: number;
+      /** Older bundles removed to honour `keep`. */
+      pruned: string[];
+      /** The hub wrote `.agentbox/` into the project's .gitignore. */
+      wroteGitignore: boolean;
+    }
+  | { ok: false; error: string };
 
 // Options for POST /boxes/:id/sync.
 export interface UploadBoxInput {

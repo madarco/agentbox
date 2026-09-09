@@ -545,6 +545,83 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/backup': {
+        post: {
+          tags: ['Checkpoints'],
+          summary: "Capture a bot: workspace + the agent's state dir, identity included",
+          description:
+            "Writes `<project>/.agentbox/bots/<bot>/<stamp>/` on the HUB's machine — a `workspace/` half, and (when the box's agent declares a state backup, i.e. `supportsBackup` on the box payload) a `state/` half holding the bot's IDENTITY: gateway token, channel pairings, history. Live databases go through SQLite's online-backup API, not a byte copy. Unlike a checkpoint, this is provider-neutral files, so a bot captured on e2b restores onto hetzner. The state half is BEST-EFFORT — a box whose agent cannot be reached still yields a usable workspace bundle, and the manifest's `state: false` says so. Mirrors `agentbox download --backup`; read back by `POST /projects/{id}/restore`. `state/` holds a live credential: it is written 0700 and `.agentbox/` is added to the project's .gitignore.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: {
+                      type: 'string',
+                      description:
+                        'Bot name the bundle is filed under (default: the box name). A single path segment.',
+                    },
+                    keep: {
+                      type: 'integer',
+                      minimum: 1,
+                      description:
+                        'Backups to keep for this bot; older ones are pruned. Default 3.',
+                    },
+                    agent: {
+                      type: 'string',
+                      description:
+                        "Whose state to capture (default: the box's own recorded agent).",
+                    },
+                    includeNodeModules: {
+                      type: 'boolean',
+                      description: 'Carry node_modules into the workspace half as well.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Backup written',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean' },
+                      bot: { type: 'string' },
+                      stamp: { type: 'string' },
+                      dir: {
+                        type: 'string',
+                        description: "Absolute bundle dir on the HUB's machine.",
+                      },
+                      agent: { type: 'string' },
+                      state: {
+                        type: 'boolean',
+                        description:
+                          'False when only the workspace was captured — no identity in this bundle.',
+                      },
+                      databases: { type: 'array', items: { type: 'string' } },
+                      files: { type: 'number' },
+                      pruned: { type: 'array', items: { type: 'string' } },
+                      wroteGitignore: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/boxes/{id}/upload': {
         post: {
           tags: ['Box services'],

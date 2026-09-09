@@ -791,6 +791,41 @@ export function parseCheckpointCreate(body: unknown): Parsed<{
   };
 }
 
+// ── bot backups ──
+// Capture a box into `<project>/.agentbox/bots/<bot>/<stamp>/`. `keep` is a
+// number here (a JSON body has real numbers, unlike a CLI flag) and is bounded
+// at the boundary rather than left to the resolver, so `keep: 0` — which would
+// prune the bundle it just wrote — is refused with its own name attached.
+export function parseBoxBackup(body: unknown): Parsed<{
+  name?: string;
+  keep?: number;
+  agent?: string;
+  includeNodeModules?: boolean;
+}> {
+  if (body === undefined || body === null) return { ok: true, value: {} };
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const name = optionalString(body.name, 'name');
+  if (!name.ok) return name;
+  const agent = optionalString(body.agent, 'agent');
+  if (!agent.ok) return agent;
+  const keep = optionalNumber(body.keep, 'keep');
+  if (!keep.ok) return keep;
+  if (keep.value !== undefined && (!Number.isInteger(keep.value) || keep.value < 1)) {
+    return { ok: false, message: 'keep must be a positive integer' };
+  }
+  const includeNodeModules = optionalBool(body.includeNodeModules, 'includeNodeModules');
+  if (!includeNodeModules.ok) return includeNodeModules;
+  return {
+    ok: true,
+    value: {
+      name: name.value,
+      keep: keep.value,
+      agent: agent.value,
+      includeNodeModules: includeNodeModules.value,
+    },
+  };
+}
+
 // ── prune ──
 // Fleet cleanup. Without `provider` (or provider === 'docker'): remove orphan
 // docker records/resources (+ project configs with `all`). With a cloud provider

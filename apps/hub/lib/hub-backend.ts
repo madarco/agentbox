@@ -82,10 +82,16 @@ import {
   boxSshDirForProvider,
   botWorkspaceRoot,
   clonePerBoxCarryRefusal,
+  backupAgentState,
   detectGitRepos,
   ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
+  linkLatest,
+  prepareBackupDir,
+  pruneBackups,
+  resolveBackupTarget,
+  writeBackupManifest,
   readServiceUrlFields,
   serviceAgentForBox,
   resolvePerBoxCarry,
@@ -160,6 +166,7 @@ import type {
   OpenTargetsReport,
   BoxWebUrlResult,
   PrepareCloneResult,
+  BackupBoxResult,
   ProjectResult,
   PruneView,
   RemoteDockerHostView,
@@ -3381,6 +3388,93 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           mode: result.mode,
           copied: result.copied,
           conflicts: result.conflicts,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async backupBox(id, input): Promise<BackupBoxResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        // Resolved BEFORE the box is started: a bad `name`/`keep`/`agent`
+        // should cost nothing, and a paused box should not be woken to be told
+        // its request was invalid.
+        const target = resolveBackupTarget(rp.box, {
+          ...(input?.name !== undefined ? { name: input.name } : {}),
+          ...(input?.keep !== undefined ? { keep: input.keep } : {}),
+          ...(input?.agent !== undefined ? { agent: input.agent } : {}),
+        });
+        await ensureBoxRunning(rp.provider, rp.box);
+        await prepareBackupDir(target);
+
+        // `dropAgentScaffolding: false` is what separates this from a clone.
+        // Clone drops what the new bot regenerates for itself; a backup must
+        // reproduce the bot it captured, scaffolding the user edited included.
+        const exported = await exportBoxWorkspace({
+          provider: rp.provider,
+          box: rp.box,
+          destDir: target.workspaceDir,
+          dropAgentScaffolding: false,
+          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+          onLog: (line) => {
+            console.log(`[hub] ${line}`);
+          },
+        });
+
+        // Best-effort, exactly as the CLI's `runBackup` is: a box whose agent
+        // cannot be reached still leaves a usable workspace bundle, and the
+        // manifest says `state: false` so a restore knows before it starts.
+        let state = false;
+        let databases: string[] | undefined;
+        if (target.agent) {
+          const transport = rp.provider.syncTransport?.(rp.box);
+          if (!transport) {
+            console.warn(
+              `[hub] provider ${rp.box.provider ?? 'docker'} cannot read agent state; workspace only`,
+            );
+          } else {
+            try {
+              const r = await backupAgentState({
+                agent: target.agent,
+                transport,
+                destDir: path.join(target.dir, 'state'),
+              });
+              state = true;
+              databases = r.databases;
+            } catch (err) {
+              console.warn(`[hub] could not capture ${target.agent} state: ${errMsg(err)}`);
+            }
+          }
+        }
+
+        await writeBackupManifest(target.dir, {
+          version: 1,
+          stamp: target.stamp,
+          bot: target.bot,
+          boxId: rp.box.id,
+          boxName: rp.box.name,
+          provider: rp.box.provider ?? 'docker',
+          ...(target.agent ? { agent: target.agent } : {}),
+          state,
+          ...(databases && databases.length > 0 ? { databases } : {}),
+          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+        });
+        await linkLatest(target.projectRoot, target.bot, target.stamp);
+        const pruned = await pruneBackups(target.projectRoot, target.bot, target.keep);
+        const wroteGitignore = await ensureBackupGitignored(target.projectRoot);
+
+        return {
+          ok: true,
+          bot: target.bot,
+          stamp: target.stamp,
+          dir: target.dir,
+          ...(target.agent ? { agent: target.agent } : {}),
+          state,
+          ...(databases && databases.length > 0 ? { databases } : {}),
+          files: exported.files,
+          pruned,
+          wroteGitignore,
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };

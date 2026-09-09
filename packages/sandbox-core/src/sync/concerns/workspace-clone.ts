@@ -38,6 +38,16 @@ export interface ExportWorkspaceArgs {
   includeNodeModules?: boolean;
   /** The agent the source box runs, so the drop is scoped to its `clone.drop`. */
   agent?: string;
+  /**
+   * Drop the scaffolding the agent regenerates for a new box (`clone.drop` —
+   * openclaw's `AGENTS.md` / `USER.md`). Default true, which is the CLONE rule:
+   * the new bot writes its own.
+   *
+   * A BACKUP passes false. A restore is meant to reproduce the bot it captured,
+   * so a bundle missing files the user may well have edited is not a backup of
+   * that bot — it is a template of it, which is what clone already produces.
+   */
+  dropAgentScaffolding?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -104,7 +114,7 @@ export async function exportBoxWorkspace(
     includeNodeModules: args.includeNodeModules,
     dropExcludedInGitMode: true,
     writeSidecar: false,
-    agent: args.agent,
+    ...(args.dropAgentScaffolding === false ? {} : { agent: args.agent }),
   });
   const files = staged.fileList === null ? 0 : staged.fileList.split('\0').length;
   log(`exported ${String(files)} file(s)${staged.mode === 'git' ? '' : ' (exclude-list mode)'}`);

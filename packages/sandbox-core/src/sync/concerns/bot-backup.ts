@@ -35,9 +35,9 @@ import {
 } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Dirent } from 'node:fs';
-import type { AgentId, SyncTransport } from '@agentbox/core';
+import type { AgentId, BoxRecord, SyncTransport } from '@agentbox/core';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
-import { resolveAgentSpec } from '../registry.js';
+import { findAgentSpec, resolveAgentSpec } from '../registry.js';
 import { agentPullBoxDir, pullSqliteSnapshot } from '../agent-pull-module.js';
 
 /** Directory under a project that holds every bot's backups. */
@@ -95,7 +95,12 @@ export function botDir(projectRoot: string, bot: string): string {
 export function botWorkspaceRoot(projectRoot: string): string {
   const parts = projectRoot.split(sep);
   const n = parts.length;
-  if (n >= 4 && parts[n - 1] === 'workspace' && parts[n - 3] === 'bots' && parts[n - 4] === '.agentbox') {
+  if (
+    n >= 4 &&
+    parts[n - 1] === 'workspace' &&
+    parts[n - 3] === 'bots' &&
+    parts[n - 4] === '.agentbox'
+  ) {
     return parts.slice(0, n - 4).join(sep);
   }
   return projectRoot;
@@ -104,6 +109,90 @@ export function botWorkspaceRoot(projectRoot: string): string {
 /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
 export function botBackupDir(projectRoot: string, bot: string, stamp: string): string {
   return join(botDir(projectRoot, bot), stamp);
+}
+
+/** How many backups a bot keeps before the oldest are pruned. */
+export const DEFAULT_BACKUP_KEEP = 3;
+
+/** Where one backup goes, and what it will capture. */
+export interface BackupTarget {
+  /** The project the bundle is written under. */
+  projectRoot: string;
+  bot: string;
+  stamp: string;
+  /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
+  dir: string;
+  /** Where the workspace half lands. */
+  workspaceDir: string;
+  keep: number;
+  /** The agent whose state to capture; absent when the box has no known one. */
+  agent?: AgentId;
+}
+
+/** What a caller may say about a backup. `keep` is a string so a CLI flag and a
+ * JSON body reach the same validator. */
+export interface BackupTargetOptions {
+  name?: string;
+  keep?: string | number;
+  agent?: string;
+}
+
+/**
+ * Resolve where this backup goes and what it will capture.
+ *
+ * `projectRoot ?? workspacePath` is the fallback the hub already uses: the field
+ * is absent on records made before it existed, and a backup must not silently
+ * pick a different directory for an old box.
+ *
+ * Shared with the hub deliberately — a route that resolved the bundle path its
+ * own way would be a second definition of "where a bot's backups live", and the
+ * CLI's `--restore` reads back what either of them wrote.
+ */
+export function resolveBackupTarget(box: BoxRecord, opts: BackupTargetOptions): BackupTarget {
+  const projectRoot = box.projectRoot ?? box.workspacePath;
+  const bot = (opts.name ?? box.name).trim();
+  if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
+    throw new Error(`--name ${opts.name ?? ''}: a bot name must be a single path segment`);
+  }
+
+  const keep =
+    opts.keep === undefined
+      ? DEFAULT_BACKUP_KEEP
+      : typeof opts.keep === 'number'
+        ? opts.keep
+        : Number.parseInt(opts.keep, 10);
+  if (!Number.isInteger(keep) || keep < 1) {
+    throw new Error(`--keep ${String(opts.keep ?? '')}: expected a positive integer`);
+  }
+
+  // An explicit `--agent` is checked; a guess off the record is not, because a
+  // box whose recorded agent has since been removed from the registry should
+  // still get its workspace backed up.
+  let agent: AgentId | undefined;
+  if (opts.agent) {
+    const spec = findAgentSpec(opts.agent);
+    if (!spec) throw new Error(`--agent ${opts.agent}: no such agent`);
+    agent = spec.id;
+  } else {
+    const guess = box.lastAgent ?? box.agents?.[0];
+    agent = guess ? findAgentSpec(guess)?.id : undefined;
+  }
+
+  const stamp = backupStamp();
+  const dir = botBackupDir(projectRoot, bot, stamp);
+  return { projectRoot, bot, stamp, dir, workspaceDir: join(dir, 'workspace'), keep, agent };
+}
+
+/**
+ * Create the bundle's directories before anything writes into them.
+ *
+ * rsync creates the LAST component of its destination and no more, so a fresh
+ * `<project>/.agentbox/bots/<bot>/<stamp>/workspace` is several levels too deep
+ * for it and the transfer dies with "No such file or directory". The CLI's
+ * dry-run pass hits it too, so this cannot wait until the write.
+ */
+export async function prepareBackupDir(target: BackupTarget): Promise<void> {
+  await mkdir(target.workspaceDir, { recursive: true });
 }
 
 /** What a backup records about itself, for a later `--restore`. */
