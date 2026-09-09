@@ -38,9 +38,17 @@ const config = {
   // pg (dynamic require), and the AgentBox box-runtime packages (they shell out
   // to docker/ssh via execa and are read from node_modules at runtime by the
   // hub's data source + lifecycle server actions).
+  //
+  // `execa` is deliberately NOT here. Listing it made turbopack emit an async
+  // external under a GENERATED id — `e.y("execa-<hash>")` — that names no
+  // package on disk, so every server-rendered PAGE died with
+  // ERR_MODULE_NOT_FOUND while the API routes, which never load that chunk,
+  // stayed fine. It is imported by the @agentbox/* packages that are NOT
+  // external here (relay, sandbox-cloud, …), so turbopack has to resolve it
+  // either way. Bundling is safe: execa is plain ESM over `node:` builtins,
+  // with none of the dynamic requires that force `pg` out.
   serverExternalPackages: [
     'pg',
-    'execa',
     '@agentbox/ctl',
     '@agentbox/sandbox-core',
     '@agentbox/sandbox-docker',
