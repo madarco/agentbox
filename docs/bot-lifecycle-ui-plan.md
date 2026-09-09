@@ -44,14 +44,39 @@ actions, and hide git UI when there is no repo.
 
 | Phase | What | State |
 | --- | --- | --- |
-| 1 | `hasGit` + `supportsBackup` in the box payload | not started |
-| 2 | Hide git UI when `hasGit === false` (hub + tray) | not started |
-| 3 | Hub API: `POST /boxes/{id}/backup` | not started |
-| 4 | Hub API: `GET /projects/{id}/bots`, `POST /projects/{id}/restore` | not started |
-| 5 | Hub web UI: backup / clone panel, project bots card | not started |
-| 6 | Tray: backup / clone actions, restore in the New Box panel | not started |
+| 1 | `hasGit` + `supportsBackup` in the box payload | **done** |
+| 2 | Hide git UI when `hasGit === false` (hub + tray) | **done** |
+| 3 | Hub API: `POST /boxes/{id}/backup` | **done** |
+| 4 | Hub API: `GET /projects/{id}/bots`, `POST /projects/{id}/restore` | **done** |
+| 5 | Hub web UI: bot panel (backup + clone), project bots card (restore) | **done** |
+| 6 | Tray: backup + clone actions, "Restore a Bot…" in the footer | **done** |
 
-One session per phase. Update this table as phases land — this file is the record.
+### What changed from the plan, and why
+
+- **The tray's restore did NOT go in the New Box panel.** It is a footer item that
+  fans out over every project's bots. The panel would have been the tidier home,
+  but the case a restore exists for is a box that is *gone*, and the New Box panel
+  is reached per-project from a place a user goes to create — not to recover. A
+  footer item is reachable with no box and no project selected.
+- **The hub's backup uses `exportBoxWorkspace`, not the CLI's rsync pull.** Same
+  provider-neutral export `clone` already uses, with one new knob
+  (`dropAgentScaffolding: false`) so a backup keeps what a clone drops. File
+  selection can differ from `agentbox download --backup` at the margins; accepted.
+- **Two tray bugs found by the first live backup, both fixed here:** a 10s global
+  request timeout against a 79s operation, and `.timedOut` reported as "hub is not
+  reachable" while the backup completed server-side.
+- **The shared refusals no longer hardcode `--force` / `--into`.** The rule is
+  shared between the CLI and the hub; the escape hatch is not, and a web UI told
+  to "pass --into <dir>" is being told to use a different program.
+
+### Known gaps
+
+- **Backup is a synchronous POST.** Measured 79s on a hetzner box, most of it the
+  workspace export over the provider seam. The clients carry generous timeouts;
+  making it a queue job is the proper fix and needs a new job kind (the queue has
+  only `create`/`prepare` lanes).
+- The tray shows no job log for clone/restore — the new box appears as a
+  `creating` row and the menu is the progress indicator.
 
 ---
 
