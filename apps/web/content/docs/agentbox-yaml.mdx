@@ -345,6 +345,14 @@ agentbox claude --carry skip
 
 You can also set `AGENTBOX_CARRY_YES=1` or `AGENTBOX_CARRY=skip`. Note that `-y`/`--yes` does **not** auto-approve carry — a non-TTY `-y` with non-empty entries fails loud and asks for the explicit env var. `agentbox fork` is the exception: it sends carry by default (opt out with `agentbox fork --carry skip`).
 
+### Approving carry outside the terminal
+
+The same approval happens when you create a box from the **hub web UI** or the **macOS tray**: before anything is provisioned they ask the hub what the create needs approved (`POST /api/v1/projects/{id}/create-preflight`), and show the file table — each src→dest with size, mode, and symlink warnings — as a question you answer in the UI. The answers ride back with the create as `opts.promptAnswers`.
+
+A client that skips that step does not silently drop your files: carry has no safe default answer, so the create is refused with the same message the terminal gives you. Answers are content-addressed to the question, so one collected against a `carry:` block that has since changed is refused rather than applied to the new one.
+
+One case genuinely cannot ask: a **remote control box** has no checkout of your project and cannot read the files a `carry:` block names. It reports that (`unavailable`) and the UI tells you, instead of building a box quietly missing them. Create from the CLI on the machine that holds the files, which uploads the approved material with the create.
+
 <Callout type="warn" title="HEADS UP">
   `carry` deliberately bypasses `.gitignore` and copies host files into the box. Treat the box as
   the untrusted side and only carry what the agent genuinely needs (credentials, env files). The

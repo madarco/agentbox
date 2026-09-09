@@ -128,13 +128,13 @@ Checkpoints are **durable per-project assets** — a docker image or cloud snaps
 
 ### Projects
 
-| Method + path                 | Description                                                                                                                                                                                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /projects`               | Registered projects (create targets). Each carries `currentBranch` (the default base) and `needsSetup` (no `agentbox.yaml` + no default snapshot).                                                                                                                                                 |
-| `POST /projects`              | Register a folder as a project, or create one. Exactly one body: `{ path }` (absolute, existing folder) registers it; `{ parent, name, git? }` creates `<parent>/<name>` — empty by default, or with `git: true` a repo on `main` with a `.gitignore` (`.agentbox/`) and an initial commit — and registers it. A create is refused when the target exists or when `parent` sits inside another project (its `agentbox.yaml` would claim the new folder). Both answer `{ ok, id, path }`.                                                                                                                                                                                                                                       |
-| `GET /projects/{id}/branches` | The project's branches (local + remote) and current HEAD, for the create base-branch picker: `{ current, branches }`.                                                                                                                                                                              |
-| `GET /projects/{id}/seed`     | The project's seed / custody status on a control box — what `agentbox hub project push` stored (untracked + env/secret tarballs + manifest): `{ custodyAvailable, seed }` as paths, hashes and timestamps only, never seed contents. `custodyAvailable: false` on a hub that is not a control box. |
-| `DELETE /projects/{id}`       | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes.                                                                                                                                                                                        |
+| Method + path                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /projects`               | Registered projects (create targets). Each carries `currentBranch` (the default base) and `needsSetup` (no `agentbox.yaml` + no default snapshot).                                                                                                                                                                                                                                                                                                                                       |
+| `POST /projects`              | Register a folder as a project, or create one. Exactly one body: `{ path }` (absolute, existing folder) registers it; `{ parent, name, git? }` creates `<parent>/<name>` — empty by default, or with `git: true` a repo on `main` with a `.gitignore` (`.agentbox/`) and an initial commit — and registers it. A create is refused when the target exists or when `parent` sits inside another project (its `agentbox.yaml` would claim the new folder). Both answer `{ ok, id, path }`. |
+| `GET /projects/{id}/branches` | The project's branches (local + remote) and current HEAD, for the create base-branch picker: `{ current, branches }`.                                                                                                                                                                                                                                                                                                                                                                    |
+| `GET /projects/{id}/seed`     | The project's seed / custody status on a control box — what `agentbox hub project push` stored (untracked + env/secret tarballs + manifest): `{ custodyAvailable, seed }` as paths, hashes and timestamps only, never seed contents. `custodyAvailable: false` on a hub that is not a control box.                                                                                                                                                                                       |
+| `DELETE /projects/{id}`       | Unregister an **empty** project (0 boxes). Folder/files on disk are untouched; `409` if it still has boxes.                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### Providers
 
@@ -241,6 +241,49 @@ route, same `202 { jobId }` — the hub picks the build path internally. Optiona
 fields mirror the CLI's `agentbox create` flags: `agent`, `provider`, `name`,
 `prompt`, `agentArgs`, `fromBranch`, and an `opts` object for box-shaping knobs
 (`image`, `snapshot`, `size`, `location`, `envFiles`, `carry`, …).
+
+### Questions a create has to ask first
+
+Some creates need a human decision before anything is provisioned: whether to
+copy the host files a project's [`carry:`](/docs/agentbox-yaml#carry) block
+names, or whether to seed a service agent with a host login. `POST
+/projects/{id}/create-preflight` returns those questions; you render them, and
+send the answers back with the create.
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"agent":"claude","provider":"docker"}' \
+  http://127.0.0.1:8787/api/v1/projects/<id>/create-preflight
+# -> { "prompts": [ { "id": "carry:98310458c334", "topic": "carry", "kind": "select",
+#                     "title": "Copy 15 host entries into the box?",
+#                     "choices": [ ... ], "detail": { "type": "file-table", ... },
+#                     "required": true, "fallback": { "value": "cancel", ... } } ],
+#      "unavailable": [] }
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"projectId":"<id>","agent":"claude","opts":{"promptAnswers":[
+        {"id":"carry:98310458c334","value":"approve"}]}}' \
+  http://127.0.0.1:8787/api/v1/boxes
+```
+
+A `PromptRequest` has two halves. The generic one — `kind` (`confirm` /
+`select` / `text`), `title`, `body`, `choices` — is enough to render and answer
+**any** prompt, including a `topic` your client has never seen, so the hub can
+add a question without breaking you. `detail` is the optional half a client
+_may_ draw richly (`file-table`, `credential`); every variant carries a plain
+`summary`, so render that for one you do not recognise.
+
+The list comes from running the real gates, so it can never differ from what the
+create asks. Skipping the endpoint is allowed — every prompt has a `fallback` —
+except for one marked `required` (`carry:`, whose silent answer would move host
+secrets): a create that leaves that unanswered is refused, not defaulted. Ids
+are content-addressed over the question, so an answer collected before the
+project's `agentbox.yaml` changed no longer matches and is refused too.
+
+`unavailable` names each gate this hub cannot run and why. A control box has no
+local checkout, so it can read neither your `agentbox.yaml` nor your host
+logins; it says so rather than returning an empty list that looks like "nothing
+to ask".
 
 A box being built shows up in `GET /boxes` with `status: "creating"` right away,
 then flips to `running` once the container is up. `GET /jobs` lists every

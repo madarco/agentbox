@@ -103,6 +103,8 @@ agentbox config set openclaw.modelAuth codex  # every create; `none` to stop ask
 
 With neither set, an interactive create asks — defaulting to **No** — whenever your host holds a Codex login. `-y` and a non-TTY never ask and seed nothing.
 
+Creating an OpenClaw box from the **hub web UI** or the **macOS tray** asks the same question, as a card showing which login it is and where it would land (`~/.codex/auth.json` on the host → `~/.codex/auth.json` in the box). Declining is the default there too, and a client that does not ask simply gets `none` — this question, unlike `carry:`, has a safe silent answer.
+
 What happens is ordinary AgentBox machinery plus one unit on OpenClaw's row:
 
 - The host copies the login to **codex's own credential path** in the box (`~/.codex/auth.json`, 0600), the same place a runtime install of codex would put it, at the same step your `carry:` files land — before the first supervisor task runs. Nothing about OpenClaw's auth format lives on the host.
