@@ -53,6 +53,8 @@ export interface PromptRequest {
   id: string;
   topic: string;
   kind: 'confirm' | 'select' | 'text';
+  /** Short card header, with `title` as the line under it. */
+  heading?: string;
   title: string;
   body?: string;
   choices?: PromptChoice[];
@@ -75,7 +77,9 @@ export function PromptView({
   const choices = request.choices ?? defaultChoices(request);
   return (
     <div className="space-y-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
-      <div className="text-sm font-semibold text-amber-200">{request.title}</div>
+      <div className="text-sm font-semibold text-amber-200">{request.heading ?? request.title}</div>
+      {/* With no `heading` the question IS the header, so don't repeat it. */}
+      {request.heading ? <div className="text-xs text-foreground">{request.title}</div> : null}
       {request.body ? (
         <p className="text-xs leading-relaxed text-muted-foreground">{request.body}</p>
       ) : null}
@@ -110,10 +114,10 @@ function DetailView({ detail }: { detail?: PromptDetail }) {
         <table className="w-full text-left text-xs">
           <thead className="bg-muted/40 text-muted-foreground">
             <tr>
-              <th className="px-2 py-1 font-medium">Host</th>
-              <th className="px-2 py-1 font-medium">In the box</th>
+              <th className="px-2 py-1 font-medium">From</th>
+              <th className="px-2 py-1 font-medium">To</th>
               <th className="px-2 py-1 text-right font-medium">Size</th>
-              <th className="px-2 py-1 font-medium">Flags</th>
+              <th className="px-2 py-1 font-medium">Notes</th>
             </tr>
           </thead>
           <tbody className="font-mono">
@@ -170,11 +174,10 @@ function defaultChoices(request: PromptRequest): PromptChoice[] {
   return [{ value: request.fallback.value, label: 'Continue' }];
 }
 
+// `mode`/`user` are deliberately not shown: an octal permission bit is not
+// something the person deciding needs to see.
 function rowFlags(r: PromptFileRow): string[] {
-  const out = [...r.flags];
-  if (r.mode) out.push(`mode ${r.mode}`);
-  if (r.user !== undefined) out.push(`user ${String(r.user)}`);
-  return out;
+  return r.flags;
 }
 
 function formatBytes(n: number): string {

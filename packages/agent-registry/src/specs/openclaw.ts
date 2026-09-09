@@ -438,7 +438,7 @@ export const openclawSpec: AgentSyncSpec = {
   // path and the `openclaw-model-auth` task below imports it. Absent
   // `credential` plus present `modelAuth.borrows` is the shape for a consumer.
   modelAuth: {
-    borrows: [{ agent: 'codex', label: 'your Codex login (ChatGPT subscription OAuth)' }],
+    borrows: [{ agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' }],
     ingestTask: 'openclaw-model-auth',
   },
   settings: [

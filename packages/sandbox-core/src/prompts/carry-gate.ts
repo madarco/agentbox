@@ -75,6 +75,7 @@ export function buildCarryPrompt(entries: ResolvedCarryEntry[]): PromptRequest {
     id: promptId(CARRY_TOPIC, rows),
     topic: CARRY_TOPIC,
     kind: 'select',
+    heading: 'Copy files',
     title: n === 1 ? 'Copy this file into the box?' : `Copy these ${String(n)} files into the box?`,
     body: 'They leave this machine, so check the list before you say yes.',
     choices: [

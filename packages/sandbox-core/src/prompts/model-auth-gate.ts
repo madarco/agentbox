@@ -85,6 +85,7 @@ export function buildModelAuthPrompt(agentId: string, available: AvailableBorrow
     }),
     topic: MODEL_AUTH_TOPIC,
     kind: 'select',
+    heading: 'Copy credentials',
     title: 'Copy your model provider logins?',
     choices,
     // Declining stays the default: copying a subscription login into a

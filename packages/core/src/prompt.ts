@@ -101,6 +101,13 @@ export interface PromptRequest {
   /** Machine-stable reason this prompt exists: `carry`, `model-auth`, `tools`. */
   topic: string;
   kind: PromptKind;
+  /**
+   * Two or three words for a card header ("Copy credentials"), with {@link title}
+   * as the line under it. Optional: a client without a header slot — the CLI —
+   * shows only `title`, which is always the actual question.
+   */
+  heading?: string;
+  /** The question itself. Always present, and always answerable on its own. */
   title: string;
   body?: string;
   /** Required for `select`; ignored otherwise. */

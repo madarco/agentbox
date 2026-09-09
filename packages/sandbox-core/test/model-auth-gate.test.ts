@@ -17,7 +17,7 @@ const none = { modelAuth: 'none' } as const;
 
 const CODEX_BORROW: AvailableBorrow = {
   agent: 'codex',
-  label: 'your Codex login (ChatGPT subscription OAuth)',
+  label: 'Your Codex login (ChatGPT subscription OAuth)',
   hostPath: '/home/u/.codex/auth.json',
   boxPath: '/home/vscode/.codex/auth.json',
   bytes: 512,

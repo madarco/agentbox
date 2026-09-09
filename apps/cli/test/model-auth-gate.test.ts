@@ -11,7 +11,7 @@ const openclaw = resolveAgentSpec('openclaw');
 const available = async () => [
   {
     agent: 'codex',
-    label: 'your Codex login',
+    label: 'Your Codex login',
     hostPath: '/home/u/.codex/auth.json',
     boxPath: '/home/vscode/.codex/auth.json',
   },
