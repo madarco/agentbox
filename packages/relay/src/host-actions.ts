@@ -82,6 +82,7 @@ import {
   toolRequestsEnabled,
 } from './host-tools.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
+import { browserOpenBudget } from './browser-open-budget.js';
 import type {
   CheckpointRpcParams,
   CpRpcParams,
@@ -638,14 +639,16 @@ async function runToolRpc(
 }
 
 /**
- * Mirror an in-box `browser.open` notification on the host. The action runs
- * detached from the box's `/rpc` (the in-box handler responded 200 long
- * before queuing this), so blocking here doesn't tie up an agent — we can
- * happily wait for the host user's verdict with a TTL fallback.
+ * Mirror an in-box `browser.open` notification on the host. Part of the safe
+ * host-action subset (`box.autoApproveSafeHostActions`), so it normally opens
+ * straight away and only leaves an audit event; `browserOpenBudget` is what
+ * keeps a looping agent from spraying host tabs now that no prompt gates it.
  *
- * On `y` we spawn `open <url>` on the host. Any other verdict (deny / TTL
- * timeout / no subscribers) silently drops the link. Always resolves
- * exit 0 because the box doesn't observe the result.
+ * Over budget (or in strict mode) it falls back to the old confirm. The action
+ * runs detached from the box's `/rpc` (the in-box handler responded 200 long
+ * before queuing this), so blocking on that verdict ties up no agent. Any
+ * non-`y` verdict (deny / TTL timeout / no subscribers) silently drops the
+ * link. Always resolves exit 0 because the box doesn't observe the result.
  */
 async function runBrowserOpenMirror(
   action: HostAction,
@@ -660,31 +663,40 @@ async function runBrowserOpenMirror(
   if (process.env['AGENTBOX_PROMPT'] === 'off') {
     return { exitCode: 0, stdout: '', stderr: '' };
   }
+  const openOnHost = async (): Promise<void> => {
+    // Open on the host's default handler (`open` on macOS, `xdg-open` on
+    // Linux). Spawn detached so the relay loop isn't blocked; the box never
+    // observes the outcome.
+    browserOpenBudget.record(deps.boxId, url);
+    const { spawn } = await import('node:child_process');
+    const child = spawn(hostOpenCommand(), [url], { stdio: 'ignore', detached: true });
+    child.unref();
+  };
+  const promptEvent = {
+    kind: 'confirm' as const,
+    message: `Open link from cloud box ${deps.boxName ?? deps.boxId} on the host?`,
+    detail: url,
+    defaultAnswer: 'n' as const,
+    context: { command: 'browser.open', argv: [url] },
+  };
   // 90s TTL matches the docker browser.open behavior closely enough that an
   // attached user has plenty of time to answer without leaving a stale
   // prompt indefinitely.
   const TTL_MS = 90_000;
   try {
-    const verdict = await askPrompt(
-      deps.prompts,
-      deps.subscribers,
+    const decision = browserOpenBudget.decide(
       deps.boxId,
-      {
-        kind: 'confirm',
-        message: `Open link from cloud box ${deps.boxName ?? deps.boxId} on the host?`,
-        detail: url,
-        defaultAnswer: 'n',
-        context: { command: 'browser.open', argv: [url] },
-      },
-      { ttlMs: TTL_MS },
+      url,
+      deps.autoApproveSafeHostActions !== false,
     );
-    if (verdict.answer === 'y' && !verdict.cancelled) {
-      // Open on the host's default handler (`open` on macOS, `xdg-open` on
-      // Linux). Spawn detached so the relay loop isn't blocked; the box never
-      // observes the outcome.
-      const { spawn } = await import('node:child_process');
-      const child = spawn(hostOpenCommand(), [url], { stdio: 'ignore', detached: true });
-      child.unref();
+    if (decision.action === 'open') {
+      deps.prompts.noteAutoApprove(deps.boxId, promptEvent, decision.reason);
+      await openOnHost();
+    } else if (decision.action === 'prompt') {
+      const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, promptEvent, {
+        ttlMs: TTL_MS,
+      });
+      if (verdict.answer === 'y' && !verdict.cancelled) await openOnHost();
     }
   } catch (err) {
     deps.log?.(`browser.open.mirror failed: ${err instanceof Error ? err.message : String(err)}`);

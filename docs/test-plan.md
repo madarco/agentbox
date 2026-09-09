@@ -773,10 +773,10 @@ EOF`
   - **Run:** `agentbox-ctl git fetch` inside box (no SSH key in box).
   - **Signal:** fetch succeeds; remote refs visible in `git branch -r`.
 
-- [ ] **RELAY-010** `agentbox-ctl open <url>` opens in box browser + host confirm.
+- [ ] **RELAY-010** `agentbox-ctl open <url>` opens in box browser + auto-opens on the host (rate-limited).
   - **Providers:** [docker]
   - **Run:** `agentbox-ctl open https://example.com` inside box.
-  - **Signal:** URL appears in box's VNC Chromium; host footer (dashboard) shows confirm prompt within ~25s.
+  - **Signal:** URL appears in box's VNC Chromium AND opens in the host browser with no prompt; a third distinct URL within 30s falls back to the confirm prompt in the footer/dashboard.
 
 ---
 

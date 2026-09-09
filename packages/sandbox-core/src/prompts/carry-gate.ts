@@ -70,14 +70,12 @@ export type CarryGateResult =
 export function buildCarryPrompt(entries: ResolvedCarryEntry[]): PromptRequest {
   const rows = entries.map(toFileRow);
   const totalBytes = rows.reduce((n, r) => n + (r.bytes ?? 0), 0);
-  const n = rows.length;
   return {
     id: promptId(CARRY_TOPIC, rows),
     topic: CARRY_TOPIC,
     kind: 'select',
     heading: 'Copy files',
-    title: n === 1 ? 'Copy this file into the box?' : `Copy these ${String(n)} files into the box?`,
-    body: 'They leave this machine, so check the list before you say yes.',
+    title: 'Copy these files into the box?',
     choices: [
       { value: 'approve', label: 'Copy' },
       { value: 'skip-this-run', label: 'Skip' },

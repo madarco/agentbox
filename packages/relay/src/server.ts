@@ -9,6 +9,7 @@ import {
   resolveHostPath,
 } from './host-actions.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
+import { browserOpenBudget } from './browser-open-budget.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
 import { cpCachePrefix } from './cp-cache.js';
@@ -1410,42 +1411,54 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // block the box on the host user's decision.
         await store.appendEvent({ boxId: reg.boxId, type: 'browser-open', payload: { url } });
         send(res, 200, { exitCode: 0, stdout: '', stderr: '' });
-        // Offer to mirror the link to the host browser: a non-blocking,
-        // auto-expiring confirm prompt in the footer/dashboard. Skipped under
-        // AGENTBOX_PROMPT=off so a headless box can't spray the host with
-        // browser tabs via askPrompt's auto-'y'.
+        // Mirror the link to the host browser. Part of the safe host-action
+        // subset (`box.autoApproveSafeHostActions`), so it normally just opens
+        // — `browserOpenBudget` is what keeps a looping agent from spraying
+        // tabs now that no prompt stands in the way. Skipped under
+        // AGENTBOX_PROMPT=off so a headless box can't open host tabs at all.
         if (process.env.AGENTBOX_PROMPT !== 'off') {
           if (mode === 'box' && hostActions) {
             // Cloud: the in-sandbox relay has no SSE subscribers (the host
             // wrapper attaches to the host relay, not the in-sandbox one).
             // Queue a `browser.open.mirror` host action — the host poller
-            // drains it, executes the prompt + open against host
+            // drains it, applies the same budget + open against host
             // subscribers, and resolves the parked entry. We don't await;
             // the host's verdict isn't reported back to the in-box agent
             // and `HostActionQueue.maxAgeMs` GCs the entry if it lingers.
             void hostActions.enqueue(reg.boxId, 'browser.open.mirror', { url });
           } else {
-            void askPrompt(
-              prompts,
-              subscribers,
+            const promptEvent = {
+              kind: 'confirm' as const,
+              message: `Open link from box ${reg.name} on the host?`,
+              detail: url,
+              defaultAnswer: 'n' as const,
+              context: { command: 'browser.open', argv: [url] },
+            };
+            const decision = browserOpenBudget.decide(
               reg.boxId,
-              {
-                kind: 'confirm',
-                message: `Open link from box ${reg.name} on the host?`,
-                detail: url,
-                defaultAnswer: 'n',
-                context: { command: 'browser.open', argv: [url] },
-              },
-              { ttlMs: BROWSER_OPEN_PROMPT_TTL_MS },
-            )
-              .then((verdict) => {
-                if (verdict.answer === 'y' && !verdict.cancelled) {
-                  void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
-                }
+              url,
+              reg.autoApproveSafeHostActions !== false,
+            );
+            if (decision.action === 'open') {
+              prompts.noteAutoApprove(reg.boxId, promptEvent, decision.reason);
+              browserOpenBudget.record(reg.boxId, url);
+              void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
+            } else if (decision.action === 'prompt') {
+              // Over budget (or strict mode): fall back to the non-blocking,
+              // auto-expiring confirm in the footer/dashboard.
+              void askPrompt(prompts, subscribers, reg.boxId, promptEvent, {
+                ttlMs: BROWSER_OPEN_PROMPT_TTL_MS,
               })
-              .catch(() => {
-                /* best-effort */
-              });
+                .then((verdict) => {
+                  if (verdict.answer === 'y' && !verdict.cancelled) {
+                    browserOpenBudget.record(reg.boxId, url);
+                    void runHostCommand([hostOpenCommand(), url], BROWSER_OPEN_RPC_TIMEOUT_MS);
+                  }
+                })
+                .catch(() => {
+                  /* best-effort */
+                });
+            }
           }
         }
         return;

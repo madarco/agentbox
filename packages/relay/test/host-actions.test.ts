@@ -3,9 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeCloudAction, resolveHostGitRepo, resolveHostPath } from '../src/host-actions.js';
 import { ghRunContext } from '../src/gh.js';
+import { PendingPrompts, PromptSubscribers } from '../src/prompts.js';
+import { browserOpenBudget } from '../src/browser-open-budget.js';
 import type { HostAction } from '../src/types.js';
 
 /**
@@ -104,6 +106,45 @@ describe('executeCloudAction routing', () => {
     // No prompts/subscribers => can't ask; falls through to exit 0 (the
     // box already opened it in-sandbox, the mirror is purely best-effort).
     expect(result.exitCode).toBe(0);
+  });
+
+  // The host open is part of the safe subset now, so these two cases pin the
+  // paths that must NOT open a host browser. (The auto-open path itself would
+  // spawn a real browser, so it lives in browser-open-budget.test.ts instead.)
+  it('browser.open.mirror still prompts under box.autoApproveSafeHostActions: false', async () => {
+    const prompts = new PendingPrompts();
+    const subscribers = new PromptSubscribers();
+    const url = `https://strict-${String(Date.now())}.test`;
+    const pending = executeCloudAction(action('browser.open.mirror', { url }), {
+      ...makeDeps(),
+      prompts,
+      subscribers,
+      autoApproveSafeHostActions: false,
+    });
+    // The confirm is parked for a human; deny it so nothing is opened.
+    await vi.waitFor(() => {
+      expect(prompts.all()).toHaveLength(1);
+    });
+    const parked = prompts.all()[0];
+    expect(parked?.ev.context?.command).toBe('browser.open');
+    prompts.resolve(parked?.ev.id ?? '', 'n');
+    expect((await pending).exitCode).toBe(0);
+  });
+
+  it('browser.open.mirror drops a duplicate URL without prompting or opening', async () => {
+    const prompts = new PendingPrompts();
+    const subscribers = new PromptSubscribers();
+    const url = `https://dupe-${String(Date.now())}.test`;
+    // Prime the budget as if the host had just opened this exact link.
+    browserOpenBudget.record('box1', url);
+    const result = await executeCloudAction(action('browser.open.mirror', { url }), {
+      ...makeDeps(),
+      prompts,
+      subscribers,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(prompts.all()).toHaveLength(0);
+    browserOpenBudget.forget('box1');
   });
 
   // gh.exec parity with docker: the same blocklist / destructive / checkout

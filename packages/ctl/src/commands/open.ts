@@ -44,10 +44,11 @@ function openInBoxBrowser(url: string): Promise<number> {
 }
 
 /**
- * Open a URL in the box's own browser. The relay is then notified so the host
- * user can be offered (in the footer/dashboard) to also open it on the host —
- * but that's optional: the in-box open is the primary action and a missing or
- * unreachable relay must not fail the command.
+ * Open a URL in the box's own browser. The relay is then notified so it can
+ * also open the link on the host (auto-approved but rate-limited; over budget
+ * it asks in the footer/dashboard) — but that's optional: the in-box open is
+ * the primary action and a missing or unreachable relay must not fail the
+ * command.
  */
 export const openCommand = new Command('open')
   .description("Open a URL in the box's browser (visible via `agentbox screen`)")
