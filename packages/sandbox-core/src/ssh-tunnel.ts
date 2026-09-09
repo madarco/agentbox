@@ -27,7 +27,12 @@
  *   - open()      → spawn `ssh -fNT -M -S control.sock [-i key] <dest>` once per box.
  *   - forward()   → `ssh -O forward -L 127.0.0.1:<localPort>:127.0.0.1:<remotePort> -S control.sock dummy`.
  *                   Picks a free local port. Idempotent per (boxId, remotePort)
- *                   — returns the cached localPort on a repeated call.
+ *                   ACROSS PROCESSES, not just within one: the map is persisted
+ *                   beside the control socket, because the ControlMaster
+ *                   outlives any single CLI invocation while an in-memory cache
+ *                   does not. Without that every `agentbox` command that
+ *                   resolved a preview URL minted another forward on the same
+ *                   master and nothing ever reaped them.
  *   - unforward() → `ssh -O cancel -L …`.
  *   - refresh()   → tear down a dead master + every cached forward, reopen.
  *   - close()     → `ssh -O exit -S control.sock dummy`; removes the socket.
@@ -35,18 +40,86 @@
  * Thread-safety: a single AgentBox process owns one manager per CLI invocation.
  * Concurrent `forward()` calls for the same (boxId, remotePort) race-resolve to
  * the same localPort because the cache is checked first and `ssh -O forward` is
- * idempotent on the SSH side.
+ * idempotent on the SSH side. Two separate PROCESSES racing can still mint one
+ * extra forward; the persisted map keeps that to a one-off rather than one per
+ * invocation.
  */
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createConnection, createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 
 const HOST = '127.0.0.1';
+
+/**
+ * Where the cross-process forward map lives: beside the control socket, which is
+ * already the one path that identifies a master. A regular file, so the ~104-byte
+ * `sun_path` cap that shapes `controlSockPath` does not apply.
+ */
+function forwardsPath(controlPath: string): string {
+  return `${controlPath}.forwards.json`;
+}
+
+interface PersistedForwards {
+  /** The master these ports belong to. A different pid means a different master. */
+  masterPid: number;
+  /** remotePort -> localPort. */
+  forwards: Record<string, number>;
+}
+
+async function readForwards(controlPath: string, masterPid: number): Promise<Map<number, number>> {
+  try {
+    const raw = JSON.parse(await readFile(forwardsPath(controlPath), 'utf8')) as PersistedForwards;
+    // A restarted master reuses the socket path but not its forwards, so a pid
+    // mismatch invalidates the whole map rather than handing out dead ports.
+    if (raw.masterPid !== masterPid) return new Map();
+    return new Map(Object.entries(raw.forwards).map(([r, l]) => [Number(r), l]));
+  } catch {
+    return new Map();
+  }
+}
+
+async function writeForwards(
+  controlPath: string,
+  masterPid: number,
+  forwards: Map<number, number>,
+): Promise<void> {
+  const body: PersistedForwards = {
+    masterPid,
+    forwards: Object.fromEntries([...forwards].map(([r, l]) => [String(r), l])),
+  };
+  try {
+    await writeFile(forwardsPath(controlPath), JSON.stringify(body), { mode: 0o600 });
+  } catch {
+    // Losing the map costs an extra forward, never correctness — never fatal.
+  }
+}
+
+/**
+ * Is something accepting connections on this local port?
+ *
+ * Belt-and-braces on top of the pid check: a forward normally lives as long as
+ * its master, but `-O cancel` can remove one, and handing back a port nothing
+ * listens on would look exactly like the box being down.
+ */
+async function isListening(port: number): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const sock = createConnection({ host: HOST, port });
+    const done = (ok: boolean): void => {
+      sock.destroy();
+      resolvePromise(ok);
+    };
+    sock.setTimeout(400);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
+
 
 /**
  * ControlMaster socket path. It must be SHORT: a Unix domain socket path is
@@ -194,14 +267,28 @@ export class SshTunnelManager {
    */
   async forward(boxId: string, remotePort: number): Promise<number> {
     const tunnel = this.getTunnelOrThrow(boxId);
-    const cached = tunnel.forwards.get(remotePort);
-    if (cached !== undefined && (await this.isAlive(tunnel.controlPath))) {
-      return cached;
-    }
-    if (cached !== undefined) {
+    const { alive, pid } = await this.masterState(tunnel.controlPath);
+    if (!alive) {
       // Master died — every cached local port stopped listening. Drop them all;
       // callers that still hold a stale `localPort` get a fresh one next call.
       tunnel.forwards.clear();
+      await rm(forwardsPath(tunnel.controlPath), { force: true });
+    } else {
+      const cached = tunnel.forwards.get(remotePort);
+      if (cached !== undefined) return cached;
+      // Not in THIS process's cache, but the master outlives any one process, so
+      // a forward for this port may already exist from an earlier invocation.
+      // Adopting it is what stops every command that resolves a preview URL from
+      // minting another one. Needs the pid: without it we cannot tell this
+      // master's forwards from a previous master's, so we mint instead.
+      if (pid !== null) {
+        const persisted = await readForwards(tunnel.controlPath, pid);
+        const known = persisted.get(remotePort);
+        if (known !== undefined && (await isListening(known))) {
+          tunnel.forwards.set(remotePort, known);
+          return known;
+        }
+      }
     }
     const localPort = await pickFreePort();
     const argv = [
@@ -220,6 +307,12 @@ export class SshTunnelManager {
       );
     }
     tunnel.forwards.set(remotePort, localPort);
+    if (pid !== null) {
+      // Re-read before writing so a concurrent process's entries survive.
+      const persisted = await readForwards(tunnel.controlPath, pid);
+      persisted.set(remotePort, localPort);
+      await writeForwards(tunnel.controlPath, pid, persisted);
+    }
     return localPort;
   }
 
@@ -239,6 +332,7 @@ export class SshTunnelManager {
       if (!alive && existsSync(existing.controlPath)) {
         // Stale socket from a dead master — best-effort cleanup, then reopen.
         try {
+          await rm(forwardsPath(existing.controlPath), { force: true });
           await execa('ssh', ['-O', 'exit', '-S', existing.controlPath, 'dummy'], {
             reject: false,
           });
@@ -271,6 +365,15 @@ export class SshTunnelManager {
     ];
     await execa('ssh', argv, { reject: false });
     tunnel.forwards.delete(remotePort);
+    // Also out of the persisted map, or the next process adopts a port that no
+    // longer forwards anywhere.
+    const { pid } = await this.masterState(tunnel.controlPath);
+    if (pid !== null) {
+      const persisted = await readForwards(tunnel.controlPath, pid);
+      if (persisted.delete(remotePort)) {
+        await writeForwards(tunnel.controlPath, pid, persisted);
+      }
+    }
   }
 
   /**
@@ -282,6 +385,7 @@ export class SshTunnelManager {
     if (!tunnel) return;
     if (existsSync(tunnel.controlPath)) {
       await execa('ssh', ['-O', 'exit', '-S', tunnel.controlPath, 'dummy'], { reject: false });
+      await rm(forwardsPath(tunnel.controlPath), { force: true });
       await rm(tunnel.controlPath, { force: true });
     }
     this.boxes.delete(boxId);
@@ -323,8 +427,26 @@ export class SshTunnelManager {
   }
 
   private async isAlive(controlPath: string): Promise<boolean> {
+    return (await this.masterState(controlPath)).alive;
+  }
+
+  /**
+   * Whether a master is running, and which one.
+   *
+   * Liveness and IDENTITY are separate answers and only the first is
+   * guaranteed: `ssh -O check` exits 0 when a master answers and prints
+   * `Master running (pid=NNN)`, but the pid is the only handle OpenSSH gives on
+   * identity (there is no "list forwards" query) and a build that does not print
+   * it still has a perfectly live master. So an unparsed pid means "alive, but
+   * we cannot safely adopt its forwards" — never "dead".
+   */
+  private async masterState(
+    controlPath: string,
+  ): Promise<{ alive: boolean; pid: number | null }> {
     const res = await execa('ssh', ['-O', 'check', '-S', controlPath, 'dummy'], { reject: false });
-    return res.exitCode === 0;
+    if (res.exitCode !== 0) return { alive: false, pid: null };
+    const m = /pid=(\d+)/.exec(`${res.stderr}${res.stdout}`);
+    return { alive: true, pid: m?.[1] ? Number(m[1]) : null };
   }
 
   private getTunnelOrThrow(boxId: string): BoxTunnel {
