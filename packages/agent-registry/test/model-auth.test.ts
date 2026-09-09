@@ -79,7 +79,7 @@ describe('openclaw-model-auth', () => {
     expect(script).not.toContain('set -e');
     expect(script).toMatch(/no borrowed Codex login[^\n]*exit 0/);
     expect(script).toMatch(/not a Codex ChatGPT login[^\n]*exit 0/);
-    expect(script).toMatch(/already in place[\s\S]*exit 0/);
+    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
   });
 
   it('imports through openclaw`s own migrate command, scoped to the auth item', () => {
@@ -98,12 +98,15 @@ describe('openclaw-model-auth', () => {
     expect(script).toMatch(/if \[ ! -d '[^']*\/\.openclaw\/extensions\/codex' \]/);
   });
 
-  it('skips the import while openclaw reports a usable OpenAI OAuth profile', () => {
-    expect(script).toContain('openclaw models status --json');
-    // The program rides inside a single-quoted shell word, so its own quotes
-    // are escaped; match the check loosely rather than its quoting.
-    expect(script).toMatch(/p\.provider === .{0,6}openai.{0,6} && p\.type === .{0,6}oauth/);
-    expect(script).toContain('unusableProfiles');
+  it('gates on the seed file`s hash, never on openclaw`s status view', () => {
+    // A bare seeded file makes `models status` show a bootstrapped profile
+    // that a turn cannot use, so status cannot say "already imported". The
+    // marker sits beside the overlay record and is excluded from the push.
+    expect(script).not.toContain('models status');
+    expect(script).toContain('sha256sum "$auth"');
+    expect(script).toContain('.agentbox-model-auth.sha256');
+    expect(script).toMatch(/already imported[\s\S]*exit 0/);
+    expect(spec.staticPaths[0]!.exclude).toContain('.agentbox-model-auth.sha256');
   });
 
   it('never writes the store or the config file by hand', () => {

@@ -194,20 +194,24 @@ const IDENTITY_NUDGE_TEXT = [
  *    completes the default rather than changing it. The install is ~17s and
  *    lands in the config volume, so it is paid once per box.
  *  - A bare `~/.codex/auth.json` is enough for `models status` to SHOW a
- *    bootstrapped `openai:default`, but a turn then fails with
- *    `selected_auth_profile_unavailable`: the run path wants a stored row. The
- *    import is what makes it real.
- *  - After import OpenClaw owns the profile and refreshes it in its own store.
- *    OpenAI does not invalidate the prior refresh token on rotation (two boxes
- *    seeded from one host file refreshed independently and every chain, the
- *    host's included, stayed valid), so the box is an independent session from
- *    here and the seed is never re-read — which is why the import is skipped
- *    while a usable OpenAI OAuth profile exists.
+ *    bootstrapped `openai:default` — reported as `source: store`, status `ok`,
+ *    indistinguishable from a real row — but a turn on it fails with
+ *    `selected_auth_profile_unavailable`. So OpenClaw's own status is NOT the
+ *    gate for "already imported"; the import is what makes the profile real.
+ *  - The import applies on every run. After it OpenClaw owns the profile and
+ *    refreshes it in its own store, and OpenAI does not invalidate the prior
+ *    refresh token on rotation (two boxes seeded from one host file refreshed
+ *    independently and every chain, the host's included, stayed valid). So a
+ *    re-import is never needed for freshness, and would only replace the box's
+ *    own newer chain with the seed's.
  *
- * Idempotent and exit 0 on every "nothing to do": no seeded file, a file that
- * is not a Codex login, or a profile already in place. The gateway is ordered
- * after this task (`needs`), so the plugin it installs is loaded on the
- * gateway's first start rather than needing a restart.
+ * Hence the gate is the SEED itself: a hash of the file, recorded beside
+ * `.agentbox-overlay.json` once an import succeeds. Unchanged file, no work;
+ * a re-pushed login (the host logged in again) imports again. Idempotent and
+ * exit 0 on every "nothing to do": no seeded file, a file that is not a Codex
+ * login, or one already imported. The gateway is ordered after this task
+ * (`needs`), so the plugin it installs is loaded on the gateway's first start
+ * rather than needing a restart.
  */
 function buildModelAuthScript(): string {
   const auth = codexSpec.credential!.boxAbsPath;
@@ -215,54 +219,40 @@ function buildModelAuthScript(): string {
   return [
     'set -u',
     `auth=${sq(auth)}`,
+    `marker=${sq(MODEL_AUTH_MARKER)}`,
     'if [ ! -s "$auth" ]; then echo "openclaw-model-auth: no borrowed Codex login at $auth"; exit 0; fi',
     // Shape gate, so a half-written or API-key-only file is "nothing to
     // ingest" rather than a failed import.
     `if ! node -e ${sq(MODEL_AUTH_IS_CODEX_LOGIN)} "$auth"; then echo "openclaw-model-auth: $auth is not a Codex ChatGPT login"; exit 0; fi`,
+    'seen=$(sha256sum "$auth" | cut -d" " -f1)',
+    'if [ -f "$marker" ] && [ "$(cat "$marker")" = "$seen" ]; then',
+    '  echo "openclaw-model-auth: this Codex login is already imported"',
+    '  exit 0',
+    'fi',
     // The plugin owns both the import command and the harness the default
-    // model runs on; without it `models status` still SHOWS a bootstrapped
-    // profile the daemon cannot use.
+    // model runs on.
     `if [ ! -d ${sq(`${OPENCLAW_BOX_DIR}/extensions/codex`)} ]; then`,
     '  echo "openclaw-model-auth: installing the @openclaw/codex plugin"',
-    '  openclaw plugins install clawhub:@openclaw/codex',
-    'fi',
-    `if openclaw models status --json 2>/dev/null | node -e ${sq(MODEL_AUTH_HAS_USABLE_PROFILE)}; then`,
-    '  echo "openclaw-model-auth: a usable OpenAI OAuth profile is already in place"',
-    '  exit 0',
+    '  openclaw plugins install clawhub:@openclaw/codex || exit 0',
     'fi',
     'echo "openclaw-model-auth: importing the Codex login into the OpenClaw auth store"',
     // `--no-backup --force`: the pre-migration archive would snapshot a state
-    // dir that is fresh on the only boot this runs, and the migration report
-    // is still written. `--item auth:openai` keeps skills/plugins/config out.
-    `openclaw migrate apply codex --from ${sq(home)} --include-secrets --item auth:openai --yes --no-backup --force`,
+    // dir that is fresh on the boot this runs, and the migration report is
+    // still written. `--item auth:openai` keeps skills/plugins/config out.
+    `if openclaw migrate apply codex --from ${sq(home)} --include-secrets --item auth:openai --yes --no-backup --force; then`,
+    '  printf %s "$seen" > "$marker" && chmod 600 "$marker"',
+    'fi',
+    'exit 0',
   ].join('\n');
 }
+
+/** Hash of the last seed imported. Beside the overlay record: AgentBox-owned, per box. */
+const MODEL_AUTH_MARKER = `${OPENCLAW_BOX_DIR}/.agentbox-model-auth.sha256`;
 
 /** argv[1] is the file. Exit 0 iff it is a Codex ChatGPT login with a refresh token. */
 const MODEL_AUTH_IS_CODEX_LOGIN = `
 const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
 process.exit(typeof j?.tokens?.refresh_token === 'string' && j.tokens.refresh_token.length > 0 ? 0 : 1);
-`;
-
-/**
- * stdin is `openclaw models status --json`. Exit 0 iff an OpenAI OAuth profile
- * exists that OpenClaw itself does not report as unusable or expired-without-
- * refresh. Missing or unparsable input exits 1, which means "import".
- */
-const MODEL_AUTH_HAS_USABLE_PROFILE = `
-let s = '';
-process.stdin.on('data', (d) => (s += d)).on('end', () => {
-  try {
-    const a = JSON.parse(s).auth;
-    const bad = new Set(a.unusableProfiles ?? []);
-    const ok = (a.oauth?.profiles ?? []).some(
-      (p) => p.provider === 'openai' && p.type === 'oauth' && p.status !== 'expired' && !bad.has(p.profileId),
-    );
-    process.exit(ok ? 0 : 1);
-  } catch {
-    process.exit(1);
-  }
-});
 `;
 
 /**
@@ -408,6 +398,7 @@ export const openclawSpec: AgentSyncSpec = {
         'openclaw.json.bak',
         'config-journal-fingerprint.key',
         '.agentbox-overlay.json',
+        '.agentbox-model-auth.sha256',
         'state',
         'migration',
         'tmp',

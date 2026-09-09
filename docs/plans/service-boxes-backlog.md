@@ -13,8 +13,10 @@ here rather than sidequesting. Promote an item to the plan if it turns out to be
   on-demand install is the default for good reason.
 - **Channel pairing is unverified.** `openclaw channels add --use-env` and *which* dirs a pairing
   needs to survive a restart both need a real credential. Do it when a channel is first wired.
-- **`~/.config/openclaw` is empty after onboard.** It is persisted on the assumption it holds the
-  auth-profile encryption key; confirm when auth profiles are actually used.
+- **`~/.config/openclaw` is empty after onboard — and stays empty once auth is in use.** Measured
+  on 2026.9.3 with a Codex login imported: the auth store is
+  `~/.openclaw/agents/<id>/agent/openclaw-agent.sqlite`, and the XDG dir gained nothing. The
+  relocation is harmless (one mount, no second dir to lose) but is no longer load-bearing for auth.
 
 ## From Phase 7 (deferred, needs real money / shared state)
 

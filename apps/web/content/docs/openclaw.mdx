@@ -61,7 +61,7 @@ inside the box (in there the gateway is `http://localhost:18789`). Re-read it wi
 | `agentbox openclaw restart [box]` | Restart the gateway                                                                                     |
 | `agentbox openclaw stop [box]`    | Stop the gateway; the box keeps running                                                                 |
 
-The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180).
+The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180), and `--model-auth <source>` to seed a model-provider login (see [Model provider](#model-provider)).
 
 <Callout title="ALWAYS-ON BY DEFAULT">
   OpenClaw's box is a [persistent box](/docs/checkpoints-and-pausing#persistent-boxes): never
@@ -84,10 +84,34 @@ Nothing here is OpenClaw-specific code. The units below are declared on OpenClaw
 
 1. **Install, on demand.** `npm i -g openclaw` runs into the live box the first time. It is **not** baked into any base image: OpenClaw is ~893 MB installed, a ~29% increase on the base image, and baking it would stale every provider's snapshot.
 2. **`openclaw-onboard`** — a one-shot unit running `openclaw onboard --non-interactive --accept-risk --mode local --skip-channels --skip-health --no-install-daemon`. It writes the factory config, sets the agent workspace to `/workspace`, and **generates this box's gateway identity and auth token**. It is marked run-once, so a restart never replaces that identity.
-3. **`openclaw-render`** — `agentbox-ctl agent render openclaw`, which applies your `openclaw:` overlay (below).
-4. **`openclaw`** — `openclaw gateway`, `restart: always`, ready when `http://127.0.0.1:18789/healthz` answers, published on the box's web port.
+3. **`openclaw-model-auth`** — imports a borrowed model login, if the create seeded one (see [Model provider](#model-provider)). A no-op otherwise.
+4. **`openclaw-render`** — `agentbox-ctl agent render openclaw`, which applies your `openclaw:` overlay (below).
+5. **`openclaw`** — `openclaw gateway`, `restart: always`, ready when `http://127.0.0.1:18789/healthz` answers, published on the box's web port.
 
 The gateway binds **loopback only**. AgentBox forwards the box's `:80` to `127.0.0.1:18789` inside the same container, so the Control UI is reachable without ever widening the bind — which is both sufficient and safer than exposing the daemon on `0.0.0.0`.
+
+## Model provider
+
+A fresh box has a gateway identity and **no model provider**: onboarding runs with auth skipped, so the first turn fails until OpenClaw is given a login. Two ways to give it one.
+
+**Borrow your Codex login.** `agentbox openclaw --model-auth codex` seeds the box with the Codex (ChatGPT subscription) OAuth login your host already holds, and OpenClaw runs on it — the same login `agentbox codex` boxes use. OpenAI explicitly permits that OAuth in external tools, and its shape maps one-to-one onto OpenClaw's OpenAI profile.
+
+```bash
+agentbox openclaw --model-auth codex          # this create
+agentbox config set openclaw.modelAuth codex  # every create; `none` to stop asking
+```
+
+With neither set, an interactive create asks — defaulting to **No** — whenever your host holds a Codex login. `-y` and a non-TTY never ask and seed nothing.
+
+What happens is ordinary AgentBox machinery plus one unit on OpenClaw's row:
+
+- The host copies the login to **codex's own credential path** in the box (`~/.codex/auth.json`, 0600), the same place a runtime install of codex would put it, at the same step your `carry:` files land — before the first supervisor task runs. Nothing about OpenClaw's auth format lives on the host.
+- **`openclaw-model-auth`** then installs the official `@openclaw/codex` plugin (the harness OpenClaw's default model already runs on; ~15s, once per box) and runs `openclaw migrate apply codex --item auth:openai`, OpenClaw's own import of a Codex home. It records a hash of the seeded file and does nothing on later boots unless the file changes.
+- From here OpenClaw **owns the profile** and refreshes it in its own store. OpenAI does not invalidate the previous refresh token on rotation — measured with two boxes seeded from one host file, both refreshing independently while the host kept working — so the box is an independent session and the seed is never read again. A later `codex login` on the host reaches the box through the normal credential fan-out and re-imports only if the file changed.
+
+Borrowing is one-way: the box is a consumer of that login, never a source. It is not extracted back, not reconciled on resume, and a clone borrows the same login afresh from the host rather than copying the source box's session.
+
+**An API key.** `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the per-box env file OpenClaw loads (`~/.agentbox/openclaw/<box>.env` on the host → `~/.openclaw/.env` in the box, see [Channels](#channels)) is read by the gateway with no other configuration; set the model in the overlay below. Claude's own subscription login is deliberately **not** borrowable: OpenClaw's refresh would rotate that token and log out the host and every claude box.
 
 ## Configuring it: the `openclaw:` overlay
 
@@ -171,14 +195,15 @@ cloned box from inheriting the facts of the box it was cloned from.
 
 ## State, sync and clones
 
-| Path in the box                   | What it is                      | Travels?                         |
-| --------------------------------- | ------------------------------- | -------------------------------- |
-| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | `--backup` / `--restore` only    |
-| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | `--backup` / `--restore` only    |
-| `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                            |
-| `~/.openclaw/agents/`             | Your agent definitions          | Both directions                  |
-| `~/.config/openclaw`              | Auth-profile key                | Stays in the box's config volume |
-| `~/.openclaw/.env`                | Channel tokens                  | Carried per box, never copied    |
+| Path in the box                   | What it is                      | Travels?                              |
+| --------------------------------- | ------------------------------- | ------------------------------------- |
+| `~/.openclaw/openclaw.json`       | Config **and gateway identity** | `--backup` / `--restore` only         |
+| `~/.openclaw/state/*.sqlite*`     | Live gateway state              | `--backup` / `--restore` only         |
+| `~/.openclaw/tmp/openclaw-<uid>/` | Lock databases                  | Never                                 |
+| `~/.openclaw/agents/`             | Your agent definitions          | Both directions                       |
+| `~/.config/openclaw`              | OpenClaw's XDG config dir       | Stays in the box's config volume      |
+| `~/.openclaw/.env`                | Channel tokens                  | Carried per box, never copied         |
+| `~/.codex/auth.json`              | Borrowed Codex login (seed)     | Seeded from the host, never read back |
 
 `agentbox download openclaw [box]` pulls the agent definitions back to your host, additively — an item the host already has is never overwritten. There is deliberately no `--propagate`: an OpenClaw box is a tenant, and copying one tenant's definitions into another's gateway is not a sensible default.
 

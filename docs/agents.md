@@ -500,6 +500,29 @@ name; the render lints for a secret-shaped literal and warns.
    everything else about it is unchanged. Absent is not a placeholder for "not
    wired up yet" — if the agent has a host-side login, declare it.
 
+   **`modelAuth` is the other direction: a login the agent CONSUMES.** A service
+   agent that speaks to a model provider with the user's Codex login declares
+   `modelAuth: { borrows: [{ agent: 'codex', label }], ingestTask }` — which
+   other agents' host-held `credential`s it may borrow, and the `service.tasks`
+   entry that turns the borrowed file into its own store. The host's whole job
+   is deciding WHICH login enters the box (`--model-auth`, the generated
+   `<agent>.modelAuth` key, or a TTY prompt defaulting to no) and landing it at
+   the LENDER's own `credential.boxAbsPath`, 0600, through the carry step every
+   provider already runs before the first supervisor task. AgentBox never learns
+   the consumer's auth format: openclaw's `openclaw-model-auth` installs the
+   official `@openclaw/codex` plugin and runs `openclaw migrate apply codex
+   --item auth:openai`, gated on a hash of the seed so a later boot is a no-op.
+   Borrowing is one-way — `box.agents` still gates extraction, the resume
+   reconcile and the watch, so the daemon's own refreshed chain never flows
+   back over the host's — and it is recorded as `BoxRecord.borrowedCredentials`
+   so the fan-out reaches the box (push to the canonical path, re-run the
+   ingest) and a clone borrows the same set afresh. Measured before it was
+   designed: OpenAI does not invalidate a prior refresh token on rotation, so
+   each seeded box is an independent session and no reverse sync is needed.
+   Claude's live OAuth blob is deliberately NOT borrowable — a refresh by the
+   consumer rotates the refresh token and logs out the host and every claude
+   box. See `docs/service-agent-model-auth-plan.md`.
+
    **`clone` is optional, and only a SERVICE agent has ever needed it.** It
    answers "what must differ when a second instance of this agent is spawned
    from the same workspace?", in three lists:
@@ -585,7 +608,8 @@ name; the render lints for a secret-shaped literal and warns.
    reporting.
 6b. **If the agent is a SERVICE**, steps 2, 3 and 6 collapse: declare
    `caps.surface: 'service'` plus a `service` block (and `configRender` if its
-   tool ships a patch command), skip the `AGENT_MODULES` arm and the `src/cli/`
+   tool ships a patch command, `modelAuth` if it consumes another agent's
+   login), skip the `AGENT_MODULES` arm and the `src/cli/`
    tree entirely, and add `surface: 'service'` to its `AGENT_KINDS` row so no
    `box.isolate<Agent>Config` key is generated. The CLI command comes from
    `buildServiceAgentCommand` off the registry row. What remains is the docker

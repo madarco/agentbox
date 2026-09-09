@@ -199,6 +199,7 @@ row — the mechanism it was waiting on exists. See [`agents.md`](./agents.md) �
 and never was — an agent is absent from a bake unless `--agents` names it, and
 `ensureAgentInstalled` puts it in on demand. Nothing to declare.)
 
-OpenClaw is also the obvious first user of `AgentSyncSpec.settings` if it needs
-anything configured per host, and of the pull hook if its state is not a plain
-file tree.
+OpenClaw is now the second user of `AgentSyncSpec.settings` (`openclaw.modelAuth`,
+which host login a new box borrows as its model provider — see
+[`service-agent-model-auth-plan.md`](./service-agent-model-auth-plan.md)), and
+would be the first user of the pull hook if its state were not a plain file tree.
