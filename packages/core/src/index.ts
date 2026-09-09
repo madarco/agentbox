@@ -77,12 +77,20 @@ export type {
 } from './cloud-backend.js';
 export { AmbiguousBoxError, BoxNotFoundError, UserFacingError } from './errors.js';
 export { BOX_ID_PREFIX, generateBoxId } from './identity.js';
-export { promptId, promptTopicOf } from './prompt.js';
+export {
+  decodeMultiAnswer,
+  encodeMultiAnswer,
+  PROMPT_MULTI_SEPARATOR,
+  promptId,
+  promptTopicOf,
+} from './prompt.js';
 export type {
   PromptAnswer,
   PromptAsker,
   PromptChoice,
   PromptCredentialDetail,
+  PromptCredentialListDetail,
+  PromptCredentialRow,
   PromptDetail,
   PromptFallback,
   PromptFileRow,

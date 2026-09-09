@@ -12,13 +12,14 @@ export type {
 } from './transport.js';
 export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export type {
-  AgentBorrowSpec,
   AgentCapabilities,
   AgentConfigRenderSpec,
   AgentCredential,
   AgentInstall,
   AgentInstallRecipe,
   AgentModelAuthSpec,
+  AgentModelAuthSource,
+  AgentModelAuthIngest,
   AgentCloneSpec,
   AgentPathMap,
   AgentPerBoxCarry,
@@ -46,6 +47,9 @@ export {
   BOX_CREDS_DIR,
   agentDirPrelude,
   isServiceAgent,
+  enumListMembers,
+  modelAuthSourceId,
+  modelAuthEnvKey,
   BOX_ASSET_DIR,
   SETUP_GUIDE_PATH,
   IDENTITY_RULE_SET,

@@ -30,8 +30,15 @@ function isSetting(v: unknown): v is AgentConfigSetting {
   // A dotted leaf would generate `agent.a.b`, which the parser reads as a
   // nested branch that nothing materialises.
   if (s['key'].includes('.')) return false;
-  if (s['type'] !== 'string' && s['type'] !== 'bool' && s['type'] !== 'enum') return false;
-  if (s['type'] === 'enum') {
+  if (
+    s['type'] !== 'string' &&
+    s['type'] !== 'bool' &&
+    s['type'] !== 'enum' &&
+    s['type'] !== 'enum-list'
+  ) {
+    return false;
+  }
+  if (s['type'] === 'enum' || s['type'] === 'enum-list') {
     const vals = s['enumValues'];
     if (!Array.isArray(vals) || vals.length === 0 || vals.some((x) => typeof x !== 'string')) {
       return false;

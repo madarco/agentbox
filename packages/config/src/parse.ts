@@ -89,6 +89,18 @@ function coerceTypedValue(raw: unknown, desc: KeyDescriptor, where: string): unk
         );
       }
       return raw;
+    case 'enum-list': {
+      if (typeof raw !== 'string') {
+        throw new UserConfigError(`${where} must be a comma-separated string (got ${String(raw)})`);
+      }
+      const unknown = enumListMembers(raw).filter((m) => !desc.enumValues!.includes(m));
+      if (unknown.length > 0) {
+        throw new UserConfigError(
+          `${where}: unknown ${unknown.length === 1 ? 'value' : 'values'} ${unknown.join(', ')} — pick from: ${desc.enumValues!.join(', ')}`,
+        );
+      }
+      return raw;
+    }
   }
 }
 
@@ -97,6 +109,23 @@ function coerceTypedValue(raw: unknown, desc: KeyDescriptor, where: string): unk
  * host-qualified `docker:<alias>` spec. Parsed rather than pattern-matched so the
  * accepted shapes cannot drift from what the CLI and hub actually resolve.
  */
+/**
+ * Split an `enum-list` value into its members. Trims, drops empties, dedupes.
+ *
+ * Spelled here rather than imported: `@agentbox/config` is a leaf package with
+ * one dependency, and depending on `@agentbox/core` for four lines would invert
+ * the layering that keeps it loadable from anywhere. Mirrors
+ * `enumListMembers` in `@agentbox/core`.
+ */
+function enumListMembers(raw: string): string[] {
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const v = part.trim();
+    if (v.length > 0) seen.add(v);
+  }
+  return [...seen];
+}
+
 function enumValueAllowed(desc: KeyDescriptor, raw: string): boolean {
   if (desc.enumValues!.includes(raw)) return true;
   if (!desc.allowProviderSpec) return false;
@@ -316,6 +345,15 @@ export function coerceFromString(key: string, raw: string): unknown {
         );
       }
       return raw;
+    case 'enum-list': {
+      const unknown = enumListMembers(raw).filter((m) => !desc.enumValues!.includes(m));
+      if (unknown.length > 0) {
+        throw new UserConfigError(
+          `${key}: unknown ${unknown.length === 1 ? 'value' : 'values'} ${unknown.join(', ')} — pick from: ${desc.enumValues!.join(', ')} (comma-separated)`,
+        );
+      }
+      return raw;
+    }
   }
 }
 

@@ -436,15 +436,17 @@ export const openclawSpec: AgentSyncSpec = {
   // A MODEL-PROVIDER login is the one host secret it does consume, and that is
   // `modelAuth`, not `credential`: the host seeds codex's file at codex's own
   // path and the `openclaw-model-auth` task below imports it. Absent
-  // `credential` plus present `modelAuth.borrows` is the shape for a consumer.
+  // `credential` plus present `modelAuth.sources` is the shape for a consumer.
   modelAuth: {
-    borrows: [{ agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' }],
-    ingestTask: 'openclaw-model-auth',
+    sources: [
+      { kind: 'agent', agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' },
+    ],
+    ingest: { kind: 'serviceTask', task: 'openclaw-model-auth' },
   },
   settings: [
     {
       key: 'modelAuth',
-      type: 'enum',
+      type: 'enum-list',
       enumValues: ['none', 'codex'],
       default: 'none',
       description:

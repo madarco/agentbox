@@ -11,7 +11,7 @@
 
 import { findAgentSpec } from '@agentbox/sandbox-core';
 import type { AgentSettingsMap } from '@agentbox/sandbox-core';
-import type { AgentSettingSpec } from '@agentbox/core';
+import { enumListMembers, type AgentSettingSpec } from '@agentbox/core';
 
 /** Parse the repeated flag values, or return one error message. */
 export function parseAgentSettingFlags(values: readonly string[]): AgentSettingsMap | string {
@@ -55,6 +55,13 @@ function coerceSetting(
   if (declared.type === 'enum') {
     const allowed = declared.enumValues ?? [];
     if (!allowed.includes(raw)) return `must be one of: ${allowed.join(', ')}`;
+  }
+  if (declared.type === 'enum-list') {
+    const allowed = declared.enumValues ?? [];
+    const unknown = enumListMembers(raw).filter((m) => !allowed.includes(m));
+    if (unknown.length > 0) {
+      return `unknown ${unknown.length === 1 ? 'value' : 'values'} ${unknown.join(', ')} — pick from: ${allowed.join(', ')} (comma-separated)`;
+    }
   }
   return { value: raw };
 }

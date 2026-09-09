@@ -4,7 +4,7 @@ import { resolveAgentSpec } from '../src/index.js';
 import {
   buildModelAuthPrompt,
   resolveModelAuth,
-  type AvailableBorrow,
+  type AvailableSource,
 } from '../src/prompts/model-auth-gate.js';
 
 /**
@@ -15,8 +15,9 @@ const openclaw = resolveAgentSpec('openclaw');
 const codex = resolveAgentSpec('codex');
 const none = { modelAuth: 'none' } as const;
 
-const CODEX_BORROW: AvailableBorrow = {
-  agent: 'codex',
+const CODEX_BORROW: AvailableSource = {
+  id: 'codex',
+  kind: 'agent',
   label: 'Your Codex login (ChatGPT subscription OAuth)',
   hostPath: '/home/u/.codex/auth.json',
   boxPath: '/home/vscode/.codex/auth.json',
@@ -46,17 +47,17 @@ function picks(value: string, seen?: PromptRequest[]) {
 
 describe('resolveModelAuth', () => {
   it('--model-auth wins outright, and none means none', async () => {
-    expect(await resolveModelAuth(args({ flag: 'codex' }))).toEqual(['codex']);
-    expect(await resolveModelAuth(args({ flag: 'none' }))).toEqual([]);
+    expect(await resolveModelAuth(args({ flags: ['codex'] }))).toEqual(['codex']);
+    expect(await resolveModelAuth(args({ flags: ['none'] }))).toEqual([]);
   });
 
   it('refuses a flag value the row does not declare', async () => {
-    await expect(resolveModelAuth(args({ flag: 'claude' }))).rejects.toThrow(/declares codex/);
+    await expect(resolveModelAuth(args({ flags: ['claude'] }))).rejects.toThrow(/declares codex/);
   });
 
   it('refuses the flag on an agent that borrows nothing', async () => {
-    await expect(resolveModelAuth(args({ spec: codex, flag: 'codex' }))).rejects.toThrow(
-      /borrows no host login/,
+    await expect(resolveModelAuth(args({ spec: codex, flags: ['codex'] }))).rejects.toThrow(
+      /uses no host login/,
     );
     expect(await resolveModelAuth(args({ spec: codex }))).toEqual([]);
   });

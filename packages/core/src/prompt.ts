@@ -28,6 +28,14 @@ export interface PromptChoice {
   hint?: string;
   /** Risky/destructive — a client may style it apart. */
   danger?: boolean;
+  /**
+   * In a `multiple` select this option means "none of the others" — a
+   * multi-aware client draws it apart from the checkboxes. Meaningless without
+   * {@link PromptRequest.multiple}, where every option is already exclusive,
+   * which is exactly what lets an older client render it as an ordinary choice
+   * and still produce a valid answer.
+   */
+  exclusive?: boolean;
 }
 
 /** One row of a {@link PromptFileTableDetail}. */
@@ -69,6 +77,53 @@ export interface PromptCredentialDetail {
   bytes?: number;
 }
 
+/**
+ * One row of a {@link PromptCredentialListDetail}.
+ *
+ * Every field past `value`/`source`/`label` is optional because the two source
+ * kinds populate different ones, and because a client decoding this strictly
+ * must not fail on a row shaped for the other kind.
+ */
+export interface PromptCredentialRow {
+  /**
+   * The {@link PromptChoice.value} this row describes. The join between the
+   * detail and the choices, so a multi-select client can draw the row AS the
+   * checkbox rather than pairing two unrelated lists by index.
+   */
+  value: string;
+  /** How the host holds it: a login file to copy, or an env var to forward. */
+  source: 'file' | 'env';
+  label: string;
+  /** Who it authenticates to, when `label` does not say it. */
+  provider?: string;
+  caveat?: string;
+  /** `source: 'file'` only. */
+  hostPath?: string;
+  boxPath?: string;
+  bytes?: number;
+  /** `source: 'env'` only: the variable NAME. The VALUE never goes on this wire. */
+  envVar?: string;
+  /** Deserves visual weight — mirrors {@link PromptFileRow.warn}. */
+  warn?: boolean;
+}
+
+/**
+ * Several host logins offered together.
+ *
+ * A separate `type` from {@link PromptCredentialDetail} rather than a widening
+ * of it, because that variant's `hostPath`/`boxPath` are load-bearing in shipped
+ * clients: the macOS tray decodes them as non-optional, so a `credential` detail
+ * describing an env-backed source would fail its whole preflight decode and the
+ * user would be shown no prompts at all. A new type degrades to `summary`
+ * instead, which is what every variant carries it for.
+ */
+export interface PromptCredentialListDetail {
+  type: 'credential-list';
+  /** Must be a real, readable list — a shipped client renders ONLY this. */
+  summary: string;
+  rows: PromptCredentialRow[];
+}
+
 /** Nothing structured to say — `summary` is the whole detail. */
 export interface PromptTextDetail {
   type: 'text';
@@ -82,7 +137,11 @@ export interface PromptTextDetail {
  * the variant still renders something correct rather than nothing. New variants
  * are therefore additive: an older client degrades, it does not break.
  */
-export type PromptDetail = PromptFileTableDetail | PromptCredentialDetail | PromptTextDetail;
+export type PromptDetail =
+  | PromptFileTableDetail
+  | PromptCredentialDetail
+  | PromptCredentialListDetail
+  | PromptTextDetail;
 
 /** What an asker does when it cannot reach a human. */
 export interface PromptFallback {
@@ -112,6 +171,18 @@ export interface PromptRequest {
   body?: string;
   /** Required for `select`; ignored otherwise. */
   choices?: PromptChoice[];
+  /**
+   * `select` only: several choices may be picked at once, and the answer is
+   * their values joined by {@link PROMPT_MULTI_SEPARATOR}.
+   *
+   * Deliberately a flag rather than a fourth {@link PromptKind}. A client that
+   * has never heard of it still sees a `kind` it is obliged to render, draws a
+   * plain single select, and posts ONE value — which is the n=1 encoding of the
+   * same answer. It degrades to a strictly valid subset instead of guessing at
+   * an unknown widget. No choice `value` in such a request may contain the
+   * separator.
+   */
+  multiple?: boolean;
   /** Pre-selected choice / prefilled text. For `confirm`, `'y'` or `'n'`. */
   defaultValue?: string;
   detail?: PromptDetail;
@@ -162,6 +233,36 @@ export function promptId(topic: string, payload: unknown): string {
     .digest('hex')
     .slice(0, 12);
   return `${topic}:${digest}`;
+}
+
+/**
+ * Separator for the answer to a `multiple` select.
+ *
+ * A comma is safe for every value space that uses one today — agent ids are
+ * lowercase slugs, env var names are `[A-Z0-9_]` — and that is a RULE, not an
+ * accident: a gate must not offer a choice whose `value` contains it.
+ */
+export const PROMPT_MULTI_SEPARATOR = ',';
+
+/** Join chosen values. One value encodes to itself — see {@link decodeMultiAnswer}. */
+export function encodeMultiAnswer(values: readonly string[]): string {
+  return values.join(PROMPT_MULTI_SEPARATOR);
+}
+
+/**
+ * Split a multi answer.
+ *
+ * `'codex'` -> `['codex']` is the whole point: a client that rendered a
+ * `multiple` select as a plain single select posts one bare value, and that is
+ * already a valid answer rather than a case to detect. `''` -> `[]`.
+ */
+export function decodeMultiAnswer(value: string): string[] {
+  const seen = new Set<string>();
+  for (const part of value.split(PROMPT_MULTI_SEPARATOR)) {
+    const v = part.trim();
+    if (v.length > 0) seen.add(v);
+  }
+  return [...seen];
 }
 
 /** True when `id` names this topic — the cheap half of answer validation. */

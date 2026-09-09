@@ -613,8 +613,15 @@ export type AgentSettings = Readonly<Record<string, string | boolean>>;
 export interface AgentSettingSpec {
   /** Leaf key under the agent's own config block: `claude.install`. */
   key: string;
-  type: 'string' | 'bool' | 'enum';
-  /** Required when `type` is `enum`; the accepted values. */
+  type: 'string' | 'bool' | 'enum' | 'enum-list';
+  /**
+   * Required when `type` is `enum` or `enum-list`; the accepted values.
+   *
+   * `enum-list` holds a comma-separated SUBSET of these in one string, so the
+   * value stays scalar everywhere it is carried — config, the JSON schema, and
+   * the `AGENTBOX_AGENT_SETTING_*` export are all string-shaped by contract.
+   * A sentinel meaning "none of them" is only legal on its own.
+   */
   enumValues?: readonly string[];
   /** Applied when the user set nothing. Also what the fingerprint fold treats as absent. */
   default: string | boolean;
@@ -633,39 +640,118 @@ export interface AgentSettingSpec {
 }
 
 /**
- * One host-held login of ANOTHER agent that this agent may consume as
- * model-provider auth — the Codex (ChatGPT OAuth) login an OpenClaw box runs
- * its model calls on.
+ * One host-held model-provider credential a box may be seeded with.
+ *
+ * Two kinds, because the host holds these two ways and a picker that offered
+ * only the first could never express a provider with no agent behind it (xAI):
+ *
+ *  - `agent` — another agent's login FILE. The host lands it at that agent's
+ *    own `credential.boxAbsPath`, 0600, exactly where a runtime install would
+ *    put it, and the consumer's `ingest` turns it into its own store.
+ *  - `env` — a provider API key held in the host's environment, forwarded into
+ *    the box. There is nothing to import: the key IS the auth.
  */
-export interface AgentBorrowSpec {
-  /** The agent whose `credential` is borrowed. Must declare one. */
-  agent: AgentId;
-  /** Shown by the opt-in prompt and `--model-auth`'s help. */
-  label: string;
-  /** Printed beside the prompt when consuming this login carries a caveat. */
-  caveat?: string;
+export type AgentModelAuthSource =
+  | {
+      kind: 'agent';
+      /** The agent whose `credential` is borrowed. Must declare one. */
+      agent: AgentId;
+      /** Shown by the picker and by `--model-auth`'s help. */
+      label: string;
+      /** Shown beside the choice when consuming this login carries a caveat. */
+      caveat?: string;
+    }
+  | {
+      kind: 'env';
+      /** Host env var holding the key; the same name it is set under in the box. */
+      envKey: string;
+      label: string;
+      /** Who it authenticates to, when `label` does not say it: 'xAI (Grok)'. */
+      provider?: string;
+      caveat?: string;
+    };
+
+/**
+ * How a box turns a seeded `agent` source into this agent's own auth state.
+ *
+ * AgentBox never learns the consuming agent's auth format; the row owns that.
+ * Two shapes because the two agent surfaces have different places to run one:
+ *
+ *  - `serviceTask` names an entry in the agent's OWN `service.tasks`, ordered
+ *    in its DAG (openclaw's import runs after onboard, before the gateway).
+ *  - `command` is for an agent with no service DAG. The HOST runs it in the box
+ *    at the launch seam — after the binary is installed, before the session
+ *    starts — because a TUI agent has no supervisor unit to hang it on and
+ *    ctl's wire cannot express a task without a service.
+ *
+ * Absent means nothing needs importing, which is the correct answer for a row
+ * whose only sources are `env`.
+ */
+export type AgentModelAuthIngest =
+  | { kind: 'serviceTask'; task: string }
+  | {
+      kind: 'command';
+      /** Unique across the registry; used in logs and as the marker basename. */
+      name: string;
+      /** Shell script. Must be idempotent and exit 0 on nothing-to-do. */
+      command: string;
+    };
+
+/**
+ * Which host model-provider credentials this agent may be seeded with.
+ *
+ * Seeding is ONE-WAY. The box is a consumer of that credential, never a source:
+ * `box.agents` still gates box->host extraction, the resume reconcile and the
+ * credential watch, so a copy the box has since rewritten in its own store is
+ * never read back over the host's.
+ *
+ * MEASURED, and it shapes the refresh story: a borrowed Codex login works in a
+ * pi/opencode box until its access token expires, but the box cannot renew it —
+ * the consumer's refresh call rejects a codex-issued refresh token
+ * (`invalid_state`). Renewal therefore rides the existing credential fan-out,
+ * which re-pushes the host's refreshed login and re-runs `ingest`. That is why
+ * an ingest must gate on a hash of the SEED, so a re-pushed login re-imports.
+ */
+export interface AgentModelAuthSpec {
+  sources: readonly AgentModelAuthSource[];
+  ingest?: AgentModelAuthIngest;
 }
 
 /**
- * How a service agent gets a model-provider login from the host.
+ * The stable id `--model-auth`, `<agent>.modelAuth` and `BoxRecord` use.
  *
- * AgentBox learns only WHICH host credential a box may consume and moves it
- * there over the machinery it already has: the borrowed agent's file lands at
- * that agent's own `credential.boxAbsPath`, 0600, exactly where a runtime
- * install would put it. It never learns the consuming agent's auth format —
- * `ingestTask` names the `service.tasks` entry that reads the file and writes
- * the agent's own store, the same way `openclaw-agentbox-env` asserts config
- * through the tool's own patch command.
- *
- * Borrowing is ONE-WAY. The box is a consumer of that credential, never a
- * source: `box.agents` still gates box->host extraction, the resume reconcile
- * and the credential watch, so a copy that the consuming daemon has since
- * refreshed in its own store is never read back over the host's.
+ * An agent id stays BARE (`codex`) and an env key is prefixed
+ * (`env:XAI_API_KEY`). Agent ids never contain `:`, so this is unambiguous, and
+ * every `--model-auth codex` invocation and stored config value keeps working
+ * verbatim.
  */
-export interface AgentModelAuthSpec {
-  borrows: readonly AgentBorrowSpec[];
-  /** The `service.tasks` entry that ingests whatever borrowed files are present. */
-  ingestTask: string;
+export function modelAuthSourceId(s: AgentModelAuthSource): string {
+  return s.kind === 'agent' ? s.agent : `env:${s.envKey}`;
+}
+
+/**
+ * Split an `enum-list` setting value into its members.
+ *
+ * Trims, drops empties, dedupes, preserves order. `''` is `[]` — an empty list
+ * is a legal value, not an error.
+ *
+ * Membership is validated by the config layer against `enumValues`. Whether a
+ * particular sentinel (`none`) may be combined with real members is the OWNING
+ * feature's rule, not a property of the type, so it is enforced where that
+ * meaning lives.
+ */
+export function enumListMembers(raw: string): string[] {
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const v = part.trim();
+    if (v.length > 0) seen.add(v);
+  }
+  return [...seen];
+}
+
+/** The env key an `env:`-prefixed source id names, or undefined for an agent id. */
+export function modelAuthEnvKey(id: string): string | undefined {
+  return id.startsWith('env:') ? id.slice(4) : undefined;
 }
 
 export interface AgentSyncSpec {
@@ -841,9 +927,12 @@ export interface AgentSyncSpec {
    */
   stateBackup?: AgentStateBackupSpec;
   /**
-   * Other agents' host-held logins this agent may consume as model-provider
-   * auth, and the in-box task that ingests them. See {@link AgentModelAuthSpec}.
-   * Absent means the agent authenticates to its model providers by itself.
+   * Host-held model-provider credentials this agent may be seeded with — another
+   * agent's login file, a provider API key from the host env — and how it
+   * ingests them. See {@link AgentModelAuthSpec}.
+   *
+   * Absent means the agent authenticates to its model providers by itself and
+   * the picker offers it nothing.
    */
   modelAuth?: AgentModelAuthSpec;
   /**

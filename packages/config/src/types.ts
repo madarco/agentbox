@@ -689,7 +689,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
 };
 
-export type KeyType = 'bool' | 'string' | 'int' | 'enum';
+export type KeyType = 'bool' | 'string' | 'int' | 'enum' | 'enum-list';
 
 export interface KeyDescriptor {
   /** Dot-path, e.g. "box.snapshot". */

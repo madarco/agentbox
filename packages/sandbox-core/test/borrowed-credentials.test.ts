@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  borrowIngestTask,
+  resolveModelAuthIngest,
   borrowedCredentialCarry,
-  resolveBorrowedCredentials,
+  resolveModelAuthSources,
   resolveHostCredentialFile,
   resolveAgentSpec,
   planPropagateTargets,
@@ -14,32 +14,35 @@ import {
 const openclaw = resolveAgentSpec('openclaw');
 const codex = resolveAgentSpec('codex');
 
-describe('resolveBorrowedCredentials', () => {
+describe('resolveModelAuthSources', () => {
   it('accepts a declared borrow, deduplicated and trimmed', () => {
-    expect(resolveBorrowedCredentials(openclaw, [' codex ', 'codex'])).toEqual(['codex']);
+    expect(resolveModelAuthSources(openclaw, [' codex ', 'codex'])).toEqual(['codex']);
   });
 
   it('is empty for nothing requested', () => {
-    expect(resolveBorrowedCredentials(openclaw, undefined)).toEqual([]);
-    expect(resolveBorrowedCredentials(openclaw, [''])).toEqual([]);
+    expect(resolveModelAuthSources(openclaw, undefined)).toEqual([]);
+    expect(resolveModelAuthSources(openclaw, [''])).toEqual([]);
   });
 
   it('refuses an agent the row does not declare, naming what it does', () => {
     // A silently dropped entry is a box with no model auth and no message —
     // the exact failure this feature exists to end.
-    expect(() => resolveBorrowedCredentials(openclaw, ['claude'])).toThrow(/declares codex/);
+    expect(() => resolveModelAuthSources(openclaw, ['claude'])).toThrow(/declares codex/);
   });
 
   it('refuses on an agent with no modelAuth at all', () => {
-    expect(() => resolveBorrowedCredentials(codex, ['codex'])).toThrow(/declares nothing/);
+    expect(() => resolveModelAuthSources(codex, ['codex'])).toThrow(/declares nothing/);
   });
 
   it('refuses a declared borrow whose lender has no host credential', () => {
     const spec = {
       id: 'x',
-      modelAuth: { borrows: [{ agent: 'openclaw', label: 'l' }], ingestTask: 't' },
+      modelAuth: {
+        sources: [{ kind: 'agent' as const, agent: 'openclaw', label: 'l' }],
+        ingest: { kind: 'serviceTask' as const, task: 't' },
+      },
     };
-    expect(() => resolveBorrowedCredentials(spec, ['openclaw'])).toThrow(/no host-side credential/);
+    expect(() => resolveModelAuthSources(spec, ['openclaw'])).toThrow(/no host-side credential/);
   });
 });
 
@@ -143,10 +146,10 @@ describe('borrowedCredentialCarry with a real file', () => {
   });
 });
 
-describe('borrowIngestTask', () => {
+describe('resolveModelAuthIngest', () => {
   it('names the task the row declares, and nothing for an agent without one', () => {
-    expect(borrowIngestTask(openclaw)).toBe('openclaw-model-auth');
-    expect(borrowIngestTask(codex)).toBeUndefined();
+    expect(resolveModelAuthIngest(openclaw)).toEqual({ kind: 'serviceTask', task: 'openclaw-model-auth' });
+    expect(resolveModelAuthIngest(codex)).toBeUndefined();
   });
 });
 

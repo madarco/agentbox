@@ -193,9 +193,11 @@ export {
   type PerBoxCarryResolution,
 } from './per-box-carry.js';
 export {
+  agentSourceIds,
   borrowedCredentialCarry,
-  borrowIngestTask,
-  resolveBorrowedCredentials,
+  envSourceKeys,
+  resolveModelAuthIngest,
+  resolveModelAuthSources,
 } from './borrowed-credentials.js';
 export * from './sync/index.js';
 export * from './sync/agent-pull-module.js';
@@ -268,11 +270,12 @@ export {
 } from './prompts/dir-breakdown.js';
 export {
   buildModelAuthPrompt,
-  listAvailableBorrows,
+  listAvailableSources,
   MODEL_AUTH_NONE,
   MODEL_AUTH_SETTING,
   MODEL_AUTH_TOPIC,
+  parseModelAuthValue,
   resolveModelAuth,
-  type AvailableBorrow,
+  type AvailableSource,
   type ModelAuthGateArgs,
 } from './prompts/model-auth-gate.js';

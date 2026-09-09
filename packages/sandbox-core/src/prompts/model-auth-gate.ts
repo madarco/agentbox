@@ -1,180 +1,269 @@
 /**
- * The create-time decision "which host login does this service box borrow as its
- * model provider?" — the host-boundary gate for `AgentSyncSpec.modelAuth`.
+ * The create-time decision "which of the host's model-provider logins does this
+ * box get?" — the host-boundary gate for `AgentSyncSpec.modelAuth`.
  *
  * Precedence: `--model-auth` > the agent's `<agent>.modelAuth` config key > a
- * prompt. The prompt only appears when nothing chose and the host actually holds
- * one of the declared logins, so a scripted create never hands a subscription
- * token to a daemon by default. Declining resolves to "none", which is also the
- * config default: a box that comes up without model auth says so in its ingest
- * task's log, it does not fail.
+ * prompt. The prompt only offers what the host can actually satisfy right now,
+ * so a scripted create never hands out a login by surprise.
+ *
+ * Two kinds of source share one picker. An `agent` source is another agent's
+ * login FILE and is opt-IN: copying a subscription login into a box should never
+ * be the answer you get by not reading. An `env` source is a provider API key
+ * from the host environment and is opt-OUT, because that key is already
+ * forwarded into every box today — making it a grant is about making it visible
+ * and revocable, not about taking it away.
  *
  * Like the carry gate, it asks through a {@link PromptAsker} rather than a
  * prompt library, so the hub can ask the same question of a tray or web client.
  */
 
 import {
+  decodeMultiAnswer,
+  encodeMultiAnswer,
+  modelAuthSourceId,
   promptId,
+  type AgentModelAuthSource,
   type AgentSettings,
   type AgentSyncSpec,
   type PromptAsker,
   type PromptChoice,
+  type PromptCredentialRow,
   type PromptRequest,
 } from '@agentbox/core';
-import { resolveBorrowedCredentials } from '../borrowed-credentials.js';
+import { resolveModelAuthSources } from '../borrowed-credentials.js';
 import { resolveHostCredentialFile } from '../sync/concerns/credentials.js';
 
 export const MODEL_AUTH_TOPIC = 'model-auth';
 export const MODEL_AUTH_SETTING = 'modelAuth';
 export const MODEL_AUTH_NONE = 'none';
 
-/** A borrow the host can actually satisfy, with the paths to show the user. */
-export interface AvailableBorrow {
-  agent: string;
+/** A declared source the host can actually satisfy, with what to show the user. */
+export interface AvailableSource {
+  /** The stable source id — `codex`, `env:XAI_API_KEY`. */
+  id: string;
+  kind: 'agent' | 'env';
   label: string;
+  provider?: string;
   caveat?: string;
-  /** Where the login is on this host. */
-  hostPath: string;
-  /** Where it lands inside the box. */
-  boxPath: string;
+  /** `agent` sources only: where the login is, and where it lands. */
+  hostPath?: string;
+  boxPath?: string;
   bytes?: number;
+  /** `env` sources only: the variable name. Never its value. */
+  envVar?: string;
 }
 
 export interface ModelAuthGateArgs {
   spec: Pick<AgentSyncSpec, 'id' | 'modelAuth'>;
-  /** `--model-auth <source>` as typed, if passed. */
-  flag?: string;
+  /** `--model-auth <source...>` as typed, if passed. */
+  flags?: readonly string[];
   /** The agent's settings block, defaults applied. */
   settings: AgentSettings;
   /** True when `<agent>.modelAuth` was set by the user rather than defaulted. */
   configuredExplicitly: boolean;
   ask: PromptAsker;
-  /** Injectable for tests: which borrows this host can satisfy. */
-  listAvailable?: (spec: ModelAuthGateArgs['spec']) => Promise<AvailableBorrow[]>;
+  /** Injectable for tests: which sources this host can satisfy. */
+  listAvailable?: (spec: ModelAuthGateArgs['spec']) => Promise<AvailableSource[]>;
 }
 
-/**
- * Build the question for a set of satisfiable borrows.
- *
- * One `select` rather than a confirm per borrow: `<agent>.modelAuth` is itself a
- * single-valued enum, so offering more than one choice at a time would let the
- * prompt express something the config cannot.
- */
-export function buildModelAuthPrompt(agentId: string, available: AvailableBorrow[]): PromptRequest {
-  const first = available[0];
-  // One borrow is the only shape that exists today, and it reads as a plain
-  // yes/no. Naming the login on the button would repeat the card right below it.
-  const choices: PromptChoice[] =
-    available.length === 1 && first
-      ? [
-          { value: first.agent, label: 'Yes' },
-          { value: MODEL_AUTH_NONE, label: 'No' },
-        ]
-      : [
-          ...available.map((b) => ({
-            value: b.agent,
-            label: titleCase(b.agent),
-            ...(b.caveat ? { hint: b.caveat } : {}),
-          })),
-          { value: MODEL_AUTH_NONE, label: 'No thanks' },
-        ];
+/** The env-backed sources, which are granted unless the user says otherwise. */
+function defaultGranted(available: readonly AvailableSource[]): string[] {
+  return available.filter((s) => s.kind === 'env').map((s) => s.id);
+}
+
+function detailRow(s: AvailableSource): PromptCredentialRow {
   return {
-    id: promptId(MODEL_AUTH_TOPIC, {
-      agent: agentId,
-      borrows: available.map((b) => ({ agent: b.agent, hostPath: b.hostPath })),
-    }),
-    topic: MODEL_AUTH_TOPIC,
-    kind: 'select',
-    heading: 'Copy credentials',
-    title: 'Copy your model provider logins?',
-    choices,
-    // Declining stays the default: copying a subscription login into a
-    // long-lived daemon should never be the answer you get by not reading.
-    defaultValue: MODEL_AUTH_NONE,
-    ...(first
-      ? {
-          detail: {
-            type: 'credential' as const,
-            summary: `${first.hostPath} -> ${first.boxPath}`,
-            agent: first.agent,
-            label: first.label,
-            ...(first.caveat ? { caveat: first.caveat } : {}),
-            hostPath: first.hostPath,
-            boxPath: first.boxPath,
-            ...(first.bytes !== undefined ? { bytes: first.bytes } : {}),
-          },
-        }
-      : {}),
-    // Declining is the safe answer and the config default, so an asker that
-    // cannot reach a human takes it rather than refusing the create.
-    fallback: { value: MODEL_AUTH_NONE, reason: 'not asked - the box starts without it' },
-    nonInteractiveHint:
-      `Use --model-auth <agent|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <agent>\` ` +
-      'to decide this once.',
+    value: s.id,
+    source: s.kind === 'agent' ? 'file' : 'env',
+    label: s.label,
+    ...(s.provider ? { provider: s.provider } : {}),
+    ...(s.caveat ? { caveat: s.caveat } : {}),
+    ...(s.hostPath ? { hostPath: s.hostPath } : {}),
+    ...(s.boxPath ? { boxPath: s.boxPath } : {}),
+    ...(s.bytes !== undefined ? { bytes: s.bytes } : {}),
+    ...(s.envVar ? { envVar: s.envVar } : {}),
   };
 }
 
-function titleCase(s: string): string {
-  return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
+/** The plain-text rendering a client that does not know `credential-list` shows. */
+function listSummary(available: readonly AvailableSource[]): string {
+  return available
+    .map((s) =>
+      s.kind === 'agent'
+        ? `${s.label}\n  ${s.hostPath ?? ''} -> ${s.boxPath ?? ''}`
+        : `${s.label}\n  ${s.envVar ?? ''}${s.provider ? ` (${s.provider})` : ''}`,
+    )
+    .join('\n');
 }
 
-/** The agents whose logins the create should seed, in declaration order. */
+/**
+ * Build the question for a set of satisfiable sources.
+ *
+ * A single `agent` source keeps the plain yes/no it has always had — that is
+ * openclaw's whole surface, and a checkbox list of one would be worse. Anything
+ * else is a multi-select, because a box may genuinely use several providers.
+ */
+export function buildModelAuthPrompt(agentId: string, available: AvailableSource[]): PromptRequest {
+  const id = promptId(MODEL_AUTH_TOPIC, {
+    agent: agentId,
+    sources: available.map((s) => ({ id: s.id, hostPath: s.hostPath, envVar: s.envVar })),
+  });
+  const hint =
+    `Use --model-auth <source...|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <sources>\` ` +
+    'to decide this once.';
+  const first = available[0];
+
+  if (available.length === 1 && first?.kind === 'agent') {
+    return {
+      id,
+      topic: MODEL_AUTH_TOPIC,
+      kind: 'select',
+      heading: 'Copy credentials',
+      title: 'Copy your model provider logins?',
+      choices: [
+        { value: first.id, label: 'Yes' },
+        { value: MODEL_AUTH_NONE, label: 'No' },
+      ],
+      // Declining stays the default: copying a subscription login into a box
+      // should never be the answer you get by not reading.
+      defaultValue: MODEL_AUTH_NONE,
+      detail: {
+        type: 'credential' as const,
+        summary: `${first.hostPath ?? ''} -> ${first.boxPath ?? ''}`,
+        agent: first.id,
+        label: first.label,
+        ...(first.caveat ? { caveat: first.caveat } : {}),
+        hostPath: first.hostPath ?? '',
+        boxPath: first.boxPath ?? '',
+        ...(first.bytes !== undefined ? { bytes: first.bytes } : {}),
+      },
+      fallback: { value: MODEL_AUTH_NONE, reason: 'not asked - the box starts without it' },
+      nonInteractiveHint: hint,
+    };
+  }
+
+  const choices: PromptChoice[] = [
+    ...available.map((s) => ({
+      value: s.id,
+      label: s.label,
+      ...((s.caveat ?? s.provider) ? { hint: s.caveat ?? s.provider } : {}),
+    })),
+    { value: MODEL_AUTH_NONE, label: 'None of these', exclusive: true },
+  ];
+  // Env keys already reach every box today; the grant makes that visible and
+  // revocable rather than silently removing it. A login FILE stays opt-in.
+  const granted = encodeMultiAnswer(defaultGranted(available));
+  return {
+    id,
+    topic: MODEL_AUTH_TOPIC,
+    kind: 'select',
+    multiple: true,
+    heading: 'Model provider logins',
+    title: 'Which of these should this box be able to use?',
+    choices,
+    defaultValue: granted,
+    detail: {
+      type: 'credential-list' as const,
+      summary: listSummary(available),
+      rows: available.map(detailRow),
+    },
+    fallback: {
+      value: granted,
+      reason:
+        granted.length > 0
+          ? 'not asked - the box gets your provider API keys, as it does today'
+          : 'not asked - the box starts without one',
+    },
+    nonInteractiveHint: hint,
+  };
+}
+
+/** Parse a flag / config value into source ids. `none` is only legal alone. */
+export function parseModelAuthValue(raw: readonly string[] | string): string[] {
+  const parts = (typeof raw === 'string' ? [raw] : raw).flatMap((v) => decodeMultiAnswer(v));
+  if (parts.length === 0) return [];
+  if (parts.includes(MODEL_AUTH_NONE)) {
+    if (parts.length > 1) {
+      throw new Error(
+        `--model-auth ${MODEL_AUTH_NONE} cannot be combined with ${parts
+          .filter((p) => p !== MODEL_AUTH_NONE)
+          .join(', ')}`,
+      );
+    }
+    return [];
+  }
+  return parts;
+}
+
+/** The model-auth sources this create should seed, in declaration order. */
 export async function resolveModelAuth(args: ModelAuthGateArgs): Promise<string[]> {
   const { spec } = args;
-  const borrows = spec.modelAuth?.borrows ?? [];
-  if (borrows.length === 0) {
-    if (args.flag !== undefined && args.flag !== MODEL_AUTH_NONE) {
-      throw new Error(`${spec.id} borrows no host login — --model-auth does not apply to it`);
+  const sources = spec.modelAuth?.sources ?? [];
+  if (sources.length === 0) {
+    if (args.flags !== undefined && parseModelAuthValue(args.flags).length > 0) {
+      throw new Error(`${spec.id} uses no host login — --model-auth does not apply to it`);
     }
     return [];
   }
 
-  const flag = args.flag?.trim();
-  if (flag !== undefined) {
-    return flag === MODEL_AUTH_NONE ? [] : resolveBorrowedCredentials(spec, [flag]);
+  if (args.flags !== undefined) {
+    return resolveModelAuthSources(spec, parseModelAuthValue(args.flags));
   }
 
   const configured = args.settings[MODEL_AUTH_SETTING];
-  if (
-    args.configuredExplicitly ||
-    (typeof configured === 'string' && configured !== MODEL_AUTH_NONE)
-  ) {
-    return typeof configured === 'string' && configured !== MODEL_AUTH_NONE
-      ? resolveBorrowedCredentials(spec, [configured])
-      : [];
+  const configuredIds = typeof configured === 'string' ? parseModelAuthValue(configured) : [];
+  if (args.configuredExplicitly || configuredIds.length > 0) {
+    return resolveModelAuthSources(spec, configuredIds);
   }
 
-  const available = await (args.listAvailable ?? listAvailableBorrows)(spec);
+  const available = await (args.listAvailable ?? listAvailableSources)(spec);
   // Nothing to offer: the host holds none of the declared logins.
   if (available.length === 0) return [];
 
   const answer = await args.ask(buildModelAuthPrompt(spec.id, available));
   if (answer.cancelled) return [];
-  const chosen = answer.value;
-  if (chosen === MODEL_AUTH_NONE || chosen.length === 0) return [];
-  // An answer naming a borrow this host cannot satisfy is a stale answer, not a
-  // silent "none" — resolveBorrowedCredentials throws with the valid values.
-  return resolveBorrowedCredentials(spec, [chosen]);
+  const chosen = parseModelAuthValue(answer.value);
+  if (chosen.length === 0) return [];
+  // An answer naming a source this host cannot satisfy is a stale answer, not a
+  // silent "none" — resolveModelAuthSources throws with the valid values.
+  return resolveModelAuthSources(spec, chosen);
 }
 
-/** Which declared borrows this host can actually satisfy right now. */
-export async function listAvailableBorrows(
+/** Which declared sources this host can actually satisfy right now. */
+export async function listAvailableSources(
   spec: Pick<AgentSyncSpec, 'id' | 'modelAuth'>,
-): Promise<AvailableBorrow[]> {
+  /** Injectable so a test never reads the ambient environment. */
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<AvailableSource[]> {
   const { findAgentSpec } = await import('@agentbox/agent-registry');
-  const out: AvailableBorrow[] = [];
-  for (const b of spec.modelAuth?.borrows ?? []) {
-    const hit = await resolveHostCredentialFile(b.agent);
+  const out: AvailableSource[] = [];
+  for (const s of spec.modelAuth?.sources ?? []) {
+    if (s.kind === 'env') {
+      const v = env[s.envKey];
+      if (typeof v !== 'string' || v.length === 0) continue;
+      out.push({
+        id: modelAuthSourceId(s),
+        kind: 'env',
+        label: s.label,
+        ...(s.provider ? { provider: s.provider } : {}),
+        ...(s.caveat ? { caveat: s.caveat } : {}),
+        envVar: s.envKey,
+      });
+      continue;
+    }
+    const hit = await resolveHostCredentialFile(s.agent);
     if (!hit) continue;
-    const boxPath = findAgentSpec(b.agent)?.credential?.boxAbsPath ?? '';
     out.push({
-      agent: b.agent,
-      label: b.label,
-      ...(b.caveat ? { caveat: b.caveat } : {}),
+      id: modelAuthSourceId(s),
+      kind: 'agent',
+      label: s.label,
+      ...(s.caveat ? { caveat: s.caveat } : {}),
       hostPath: hit.path,
-      boxPath,
+      boxPath: findAgentSpec(s.agent)?.credential?.boxAbsPath ?? '',
       bytes: Buffer.byteLength(hit.text, 'utf8'),
     });
   }
   return out;
 }
+
+export type { AgentModelAuthSource };
