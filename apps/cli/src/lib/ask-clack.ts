@@ -10,7 +10,8 @@
  * preserves the rule that `-y` must never auto-approve a `carry:` block.
  */
 
-import { confirm, isCancel, log, select, text } from '@agentbox/cli-kit';
+import { confirm, isCancel, log, multiselect, select, text } from '@agentbox/cli-kit';
+import { decodeMultiAnswer, encodeMultiAnswer } from '@agentbox/core';
 import type { PromptAnswer, PromptAsker, PromptRequest } from '@agentbox/core';
 
 export interface ClackAskerOptions {
@@ -48,6 +49,34 @@ export function clackAsker(opts: ClackAskerOptions = {}): PromptAsker {
     }
 
     const choices = req.choices ?? [];
+
+    if (req.multiple) {
+      // The "none of these" option is not a checkbox — an empty selection
+      // already says it. Offering both would let the user tick a login AND
+      // "none" in the same answer.
+      const exclusive = choices.find((c) => c.exclusive);
+      const picks = await multiselect<string>({
+        message: req.title,
+        options: choices
+          .filter((c) => !c.exclusive)
+          .map((c) => ({ value: c.value, label: c.label, ...(c.hint ? { hint: c.hint } : {}) })),
+        initialValues: decodeMultiAnswer(req.defaultValue ?? '').filter((v) =>
+          choices.some((c) => c.value === v && !c.exclusive),
+        ),
+        // Clack would otherwise refuse an empty submit, and empty IS the answer
+        // "none of them" — the one a user submits by just pressing enter.
+        required: false,
+      });
+      if (isCancel(picks)) return { id: req.id, value: req.fallback.value, cancelled: true };
+      // Ordered by the offer, never by pick order, so the same choice always
+      // produces the same answer string (and the same line in a log).
+      const ordered = choices.filter((c) => picks.includes(c.value)).map((c) => c.value);
+      return {
+        id: req.id,
+        value: ordered.length > 0 ? encodeMultiAnswer(ordered) : (exclusive?.value ?? ''),
+      };
+    }
+
     const answer = await select<string>({
       message: req.title,
       options: choices.map((c) => ({
@@ -90,6 +119,16 @@ function printDetail(req: PromptRequest): void {
     case 'credential':
       log.message(indent(`${d.label}\n${d.hostPath}  ->  ${d.boxPath}`));
       if (d.caveat) log.warn(d.caveat);
+      break;
+    case 'credential-list':
+      for (const row of d.rows) {
+        const where =
+          row.source === 'env'
+            ? `${row.envVar ?? ''}${row.provider ? ` (${row.provider})` : ''}`
+            : `${row.hostPath ?? ''}  ->  ${row.boxPath ?? ''}`;
+        log.message(indent(`${row.label}\n${where}`));
+        if (row.caveat) log.warn(row.caveat);
+      }
       break;
     default:
       // An unknown variant still has a summary — that is the contract.

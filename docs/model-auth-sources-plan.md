@@ -65,45 +65,28 @@ skipped by every box built from an existing image or snapshot.
 | 1 | the source model in `@agentbox/core` + registry data | **done** |
 | 2 | ingest runner + the three launch seams | **done** |
 | 5a | `--model-auth <source...>` on every declaring agent; `enum-list` config | **done** |
-| 3 | **env sources: make the existing spray a grant** | **not started** |
-| 4 | **multi-select through the four front-ends** | **schema done, renderers not started** |
+| 3 | ~~env sources~~ | **dropped** — copying an API key by hand is not a real burden, and it is not worth rewiring ~10 forwarding sites for |
+| 4 | multi-select through the front-ends | **CLI done** (schema + clack renderer, drive-verified); web/tray renderers not started |
 | 5b | `--model-auth` on `agentbox create` (box-wide) | **not started** |
 
 Phases 1, 2 and 5a are live-verified: `agentbox pi --model-auth codex` seeds the
 login, imports it as `openai-codex`, and the box answers a real turn.
 
-## Phase 3 — the remaining work
+## Phase 3 — dropped
 
-Move each spec's provider keys out of `forwardedEnvKeys` (which keeps only
-non-secret passthrough like `ANTHROPIC_MODEL`) and into `modelAuth.sources`,
-then filter the forwarding sites by the box's grant. This must be ATOMIC: a key
-that is a source but still in `forwardedEnvKeys` would be both granted and
-sprayed, and one removed from `forwardedEnvKeys` before the grant plumbing
-exists would make boxes lose keys they have today. `model-auth.test.ts` asserts
-a key is never both.
+Turning `forwardedEnvKeys` into a grant was cut: copying a provider API key into
+a box by hand is not a real burden, and it is not worth rewiring ~10 forwarding
+sites in four agent packages for. Those keys keep reaching boxes exactly as they
+do today, unconditionally.
 
-The forwarding sites are ~10, in four agent packages each iterating a
-hand-copied constant (`agent-claude/src/docker-sync.ts:482`, `agent-codex:505`,
-`agent-opencode:225`; only `agent-pi:46` derives from the spec) plus
-`buildForwardedEnv` in `sandbox-cloud/src/sync/agent-credentials.ts:253`.
-Preserve the isolation rule documented there: per agent, never the union.
+The `env` source KIND stays in the schema — it costs nothing, the gate and the
+picker already handle it, and it is the only shape that could ever express a
+provider with no agent behind it (xAI). Nothing declares one.
 
-Persist the grant as `BoxRecord.modelAuthSources` **beside**
-`borrowedCredentials`, not instead of it — the credential fan-out matches that
-field against agent ids (`agent-propagate.ts:306`).
-
-**No "my box lost its key" regression**: `env` sources default ON. The prompt's
-`defaultValue` and its non-interactive `fallback` both already carry every
-declared env key the host holds, so today's behaviour is what you get by not
-reading — only now visible and revocable. `agent` sources stay opt-in.
-
-### Considered and deferred
-
-Moving env values into a 0600 `~/.agentbox/model-auth.env` sourced by a launch
-wrapper. A real hardening — secrets leave `docker inspect` and the host's `ps`
-argv — but it rewrites five launch sites and regresses a hand-run `pi` inside
-`agentbox shell`, which inherits the key today. Orthogonal to "let the user
-pick", and easy to add later since the grant is already the input either way.
+Consequence worth knowing: with no env sources declared, every agent has exactly
+ONE source (`codex`), so the gate always takes the single-`agent`-source branch
+and asks a plain yes/no. The multi-select is reachable only once a row declares
+a second source.
 
 ## Phase 4 — the remaining work
 
@@ -118,8 +101,9 @@ select and posts one value — the n=1 encoding of the same answer),
 one `agent` source it emits the yes/no it always did, so openclaw's surface is
 untouched and no renderer needs to change until Phase 3 lands.
 
-Renderers still to do: `ask-clack.ts` (cli-kit already exports `multiselect`),
-`prompt-view.tsx` (checkboxes + confirm; and a `key` on `<PromptView>` in
+`ask-clack.ts` is DONE and drive-verified: ticking both options yields
+`codex,claude`, and submitting an empty selection yields `none`. Renderers still
+to do: `prompt-view.tsx` (checkboxes + confirm; and a `key` on `<PromptView>` in
 `create-box-modal.tsx`, or React reuses the instance across the queue and the
 second prompt opens with the first's boxes ticked), and the tray's
 `Prompt.swift` / `PromptCard.swift` / `CreateBoxPanel.swift`.
