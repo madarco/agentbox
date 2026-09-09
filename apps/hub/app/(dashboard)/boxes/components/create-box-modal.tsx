@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, useTransition, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import { defaultAgentFor, defaultProviderFor, usableProvider } from '@/lib/boxes/project-defaults';
-import { Icons } from '@/components/icons';
+import { Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,6 +19,13 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { createBoxAction, listBranchesAction } from '@/lib/boxes/actions';
+import {
+  parseRestoreKey,
+  readableStamp,
+  restorableBackups,
+  restoreKeyOf,
+  type BotBackups,
+} from './bots';
 import type { CreateBoxInput } from '@/lib/boxes/backend-types';
 import { useStore } from '@/lib/boxes/store';
 import type { AgentOption, Project, ProviderOption } from '@/lib/boxes/types';
@@ -69,24 +76,39 @@ export function CreateBoxButton({
   variant,
   size,
   className,
+  label,
+  icon: Ic,
+  initialRestore,
 }: {
   project?: Project;
   projects?: Project[];
   variant?: 'default' | 'outline';
   size?: 'sm';
   className?: string;
+  /** Button text. Defaults to "Create box". */
+  label?: string;
+  icon?: Icon;
+  /**
+   * Open with Start-from already on this backup (`restoreKeyOf(bot, stamp)`).
+   *
+   * This is what lets the project page's bot listing hand off to THIS form
+   * instead of carrying a second restore implementation: one modal, reachable
+   * from wherever a restore is discovered.
+   */
+  initialRestore?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button variant={variant} size={size} className={className} onClick={() => setOpen(true)}>
-        <Icons.plus />
-        Create box
+        {Ic ? <Ic /> : <Icons.plus />}
+        {label ?? 'Create box'}
       </Button>
       {open ? (
         <CreateBoxModal
           project={project}
           projects={projects ?? (project ? [project] : [])}
+          initialRestore={initialRestore}
           onClose={() => setOpen(false)}
         />
       ) : null}
@@ -97,10 +119,12 @@ export function CreateBoxButton({
 function CreateBoxModal({
   project,
   projects,
+  initialRestore,
   onClose,
 }: {
   project?: Project;
   projects: Project[];
+  initialRestore?: string;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -130,6 +154,28 @@ function CreateBoxModal({
   const [fromBranch, setFromBranch] = useState('');
   const [branches, setBranches] = useState<string[] | null>(null);
   const [runSetup, setRunSetup] = useState(false);
+  // "Start from": a fresh workspace, or one specific bot backup of this project.
+  //
+  // Restore lives in THIS form rather than its own because it is the same
+  // decision as a create — which project, which provider, what to call it — with
+  // a different starting point. ONE select, not a bot picker plus a backup
+  // picker: a backup is identified by both halves, so splitting them made the
+  // common case (one bot, one recent backup) two decisions where there is none.
+  const [bots, setBots] = useState<BotBackups[]>([]);
+  // `"<bot>/<stamp>"` (see `restoreKeyOf`), or '' for a plain create.
+  const [restoreKey, setRestoreKey] = useState(initialRestore ?? '');
+  // Overrides the two refusals a restore can hit: the source box still running,
+  // and a destination another box (or an earlier attempt) already occupies. Off
+  // by default and shown only once a backup is picked — it is an override, not a
+  // setting, so it should never sit on a plain create.
+  const [restoreForce, setRestoreForce] = useState(false);
+  /**
+   * The project the `initialRestore` seed belongs to. The bots effect clears the
+   * selection when it runs for a DIFFERENT project, so a bare "has run once"
+   * boolean broke under React StrictMode, whose dev-only mount→cleanup→mount
+   * wiped the seed on the second run and opened the modal on "New workspace".
+   */
+  const seededRestoreFor = useRef(initialRestore ? (project?.id ?? projects[0]?.id ?? '') : null);
   // Always-on box, as a TRI-STATE: null means "no opinion", which is what the
   // API wants for the common case. It matters because the default is not a
   // constant — a service agent's box is always-on (`resolveCreatePersistent`),
@@ -205,6 +251,43 @@ function CreateBoxModal({
     };
   }, []);
 
+  // The selected project's restorable bot backups. Refetched per project, and
+  // silently empty on failure: no backups and an unreachable listing look the
+  // same to this form (no Start-from row), and a create must never be blocked by
+  // a feature the user did not ask for.
+  useEffect(() => {
+    let cancelled = false;
+    // Cleared BEFORE the fetch, not after it answers: carrying the previous
+    // project's bots for the round-trip would offer a backup belonging to a
+    // different project, and picking it would restore into this one.
+    //
+    // The seeded project is the exception: it must not wipe an `initialRestore`
+    // the caller opened this modal with, which is the whole point of that prop.
+    setBots([]);
+    if (seededRestoreFor.current === projectId) {
+      seededRestoreFor.current = null; // honoured once; a later revisit clears as normal
+    } else {
+      setRestoreKey('');
+    }
+    if (!projectId) return;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/bots`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { bots?: BotBackups[] };
+        if (cancelled) return;
+        setBots((j.bots ?? []).filter((b) => b.backups.some((x) => x.state)));
+      } catch {
+        // Best-effort — the create is unaffected.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   // The agent list, from the registry rather than a table here — that is what
   // lets an `agentbox agent add` plugin agent be chosen at all. A hub older than
   // the endpoint 404s and the built-ins stand.
@@ -230,6 +313,15 @@ function CreateBoxModal({
   }, []);
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
+  // The backup Start-from names, or null for a plain create. Everything a
+  // restore decides for you branches on this.
+  const restoring = (() => {
+    const parsed = restoreKey ? parseRestoreKey(restoreKey) : null;
+    if (!parsed) return null;
+    const bot = bots.find((b) => b.bot === parsed.bot);
+    const backup = bot && restorableBackups(bot).find((x) => x.stamp === parsed.stamp);
+    return bot && backup ? { bot: bot.bot, stamp: backup.stamp } : null;
+  })();
   // The create defaults for THIS project, clamped to what the live catalogs
   // offer (a remembered provider can be unconfigured or gone, a remembered
   // plugin agent can be uninstalled). Plain strings, deliberately: the store
@@ -277,7 +369,12 @@ function CreateBoxModal({
   const persistent = (persistentChoice ?? persistentByDefault) && !persistentCapped;
   const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
+  // Never for a restore: the restore route enqueues its own create job, and this
+  // form runs no bake phase for it — so promising a rebuild would be a claim the
+  // button does not honour. A restore defaults to the provider the bundle was
+  // captured on, which already has a base.
   const bakeNeeded =
+    !restoring &&
     !!providerFreshness &&
     (!!providerFreshness.jobId ||
       providerFreshness.baseStatus === 'unprepared' ||
@@ -370,11 +467,59 @@ function CreateBoxModal({
       setError('pick a project');
       return;
     }
+    // A restore leaves this form early and by a different door. It skips the
+    // preflight too: those gates were answered when the ORIGINAL box was made,
+    // and the hub's restore route inherits that grant the same way clone does.
+    if (restoring) {
+      startTransition(async () => {
+        await submitRestore(restoring);
+      });
+      return;
+    }
     startTransition(async () => {
       const asked = await askPreflight();
       // Questions shown: `answerPrompt` calls `proceed()` once they are answered.
       if (!asked) proceed();
     });
+  };
+
+  /**
+   * Post the restore and hand its create job to the same log stream a create
+   * uses — the hub stages the bundle's workspace and enqueues an ordinary create,
+   * so from here on the two are the same thing.
+   *
+   * `force` is off by default and opt-in per attempt. Without it there was no way
+   * out of the browser at all: `stageRestoreWorkspace` refuses a non-empty
+   * destination, and ANY failed create after a successful stage — a capped
+   * `persistent`, a bad provider — leaves one behind, so every later attempt at
+   * the same bot died on "is not empty".
+   */
+  const submitRestore = async (target: { bot: string; stamp: string }) => {
+    try {
+      const res = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/restore`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bot: target.bot,
+          stamp: target.stamp,
+          name: name.trim() || undefined,
+          provider,
+          ...(restoreForce ? { force: true } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        setError(body?.error?.message ?? `restore failed (HTTP ${String(res.status)})`);
+        return;
+      }
+      const body = (await res.json()) as { jobId: string };
+      setJobId(body.jobId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   /**
@@ -677,6 +822,46 @@ function CreateBoxModal({
                 </Select>
               </Field>
             ) : null}
+            {bots.length > 0 ? (
+              <Field label="Start from">
+                <Select value={restoreKey} onChange={(e) => setRestoreKey(e.target.value)}>
+                  <option value="">New workspace</option>
+                  {bots.flatMap((b) =>
+                    restorableBackups(b).map((backup) => (
+                      <option
+                        key={restoreKeyOf(b.bot, backup.stamp)}
+                        value={restoreKeyOf(b.bot, backup.stamp)}
+                      >
+                        {b.bot} &mdash; {readableStamp(backup.stamp)}
+                        {backup.stamp === b.latest ? ' (latest)' : ''}
+                      </option>
+                    )),
+                  )}
+                </Select>
+                {restoring ? (
+                  <>
+                    <p className="mt-1.5 text-[11.5px] leading-normal text-muted-foreground">
+                      Restores <span className="font-mono">{restoring.bot}</span> with{' '}
+                      <strong>the same identity</strong> &mdash; same auth token, same pairings,
+                      same history. Refused while the box this backup came from is still running:
+                      two live gateways cannot share one identity.
+                    </p>
+                    <label className="mt-2 flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={restoreForce}
+                        onChange={(e) => setRestoreForce(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 flex-none accent-primary"
+                      />
+                      <span className="text-[11.5px] leading-normal text-muted-foreground">
+                        Restore anyway if the source box is still running, or the destination is not
+                        empty
+                      </span>
+                    </label>
+                  </>
+                ) : null}
+              </Field>
+            ) : null}
             <Field label="Provider">
               <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
                 {providers.map((p) => (
@@ -730,8 +915,10 @@ function CreateBoxModal({
               </p>
             ) : null}
             {/* Base branch picker: the box forks its per-box branch from this ref.
-                Hidden on the hosted path (no local repo → empty branch list). */}
-            {branches === null ? (
+                Hidden on the hosted path (no local repo → empty branch list), and
+                for a restore, which has no base ref at all: the bundle's workspace
+                IS the new box's project and nothing is forked from the host repo. */}
+            {restoring ? null : branches === null ? (
               <Field label="Base branch">
                 <Select value="" disabled>
                   <option value="">Loading branches…</option>
@@ -753,23 +940,31 @@ function CreateBoxModal({
                 </Select>
               </Field>
             ) : null}
-            <Field label="Agent">
-              <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {/* Flag an agent this machine has no config or saved login for.
+            {/* No Agent row for a restore: the bundle records whose identity it
+                holds, so a picker here would let the user choose an agent the
+                restore then ignores. */}
+            {restoring ? null : (
+              <Field label="Agent">
+                <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {/* Flag an agent this machine has no config or saved login for.
                         Still selectable — the box installs it on demand — but say
                         so, since it will start out asking the user to sign in. */}
-                    {a.installed === false ? `${a.label} — not set up on this host` : a.label}
-                  </option>
-                ))}
-                <option value="none">Empty — just create the box</option>
-              </Select>
-            </Field>
+                      {a.installed === false ? `${a.label} — not set up on this host` : a.label}
+                    </option>
+                  ))}
+                  <option value="none">Empty — just create the box</option>
+                </Select>
+              </Field>
+            )}
             <Field label="Name (optional)">
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="auto" />
             </Field>
-            {selected?.needsSetup && agent !== 'none' ? (
+            {/* Never for a restore: the bundle brings its own workspace and its
+                own agentbox.yaml, and there is no first turn to seed — the
+                restored box runs a daemon, not a conversation. */}
+            {selected?.needsSetup && agent !== 'none' && !restoring ? (
               <label className="flex items-start gap-2.5">
                 <input
                   type="checkbox"
@@ -788,7 +983,7 @@ function CreateBoxModal({
                 </span>
               </label>
             ) : null}
-            {agent === 'none' ? (
+            {agent === 'none' && !restoring ? (
               <p className="font-mono text-xs text-muted-foreground">
                 The box is created and left running with no agent — attach later from a terminal or
                 SSH (<span className="text-secondary-foreground">agentbox shell</span>).
@@ -965,7 +1160,7 @@ function CreateBoxModal({
               Cancel
             </Button>
             <Button onClick={submit} disabled={pending || !projectId}>
-              {pending ? 'Starting…' : 'Create box'}
+              {pending ? 'Starting…' : restoring ? 'Restore' : 'Create box'}
             </Button>
           </>
         )}

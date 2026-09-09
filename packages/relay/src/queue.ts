@@ -268,6 +268,25 @@ export interface QueueJobCreateOpts {
   inbound?: string;
   /** `--remote-host`: SSH destination whose docker engine runs a remote-docker box. */
   remoteHost?: string;
+  /**
+   * Put a backed-up bot's IDENTITY back once the box is up. Set only by the
+   * hub's restore route — never from the wire, and never by a plain create.
+   *
+   * The workspace half needs nothing here: the staged bundle tree IS the job's
+   * `workspace`, so it rides the ordinary create. The state half cannot, because
+   * it belongs inside the agent's own config dir — so the worker waits for the
+   * service to report ready ON ITS OWN, stops it, pushes `<bundleDir>/state` in,
+   * and restarts it. That ordering is forced by a `run_once: marker` onboard
+   * task whose marker lives on the box ROOTFS: it fires on every fresh box no
+   * matter what the config volume holds, so letting it run and THEN replacing
+   * what it wrote is the only sequence that survives later boots.
+   */
+  restore?: {
+    /** Absolute bundle dir on the host running the worker (`…/bots/<bot>/<stamp>`). */
+    bundleDir: string;
+    /** The agent whose state dir the bundle carries. */
+    agent: string;
+  };
 }
 
 export interface QueueConfig {

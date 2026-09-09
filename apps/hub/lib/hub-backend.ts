@@ -82,9 +82,23 @@ import {
   boxSshDirForProvider,
   botWorkspaceRoot,
   clonePerBoxCarryRefusal,
+  backupAgentState,
+  detectGitRepos,
   ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
+  existingBoxRefusal,
+  linkLatest,
+  listBots,
+  prepareBackupDir,
+  pruneBackups,
+  resolveBackupTarget,
+  resolveBotBundle,
+  restoreScope,
+  restoreWorkspaceDir,
+  sourceBoxRunningRefusal,
+  stageRestoreWorkspace,
+  writeBackupManifest,
   readServiceUrlFields,
   serviceAgentForBox,
   resolvePerBoxCarry,
@@ -159,6 +173,9 @@ import type {
   OpenTargetsReport,
   BoxWebUrlResult,
   PrepareCloneResult,
+  BackupBoxResult,
+  BotsResult,
+  PrepareRestoreResult,
   ProjectResult,
   PruneView,
   RemoteDockerHostView,
@@ -350,7 +367,12 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
-function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
+function mapBox(
+  b: ListedBox,
+  regroup?: ProjectRegrouping,
+  originUrl?: string,
+  hasGit?: boolean,
+): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
@@ -399,6 +421,18 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     vncEnabled: b.vncEnabled ?? false,
     persistent: b.persistent === true,
     gitWorktrees: b.gitWorktrees?.map((w) => ({ kind: w.kind, branch: w.branch })),
+    // Resolved by the caller, which memoizes the `.git` probe per project root —
+    // a cloud box records no worktrees at all (it carries `cloud.workspaceBranch`,
+    // which is minted whether or not a repo exists), so the recorded list alone
+    // would report every cloud box as repo-less.
+    hasGit,
+    // `findAgentSpec`, not `resolveAgentSpec`: the latter THROWS on an id the
+    // registry no longer knows, which a removed plugin agent is, and a box whose
+    // agent went away must still list.
+    supportsBackup:
+      findAgentSpec(b.lastAgent ?? b.agents?.[0] ?? '')?.stateBackup !== undefined
+        ? true
+        : undefined,
     // The keyed map is the source; the five named fields below are its derived
     // projection, kept because the macOS tray decodes the three title keys BY
     // NAME (as optional strings, so dropping one would silently blank its box
@@ -460,6 +494,56 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
  * local state, not here).
  */
 
+/**
+ * "Does this box have a git repo at all?", resolved per project root and cached
+ * for the life of one `getData()`.
+ *
+ * The recorded worktree list is the fast path but not a sufficient one: only the
+ * docker provider writes `gitWorktrees`, so every cloud box would read as
+ * repo-less. Falling through to the same `detectGitRepos` probe the create paths
+ * use is what keeps the answer honest across providers — and, being a read-time
+ * probe rather than a persisted bit, it needs no migration for boxes that
+ * already exist and follows a project that gains a repo later.
+ */
+function boxHasGitResolver(): (b: ListedBox) => Promise<boolean | undefined> {
+  return async (b) => {
+    if ((b.gitWorktrees?.length ?? 0) > 0) return true;
+    const root = b.projectRoot ?? b.workspacePath;
+    if (!root) return undefined;
+    return hasGitAt(root);
+  };
+}
+
+/**
+ * `detectGitRepos(root).length > 0`, cached briefly across calls.
+ *
+ * `getData()` backs the hottest endpoint in the hub — every `/api/v1/boxes` read
+ * and every SSE-driven refetch — and the probe is a `readdir` of the project root
+ * plus a `stat` per top-level entry. On a monorepo root, or a root on a slow or
+ * absent mount, doing that per read is real latency for an answer that changes
+ * about never. The TTL is short enough that `git init` in a project shows up
+ * within seconds.
+ */
+const HAS_GIT_TTL_MS = 30_000;
+const hasGitCache = new Map<string, { at: number; value: Promise<boolean> }>();
+
+function hasGitAt(root: string): Promise<boolean> {
+  const hit = hasGitCache.get(root);
+  if (hit && Date.now() - hit.at < HAS_GIT_TTL_MS) return hit.value;
+  const value = detectGitRepos(root)
+    .then((repos) => repos.length > 0)
+    .catch(() => false);
+  hasGitCache.set(root, { at: Date.now(), value });
+  // Unbounded growth would be a leak in a long-lived daemon; projects are few,
+  // but a control box churns per-job clone paths.
+  if (hasGitCache.size > 256) {
+    for (const [k, v] of hasGitCache) {
+      if (Date.now() - v.at >= HAS_GIT_TTL_MS) hasGitCache.delete(k);
+    }
+  }
+  return value;
+}
+
 function mapRegistrationToBox(reg: BoxRegistration): Box {
   const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
   const { id: projectId, repo: repoKey } = registrationProjectKey(reg);
@@ -468,6 +552,15 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     projectId,
     repo: repoKey,
     branch: reg.worktrees?.[0]?.branch ?? '',
+    // TRUE or UNDEFINED, never false. A registration records worktrees only when
+    // the registering host had a local clone — on a control box `projectRoot` is
+    // undefined, so a cloud box whose workspace IS a real git clone registers
+    // with none (`registrationToBoxRecord`). Answering `false` there stripped the
+    // Git card off every reverse-adopted box, whose pull/push/checkout all work
+    // through the relay. Silence is the honest answer, and clients read it as
+    // "show" by contract.
+    hasGit: (reg.worktrees?.length ?? 0) > 0 ? true : undefined,
+    supportsBackup: findAgentSpec(reg.agent ?? '')?.stateBackup !== undefined ? true : undefined,
     task: reg.name,
     displayName: null,
     agent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']) ?? 'claude',
@@ -2126,15 +2219,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           ...custodyIdentityFromRegistration(reg),
         });
       }
+      // Resolved before mapping because `mapBox` is sync and the git answer is a
+      // filesystem probe; the resolver caches per project root, so a fleet of
+      // boxes over three projects costs three stats, not one per box.
+      const hasGitOf = boxHasGitResolver();
+      const listedBoxes = await Promise.all(
+        listed.map(async (b) =>
+          mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
+        ),
+      );
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
         projects,
-        boxes: [
-          ...jobBoxes,
-          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl)),
-          ...registeredBoxes,
-        ],
+        boxes: [...jobBoxes, ...listedBoxes, ...registeredBoxes],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: await withRemoteProviders(listProviders(jobs)),
@@ -2479,6 +2577,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             // resolution is ours.
             carry: gated.carry as QueueJobCreateOpts['carry'],
             borrowCredentials: gated.borrowCredentials,
+            // Restore only. Not reachable from the wire — `parseCreateBox` does
+            // not accept it — so a plain create cannot ask the worker to push an
+            // arbitrary directory into a box's agent config dir.
+            ...(o.restore ? { restore: o.restore } : {}),
           },
         });
         handle.pokeQueue();
@@ -3325,6 +3427,220 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           mode: result.mode,
           copied: result.copied,
           conflicts: result.conflicts,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async backupBox(id, input): Promise<BackupBoxResult> {
+      try {
+        const rp = await resolveBoxProvider(id, hydrate);
+        if (!rp) return { ok: false, error: `box ${id} not found` };
+        // Resolved BEFORE the box is started: a bad `name`/`keep`/`agent`
+        // should cost nothing, and a paused box should not be woken to be told
+        // its request was invalid.
+        const target = resolveBackupTarget(rp.box, {
+          ...(input?.name !== undefined ? { name: input.name } : {}),
+          ...(input?.keep !== undefined ? { keep: input.keep } : {}),
+          ...(input?.agent !== undefined ? { agent: input.agent } : {}),
+        });
+        await ensureBoxRunning(rp.provider, rp.box);
+        await prepareBackupDir(target);
+
+        // `dropAgentScaffolding: false` is what separates this from a clone.
+        // Clone drops what the new bot regenerates for itself; a backup must
+        // reproduce the bot it captured, scaffolding the user edited included.
+        const exported = await exportBoxWorkspace({
+          provider: rp.provider,
+          box: rp.box,
+          destDir: target.workspaceDir,
+          dropAgentScaffolding: false,
+          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+          onLog: (line) => {
+            console.log(`[hub] ${line}`);
+          },
+        });
+
+        // Best-effort, exactly as the CLI's `runBackup` is: a box whose agent
+        // cannot be reached still leaves a usable workspace bundle, and the
+        // manifest says `state: false` so a restore knows before it starts.
+        let state = false;
+        let databases: string[] | undefined;
+        if (target.agent) {
+          const transport = rp.provider.syncTransport?.(rp.box);
+          if (!transport) {
+            console.warn(
+              `[hub] provider ${rp.box.provider ?? 'docker'} cannot read agent state; workspace only`,
+            );
+          } else {
+            try {
+              const r = await backupAgentState({
+                agent: target.agent,
+                transport,
+                destDir: path.join(target.dir, 'state'),
+              });
+              state = true;
+              databases = r.databases;
+            } catch (err) {
+              console.warn(`[hub] could not capture ${target.agent} state: ${errMsg(err)}`);
+            }
+          }
+        }
+
+        await writeBackupManifest(target.dir, {
+          version: 1,
+          stamp: target.stamp,
+          bot: target.bot,
+          boxId: rp.box.id,
+          boxName: rp.box.name,
+          provider: rp.box.provider ?? 'docker',
+          ...(target.agent ? { agent: target.agent } : {}),
+          state,
+          ...(databases && databases.length > 0 ? { databases } : {}),
+          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+        });
+        await linkLatest(target.projectRoot, target.bot, target.stamp);
+        const pruned = await pruneBackups(target.projectRoot, target.bot, target.keep);
+        const wroteGitignore = await ensureBackupGitignored(target.projectRoot);
+
+        return {
+          ok: true,
+          bot: target.bot,
+          stamp: target.stamp,
+          dir: target.dir,
+          ...(target.agent ? { agent: target.agent } : {}),
+          state,
+          ...(databases && databases.length > 0 ? { databases } : {}),
+          files: exported.files,
+          pruned,
+          wroteGitignore,
+        };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async listBots(projectId): Promise<BotsResult> {
+      const root = await resolveProjectPath(projectId);
+      if (!root) return { ok: false, error: `unknown project ${projectId}` };
+      try {
+        // `botWorkspaceRoot`, not the raw root: a RESTORED bot's box runs on
+        // `<proj>/.agentbox/bots/<bot>/workspace`, and `prepareRestore` registers
+        // that directory as its own project. Looking for bundles under it would
+        // find none, so the box page would report a bot that has been backed up
+        // for weeks as never backed up.
+        return { ok: true, bots: await listBots(botWorkspaceRoot(root)) };
+      } catch (err) {
+        return { ok: false, error: errMsg(err) };
+      }
+    },
+    async prepareRestore(projectId, input): Promise<PrepareRestoreResult> {
+      try {
+        const root = await resolveProjectPath(projectId);
+        if (!root) return { ok: false, error: `unknown project ${projectId}` };
+        const bot = input.bot.trim();
+        if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
+          return { ok: false, error: 'bot must be a single path segment' };
+        }
+        // Same normalization as `listBots` and the destination below — all three
+        // must agree, or a restore resolves a bundle from one tree and stages it
+        // into another.
+        const botsRoot = botWorkspaceRoot(root);
+        const bundle = await resolveBotBundle(botsRoot, bot, input.stamp?.trim() || undefined);
+        // A bundle with no state half restores a workspace and a FRESH identity,
+        // which is what clone already does and is not what this route promises.
+        // Refused by name rather than half-delivered.
+        if (restoreScope(bundle) === 'workspace') {
+          return {
+            ok: false,
+            error:
+              `${bundle.dir} captured no agent state — there is no identity in it to restore. ` +
+              `Use POST /boxes/{id}/clone to start a fresh bot from these files.`,
+          };
+        }
+        const declared = bundle.manifest.agent;
+        const agent = declared ? findAgentSpec(declared)?.id : undefined;
+        if (!agent) {
+          return {
+            ok: false,
+            error:
+              `${bundle.dir} holds ${declared ?? 'unknown'} state, and this hub has no such agent ` +
+              `installed — install it (\`agentbox agent add\`) and try again`,
+          };
+        }
+
+        // Absolute by contract, like clone's `into`: this process's cwd is
+        // wherever the hub daemon was started and has nothing to do with the
+        // caller's.
+        const rawInto = input.into?.trim();
+        if (rawInto !== undefined && rawInto.length > 0 && !path.isAbsolute(rawInto)) {
+          return { ok: false, error: `into must be an absolute path (got "${rawInto}")` };
+        }
+        const workspace = rawInto
+          ? path.normalize(rawInto)
+          : restoreWorkspaceDir(botsRoot, bundle.bot);
+
+        // Both refusals run BEFORE the copy, so a rejected restore leaves the
+        // filesystem exactly as it found it — `force` must never be able to
+        // clobber a live box's workspace on its way to being refused.
+        const boxes = (await readState().catch(() => null))?.boxes ?? [];
+        const source = boxes.find((b) => b.id === bundle.manifest.boxId);
+        if (source && !input.force) {
+          let live: string | null = null;
+          try {
+            live = await (await providerForBox(source)).probeState(source);
+          } catch {
+            live = null; // unprobeable is the normal case for a box that is gone
+          }
+          // Client-NEUTRAL wording (the shared default). Every API client sees
+          // this string, and the tray offers no force control at all — naming a
+          // checkbox there would point at nothing. "Stop or destroy it" is the
+          // instruction that works everywhere.
+          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
+          if (refusal) return { ok: false, error: refusal };
+        }
+        // Gated on `force` like the running-source check above it. It was not,
+        // which made the API's own "force overrides both" a lie and left the web
+        // UI with no way past a destination its previous attempt had staged.
+        if (!input.force) {
+          const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
+          const occupied = existingBoxRefusal(occupant, workspace, 'set a different destination');
+          if (occupied) return { ok: false, error: occupied };
+        }
+
+        const staged = await stageRestoreWorkspace({
+          bundle,
+          workspaceDir: workspace,
+          ...(input.force ? { force: true } : {}),
+        });
+
+        const name = sanitizeMnemonic(input.name?.trim() || bundle.bot);
+        const provider = input.provider ?? bundle.manifest.provider ?? 'docker';
+        // A bot is an always-on box, and a restored one is the same bot. Refused
+        // here rather than in the worker so a capped provider fails the request
+        // instead of leaving a failed create job behind.
+        const persistent = input.persistent ?? true;
+        if (persistent) {
+          const refusal = persistentRefusal(provider);
+          if (refusal) return { ok: false, error: refusal };
+        }
+
+        // The staged dir is its own project, so the create below resolves it by
+        // id and never by a client-supplied path.
+        await registerProject(workspace);
+        if (!rawInto) await ensureBackupGitignored(botsRoot).catch(() => false);
+
+        return {
+          ok: true,
+          projectId: hashProjectPath(workspace),
+          workspace,
+          bundleDir: bundle.dir,
+          name,
+          provider,
+          bot: bundle.bot,
+          stamp: bundle.stamp,
+          files: staged.files,
+          agent,
+          persistent,
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };

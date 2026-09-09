@@ -1,11 +1,12 @@
 /**
  * `--restore <bot>` — the CLI half of putting a backed-up bot back into a box.
  *
- * The inverse of `_backup.ts`, and deliberately the same shape: the decisions
- * that a hub route would also need (which bundle, is the source still alive,
- * what goes where) live in `@agentbox/sandbox-core`'s bot-backup concern, and
- * what stays here is what only a CLI knows — which flags were passed, and what
- * to print.
+ * The inverse of `_backup.ts`, and deliberately the same shape: the decisions a
+ * hub route also needs (which bundle, is the source still alive, what goes
+ * where) live in `@agentbox/sandbox-core`'s bot-backup concern, and what stays
+ * here is what only a CLI knows — which flags were passed, and what to print.
+ * The refusals are re-exported so the two front-ends cannot word them
+ * differently.
  *
  * A restore is two halves that arrive by different routes. The workspace half is
  * just a directory, so it becomes the new box's project and rides the ordinary
@@ -16,19 +17,22 @@
 
 import { log } from '@agentbox/cli-kit';
 import { findProjectRoot } from '@agentbox/config';
-import { cp, mkdir, readdir } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import type { AgentId, BoxRecord } from '@agentbox/core';
 import {
-  botDir,
   findAgentSpec,
   readState,
   resolveBotBundle,
   restoreAgentState,
+  restoreWorkspaceDir,
+  sourceBoxRunningRefusal,
+  stageRestoreWorkspace as stageRestoreWorkspaceCore,
   type BotBundle,
 } from '@agentbox/sandbox-core';
 import { providerForBox } from '../provider/registry.js';
 import { pullTransportForBox } from './_agent-pull-transport.js';
+
+export { boxRefWithRestoreRefusal, existingBoxRefusal, restoreScope } from '@agentbox/sandbox-core';
 
 export interface RestoreRequest {
   bundle: BotBundle;
@@ -50,8 +54,7 @@ export interface RestoreOptions {
  *
  * The restored box does NOT run on the bundle's own `workspace/`: that copy is
  * immutable and `--keep` may prune it, so a box writing into it would lose its
- * workspace to a later backup. It runs on a live sibling,
- * `<project>/.agentbox/bots/<bot>/workspace`, which stays inside the same
+ * workspace to a later backup. It runs on a live sibling under the same
  * gitignored, never-seeded directory as the backups it came from.
  */
 export async function resolveRestoreRequest(
@@ -76,7 +79,7 @@ export async function resolveRestoreRequest(
     ? isAbsolute(raw)
       ? raw
       : resolve(process.cwd(), raw)
-    : join(botDir(projectRoot, bundle.bot), 'workspace');
+    : restoreWorkspaceDir(projectRoot, bundle.bot);
 
   const declared = bundle.manifest.agent;
   const agent = bundle.stateDir && declared ? findAgentSpec(declared)?.id : undefined;
@@ -84,51 +87,10 @@ export async function resolveRestoreRequest(
 }
 
 /**
- * What this bundle can put back: both halves, or the workspace alone.
- *
- * A backup of a box with no agent — or one whose state capture failed — carries
- * a `workspace/` and nothing else. Restoring it is still worth doing; claiming
- * it brought an identity is not, and *failing* over it would throw away a
- * perfectly good box that the command had already created.
- */
-export function restoreScope(bundle: BotBundle): 'workspace' | 'workspace+state' {
-  return bundle.stateDir ? 'workspace+state' : 'workspace';
-}
-
-/**
- * Why `--restore` cannot also take a positional box ref, or null when there is
- * no ref.
- *
- * A ref means "use THIS box", and the service command is create-or-resume — so
- * the two together resume a named box and then write a backup's identity over
- * it. No reading of `agentbox <agent> foo --restore bar` is safe, so it is
- * refused before anything is resolved rather than reinterpreted.
- */
-export function boxRefWithRestoreRefusal(boxRef: string | undefined): string | null {
-  if (boxRef === undefined) return null;
-  return (
-    `--restore always creates a new box, so it cannot also take the box ref "${boxRef}" — ` +
-    'drop the ref, or name the new box with -n <name>'
-  );
-}
-
-/** Why a restore cannot proceed into a directory a box already runs on. */
-export function existingBoxRefusal(
-  existing: { name: string } | null | undefined,
-  dir: string,
-): string | null {
-  if (!existing) return null;
-  return `box ${existing.name} already runs on ${dir} — pass --into <dir> to restore alongside it`;
-}
-
-/**
  * Refuse while the box this bundle came from is still running.
  *
- * Two live gateways holding one identity is the multi-tenancy failure OpenClaw's
- * per-box config volume exists to prevent, and a restore is the one operation
- * that can produce it. The box being GONE is the normal case — that is what a
- * restore is for — so an unknown or absent record proceeds silently; only a
- * record we can still see running stops it.
+ * The rule is shared (`sourceBoxRunningRefusal`); what is CLI-specific is where
+ * the live state comes from — the local state file plus this host's provider.
  */
 export async function assertSourceBoxNotRunning(
   bundle: BotBundle,
@@ -143,15 +105,13 @@ export async function assertSourceBoxNotRunning(
   } catch {
     return;
   }
-  if (live !== 'running') return;
+  const refusal = sourceBoxRunningRefusal(source, live, bundle.bot, 'pass --force');
+  if (!refusal) return;
   if (force) {
     log.warn(`${source.name} is still running and holds this identity; --force given, continuing`);
     return;
   }
-  throw new RestoreSourceRunningError(
-    `box ${source.name} is still running and holds ${bundle.bot}'s identity — ` +
-      `two live gateways cannot share one. Stop or destroy it, or pass --force.`,
-  );
+  throw new RestoreSourceRunningError(refusal);
 }
 
 /** Distinguished so the caller can exit 2 rather than 1, as `destroy` does. */
@@ -160,23 +120,27 @@ export class RestoreSourceRunningError extends Error {}
 /**
  * Copy the bundle's workspace half to the live directory the box will run on.
  *
- * Refuses a non-empty destination unless `--force`: the usual reason it is
- * non-empty is an earlier restore of the same bot that is still in use, and
- * overwriting it in place would take the running box's files out from under it.
+ * Wraps the shared stager only to re-word its refusal in this command's own
+ * flags — `--into` and `--force` are CLI spellings the hub route does not share.
  */
 export async function stageRestoreWorkspace(
   req: RestoreRequest,
   force: boolean | undefined,
 ): Promise<{ files: number }> {
-  await mkdir(req.workspaceDir, { recursive: true });
-  const existing = await readdir(req.workspaceDir);
-  if (existing.length > 0 && !force) {
-    throw new Error(
-      `${req.workspaceDir} is not empty — pass --into <dir> for a different location, or --force to overwrite it`,
-    );
+  try {
+    return await stageRestoreWorkspaceCore({
+      bundle: req.bundle,
+      workspaceDir: req.workspaceDir,
+      ...(force ? { force: true } : {}),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('is not empty')) {
+      throw new Error(
+        `${req.workspaceDir} is not empty — pass --into <dir> for a different location, or --force to overwrite it`,
+      );
+    }
+    throw err;
   }
-  await cp(req.bundle.workspaceDir, req.workspaceDir, { recursive: true, force: true });
-  return { files: (await readdir(req.workspaceDir)).length };
 }
 
 /**

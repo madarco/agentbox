@@ -46,11 +46,27 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   ones that can't work right now (app not installed, sshfs missing for Finder, not
   supported for the box's provider, box paused) are disabled with the reason as a
   hover tooltip),
+  **Bot** (**back up** the box — workspace plus the agent's state dir,
+  [identity included](/docs/sync-and-git#back-a-bot-up), shown only for an agent that
+  has one to keep — and **clone** it, which deliberately does the opposite and gives
+  the new box a fresh identity),
   **Git** (pull, push, [push to the host repo only](/docs/sync-and-git),
-  change branch, create a new `agentbox/*` branch) and **Services** (live state of the
-  box's [`agentbox.yaml` services](/docs/services-and-tasks), with restart-one and
-  restart-all). The same operations are on the [REST API](/docs/api) and the
-  [CLI](/docs/cli) (`agentbox git`, `agentbox services`, `agentbox open`).
+  change branch, create a new `agentbox/*` branch — the whole card is hidden on a box
+  whose workspace is not a git repo, where every one of those would fail) and
+  **Services** (live state of the box's [`agentbox.yaml` services](/docs/services-and-tasks),
+  with restart-one and restart-all). The same operations are on the [REST API](/docs/api)
+  and the [CLI](/docs/cli) (`agentbox git`, `agentbox services`, `agentbox open`).
+- **Create box** — the same form for both starting points. When the chosen project
+  holds a [bot backup](/docs/sync-and-git#back-a-bot-up), a **Start from** row
+  offers it: pick one and the form drops the rows the bundle decides for you
+  (base branch, agent, the setup wizard) and the button becomes **Restore**. It
+  belongs here because a restore is the same decision as a create — which project,
+  which provider, what to call it — with a different starting point.
+- **Project detail** — the project's boxes, its seed/custody status, and **Bot
+  backups**: every bot this project holds a backup of, with **Restore…** opening
+  that same Create box form already pointed at the backup. Only backups that
+  captured an identity are offered; a workspace-only one would start a *fresh*
+  bot, which is what clone already does.
 - **Approvals** — the host-action requests a box is blocked on (a `git push` to a
   protected branch, `cp`, `download`, gh writes, host-tool calls). **Approve** unblocks
   the box; **Deny** returns an error to it. This is the same gate the relay prompts

@@ -1,7 +1,12 @@
 // Hand-rolled request validation for the public API boundary. The repo has no zod
 // convention (validation is typeof-guards throughout); these mirror that style and
 // return a discriminated result so routes stay a flat parse-then-act.
-import type { CloneBoxInput, CreateBoxInput, CreateBoxOpts } from '@/lib/boxes/backend-types';
+import type {
+  CloneBoxInput,
+  CreateBoxInput,
+  CreateBoxOpts,
+  RestoreProjectInput,
+} from '@/lib/boxes/backend-types';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
@@ -787,6 +792,82 @@ export function parseCheckpointCreate(body: unknown): Parsed<{
       merged: merged.value,
       setDefault: setDefault.value,
       replace: replace.value,
+    },
+  };
+}
+
+// ── bot backups ──
+// Capture a box into `<project>/.agentbox/bots/<bot>/<stamp>/`. `keep` is a
+// number here (a JSON body has real numbers, unlike a CLI flag) and is bounded
+// at the boundary rather than left to the resolver, so `keep: 0` — which would
+// prune the bundle it just wrote — is refused with its own name attached.
+export function parseBoxBackup(body: unknown): Parsed<{
+  name?: string;
+  keep?: number;
+  agent?: string;
+  includeNodeModules?: boolean;
+}> {
+  if (body === undefined || body === null) return { ok: true, value: {} };
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const name = optionalString(body.name, 'name');
+  if (!name.ok) return name;
+  const agent = optionalString(body.agent, 'agent');
+  if (!agent.ok) return agent;
+  const keep = optionalNumber(body.keep, 'keep');
+  if (!keep.ok) return keep;
+  if (keep.value !== undefined && (!Number.isInteger(keep.value) || keep.value < 1)) {
+    return { ok: false, message: 'keep must be a positive integer' };
+  }
+  const includeNodeModules = optionalBool(body.includeNodeModules, 'includeNodeModules');
+  if (!includeNodeModules.ok) return includeNodeModules;
+  return {
+    ok: true,
+    value: {
+      name: name.value,
+      keep: keep.value,
+      agent: agent.value,
+      includeNodeModules: includeNodeModules.value,
+    },
+  };
+}
+
+// ── restore ──
+// Bring a backed-up bot back as a new box. `bot` is the only required field: the
+// stamp defaults to whatever `latest` points at, which is the answer a user
+// clicking "restore" almost always means.
+export function parseRestoreProject(body: unknown): Parsed<RestoreProjectInput> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  if (typeof body.bot !== 'string' || body.bot.trim().length === 0) {
+    return { ok: false, message: 'bot is required (string)' };
+  }
+  const stamp = optionalString(body.stamp, 'stamp');
+  if (!stamp.ok) return stamp;
+  const name = optionalString(body.name, 'name');
+  if (!name.ok) return name;
+  const provider = optionalString(body.provider, 'provider');
+  if (!provider.ok) return provider;
+  const into = optionalString(body.into, 'into');
+  if (!into.ok) return into;
+  // Absolute-only, for the same reason clone's `into` is: a working directory is
+  // client state that does not travel over an API, and the hub daemon's cwd is
+  // wherever it happened to be started.
+  if (into.value !== undefined && into.value.length > 0 && !into.value.startsWith('/')) {
+    return { ok: false, message: 'into must be an absolute path' };
+  }
+  const force = optionalBool(body.force, 'force');
+  if (!force.ok) return force;
+  const persistent = optionalBool(body.persistent, 'persistent');
+  if (!persistent.ok) return persistent;
+  return {
+    ok: true,
+    value: {
+      bot: body.bot.trim(),
+      stamp: stamp.value,
+      name: name.value,
+      provider: provider.value,
+      into: into.value,
+      force: force.value,
+      persistent: persistent.value,
     },
   };
 }

@@ -68,7 +68,14 @@ describe('existingBoxRefusal', () => {
     const msg = existingBoxRefusal({ name: 'ada' }, '/p/.agentbox/bots/ada/workspace');
     expect(msg).toContain('ada');
     expect(msg).toContain('/p/.agentbox/bots/ada/workspace');
-    expect(msg).toMatch(/--into/);
+  });
+
+  // The RULE is shared with the hub's restore route; the way OUT of it is not.
+  // A web UI told to "pass --into <dir>" is being told to use a different
+  // program, so the caller supplies its own spelling and the default names none.
+  it('takes the escape hatch from the caller, and never invents a CLI flag', () => {
+    expect(existingBoxRefusal({ name: 'ada' }, '/p', 'pass --into <dir>')).toMatch(/--into/);
+    expect(existingBoxRefusal({ name: 'ada' }, '/p')).not.toMatch(/--/);
   });
 
   it('allows an empty directory, whether the lookup returned null or undefined', () => {

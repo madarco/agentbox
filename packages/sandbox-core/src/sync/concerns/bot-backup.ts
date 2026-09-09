@@ -24,6 +24,7 @@
 import { execa } from 'execa';
 import {
   chmod,
+  cp,
   lstat,
   mkdir,
   readdir,
@@ -35,9 +36,9 @@ import {
 } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Dirent } from 'node:fs';
-import type { AgentId, SyncTransport } from '@agentbox/core';
+import type { AgentId, BoxRecord, SyncTransport } from '@agentbox/core';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
-import { resolveAgentSpec } from '../registry.js';
+import { findAgentSpec, resolveAgentSpec } from '../registry.js';
 import { agentPullBoxDir, pullSqliteSnapshot } from '../agent-pull-module.js';
 
 /** Directory under a project that holds every bot's backups. */
@@ -95,7 +96,12 @@ export function botDir(projectRoot: string, bot: string): string {
 export function botWorkspaceRoot(projectRoot: string): string {
   const parts = projectRoot.split(sep);
   const n = parts.length;
-  if (n >= 4 && parts[n - 1] === 'workspace' && parts[n - 3] === 'bots' && parts[n - 4] === '.agentbox') {
+  if (
+    n >= 4 &&
+    parts[n - 1] === 'workspace' &&
+    parts[n - 3] === 'bots' &&
+    parts[n - 4] === '.agentbox'
+  ) {
     return parts.slice(0, n - 4).join(sep);
   }
   return projectRoot;
@@ -104,6 +110,98 @@ export function botWorkspaceRoot(projectRoot: string): string {
 /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
 export function botBackupDir(projectRoot: string, bot: string, stamp: string): string {
   return join(botDir(projectRoot, bot), stamp);
+}
+
+/** How many backups a bot keeps before the oldest are pruned. */
+export const DEFAULT_BACKUP_KEEP = 3;
+
+/** Where one backup goes, and what it will capture. */
+export interface BackupTarget {
+  /** The project the bundle is written under. */
+  projectRoot: string;
+  bot: string;
+  stamp: string;
+  /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
+  dir: string;
+  /** Where the workspace half lands. */
+  workspaceDir: string;
+  keep: number;
+  /** The agent whose state to capture; absent when the box has no known one. */
+  agent?: AgentId;
+}
+
+/** What a caller may say about a backup. `keep` is a string so a CLI flag and a
+ * JSON body reach the same validator. */
+export interface BackupTargetOptions {
+  name?: string;
+  keep?: string | number;
+  agent?: string;
+}
+
+/**
+ * Resolve where this backup goes and what it will capture.
+ *
+ * `projectRoot ?? workspacePath` is the fallback the hub already uses: the field
+ * is absent on records made before it existed, and a backup must not silently
+ * pick a different directory for an old box.
+ *
+ * Shared with the hub deliberately — a route that resolved the bundle path its
+ * own way would be a second definition of "where a bot's backups live", and the
+ * CLI's `--restore` reads back what either of them wrote.
+ */
+export function resolveBackupTarget(box: BoxRecord, opts: BackupTargetOptions): BackupTarget {
+  // `botWorkspaceRoot`, not the raw root. A box created BY a restore (or a clone)
+  // already runs on `<proj>/.agentbox/bots/<x>/workspace`, so filing its backups
+  // under its own project root would nest a second bundle tree inside the live
+  // workspace — with its own `latest` and its own prune, invisible from the
+  // project the bot actually belongs to. `prepareClone` has always normalized
+  // here; backup could not reach the case until the hub exposed both halves.
+  const projectRoot = botWorkspaceRoot(box.projectRoot ?? box.workspacePath);
+  const bot = (opts.name ?? box.name).trim();
+  // Messages here reach an HTTP client as well as a CLI one, so they name the
+  // FIELD rather than a flag of a program the caller may not be running.
+  if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
+    throw new Error(`name "${opts.name ?? ''}": a bot name must be a single path segment`);
+  }
+
+  const keep =
+    opts.keep === undefined
+      ? DEFAULT_BACKUP_KEEP
+      : typeof opts.keep === 'number'
+        ? opts.keep
+        : Number.parseInt(opts.keep, 10);
+  if (!Number.isInteger(keep) || keep < 1) {
+    throw new Error(`keep "${String(opts.keep ?? '')}": expected a positive integer`);
+  }
+
+  // An explicit `--agent` is checked; a guess off the record is not, because a
+  // box whose recorded agent has since been removed from the registry should
+  // still get its workspace backed up.
+  let agent: AgentId | undefined;
+  if (opts.agent) {
+    const spec = findAgentSpec(opts.agent);
+    if (!spec) throw new Error(`agent "${opts.agent}": no such agent`);
+    agent = spec.id;
+  } else {
+    const guess = box.lastAgent ?? box.agents?.[0];
+    agent = guess ? findAgentSpec(guess)?.id : undefined;
+  }
+
+  const stamp = backupStamp();
+  const dir = botBackupDir(projectRoot, bot, stamp);
+  return { projectRoot, bot, stamp, dir, workspaceDir: join(dir, 'workspace'), keep, agent };
+}
+
+/**
+ * Create the bundle's directories before anything writes into them.
+ *
+ * rsync creates the LAST component of its destination and no more, so a fresh
+ * `<project>/.agentbox/bots/<bot>/<stamp>/workspace` is several levels too deep
+ * for it and the transfer dies with "No such file or directory". The CLI's
+ * dry-run pass hits it too, so this cannot wait until the write.
+ */
+export async function prepareBackupDir(target: BackupTarget): Promise<void> {
+  await mkdir(target.workspaceDir, { recursive: true });
 }
 
 /** What a backup records about itself, for a later `--restore`. */
@@ -163,6 +261,71 @@ export async function listBackups(projectRoot: string, bot: string): Promise<str
     if (st?.isDirectory()) dirs.push(name);
   }
   return dirs.sort().reverse();
+}
+
+/** One bot's backups, newest first, as a project page or a restore picker needs them. */
+export interface BotListing {
+  bot: string;
+  /** The stamp `latest` resolves to, when the link is there and intact. */
+  latest?: string;
+  /** Every backup this bot has, newest first, with its manifest folded in. */
+  backups: Array<{
+    stamp: string;
+    /** Absent when the bundle predates the field or its manifest is unreadable. */
+    agent?: AgentId;
+    /** False when the bundle carries only a workspace — no identity to restore. */
+    state: boolean;
+    boxName?: string;
+    provider?: string;
+  }>;
+}
+
+/**
+ * Every bot this project holds a backup of, alphabetically, each with its own
+ * backups newest first.
+ *
+ * The manifest is folded in here rather than left to the caller because the one
+ * fact a restore picker must show — does this bundle carry an identity, or only
+ * a workspace? — lives in it, and a UI that offered a `state: false` bundle as
+ * "restore this bot" would be lying about what it is about to do.
+ *
+ * A bot directory whose manifests are all unreadable still lists: the stamps are
+ * real directories, and hiding them would make a half-written backup invisible
+ * rather than visibly suspect.
+ */
+export async function listBots(projectRoot: string): Promise<BotListing[]> {
+  let names: Dirent[];
+  try {
+    names = await readdir(join(projectRoot, BOTS_DIR_REL), { withFileTypes: true });
+  } catch {
+    return []; // no bots dir is the normal case, not an error
+  }
+  const out: BotListing[] = [];
+  for (const e of names.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!e.isDirectory()) continue;
+    const stamps = await listBackups(projectRoot, e.name);
+    if (stamps.length === 0) continue;
+    const backups: BotListing['backups'] = [];
+    for (const stamp of stamps) {
+      const m = await readBackupManifest(botBackupDir(projectRoot, e.name, stamp)).catch(
+        () => null,
+      );
+      backups.push({
+        stamp,
+        ...(m?.agent ? { agent: m.agent } : {}),
+        state: m?.state === true,
+        ...(m?.boxName ? { boxName: m.boxName } : {}),
+        ...(m?.provider ? { provider: m.provider } : {}),
+      });
+    }
+    const latest = await readlink(join(botDir(projectRoot, e.name), 'latest')).catch(() => null);
+    out.push({
+      bot: e.name,
+      ...(latest && stamps.includes(latest) ? { latest } : {}),
+      backups,
+    });
+  }
+  return out;
 }
 
 /**
@@ -313,6 +476,113 @@ async function backupStateDatabases(
 
 function quote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Why `--restore` cannot also take a box ref, or null when there is no ref.
+ *
+ * A ref means "use THIS box", and the service command is create-or-resume — so
+ * the two together resume a named box and then write a backup's identity over
+ * it. No reading of `agentbox <agent> foo --restore bar` is safe, so it is
+ * refused before anything is resolved rather than reinterpreted.
+ */
+export function boxRefWithRestoreRefusal(boxRef: string | undefined): string | null {
+  if (boxRef === undefined) return null;
+  return (
+    `--restore always creates a new box, so it cannot also take the box ref "${boxRef}" — ` +
+    'drop the ref, or name the new box with -n <name>'
+  );
+}
+
+/**
+ * Why a restore cannot proceed into a directory a box already runs on.
+ *
+ * `escape` is the caller's own spelling of the way out — a CLI flag, a checkbox
+ * label — because the rule is shared but the escape hatch is not, and a web UI
+ * that tells the user to "pass --into <dir>" is telling them to use a different
+ * program.
+ */
+export function existingBoxRefusal(
+  existing: { name: string } | null | undefined,
+  dir: string,
+  escape = 'restore it somewhere else',
+): string | null {
+  if (!existing) return null;
+  return `box ${existing.name} already runs on ${dir} — ${escape} to restore alongside it`;
+}
+
+/**
+ * Why a restore cannot proceed while the box this bundle came from is still
+ * running, or null when it may.
+ *
+ * Two live gateways holding one identity is the multi-tenancy failure a per-box
+ * state dir exists to prevent, and a restore is the one operation that can
+ * produce it. The box being GONE is the normal case — that is what a restore is
+ * for — so an unknown or unprobeable record proceeds silently; only a record we
+ * can still see running stops it.
+ *
+ * Takes the live state rather than probing, so the CLI and the hub can each ask
+ * their own provider and share this one rule about the answer — and `escape` for
+ * the same reason as {@link existingBoxRefusal}: the rule is shared, the way out
+ * is spelled differently in a CLI flag and a web UI checkbox.
+ */
+export function sourceBoxRunningRefusal(
+  source: { name: string } | null | undefined,
+  liveState: string | null,
+  bot: string,
+  escape = 'force the restore',
+): string | null {
+  if (!source || liveState !== 'running') return null;
+  return (
+    `box ${source.name} is still running and holds ${bot}'s identity — ` +
+    `two live gateways cannot share one. Stop or destroy it, or ${escape}.`
+  );
+}
+
+/**
+ * Where a restored box's LIVE workspace goes: `<project>/.agentbox/bots/<bot>/workspace`.
+ *
+ * Deliberately not the bundle's own `workspace/`. That copy is immutable and
+ * `keep` may prune it, so a box writing into it would lose its workspace to a
+ * later backup.
+ */
+export function restoreWorkspaceDir(projectRoot: string, bot: string): string {
+  return join(botDir(projectRoot, bot), 'workspace');
+}
+
+/**
+ * Copy a bundle's workspace half to the live directory the restored box runs on.
+ *
+ * Refuses a non-empty destination unless `force`: the usual reason it is
+ * non-empty is an earlier restore of the same bot that is still in use, and
+ * overwriting it in place would take the running box's files out from under it.
+ */
+export async function stageRestoreWorkspace(args: {
+  bundle: BotBundle;
+  workspaceDir: string;
+  force?: boolean;
+}): Promise<{ files: number }> {
+  await mkdir(args.workspaceDir, { recursive: true });
+  const existing = await readdir(args.workspaceDir);
+  if (existing.length > 0 && !args.force) {
+    throw new Error(
+      `${args.workspaceDir} is not empty — pass a different destination, or force to overwrite it`,
+    );
+  }
+  await cp(args.bundle.workspaceDir, args.workspaceDir, { recursive: true, force: true });
+  return { files: (await readdir(args.workspaceDir)).length };
+}
+
+/**
+ * What a bundle can put back: both halves, or the workspace alone.
+ *
+ * A backup of a box with no agent — or one whose state capture failed — carries
+ * a `workspace/` and nothing else. Restoring it is still worth doing; claiming
+ * it brought an identity is not, and *failing* over it would throw away a
+ * perfectly good box the caller had already created.
+ */
+export function restoreScope(bundle: BotBundle): 'workspace' | 'workspace+state' {
+  return bundle.stateDir ? 'workspace+state' : 'workspace';
 }
 
 /** A bundle resolved on disk, ready to restore from. */

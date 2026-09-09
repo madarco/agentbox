@@ -6,95 +6,33 @@
  * That is deliberate: a backup whose file selection differed from a download's
  * would be a second definition of "the box's workspace" to keep in step.
  *
- * The decisions live in `@agentbox/sandbox-core`'s bot-backup concern so a hub
- * route can reuse them. What stays here is what only a CLI knows: which flags
- * were passed, and what to print.
+ * Everything a hub route also needs — where the bundle goes, what it captures,
+ * the manifest, the prune — lives in `@agentbox/sandbox-core`'s bot-backup
+ * concern. What stays here is what only a CLI knows: which flags were passed,
+ * and what to print. `resolveBackupTarget`/`prepareBackupDir` are re-exported so
+ * `download.ts` keeps importing its target resolution from one place.
  */
 
 import { log } from '@agentbox/cli-kit';
-import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentId, BoxRecord } from '@agentbox/core';
+import type { BoxRecord } from '@agentbox/core';
 import {
   backupAgentState,
-  backupStamp,
-  botBackupDir,
   ensureBackupGitignored,
-  findAgentSpec,
   linkLatest,
   pruneBackups,
   writeBackupManifest,
   type BackupManifest,
+  type BackupTarget,
 } from '@agentbox/sandbox-core';
 import { pullTransportForBox } from './_agent-pull-transport.js';
 
-const DEFAULT_KEEP = 3;
-
-export interface BackupTarget {
-  /** The project the bundle is written under. */
-  projectRoot: string;
-  bot: string;
-  stamp: string;
-  /** `<project>/.agentbox/bots/<bot>/<stamp>`. */
-  dir: string;
-  /** Where the workspace pull lands. */
-  workspaceDir: string;
-  keep: number;
-  /** The agent whose state to capture; absent when the box has no known one. */
-  agent?: AgentId;
-}
-
-/**
- * Where this backup goes, and what it will capture.
- *
- * `projectRoot ?? workspacePath` is the fallback the hub already uses: the field
- * is absent on records made before it existed, and a backup must not silently
- * pick a different directory for an old box.
- */
-export function resolveBackupTarget(
-  box: BoxRecord,
-  opts: { name?: string; keep?: string; agent?: string },
-): BackupTarget {
-  const projectRoot = box.projectRoot ?? box.workspacePath;
-  const bot = (opts.name ?? box.name).trim();
-  if (bot.length === 0 || bot.includes('/') || bot === '.' || bot === '..') {
-    throw new Error(`--name ${opts.name ?? ''}: a bot name must be a single path segment`);
-  }
-
-  const keep = opts.keep === undefined ? DEFAULT_KEEP : Number.parseInt(opts.keep, 10);
-  if (!Number.isFinite(keep) || keep < 1) {
-    throw new Error(`--keep ${opts.keep ?? ''}: expected a positive integer`);
-  }
-
-  // An explicit `--agent` is checked; a guess off the record is not, because a
-  // box whose recorded agent has since been removed from the registry should
-  // still get its workspace backed up.
-  let agent: AgentId | undefined;
-  if (opts.agent) {
-    const spec = findAgentSpec(opts.agent);
-    if (!spec) throw new Error(`--agent ${opts.agent}: no such agent`);
-    agent = spec.id;
-  } else {
-    const guess = box.lastAgent ?? box.agents?.[0];
-    agent = guess ? findAgentSpec(guess)?.id : undefined;
-  }
-
-  const stamp = backupStamp();
-  const dir = botBackupDir(projectRoot, bot, stamp);
-  return { projectRoot, bot, stamp, dir, workspaceDir: join(dir, 'workspace'), keep, agent };
-}
-
-/**
- * Create the bundle's directories before the pull runs.
- *
- * rsync creates the LAST component of its destination and no more, so a fresh
- * `<project>/.agentbox/bots/<bot>/<stamp>/workspace` is several levels too deep
- * for it and the transfer dies with "No such file or directory". The dry-run
- * pass hits it too, so this cannot wait until the write.
- */
-export async function prepareBackupDir(target: BackupTarget): Promise<void> {
-  await mkdir(target.workspaceDir, { recursive: true });
-}
+export {
+  prepareBackupDir,
+  resolveBackupTarget,
+  type BackupTarget,
+  type BackupTargetOptions,
+} from '@agentbox/sandbox-core';
 
 /**
  * Everything after the workspace pull: the agent's state dir, the manifest, the

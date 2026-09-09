@@ -73,6 +73,15 @@ Live databases are captured through SQLite's own online-backup API rather than c
 
 Unlike a plain `download`, a backup never asks about agent-generated files: `SOUL.md` and `IDENTITY.md` are the point of one.
 
+You can do the same thing without a terminal. The [hub](/docs/hub)'s box page shows a **Bot** card with **Back up now** on any box whose agent has an identity to keep, and the menu-bar app has **Back Up Now** in a box's submenu and its detail window. Both go through the same `POST /api/v1/boxes/{id}/backup` and write the same bundle, on the hub's machine.
+
+<Callout title="Watch for &quot;workspace only&quot;">
+  The state half is best-effort: a box whose agent cannot be reached still produces a usable
+  workspace bundle, and the manifest records `state: false`. Both UIs report that as a warning
+  rather than a success, because such a bundle will start a bot — it just will not restore *this*
+  one. `agentbox download --backup` prints the same thing as a `note:` line.
+</Callout>
+
 ## Bring a bot back
 
 `--restore <bot>` is the other half. It creates a **new** box from a backup:
@@ -92,6 +101,8 @@ The restored box does not run on the backup itself. That copy is immutable, and 
   holding one identity is exactly what a per-box state directory exists to prevent. Stop or destroy
   the old box first, or pass `--force` if you know what you are doing.
 </Callout>
+
+Both GUIs put this in their **Create box** form rather than on a box: a bundle outlives the box it came from, so by the time you want one there is usually no box left to click. Pick a project that holds a backup and a **Start from** row appears; choosing one drops the rows the bundle decides (base branch, agent, the setup wizard) and turns the button into **Restore**. Only backups that carry an identity are offered — a workspace-only bundle would start a *fresh* bot, which is what [clone](/docs/openclaw) already does.
 
 The identity goes in **after** the box has come up on its own, not before. A service agent's onboarding is a run-once task whose marker lives on the box's root filesystem rather than in the agent's config volume, so it runs on every fresh box no matter what that volume holds — there is no "write the state in first" that works. Letting it run and then replacing what it wrote means the marker is already down, and onboarding never touches the restored identity again, on that boot or any later one.
 
