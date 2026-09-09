@@ -102,7 +102,11 @@ handle_pr() {
       value_flags="$value_flags|$json_flags|--app|--assignee|-a|--author|-A|--base|-B|--head|-H|--label|-l|--limit|-L|--search|-S|--state|-s"
       ;;
     diff) value_flags="$value_flags|--color|--exclude|-e" ;;
-    comment) value_flags="$value_flags|$body_flags" ;;
+    # gh 2.99 added `--attach <file>` (upload an image/video into the comment).
+    # It takes a value, so leaving it off makes the shim read the FILE PATH as
+    # the PR ref: no branch injection, and the host resolves against its own
+    # checkout — a comment on the wrong PR.
+    comment) value_flags="$value_flags|$body_flags|--attach" ;;
     review) value_flags="$value_flags|$body_flags" ;;
     merge)
       # -t is --subject here, NOT --template; -A is --author-email.
