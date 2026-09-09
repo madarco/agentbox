@@ -2448,11 +2448,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             {
               topic: 'carry',
               reason:
-                'this hub has no local checkout of the project, so it cannot read the files a `carry:` block names',
+                "This hub runs somewhere else, so it can't reach files on your machine. They won't be copied.",
             },
             {
               topic: 'model-auth',
-              reason: 'this hub cannot read the host logins a box would borrow',
+              reason: "This hub runs somewhere else, so it can't reach your logins.",
             },
           ],
         };

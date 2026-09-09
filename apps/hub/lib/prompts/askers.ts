@@ -38,8 +38,8 @@ export function collectAsker(): CollectingAsker {
 export class UnansweredPromptError extends Error {
   constructor(public readonly request: PromptRequest) {
     super(
-      `${request.topic}: this create needs an answer to "${request.title}" and none was supplied` +
-        (request.nonInteractiveHint ? `. ${request.nonInteractiveHint}` : ''),
+      `Waiting on an answer: "${request.title}"` +
+        (request.nonInteractiveHint ? ` ${request.nonInteractiveHint}` : ''),
     );
     this.name = 'UnansweredPromptError';
   }

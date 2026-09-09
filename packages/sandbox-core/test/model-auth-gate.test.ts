@@ -105,9 +105,14 @@ describe('resolveModelAuth', () => {
 });
 
 describe('buildModelAuthPrompt', () => {
-  it('offers none plus every available borrow, with the credential detail', () => {
+  it('is a plain yes/no for the single-borrow case, with the credential detail', () => {
     const req = buildModelAuthPrompt('openclaw', [CODEX_BORROW]);
-    expect(req.choices?.map((c) => c.value)).toEqual(['none', 'codex']);
+    // Yes carries the borrow; the card below already names which login it is,
+    // so repeating it on the button would only overflow the row.
+    expect(req.choices).toEqual([
+      { value: 'codex', label: 'Yes' },
+      { value: 'none', label: 'No' },
+    ]);
     expect(req.detail).toMatchObject({
       type: 'credential',
       agent: 'codex',

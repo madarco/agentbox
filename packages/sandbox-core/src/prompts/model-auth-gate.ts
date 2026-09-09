@@ -61,22 +61,23 @@ export interface ModelAuthGateArgs {
  * prompt express something the config cannot.
  */
 export function buildModelAuthPrompt(agentId: string, available: AvailableBorrow[]): PromptRequest {
-  const choices: PromptChoice[] = [
-    {
-      value: MODEL_AUTH_NONE,
-      label: 'No model auth',
-      hint: `configure it inside the box (or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <agent>\`)`,
-    },
-    ...available.map((b) => ({
-      value: b.agent,
-      label: b.label,
-      ...(b.caveat ? { hint: b.caveat } : {}),
-      // Copying a subscription login into a long-lived daemon is the weightier
-      // of the two options, and should not look like the calm default.
-      danger: true,
-    })),
-  ];
   const first = available[0];
+  // One borrow is the only shape that exists today, and it reads as a plain
+  // yes/no. Naming the login on the button would repeat the card right below it.
+  const choices: PromptChoice[] =
+    available.length === 1 && first
+      ? [
+          { value: first.agent, label: 'Yes' },
+          { value: MODEL_AUTH_NONE, label: 'No' },
+        ]
+      : [
+          ...available.map((b) => ({
+            value: b.agent,
+            label: titleCase(b.agent),
+            ...(b.caveat ? { hint: b.caveat } : {}),
+          })),
+          { value: MODEL_AUTH_NONE, label: 'No thanks' },
+        ];
   return {
     id: promptId(MODEL_AUTH_TOPIC, {
       agent: agentId,
@@ -84,12 +85,10 @@ export function buildModelAuthPrompt(agentId: string, available: AvailableBorrow
     }),
     topic: MODEL_AUTH_TOPIC,
     kind: 'select',
-    title: `Seed this ${agentId} box with a model provider login?`,
-    body:
-      `${agentId} runs as a daemon and needs a model provider. It can start from a ` +
-      'login you already hold on this host — a copy is placed in the box, which ' +
-      'refreshes it independently from then on.',
+    title: 'Copy your model provider logins?',
     choices,
+    // Declining stays the default: copying a subscription login into a
+    // long-lived daemon should never be the answer you get by not reading.
     defaultValue: MODEL_AUTH_NONE,
     ...(first
       ? {
@@ -107,11 +106,15 @@ export function buildModelAuthPrompt(agentId: string, available: AvailableBorrow
       : {}),
     // Declining is the safe answer and the config default, so an asker that
     // cannot reach a human takes it rather than refusing the create.
-    fallback: { value: MODEL_AUTH_NONE, reason: 'not asked; starting without model auth' },
+    fallback: { value: MODEL_AUTH_NONE, reason: 'not asked - the box starts without it' },
     nonInteractiveHint:
-      `Pass --model-auth <agent|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <agent>\` ` +
-      'to decide this up front.',
+      `Use --model-auth <agent|none>, or \`agentbox config set ${agentId}.${MODEL_AUTH_SETTING} <agent>\` ` +
+      'to decide this once.',
   };
+}
+
+function titleCase(s: string): string {
+  return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1);
 }
 
 /** The agents whose logins the create should seed, in declaration order. */

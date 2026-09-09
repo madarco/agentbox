@@ -72,7 +72,7 @@ export function clackAsker(opts: ClackAskerOptions = {}): PromptAsker {
 function nonInteractive(req: PromptRequest, onLog?: (line: string) => void): PromptAnswer {
   if (req.required) {
     const hint = req.nonInteractiveHint ? ` ${req.nonInteractiveHint}` : '';
-    throw new Error(`${req.title} — requires approval but stdin is not a TTY.${hint}`);
+    throw new Error(`${req.title} Needs an answer, but this isn't an interactive terminal.${hint}`);
   }
   onLog?.(`${req.topic}: ${req.fallback.reason}`);
   return { id: req.id, value: req.fallback.value };

@@ -77,7 +77,7 @@ describe('runCarryGate', () => {
         items: [item({ src: join(root, 'nope.env') })],
         ask: refuses,
       }),
-    ).rejects.toThrow(/carry: refused to proceed/);
+    ).rejects.toThrow(/these files can't be copied/);
   });
 });
 
@@ -107,7 +107,7 @@ describe('buildCarryPrompt', () => {
 });
 
 describe('toFileRow', () => {
-  it('flags an optional entry, a dir, and a symlink out of $HOME', async () => {
+  it('describes a missing entry and a folder in plain words', async () => {
     const dir = join(root, 'tree');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'a'), 'x');
@@ -116,10 +116,10 @@ describe('toFileRow', () => {
       { projectRoot: root },
     );
     const rows = entries.map(toFileRow);
-    expect(rows[0]!.flags).toContain('optional');
+    expect(rows[0]!.flags).toContain('not on this machine');
     expect(rows[0]!.kind).toBe('missing');
     expect(rows[0]!.bytes).toBeUndefined();
-    expect(rows[1]!.flags).toContain('dir');
+    expect(rows[1]!.flags).toContain('folder');
   });
 
   it('formats mode as octal and keeps an explicit uid', async () => {

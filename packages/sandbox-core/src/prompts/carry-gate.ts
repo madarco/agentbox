@@ -33,8 +33,7 @@ export type CarryDecision = 'approve' | 'skip-this-run' | 'cancel';
  * gate knows its own escape hatches.
  */
 export const CARRY_NON_INTERACTIVE_HINT =
-  'Set AGENTBOX_CARRY_YES=1 to opt in to copying host files into this box, ' +
-  'or AGENTBOX_CARRY=skip to skip the carry block.';
+  'Set AGENTBOX_CARRY_YES=1 to allow the copy, or AGENTBOX_CARRY=skip to skip it.';
 
 export interface CarryGateArgs {
   /** Absolute project root (the dir holding `agentbox.yaml`). */
@@ -76,14 +75,12 @@ export function buildCarryPrompt(entries: ResolvedCarryEntry[]): PromptRequest {
     id: promptId(CARRY_TOPIC, rows),
     topic: CARRY_TOPIC,
     kind: 'select',
-    title: `Copy ${String(n)} host ${n === 1 ? 'entry' : 'entries'} into the box?`,
-    body:
-      'This project declares a `carry:` block. These host files are copied into ' +
-      'the box as it is created — anything secret among them leaves your machine.',
+    title: n === 1 ? 'Copy this file into the box?' : `Copy these ${String(n)} files into the box?`,
+    body: 'They leave this machine, so check the list before you say yes.',
     choices: [
-      { value: 'approve', label: 'Copy them' },
-      { value: 'skip-this-run', label: 'Skip for this box' },
-      { value: 'cancel', label: 'Cancel the create', danger: true },
+      { value: 'approve', label: 'Copy' },
+      { value: 'skip-this-run', label: 'Skip' },
+      { value: 'cancel', label: 'Cancel', danger: true },
     ],
     defaultValue: 'approve',
     detail: {
@@ -94,7 +91,7 @@ export function buildCarryPrompt(entries: ResolvedCarryEntry[]): PromptRequest {
     },
     // Silently answering this moves host secrets, so there is no safe default.
     required: true,
-    fallback: { value: 'cancel', reason: 'carry: nobody could approve the copy' },
+    fallback: { value: 'cancel', reason: 'nobody was there to approve the copy' },
     nonInteractiveHint: CARRY_NON_INTERACTIVE_HINT,
   };
 }
@@ -116,7 +113,7 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
   });
   if (resolved.errors.length > 0) {
     throw new Error(
-      ['carry: refused to proceed:', ...resolved.errors.map((e) => `  - ${e}`)].join('\n'),
+      ["carry: these files can't be copied:", ...resolved.errors.map((e) => `  - ${e}`)].join('\n'),
     );
   }
 
@@ -139,7 +136,7 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
 }
 
 function skip(count: number, emit: (line: string) => void): { decision: 'skip'; entries: [] } {
-  emit(`carry: skipped for this box (${String(count)} entry/entries not copied)`);
+  emit(`carry: skipped (${String(count)} ${count === 1 ? 'file' : 'files'} not copied)`);
   return { decision: 'skip', entries: [] };
 }
 
@@ -150,9 +147,12 @@ function isCarryDecision(v: string): v is CarryDecision {
 /** Project one resolved entry into the wire row every client renders. */
 export function toFileRow(e: ResolvedCarryEntry): PromptFileRow {
   const flags: string[] = [];
-  if (e.kind === 'missing' || e.optional) flags.push('optional');
-  if (e.kind === 'dir') flags.push('dir');
-  if (e.symlinkInfo === 'outside-home') flags.push('symlink-outside-home');
+  // Plain words, not the resolver's vocabulary — these are read by whoever is
+  // deciding, not by whoever wrote the `carry:` block.
+  if (e.kind === 'missing') flags.push('not on this machine');
+  else if (e.optional) flags.push('optional');
+  if (e.kind === 'dir') flags.push('folder');
+  if (e.symlinkInfo === 'outside-home') flags.push('shortcut to somewhere else');
   return {
     src: e.rawSrc,
     dest: e.rawDest,
@@ -177,11 +177,9 @@ export function renderCarryTable(rows: PromptFileRow[]): string {
   if (rows.length === 0) return '';
   const srcW = Math.max(3, ...rows.map((r) => r.src.length));
   const destW = Math.max(4, ...rows.map((r) => r.dest.length));
-  const out = [`${pad('src', srcW)}  ->  ${pad('dest', destW)}  size       flags`];
+  const out = [`${pad('from', srcW)}  ->  ${pad('to', destW)}  size       notes`];
   for (const r of rows) {
     const flags = [...r.flags];
-    if (r.mode !== undefined) flags.push(`mode ${r.mode}`);
-    if (r.user !== undefined) flags.push(`user ${String(r.user)}`);
     const size = r.kind === 'missing' ? '-' : formatBytes(r.bytes ?? 0);
     out.push(
       `${pad(r.src, srcW)}  ->  ${pad(r.dest, destW)}  ${pad(size, 9)}  ${flags.join(', ')}`,
