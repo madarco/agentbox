@@ -107,6 +107,9 @@ describe('openclaw registry row', () => {
     for (const name of ['openclaw.json', 'config-journal-fingerprint.key', 'state']) {
       expect(excludes, name).toContain(name);
     }
+    // Per-gateway approval state; the host's older-version copy broke a newer
+    // cloud box on its first turn.
+    expect(excludes).toContain('exec-approvals.json*');
     // `tmp` holds lock sqlites under a dir keyed by the box user's UID, which
     // differs per provider (docker 1000, vercel 1001, e2b 1002).
     expect(excludes).toContain('tmp');

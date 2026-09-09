@@ -399,6 +399,11 @@ export const openclawSpec: AgentSyncSpec = {
         'config-journal-fingerprint.key',
         '.agentbox-overlay.json',
         '.agentbox-model-auth.sha256',
+        // Per-gateway exec-approval state, plus the `.migrated.<hash>` archives
+        // doctor leaves beside it. MEASURED: the host's copy from an older
+        // openclaw rode the cloud static push into a 2026.9.3 box, and every
+        // turn there failed with "Legacy exec approvals exist ... run doctor".
+        'exec-approvals.json*',
         'state',
         'migration',
         'tmp',
