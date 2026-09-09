@@ -34,6 +34,7 @@ import {
   type BoxRecord,
   type CloudSandboxSummary,
   type ExecResult,
+  type PromptAnswer,
   type Provider,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
@@ -57,6 +58,8 @@ import {
   type QueueJobCreateOpts,
   type RelayServerHandle,
 } from '@agentbox/relay';
+import { collectAsker, answerMapAsker } from './prompts/askers.js';
+import { runCreateGates } from './prompts/create-gates.js';
 import { mergeRemoteProviders } from './boxes/provider-origin.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
@@ -144,6 +147,7 @@ import type {
   CloudOrphanView,
   CreateBoxInput,
   CreateBoxResult,
+  CreatePreflightResult,
   CreateProjectInput,
   DirEntry,
   GitInfo,
@@ -2358,6 +2362,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // worker's config defaults. `workspace`/`name`/`fromBranch` are authoritative
         // here (resolved server-side), so they win over any opts echo.
         const o = input.opts ?? {};
+        // The host-boundary gates (`carry:`, model auth) run HERE, before the job
+        // is queued — the same front-loading the CLI's `-i` path does. A client
+        // that ran the preflight replays its answers; one that did not gets each
+        // prompt's fallback, and a `required` one (carry, which moves host
+        // secrets) fails the create loudly instead of silently skipping.
+        let gated;
+        try {
+          gated = await runCreateGates({
+            workspace,
+            agent: input.agent,
+            ask: answerMapAsker(o.promptAnswers as PromptAnswer[] | undefined),
+          });
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (gated.cancelled) return { ok: false, error: 'create cancelled' };
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',
@@ -2379,7 +2399,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             envFiles: o.envFiles,
             vnc: o.vnc,
             persistent,
-            borrowCredentials: o.borrowCredentials,
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,
@@ -2399,15 +2418,59 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             location: o.location,
             inbound: o.inbound,
             remoteHost: o.remoteHost,
-            // ResolvedCarryEntry[] on the wire is typed unknown[] (Next-bundle
-            // hygiene); the worker reads the concrete shape.
-            carry: o.carry as QueueJobCreateOpts['carry'],
+            // Resolved server-side by the gates above, so a tray/web create
+            // carries the same files and borrows the same login a CLI one does.
+            // These win over any client echo: the answer is the client's, the
+            // resolution is ours.
+            carry: gated.carry as QueueJobCreateOpts['carry'],
+            borrowCredentials: gated.borrowCredentials.length
+              ? gated.borrowCredentials
+              : o.borrowCredentials,
           },
         });
         handle.pokeQueue();
         return { ok: true, jobId: job.id };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    async createPreflight(input): Promise<CreatePreflightResult> {
+      const empty: CreatePreflightResult = { prompts: [], unavailable: [] };
+      const workspace = input.projectId ? await resolveProjectPath(input.projectId) : null;
+      // A control box's projects are repos, not folders: its worker clones them
+      // on the VPS and can read neither the caller's `agentbox.yaml` nor their
+      // host logins. Say so — a client that is told carry is unavailable can
+      // tell the user, where a silent empty list looks like "nothing to ask".
+      if (!workspace || !existsSync(workspace)) {
+        return {
+          prompts: [],
+          unavailable: [
+            {
+              topic: 'carry',
+              reason:
+                'this hub has no local checkout of the project, so it cannot read the files a `carry:` block names',
+            },
+            {
+              topic: 'model-auth',
+              reason: 'this hub cannot read the host logins a box would borrow',
+            },
+          ],
+        };
+      }
+      try {
+        const asker = collectAsker();
+        const res = await runCreateGates({ workspace, agent: input.agent, ask: asker.ask });
+        return { prompts: asker.collected, unavailable: res.unavailable };
+      } catch (err) {
+        // A hard resolver error (a missing non-optional src, an over-cap entry)
+        // is the same failure `create` would hit. Surface it as an unavailable
+        // gate so the form can show it before the user commits to a box.
+        return {
+          ...empty,
+          unavailable: [
+            { topic: 'carry', reason: err instanceof Error ? err.message : String(err) },
+          ],
+        };
       }
     },
     async setProviderCredentials(id, fields): Promise<ActionResult> {

@@ -200,7 +200,44 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     if (!Array.isArray(v.carry)) return { ok: false, message: 'opts.carry must be an array' };
     out.carry = v.carry;
   }
+  // Other agents' host logins to seed as model auth. Parsed rather than dropped:
+  // the backend has always read this field, so without it the key was dead.
+  const bc = optionalStringArray(v.borrowCredentials, 'opts.borrowCredentials');
+  if (!bc.ok) return bc;
+  if (bc.value !== undefined) out.borrowCredentials = bc.value;
+  // promptAnswers: PromptAnswer[] — the client's answers to create-preflight.
+  // Only the shape is checked here; the backend matches each id against the
+  // question it actually asks, and refuses a stale one.
+  if (v.promptAnswers !== undefined) {
+    if (!Array.isArray(v.promptAnswers)) {
+      return { ok: false, message: 'opts.promptAnswers must be an array' };
+    }
+    for (const [i, a] of v.promptAnswers.entries()) {
+      if (!isObject(a) || typeof a.id !== 'string' || typeof a.value !== 'string') {
+        return {
+          ok: false,
+          message: `opts.promptAnswers[${String(i)}] must be { id: string, value: string }`,
+        };
+      }
+    }
+    out.promptAnswers = v.promptAnswers;
+  }
   return { ok: true, value: out };
+}
+
+// Body of POST /api/v1/projects/:id/create-preflight. The project comes from the
+// path (resolved server-side, never a client path); the agent decides which
+// agent-specific gates run.
+export function parseCreatePreflight(body: unknown): Parsed<{ agent: string; provider?: string }> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const agent = typeof body.agent === 'string' ? body.agent.trim() : '';
+  if (agent.length === 0) return { ok: false, message: 'agent is required (string)' };
+  const provider = optionalString(body.provider, 'provider');
+  if (!provider.ok) return provider;
+  return {
+    ok: true,
+    value: { agent, ...(provider.value !== undefined ? { provider: provider.value } : {}) },
+  };
 }
 
 // Rename a box: set (or clear, with an empty string) its cosmetic display label.

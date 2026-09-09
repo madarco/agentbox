@@ -183,6 +183,29 @@ export interface CreateBoxOpts {
    * files (the local file-queue path).
    */
   carry?: unknown[];
+  /**
+   * Answers to the questions GET/POST create-preflight returned
+   * (`PromptAnswer[]` from @agentbox/core — typed `unknown[]` here to keep that
+   * package out of the Next bundle). A create that omits an answer to a
+   * `required` prompt is refused rather than silently defaulted.
+   */
+  promptAnswers?: unknown[];
+}
+
+// What a create would ask the user, before anything is provisioned. `prompts`
+// is a `PromptRequest[]` (typed `unknown[]` to keep @agentbox/core out of the
+// Next bundle); `unavailable` names each gate this hub cannot run and why — a
+// remote control box cannot read the caller's files, and saying so is better
+// than silently dropping them.
+export interface CreatePreflightResult {
+  prompts: unknown[];
+  unavailable: { topic: string; reason: string }[];
+}
+
+export interface CreatePreflightInput {
+  projectId: string;
+  agent: string;
+  provider?: string;
 }
 
 // Input for creating a box. The client sends EITHER a `projectId` (a registered
@@ -467,6 +490,10 @@ export interface HubBackend {
   providersWithFreshness(opts?: { expandRemoteDockerHosts?: boolean }): Promise<ProviderOption[]>;
   // Enqueue a background create job for a registered project; returns the jobId.
   create(input: CreateBoxInput): Promise<CreateBoxResult>;
+  // What would a create for this project + agent ask the user? Runs the real
+  // gates with a collecting asker, so the questions returned here are by
+  // construction the questions `create` asks.
+  createPreflight(input: CreatePreflightInput): Promise<CreatePreflightResult>;
   // Persist a provider's credentials (validated against the cloud, then written
   // to ~/.agentbox/secrets.env). `fields` is provider-specific (e.g. { apiKey },
   // { token }, { token, teamId?, projectId? }). Never returns secret values.

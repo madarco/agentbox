@@ -126,6 +126,32 @@ describe('parseCreateBox', () => {
     expect(r.value.opts?.carry).toHaveLength(1);
   });
 
+  it('threads promptAnswers and borrowCredentials through', () => {
+    const r = parseCreateBox({
+      projectId: 'p',
+      agent: 'claude',
+      opts: {
+        promptAnswers: [{ id: 'carry:abc123', value: 'approve' }],
+        borrowCredentials: ['codex'],
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.opts?.promptAnswers).toEqual([{ id: 'carry:abc123', value: 'approve' }]);
+    // `borrowCredentials` was read by the backend but never parsed here, so the
+    // key was dead on the wire.
+    expect(r.value.opts?.borrowCredentials).toEqual(['codex']);
+  });
+
+  it('rejects a malformed promptAnswers entry', () => {
+    const bad = (promptAnswers: unknown) =>
+      parseCreateBox({ projectId: 'p', agent: 'none', opts: { promptAnswers } }).ok;
+    expect(bad('approve')).toBe(false);
+    expect(bad([{ id: 'carry:abc' }])).toBe(false);
+    expect(bad([{ value: 'approve' }])).toBe(false);
+    expect(bad([{ id: 'carry:abc', value: 5 }])).toBe(false);
+  });
+
   it('rejects a wrong-typed opts field and a bad gitPushMode', () => {
     expect(parseCreateBox({ projectId: 'p', agent: 'none', opts: { image: 5 } }).ok).toBe(false);
     expect(

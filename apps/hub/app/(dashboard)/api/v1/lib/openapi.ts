@@ -879,6 +879,45 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/projects/{id}/create-preflight': {
+        post: {
+          tags: ['Projects'],
+          summary: 'What would creating a box here ask the user?',
+          description:
+            'The host-boundary questions a create for this project would ask — a project\'s `carry:` block, the host login a service agent would borrow — as `PromptRequest` objects a client renders and answers. Answers ride back on `POST /api/v1/boxes` as `opts.promptAnswers`.\n\nThe list comes from running the real gates with a collecting asker, so it can never differ from what the create asks. `unavailable` names each gate this hub cannot run and why: a control box has no local checkout of the project, so it can read neither the files a `carry:` block names nor the host logins a box would borrow, and says so rather than returning an empty list that looks like "nothing to ask".\n\nA client that skips this endpoint still creates boxes: every prompt carries a `fallback`. But a prompt marked `required` — `carry:`, whose silent answer would move host secrets — has no safe fallback, and a create that leaves it unanswered is refused.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['agent'],
+                  properties: {
+                    agent: {
+                      type: 'string',
+                      description:
+                        'Agent the box would run; decides which agent-specific gates apply. `none` for an agentless box.',
+                    },
+                    provider: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The questions this create would ask',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/CreatePreflight' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/projects/{id}/seed': {
         get: {
           tags: ['Projects'],
@@ -2066,6 +2105,80 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           required: ['id', 'name'],
         },
+        PromptRequest: {
+          type: 'object',
+          description:
+            'One question to put to the user. The generic half (`kind`, `title`, `body`, `choices`) is enough to render and answer ANY prompt, including one this client has never seen. `detail` is the opt-in half: a client that recognises the variant draws it properly (a file table, a credential card) and one that does not renders its `summary`.',
+          required: ['id', 'topic', 'kind', 'title', 'fallback'],
+          properties: {
+            id: {
+              type: 'string',
+              description:
+                'Content-addressed over the question itself (`<topic>:<digest>`). Echo it back in the answer; if the question has since changed the id no longer matches and the create refuses rather than applying an answer to a different question.',
+            },
+            topic: {
+              type: 'string',
+              description: 'Machine-stable reason this prompt exists: `carry`, `model-auth`.',
+            },
+            kind: { type: 'string', enum: ['confirm', 'select', 'text'] },
+            title: { type: 'string' },
+            body: { type: 'string' },
+            choices: {
+              type: 'array',
+              description: 'Required for `select`.',
+              items: {
+                type: 'object',
+                required: ['value', 'label'],
+                properties: {
+                  value: { type: 'string' },
+                  label: { type: 'string' },
+                  hint: { type: 'string' },
+                  danger: { type: 'boolean' },
+                },
+              },
+            },
+            defaultValue: { type: 'string' },
+            detail: {
+              type: 'object',
+              description:
+                'Typed extra content, discriminated by `type` (`file-table` | `credential` | `text`). Every variant carries `summary`, so an unknown one still renders.',
+              required: ['type', 'summary'],
+              properties: { type: { type: 'string' }, summary: { type: 'string' } },
+              additionalProperties: true,
+            },
+            fallback: {
+              type: 'object',
+              description: 'What happens if nobody answers.',
+              required: ['value', 'reason'],
+              properties: { value: { type: 'string' }, reason: { type: 'string' } },
+            },
+            required: {
+              type: 'boolean',
+              description:
+                'No safe fallback: a create that leaves this unanswered is refused rather than defaulted.',
+            },
+            nonInteractiveHint: {
+              type: 'string',
+              description: 'The flags or env vars that decide this question up front.',
+            },
+          },
+        },
+        CreatePreflight: {
+          type: 'object',
+          required: ['prompts', 'unavailable'],
+          properties: {
+            prompts: { type: 'array', items: { $ref: '#/components/schemas/PromptRequest' } },
+            unavailable: {
+              type: 'array',
+              description: 'Gates this hub cannot run, and why.',
+              items: {
+                type: 'object',
+                required: ['topic', 'reason'],
+                properties: { topic: { type: 'string' }, reason: { type: 'string' } },
+              },
+            },
+          },
+        },
         ProjectSeed: {
           type: 'object',
           properties: {
@@ -2373,6 +2486,26 @@ export function buildOpenApi(): Record<string, unknown> {
                   type: 'boolean',
                   description:
                     "Always-on box: never auto-paused, never idle-lapsed, skipped by prune, restarted after a host reboot. OMIT for no opinion — a service agent then defaults to `true` and everything else to the hub's `box.persistent`. `true` on e2b/vercel is refused with `conflict`.",
+                },
+                promptAnswers: {
+                  type: 'array',
+                  description:
+                    'Answers to the questions POST /projects/{id}/create-preflight returned. Each `id` is matched against the question the create actually asks, so a stale answer is ignored rather than applied. Omitting an answer to a `required` prompt fails the create.',
+                  items: {
+                    type: 'object',
+                    required: ['id', 'value'],
+                    properties: {
+                      id: { type: 'string' },
+                      value: { type: 'string' },
+                      cancelled: { type: 'boolean' },
+                    },
+                  },
+                },
+                borrowCredentials: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    "Other agents' host logins to seed as this box's model auth (`--model-auth`; service agents). Normally decided by the `model-auth` prompt instead.",
                 },
               },
             },
