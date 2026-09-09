@@ -64,8 +64,11 @@ export async function runModelAuthIngest(
   const name = ingest.kind === 'serviceTask' ? ingest.task : ingest.name;
   try {
     const res = await exec(argv);
+    // Not prefixed with `name`: an ingest script tags its own output (both
+    // openclaw's and the Codex import do), so adding one here read as
+    // "pi-model-auth: pi-model-auth: imported ...".
     const out = `${res.stdout}${res.stderr}`.trim();
-    if (out.length > 0) for (const line of out.split('\n')) opts.onLog?.(`${name}: ${line}`);
+    if (out.length > 0) for (const line of out.split('\n')) opts.onLog?.(line);
     return { ran: true, exitCode: res.exitCode, name };
   } catch (err) {
     // Never fatal: see the contract above.

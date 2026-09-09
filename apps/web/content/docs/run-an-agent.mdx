@@ -114,6 +114,34 @@ $ agentbox claude
 
 Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box and skips the sign-in offer. Host `~/.claude` stays the source of truth — every `create` / `claude` syncs it in, so skills, plugins, MCP, and login flow into the next box. Cloud providers capture the login to `~/.agentbox` and push it in on create — see [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
+## Share a login you already have
+
+Some agents can run on a model-provider login another agent holds, so you do not
+have to sign in twice. `pi` and `opencode` are both multi-provider and both
+accept your **Codex (ChatGPT subscription)** login:
+
+```bash
+agentbox pi --model-auth codex        # this box
+agentbox opencode --model-auth codex
+agentbox config set pi.modelAuth codex   # every box; `none` to stop being asked
+```
+
+The host copies your Codex login into the box at Codex's own path, and the agent
+imports it into its own store before its session starts. On an interactive
+create with nothing configured, you are asked once.
+
+<Callout type="warn">
+A box **cannot refresh a borrowed login by itself** — the provider rejects a
+refresh from a different tool. The box works until the copied token expires,
+and is renewed by `agentbox credentials propagate --agent codex`, which pushes
+your host's refreshed login and re-runs the import. Boxes on their own login
+(`agentbox codex`) are unaffected.
+</Callout>
+
+Your Claude login is deliberately **not** shareable this way: a refresh inside a
+box would rotate the token and sign you out on the host and in every Claude box.
+Use `ANTHROPIC_API_KEY` for that instead.
+
 ## Credential sync across boxes
 
 Claude's OAuth refresh **rotates** the refresh token: the moment any box refreshes, every other copy of that login (the host backup, other boxes) stops working and 401s. AgentBox handles this automatically: the in-box supervisor watches each agent's credential file (`~/.claude/.credentials.json`, codex/opencode/pi `auth.json`) and reports a refreshed blob to the host relay, which keeps the newest one (for Claude, `expiresAt` decides; codex/opencode/pi are last-writer-wins) and pushes it into all your other running boxes — docker boxes via their config volumes (paused ones included), cloud boxes over the provider transport. A paused cloud box is reconciled when it wakes: `resume`/`start` compares the box's blobs with the host backup and pushes or captures whichever is newer.

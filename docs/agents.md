@@ -502,26 +502,56 @@ name; the render lints for a secret-shaped literal and warns.
 
    **`modelAuth` is the other direction: a login the agent CONSUMES.** A service
    agent that speaks to a model provider with the user's Codex login declares
-   `modelAuth: { borrows: [{ agent: 'codex', label }], ingestTask }` — which
-   other agents' host-held `credential`s it may borrow, and the `service.tasks`
-   entry that turns the borrowed file into its own store. The host's whole job
-   is deciding WHICH login enters the box (`--model-auth`, the generated
-   `<agent>.modelAuth` key, or a TTY prompt defaulting to no) and landing it at
-   the LENDER's own `credential.boxAbsPath`, 0600, through the carry step every
-   provider already runs before the first supervisor task. AgentBox never learns
-   the consumer's auth format: openclaw's `openclaw-model-auth` installs the
-   official `@openclaw/codex` plugin and runs `openclaw migrate apply codex
-   --item auth:openai`, gated on a hash of the seed so a later boot is a no-op.
-   Borrowing is one-way — `box.agents` still gates extraction, the resume
-   reconcile and the watch, so the daemon's own refreshed chain never flows
-   back over the host's — and it is recorded as `BoxRecord.borrowedCredentials`
-   so the fan-out reaches the box (push to the canonical path, re-run the
-   ingest) and a clone borrows the same set afresh. Measured before it was
-   designed: OpenAI does not invalidate a prior refresh token on rotation, so
-   each seeded box is an independent session and no reverse sync is needed.
+   `modelAuth: { sources, ingest }` — which host model-provider credentials a
+   box running this agent may be seeded with, and how it takes them in. A
+   **source** is one of two kinds: `agent` (another agent's host-held
+   `credential` FILE, landed at the LENDER's own `credential.boxAbsPath`, 0600,
+   through the carry step every provider already runs) or `env` (a provider API
+   key the host holds in its environment). `modelAuthSourceId` gives each a
+   stable id — an agent id bare (`codex`), an env key prefixed
+   (`env:XAI_API_KEY`) — and that id is what `--model-auth`, the generated
+   `<agent>.modelAuth` key and `BoxRecord.modelAuthSources` all carry. The
+   host's whole job is deciding WHICH may enter the box (`--model-auth`, the
+   config key, or a prompt) and putting it there.
+
+   AgentBox never learns the consuming agent's auth format. **`ingest`** names
+   how the row turns a seeded FILE into its own store, in one of two shapes:
+   `serviceTask` names an entry in the agent's own `service.tasks`, ordered in
+   its DAG (openclaw installs the official `@openclaw/codex` plugin and runs
+   `openclaw migrate apply codex --item auth:openai`); `command` is a script the
+   HOST runs in the box at the launch seam, after the binary is installed and
+   before the session starts. A TUI agent must use `command`: it has no
+   supervisor unit to hang a task on, and ctl's wire cannot express a task
+   without a service. pi and opencode use it to map a borrowed Codex login into
+   their own provider-keyed `auth.json` — both already store a
+   ChatGPT-subscription profile in the same five-field shape, under the same
+   OpenAI OAuth client as the Codex CLI, so the import is a field mapping.
+
+   Every ingest is gated on a hash of the SEED and exits 0 on nothing-to-do, so
+   re-running it on each launch is free. That gate is load-bearing, not just an
+   optimisation — see the renewal note below.
+
+   Seeding is one-way — `box.agents` still gates extraction, the resume
+   reconcile and the watch, so the box's own store never flows back over the
+   host's — and the grant is recorded as `BoxRecord.borrowedCredentials` so the
+   fan-out reaches the box (push to the canonical path, re-run the ingest) and a
+   clone re-grants the same set.
+
+   **Two measured facts decide the design.** OpenAI does not invalidate a prior
+   refresh token on rotation, so each seeded box is an independent session and
+   no reverse sync is needed. But a *consumer* cannot refresh a codex-issued
+   token — pi returns `invalid_state` for one while refreshing its own fine — so
+   a mapped profile must carry the real expiry off the access token's `exp`
+   claim, never 0 or a past value, and a seeded box **cannot renew itself**. Its
+   only renewal path is the credential fan-out re-pushing the host's refreshed
+   login, which re-runs the ingest because the seed's hash changed. That makes
+   `agentbox credentials propagate --agent codex` matter far more for pi and
+   opencode than for openclaw, whose own store refreshes independently.
+
    Claude's live OAuth blob is deliberately NOT borrowable — a refresh by the
    consumer rotates the refresh token and logs out the host and every claude
-   box. See `docs/service-agent-model-auth-plan.md`.
+   box. An Anthropic API key is a safe `env` source instead. See
+   `docs/service-agent-model-auth-plan.md`.
 
    **`clone` is optional, and only a SERVICE agent has ever needed it.** It
    answers "what must differ when a second instance of this agent is spawned
