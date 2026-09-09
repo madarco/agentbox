@@ -57,7 +57,11 @@ export default function BoxDetailPage() {
       </div>
 
       {box.error ? (
-        <Alert className="mt-4 border-[var(--red-line)] bg-[var(--red-soft)] text-[var(--red)]" icon={Icons.warn} title="Box errored">
+        <Alert
+          className="mt-4 border-[var(--red-line)] bg-[var(--red-soft)] text-[var(--red)]"
+          icon={Icons.warn}
+          title="Box errored"
+        >
           <span className="font-mono text-secondary-foreground">{box.error}</span>
         </Alert>
       ) : null}
@@ -77,15 +81,26 @@ export default function BoxDetailPage() {
           web/VNC endpoint and no launchable host app. */}
       <Access box={box} />
 
-      <SectionLabel>Git operations</SectionLabel>
-      <GitActions box={box} />
+      {/* A box created from a plain directory has no worktree and no remote, so
+          every button in this card would fail. `undefined` means the source did
+          not say (hosted plane, older hub) — show it, as before. */}
+      {box.hasGit === false ? null : (
+        <>
+          <SectionLabel>Git operations</SectionLabel>
+          <GitActions box={box} />
+        </>
+      )}
 
       <ServicesPanel id={box.id} running={box.status === 'running'} />
 
       <SectionLabel>Details</SectionLabel>
       <Card className="divide-y divide-border/60 overflow-hidden">
         <DRow k="Box ID" v={box.id} mono />
-        <DRow k="Project" v={proj ? proj.name : '—'} link={proj ? '/projects/' + box.projectId : null} />
+        <DRow
+          k="Project"
+          v={proj ? proj.name : '—'}
+          link={proj ? '/projects/' + box.projectId : null}
+        />
         <DRow k="Repository" v={box.repo} mono />
         <DRow k="Branch" v={box.branch} mono />
         <DRow k="Host" v={box.host} mono />

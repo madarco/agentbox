@@ -82,6 +82,7 @@ import {
   boxSshDirForProvider,
   botWorkspaceRoot,
   clonePerBoxCarryRefusal,
+  detectGitRepos,
   ensureBackupGitignored,
   exportBoxWorkspace,
   findAgentSpec,
@@ -350,7 +351,12 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
-function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): Box {
+function mapBox(
+  b: ListedBox,
+  regroup?: ProjectRegrouping,
+  originUrl?: string,
+  hasGit?: boolean,
+): Box {
   const root = projectRootOf(b);
   const createdAt = Date.parse(b.createdAt) || Date.now();
   const status = mapStatus(b);
@@ -399,6 +405,18 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
     vncEnabled: b.vncEnabled ?? false,
     persistent: b.persistent === true,
     gitWorktrees: b.gitWorktrees?.map((w) => ({ kind: w.kind, branch: w.branch })),
+    // Resolved by the caller, which memoizes the `.git` probe per project root —
+    // a cloud box records no worktrees at all (it carries `cloud.workspaceBranch`,
+    // which is minted whether or not a repo exists), so the recorded list alone
+    // would report every cloud box as repo-less.
+    hasGit,
+    // `findAgentSpec`, not `resolveAgentSpec`: the latter THROWS on an id the
+    // registry no longer knows, which a removed plugin agent is, and a box whose
+    // agent went away must still list.
+    supportsBackup:
+      findAgentSpec(b.lastAgent ?? b.agents?.[0] ?? '')?.stateBackup !== undefined
+        ? true
+        : undefined,
     // The keyed map is the source; the five named fields below are its derived
     // projection, kept because the macOS tray decodes the three title keys BY
     // NAME (as optional strings, so dropping one would silently blank its box
@@ -460,6 +478,34 @@ function mapBox(b: ListedBox, regroup?: ProjectRegrouping, originUrl?: string): 
  * local state, not here).
  */
 
+/**
+ * "Does this box have a git repo at all?", resolved per project root and cached
+ * for the life of one `getData()`.
+ *
+ * The recorded worktree list is the fast path but not a sufficient one: only the
+ * docker provider writes `gitWorktrees`, so every cloud box would read as
+ * repo-less. Falling through to the same `detectGitRepos` probe the create paths
+ * use is what keeps the answer honest across providers — and, being a read-time
+ * probe rather than a persisted bit, it needs no migration for boxes that
+ * already exist and follows a project that gains a repo later.
+ */
+function boxHasGitResolver(): (b: ListedBox) => Promise<boolean | undefined> {
+  const byRoot = new Map<string, Promise<boolean>>();
+  return async (b) => {
+    if ((b.gitWorktrees?.length ?? 0) > 0) return true;
+    const root = b.projectRoot ?? b.workspacePath;
+    if (!root) return undefined;
+    let probe = byRoot.get(root);
+    if (!probe) {
+      probe = detectGitRepos(root)
+        .then((repos) => repos.length > 0)
+        .catch(() => false);
+      byRoot.set(root, probe);
+    }
+    return probe;
+  };
+}
+
 function mapRegistrationToBox(reg: BoxRegistration): Box {
   const createdAt = Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now();
   const { id: projectId, repo: repoKey } = registrationProjectKey(reg);
@@ -468,6 +514,11 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     projectId,
     repo: repoKey,
     branch: reg.worktrees?.[0]?.branch ?? '',
+    // The registration's own answer: `BoxWorktree[]` is documented "Empty when
+    // the box has no git repos", and it is all a control box has for a box whose
+    // project folder lives on someone else's machine.
+    hasGit: (reg.worktrees?.length ?? 0) > 0,
+    supportsBackup: findAgentSpec(reg.agent ?? '')?.stateBackup !== undefined ? true : undefined,
     task: reg.name,
     displayName: null,
     agent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']) ?? 'claude',
@@ -2126,15 +2177,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           ...custodyIdentityFromRegistration(reg),
         });
       }
+      // Resolved before mapping because `mapBox` is sync and the git answer is a
+      // filesystem probe; the resolver caches per project root, so a fleet of
+      // boxes over three projects costs three stats, not one per box.
+      const hasGitOf = boxHasGitResolver();
+      const listedBoxes = await Promise.all(
+        listed.map(async (b) =>
+          mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
+        ),
+      );
       return {
         user: currentUser(),
         github: LOCAL_GITHUB,
         projects,
-        boxes: [
-          ...jobBoxes,
-          ...listed.map((b) => mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl)),
-          ...registeredBoxes,
-        ],
+        boxes: [...jobBoxes, ...listedBoxes, ...registeredBoxes],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: await withRemoteProviders(listProviders(jobs)),

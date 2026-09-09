@@ -2011,6 +2011,16 @@ export function buildOpenApi(): Record<string, unknown> {
                 properties: { kind: { type: 'string' }, branch: { type: 'string' } },
               },
             },
+            hasGit: {
+              type: 'boolean',
+              description:
+                'Does the box workspace have a git repo at all? `false` means there is no worktree and no branch, and a client should HIDE its git UI (pull/push/checkout would all fail). Derived host-side on read from the recorded worktrees, else a `.git` probe of the project root, so cloud boxes — which record no worktrees — answer correctly. ABSENT is not `false`: the hosted plane and synthetic creating/error rows say nothing, and silence must be read as "show".',
+            },
+            supportsBackup: {
+              type: 'boolean',
+              description:
+                "The box's agent declares a state backup, so `POST /boxes/{id}/backup` captures its IDENTITY (gateway token, pairings, history) and not just a workspace. Present for a service bot (openclaw); absent for a coding-agent box.",
+            },
             agentStatus: {
               type: 'object',
               description:

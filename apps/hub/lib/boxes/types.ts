@@ -52,6 +52,20 @@ export interface Box {
   // relay's boot reconcile. Absent/false = an ordinary expendable box.
   persistent?: boolean;
   gitWorktrees?: Array<{ kind?: string; branch?: string }>;
+  // Does this box's workspace have a git repo AT ALL? False means no worktree,
+  // no branch, nothing for pull/push/checkout to act on — clients HIDE their git
+  // UI on it. Derived host-side on read (recorded worktrees, else a `.git` probe
+  // of the project root) rather than persisted, so it is right for boxes that
+  // already existed and stays right if the project later gains a repo.
+  //
+  // `undefined` is NOT false: the hosted/Postgres source and synthetic job rows
+  // say nothing, and a client must treat silence as "show", never as "hide".
+  hasGit?: boolean;
+  // The box's agent declares a state backup (`AgentSyncSpec.stateBackup`), so
+  // `POST /boxes/{id}/backup` captures its IDENTITY and not merely a workspace.
+  // True for a service bot (openclaw); absent for a coding-agent box, whose
+  // backup would be a directory copy nobody asked for.
+  supportsBackup?: boolean;
   // Every reporting agent's activity + session title, keyed by agent id. THE
   // source; the five named fields below are its derived projection, kept because
   // the macOS tray decodes the three title keys BY NAME and a client older than
