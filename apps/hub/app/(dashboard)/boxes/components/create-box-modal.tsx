@@ -23,6 +23,13 @@ import { useStore } from '@/lib/boxes/store';
 import type { AgentOption, Project, ProviderOption } from '@/lib/boxes/types';
 import { cn } from '@/lib/utils';
 import { JobLogStream, type JobLoginState } from './job-log-stream';
+import { PromptView, type PromptRequest } from './prompt-view';
+
+/** Mirror of @agentbox/core's PromptAnswer (kept out of the Next bundle). */
+interface PromptAnswer {
+  id: string;
+  value: string;
+}
 
 type Agent = CreateBoxInput['agent'];
 
@@ -134,6 +141,13 @@ function CreateBoxModal({
   const [sizeRebake, setSizeRebake] = useState<{ required: boolean; reason?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  // Questions the hub says this create needs approved, asked one at a time, and
+  // the answers gathered so far. Empty when there is nothing to ask.
+  const [prompts, setPrompts] = useState<PromptRequest[]>([]);
+  const [answers, setAnswers] = useState<PromptAnswer[]>([]);
+  // Gates this hub could not run (a control box cannot read this machine's
+  // files) — shown so a dropped `carry:` block is never silent.
+  const [unavailable, setUnavailable] = useState<{ topic: string; reason: string }[]>([]);
   const [jobStatus, setJobStatus] = useState<string>('streaming');
   const [loginPhase, setLoginPhase] = useState<JobLoginState['phase'] | null>(null);
   // Two-phase create: when the provider's base image needs baking, a prepare
@@ -384,61 +398,124 @@ function CreateBoxModal({
     });
   };
 
+  /**
+   * Ask the hub what this create would need approved, then either show those
+   * questions or go straight to creating. Runs on Create rather than on every
+   * form change: the answer depends on the agent, and the walk touches the disk.
+   */
   const startCreate = () => {
     setError(null);
     startTransition(async () => {
-      const res = await createBoxAction({
-        projectId,
-        agent,
-        provider,
-        name: name.trim() || undefined,
-        prompt: agent === 'none' ? undefined : prompt.trim() || undefined,
-        // Only pin an explicit base when it differs from the current branch; leaving the current
-        // branch selected bases the box on the host's literal HEAD (like `agentbox create` with no
-        // --from-branch) and skips a redundant fetch. Uncommitted + untracked files carry over either way.
-        fromBranch:
-          fromBranch.trim() && fromBranch.trim() !== selected?.currentBranch
-            ? fromBranch.trim()
-            : undefined,
-        setupWizard: agent !== 'none' && runSetup,
-        // Both options land in ONE `opts`: two conditional `{ opts: ... }`
-        // spreads would overwrite each other, silently dropping `persistent`
-        // whenever a size was also picked.
-        //
-        // `persistent` is omitted unless asked for — sending `false` would
-        // override the hub's own `box.persistent`, turning "no opinion" into an
-        // opt-out. `size` goes only to providers that apply one per create;
-        // daytona and e2b reject it there and got theirs baked in above.
-        ...(() => {
-          const opts: { persistent?: boolean; size?: string } = {};
-          // Sent only when it differs from what the API would derive on its own.
-          // Silence is not `false`: it lets the hub's `box.persistent` decide,
-          // and for a service agent it is what keeps the box always-on.
-          //
-          // A capped provider is the case where silence is WRONG. e2b and vercel
-          // refuse `persistent: true`, and for a service agent the API derives
-          // exactly that — so omitting the field made every OpenClaw create on
-          // those providers fail, with the toggle sitting disabled and unable to
-          // say otherwise. It has to opt out explicitly, which is what the CLI's
-          // `--no-persistent` does.
-          if (persistentCapped) {
-            if (persistentByDefault) opts.persistent = false;
-          } else if (persistent !== persistentByDefault) {
-            opts.persistent = persistent;
-          }
-          if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {
-            opts.size = chosenSize;
-          }
-          return Object.keys(opts).length > 0 ? { opts } : {};
-        })(),
-      });
-      if (!res.ok) {
-        setError(res.error);
-        return;
+      try {
+        const res = await fetch(
+          `/api/v1/projects/${encodeURIComponent(projectId)}/create-preflight`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ agent, provider }),
+          },
+        );
+        const j = (await res.json()) as {
+          prompts?: PromptRequest[];
+          unavailable?: { topic: string; reason: string }[];
+          error?: { message?: string };
+        } | null;
+        if (res.ok && j?.prompts?.length) {
+          setPrompts(j.prompts);
+          setAnswers([]);
+          setUnavailable(j.unavailable ?? []);
+          return;
+        }
+        setUnavailable(j?.unavailable ?? []);
+      } catch {
+        // The preflight is advisory: a hub too old to serve it still creates
+        // boxes, and a `required` prompt is refused by the create itself rather
+        // than slipping through silently.
       }
-      setJobId(res.jobId);
-      router.refresh(); // surface the box as `creating`
+      await submitCreate([]);
     });
+  };
+
+  /** Post the create with whatever answers were collected. */
+  const submitCreate = async (promptAnswers: PromptAnswer[]) => {
+    const res = await createBoxAction({
+      projectId,
+      agent,
+      provider,
+      name: name.trim() || undefined,
+      prompt: agent === 'none' ? undefined : prompt.trim() || undefined,
+      // Only pin an explicit base when it differs from the current branch; leaving the current
+      // branch selected bases the box on the host's literal HEAD (like `agentbox create` with no
+      // --from-branch) and skips a redundant fetch. Uncommitted + untracked files carry over either way.
+      fromBranch:
+        fromBranch.trim() && fromBranch.trim() !== selected?.currentBranch
+          ? fromBranch.trim()
+          : undefined,
+      setupWizard: agent !== 'none' && runSetup,
+      // Both options land in ONE `opts`: two conditional `{ opts: ... }`
+      // spreads would overwrite each other, silently dropping `persistent`
+      // whenever a size was also picked.
+      //
+      // `persistent` is omitted unless asked for — sending `false` would
+      // override the hub's own `box.persistent`, turning "no opinion" into an
+      // opt-out. `size` goes only to providers that apply one per create;
+      // daytona and e2b reject it there and got theirs baked in above.
+      ...(() => {
+        const opts: {
+          persistent?: boolean;
+          size?: string;
+          promptAnswers?: PromptAnswer[];
+        } = {};
+        // The user's answers to the preflight questions. Each id is matched
+        // against the question the create actually asks, so a stale one is
+        // refused rather than applied to a different question.
+        if (promptAnswers.length > 0) opts.promptAnswers = promptAnswers;
+        // Sent only when it differs from what the API would derive on its own.
+        // Silence is not `false`: it lets the hub's `box.persistent` decide,
+        // and for a service agent it is what keeps the box always-on.
+        //
+        // A capped provider is the case where silence is WRONG. e2b and vercel
+        // refuse `persistent: true`, and for a service agent the API derives
+        // exactly that — so omitting the field made every OpenClaw create on
+        // those providers fail, with the toggle sitting disabled and unable to
+        // say otherwise. It has to opt out explicitly, which is what the CLI's
+        // `--no-persistent` does.
+        if (persistentCapped) {
+          if (persistentByDefault) opts.persistent = false;
+        } else if (persistent !== persistentByDefault) {
+          opts.persistent = persistent;
+        }
+        if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {
+          opts.size = chosenSize;
+        }
+        return Object.keys(opts).length > 0 ? { opts } : {};
+      })(),
+    });
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setJobId(res.jobId);
+    setPrompts([]);
+    router.refresh(); // surface the box as `creating`
+  };
+
+  /** Record one answer; the last one submits the create. */
+  const answerPrompt = (value: string) => {
+    const current = prompts[0];
+    if (!current) return;
+    const next = [...answers, { id: current.id, value }];
+    const remaining = prompts.slice(1);
+    // Any answer that abandons the create ends it here rather than sending a
+    // decision the backend would only refuse.
+    if (value === 'cancel') {
+      setPrompts([]);
+      setAnswers([]);
+      return;
+    }
+    setAnswers(next);
+    setPrompts(remaining);
+    if (remaining.length === 0) startTransition(() => submitCreate(next));
   };
 
   return (
@@ -462,7 +539,23 @@ function CreateBoxModal({
         ) : null}
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4">
-        {jobId ? (
+        {/* Gates this hub could not run. Shown above everything else so a
+            dropped `carry:` block is visible before the box is committed to,
+            not discovered later inside a box missing its files. */}
+        {unavailable.length > 0 && !jobId && !bakeJobId ? (
+          <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+            {unavailable.map((u) => (
+              <div key={u.topic}>
+                <span className="font-medium text-amber-200">{u.topic}</span>
+                <span className="text-muted-foreground"> — {u.reason}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {prompts.length > 0 && !jobId ? (
+          // One question at a time: answering the last one starts the create.
+          <PromptView request={prompts[0]!} onAnswer={answerPrompt} disabled={pending} />
+        ) : jobId ? (
           <JobLogStream
             jobId={jobId}
             onStatus={setJobStatus}
@@ -487,7 +580,7 @@ function CreateBoxModal({
             />
             {error ? <div className="font-mono text-xs text-destructive">{error}</div> : null}
           </>
-        ) : (
+        ) : prompts.length > 0 ? null : (
           <>
             {!project ? (
               <Field label="Project">
@@ -727,7 +820,20 @@ function CreateBoxModal({
         )}
       </DialogBody>
       <DialogFooter>
-        {jobId || bakeJobId ? (
+        {prompts.length > 0 && !jobId ? (
+          // The prompt's own choice buttons are the action here; a second
+          // "Create" would let the user skip the question it is asking.
+          <>
+            <span className="mr-auto self-center font-mono text-xs text-muted-foreground">
+              {prompts.length > 1
+                ? `${String(prompts.length)} questions before this box is created`
+                : 'One question before this box is created'}
+            </span>
+            <Button variant="outline" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+          </>
+        ) : jobId || bakeJobId ? (
           <>
             {jobStatus === 'streaming' ? (
               <span className="mr-auto self-center font-mono text-xs text-muted-foreground">
