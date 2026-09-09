@@ -113,6 +113,16 @@ export const AGENT_KINDS = [
     defaultSessionName: 'opencode',
     hasSkipPermissions: false,
     isolateVolumeDesc: 'Use a per-box OpenCode config/data volume instead of the shared one.',
+    settings: [
+      {
+        key: 'modelAuth',
+        type: 'enum-list',
+        enumValues: ['none', 'codex'],
+        default: 'none',
+        description:
+          'Which host model-provider logins a new opencode box is seeded with, comma-separated. `codex` copies your Codex (ChatGPT) OAuth login into the box and imports it as `openai`. `none` leaves model auth to the box, and is only valid on its own. `--model-auth` overrides per create.',
+      },
+    ],
   },
   {
     id: 'pi',
@@ -123,6 +133,16 @@ export const AGENT_KINDS = [
     hasSkipPermissions: false,
     isolateVolumeDesc:
       'Use a per-box Pi config/data volume (~/.pi/agent) instead of the shared one.',
+    settings: [
+      {
+        key: 'modelAuth',
+        type: 'enum-list',
+        enumValues: ['none', 'codex'],
+        default: 'none',
+        description:
+          'Which host model-provider logins a new pi box is seeded with, comma-separated. `codex` copies your Codex (ChatGPT) OAuth login into the box and imports it as `openai-codex`. `none` leaves model auth to the box, and is only valid on its own. `--model-auth` overrides per create.',
+      },
+    ],
   },
   {
     id: 'openclaw',

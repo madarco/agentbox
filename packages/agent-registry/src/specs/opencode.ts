@@ -13,6 +13,8 @@ import { STATE_DIR } from '@agentbox/config';
 import { BOX_USER, BOX_HOME, BOX_CREDS_DIR, agentDirPrelude } from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 
+import { buildCodexImportScript, codexImportMarker } from './_codex-import.js';
+
 const OPENCODE_BOX_DIR = `${BOX_HOME}/.local/share/opencode`;
 /** Baked alongside the setup guide: opencode's activity-reporting plugin. */
 const OPENCODE_PLUGIN_PATH = '/usr/local/share/agentbox/opencode-agentbox-plugin.js';
@@ -127,4 +129,32 @@ export const opencodeSpec: AgentSyncSpec = {
       },
     ],
   },
+  // Multi-provider, so it can run on a Codex (ChatGPT) subscription the host
+  // already holds. The import is a field mapping into its own store — see
+  // `buildCodexImportScript` for what was measured to make that safe.
+  modelAuth: {
+    sources: [
+      { kind: 'agent', agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' },
+    ],
+    ingest: {
+      kind: 'command',
+      name: 'opencode-model-auth',
+      command: buildCodexImportScript({
+        agentId: 'opencode',
+        storePath: `${OPENCODE_BOX_DIR}/auth.json`,
+        providerKey: 'openai',
+        marker: codexImportMarker(OPENCODE_BOX_DIR),
+      }),
+    },
+  },
+  settings: [
+    {
+      key: 'modelAuth',
+      type: 'enum-list',
+      enumValues: ['none', 'codex'],
+      default: 'none',
+      description:
+        'Which host model-provider logins a new opencode box is seeded with, comma-separated. `codex` copies your Codex (ChatGPT) OAuth login into the box and imports it as `openai`. `none` leaves model auth to the box, and is only valid on its own. `--model-auth` overrides per create.',
+    },
+  ],
 };

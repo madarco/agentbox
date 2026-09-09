@@ -120,14 +120,16 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 }
+        "sessionName": { "type": "string", "minLength": 1 },
+        "modelAuth": { "type": "string", "pattern": "^(none|codex(,codex)*)$" }
       }
     },
     "pi": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 }
+        "sessionName": { "type": "string", "minLength": 1 },
+        "modelAuth": { "type": "string", "pattern": "^(none|codex(,codex)*)$" }
       }
     },
     "openclaw": {

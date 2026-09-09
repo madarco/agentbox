@@ -14,6 +14,8 @@ import { BOX_USER, BOX_HOME, BOX_CREDS_DIR, agentDirPrelude } from '@agentbox/co
 import type { AgentSyncSpec } from '@agentbox/core';
 
 /** Pi keeps everything under one root; `PI_CODING_AGENT_DIR` would move it. */
+import { buildCodexImportScript, codexImportMarker } from './_codex-import.js';
+
 const PI_BOX_DIR = `${BOX_HOME}/.pi/agent`;
 /** Baked alongside the setup guide: Pi's activity-reporting extension. */
 const PI_EXTENSION_PATH = '/usr/local/share/agentbox/pi-agentbox-extension.js';
@@ -149,4 +151,32 @@ export const piSpec: AgentSyncSpec = {
     // as claude's skills/agents/commands.
     categories: ['extensions', 'skills', 'prompts', 'themes'],
   },
+  // Multi-provider, so it can run on a Codex (ChatGPT) subscription the host
+  // already holds. The import is a field mapping into its own store — see
+  // `buildCodexImportScript` for what was measured to make that safe.
+  modelAuth: {
+    sources: [
+      { kind: 'agent', agent: 'codex', label: 'Your Codex login (ChatGPT subscription OAuth)' },
+    ],
+    ingest: {
+      kind: 'command',
+      name: 'pi-model-auth',
+      command: buildCodexImportScript({
+        agentId: 'pi',
+        storePath: `${PI_BOX_DIR}/auth.json`,
+        providerKey: 'openai-codex',
+        marker: codexImportMarker(PI_BOX_DIR),
+      }),
+    },
+  },
+  settings: [
+    {
+      key: 'modelAuth',
+      type: 'enum-list',
+      enumValues: ['none', 'codex'],
+      default: 'none',
+      description:
+        'Which host model-provider logins a new pi box is seeded with, comma-separated. `codex` copies your Codex (ChatGPT) OAuth login into the box and imports it as `openai-codex`. `none` leaves model auth to the box, and is only valid on its own. `--model-auth` overrides per create.',
+    },
+  ],
 };
