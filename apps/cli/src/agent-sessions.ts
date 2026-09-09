@@ -19,7 +19,8 @@
  */
 import { loadEffectiveConfig } from '@agentbox/config';
 import type { AgentId, BoxRecord, Provider } from '@agentbox/core';
-import { agentIds, resolveAgentSpec } from '@agentbox/sandbox-core';
+import { agentIds, resolveAgentSpec, runModelAuthIngest } from '@agentbox/sandbox-core';
+import { execInBox } from '@agentbox/sandbox-docker';
 import { loadAgentModule, loadAgentModuleOrNull } from './agents/index.js';
 import { cloudAgentStartDetached } from './commands/_cloud-attach.js';
 
@@ -112,6 +113,37 @@ export interface RestoreOptions {
   force?: boolean;
 }
 
+/**
+ * Start a docker agent session, running its model-auth ingest first.
+ *
+ * One place, because the cloud leg gets this for free inside
+ * `cloudAgentStartDetached` and the docker leg had two `runtime.startSession`
+ * call sites with neither. The ingest is hash-gated, so this is a no-op unless
+ * the credential fan-out has pushed a refreshed login since the last start —
+ * which is the only way a seeded box's model auth is ever renewed.
+ */
+async function startDockerSession(
+  box: BoxRecord,
+  kind: AgentId,
+  sessionName: string,
+  args: string[],
+): Promise<void> {
+  if ((box.borrowedCredentials ?? []).length > 0) {
+    await runModelAuthIngest(resolveAgentSpec(kind), async (argv) => {
+      const r = await execInBox(box.container, argv);
+      return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+    });
+  }
+  const { runtime } = await loadAgentModule(kind);
+  await runtime.startSession({
+    container: box.container,
+    args,
+    sessionName,
+    boxName: box.name,
+    workspacePath: box.workspacePath,
+  });
+}
+
 /** Start a fresh (no-resume) detached agent session. */
 async function startFreshSession(
   box: BoxRecord,
@@ -124,13 +156,7 @@ async function startFreshSession(
   const args =
     cfg && runtime.skipPermissions ? runtime.skipPermissions.apply([], cfg.effective) : [];
   if (isDocker) {
-    await runtime.startSession({
-      container: box.container,
-      args,
-      sessionName,
-      boxName: box.name,
-      workspacePath: box.workspacePath,
-    });
+    await startDockerSession(box, kind, sessionName, args);
   } else {
     await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
   }
@@ -174,13 +200,7 @@ export async function restoreAgentSessions(
         : resume;
     try {
       if (isDocker) {
-        await runtime.startSession({
-          container: box.container,
-          args,
-          sessionName,
-          boxName: box.name,
-          workspacePath: box.workspacePath,
-        });
+        await startDockerSession(box, kind, sessionName, args);
       } else {
         await cloudAgentStartDetached({ box, binary: kind, sessionName, extraArgs: args });
       }

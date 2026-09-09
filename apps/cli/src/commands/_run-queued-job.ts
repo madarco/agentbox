@@ -28,6 +28,7 @@ import {
   DEFAULT_BOX_IMAGE,
   detectEngine,
   ensureImage,
+  execInBox,
   hostBackupHasCredentials,
   recordLastAgent,
   volumeClaudeCredentials,
@@ -62,7 +63,7 @@ import { claudeRuntime } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
 import { providerForCreate } from '../provider/registry.js';
 import { parseProviderSpec, providerNameOf, resolveCreateProviderSpec } from '../provider/spec.js';
-import { autoWriteSshConfig } from '@agentbox/sandbox-core';
+import { autoWriteSshConfig, runModelAuthIngest } from '@agentbox/sandbox-core';
 import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
 import { resolvePortlessNonInteractive } from '../portless-prompt.js';
@@ -443,12 +444,51 @@ async function runDockerJob(
   const prompt = prependResyncWarning(resyncWarning, seeded);
   const promptedArgs = buildPromptArgs(job.agent, prompt, job.agentArgs);
 
+  // Install, then ingest, then start — the same three-step sequence the
+  // foreground path runs (`create-action.ts`). Split into two dispatches rather
+  // than one so the ingest sits between them ONCE: it used to be missing here
+  // entirely, because this block is a second hand-written copy of that sequence
+  // and only the copy in `create-action.ts` was updated.
   if (job.agent === 'claude-code') {
     log.write(`checking plugin native deps`);
     await rebuildPluginNativeDeps(result.record.container, {
       volume: result.record.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
       onProgress: (line) => log.write(line),
     });
+  } else if (job.agent === 'codex') {
+    log.write(`checking codex`);
+    await ensureCodexInstalled(result.record.container, {
+      onProgress: (line) => log.write(line),
+    });
+  } else if (job.agent === 'opencode') {
+    log.write(`checking opencode`);
+    await ensureOpencodeInstalled(result.record.container, {
+      onProgress: (line) => log.write(line),
+    });
+  } else if (job.agent === 'pi') {
+    log.write(`checking pi`);
+    await ensurePiInstalled(result.record.container, {
+      onProgress: (line) => log.write(line),
+    });
+  } else {
+    throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
+  }
+
+  // Turn a seeded login into this agent's own auth store, after the binary
+  // exists and before the session opens on it. No-op for an agent with no
+  // grant, and for a service agent, whose ingest is a ctl task in its own DAG.
+  if ((opts.borrowCredentials ?? []).length > 0) {
+    await runModelAuthIngest(
+      plan.spec,
+      async (argv) => {
+        const r = await execInBox(result.record.container, argv);
+        return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+      },
+      { onLog: (line) => log.write(line) },
+    );
+  }
+
+  if (job.agent === 'claude-code') {
     log.write(`starting claude session`);
     await startClaudeSession({
       container: result.record.container,
@@ -458,10 +498,6 @@ async function runDockerJob(
       agentSettings: agentSettings(cfg.effective, 'claude'),
     });
   } else if (job.agent === 'codex') {
-    log.write(`checking codex`);
-    await ensureCodexInstalled(result.record.container, {
-      onProgress: (line) => log.write(line),
-    });
     log.write(`starting codex session`);
     await startCodexSession({
       container: result.record.container,
@@ -469,21 +505,13 @@ async function runDockerJob(
       sessionName: cfg.effective.codex.sessionName,
     });
   } else if (job.agent === 'opencode') {
-    log.write(`checking opencode`);
-    await ensureOpencodeInstalled(result.record.container, {
-      onProgress: (line) => log.write(line),
-    });
     log.write(`starting opencode session`);
     await startOpencodeSession({
       container: result.record.container,
       opencodeArgs: promptedArgs,
       sessionName: cfg.effective.opencode.sessionName,
     });
-  } else if (job.agent === 'pi') {
-    log.write(`checking pi`);
-    await ensurePiInstalled(result.record.container, {
-      onProgress: (line) => log.write(line),
-    });
+  } else {
     log.write(`starting pi session`);
     await startPiSession({
       container: result.record.container,
@@ -493,8 +521,6 @@ async function runDockerJob(
       piArgs: promptedArgs,
       sessionName: cfg.effective.pi.sessionName,
     });
-  } else {
-    throw new Error(`unknown agent kind: ${String(job.agent satisfies QueueAgentKind)}`);
   }
 
   await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);

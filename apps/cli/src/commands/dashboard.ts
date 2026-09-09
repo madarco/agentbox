@@ -17,6 +17,7 @@ import {
   listBoxes,
   relayPort,
   pauseBox,
+  execInBox,
   seedAgentDeclaredFiles,
   shellSessionInfo,
   startBox,
@@ -53,6 +54,7 @@ import {
   readState,
   removeBoxRecord,
   resolveAgentSpec,
+  runModelAuthIngest,
   withServiceSignIn,
 } from '@agentbox/sandbox-core';
 import { resolveBoxPromptSource } from '../control-plane/box-plane.js';
@@ -88,6 +90,22 @@ interface DashboardOptions {
  * daytona mints+revokes a per-call SSH token, so pooling it would change token
  * lifetime semantics. Add future no-SSH providers here.
  */
+/**
+ * Run a box's model-auth ingest before its agent session starts.
+ *
+ * The dashboard launches agents itself rather than going through
+ * `agent-sessions.ts`, so it is its own launch seam and needs this explicitly —
+ * `model-auth-launch-seams.test.ts` is what says so. Hash-gated, so a warm open
+ * is a no-op.
+ */
+async function ingestModelAuth(box: BoxRecord, kind: AgentId): Promise<void> {
+  if ((box.borrowedCredentials ?? []).length === 0) return;
+  await runModelAuthIngest(resolveAgentSpec(kind), async (argv) => {
+    const r = await execInBox(box.container, argv);
+    return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+  });
+}
+
 function providerSupportsKeepAlive(provider: BoxRecord['provider']): boolean {
   return provider === 'vercel' || provider === 'e2b';
 }
@@ -404,6 +422,7 @@ export const dashboardCommand = new Command('dashboard')
           { image: box.image, isolate: claudeVolume !== SHARED_CLAUDE_VOLUME },
         );
         const claudeCfg = await loadEffectiveConfig(box.workspacePath);
+        await ingestModelAuth(box, 'claude');
         await startClaudeSession({
           container: box.container,
           claudeArgs: claudeRuntime.skipPermissions!.apply([], claudeCfg.effective),
@@ -432,6 +451,7 @@ export const dashboardCommand = new Command('dashboard')
           await seedAgentDeclaredFiles('codex', box.codexConfigVolume, box.image);
         }
         const codexCfg = await loadEffectiveConfig(box.workspacePath);
+        await ingestModelAuth(box, 'codex');
         await startCodexSession({
           container: box.container,
           codexArgs: codexRuntime.skipPermissions!.apply([], codexCfg.effective),
@@ -451,6 +471,7 @@ export const dashboardCommand = new Command('dashboard')
           return buildCloudAttachTarget(await loadBoxRecord(boxId), 'opencode');
         }
         await ensureOpencodeInstalled(box.container);
+        await ingestModelAuth(box, 'opencode');
         await startOpencodeSession({ container: box.container, opencodeArgs: [] });
         await waitForTmuxPaneContent(box.container, DEFAULT_OPENCODE_SESSION);
         return {
@@ -472,6 +493,7 @@ export const dashboardCommand = new Command('dashboard')
         // predates it still reports working/idle.
         if (piVolume) await seedAgentDeclaredFiles('pi', piVolume, box.image);
         // No `skipPermissions.apply`: Pi has no bypass flag (no prompts).
+        await ingestModelAuth(box, 'pi');
         await startPiSession({ container: box.container, piArgs: [] });
         await waitForTmuxPaneContent(box.container, DEFAULT_PI_SESSION);
         return {
@@ -552,6 +574,7 @@ export const dashboardCommand = new Command('dashboard')
         if (!agent) return { boxId: result.record.id };
         if (agent === 'codex') {
           await ensureCodexInstalled(ctr, { onProgress });
+          await ingestModelAuth(result.record, 'codex');
           await startCodexSession({
             container: ctr,
             codexArgs: codexRuntime.skipPermissions!.apply([], cfg.effective),
@@ -570,6 +593,7 @@ export const dashboardCommand = new Command('dashboard')
         }
         if (agent === 'opencode') {
           await ensureOpencodeInstalled(ctr, { onProgress });
+          await ingestModelAuth(result.record, 'opencode');
           await startOpencodeSession({ container: ctr, opencodeArgs: [] });
           await waitForTmuxPaneContent(ctr, DEFAULT_OPENCODE_SESSION);
           return {
@@ -584,6 +608,7 @@ export const dashboardCommand = new Command('dashboard')
         }
         if (agent === 'pi') {
           await ensurePiInstalled(ctr, { onProgress });
+          await ingestModelAuth(result.record, 'pi');
           await startPiSession({ container: ctr, piArgs: [] });
           await waitForTmuxPaneContent(ctr, DEFAULT_PI_SESSION);
           return {
@@ -598,6 +623,7 @@ export const dashboardCommand = new Command('dashboard')
         }
         await ensureClaudeInstalled(ctr);
         await rebuildPluginNativeDeps(ctr, { volume: result.record.claudeConfigVolume });
+        await ingestModelAuth(result.record, 'claude');
         await startClaudeSession({
           container: ctr,
           claudeArgs: claudeRuntime.skipPermissions!.apply([], cfg.effective),
