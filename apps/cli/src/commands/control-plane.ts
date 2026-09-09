@@ -1347,7 +1347,10 @@ const credentialsPushSub = new Command('push')
     'Push host agent-credential backups (claude/codex/opencode) to the control box custody store',
   )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--agent <id>', 'push only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)')
+  .option(
+    '--agent <id>',
+    'push only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)',
+  )
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
     try {
@@ -1375,7 +1378,10 @@ const credentialsPushSub = new Command('push')
 const credentialsPullSub = new Command('pull')
   .description('Pull agent-credential backups from the control box custody store into ~/.agentbox')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--agent <id>', 'pull only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)')
+  .option(
+    '--agent <id>',
+    'pull only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)',
+  )
   .action(async (opts: { url?: string; agent?: string }) => {
     try {
       const target = await resolveCustodyApiTarget(opts.url);
@@ -1716,8 +1722,9 @@ const approvalsAnswerSub = new Command('answer')
         process.exitCode = 1;
         return;
       }
-      await client.answerApproval(id, answer);
-      log.success(`Answered ${id} → ${answer}.`);
+      // An `open-link` opens on this machine, not on the control box.
+      const opened = await client.answerApprovalOpeningLinks(id, answer);
+      log.success(opened ? `Opened ${opened}.` : `Answered ${id} → ${answer}.`);
     } catch (err) {
       if (err instanceof HubApiError && err.code === 'not_found') {
         log.info(`No pending approval with id ${id} (already answered or expired?).`);

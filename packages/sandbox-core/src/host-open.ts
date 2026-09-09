@@ -28,6 +28,13 @@ export function hostOpenCommand(): string {
 export function openOnHost(target: string): void {
   try {
     const child = spawn(hostOpenCommand(), [target], { detached: true, stdio: 'ignore' });
+    // A missing `xdg-open` surfaces as an ASYNC 'error' event, not a throw, and
+    // an unlistened 'error' on a ChildProcess is re-thrown — which would take
+    // down the relay daemon (or the attach wrapper) on a host with no desktop
+    // opener. The listener is what makes this function actually never-throw.
+    child.on('error', () => {
+      /* no opener on this host; the caller has already surfaced the target */
+    });
     child.unref();
   } catch {
     /* the caller has already surfaced the target */

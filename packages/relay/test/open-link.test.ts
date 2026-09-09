@@ -105,6 +105,45 @@ describe('offerBrowserOpen', () => {
     expect(h.prompts.size()).toBe(0);
   });
 
+  it('charges the budget when the link is offered, not when it is claimed', async () => {
+    // The box's /rpc is answered before the offer is made, so a looping agent
+    // fires the next open while this one is still parked. Recording only on the
+    // claim would let every link in the loop see an empty window and be claimed
+    // together — the tab spray the budget exists to stop.
+    const h = harness();
+    h.subscribers.addListener('box1', () => {});
+    const first = offerBrowserOpen(h.deps, 'https://a.test');
+    const second = offerBrowserOpen(h.deps, 'https://b.test');
+    // Nothing has been claimed yet, and the burst limit is already spent.
+    const third = offerBrowserOpen(h.deps, 'https://c.test');
+    expect(h.prompts.all()).toHaveLength(3);
+    expect(h.prompts.all()[2]?.ev.autoOpen).toBeUndefined(); // over budget: needs a human
+    for (const p of h.prompts.all()) h.prompts.resolve(p.ev.id, 'n', true);
+    await Promise.all([first, second, third]);
+  });
+
+  it('honours the blanket box.autoApproveHostActions on an over-budget link', async () => {
+    // The pre-offer relay resolved these through askPrompt, which consults the
+    // blanket opt-in; without it an unattended box would park and TTL-drop.
+    const audited: string[] = [];
+    const h = harness({ autoApproveSafe: false });
+    h.prompts.setAutoApprovePolicy({
+      shouldAutoApprove: () => true,
+      audit: (_boxId, params) => audited.push(params.message),
+    });
+    await expect(offerBrowserOpen(h.deps, 'https://a.test')).resolves.toBe('opened-locally');
+    expect(h.opened).toEqual(['https://a.test']);
+    expect(audited).toHaveLength(1);
+    expect(h.prompts.size()).toBe(0);
+  });
+
+  it('a control box still opens nothing under the blanket opt-in', async () => {
+    const h = harness({ autoApproveSafe: false, controlPlane: true });
+    h.prompts.setAutoApprovePolicy({ shouldAutoApprove: () => true, audit: () => {} });
+    await expect(offerBrowserOpen(h.deps, 'https://a.test')).resolves.toBe('unclaimed');
+    expect(h.opened).toEqual([]);
+  });
+
   it('drops a duplicate link without offering or opening it', async () => {
     const h = harness();
     await expect(offerBrowserOpen(h.deps, 'https://a.test')).resolves.toBe('opened-locally');

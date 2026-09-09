@@ -72,6 +72,13 @@ export async function offerBrowserOpen(deps: OpenLinkDeps, url: string): Promise
   const open = deps.openHost ?? openOnHost;
   const decision = budget.decide(deps.boxId, url, deps.autoApproveSafe);
   if (decision.action === 'drop') return 'dropped';
+  // Charge an approved link against the budget HERE, not when it finally
+  // opens. The box's `/rpc` is answered before the offer is even made, so a
+  // looping agent fires the next `browser.open` while this one is still parked
+  // — waiting for the claim to record would let every link in the loop see an
+  // empty window, clear the burst limit, and be claimed together. That is the
+  // tab-spray the budget exists to stop.
+  if (decision.action === 'open') budget.record(deps.boxId, url);
 
   const promptEvent: Omit<PromptAskEvent, 'id'> = {
     kind: 'open-link',
@@ -97,7 +104,20 @@ export async function offerBrowserOpen(deps: OpenLinkDeps, url: string): Promise
     deps.subscribers.count(deps.boxId) === 0
   ) {
     deps.prompts.noteAutoApprove(deps.boxId, promptEvent, decision.reason);
+    open(url);
+    return 'opened-locally';
+  }
+
+  // `box.autoApproveHostActions` — the blanket opt-in — used to resolve this
+  // confirm through `askPrompt`. Honour it here too (it audits itself), or an
+  // unattended box that opted into everything would park an over-budget link
+  // and drop it at the TTL instead of opening it.
+  if (decision.action !== 'open' && deps.prompts.consumeAutoApprove(deps.boxId, promptEvent)) {
     budget.record(deps.boxId, url);
+    if (deps.controlPlane) {
+      deps.log?.(`browser.open: auto-approved but nothing here can open it (control box): ${url}`);
+      return 'unclaimed';
+    }
     open(url);
     return 'opened-locally';
   }
@@ -117,8 +137,11 @@ export async function offerBrowserOpen(deps: OpenLinkDeps, url: string): Promise
   if (verdict.answer !== 'y' || verdict.cancelled) return 'unclaimed';
   if (decision.action === 'open') {
     deps.prompts.noteAutoApprove(deps.boxId, promptEvent, decision.reason);
+  } else {
+    // Only the over-budget path is uncharged at this point: an approved link
+    // was recorded before it was offered.
+    budget.record(deps.boxId, url);
   }
-  budget.record(deps.boxId, url);
   if (verdict.openedByClient) return 'opened-by-client';
   // A plain `y`: the answering surface either can't open URLs or predates
   // `open-link` and rendered a confirm. Open it here — unless "here" is a

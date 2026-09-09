@@ -346,8 +346,8 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
   if (localClient) {
     reachedHub = true;
     try {
-      await localClient.answerApproval(id, answer, cancelled);
-      log.success(`approval ${id}: ${label}`);
+      const opened = await localClient.answerApprovalOpeningLinks(id, answer, cancelled);
+      log.success(opened ? `approval ${id}: opened ${opened}` : `approval ${id}: ${label}`);
       return;
     } catch (err) {
       if (!(err instanceof HubApiError && err.code === 'not_found')) throw err;
@@ -367,8 +367,14 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
     }
     reachedHub = true;
     try {
-      await remoteClient.answerApproval(id, answer, cancelled);
-      log.success(`approval ${id}: ${label} (on the control box)`);
+      // Open a link HERE rather than on the control box, which has no human
+      // (and no browser) — answering it with a plain `y` would drop it.
+      const opened = await remoteClient.answerApprovalOpeningLinks(id, answer, cancelled);
+      log.success(
+        opened
+          ? `approval ${id}: opened ${opened}`
+          : `approval ${id}: ${label} (on the control box)`,
+      );
       return;
     } catch (err) {
       if (err instanceof HubApiError && err.code === 'not_found') {

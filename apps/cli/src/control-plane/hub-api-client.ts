@@ -11,6 +11,7 @@
  * fleet operation (list, lifecycle, git, approvals, custody) goes through here.
  */
 import { parseAgentStatusEntry } from '@agentbox/core';
+import { openOnHost } from '@agentbox/sandbox-core';
 import type { AgentId, AgentMode, AgentStatusMap } from '@agentbox/core';
 
 /**
@@ -207,6 +208,8 @@ export interface HubApiHostShare {
 export interface HubApiApproval {
   id: string;
   boxId: string;
+  /** Absent means `confirm`. `open-link` carries a `url` to open HERE. */
+  kind?: 'confirm' | 'select' | 'text' | 'open-link';
   message: string;
   detail?: string;
   command?: string;
@@ -214,6 +217,10 @@ export interface HubApiApproval {
   argv?: string[];
   defaultAnswer: 'y' | 'n';
   createdAt: number;
+  /** `open-link` only: the http(s) URL the box wants opened on your machine. */
+  url?: string;
+  /** `open-link` only: already cleared host-side — open it without asking. */
+  autoOpen?: boolean;
 }
 
 /** Result of a box git/service op (mirrors the backend `BoxOpResult`). */
@@ -736,11 +743,42 @@ export class HubApiClient {
    * from a plain deny in the audit trail (the `agent approve --cancel` capability);
    * it still resolves the parked action as not-approved.
    */
-  async answerApproval(id: string, answer: 'y' | 'n', cancelled?: boolean): Promise<void> {
+  async answerApproval(
+    id: string,
+    answer: 'y' | 'n',
+    cancelled?: boolean,
+    openedByClient?: boolean,
+  ): Promise<void> {
     await this.request<{ ok: true }>('POST', `/approvals/${encodeURIComponent(id)}/answer`, {
       answer,
       ...(cancelled === true ? { cancelled: true } : {}),
+      // `open-link` only: this machine opened the URL, so the hub's host must
+      // not open a second copy (on a control box, one nobody can see).
+      ...(openedByClient === true ? { openedByClient: true } : {}),
     });
+  }
+
+  /**
+   * Answer `id` and, when it is an `open-link`, open the URL on THIS machine —
+   * the CLI runs where the human is, which a control box does not. Answering
+   * first is the claim: it throws `not_found` when another surface got there
+   * first, so we only ever open a link we won. Returns the URL we opened.
+   */
+  async answerApprovalOpeningLinks(
+    id: string,
+    answer: 'y' | 'n',
+    cancelled?: boolean,
+  ): Promise<string | undefined> {
+    const link =
+      answer === 'y' && cancelled !== true
+        ? await this.listApprovals()
+            .then((all) => all.find((a) => a.id === id))
+            .catch(() => undefined)
+        : undefined;
+    const url = link?.kind === 'open-link' ? link.url : undefined;
+    await this.answerApproval(id, answer, cancelled, url !== undefined);
+    if (url !== undefined) openOnHost(url);
+    return url;
   }
 
   /**
