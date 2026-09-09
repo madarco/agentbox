@@ -1470,6 +1470,13 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": false
+      },
+      {
+        "flags": "--model-auth <source...>",
+        "description": "which host model-provider logins to seed (none|codex; repeatable or comma-separated; default: opencode.modelAuth, else ask). codex: Your Codex login (ChatGPT subscription OAuth)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       }
     ],
     "subcommands": [
@@ -1900,6 +1907,13 @@
       {
         "flags": "--resume <id>",
         "description": "teleport a specific host Pi session (uuid, or a unique prefix) into the box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--model-auth <source...>",
+        "description": "which host model-provider logins to seed (none|codex; repeatable or comma-separated; default: pi.modelAuth, else ask). codex: Your Codex login (ChatGPT subscription OAuth)",
         "defaultValue": null,
         "mandatory": false,
         "negate": false

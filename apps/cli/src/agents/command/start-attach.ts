@@ -9,12 +9,14 @@
 import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@agentbox/config';
 import {
   inspectBox,
+  execInBox,
   recordLastAgent,
   seedAgentDeclaredFiles,
   startBox,
   unpauseBox,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
+import { runModelAuthIngest } from '@agentbox/sandbox-core';
 import type { Command } from 'commander';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../../box-ref.js';
@@ -173,6 +175,21 @@ async function startOrAttach(
   await a.runtime.ensureInstalled(box.container, {
     onProgress: (line) => s.message(clampSpinnerLine(line)),
   });
+
+  // Re-run the model-auth ingest before the session comes up. Hash-gated, so
+  // this is a no-op unless the fan-out has pushed a refreshed login since the
+  // last start — which is the ONLY way a seeded box's auth is renewed, because
+  // the consumer cannot refresh a borrowed token itself.
+  if ((box.borrowedCredentials ?? []).length > 0) {
+    await runModelAuthIngest(
+      a.spec,
+      async (argv) => {
+        const r = await execInBox(box.container, argv);
+        return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+      },
+      { onLog: (line) => s.message(clampSpinnerLine(line)) },
+    );
+  }
 
   let effectiveArgs = a.runtime.skipPermissions
     ? a.runtime.skipPermissions.apply(agentArgs, cfg)

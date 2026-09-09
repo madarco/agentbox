@@ -9,6 +9,7 @@
  */
 import {
   findProjectRoot,
+  agentSettings,
   loadEffectiveConfig,
   resolveBoxImage,
   resolveDefaultCheckpoint,
@@ -20,6 +21,7 @@ import {
   createBox,
   DEFAULT_BOX_IMAGE,
   detectEngine,
+  execInBox,
   recordLastAgent,
 } from '@agentbox/sandbox-docker';
 import { intro, log, outro } from '@agentbox/cli-kit';
@@ -45,6 +47,8 @@ import { ensureProjectRepoOnControlPlane } from '../../control-plane/ensure-repo
 import { resolveCreateRouting, type CreateRouting } from '../../control-plane/route-create.js';
 import { dockerProviderRefusal, remoteHubConfigured } from '../../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../../lib/carry-gate.js';
+import { runModelAuthIngest } from '@agentbox/sandbox-core';
+import { resolveModelAuth } from '../../lib/model-auth-gate.js';
 import { runToolsGate } from '../../lib/tools-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../../lib/from-branch.js';
@@ -510,6 +514,23 @@ export async function runAgentCreate(
     fail(err instanceof Error ? err.message : String(err), 1);
   }
 
+  // Model-auth gate: which of the host's model-provider logins this box gets.
+  // Decided here, at the host boundary, before anything is created — a refused
+  // value must not cost a box, and a prompt must not appear under a spinner.
+  let modelAuthSources: string[] = [];
+  try {
+    modelAuthSources = await resolveModelAuth({
+      spec: a.spec,
+      ...(opts.modelAuth !== undefined ? { flags: opts.modelAuth } : {}),
+      settings: agentSettings(cfg, a.spec.id),
+      sources: cfgLoaded.sources,
+      yes: !!opts.yes,
+    });
+    for (const id of modelAuthSources) cmdLog.write(`model auth: granting ${id}`);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err), 1);
+  }
+
   // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
   // only REQUEST host CLIs; the grant is the host's decision. Never blocks.
   try {
@@ -634,6 +655,7 @@ export async function runAgentCreate(
         withEnv: cfg.box.withEnv,
         ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
         carry: carryEntries,
+        ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
         vnc: { enabled: cfg.box.vnc },
         ...(persistent !== undefined ? { persistent } : {}),
         limits: resolveLimits(cfg.box, opts),
@@ -717,6 +739,7 @@ export async function runAgentCreate(
       withEnv: cfg.box.withEnv,
       ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
       carry: carryEntries,
+      ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },
@@ -744,6 +767,27 @@ export async function runAgentCreate(
           cmdLog.write(line);
         },
       });
+    }
+
+    // Turn a seeded login into this agent's own auth store. HERE, not in the
+    // provider's create: the binary has to exist first (ensureInstalled above),
+    // and the session must not start before its auth is in place. A service
+    // agent's ingest is a ctl task in its own DAG instead, so this is a no-op
+    // for it.
+    if (modelAuthSources.length > 0) {
+      await runModelAuthIngest(
+        a.spec,
+        async (argv) => {
+          const r = await execInBox(result.record.container, argv);
+          return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+        },
+        {
+          onLog: (line) => {
+            s.message(line);
+            cmdLog.write(line);
+          },
+        },
+      );
     }
 
     const afterCreate = await a.hooks?.afterCreate?.(result.record, {

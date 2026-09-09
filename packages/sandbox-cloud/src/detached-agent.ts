@@ -14,7 +14,12 @@
 import { spawn } from 'node:child_process';
 import type { AgentSettings, BoxRecord, Provider } from '@agentbox/core';
 import { agentSettingsFor } from '@agentbox/config';
-import { agentTuiEnv, isRuntimeAgent, resolveAgentSpec } from '@agentbox/sandbox-core';
+import {
+  agentTuiEnv,
+  isRuntimeAgent,
+  resolveAgentSpec,
+  runModelAuthIngest,
+} from '@agentbox/sandbox-core';
 import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
 
 /**
@@ -321,6 +326,19 @@ export async function startDetachedCloudAgent(
   // callers so every consumer of this primitive — the CLI's detached start and
   // the control box's create worker — gets it in the right order.
   await seedDeclaredFilesForLaunch(provider, box, binary);
+  // Same seam, same reason as the docker path: after the binary exists, before
+  // the session starts. Hash-gated, so a warm start is a no-op unless the
+  // credential fan-out has pushed a refreshed login since the last one.
+  if ((box.borrowedCredentials ?? []).length > 0 && isRuntimeAgent(binary)) {
+    await runModelAuthIngest(
+      resolveAgentSpec(binary),
+      async (argv) => {
+        const r = await provider.exec(box, argv, { user: 'vscode' });
+        return { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+      },
+      {},
+    );
+  }
   let extraArgs = args.extraArgs;
   if ((!extraArgs || extraArgs.length === 0) && args.resolveResumeArgs) {
     const resume = await args.resolveResumeArgs(box);

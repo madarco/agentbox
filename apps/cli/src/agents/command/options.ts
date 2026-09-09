@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { ATTACH_IN_HELP, INLINE_HELP, NO_ATTACH_HELP } from '../../commands/_attach-in.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
+import { modelAuthHelp } from '../../lib/model-auth-gate.js';
 
 /** Flags shared by the create action and both subcommands. */
 export interface AgentCreateOptions {
@@ -30,6 +31,9 @@ export interface AgentCreateOptions {
   carryYes?: boolean;
   /** `--carry <mode>`: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
   carry?: 'skip' | 'ask';
+  /** `--model-auth <source...>`: which host model-provider logins to seed.
+   *  Only present for an agent whose row declares sources. */
+  modelAuth?: string[];
   /** `--dangerously-with-credentials`: copy a git credential into the box
    *  (git.pushMode=direct); cloud only. Token-vs-SSH is chosen ONLY at the
    *  interactive prompt (TTY required). */
@@ -223,6 +227,11 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
       `[${id}-args...]`,
       `extra args passed to ${id} inside the box; place after \`--\`, e.g. \`agentbox ${id} -- ${text.argsExample}\``,
     );
+  // Only for a row that declares sources — an agent with none would get a flag
+  // whose every value is an error.
+  if (a.spec.modelAuth?.sources.length) {
+    cmd.option('--model-auth <source...>', modelAuthHelp(a.spec));
+  }
   cmd.description(`Create a sandboxed box and launch ${productName} in a detachable tmux session`);
   return cmd;
 }
