@@ -484,28 +484,41 @@ async function touchProjectMeta(absPath: string, originUrl?: string): Promise<vo
   await mkdir(dirname(metaPath), { recursive: true });
   // Locked: the hub touches this on every dashboard poll while a create records
   // last-used fields into the same file, and an unlocked read-modify-write drops
-  // whichever writer read first.
-  await withFileLock(metaPath, async () => {
-    const prior = await readMetaFile(metaPath);
-    const now = new Date().toISOString();
-    // A caller that didn't read an origin (the folder may be gone) must not erase
-    // the one recorded when it was there.
-    const origin =
-      originUrl ?? (typeof prior['originUrl'] === 'string' ? prior['originUrl'] : undefined);
-    const createdAt = typeof prior['createdAt'] === 'string' ? prior['createdAt'] : now;
-    // Spread `prior` first: every field this function does not own (the
-    // last-used create defaults) has to survive a touch, and the hub touches
-    // this file on every poll.
-    await writeMetaFile(metaPath, {
-      ...prior,
-      originalPath: absPath,
-      hash: hashProjectPath(absPath),
-      createdAt,
-      lastSeenAt: now,
-      ...(origin ? { originUrl: origin } : {}),
-    });
-  });
+  // whichever writer read first. Short stale/acquire windows because THIS file
+  // is on that poll's hot path — the write is sub-millisecond, so a lock left by
+  // a killed process must not hold `GET /api/v1/projects` for the default 15s.
+  await withFileLock(
+    metaPath,
+    async () => {
+      const prior = await readMetaFile(metaPath);
+      const now = new Date().toISOString();
+      // A caller that didn't read an origin (the folder may be gone) must not erase
+      // the one recorded when it was there.
+      const origin =
+        originUrl ?? (typeof prior['originUrl'] === 'string' ? prior['originUrl'] : undefined);
+      const createdAt = typeof prior['createdAt'] === 'string' ? prior['createdAt'] : now;
+      // Spread `prior` first: every field this function does not own (the
+      // last-used create defaults) has to survive a touch, and the hub touches
+      // this file on every poll.
+      await writeMetaFile(metaPath, {
+        ...prior,
+        originalPath: absPath,
+        hash: hashProjectPath(absPath),
+        createdAt,
+        lastSeenAt: now,
+        ...(origin ? { originUrl: origin } : {}),
+      });
+    },
+    META_LOCK,
+  );
 }
+
+/**
+ * meta.json is written in sub-millisecond bursts but READ on the hub's dashboard
+ * poll (`listProjects` re-registers every box root), so a lock orphaned by a
+ * killed process must not stall that poll for the default 15s stale window.
+ */
+const META_LOCK = { staleMs: 2_000, acquireTimeoutMs: 5_000 };
 
 /** Parse a meta.json into a plain bag; a missing or corrupt file reads as empty. */
 async function readMetaFile(metaPath: string): Promise<Record<string, unknown>> {
@@ -556,17 +569,21 @@ export async function recordProjectLastUsed(
   // Checked BEFORE the lock: `withFileLock` mkdirs the parent, which would
   // create the very project dir this must not create.
   if (!(await fileExists(metaPath))) return false;
-  return withFileLock(metaPath, async () => {
-    const prior = await readMetaFile(metaPath);
-    if (typeof prior['originalPath'] !== 'string') return false;
-    await writeMetaFile(metaPath, {
-      ...prior,
-      ...(provider ? { lastProvider: provider } : {}),
-      ...(agent ? { lastAgent: agent } : {}),
-      lastUsedAt: new Date().toISOString(),
-    });
-    return true;
-  });
+  return withFileLock(
+    metaPath,
+    async () => {
+      const prior = await readMetaFile(metaPath);
+      if (typeof prior['originalPath'] !== 'string') return false;
+      await writeMetaFile(metaPath, {
+        ...prior,
+        ...(provider ? { lastProvider: provider } : {}),
+        ...(agent ? { lastAgent: agent } : {}),
+        lastUsedAt: new Date().toISOString(),
+      });
+      return true;
+    },
+    META_LOCK,
+  );
 }
 
 // Re-export for ergonomics; same path resolution as the loader uses.

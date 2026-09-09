@@ -71,32 +71,41 @@ describe('defaultAgentFor', () => {
 });
 
 describe('lastUsedFromRegistrations', () => {
-  it('takes the newest registration and prefers backend over kind', () => {
+  it('takes the newest registration', () => {
     const out = lastUsedFromRegistrations([
-      { kind: 'cloud', backend: 'e2b', agent: 'claude', registeredAt: '2026-01-01T00:00:00.000Z' },
-      {
-        kind: 'cloud',
-        backend: 'hetzner',
-        agent: 'codex',
-        registeredAt: '2026-02-01T00:00:00.000Z',
-      },
+      { backend: 'e2b', agent: 'claude', registeredAt: '2026-01-01T00:00:00.000Z' },
+      { backend: 'hetzner', agent: 'codex', registeredAt: '2026-02-01T00:00:00.000Z' },
     ]);
     expect(out.lastProvider).toBe('hetzner');
     expect(out.lastAgent).toBe('codex');
     expect(out.lastUsedAt).toBe(Date.parse('2026-02-01T00:00:00.000Z'));
   });
 
-  it('prefers createdAt over registeredAt, and falls back to kind', () => {
+  it('prefers createdAt over registeredAt, and says nothing without a backend', () => {
     const out = lastUsedFromRegistrations([
-      {
-        kind: 'cloud',
-        createdAt: '2026-03-01T00:00:00.000Z',
-        registeredAt: '2026-01-01T00:00:00.000Z',
-      },
-      { kind: 'cloud', backend: 'e2b', registeredAt: '2026-02-01T00:00:00.000Z' },
+      { createdAt: '2026-03-01T00:00:00.000Z', registeredAt: '2026-01-01T00:00:00.000Z' },
+      { backend: 'e2b', registeredAt: '2026-02-01T00:00:00.000Z' },
     ]);
-    expect(out.lastProvider).toBe('cloud');
+    // The newest wins even though it names no backend: `kind` is 'cloud', never
+    // a provider id, and reporting the OLDER registration's backend would be a
+    // lie about what was last used.
+    expect(out.lastProvider).toBeUndefined();
     expect(out.lastAgent).toBeUndefined();
+    expect(out.lastUsedAt).toBe(Date.parse('2026-03-01T00:00:00.000Z'));
+  });
+
+  it('maps the queue wire spelling but passes a plugin agent through', () => {
+    const at = '2026-02-01T00:00:00.000Z';
+    expect(
+      lastUsedFromRegistrations([{ backend: 'e2b', agent: 'claude-code', registeredAt: at }])
+        .lastAgent,
+    ).toBe('claude');
+    // A service/plugin agent is a fine memory; defaultAgentFor's catalog check
+    // is what decides whether this hub can still offer it.
+    expect(
+      lastUsedFromRegistrations([{ backend: 'e2b', agent: 'openclaw', registeredAt: at }])
+        .lastAgent,
+    ).toBe('openclaw');
   });
 
   it('drops an agentless registration and tolerates an empty list', () => {

@@ -58,13 +58,22 @@ export function defaultAgentFor(
 
 /** One box registration, as much of it as the last-used derivation needs. */
 export interface LastUsedRegistration {
-  /** The cloud backend (`hetzner`, `e2b`, …). `kind` is only ever 'cloud'/'docker'. */
+  /** The cloud backend (`hetzner`, `e2b`, …) — the only field that names a real provider. */
   backend?: string;
-  kind?: string;
   agent?: string;
   createdAt?: string;
   registeredAt: string;
 }
+
+/**
+ * The one wire spelling a registration can carry for an agent id (`toQueueKind`
+ * maps 'claude' → 'claude-code' on the queue boundary). Anything else is passed
+ * through untouched rather than dropped: a plugin or service agent is a
+ * perfectly good memory, and `defaultAgentFor`'s catalog check is what judges
+ * whether this hub can still offer it. Inlined rather than imported from
+ * @agentbox/core because this module is pulled into the client bundle.
+ */
+const AGENT_WIRE_ALIASES: Record<string, string> = { 'claude-code': 'claude' };
 
 /**
  * Derive the same three fields from box registrations, for the hosted
@@ -84,8 +93,12 @@ export function lastUsedFromRegistrations(regs: readonly LastUsedRegistration[])
     if (!newest || at > newest.at) newest = { at, reg };
   }
   if (!newest) return {};
-  const provider = newest.reg.backend ?? newest.reg.kind;
-  const agent = newest.reg.agent;
+  // `backend` only. The registration's `kind` is 'cloud'/'docker', never a
+  // provider id, so falling back to it would emit `lastProvider: 'cloud'` —
+  // a value that always loses the clamp. Saying nothing is more honest.
+  const provider = newest.reg.backend;
+  const raw = newest.reg.agent;
+  const agent = raw ? (AGENT_WIRE_ALIASES[raw] ?? raw) : undefined;
   return {
     ...(provider ? { lastProvider: provider } : {}),
     ...(agent && agent !== 'none' ? { lastAgent: agent } : {}),

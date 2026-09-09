@@ -116,8 +116,9 @@ function CreateBoxModal({
   // Whether the user has touched the picker for the CURRENTLY selected project.
   // Until they do, the field tracks what that project last created with; both
   // pins reset on a project switch so the new project's memory applies.
-  const [agentPinned, setAgentPinned] = useState(false);
-  const [providerPinned, setProviderPinned] = useState(false);
+  // The project whose remembered defaults have been applied. Seeding is latched
+  // on it so a background refresh cannot overwrite what the user is looking at.
+  const [seededFor, setSeededFor] = useState<string | null>(null);
   // The agent catalog (GET /api/v1/agents). Null until it lands — the built-ins
   // paint meanwhile so the form doesn't flash an empty picker.
   const [fetchedAgents, setFetchedAgents] = useState<AgentOption[] | null>(null);
@@ -239,16 +240,24 @@ function CreateBoxModal({
   const providerUsable = usableProvider(provider, providers);
   const agentUsable = agent === 'none' || agents.some((a) => a.id === agent);
 
-  // Seed the two pickers from the project, and re-seed whenever the current
-  // value stops being selectable (the catalogs arrive after the first paint).
-  // `setState` with an unchanged value bails out, so an unusable `desired*`
-  // cannot loop.
+  // Seed each picker ONCE per project selection, and re-seed only when the
+  // current value stops being selectable (the catalogs arrive after the first
+  // paint). The latch is what keeps the form still: `desired*` is recomputed
+  // from `projects`, which the store replaces on every SSE tick, so without it
+  // a create recorded elsewhere for this project — a CLI run, the tray, another
+  // tab — would flip the pickers under a user who is mid-form. `setState` with
+  // an unchanged value bails out, so an unusable `desired*` cannot loop.
   useEffect(() => {
-    if (!providerPinned || !providerUsable) setProvider(desiredProvider);
-  }, [providerPinned, providerUsable, desiredProvider]);
-  useEffect(() => {
-    if (!agentPinned || !agentUsable) setAgent(desiredAgent as Agent);
-  }, [agentPinned, agentUsable, desiredAgent]);
+    if (seededFor !== projectId || !providerUsable) {
+      setProvider(desiredProvider);
+      setAgent(desiredAgent as Agent);
+      setSeededFor(projectId);
+      return;
+    }
+    if (!agentUsable) setAgent(desiredAgent as Agent);
+    // `desired*` is deliberately NOT a dependency: it is READ when the latch
+    // opens, never followed.
+  }, [projectId, seededFor, providerUsable, agentUsable]);
 
   // `provider` state always holds a concrete id (init 'docker'), but its TYPE is optional.
   const providerId = provider ?? 'docker';
@@ -325,12 +334,11 @@ function CreateBoxModal({
   useEffect(() => {
     if (!projectId || jobId) return;
     setRunSetup(selected?.needsSetup ?? false);
-    // Unpin on a project switch (like branch/setup) so a cloud provider picked
-    // for one project doesn't silently carry to the next — the effect above then
-    // applies what the project being switched TO last used, or docker when it
-    // has no memory.
-    setProviderPinned(false);
-    setAgentPinned(false);
+    // The provider/agent seed is latched on `projectId` (see the effect above),
+    // so a switch re-seeds from the project being switched TO — what it last
+    // used, or docker/claude when it has no memory. That keeps the old
+    // behaviour's promise: a cloud provider picked for one project never
+    // silently carries to the next.
     let cancelled = false;
     setBranches(null);
     setFromBranch(selected?.currentBranch ?? '');
@@ -670,13 +678,7 @@ function CreateBoxModal({
               </Field>
             ) : null}
             <Field label="Provider">
-              <Select
-                value={provider}
-                onChange={(e) => {
-                  setProviderPinned(true);
-                  setProvider(e.target.value);
-                }}
-              >
+              <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
                 {providers.map((p) => (
                   <option
                     key={p.id}
@@ -752,13 +754,7 @@ function CreateBoxModal({
               </Field>
             ) : null}
             <Field label="Agent">
-              <Select
-                value={agent}
-                onChange={(e) => {
-                  setAgentPinned(true);
-                  setAgent(e.target.value as Agent);
-                }}
-              >
+              <Select value={agent} onChange={(e) => setAgent(e.target.value as Agent)}>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
                     {/* Flag an agent this machine has no config or saved login for.

@@ -471,19 +471,6 @@ export const createCommand = new Command('create')
       provider: opts.provider,
       remoteHost: opts.remoteHost,
     });
-    // Remember the provider for the create pickers (hub web, tray). No agent:
-    // `agentbox create` builds a plain box, and "I once made a bare box" is no
-    // evidence about which agent to pre-select. Recorded here rather than left
-    // to the hub seam because the REMOTE control-box route below never touches
-    // this machine's registry, and the pickers run on this machine.
-    try {
-      await recordProjectLastUsed(projectRoot, {
-        provider: providerSpecFor(providerName, remoteHost),
-      });
-    } catch {
-      /* best-effort UI memory */
-    }
-
     // Docker off under a remote hub (Step 12): with a control box configured a
     // docker box built here can't run with the laptop off, so it's refused unless
     // hub.mode=local. Runs BEFORE routing so a control-box create can't slip past.
@@ -534,6 +521,21 @@ export const createCommand = new Command('create')
         cmdLog.close();
         process.exit(1);
       }
+    }
+
+    // Remember the provider for the create pickers (hub web, tray). No agent:
+    // `agentbox create` builds a plain box, and "I once made a bare box" is no
+    // evidence about which agent to pre-select. Below every refusal above, so a
+    // create the CLI just rejected does not leave the pickers opening on the one
+    // provider the user was told they cannot use. Recorded here rather than left
+    // to the hub seam because the REMOTE control-box route below never touches
+    // this machine's registry, and the pickers run on this machine.
+    try {
+      await recordProjectLastUsed(projectRoot, {
+        provider: providerSpecFor(providerName, remoteHost),
+      });
+    } catch {
+      /* best-effort UI memory */
     }
 
     // Pick WHICH HUB the create goes to (both modes go through POST /api/v1/boxes;
