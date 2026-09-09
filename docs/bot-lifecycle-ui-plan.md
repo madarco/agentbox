@@ -49,15 +49,19 @@ actions, and hide git UI when there is no repo.
 | 3 | Hub API: `POST /boxes/{id}/backup` | **done** |
 | 4 | Hub API: `GET /projects/{id}/bots`, `POST /projects/{id}/restore` | **done** |
 | 5 | Hub web UI: bot panel (backup + clone), project bots card (restore) | **done** |
-| 6 | Tray: backup + clone actions, "Restore a Bot…" in the footer | **done** |
+| 6 | Tray: backup action, clone in the detail window, restore in the New Box panel | **done** |
 
 ### What changed from the plan, and why
 
-- **The tray's restore did NOT go in the New Box panel.** It is a footer item that
-  fans out over every project's bots. The panel would have been the tidier home,
-  but the case a restore exists for is a box that is *gone*, and the New Box panel
-  is reached per-project from a place a user goes to create — not to recover. A
-  footer item is reachable with no box and no project selected.
+- **The tray's restore is a "Start from" row in the New Box panel**, as planned.
+  It first shipped as a footer item; that was wrong. Restore is the same decision
+  as a create — which project, which provider, what to call it — with a different
+  starting point, so it belongs in that form and not in a menu of its own. Picking
+  a backup hides the rows the bundle decides (Branch, Agent, the setup wizard) and
+  the bake note, since `beginRestore` runs no bake phase.
+- **Clone is in the tray's detail window only, not the box submenu.** It is a
+  rare, considered action that opens a naming dialog, and next to Back Up Now in a
+  menu the two read as a pair when they are opposites.
 - **The hub's backup uses `exportBoxWorkspace`, not the CLI's rsync pull.** Same
   provider-neutral export `clone` already uses, with one new knob
   (`dropAgentScaffolding: false`) so a backup keeps what a clone drops. File

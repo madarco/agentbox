@@ -3556,7 +3556,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           } catch {
             live = null; // unprobeable is the normal case for a box that is gone
           }
-          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot, 'tick force');
+          // Client-NEUTRAL wording (the shared default). Every API client sees
+          // this string, and the tray offers no force control at all — naming a
+          // checkbox there would point at nothing. "Stop or destroy it" is the
+          // instruction that works everywhere.
+          const refusal = sourceBoxRunningRefusal(source, live, bundle.bot);
           if (refusal) return { ok: false, error: refusal };
         }
         const occupant = boxes.find((b) => (b.projectRoot ?? b.workspacePath) === workspace);
