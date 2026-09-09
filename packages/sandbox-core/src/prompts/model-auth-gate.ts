@@ -6,12 +6,12 @@
  * prompt. The prompt only offers what the host can actually satisfy right now,
  * so a scripted create never hands out a login by surprise.
  *
- * Two kinds of source share one picker. An `agent` source is another agent's
- * login FILE and is opt-IN: copying a subscription login into a box should never
- * be the answer you get by not reading. An `env` source is a provider API key
- * from the host environment and is opt-OUT, because that key is already
- * forwarded into every box today — making it a grant is about making it visible
- * and revocable, not about taking it away.
+ * Two kinds of source share one picker: an `agent` source is another agent's
+ * login FILE, an `env` source a provider API key from the host environment.
+ *
+ * The offered login is pre-selected, because reaching this question at all means
+ * the host holds one the box can use. Nothing is copied without a human seeing
+ * it: with no one to ask, the fallback declines.
  *
  * Like the carry gate, it asks through a {@link PromptAsker} rather than a
  * prompt library, so the hub can ask the same question of a tray or web client.
@@ -99,8 +99,15 @@ function listSummary(available: readonly AvailableSource[]): string {
  * one model provider. `multiple` stays in the schema for a prompt that genuinely
  * wants several; this one does not.
  *
- * Declining is the default: copying a subscription login into a box should
- * never be the answer you get by not reading.
+ * The first offered login is the DEFAULT — someone who reached this question
+ * has a login the box can use, and making them pick it every time is friction
+ * for the common case.
+ *
+ * `fallback` still declines, and that difference is deliberate: a default is
+ * what you get by pressing enter with the question in front of you, while the
+ * fallback is what happens when NOBODY is there to read it. A scripted or
+ * non-TTY create must not gain a subscription token silently; it says so up
+ * front with `--model-auth`, or once with the config key.
  */
 export function buildModelAuthPrompt(agentId: string, available: AvailableSource[]): PromptRequest {
   const id = promptId(MODEL_AUTH_TOPIC, {
@@ -123,7 +130,7 @@ export function buildModelAuthPrompt(agentId: string, available: AvailableSource
     heading: 'Model provider',
     title: 'Which login should this box use as its model provider?',
     choices,
-    defaultValue: MODEL_AUTH_NONE,
+    defaultValue: first ? first.id : MODEL_AUTH_NONE,
     // One `agent` source still gets the richer single-credential card, which
     // every shipped client already draws properly. Several get the list, whose
     // `summary` is what an older client falls back to.

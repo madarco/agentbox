@@ -80,9 +80,11 @@ describe('resolveModelAuth', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.topic).toBe('model-auth');
     expect(seen[0]!.kind).toBe('select');
-    // Declining must be the pre-selected answer: copying a subscription login
-    // into a daemon is never the calm default.
-    expect(seen[0]!.defaultValue).toBe('none');
+    // The offered login is pre-selected — someone who reached this question has
+    // one the box can use. The FALLBACK still declines (asserted below), which
+    // is the case where nobody is there to read the question at all.
+    expect(seen[0]!.defaultValue).toBe('codex');
+    expect(seen[0]!.fallback.value).toBe('none');
     expect(await resolveModelAuth(args({ ask: picks('codex') }))).toEqual(['codex']);
   });
 
@@ -143,7 +145,7 @@ describe('who gets asked', () => {
 });
 
 describe('buildModelAuthPrompt', () => {
-  it('lists the logins and asks for ONE, defaulting to none', () => {
+  it('lists the logins and asks for ONE, defaulting to the login', () => {
     const req = buildModelAuthPrompt('openclaw', [CODEX_BORROW]);
     // A list, not a yes/no: "yes" only reads correctly while there is exactly
     // one thing to say it to. Not a multi-select either — a box runs on one
@@ -160,10 +162,11 @@ describe('buildModelAuthPrompt', () => {
       hostPath: '/home/u/.codex/auth.json',
       boxPath: '/home/vscode/.codex/auth.json',
     });
-    // Declining is safe, so an asker that cannot reach a human takes it.
+    // The offered login is the default; declining is still what an asker that
+    // cannot reach a human falls back to. Those are different questions.
     expect(req.required).toBeUndefined();
+    expect(req.defaultValue).toBe('codex');
     expect(req.fallback.value).toBe('none');
-    expect(req.defaultValue).toBe('none');
   });
 
   it('is content-addressed: the same offer is the same id, a different one is not', () => {
