@@ -2459,7 +2459,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       try {
         const asker = collectAsker();
-        const res = await runCreateGates({ workspace, agent: input.agent, ask: asker.ask });
+        const res = await runCreateGates({
+          workspace,
+          agent: input.agent,
+          ask: asker.ask,
+          collecting: true,
+        });
         return { prompts: asker.collected, unavailable: res.unavailable };
       } catch (err) {
         // A hard resolver error (a missing non-optional src, an over-cap entry)

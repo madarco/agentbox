@@ -30,6 +30,15 @@ export interface CreateGateInput {
   /** The agent the box is being created for; `none` for an agentless box. */
   agent: string;
   ask: PromptAsker;
+  /**
+   * Dry run: ask every gate its question and DECIDE nothing.
+   *
+   * Load-bearing for the preflight. A collecting asker answers each prompt with
+   * its own fallback, and carry's fallback is `cancel` — so without this the
+   * carry gate would abort the run and every later gate's question would be
+   * missing from the list the client is shown.
+   */
+  collecting?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -58,7 +67,7 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     ask: input.ask,
     onLog: emit,
   });
-  if (gate.decision === 'cancel') {
+  if (gate.decision === 'cancel' && !input.collecting) {
     return { carry: [], borrowCredentials: [], cancelled: true, unavailable };
   }
   const carry = gate.decision === 'approve' ? gate.entries : [];
