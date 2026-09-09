@@ -1,8 +1,8 @@
 import { log } from '@clack/prompts';
-import { LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
+import { isServiceAgent, LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
 import { execa } from 'execa';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
-import { deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
+import { deriveRepoLabel, findAgentSpec, isHubWorkerClone } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -74,16 +74,18 @@ function urlCell(b: HubApiBox, stream: NodeJS.WriteStream, hub: HubLinkTarget | 
   // The DISPLAYED host is always a direct box URL — never the hub's own host,
   // which a minted `(VNC)` link points at.
   const primary = web ?? b.vncUrl ?? undefined;
+  // ...but the CLICK may go somewhere else. See `webLinkTarget`.
+  const primaryHref = (web ? webLinkTarget(b, hub) : undefined) ?? primary;
 
   const parts: Cell[] = [];
-  if (primary) {
+  if (primary && primaryHref) {
     let display: string;
     try {
       display = new URL(primary).host;
     } catch {
       display = primary;
     }
-    parts.push({ text: hyperlink(display, primary, stream), width: display.length });
+    parts.push({ text: hyperlink(display, primaryHref, stream), width: display.length });
   }
   if (vnc && vnc !== primary) {
     const label = '(VNC)';
@@ -122,6 +124,40 @@ export function vncLinkTarget(b: HubApiBox, hub: HubLinkTarget | undefined): str
   const base = hub.url.replace(/\/+$/, '');
   const q = hub.mode === 'local' && hub.apiKey ? `?token=${encodeURIComponent(hub.apiKey)}` : '';
   return `${base}/boxes/${encodeURIComponent(b.id)}/vnc${q}`;
+}
+
+/**
+ * Where a click on the web URL should actually land.
+ *
+ * For a TUI agent's box the recorded `webUrl` is the answer. For a SERVICE agent
+ * it is not, for two independent reasons, and the box list is exactly where both
+ * bite:
+ *
+ *  - its UI needs a sign-in token the recorded URL does not carry, so a direct
+ *    click opens an unauthenticated page;
+ *  - on an SSH-forward provider (hetzner, digitalocean) the recorded port is a
+ *    snapshot, and the live forward can differ by the time the row is clicked.
+ *
+ * So the click goes through the owning hub's `/boxes/:id/web`, which resolves
+ * live and appends the agent's `#token=` — the same indirection, and the same
+ * reasoning, as {@link vncLinkTarget}. The DISPLAYED text stays the direct box
+ * host either way: the hub's own host in the table would tell the reader
+ * nothing about where their box is.
+ *
+ * Falls back to the direct URL when there is no live hub to link into (a stale
+ * or cached listing) or the box is not running — a redirect would only 409.
+ */
+export function webLinkTarget(b: HubApiBox, hub: HubLinkTarget | undefined): string | null {
+  const web = b.webUrl ?? null;
+  if (!web) return null;
+  const spec = b.agent ? findAgentSpec(b.agent) : undefined;
+  if (!spec || !isServiceAgent(spec)) return web;
+  if (!hub || effectiveState(b) !== 'running') return web;
+  // Same `?token=` rule as the VNC link: it authorizes the click on a
+  // token-gated localhost hub, and buys nothing on a password profile.
+  const base = hub.url.replace(/\/+$/, '');
+  const q = hub.mode === 'local' && hub.apiKey ? `?token=${encodeURIComponent(hub.apiKey)}` : '';
+  return `${base}/boxes/${encodeURIComponent(b.id)}/web${q}`;
 }
 
 /** Workspace path truncated to `target` and linked to its `file://` URL. */
