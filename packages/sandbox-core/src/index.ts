@@ -193,6 +193,12 @@ export {
   type PerBoxCarryResolution,
 } from './per-box-carry.js';
 export {
+  modelAuthIngestArgv,
+  runModelAuthIngest,
+  type IngestExecResult,
+  type ModelAuthIngestResult,
+} from './model-auth-ingest.js';
+export {
   agentSourceIds,
   borrowedCredentialCarry,
   envSourceKeys,

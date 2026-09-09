@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import {
-  borrowIngestTask,
+  runModelAuthIngest,
   findAgentSpec,
   isRealAgentCredential,
   planPropagateTargets,
@@ -135,14 +135,24 @@ const propagateCommand = new Command('propagate')
           await pushCredentialToBox(provider.syncTransport(target), agent, content);
           pushed += 1;
           process.stdout.write(`pushed ${agent} credential to ${target.name} (borrowed)\n`);
-          const ingest = (target.agents ?? [])
-            .map((a) => findAgentSpec(a))
-            .map((spec) => (spec ? borrowIngestTask(spec) : undefined))
-            .find((task) => task !== undefined);
-          if (ingest) {
-            await provider.exec(target, ['agentbox-ctl', 'run-task', ingest, '--force'], {
-              user: 'vscode',
-            });
+          // EVERY consuming agent on the box, not just the first: a box can run
+          // more than one, and `.find()` here silently left the rest holding a
+          // dead profile after a refresh.
+          for (const id of target.agents ?? []) {
+            const consumer = findAgentSpec(id);
+            if (!consumer) continue;
+            await runModelAuthIngest(
+              consumer,
+              async (argv) => {
+                const r = await provider.exec(target, argv, { user: 'vscode' });
+                return {
+                  exitCode: r.exitCode ?? 0,
+                  stdout: r.stdout ?? '',
+                  stderr: r.stderr ?? '',
+                };
+              },
+              { force: true, onLog: (line) => process.stdout.write(`${line}\n`) },
+            );
           }
         } catch (err) {
           failed += 1;

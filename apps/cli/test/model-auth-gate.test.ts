@@ -10,7 +10,8 @@ import { resolveModelAuth } from '../src/lib/model-auth-gate.js';
 const openclaw = resolveAgentSpec('openclaw');
 const available = async () => [
   {
-    agent: 'codex',
+    id: 'codex',
+    kind: 'agent' as const,
     label: 'Your Codex login',
     hostPath: '/home/u/.codex/auth.json',
     boxPath: '/home/vscode/.codex/auth.json',
@@ -36,7 +37,7 @@ describe('resolveModelAuth (CLI wrapper)', () => {
   });
 
   it('still honours the flag and the config key with no TTY', async () => {
-    expect(await resolveModelAuth(args({ isTTY: false, flag: 'codex' }))).toEqual(['codex']);
+    expect(await resolveModelAuth(args({ isTTY: false, flags: ['codex'] }))).toEqual(['codex']);
     expect(
       await resolveModelAuth(
         args({

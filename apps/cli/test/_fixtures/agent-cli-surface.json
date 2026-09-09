@@ -1013,8 +1013,8 @@
         "negate": false
       },
       {
-        "flags": "--model-auth <source>",
-        "description": "which host login to seed as the model provider (none|codex; default: openclaw.modelAuth, else ask). codex: Your Codex login (ChatGPT subscription OAuth)",
+        "flags": "--model-auth <source...>",
+        "description": "which host model-provider logins to seed (none|codex; repeatable or comma-separated; default: openclaw.modelAuth, else ask). codex: Your Codex login (ChatGPT subscription OAuth)",
         "defaultValue": null,
         "mandatory": false,
         "negate": false

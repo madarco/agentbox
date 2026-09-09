@@ -265,6 +265,27 @@ describe('user-config: parser ↔ JSON schema agreement', () => {
         expect(n?.['enum']).toEqual([...(desc.enumValues ?? [])]);
       });
     }
+
+    for (const desc of BUILTIN_KEY_REGISTRY.filter((d) => d.type === 'enum-list')) {
+      it(`${desc.key} enum-list pattern accepts every declared member`, () => {
+        // An `enum-list` is a comma-separated SUBSET, so it cannot be a JSON
+        // Schema `enum`. The pattern is the only thing standing between the
+        // editor and a value the parser accepts, so check it member by member
+        // rather than comparing the regex source to a hand-written copy.
+        const n = node(desc.key);
+        const pattern = n?.['pattern'];
+        expect(pattern, `${desc.key} must be a pattern, not an enum`).toBeTruthy();
+        const re = new RegExp(String(pattern));
+        const members = [...(desc.enumValues ?? [])];
+        for (const m of members) expect(re.test(m), `${desc.key} rejects "${m}"`).toBe(true);
+        // And a combination of the non-sentinel members.
+        const combinable = members.filter((m) => m !== 'none');
+        if (combinable.length > 1) {
+          expect(re.test(combinable.join(',')), `${desc.key} rejects a combination`).toBe(true);
+        }
+        expect(re.test('definitely-not-a-member')).toBe(false);
+      });
+    }
   });
 
   describe('UNKNOWN-KEY fixtures: schema rejects, parser warns and skips', () => {

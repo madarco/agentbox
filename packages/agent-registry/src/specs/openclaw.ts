@@ -450,7 +450,7 @@ export const openclawSpec: AgentSyncSpec = {
       enumValues: ['none', 'codex'],
       default: 'none',
       description:
-        'Which host login a new OpenClaw box is seeded with as its model provider. `codex` copies your Codex (ChatGPT) OAuth login into the box, where OpenClaw imports it and refreshes it independently from then on. `none` leaves model auth for you to configure in the box. `--model-auth` overrides per create.',
+        'Which host model-provider logins a new OpenClaw box is seeded with, comma-separated. `codex` copies your Codex (ChatGPT) OAuth login into the box, where OpenClaw imports it and refreshes it independently from then on. `none` leaves model auth for you to configure in the box, and is only valid on its own. `--model-auth` overrides per create.',
       // Seeded at create, never baked: the file rides the carry step.
     },
   ],

@@ -80,8 +80,8 @@ export interface ServiceAgentOptions {
   persistent?: boolean;
   /** Seconds to wait for the service to report ready. */
   timeout?: string;
-  /** `--model-auth <source>`: which host login to seed as the model provider. */
-  modelAuth?: string;
+  /** `--model-auth <source...>`: which host model-provider logins to seed. */
+  modelAuth?: string[];
   /** `--restore <bot>`: recreate that bot from its backup, identity included. */
   restore?: string;
   /** `--stamp <s>`: which backup (default: the `latest` link). */
@@ -416,12 +416,12 @@ export async function runServiceAgent(
       // under a spinner.
       const borrowCredentials = await resolveModelAuth({
         spec,
-        flag: opts.modelAuth,
+        ...(opts.modelAuth !== undefined ? { flags: opts.modelAuth } : {}),
         settings: agentSettings(cfg, spec.id),
         sources: cfgLoaded.sources,
         yes: !!opts.yes,
       });
-      for (const a of borrowCredentials) cmdLog.write(`model auth: borrowing the ${a} login`);
+      for (const a of borrowCredentials) cmdLog.write(`model auth: granting ${a}`);
 
       const persistent = resolveCreatePersistent({ spec, flag: opts.persistent });
       if (persistent ?? cfg.box.persistent) {
