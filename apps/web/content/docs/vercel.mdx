@@ -42,7 +42,7 @@ agentbox vercel claude
 
 ## Prepare the base snapshot
 
-Vercel can't build a Dockerfile image, so the base environment is a one-time Vercel snapshot (like Hetzner's prepare). `agentbox prepare --provider vercel` boots a fresh sandbox, provisions it (relay shims, VNC, Chromium), then snapshots it. The snapshot id is recorded in `~/.agentbox/vercel-prepared.json`, and every `create --provider vercel` boots from it.
+Vercel can't build a Dockerfile image, so the base environment is a one-time Vercel snapshot (like Hetzner's prepare). `agentbox prepare --provider vercel` boots a fresh sandbox, provisions it (relay shims, VNC, Google Chrome), then snapshots it. The snapshot id is recorded in `~/.agentbox/vercel-prepared.json`, and every `create --provider vercel` boots from it.
 
 The base carries **no agent**. Add one as its own snapshot, on top of the base:
 

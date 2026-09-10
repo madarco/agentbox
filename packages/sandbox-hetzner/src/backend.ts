@@ -884,7 +884,7 @@ export const hetznerBackend: CloudBackend = {
     if (opts.tls) {
       // The TLS mirror serves its own self-signed CA at /root/.portless/ca.pem.
       // `portless proxy start` only trusts it in the system store — not the box
-      // user's NSS db, which Chromium / Playwright read — so the VNC browser and
+      // user's NSS db, which Chrome / Chromium / Playwright read — so the VNC browser and
       // Playwright fail with a cert error on `https://<box>.localhost`. Trust it
       // everywhere (system store + vscode NSS db) and point Node at it via
       // NODE_EXTRA_CA_CERTS. Best-effort: the helper never exits non-zero.

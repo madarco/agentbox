@@ -40,7 +40,7 @@ Set `box.autoApproveSafeHostActions=false` to be asked about every link (and eve
 
 ## Playwright
 
-The Playwright runtime ships in the image; a project's own Playwright tests use the Chromium that project pins, installed on first use (on arm64 boxes `agent-browser` shares that same binary, so nothing version-mismatched is baked in). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
+The Playwright runtime ships in the image; a project's own Playwright tests use the Chromium that project pins, which the project installs itself (`npx playwright install chromium`; on arm64 boxes `agent-browser`'s first launch does it and shares that same binary, so nothing version-mismatched is baked in). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
 
 ```bash
 agentbox claude --with-playwright

@@ -328,9 +328,10 @@ kernel.apparmor_restrict_unprivileged_userns = 0
 kernel.unprivileged_userns_clone = 1
 SYSCTL
 chmod 0644 /etc/sysctl.d/99-agentbox-userns.conf
-# Apply now too so the rest of this install (Chrome's sandbox needs it the
-# moment anything launches the browser) works without needing a reboot
-# of the prepare VPS. The drop-in then re-applies on every boot of the
+# Apply now too so anything that launches a browser during the rest of this
+# install works without a reboot of the prepare VPS. (Chrome itself ships a
+# setuid chrome-sandbox and would cope; the Playwright Chromium fallback has
+# no such helper and needs the knob.) The drop-in then re-applies on every boot of the
 # baked snapshot.
 sysctl -p /etc/sysctl.d/99-agentbox-userns.conf >/dev/null
 done_ "allow unprivileged user namespaces (sysctl drop-in)"

@@ -83,7 +83,7 @@ export interface PrepareVercelOptions {
    *
    * A non-empty set bakes a DERIVED snapshot: boot the existing base, run only
    * those agents' install recipes, re-snapshot. The base already carries the
-   * expensive layers (dnf packages, Chromium, the VNC stack), so re-running
+   * expensive layers (dnf packages, Chrome, the VNC stack), so re-running
    * provision.sh would rebuild all of it for one npm install.
    */
   agents?: string[];
@@ -210,7 +210,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
 
   // 4. Install. A base bake runs provision.sh; a derived bake runs ONLY the
   // agent recipes -- the base already has the expensive layers (dnf packages,
-  // Chromium, the VNC stack), and provision.sh trims its own inputs from /tmp
+  // Chrome, the VNC stack), and provision.sh trims its own inputs from /tmp
   // before the snapshot so it cannot be re-run anyway.
   if (derived) {
     // Same AGENT_SYNC_SPECS data the docker derived layer and

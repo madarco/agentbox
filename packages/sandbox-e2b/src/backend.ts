@@ -6,7 +6,7 @@
  * Platform shape this backend is built around:
  *   - Boxes boot from the prepared base template baked by `agentbox prepare
  *     --provider e2b` (Template.build → custom Debian image with agentbox-ctl,
- *     the vscode user, /workspace, claude/codex/opencode, tmux, Chromium).
+ *     the vscode user, /workspace, claude/codex/opencode, tmux, Chrome).
  *     `backend.provision` gates on `ensureE2bBaseTemplate()` (mirrors the
  *     hetzner/vercel pattern: `prepare` itself sidesteps the gate so a cold
  *     install can bootstrap). A snapshot ref (cloud checkpoint) wins over

@@ -28,6 +28,7 @@ export const SHARED_RUNTIME_ASSETS = [
   'agentbox-portless-trust',
   'agentbox-checkpoint-cleanup',
   'agentbox-open',
+  'chromium-resolver',
   'gh-shim',
   'git-shim',
   'agentbox-tool-shim',
