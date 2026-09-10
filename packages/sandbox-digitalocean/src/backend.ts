@@ -880,7 +880,12 @@ export const digitaloceanBackend: CloudBackend = {
     const cmds = [startCmd, aliasCmd];
     if (opts.tls) {
       cmds.push(
-        'sudo agentbox-portless-trust /root/.portless/ca.pem >/dev/null 2>&1 || true',
+        // Where the CA landed depends on whether the VPS's sudo resets HOME:
+        // `sudo portless proxy start` wrote it under /root on some images and
+        // under the box user's home on others (measured on DigitalOcean, where
+        // the /root-only lookup left NODE_EXTRA_CA_CERTS pointing at nothing and
+        // every in-box node process warning "Ignoring extra certs"). Try both.
+        `sudo sh -c 'for ca in /root/.portless/ca.pem /home/${VPS_USER}/.portless/ca.pem; do if [ -r "$ca" ]; then agentbox-portless-trust "$ca" >/dev/null 2>&1; break; fi; done' || true`,
         `echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' | sudo tee /etc/profile.d/agentbox-portless-ca.sh >/dev/null || true`,
       );
     }
