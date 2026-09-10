@@ -20,6 +20,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -94,6 +95,20 @@ function copy(srcRel, destAbs, exec = false) {
 rmSync(runtime, { recursive: true, force: true });
 mkdirSync(runtime, { recursive: true });
 
+/**
+ * Delete every .gitignore / .npmignore under `dir`. These arrive as a side
+ * effect of copying build output that was itself produced from a git worktree;
+ * inside a published package they only ever subtract files.
+ */
+function stripIgnoreFiles(dir) {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) stripIgnoreFiles(full);
+    else if (entry.name === '.gitignore' || entry.name === '.npmignore') rmSync(full);
+  }
+}
+
 for (const [srcRel, destRel] of direct) {
   copy(srcRel, join(runtime, destRel));
 }
@@ -107,6 +122,14 @@ for (const [srcRel, destRel] of direct) {
 // Absent in a partial dev build (warn+skip) — a publish runs build:standalone
 // first (apps/cli prepublishOnly).
 copy('apps/hub/dist-standalone', join(runtime, 'hub'));
+
+// Next's standalone output carries apps/hub/.gitignore along, and that file
+// lists `/.next/`. npm-packlist honours a .gitignore found ANYWHERE inside the
+// package, so leaving it here silently strips the whole Next production build
+// from the published tarball — the hub then starts and dies with "Could not
+// find a production build in the '.next' directory". Nothing in runtime/ is
+// tracked by git, so an ignore file has no purpose here at all.
+stripIgnoreFiles(runtime);
 
 // Control-box deploy assets — `agentbox hub deploy hetzner` scp's these onto the
 // VPS and builds the `app` service from them, so a package-mode deploy needs no

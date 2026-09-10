@@ -9,6 +9,17 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.31.1] - 2026-09-10
+
+### Fixed
+
+- **`agentbox hub` could not start on 0.31.0** — it exited with "Could not find a
+  production build in the '.next' directory". The published tarball was missing
+  the hub's entire Next build: Next's standalone output began carrying
+  `apps/hub/.gitignore` (which lists `/.next/`) into the staged runtime, and npm
+  honours an ignore file found anywhere inside a package. `agentbox self-update`
+  (or `npm i -g @madarco/agentbox`) fixes an affected install.
+
 ## [0.31.0] - 2026-09-10
 
 ### Breaking
