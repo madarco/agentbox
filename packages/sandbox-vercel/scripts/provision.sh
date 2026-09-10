@@ -22,6 +22,7 @@
 #   /tmp/agentbox-dockerd-start        -- in-box dockerd startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
+#   /tmp/agentbox-chromium-resolver    -- /usr/local/bin/chromium (Chrome first, Playwright fallback)
 #   /tmp/agentbox-gh-shim              -- in-box `gh` shim (routes to host gh)
 #   /tmp/agentbox-git-shim             -- in-box `git` shim (routes via relay)
 #   /tmp/agentbox-tool-shim            -- generic host-tool shim, symlinked per granted tool at box start
@@ -403,31 +404,37 @@ dnf install -y -q --allowerasing \
   liberation-fonts
 done_ "Chrome runtime libs (dnf)"
 
-step "playwright + Chromium download (as vscode)"
-# Run the download as vscode so the cache lands under
-# /home/vscode/.cache/ms-playwright. Resolve a stable symlink at
-# /usr/local/bin/chromium so AGENT_BROWSER_EXECUTABLE_PATH stays predictable
-# across Chromium revision bumps (mirrors hetzner install-box.sh).
+step "playwright + Google Chrome (full, x86_64) + chromium resolver"
+# Full Chrome, not Playwright's linux-x64 "chromium": that one is a Chrome for
+# Testing build that paints a permanent "for testing only" notice on the VNC
+# desktop the user actually looks at. agent-browser drives Chrome over CDP with
+# the same flags. Google's package repo + daily cron are opted out
+# (`/etc/default/google-chrome` is honoured by the post-install), so the
+# snapshot stays what was baked. /usr/local/bin/chromium is the same resolver
+# script docker ships: it execs this Chrome, and only falls back to a (lazy,
+# project-pinned) Playwright Chromium where Chrome is absent. The global
+# playwright stays for that fallback and for projects' own tests.
 npm install -g playwright 2>&1 | tail -3
-sudo -u vscode -H bash -lc 'playwright install chromium'
-CHROME_BIN="$(sudo -u vscode -H bash -lc 'ls /home/vscode/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1')"
-if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
-  echo "provision.sh: could not resolve Playwright Chromium binary" >&2
+mkdir -p /etc/default
+printf 'repo_add_once="false"\nrepo_reenable_on_distupgrade="false"\n' > /etc/default/google-chrome
+dnf install -y -q https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+rm -f /etc/cron.daily/google-chrome
+if [ ! -x /opt/google/chrome/chrome ]; then
+  echo "provision.sh: Google Chrome install failed (/opt/google/chrome/chrome missing)" >&2
   exit 70
 fi
-# Fail loud if a shared lib is missing — this is where an incomplete AL2023 dep
-# set surfaces at bake time instead of at first agent-browser launch. Capture
-# ldd's output first (|| true): under `set -euo pipefail` a non-zero ldd exit
-# would otherwise dominate the `ldd | grep` pipeline and make the missing-libs
-# check a silent no-op even when 'not found' lines are present.
-LDD_OUT="$(ldd "$CHROME_BIN" 2>&1 || true)"
+# Fail loud if a shared lib is missing — surfaces an incomplete dep set at bake
+# time, not at first agent-browser launch. Capture ldd's output first (|| true):
+# under `set -euo pipefail` a non-zero ldd exit would otherwise dominate the
+# `ldd | grep` pipeline and make the check a silent no-op.
+LDD_OUT="$(ldd /opt/google/chrome/chrome 2>&1 || true)"
 if printf '%s\n' "$LDD_OUT" | grep -q 'not found'; then
-  echo "provision.sh: Chromium has unresolved shared libs:" >&2
+  echo "provision.sh: Chrome has unresolved shared libs:" >&2
   printf '%s\n' "$LDD_OUT" | grep 'not found' >&2
   exit 71
 fi
-ln -sf "$CHROME_BIN" /usr/local/bin/chromium
-done_ "playwright + Chromium download (as vscode)"
+install -m 0755 /tmp/agentbox-chromium-resolver /usr/local/bin/chromium
+done_ "playwright + Google Chrome (full, x86_64) + chromium resolver"
 
 step "dnf cleanup"
 dnf clean all 2>/dev/null || true
@@ -449,7 +456,7 @@ done_ "relay shims (gh + git + tool)"
 
 step "trim /tmp/agentbox-*"
 rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start /tmp/agentbox-dockerd-start \
-      /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
+      /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open /tmp/agentbox-chromium-resolver \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-tool-shim \
       /tmp/agentbox-custom-CLAUDE.md /tmp/agentbox-managed-settings.json \
       /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md /tmp/agentbox-identity-skill.md

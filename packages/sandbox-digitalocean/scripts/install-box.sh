@@ -13,6 +13,7 @@
 #   /tmp/agentbox-dockerd-start        -- DinD startup helper
 #   /tmp/agentbox-checkpoint-cleanup   -- pre-snapshot cleanup helper
 #   /tmp/agentbox-open                 -- in-box xdg-open shim
+#   /tmp/agentbox-chromium-resolver    -- /usr/local/bin/chromium (Chrome first, Playwright fallback)
 #   /tmp/agentbox-gh-shim              -- in-box `gh` shim (routes to host gh via relay)
 #   /tmp/agentbox-git-shim             -- in-box `git` shim (routes push/pull/fetch/clone via relay)
 #   /tmp/agentbox-tool-shim            -- generic host-tool shim, symlinked per granted tool at box start
@@ -202,14 +203,12 @@ install -m 0755 /tmp/agentbox-ctl /usr/local/bin/agentbox-ctl
 done_ "agentbox-ctl install"
 
 # === EARLY BAKE: helper scripts, baked configs, profile/sshd shims ===
-# Originally these steps lived after Chromium download (which takes ~5min).
-# We moved them up because — for reasons that didn't fully resolve in
-# diagnostic runs — bash's set -x trace, the pipe-tee log capture, and any
-# subsequent file system writes from this script silently stop emitting
-# output after the long-running `playwright install chromium` exec, leaving
-# the snapshot missing every file these steps would install. Running them
-# *before* Chromium sidesteps the issue and keeps the snapshot complete.
-# Tracked as Phase-7 follow-up in docs/hertzner_backlog.md.
+# These steps run before the long package installs below. They used to sit
+# after a ~5 min `playwright install chromium` (since replaced by the Chrome
+# .deb), and — for reasons that never fully resolved in diagnostic runs —
+# bash's set -x trace, the pipe-tee log capture, and any later file system
+# writes silently stopped emitting output after that long exec, leaving the
+# snapshot missing every file these steps install. Keep them first.
 
 step "baked helper scripts (vnc / dockerd / portless-trust / cleanup / xdg-open / gh + git + tool shims)"
 install -m 0755 /tmp/agentbox-vnc-start          /usr/local/bin/agentbox-vnc-start
@@ -333,8 +332,8 @@ kernel.apparmor_restrict_unprivileged_userns = 0
 kernel.unprivileged_userns_clone = 1
 SYSCTL
 chmod 0644 /etc/sysctl.d/99-agentbox-userns.conf
-# Apply now too so the rest of this install (in particular `playwright
-# install chromium`'s post-install probe) works without needing a reboot
+# Apply now too so the rest of this install (Chrome's sandbox needs it the
+# moment anything launches the browser) works without needing a reboot
 # of the prepare VPS. The drop-in then re-applies on every boot of the
 # baked snapshot.
 sysctl -p /etc/sysctl.d/99-agentbox-userns.conf >/dev/null
@@ -384,19 +383,25 @@ done_ "agent-browser + playwright + portless (global npm)"
 # are still honoured -- they select the RECIPE, not whether to install -- and
 # reach it via the derived bake, as AGENTBOX_AGENT_SETTING_* env.
 
-step "Chromium download via Playwright (as vscode)"
-# Run the download as vscode so the cache lands under
-# /home/vscode/.cache/ms-playwright. Resolve a stable symlink at
-# /usr/local/bin/chromium so AGENT_BROWSER_EXECUTABLE_PATH stays predictable
-# across Chromium revision bumps.
-sudo -u vscode -H bash -lc 'playwright install chromium'
-CHROME_BIN="$(sudo -u vscode -H bash -lc 'ls /home/vscode/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort | tail -1')"
-if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
-  echo "install-box.sh: could not resolve Playwright Chromium binary" >&2
+step "Google Chrome (full, x86_64) + chromium resolver"
+# Full Chrome, not Playwright's linux-x64 "chromium": that one is a Chrome for
+# Testing build that paints a permanent "for testing only" notice on the VNC
+# desktop the user actually looks at. agent-browser drives Chrome over CDP with
+# the same flags. Installed from the direct .deb with Google's apt repo + daily
+# cron opted out (`/etc/default/google-chrome` is honoured by the postinst), so
+# the snapshot stays what was baked. /usr/local/bin/chromium is the same
+# resolver script docker ships: it execs this Chrome, and only falls back to a
+# (lazy, project-pinned) Playwright Chromium where Chrome is absent.
+printf 'repo_add_once="false"\nrepo_reenable_on_distupgrade="false"\n' > /etc/default/google-chrome
+curl -fsSL -o /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+apt-get install -y --no-install-recommends /tmp/google-chrome.deb
+rm -f /tmp/google-chrome.deb /etc/cron.daily/google-chrome
+if [ ! -x /opt/google/chrome/chrome ]; then
+  echo "install-box.sh: Google Chrome install failed (/opt/google/chrome/chrome missing)" >&2
   exit 70
 fi
-ln -sf "$CHROME_BIN" /usr/local/bin/chromium
-done_ "Chromium download via Playwright (as vscode)"
+install -m 0755 /tmp/agentbox-chromium-resolver /usr/local/bin/chromium
+done_ "Google Chrome (full, x86_64) + chromium resolver"
 
 step "apt cleanup"
 apt-get clean
@@ -408,7 +413,7 @@ step "trim /tmp/agentbox-*"
 # the install log saved into the snapshot so a Phase-7-style diagnostic can
 # re-read which lines actually executed against which source.
 rm -f /tmp/agentbox-ctl /tmp/agentbox-vnc-start /tmp/agentbox-dockerd-start \
-      /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open \
+      /tmp/agentbox-checkpoint-cleanup /tmp/agentbox-open /tmp/agentbox-chromium-resolver \
       /tmp/agentbox-gh-shim /tmp/agentbox-git-shim /tmp/agentbox-tool-shim \
       /tmp/agentbox-custom-CLAUDE.md /tmp/agentbox-managed-settings.json \
       /tmp/agentbox-codex-hooks.json /tmp/agentbox-setup-skill.md /tmp/agentbox-identity-skill.md

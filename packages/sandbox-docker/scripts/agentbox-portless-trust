@@ -7,7 +7,7 @@
 # in-VPS mirror proxy with its own CA at /root/.portless/ca.pem; Docker: the
 # host CA bind-mounted at /home/vscode/.portless/ca.pem). `portless proxy start`
 # at best trusts the CA in the Linux *system* store — it does NOT populate the
-# per-user NSS database that Chromium / Playwright-Chromium read on Linux, so
+# per-user NSS database that Chrome / Chromium / Playwright-Chromium read on Linux, so
 # the VNC browser window and Playwright fail with a cert error. We close that
 # gap here by trusting the CA in BOTH the system store and the box user's NSS db.
 #
@@ -43,8 +43,9 @@ else
   warn "could not stage CA to $SYS_CA_DST"
 fi
 
-# --- Box user's NSS DB (Chromium / Playwright-Chromium on Linux) --------------
-# Chromium reads sql:\$HOME/.pki/nssdb for the user it runs as. certutil ships in
+# --- Box user's NSS DB (Chrome / Chromium / Playwright-Chromium on Linux) -----
+# Google Chrome and Chromium both read sql:\$HOME/.pki/nssdb for the user they
+# run as. certutil ships in
 # libnss3-tools (baked into the box images).
 if command -v certutil >/dev/null 2>&1; then
   BOX_HOME="$(getent passwd "$BOX_USER" 2>/dev/null | cut -d: -f6)"
@@ -68,7 +69,7 @@ if command -v certutil >/dev/null 2>&1; then
     if run_as_user "certutil -d sql:'$NSSDB' -A -t 'C,,' -n '$NSS_NICK' -i '$SYS_CA_DST'" 2>/dev/null; then
       :
     else
-      warn "certutil -A failed — in-box Chromium may not trust the CA"
+      warn "certutil -A failed — the in-box browser may not trust the CA"
     fi
   else
     warn "user '$BOX_USER' not found — skipping NSS trust"

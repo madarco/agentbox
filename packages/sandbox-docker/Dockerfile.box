@@ -208,7 +208,7 @@ RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/
 # `renderAgentSettingEnv` / `AGENTBOX_AGENT_SETTING_*`.
 
 # Browser support for in-box agents: Vercel's agent-browser drives Chrome via
-# CDP. Two things have to happen here:
+# CDP. Three things have to happen here:
 #
 #  1. Install Chrome's runtime libs (the well-known set Playwright's
 #     `install-deps` installs). Package names are pinned to Ubuntu 24.04
@@ -216,20 +216,28 @@ RUN mkdir -p /home/vscode/.vscode-server/extensions /home/vscode/.cursor-server/
 #     the noble transition. If the base image moves back to jammy these will
 #     need the un-suffixed names.
 #
-#  2. Provide a Chromium *lazily*, shared with the project's Playwright. We do
+#  2. On amd64, bake full Google Chrome. The VNC screen is a real desktop the
+#     user looks at, and Playwright's linux-x64 "chromium" is a Chrome for
+#     Testing build that paints a permanent "for testing only" notice there.
+#     Google ships no linux/arm64 Chrome, so arm64 (Apple Silicon docker)
+#     skips this and stays on tier 3. Installed from the direct .deb with
+#     Google's apt repo + daily cron opted out (`/etc/default/google-chrome`,
+#     honoured by the package's postinst), so the image stays what was baked.
+#
+#  3. Provide Playwright's Chromium *lazily*, shared with the project. We do
 #     NOT bake a Chromium download into the image: Playwright pins an exact
 #     build per playwright version, so a baked browser goes stale the instant a
 #     project pins a different Playwright — its `playwright install` fetches a
 #     different build and anything waiting on the baked path hangs. Instead,
 #     `AGENT_BROWSER_EXECUTABLE_PATH` points at the `chromium-resolver` script
-#     (installed as /usr/local/bin/chromium below), which reuses the project's
-#     Playwright Chromium when present and otherwise installs one on first use
-#     with the project's pinned Playwright (matching build), falling back to the
-#     box's global Playwright. agent-browser honours that env var (priority: CLI
-#     flag > env > config file > built-in default; see agent-browser's README).
-#     Chrome-for-Testing has no linux/arm64 build and Noble's chromium apt
-#     package is a snap stub, so Playwright's downloader stays the only reliable
-#     cross-arch source — we just invoke it lazily instead of at build time.
+#     (installed as /usr/local/bin/chromium below), which execs Chrome when
+#     tier 2 baked it, else reuses the project's Playwright Chromium when
+#     present and otherwise installs one on first use with the project's pinned
+#     Playwright (matching build), falling back to the box's global Playwright.
+#     agent-browser honours that env var (priority: CLI flag > env > config
+#     file > built-in default; see agent-browser's README). Noble's chromium
+#     apt package is a snap stub, so Playwright's downloader stays the only
+#     reliable arm64 source — we just invoke it lazily instead of at build time.
 #
 # Runtime state (sessions, auth cookies under ~/.agent-browser/) lives in the
 # container's writable layer, preserved across pause/unpause/stop/start and
@@ -241,6 +249,17 @@ RUN apt-get update \
         libgbm1 libdrm2 libpango-1.0-0 libcairo2 libasound2t64 \
         fonts-liberation xdg-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# Tier 2: full Google Chrome, amd64 only (see the note above). `if`, not `&&`:
+# RUN is plain `sh -c`, so a false test would fail the arm64 build.
+RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+        printf 'repo_add_once="false"\nrepo_reenable_on_distupgrade="false"\n' > /etc/default/google-chrome \
+        && curl -fsSL -o /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
+        && rm -rf /var/lib/apt/lists/* /tmp/google-chrome.deb /etc/cron.daily/google-chrome \
+        && test -x /opt/google/chrome/chrome; \
+    fi
 
 # agent-browser + a global playwright (the latter is only the lazy fallback
 # Chromium downloader for projects that don't pin their own Playwright).
@@ -494,9 +513,9 @@ COPY apps/cli/share/agentbox-setup/SKILL.md /usr/local/share/agentbox/setup-guid
 COPY apps/cli/share/agentbox-identity/SKILL.md /usr/local/share/agentbox/identity-skill.md
 RUN chmod 0644 /usr/local/share/agentbox/setup-guide.md /usr/local/share/agentbox/identity-skill.md
 
-# /usr/local/bin/chromium is a resolver (not a baked binary): on first launch it
-# reuses the project's Playwright Chromium or installs one on demand, then execs
-# it. See the script header and the rationale in the browser-support note above.
+# /usr/local/bin/chromium is a resolver, not a binary: it execs the baked Chrome
+# on amd64, else reuses the project's Playwright Chromium or installs one on
+# demand. See the script header and the browser-support note above.
 COPY packages/sandbox-docker/scripts/chromium-resolver /usr/local/bin/chromium
 RUN chmod +x /usr/local/bin/chromium
 

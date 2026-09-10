@@ -86,8 +86,9 @@ done
 # JPEG rings around the letterforms, and the AL2023 source build of JWM has no
 # jpeg support at all, only png). The icons also sidestep what the base images
 # actually offer -- xterm's own pixmap is a 1990s bitmap of the letters "XTERM",
-# and no base image ships a browser icon at all (Chromium arrives later via
-# Playwright, under the box user's cache).
+# and the arm64 images ship no browser icon at all (their Chromium arrives
+# later via Playwright, under the box user's cache; x86_64 images bake Google
+# Chrome, whose own icon we still don't want to hunt for per provider).
 DESKTOP_ASSET_DIR="$HOME/.local/share/agentbox/desktop"
 DESKTOP_LAUNCHER="$DESKTOP_ASSET_DIR/open-browser"
 
@@ -179,9 +180,10 @@ DESKTOP_LOGO
 }
 
 # The dock's Browser button and the host's "show the app on the VNC screen" step
-# both go through this launcher instead of calling agent-browser directly. The
-# first Chromium launch in a box is a Playwright download (~150MB, tens of
-# seconds; see chromium-resolver on why nothing is baked), and JWM has no
+# both go through this launcher instead of calling agent-browser directly. On
+# an arm64 box the first browser launch is a Playwright Chromium download
+# (~150MB, tens of seconds; see chromium-resolver on why that tier is not
+# baked -- x86_64 boxes exec the baked Google Chrome instead), and JWM has no
 # startup notification -- no busy cursor, no bouncing icon -- so a direct exec
 # leaves a person staring at an empty desktop with no sign anything is
 # happening. The launcher maps an xterm immediately, which is both the progress
@@ -295,7 +297,11 @@ log="$(mktemp)"
 agent-browser --session "$session" open --headed "$url" >"$log" 2>&1 9>&- &
 pid=$!
 printf "\n  Starting the browser on this desktop.\n"
-printf "  The first launch downloads Chromium and can take a minute.\n\n"
+if [[ -x /opt/google/chrome/chrome ]]; then
+  printf "\n"
+else
+  printf "  The first launch downloads Chromium and can take a minute.\n\n"
+fi
 frames="|/-\\"
 i=0
 start=$SECONDS
@@ -309,10 +315,11 @@ while :; do
   fi
   # The command exiting is NOT the browser being on screen: agent-browser hands
   # the request to its daemon and returns in milliseconds whenever one is
-  # already up. Wait for the Chromium itself -- the CDP flag is how every
-  # agent-browser launch spells it, and the lazy chromium-resolver wrapper
-  # ("/chromium ") is deliberately not matched, since seeing it means the
-  # download this window exists for is still running. Give up waiting 25s after
+  # already up. Wait for the browser itself -- the CDP flag is how every
+  # agent-browser launch spells it, and both Google Chrome and Playwright's
+  # build end in "/chrome". The chromium-resolver wrapper ("/chromium ") is
+  # deliberately not matched: on arm64 seeing it means the download this
+  # window exists for is still running. Give up waiting 25s after
   # the launch returned, so an unrecognised browser closes the window instead of
   # stranding it.
   if [[ -n $rc ]]; then
@@ -532,9 +539,10 @@ write_jwmrc() {
   </MenuStyle>
 
   <!-- Keep the screen-launched browser filling the desktop the way it did when
-       there was no WM at all, now minus the dock's strut. Playwright's Chromium
-       (what agent-browser drives) reports WM_CLASS "Chromium-browser"; the other
-       two are what a distro chromium and a real Chrome report. JWM matches the
+       there was no WM at all, now minus the dock's strut. The baked Google
+       Chrome on x86_64 boxes reports WM_CLASS "Google-chrome", Playwright's
+       Chromium on arm64 reports "Chromium-browser", and a distro chromium
+       "Chromium" (agent-browser drives whichever chromium-resolver picks). JWM matches the
        class exactly, so each spelling needs its own Group.
        Undecorated: on a 800px-tall desktop a titlebar over a browser that is
        always maximized is ~30px of page spent on a second title above the one

@@ -21,6 +21,7 @@ function makeFakeRepo(): string {
     'packages/sandbox-docker/scripts/agentbox-portless-trust',
     'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
     'packages/sandbox-docker/scripts/agentbox-open',
+    'packages/sandbox-docker/scripts/chromium-resolver',
     'packages/sandbox-docker/scripts/gh-shim',
     'packages/sandbox-docker/scripts/git-shim',
     'packages/sandbox-docker/scripts/agentbox-tool-shim',
@@ -47,9 +48,9 @@ describe('resolveRuntimeAssets', () => {
   });
 
   it('lists every missing path when assets are not found', () => {
-    expect(() => resolveRuntimeAssets({ repoRoot: '/nonexistent/path/that/does/not/exist' })).toThrow(
-      /could not resolve runtime assets/,
-    );
+    expect(() =>
+      resolveRuntimeAssets({ repoRoot: '/nonexistent/path/that/does/not/exist' }),
+    ).toThrow(/could not resolve runtime assets/);
   });
 
   it('prefers cliRuntimeRoot when provided', () => {

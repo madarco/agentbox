@@ -49,6 +49,7 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
     remoteMode: 0o755,
   },
   { name: 'agentbox-open', remotePath: '/tmp/agentbox-open', remoteMode: 0o755 },
+  { name: 'chromium-resolver', remotePath: '/tmp/agentbox-chromium-resolver', remoteMode: 0o755 },
   { name: 'gh-shim', remotePath: '/tmp/agentbox-gh-shim', remoteMode: 0o755 },
   { name: 'git-shim', remotePath: '/tmp/agentbox-git-shim', remoteMode: 0o755 },
   { name: 'agentbox-tool-shim', remotePath: '/tmp/agentbox-tool-shim', remoteMode: 0o755 },
@@ -97,6 +98,7 @@ export function candidatesFor(
     'agentbox-dockerd-start': ['packages/sandbox-docker/scripts/agentbox-dockerd-start'],
     'agentbox-checkpoint-cleanup': ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['packages/sandbox-docker/scripts/agentbox-open'],
+    'chromium-resolver': ['packages/sandbox-docker/scripts/chromium-resolver'],
     'gh-shim': ['packages/sandbox-docker/scripts/gh-shim'],
     'git-shim': ['packages/sandbox-docker/scripts/git-shim'],
     'agentbox-tool-shim': ['packages/sandbox-docker/scripts/agentbox-tool-shim'],
@@ -127,6 +129,10 @@ export function candidatesFor(
     'agentbox-open': [
       'vercel/agentbox-open',
       'docker/packages/sandbox-docker/scripts/agentbox-open',
+    ],
+    'chromium-resolver': [
+      'vercel/chromium-resolver',
+      'docker/packages/sandbox-docker/scripts/chromium-resolver',
     ],
     'gh-shim': ['vercel/gh-shim', 'docker/packages/sandbox-docker/scripts/gh-shim'],
     'git-shim': ['vercel/git-shim', 'docker/packages/sandbox-docker/scripts/git-shim'],

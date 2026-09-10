@@ -17,9 +17,9 @@ export interface CloudVncBrowserResult {
  * the app instead of a blank X screen. The box can reach its own preview domain
  * (verified on vercel), so host and box load one origin. No-op when the box
  * declares no exposed web service. Goes through the same desktop launcher the
- * docker path uses, so a cloud box's first launch (a Chromium download, worse
- * over a cold cloud disk) shows a progress window on the desktop instead of
- * holding this exec open for a minute. Best-effort by contract — callers surface
+ * docker path uses, so the launch shows its progress window on the desktop
+ * (cloud images bake Google Chrome, so this is normally instant; the window is
+ * also where a failed launch reports itself) instead of holding this exec open. Best-effort by contract — callers surface
  * `reason` as a warning and never fail the open-VNC flow on it.
  */
 export async function openWebAppOnVncScreen(

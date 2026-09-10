@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Routes in-box URL opens to `agentbox-ctl open`, which opens the link in the
-# box's own Chromium (agent-browser, visible via `agentbox screen`) and also
+# box's own browser (agent-browser, visible via `agentbox screen`) and also
 # mirrors it on the host browser — no approval, it's part of the safe
 # host-action subset, but rate-limited so a loop can't spray host tabs. This script is installed at /usr/local/bin (earlier in PATH than
 # xdg-utils' /usr/bin/xdg-open, which it is also symlinked over) and is the

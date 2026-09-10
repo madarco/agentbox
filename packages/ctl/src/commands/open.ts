@@ -15,7 +15,7 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
- * Open the URL in the box's own Chromium via agent-browser. `agent-browser
+ * Open the URL in the box's own browser via agent-browser. `agent-browser
  * open` starts the persistent headed session on first call and reuses it
  * after — so this both ensures the browser is running and navigates it. It
  * renders to DISPLAY=:1, i.e. the VNC view (`agentbox screen`).

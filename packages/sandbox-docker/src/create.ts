@@ -350,7 +350,7 @@ async function pathExists(p: string): Promise<boolean> {
 
 /**
  * Trust the (TLS) host Portless CA inside a docker box so the in-box VNC
- * Chromium and Playwright accept `https://<name>.localhost`. The CA is the
+ * browser (Chrome or Chromium) and Playwright accept `https://<name>.localhost`. The CA is the
  * host's, bind-mounted at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR).
  * The baked `agentbox-portless-trust` helper installs it into the system store
  * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS

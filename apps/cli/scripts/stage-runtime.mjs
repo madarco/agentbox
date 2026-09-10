@@ -14,7 +14,15 @@
 // needs zero changes. runtime/ sits next to dist/ in both the dev tree and the
 // published package, so the resolvers anchor on it uniformly.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,9 +38,7 @@ const vercelCtx = join(runtime, 'vercel');
 const e2bCtx = join(runtime, 'e2b');
 
 // Copies that land directly under runtime/ (not part of the docker context).
-const direct = [
-  ['packages/relay/dist/bin.cjs', 'relay/bin.cjs'],
-];
+const direct = [['packages/relay/dist/bin.cjs', 'relay/bin.cjs']];
 
 // Copies that reproduce the EXACT monorepo-relative path the Dockerfile.box
 // COPY statements use, rooted at runtime/docker/ (the build context).
@@ -132,15 +138,28 @@ const hetznerFiles = [
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
-  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  [
+    'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    'agentbox-checkpoint-cleanup',
+    true,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/chromium-resolver', 'chromium-resolver', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
   ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-docker/scripts/agentbox-tool-shim', 'agentbox-tool-shim', true],
   ['packages/sandbox-hetzner/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
-  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  [
+    'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    'claude-managed-settings.json',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
-  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  [
+    'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
+    'opencode-agentbox-plugin.js',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
   ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
@@ -161,14 +180,27 @@ const sharedFiles = [
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
-  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  [
+    'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    'agentbox-checkpoint-cleanup',
+    true,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/chromium-resolver', 'chromium-resolver', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
   ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-docker/scripts/agentbox-tool-shim', 'agentbox-tool-shim', true],
-  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  [
+    'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    'claude-managed-settings.json',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
-  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  [
+    'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
+    'opencode-agentbox-plugin.js',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
   ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
@@ -187,15 +219,32 @@ const digitaloceanFiles = [
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-portless-trust', 'agentbox-portless-trust', true],
-  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  [
+    'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    'agentbox-checkpoint-cleanup',
+    true,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/chromium-resolver', 'chromium-resolver', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
   ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-docker/scripts/agentbox-tool-shim', 'agentbox-tool-shim', true],
-  ['packages/sandbox-digitalocean/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
-  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  [
+    'packages/sandbox-digitalocean/scripts/custom-system-CLAUDE.md',
+    'custom-system-CLAUDE.md',
+    false,
+  ],
+  [
+    'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    'claude-managed-settings.json',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
-  ['packages/sandbox-docker/scripts/opencode-agentbox-plugin.js', 'opencode-agentbox-plugin.js', false],
+  [
+    'packages/sandbox-docker/scripts/opencode-agentbox-plugin.js',
+    'opencode-agentbox-plugin.js',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/pi-agentbox-extension.js', 'pi-agentbox-extension.js', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
   ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
@@ -227,13 +276,22 @@ const vercelFiles = [
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
-  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  [
+    'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    'agentbox-checkpoint-cleanup',
+    true,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/chromium-resolver', 'chromium-resolver', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
   ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-docker/scripts/agentbox-tool-shim', 'agentbox-tool-shim', true],
   ['packages/sandbox-vercel/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
-  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  [
+    'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    'claude-managed-settings.json',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
   ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],
@@ -255,13 +313,22 @@ const e2bFiles = [
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
-  ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup', 'agentbox-checkpoint-cleanup', true],
+  [
+    'packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    'agentbox-checkpoint-cleanup',
+    true,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-open', 'agentbox-open', true],
+  ['packages/sandbox-docker/scripts/chromium-resolver', 'chromium-resolver', true],
   ['packages/sandbox-docker/scripts/gh-shim', 'gh-shim', true],
   ['packages/sandbox-docker/scripts/git-shim', 'git-shim', true],
   ['packages/sandbox-docker/scripts/agentbox-tool-shim', 'agentbox-tool-shim', true],
   ['packages/sandbox-e2b/scripts/custom-system-CLAUDE.md', 'custom-system-CLAUDE.md', false],
-  ['packages/sandbox-docker/scripts/claude-managed-settings.json', 'claude-managed-settings.json', false],
+  [
+    'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    'claude-managed-settings.json',
+    false,
+  ],
   ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json', 'agentbox-codex-hooks.json', false],
   ['apps/cli/share/agentbox-setup/SKILL.md', 'agentbox-setup-skill.md', false],
   ['apps/cli/share/agentbox-identity/SKILL.md', 'agentbox-identity-skill.md', false],

@@ -59,16 +59,37 @@ export const RUNTIME_ASSETS: readonly RuntimeAsset[] = [
   { name: 'agentbox-vnc-start', remoteBasename: 'agentbox-vnc-start', remoteMode: 0o755 },
   { name: 'agentbox-dockerd-start', remoteBasename: 'agentbox-dockerd-start', remoteMode: 0o755 },
   { name: 'agentbox-portless-trust', remoteBasename: 'agentbox-portless-trust', remoteMode: 0o755 },
-  { name: 'agentbox-checkpoint-cleanup', remoteBasename: 'agentbox-checkpoint-cleanup', remoteMode: 0o755 },
+  {
+    name: 'agentbox-checkpoint-cleanup',
+    remoteBasename: 'agentbox-checkpoint-cleanup',
+    remoteMode: 0o755,
+  },
   { name: 'agentbox-open', remoteBasename: 'agentbox-open', remoteMode: 0o755 },
+  { name: 'chromium-resolver', remoteBasename: 'agentbox-chromium-resolver', remoteMode: 0o755 },
   { name: 'gh-shim', remoteBasename: 'agentbox-gh-shim', remoteMode: 0o755 },
   { name: 'git-shim', remoteBasename: 'agentbox-git-shim', remoteMode: 0o755 },
   { name: 'agentbox-tool-shim', remoteBasename: 'agentbox-tool-shim', remoteMode: 0o755 },
-  { name: 'custom-system-CLAUDE.md', remoteBasename: 'agentbox-custom-CLAUDE.md', remoteMode: 0o644 },
-  { name: 'claude-managed-settings.json', remoteBasename: 'agentbox-managed-settings.json', remoteMode: 0o644 },
-  { name: 'agentbox-codex-hooks.json', remoteBasename: 'agentbox-codex-hooks.json', remoteMode: 0o644 },
+  {
+    name: 'custom-system-CLAUDE.md',
+    remoteBasename: 'agentbox-custom-CLAUDE.md',
+    remoteMode: 0o644,
+  },
+  {
+    name: 'claude-managed-settings.json',
+    remoteBasename: 'agentbox-managed-settings.json',
+    remoteMode: 0o644,
+  },
+  {
+    name: 'agentbox-codex-hooks.json',
+    remoteBasename: 'agentbox-codex-hooks.json',
+    remoteMode: 0o644,
+  },
   { name: 'agentbox-setup-skill.md', remoteBasename: 'agentbox-setup-skill.md', remoteMode: 0o644 },
-  { name: 'agentbox-identity-skill.md', remoteBasename: 'agentbox-identity-skill.md', remoteMode: 0o644 },
+  {
+    name: 'agentbox-identity-skill.md',
+    remoteBasename: 'agentbox-identity-skill.md',
+    remoteMode: 0o644,
+  },
 ] as const;
 
 export interface ResolvedAsset extends RuntimeAsset {
@@ -101,11 +122,14 @@ export function candidatesFor(
     'agentbox-portless-trust': ['packages/sandbox-docker/scripts/agentbox-portless-trust'],
     'agentbox-checkpoint-cleanup': ['packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
     'agentbox-open': ['packages/sandbox-docker/scripts/agentbox-open'],
+    'chromium-resolver': ['packages/sandbox-docker/scripts/chromium-resolver'],
     'gh-shim': ['packages/sandbox-docker/scripts/gh-shim'],
     'git-shim': ['packages/sandbox-docker/scripts/git-shim'],
     'agentbox-tool-shim': ['packages/sandbox-docker/scripts/agentbox-tool-shim'],
     'custom-system-CLAUDE.md': ['packages/sandbox-digitalocean/scripts/custom-system-CLAUDE.md'],
-    'claude-managed-settings.json': ['packages/sandbox-docker/scripts/claude-managed-settings.json'],
+    'claude-managed-settings.json': [
+      'packages/sandbox-docker/scripts/claude-managed-settings.json',
+    ],
     'agentbox-codex-hooks.json': ['packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
     'agentbox-setup-skill.md': ['apps/cli/share/agentbox-setup/SKILL.md'],
     'agentbox-identity-skill.md': ['apps/cli/share/agentbox-identity/SKILL.md'],
@@ -115,19 +139,53 @@ export function candidatesFor(
   const cliRelative: Record<string, string[]> = {
     'install-box.sh': ['digitalocean/scripts/install-box.sh'],
     'agentbox-ctl': ['digitalocean/ctl.cjs'],
-    'agentbox-vnc-start': ['digitalocean/agentbox-vnc-start', 'docker/packages/sandbox-docker/scripts/agentbox-vnc-start'],
-    'agentbox-dockerd-start': ['digitalocean/agentbox-dockerd-start', 'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start'],
-    'agentbox-portless-trust': ['digitalocean/agentbox-portless-trust', 'docker/packages/sandbox-docker/scripts/agentbox-portless-trust'],
-    'agentbox-checkpoint-cleanup': ['digitalocean/agentbox-checkpoint-cleanup', 'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup'],
-    'agentbox-open': ['digitalocean/agentbox-open', 'docker/packages/sandbox-docker/scripts/agentbox-open'],
+    'agentbox-vnc-start': [
+      'digitalocean/agentbox-vnc-start',
+      'docker/packages/sandbox-docker/scripts/agentbox-vnc-start',
+    ],
+    'agentbox-dockerd-start': [
+      'digitalocean/agentbox-dockerd-start',
+      'docker/packages/sandbox-docker/scripts/agentbox-dockerd-start',
+    ],
+    'agentbox-portless-trust': [
+      'digitalocean/agentbox-portless-trust',
+      'docker/packages/sandbox-docker/scripts/agentbox-portless-trust',
+    ],
+    'agentbox-checkpoint-cleanup': [
+      'digitalocean/agentbox-checkpoint-cleanup',
+      'docker/packages/sandbox-docker/scripts/agentbox-checkpoint-cleanup',
+    ],
+    'agentbox-open': [
+      'digitalocean/agentbox-open',
+      'docker/packages/sandbox-docker/scripts/agentbox-open',
+    ],
+    'chromium-resolver': [
+      'digitalocean/chromium-resolver',
+      'docker/packages/sandbox-docker/scripts/chromium-resolver',
+    ],
     'gh-shim': ['digitalocean/gh-shim', 'docker/packages/sandbox-docker/scripts/gh-shim'],
     'git-shim': ['digitalocean/git-shim', 'docker/packages/sandbox-docker/scripts/git-shim'],
-    'agentbox-tool-shim': ['digitalocean/agentbox-tool-shim', 'docker/packages/sandbox-docker/scripts/agentbox-tool-shim'],
+    'agentbox-tool-shim': [
+      'digitalocean/agentbox-tool-shim',
+      'docker/packages/sandbox-docker/scripts/agentbox-tool-shim',
+    ],
     'custom-system-CLAUDE.md': ['digitalocean/custom-system-CLAUDE.md'],
-    'claude-managed-settings.json': ['digitalocean/claude-managed-settings.json', 'docker/packages/sandbox-docker/scripts/claude-managed-settings.json'],
-    'agentbox-codex-hooks.json': ['digitalocean/agentbox-codex-hooks.json', 'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json'],
-    'agentbox-setup-skill.md': ['digitalocean/agentbox-setup-skill.md', 'docker/apps/cli/share/agentbox-setup/SKILL.md'],
-    'agentbox-identity-skill.md': ['digitalocean/agentbox-identity-skill.md', 'docker/apps/cli/share/agentbox-identity/SKILL.md'],
+    'claude-managed-settings.json': [
+      'digitalocean/claude-managed-settings.json',
+      'docker/packages/sandbox-docker/scripts/claude-managed-settings.json',
+    ],
+    'agentbox-codex-hooks.json': [
+      'digitalocean/agentbox-codex-hooks.json',
+      'docker/packages/sandbox-docker/scripts/agentbox-codex-hooks.json',
+    ],
+    'agentbox-setup-skill.md': [
+      'digitalocean/agentbox-setup-skill.md',
+      'docker/apps/cli/share/agentbox-setup/SKILL.md',
+    ],
+    'agentbox-identity-skill.md': [
+      'digitalocean/agentbox-identity-skill.md',
+      'docker/apps/cli/share/agentbox-identity/SKILL.md',
+    ],
   };
 
   const out: string[] = [];
@@ -142,10 +200,12 @@ export function candidatesFor(
  * Resolve every runtime asset to its absolute on-host path. Throws an
  * actionable error if any asset can't be found (lists every path tried).
  */
-export function resolveRuntimeAssets(opts: {
-  cliRuntimeRoot?: string;
-  repoRoot?: string;
-} = {}): ResolvedAsset[] {
+export function resolveRuntimeAssets(
+  opts: {
+    cliRuntimeRoot?: string;
+    repoRoot?: string;
+  } = {},
+): ResolvedAsset[] {
   const out: ResolvedAsset[] = [];
   const missing: Array<{ name: string; tried: string[] }> = [];
   for (const asset of RUNTIME_ASSETS) {
@@ -158,7 +218,10 @@ export function resolveRuntimeAssets(opts: {
     out.push({ ...asset, localPath: hit });
   }
   if (missing.length > 0) {
-    const lines = missing.flatMap((m) => [`  - ${m.name}: tried`, ...m.tried.map((p) => `      ${p}`)]);
+    const lines = missing.flatMap((m) => [
+      `  - ${m.name}: tried`,
+      ...m.tried.map((p) => `      ${p}`),
+    ]);
     throw new Error(
       `digitalocean: could not resolve runtime assets — these files are needed to install on the prepare VPS:\n` +
         lines.join('\n') +

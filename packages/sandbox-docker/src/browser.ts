@@ -42,7 +42,8 @@ export function browserSessionActive(stdout: string, exitCode: number): boolean 
  * exec inherits them; runs as `vscode` like the other in-box launches.
  *
  * When `targetUrl` is the box's Portless `<name>.localhost` URL, the in-box
- * Chromium routes it back out to the host Portless proxy — the box's
+ * browser (Google Chrome on x86_64, Playwright's Chromium on arm64 — both via
+ * chromium-resolver) routes it back out to the host Portless proxy — the box's
  * `AGENT_BROWSER_ARGS` env (set at create, see `portlessBrowserEnv`) carries
  * the `--host-resolver-rules` that makes that work.
  */
@@ -65,9 +66,10 @@ const DESKTOP_LAUNCHER = '"$HOME/.local/share/agentbox/desktop/open-browser"';
  * desktop launcher.
  *
  * The launcher branch is backgrounded on purpose: it lives as long as the
- * launch does (its progress window is the whole point), and a first launch —
- * a ~150MB Playwright Chromium download — outruns any exec timeout the caller
- * would be willing to wait on. It reports its own failures on the desktop, in
+ * launch does (its progress window is the whole point), and an arm64 box's
+ * first launch — a ~150MB Playwright Chromium download; x86_64 boxes exec the
+ * baked Google Chrome — outruns any exec timeout the caller would be willing
+ * to wait on. It reports its own failures on the desktop, in
  * the window that showed the progress.
  *
  * The fallback branch (a box whose VNC never started, or an image baked before

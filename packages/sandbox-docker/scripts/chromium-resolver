@@ -1,27 +1,40 @@
 #!/usr/bin/env bash
-# agentbox: resolve the Chromium that agent-browser drives.
+# agentbox: resolve the browser that agent-browser drives.
 #
-# We deliberately do NOT bake a Chromium into the box image. Playwright pins an
-# exact Chromium build per playwright version, so a baked browser goes stale the
-# moment a project pins a different Playwright — the project's `playwright
-# install` then fetches a *different* build, and anything waiting on the baked
-# one (a hard-coded ms-playwright path) hangs forever. Instead we reuse the
-# *project's* Playwright Chromium — the exact build its own tests use — so
-# agent-browser and Playwright share a single binary that is always correct.
+# Two tiers, one entry point (`AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium`
+# points at this script, so every agent-browser launch runs it):
 #
-# `AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium` points at this script,
-# so every agent-browser launch runs it. Resolution is effectively cached: once
-# a build exists the hot path is just an `ls` + `exec` (no download).
+#   1. Full Google Chrome at /opt/google/chrome/chrome, baked into every x86_64
+#      image (all cloud providers, docker on amd64). The box's VNC screen is a
+#      real desktop the user looks at, and Playwright's linux-x64 "chromium" is
+#      a Chrome for Testing build that paints a permanent "for testing only"
+#      notice there. Real Chrome has no such notice; agent-browser drives it
+#      over CDP with the same flags. Google ships no linux/arm64 Chrome, so
+#      arm64 images (docker on Apple Silicon) never have this tier.
 #
-#   1. newest installed Playwright Chromium under ~/.cache/ms-playwright; else
-#   2. install one with the project's pinned Playwright (matching build), or the
-#      box's global Playwright as a fallback when the project has none; then
-#   3. exec the real binary with the args agent-browser passed.
+#   2. Playwright's Chromium, shared with the project. We deliberately do NOT
+#      bake one: Playwright pins an exact build per playwright version, so a
+#      baked browser goes stale the moment a project pins a different
+#      Playwright — the project's `playwright install` then fetches a
+#      *different* build, and anything waiting on the baked one (a hard-coded
+#      ms-playwright path) hangs forever. Instead we reuse the *project's*
+#      Playwright Chromium — the exact build its own tests use — so
+#      agent-browser and Playwright share a single binary that is always
+#      correct. Resolution is effectively cached: once a build exists the hot
+#      path is just an `ls` + `exec` (no download).
 #
-# Chrome-for-Testing has no linux/arm64 build and Noble's chromium apt package
-# is a snap stub, so Playwright's downloader stays the only reliable cross-arch
-# source — we just invoke it lazily, with the project's version, instead of
-# baking a fixed one.
+#      a. newest installed Playwright Chromium under ~/.cache/ms-playwright; else
+#      b. install one with the project's pinned Playwright (matching build), or
+#         the box's global Playwright as a fallback when the project has none;
+#      c. exec the real binary with the args agent-browser passed.
+#
+# Noble's chromium apt package is a snap stub, so Playwright's downloader stays
+# the only reliable arm64 source — we just invoke it lazily, with the project's
+# version, instead of baking a fixed one.
+
+if [ -x /opt/google/chrome/chrome ]; then
+  exec /opt/google/chrome/chrome "$@"
+fi
 
 newest_chrome() {
   ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1
