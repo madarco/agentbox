@@ -71,8 +71,8 @@
       },
       {
         "flags": "--carry <mode>",
-        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-        "defaultValue": "ask",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
+        "defaultValue": null,
         "mandatory": false,
         "negate": false
       },
@@ -539,8 +539,8 @@
       },
       {
         "flags": "--carry <mode>",
-        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-        "defaultValue": "ask",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
+        "defaultValue": null,
         "mandatory": false,
         "negate": false
       },
@@ -979,7 +979,7 @@
       },
       {
         "flags": "--carry <mode>",
-        "description": "'skip' disables carry for this run",
+        "description": "'skip' disables carry for this run; 'ask' re-opens an approval this project already gave",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1249,8 +1249,8 @@
       },
       {
         "flags": "--carry <mode>",
-        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-        "defaultValue": "ask",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
+        "defaultValue": null,
         "mandatory": false,
         "negate": false
       },
@@ -1689,8 +1689,8 @@
       },
       {
         "flags": "--carry <mode>",
-        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-        "defaultValue": "ask",
+        "description": "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
+        "defaultValue": null,
         "mandatory": false,
         "negate": false
       },

@@ -25,6 +25,13 @@ import { resolveCarry } from './carry-resolve.js';
 
 export const CARRY_TOPIC = 'carry';
 
+/**
+ * Topic for the standing GRANT, deliberately not `CARRY_TOPIC`: a grant id and a
+ * prompt id are different things over different payloads, and a shared topic
+ * would let one be mistaken for the other by `promptTopicOf` or an answer map.
+ */
+export const CARRY_GRANT_TOPIC = 'carry-grant';
+
 /** The three things a user can say about a carry block. */
 export type CarryDecision = 'approve' | 'skip-this-run' | 'cancel';
 
@@ -36,6 +43,17 @@ export const CARRY_NON_INTERACTIVE_HINT =
   'Set AGENTBOX_CARRY_YES=1 to allow the copy, or AGENTBOX_CARRY=skip to skip it.';
 
 export interface CarryGateArgs {
+  /**
+   * The `approvedId` of this project's stored carry grant, when it has one.
+   * Matching it approves without asking — see {@link carryGrantId}.
+   *
+   * Passed IN rather than read here on purpose: this package must not touch
+   * `~/.agentbox`, or its tests (which have no HOME isolation) would write to
+   * the real home. The caller owns the store; the gate owns the decision.
+   */
+  approvedGrantId?: string;
+  /** `--carry ask` — ignore any grant and ask again, even for an unchanged list. */
+  carryAsk?: boolean;
   /** Absolute project root (the dir holding `agentbox.yaml`). */
   projectRoot: string;
   /** Parsed `carry:` entries — see `loadCarrySpec` in `@agentbox/ctl`. */
@@ -54,7 +72,22 @@ export interface CarryGateArgs {
 }
 
 export type CarryGateResult =
-  | { decision: 'approve'; entries: ResolvedCarryEntry[] }
+  | {
+      decision: 'approve';
+      entries: ResolvedCarryEntry[];
+      /**
+       * Identity of the list that was approved — what a caller stores so the
+       * next create can skip the question. Absent only when there was nothing
+       * to carry.
+       */
+      grantId?: string;
+      /**
+       * True when the approval came from a stored grant rather than a human
+       * just now. A caller must not re-record one of these (nothing changed),
+       * and it is what keeps `--carry-yes` from minting a standing grant.
+       */
+      fromGrant?: boolean;
+    }
   | { decision: 'skip'; entries: [] }
   | { decision: 'cancel' };
 
@@ -96,6 +129,39 @@ export function buildCarryPrompt(entries: ResolvedCarryEntry[]): PromptRequest {
 }
 
 /**
+ * Identity of a carry LIST, for the standing grant: `carry-grant:<12 hex>`.
+ *
+ * The same rows the prompt is built from, minus `bytes` — and that omission is
+ * the whole point. `buildCarryPrompt`'s id includes each row's size so a
+ * preflight answer cannot be replayed onto a table that moved underneath it,
+ * which is right for a single create but wrong for a standing approval: editing
+ * an already-approved `secrets.env` would rotate the id and re-ask forever.
+ *
+ * Everything else stays in: `src`, `dest`, `kind`, `mode`, `user`, `flags` and
+ * `warn` describe the SHAPE and the SAFETY of the copy, not its contents, so a
+ * file that becomes a folder, changes mode, or starts resolving through a
+ * symlink out of $HOME correctly invalidates the grant.
+ */
+export function carryGrantId(entries: ResolvedCarryEntry[]): string {
+  const rows = entries.map((e) => {
+    // Rebuilt without `bytes` rather than deleted from the row, so the key ORDER
+    // is stable and explicit — `promptId` hashes JSON.stringify output, which is
+    // order-sensitive.
+    const row = toFileRow(e);
+    return {
+      src: row.src,
+      dest: row.dest,
+      kind: row.kind,
+      ...(row.mode !== undefined ? { mode: row.mode } : {}),
+      ...(row.user !== undefined ? { user: row.user } : {}),
+      flags: row.flags,
+      ...(row.warn ? { warn: row.warn } : {}),
+    };
+  });
+  return promptId(CARRY_GRANT_TOPIC, rows);
+}
+
+/**
  * Run the gate: resolve, safety-check, ask, and return the approved entries.
  *
  * Throws on a hard resolver error (a missing non-optional src, a denylisted
@@ -119,7 +185,22 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
   // Flags decide the question before anyone is asked, so a scripted create never
   // surfaces a prompt it has already been told the answer to.
   if (args.carrySkip) return skip(resolved.entries.length, emit);
-  if (args.carryYes) return { decision: 'approve', entries: resolved.entries };
+  const grantId = carryGrantId(resolved.entries);
+  // A one-shot bypass, not a human reading the table: it approves this run and
+  // reports `fromGrant: false` WITHOUT being a grant a caller should store.
+  // `clone`/`restore` pass it, and a scripted flag must not leave a standing
+  // approval behind.
+  if (args.carryYes) return { decision: 'approve', entries: resolved.entries, grantId };
+
+  // The list this project already approved, unchanged since. `--carry ask`
+  // re-opens the decision even then.
+  if (!args.carryAsk && args.approvedGrantId === grantId) {
+    const n = resolved.entries.length;
+    emit(
+      `carry: approved earlier for this project (${String(n)} ${n === 1 ? 'file' : 'files'}, list unchanged)`,
+    );
+    return { decision: 'approve', entries: resolved.entries, grantId, fromGrant: true };
+  }
 
   const req = buildCarryPrompt(resolved.entries);
   const answer = await args.ask(req);
@@ -131,7 +212,7 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
 
   if (decision === 'cancel') return { decision: 'cancel' };
   if (decision === 'skip-this-run') return skip(resolved.entries.length, emit);
-  return { decision: 'approve', entries: resolved.entries };
+  return { decision: 'approve', entries: resolved.entries, grantId };
 }
 
 function skip(count: number, emit: (line: string) => void): { decision: 'skip'; entries: [] } {

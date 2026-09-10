@@ -70,6 +70,7 @@ export {
   GLOBAL_CONFIG_FILE,
   GLOBAL_TOOLS_FILE,
   hashProjectPath,
+  projectCarryFile,
   projectConfigDir,
   projectConfigFile,
   projectDirSegment,
@@ -122,6 +123,13 @@ export {
   type PruneOrphanProjectConfigsOptions,
   type PruneOrphanProjectConfigsResult,
 } from './write.js';
+
+export {
+  readCarryGrant,
+  writeCarryGrant,
+  type CarryGrant,
+  type CarryGrantFile,
+} from './carry-grant.js';
 
 export {
   BUILTIN_GH_GRANT,

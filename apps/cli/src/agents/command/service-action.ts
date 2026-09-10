@@ -402,6 +402,7 @@ export async function runServiceAgent(
         yes: !!opts.yes,
         carryYesFlag: opts.carryYes ? true : undefined,
         carrySkipFlag: opts.carry === 'skip' ? true : undefined,
+        carryAskFlag: opts.carry === 'ask' ? true : undefined,
         onLog: (line) => cmdLog.write(line),
       });
       if (gate.decision === 'cancel') {

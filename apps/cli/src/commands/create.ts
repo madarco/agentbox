@@ -70,7 +70,11 @@ interface CreateOptions {
   withEnv?: boolean;
   /** --carry-yes (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block prompt. */
   carryYes?: boolean;
-  /** --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
+  /**
+   * --carry <mode>: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip);
+   * 'ask' re-opens an approval this project already gave. Undefined (no flag) is
+   * the default: ask only when the list is new or changed.
+   */
   carry?: 'skip' | 'ask';
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   /** --persistent / --no-persistent: always-on box (config box.persistent). */
@@ -378,8 +382,7 @@ export const createCommand = new Command('create')
   )
   .option(
     '--carry <mode>',
-    "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-    'ask',
+    "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
   )
   .option(
     '--no-credential-sync',
@@ -638,6 +641,7 @@ export const createCommand = new Command('create')
         // runCarryGate (?? carryYesEnv / ?? carrySkipEnv) actually fires.
         carryYesFlag: opts.carryYes ? true : undefined,
         carrySkipFlag: opts.carry === 'skip' ? true : undefined,
+        carryAskFlag: opts.carry === 'ask' ? true : undefined,
         onLog: (line) => cmdLog.write(line),
       });
       if (gate.decision === 'cancel') {

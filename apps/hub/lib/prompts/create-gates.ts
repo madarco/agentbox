@@ -8,7 +8,12 @@
  * asks. Adding a gate here reaches all four front-ends at once.
  */
 
-import { agentSettings, loadEffectiveConfig, type ConfigSource } from '@agentbox/config';
+import {
+  agentSettings,
+  loadEffectiveConfig,
+  readCarryGrant,
+  type ConfigSource,
+} from '@agentbox/config';
 import type { PromptAsker, ResolvedCarryEntry } from '@agentbox/core';
 import { loadCarrySpec } from '@agentbox/ctl';
 import {
@@ -59,6 +64,17 @@ export interface CreateGateInput {
 export interface CreateGateResult {
   /** Approved `carry:` entries — empty when skipped or when there are none. */
   carry: ResolvedCarryEntry[];
+  /**
+   * Identity of the carry list that was approved, for the caller to store as a
+   * standing grant. Absent when there was nothing to carry, or when the carry
+   * decision was not an approval.
+   */
+  carryGrantId?: string;
+  /**
+   * The approval came from the project's existing grant, not from a human just
+   * now — so there is nothing new to record.
+   */
+  carryFromGrant?: boolean;
   /** Agents whose host login the box should be seeded with. */
   borrowCredentials: string[];
   /** True when the user asked to abandon the create. */
@@ -73,6 +89,11 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
   const { items, replacements } = await loadCarrySpec(input.workspace);
   const cfg = await loadEffectiveConfig(input.workspace);
 
+  // The project's standing approval of this exact list, if it has one. Read on
+  // BOTH paths: the preflight consults it too, which is what stops the web
+  // modal and the tray card asking again for a list already approved.
+  const granted = await readCarryGrant(input.workspace);
+
   const gate = await runCarryGate({
     projectRoot: input.workspace,
     items,
@@ -80,12 +101,20 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     maxBytes: cfg.effective.box.cpMaxBytes,
     ask: input.ask,
     ...(input.carryYes ? { carryYes: true } : {}),
+    ...(granted ? { approvedGrantId: granted.approvedId } : {}),
     onLog: emit,
   });
   if (gate.decision === 'cancel' && !input.collecting) {
     return { carry: [], borrowCredentials: [], cancelled: true, unavailable };
   }
   const carry = gate.decision === 'approve' ? gate.entries : [];
+  // Handed back rather than written here: only the real create means a box is
+  // being made (a preflight must never grant), and writing from this function
+  // would put ~/.agentbox writes inside a test that has no HOME isolation.
+  const carryGrant =
+    gate.decision === 'approve' && gate.grantId
+      ? { carryGrantId: gate.grantId, ...(gate.fromGrant ? { carryFromGrant: true } : {}) }
+      : {};
 
   const spec = input.agent === 'none' ? undefined : findAgentSpec(input.agent);
   let borrowCredentials: string[] = [];
@@ -107,5 +136,5 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     for (const a of borrowCredentials) emit(`model auth: borrowing the ${a} login`);
   }
 
-  return { carry, borrowCredentials, cancelled: false, unavailable };
+  return { carry, ...carryGrant, borrowCredentials, cancelled: false, unavailable };
 }

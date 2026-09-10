@@ -17,6 +17,7 @@ import {
   pruneOrphanProjectConfigs,
   recordProjectLastUsed,
   registerProject,
+  writeCarryGrant,
   resolveDefaultCheckpoint,
   setConfigValue,
   unregisterProject,
@@ -111,6 +112,7 @@ import {
   secretsEnvPath,
   setBoxDisplayName,
   syncAgentboxSshConfig,
+  toFileRow,
   uploadWorkspaceToBox,
   diffFileManifests,
   listProviderDescriptors,
@@ -2531,6 +2533,34 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         if (gated.cancelled) return { ok: false, error: 'create cancelled' };
+        // Record the carry approval as this project's standing grant, so the
+        // next create — from any surface — does not re-ask for the same list.
+        // Only a fresh human approval: `carryFromGrant` is already stored, and
+        // `opts.carryYes` (clone/restore) is a one-shot bypass, not a review.
+        // Same clone guard as the last-used memo: a control box's per-job
+        // checkout is not a project anyone approves files for.
+        if (
+          gated.carryGrantId &&
+          !gated.carryFromGrant &&
+          !o.carryYes &&
+          !isHubWorkerClone(workspace)
+        ) {
+          void writeCarryGrant(workspace, {
+            approvedId: gated.carryGrantId,
+            approvedAt: new Date().toISOString(),
+            files: gated.carry.map((e) => {
+              const row = toFileRow(e);
+              return {
+                src: row.src,
+                dest: row.dest,
+                kind: row.kind,
+                ...(row.mode !== undefined ? { mode: row.mode } : {}),
+                ...(row.user !== undefined ? { user: row.user } : {}),
+                ...(row.flags.length > 0 ? { flags: row.flags } : {}),
+              };
+            }),
+          }).catch(() => {});
+        }
         const { job } = await enqueueQueueJob({
           agent,
           boxName: name ?? '',

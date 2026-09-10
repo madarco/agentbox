@@ -2,6 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { writeCarryGrant } from '@agentbox/config';
 import { collectAsker } from '../lib/prompts/askers';
 import { runCreateGates } from '../lib/prompts/create-gates';
 
@@ -89,6 +90,37 @@ describe('runCreateGates in collecting mode', () => {
     });
     expect(res.cancelled).toBe(false);
     expect(res.carry).toHaveLength(1);
+  });
+
+  it('asks no carry question once the project has granted that list', async () => {
+    // The reason the web modal and the tray card stop re-asking: the preflight
+    // runs the same gate, so a stored grant removes the question at the source.
+    const granted = await runCreateGates({
+      workspace: root,
+      agent: 'none',
+      ask: (req) => Promise.resolve({ id: req.id, value: 'approve' }),
+    });
+    expect(granted.carryGrantId).toMatch(/^carry-grant:/);
+    expect(granted.carryFromGrant).toBeUndefined();
+    await writeCarryGrant(root, {
+      approvedId: granted.carryGrantId!,
+      approvedAt: new Date().toISOString(),
+      files: [],
+    });
+
+    const asker = collectAsker();
+    const res = await runCreateGates({
+      workspace: root,
+      agent: 'openclaw',
+      ask: asker.ask,
+      collecting: true,
+    });
+    // No question to show — and the files are still approved, so the create
+    // that follows carries them.
+    expect(asker.collected.map((p) => p.topic)).not.toContain('carry');
+    expect(res.carry).toHaveLength(1);
+    expect(res.carryFromGrant).toBe(true);
+    expect(res.cancelled).toBe(false);
   });
 
   it('asks nothing for a project with no carry block and no borrowing agent', async () => {

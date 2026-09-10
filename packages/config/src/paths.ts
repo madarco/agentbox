@@ -152,3 +152,14 @@ export const GLOBAL_TOOLS_FILE = join(STATE_DIR, 'tools.yaml');
 export function projectToolsFile(absPath: string): string {
   return join(projectConfigDir(absPath), 'tools.yaml');
 }
+
+/**
+ * Host-side `carry:` grant file. Same trust split as the tool grants above and
+ * kept beside them: an `agentbox.yaml` `carry:` block only *requests* the copy,
+ * and the host's approval of a given file list lands here. Project-scoped only —
+ * a carry list is a property of one project, so a global grant would name files
+ * that mean nothing anywhere else.
+ */
+export function projectCarryFile(absPath: string): string {
+  return join(projectConfigDir(absPath), 'carry.yaml');
+}

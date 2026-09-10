@@ -13,5 +13,6 @@ export default defineConfig({
   test: {
     include: ['lib/**/*.test.ts', 'test/**/*.test.ts'],
     environment: 'node',
+    setupFiles: ['./test/setup.ts'],
   },
 });

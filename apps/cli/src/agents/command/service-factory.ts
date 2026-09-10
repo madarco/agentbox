@@ -92,7 +92,10 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
     .option('--snapshot <ref>', 'start from a project checkpoint (see `agentbox checkpoint`)')
     .option('-y, --yes', 'skip prompts, accept defaults')
     .option('--carry-yes', 'auto-approve the agentbox.yaml carry: block')
-    .option('--carry <mode>', "'skip' disables carry for this run")
+    .option(
+      '--carry <mode>',
+      "'skip' disables carry for this run; 'ask' re-opens an approval this project already gave",
+    )
     .option(
       '--persistent',
       'always-on box (the default for a service agent: a daemon that autopause reaps is an outage)',

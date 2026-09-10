@@ -256,8 +256,10 @@ export {
 // `packages/core/src/prompt.ts` for the schema every front-end renders.
 export {
   buildCarryPrompt,
+  CARRY_GRANT_TOPIC,
   CARRY_NON_INTERACTIVE_HINT,
   CARRY_TOPIC,
+  carryGrantId,
   renderCarryTable,
   runCarryGate,
   toFileRow,

@@ -29,7 +29,11 @@ export interface AgentCreateOptions {
   dangerouslySkipPermissions?: boolean;
   /** `--carry-yes` (or AGENTBOX_CARRY_YES=1): auto-approve the carry: block. */
   carryYes?: boolean;
-  /** `--carry <mode>`: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip). */
+  /**
+   * `--carry <mode>`: 'skip' disables carry for this run (also AGENTBOX_CARRY=skip);
+   * 'ask' re-opens an approval this project already gave. Undefined (no flag) is
+   * the default: ask only when the list is new or changed.
+   */
   carry?: 'skip' | 'ask';
   /** `--model-auth <source...>`: which host model-provider logins to seed.
    *  Only present for an agent whose row declares sources. */
@@ -131,8 +135,7 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
     )
     .option(
       '--carry <mode>',
-      "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip). Default: 'ask' (prompt).",
-      'ask',
+      "control the carry: block; 'skip' disables it for this box (also AGENTBOX_CARRY=skip), 'ask' re-opens an approval this project already gave. Default: ask when the list is new or changed, silent when it is already approved.",
     )
     .option(
       '--dangerously-with-credentials',
