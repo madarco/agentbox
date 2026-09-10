@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
+  cloudBoxCountsAsRunning,
   countInFlightCreateJobs,
   countRunningPrepareJobsByProvider,
   countWorkingSlots,
@@ -827,5 +828,28 @@ describe('orphan reaping (worker died mid-flight)', () => {
     } finally {
       await rm(join(QUEUE_DIR, `${id}.json`), { force: true });
     }
+  });
+});
+
+describe('cloudBoxCountsAsRunning', () => {
+  it('frees the slot of a cloud box the host paused', () => {
+    // Three finished cloud boxes that had been `stop`ped kept two queued jobs
+    // waiting indefinitely: every non-docker record counted as running until
+    // destroyed. `lastState` is the same host-driven state `agentbox list` shows.
+    expect(
+      cloudBoxCountsAsRunning({
+        cloud: { backend: 'vercel', sandboxId: 'x', lastState: 'paused' },
+      }),
+    ).toBe(false);
+  });
+
+  it('counts a running or pre-feature record as occupying a slot', () => {
+    expect(
+      cloudBoxCountsAsRunning({
+        cloud: { backend: 'vercel', sandboxId: 'x', lastState: 'running' },
+      }),
+    ).toBe(true);
+    expect(cloudBoxCountsAsRunning({ cloud: { backend: 'vercel', sandboxId: 'x' } })).toBe(true);
+    expect(cloudBoxCountsAsRunning({})).toBe(true);
   });
 });

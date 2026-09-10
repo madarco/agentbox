@@ -1145,11 +1145,13 @@ let boxStateCache: { boxCount: number; stateIds: Set<string>; expiresAt: number 
  *
  * The box-state portion reads `~/.agentbox/state.json`, then per-provider:
  *   - docker: `docker inspect --format {{.State.Status}}` shell-out (cheap).
- *   - non-docker (daytona/hetzner/…): counted as running. Cloud providers
- *     don't expose a cheap synchronous probe; the autopause/queue loops would
- *     pay an SDK round-trip per box per tick otherwise. Tracked as a v1
- *     limitation: a paused cloud box still counts against the slot cap until
- *     it's destroyed. Acceptable because cloud pause is rare today.
+ *   - non-docker (daytona/hetzner/…): counted as running unless the record's
+ *     `lastState` says the host itself paused it. Cloud providers don't expose
+ *     a cheap synchronous probe (the queue loop would pay an SDK round-trip per
+ *     box per tick), so this is the same host-driven state `agentbox list`
+ *     shows — a platform-side stop is not seen, which only ever over-counts.
+ *     Before this, a `stop`ped cloud box held its slot until destroyed, and
+ *     three finished cloud boxes kept two queued jobs waiting indefinitely.
  * That portion is cached for 3s so multiple slot decisions in one tick share it.
  *
  * The in-flight term is recomputed every call (a cheap `loadQueue` fs read), NOT
@@ -1197,9 +1199,7 @@ async function uncachedBoxStateCount(): Promise<{ boxCount: number; stateIds: Se
     const provider = b.provider ?? 'docker';
     if (provider === 'docker') {
       dockerBoxes.push(b);
-    } else {
-      // Optimistic: count cloud boxes as running. See note on
-      // {@link defaultCountRunningBoxes} for why.
+    } else if (cloudBoxCountsAsRunning(b)) {
       boxCount += 1;
     }
   }
@@ -1210,6 +1210,15 @@ async function uncachedBoxStateCount(): Promise<{ boxCount: number; stateIds: Se
     }
   }
   return { boxCount, stateIds };
+}
+
+/**
+ * Whether a non-docker box occupies a queue slot: yes unless agentbox itself
+ * paused it (`cloud.lastState`). Absent (a pre-feature record) counts as
+ * running, matching that field's own default.
+ */
+export function cloudBoxCountsAsRunning(box: Pick<BoxRecord, 'cloud'>): boolean {
+  return box.cloud?.lastState !== 'paused';
 }
 
 function inspectDockerState(containerName: string): Promise<'running' | 'other'> {
