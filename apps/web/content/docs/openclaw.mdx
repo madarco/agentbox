@@ -76,7 +76,7 @@ The create form takes the box flags you already know — `-w`, `-n`, `-p/--provi
 
 The token rides the fragment rather than a query string because a browser never sends a fragment to the server — it stays out of access logs and `Referer` headers.
 
-The web hub and the macOS tray get the same link without the CLI: **Open Web** on a bot calls `GET /api/v1/boxes/{id}/web`, which answers `{ url, signInUrl }`. It is resolved when you click rather than carried on the box list, because reading the token is an exec into the box — and it re-resolves the URL at the same time, which matters on a box reached over an SSH forward, where the listed port can differ from the live one.
+The web hub and the macOS tray get the same link without the CLI: **Open Web** on a bot calls `GET /api/v1/boxes/{id}/web`, which answers `{ url, signInUrl, signInPending }`. It is resolved when you click rather than carried on the box list, because reading the token is an exec into the box — and it re-resolves the URL at the same time, which matters on a box reached over an SSH forward, where the listed port can differ from the live one. That read is why the click is not instant (~5s on a remote bot), so both surfaces show a progress card while it runs. A bot whose gateway has not come up yet answers with `signInPending: true` and no token: the tray waits for it rather than opening a page that would show the sign-in prompt, or nothing at all.
 
 ## What happens on create
 

@@ -2983,9 +2983,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         // keeps running, and the dashboard would silently go back to prompting.
         const spec = serviceAgentForBox(rp.box);
         const fields = spec?.service?.urlFields ?? [];
-        if (fields.length === 0) return { ok: true, url, signInUrl: null };
+        if (fields.length === 0) return { ok: true, url, signInUrl: null, signInPending: false };
         const values = await readServiceUrlFields(rp.provider, rp.box, fields);
-        return { ok: true, url, signInUrl: serviceSignInUrl(url, values) };
+        const signInUrl = serviceSignInUrl(url, values);
+        // A daemon that declares a token and gave none is not up yet: reading it
+        // goes through the daemon's own CLI, which needs the gateway running.
+        // Say so, rather than hand back a URL that opens on a dead port.
+        return { ok: true, url, signInUrl, signInPending: signInUrl === null };
       } catch (err) {
         return { ok: false, error: errMsg(err) };
       }

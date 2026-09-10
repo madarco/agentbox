@@ -38,7 +38,7 @@ export async function GET(
   if (!res.ok) return failFromAction(res.error);
   // The sign-in URL carries the gateway token in its fragment — never cache it.
   return Response.json(
-    { url: res.url, signInUrl: res.signInUrl },
+    { url: res.url, signInUrl: res.signInUrl, signInPending: res.signInPending },
     { headers: { 'cache-control': 'no-store' } },
   );
 }

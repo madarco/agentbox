@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import {
   readServiceUrlFields,
@@ -59,6 +59,23 @@ describe('readServiceUrlFields', () => {
     ]);
     expect(calls).toEqual([['cat', '/home/vscode/.x/config.json']]);
     expect(out[0]?.value).toBe('abc');
+  });
+
+  it('gives up on a daemon CLI that never answers, rather than holding the click', async () => {
+    // The read runs the daemon's OWN command inside the box, so a gateway that is
+    // starting or wedged can leave it hanging — and the caller is a user waiting on
+    // a click. Real timers: the bound is 20s, so this drives it with a fake clock.
+    vi.useFakeTimers();
+    try {
+      const provider = {
+        exec: () => new Promise(() => {}),
+      } as unknown as Provider;
+      const pending = readServiceUrlFields(provider, box, [openclawField]);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await pending).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('tolerates a banner printed before the JSON', async () => {

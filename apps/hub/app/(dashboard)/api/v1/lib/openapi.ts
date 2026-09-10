@@ -348,7 +348,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "Resolve a box's web URL at click time, with a sign-in link when one applies",
           description:
-            "The live web URL for the box, plus — for a SERVICE agent (openclaw) — a link that opens the agent's own UI already signed in. Call this before opening a box's web UI instead of using the Box payload's `webUrl`: that field is a recorded value, and where the URL is an SSH forward (hetzner/DO) the live port differs once the session has been re-established — the same class of reason `vncUrl` is null for signed-URL clouds. `signInUrl` is `<url>/#token=…` (the daemon generates its token inside the box and its UI reads it from the URL FRAGMENT), and null when the agent declares no such field or has not written one yet — open `url` then, and the UI asks for the token. Read-only: refused with 409 when the box is not running.",
+            "The live web URL for the box, plus — for a SERVICE agent (openclaw) — a link that opens the agent's own UI already signed in. Call this before opening a box's web UI instead of using the Box payload's `webUrl`: that field is a recorded value, and where the URL is an SSH forward (hetzner/DO) the live port differs once the session has been re-established — the same class of reason `vncUrl` is null for signed-URL clouds. `signInUrl` is `<url>/#token=…` (the daemon generates its token inside the box and its UI reads it from the URL FRAGMENT), and null when the agent declares no such field or has not written one yet. `signInPending` tells those two apart: true means this box's daemon HAS a token and could not give one (still starting, or still onboarding), so `url` opens its sign-in prompt at best and a dead port at worst — say \"not ready yet\" and offer to wait rather than opening it. False means `url` is the complete answer. Read-only: refused with 409 when the box is not running.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': {
@@ -360,8 +360,9 @@ export function buildOpenApi(): Record<string, unknown> {
                     properties: {
                       url: { type: 'string' },
                       signInUrl: { type: 'string', nullable: true },
+                      signInPending: { type: 'boolean' },
                     },
-                    required: ['url', 'signInUrl'],
+                    required: ['url', 'signInUrl', 'signInPending'],
                   },
                 },
               },

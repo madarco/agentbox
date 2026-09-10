@@ -109,9 +109,16 @@ export type VncUrlResult = { ok: true; url: string; ttl?: number } | { ok: false
  * `signInUrl` is null for a box whose agent declares no such field, and for one
  * whose daemon has not written its token yet — the caller opens `url` and the
  * user is asked for the token, which is exactly the old behaviour.
+ *
+ * `signInPending` separates those two: TRUE means this box hosts a daemon that
+ * DOES have a token and could not give one — it is still starting, or still
+ * onboarding — so `url` right now opens its sign-in prompt at best and a dead
+ * port at worst. A client that opens the link anyway shows the user a broken
+ * page and no reason for it; one that reads this can say "not ready yet" and
+ * offer to wait. FALSE means the plain `url` is the right and complete answer.
  */
 export type BoxWebUrlResult =
-  | { ok: true; url: string; signInUrl: string | null }
+  | { ok: true; url: string; signInUrl: string | null; signInPending: boolean }
   | { ok: false; error: string };
 
 // Live git summary for the box detail panel. `box.branch` from getData() goes

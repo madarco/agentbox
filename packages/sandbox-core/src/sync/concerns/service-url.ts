@@ -80,6 +80,34 @@ function fragmentParam(raw: string, key: string): string | undefined {
 }
 
 /**
+ * How long one source gets before it counts as "no value".
+ *
+ * The read goes through the daemon's own CLI, which needs the daemon running:
+ * a gateway that is starting, wedged, or waiting on something can leave that
+ * command hanging, and the caller here is a user waiting on a click (the tray's
+ * Open Web, the hub's, `agentbox <agent> url`). A healthy read of openclaw's
+ * token over an SSH provider measured ~5s, so this is generous, not tight -- it
+ * exists to bound the pathological case, not to race the normal one.
+ */
+const SOURCE_READ_TIMEOUT_MS = 20_000;
+
+/** `promise`, or undefined once `ms` has passed. The work is left running: a
+ *  provider exec has no cancel, and the value is discarded either way. */
+async function withinTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Read an agent's declared url fields out of the running box.
  *
  * One read per distinct SOURCE, not per field: two fields out of one config (or
@@ -103,11 +131,14 @@ export async function readServiceUrlFields(
     if (!docs.has(key)) {
       let parsed: unknown;
       try {
-        const r = await provider.exec(box, argv, { user: 'vscode' });
+        const r = await withinTimeout(
+          provider.exec(box, argv, { user: 'vscode' }),
+          SOURCE_READ_TIMEOUT_MS,
+        );
         // A daemon's CLI may print a banner before its JSON, so parse from the
         // first `{` rather than requiring the whole of stdout to be the payload.
-        const body = r.stdout.slice(r.stdout.indexOf('{'));
-        parsed = r.exitCode === 0 && body.startsWith('{') ? JSON.parse(body) : undefined;
+        const body = r?.stdout.slice(r.stdout.indexOf('{'));
+        parsed = r?.exitCode === 0 && body?.startsWith('{') ? JSON.parse(body) : undefined;
       } catch {
         parsed = undefined;
       }
