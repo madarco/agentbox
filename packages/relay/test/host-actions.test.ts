@@ -4,7 +4,12 @@ import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { executeCloudAction, resolveHostGitRepo, resolveHostPath } from '../src/host-actions.js';
+import {
+  cloudHandleOf,
+  executeCloudAction,
+  resolveHostGitRepo,
+  resolveHostPath,
+} from '../src/host-actions.js';
 import { ghRunContext } from '../src/gh.js';
 import { PendingPrompts, PromptSubscribers } from '../src/prompts.js';
 import { browserOpenBudget } from '../src/browser-open-budget.js';
@@ -304,5 +309,22 @@ describe('ghRunContext', () => {
       cwd: tmpdir(),
       args: ['view'],
     });
+  });
+});
+
+describe('cloudHandleOf', () => {
+  it('carries the record sandboxClass into the backend handle', () => {
+    // Daytona's exec wrap keys on the class: a handle without it is treated as
+    // a linux-vm and wrapped in `sudo -u vscode`, which a container sandbox
+    // (already vscode) refuses — `agentbox-ctl git push` then failed to even
+    // resolve the branch.
+    expect(cloudHandleOf({ cloudSandboxId: 'sb1', sandboxClass: 'container' })).toEqual({
+      sandboxId: 'sb1',
+      sandboxClass: 'container',
+    });
+  });
+
+  it('omits the class when the record has none', () => {
+    expect(cloudHandleOf({ cloudSandboxId: 'sb1' })).toEqual({ sandboxId: 'sb1' });
   });
 });

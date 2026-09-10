@@ -354,7 +354,7 @@ export async function refreshCloudPreviewUrl(
     const backend = await resolveCloudBackend(backendName);
     if (!backend.refreshPreviewUrl) return null;
     const lookup = await lookupCloudBox(boxId);
-    const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
+    const handle: CloudHandle = cloudHandleOf(lookup);
     const url = await backend.refreshPreviewUrl(handle, port);
     return url.url;
   } catch {
@@ -697,11 +697,29 @@ interface BoxLookup {
   workspacePath: string;
   cloudSandboxId: string;
   /**
+   * Provider-specific sandbox class, when the record carries one. Daytona's
+   * exec wrap keys on it: a handle without it is treated as a `linux-vm` and
+   * every command gets `sudo -u vscode`, which a `container` sandbox — already
+   * running as vscode — refuses ("user vscode is not allowed to execute … as
+   * vscode"), so `agentbox-ctl git push` failed to even resolve the branch.
+   */
+  sandboxClass?: string;
+  /**
    * Branch the host has sanctioned for this box's pushes (defaults to the
    * create-time `workspaceBranch`). The push gate auto-approves a push only to
    * a scratch branch or this value.
    */
   sanctionedBranch?: string;
+}
+
+/** The backend handle for a looked-up box — id plus the class the exec wrap needs. */
+export function cloudHandleOf(
+  lookup: Pick<BoxLookup, 'cloudSandboxId' | 'sandboxClass'>,
+): CloudHandle {
+  return {
+    sandboxId: lookup.cloudSandboxId,
+    ...(lookup.sandboxClass ? { sandboxClass: lookup.sandboxClass } : {}),
+  };
 }
 
 async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
@@ -717,6 +735,7 @@ async function lookupCloudBox(boxId: string): Promise<BoxLookup> {
   return {
     workspacePath: hit.box.workspacePath,
     cloudSandboxId: sid,
+    ...(hit.box.cloud?.sandboxClass ? { sandboxClass: hit.box.cloud.sandboxClass } : {}),
     sanctionedBranch: hit.box.cloud?.sanctionedBranch ?? hit.box.cloud?.workspaceBranch,
   };
 }
@@ -1104,7 +1123,7 @@ async function runDownloadRpc(
     }
   }
   const backend = await resolveCloudBackend(deps.backendName);
-  const handle: CloudHandle = { sandboxId: lookup.cloudSandboxId };
+  const handle: CloudHandle = cloudHandleOf(lookup);
   const cp = await loadCloudCp();
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);
@@ -1218,7 +1237,7 @@ async function runGitRpc(
   const params = (action.params ?? {}) as GitRpcParams;
   const lookup = await lookupCloudBox(deps.boxId);
   const backend = await resolveCloudBackend(deps.backendName);
-  const handle = { sandboxId: lookup.cloudSandboxId };
+  const handle: CloudHandle = cloudHandleOf(lookup);
 
   // The in-box ctl sends `params.path = process.cwd()`. When the user runs
   // `agentbox-ctl git push` from anywhere outside /workspace (e.g. $HOME),
