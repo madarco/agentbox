@@ -437,13 +437,29 @@ write_jwmrc() {
        measures, below every window, with nothing but the mark in it. -->
   $logo_tray
 
-  <!-- The dock: a fixed-width strip centered on the bottom edge. The explicit
-       width is load-bearing, because JWM honors halign only on a sized tray and
-       an unsized horizontal tray spans the screen (a taskbar, not a dock). JWM
-       cannot size a tray to its contents, so 240 is a compromise: snug for the
-       two launchers plus the one or two windows a box usually has, and the
-       TaskList shrinks its icons rather than overflowing beyond that. -->
-  <Tray valign="bottom" halign="center" width="240" height="48" border="0" autohide="off" layer="above">
+  <!-- The dock: a strip across the bottom edge, painted in the desktop's own
+       paper (below) so only the icons read as the dock. It spans the screen
+       because JWM leaves no choice: a TaskList is a variable-width component,
+       and any horizontal tray holding one is stretched to the screen. Sizing
+       the tray does not centre the icons either -- halign centres the TRAY, and
+       the TaskList then eats every pixel the launchers leave, parking them at
+       its left edge (a 240-wide dock sat 72px left of centre with no window
+       open, and JWM cannot size a tray to its contents).
+       What centres them is JWM's split rule: every variable-width component
+       gets an EQUAL share of what the fixed ones leave. A second TaskList in
+       FRONT of the launchers therefore claims exactly as much room as the real
+       one behind them, and the block between the two lands dead centre of any
+       screen at any size -- no width to hardcode, and it re-centres itself when
+       a noVNC viewer resizes the desktop. maxwidth="1" is what makes the front
+       one a spacer: its buttons shrink to a 1px sliver in the bottom-left
+       corner, and to nothing at all while no window is open.
+       The one thing the trick cannot do is grow symmetrically: the real
+       TaskList still draws its icons left-to-right from the centre, so each
+       open window pushes the row 24px right. Exact centring at every window
+       count needs the tray width recomputed per window and a JWM restart on
+       every open/close, which is a per-box daemon for half an icon. -->
+  <Tray valign="bottom" halign="center" height="48" border="0" autohide="off" layer="above">
+    <TaskList labeled="false" maxwidth="1"/>
     $term_button
     $browser_button
     <!-- labeled="false" makes these icon-only buttons, and the icons come free
@@ -463,8 +479,8 @@ write_jwmrc() {
     <Background>#f5f3f0</Background>
     <Foreground>#1d1e20</Foreground>
     <!-- Paper, not a colour: JWM draws the tray edge in the outline colour even
-         at border="0", and a 240px rectangle on the paper is exactly the
-         slab this style exists to get rid of. -->
+         at border="0", and an outlined rectangle the width of the screen is
+         exactly the slab this style exists to get rid of. -->
     <Outline>#f5f3f0</Outline>
   </TrayStyle>
 

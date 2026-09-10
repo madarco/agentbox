@@ -92,6 +92,25 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     expect(jwmrc).toContain('$browser_button');
   });
 
+  it('centres the dock icons with a spacer TaskList, not a tray width', () => {
+    // JWM stretches any horizontal tray holding a TaskList to the screen and
+    // cannot size one to its contents, so halign centres the TRAY while the
+    // TaskList eats the slack and parks the launchers at its left edge. The
+    // fix is the split rule -- variable-width components share the leftover
+    // space EQUALLY -- so a maxwidth="1" TaskList in front of the launchers
+    // mirrors the real one behind them and the block lands dead centre at any
+    // desktop size. Delete the front one (it looks redundant, it renders as a
+    // 1px sliver) and the dock silently goes back to sitting left of centre.
+    const dock = jwmrc.slice(jwmrc.indexOf('<Tray valign="bottom"'), jwmrc.indexOf('</Tray>'));
+    expect(dock.slice(0, dock.indexOf('>'))).not.toMatch(/\bwidth="/);
+    expect(dock.match(/<TaskList[^>]*>/g)).toEqual([
+      '<TaskList labeled="false" maxwidth="1"/>',
+      '<TaskList labeled="false" maxwidth="48"/>',
+    ]);
+    expect(dock.indexOf('maxwidth="1"')).toBeLessThan(dock.indexOf('$term_button'));
+    expect(dock.indexOf('maxwidth="48"')).toBeGreaterThan(dock.indexOf('$browser_button'));
+  });
+
   it('fills the desktop with paper and centres the logo on its own tray', () => {
     // A noVNC viewer can resize the desktop to its window, and JWM's image
     // backgrounds ("scale" and "center" alike) fit by aspect ratio and
