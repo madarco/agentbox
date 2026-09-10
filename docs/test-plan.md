@@ -776,7 +776,7 @@ EOF`
 - [ ] **RELAY-010** `agentbox-ctl open <url>` opens in box browser + auto-opens on the host (rate-limited).
   - **Providers:** [docker]
   - **Run:** `agentbox-ctl open https://example.com` inside box.
-  - **Signal:** URL appears in box's VNC Chromium AND opens in the browser of whichever surface is attached (footer/dashboard claim it; with nothing attached the local relay opens it directly), exactly once even with two surfaces watching; a third distinct URL within 30s falls back to an `open-link` card the human clicks.
+  - **Signal:** URL appears in box's VNC browser AND opens in the browser of whichever surface is attached (footer/dashboard claim it; with nothing attached the local relay opens it directly), exactly once even with two surfaces watching; a third distinct URL within 30s falls back to an `open-link` card the human clicks.
 
 ---
 

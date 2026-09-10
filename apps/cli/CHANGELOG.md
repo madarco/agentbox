@@ -51,6 +51,13 @@ CLI, not the raw commits.
   provider if you pass one. `agentbox create --restore` takes the workspace only.
   Refused while the backed-up box is still running, unless `--force`.
 
+### Changed
+
+- **x86_64 boxes ship full Google Chrome.** Every cloud provider and docker on
+  amd64 now bake `google-chrome-stable` instead of Playwright's Chrome-for-Testing
+  build, which painted a "for testing only" notice on the VNC desktop. arm64
+  docker boxes keep the lazy Playwright Chromium.
+
 ### Fixed
 
 - **OpenClaw on Hetzner and DigitalOcean worked in the wrong directory.** The

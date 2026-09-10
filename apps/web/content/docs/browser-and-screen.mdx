@@ -7,7 +7,7 @@ Every box ships a real headed browser and a live VNC desktop. A coding agent can
 
 ## Give the agent a browser
 
-Vercel's [`agent-browser`](https://github.com/vercel-labs/agent-browser) is baked into the box image, so every box (docker, daytona, hetzner, vercel) has a working browser with no setup. The Chromium it drives is provided by Playwright — fetched on first browser use (and reused from the project's own pinned Playwright build when present), so agent-browser and the project's Playwright share a single, current Chromium rather than a stale baked-in one.
+Vercel's [`agent-browser`](https://github.com/vercel-labs/agent-browser) is baked into the box image, so every box (docker, daytona, hetzner, vercel) has a working browser with no setup. On x86_64 boxes (every cloud provider, and docker on an Intel/AMD host) that browser is **full Google Chrome**, baked into the image. arm64 boxes (docker on Apple Silicon) have no Chrome build, so there agent-browser drives Playwright's Chromium — fetched on first browser use and reused from the project's own pinned Playwright build when present, so agent-browser and the project's Playwright share a single, current Chromium rather than a stale baked-in one.
 
 The agent calls `agent-browser` directly from inside the box, and any GUI process renders to the box's VNC display — which is what you see through `agentbox screen` below.
 
@@ -40,7 +40,7 @@ Set `box.autoApproveSafeHostActions=false` to be asked about every link (and eve
 
 ## Playwright
 
-The Playwright runtime ships in the image; the Chromium itself is installed on first browser use (reusing the project's pinned Playwright build when present, so `agent-browser` and the project's tests share one binary — no version-mismatched, baked-in browser to go stale). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
+The Playwright runtime ships in the image; a project's own Playwright tests use the Chromium that project pins, installed on first use (on arm64 boxes `agent-browser` shares that same binary, so nothing version-mismatched is baked in). Add `--with-playwright` to also install the standalone Playwright CLI in the box:
 
 ```bash
 agentbox claude --with-playwright
@@ -58,7 +58,7 @@ agentbox screen mybox
 
 The desktop has a window manager, the AgentBox wallpaper (paper to every edge with the logo centred, whatever size the desktop is), and a small **icon dock** centred on the bottom edge. Everything on it is in the wallpaper's palette: the dock, the window titlebars, and the terminal, which opens light (ink on paper) with an ANSI palette to match. The dock carries: a Terminal button, a Browser button, and one icon per open window. Click an icon to raise that window, drag titlebars to move them, `Alt+Tab` to cycle; the browser runs undecorated (it is always maximized, and its tab strip already carries the title), so right-click its dock icon for the window menu. Nothing to enable — it's part of the desktop whenever VNC is on. The Browser button opens a browser of your own, separate from the agent's, so clicking it never navigates the page the agent is working on.
 
-Starting a browser is not instant — the first one in a box downloads its Chromium — so a launch puts a small **progress window** on the desktop (and an entry in the dock) that counts the seconds and closes itself once the browser is up. A launch that fails leaves that window open with the error in it. The same window appears when `agentbox screen` or the hub opens a box's browser for you, so an empty desktop always tells you whether something is on its way.
+A launch puts a small **progress window** on the desktop (on an arm64 box the first one also has to download its Chromium, so it is not instant) (and an entry in the dock) that counts the seconds and closes itself once the browser is up. A launch that fails leaves that window open with the error in it. The same window appears when `agentbox screen` or the hub opens a box's browser for you, so an empty desktop always tells you whether something is on its way.
 
 `screen` is distinct from [`agentbox url`](/docs/web-apps-and-tunnels): `url` opens the box's web _app_; `screen` opens the _desktop_ viewer. See [CLI commands](/docs/cli) for all flags (`--print`, `--loopback`, `--ttl`).
 
@@ -77,7 +77,7 @@ agentbox create --no-vnc
 
 <Figure
   src="/screenshots/novnc-desktop.png"
-  caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed Chromium shown above the dock."
+  caption="agentbox screen opens the box's desktop in your browser over noVNC, with the box's headed browser shown above the dock."
 />
 
 This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [vercel](/docs/vercel), [hetzner](/docs/hetzner)): the same noVNC desktop, reached via the provider's preview URL. The desktop is reachable from every surface — the `(VNC)` link in `agentbox ls`, the tray's **Open VNC**, and the hub UI — not just `agentbox screen`.
@@ -92,7 +92,7 @@ This works end-to-end on the cloud providers too ([daytona](/docs/daytona), [ver
 
 ## Screen sharing
 
-`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed Chromium _inside_ the box pointed at the box's own web app — so you land on the running app rather than an empty desktop.
+`agentbox screen` does more than open the noVNC viewer. When the box has a web service that declares `expose:`, it also opens a headed browser _inside_ the box pointed at the box's own web app — so you land on the running app rather than an empty desktop.
 
 It's idempotent: if a browser session is already active (the agent is mid-task), `screen` leaves it untouched and never navigates the agent's page away.
 
@@ -101,7 +101,7 @@ agentbox screen mybox          # noVNC viewer + opens the web app inside the box
 agentbox url mybox             # open the web app host-side
 ```
 
-The most useful part is one origin from both sides: the in-box Chromium loads the same URL the host uses, so Next.js `allowedDevOrigins`, OAuth, and CORS behave identically on both sides. This holds across engines and cloud providers (see [local-docker](/docs/local-docker) for the Portless vs OrbStack details).
+The most useful part is one origin from both sides: the in-box browser loads the same URL the host uses, so Next.js `allowedDevOrigins`, OAuth, and CORS behave identically on both sides. This holds across engines and cloud providers (see [local-docker](/docs/local-docker) for the Portless vs OrbStack details).
 
 From [`agentbox dashboard`](/docs/background-and-parallel), the same two actions are chords on the selected box: `Ctrl-a s` (screen — noVNC viewer + in-box browser) and `Ctrl-a u` (url — web app host-side). They shell out to `agentbox screen` / `agentbox url`, inheriting the same Portless behavior.
 

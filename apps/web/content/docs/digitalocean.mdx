@@ -45,7 +45,7 @@ DigitalOcean can't build an image from a Dockerfile, so a one-time base snapshot
 agentbox prepare --provider digitalocean
 ```
 
-The snapshot is a shell mirror of the Docker box image (Node, Python, Docker, the VNC stack, Playwright Chromium, and the `agentbox-ctl` supervisor). First run takes ~15–20 minutes; after that, every `create --provider digitalocean` boots from it in ~15–20s. Re-running is idempotent — pass `--force` to rebake.
+The snapshot is a shell mirror of the Docker box image (Node, Python, Docker, the VNC stack, Google Chrome, and the `agentbox-ctl` supervisor). First run takes ~15–20 minutes; after that, every `create --provider digitalocean` boots from it in ~15–20s. Re-running is idempotent — pass `--force` to rebake.
 
 The base carries **no agent**. Add one as its own snapshot, on top of the base:
 

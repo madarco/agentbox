@@ -142,7 +142,7 @@ See [CLI commands](/docs/cli) for all flags.
 
 <Callout type="warn" title="HEADS UP">
   Without `prepare`, every first box in a new project eats a ~7-minute cold Dockerfile build on
-  Daytona (Playwright + Chromium). Run `prepare` once.
+  Daytona (Playwright + Google Chrome). Run `prepare` once.
 </Callout>
 
 The base snapshot is shared org-wide and holds only runtime + agent config. A later **project setup snapshot** captured with `agentbox checkpoint create` also includes `/workspace`. See [checkpoints & pausing](/docs/checkpoints-and-pausing).

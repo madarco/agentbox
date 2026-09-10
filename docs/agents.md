@@ -273,7 +273,7 @@ Dockerfile.box ──prepare/pull──▶ agentless base            agentbox/bo
 
 The base carries **no agents**. Each agent is added as a thin `FROM <base>`
 layer, not a second full build, because the agent installs would otherwise have
-to sit above Playwright, Chromium and the VNC stack — so every one of those
+to sit above Playwright, Chrome and the VNC stack — so every one of those
 layers would diverge per agent:
 
 | | full variant build | derived layer |

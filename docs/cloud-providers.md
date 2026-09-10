@@ -839,11 +839,11 @@ The install script (`packages/sandbox-hetzner/scripts/install-box.sh`)
 is a shell mirror of `packages/sandbox-docker/Dockerfile.box`: Node 24
 + Python + corepack, docker.io + the same `/usr/local/bin/agentbox-dockerd-start`
 the docker provider ships, TigerVNC + noVNC + websockify + autocutsel,
-Playwright Chromium + agent-browser + portless, Claude Code (native
+Google Chrome + agent-browser + playwright + portless, Claude Code (native
 installer) + Codex + OpenCode, sshd hardening drop-in, vscode user (UID
 1000) with passwordless sudo. Order matters: all small file-install
-steps run BEFORE the long Chromium download — a failure late in that
-download otherwise loses every install step that came after it.
+steps run BEFORE the long package installs — a failure late in one of
+those otherwise loses every install step that came after it.
 
 ### 3.3 SSH tunnel manager — the load-bearing comms primitive
 
@@ -876,7 +876,7 @@ and writes it back to `cloud.webPort`, so a box created before this heals
 itself.
 
 When the host Portless proxy runs in **TLS** mode, the in-box mirror serves a
-self-signed CA the box doesn't trust by default, so in-box Chromium (VNC window)
+self-signed CA the box doesn't trust by default, so the in-box browser (VNC window)
 and Playwright would reject `https://<box>.localhost`. The baked
 `agentbox-portless-trust` helper fixes this: `startInBoxPortless` (hetzner) and
 docker `create` invoke it to trust the CA in both the system store
@@ -1281,7 +1281,7 @@ With a control box configured, cloud-box **management** runs on the control box
   resource is gone; only the dashboard is stale. Refresh the page if you
   need an immediate-consistent view. Nothing for us to fix on this side.
 - **First-run Dockerfile.box build** takes ~7 min on Daytona because
-  it includes Playwright + Chromium. Cached snapshot reuse is seconds.
+  it includes Playwright + Google Chrome. Cached snapshot reuse is seconds.
   Future: ship a public snapshot to skip the cold build. Tracked as
   backlog 5.1.
 - **Live stats** (`agentbox top` CPU/mem) aren't surfaced for cloud —

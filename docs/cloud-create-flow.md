@@ -398,7 +398,7 @@ for different purposes and reached through different mechanisms. They are
 
 | | Base / "image" snapshot | Project / "setup" snapshot |
 |---|---|---|
-| **What it captures** | Just the Dockerfile.box runtime (Node, Playwright, Chromium, agent CLIs, ctl, VNC stack). **No `/workspace`.** | Everything in the box at capture time, **including `/workspace`** (installed deps, generated files, dev DB seed, etc.) |
+| **What it captures** | Just the Dockerfile.box runtime (Node, Playwright, Google Chrome on amd64, agent CLIs, ctl, VNC stack). **No `/workspace`.** | Everything in the box at capture time, **including `/workspace`** (installed deps, generated files, dev DB seed, etc.) |
 | **Scope** | Org-wide; **shared across all projects** | Org-wide registry but **prefixed by project hash** (`agentbox-ckpt-<hash>_<mn>-<name>`) so two projects can't collide |
 | **Created by** | `agentbox daytona prepare --provider daytona [--name X]` (one-off, manual; rebuilds ~7 min) | `agentbox checkpoint create [--name X] [--set-default]` (per-box, anytime) |
 | **Stored as** | Daytona snapshot `agentbox-box-prebuilt-<ts>` (or whatever `--name` you pass) | Daytona snapshot `agentbox-ckpt-<projectHash>_<mn>-<name>` + host manifest |

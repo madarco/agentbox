@@ -233,7 +233,7 @@ command exits 127 / 4 with a clear stderr.
 | `agentbox dashboard` | TUI status + switcher across all boxes. The leader is **`Ctrl+a`** (e.g. `Ctrl+a u` opens the box's web URL; `Ctrl+a s` opens the in-box browser; `Ctrl+a q` quits). |
 | `agentbox shell [n\|name]` | Interactive `bash -l` inside the box (also wrapped in tmux by default — detach with `Ctrl+a d`). |
 | `agentbox url [n\|name]` | Open the box's web app URL (`<box-name>.localhost` via Portless) in the host browser. |
-| `agentbox screen [n\|name]` | Open the box's **own** Chromium via VNC — useful for OAuth flows the agent inside the box initiates. |
+| `agentbox screen [n\|name]` | Open the box's **own** browser via VNC — useful for OAuth flows the agent inside the box initiates. |
 | `agentbox code [n\|name]` | Open VS Code / Cursor pointed at the box. |
 | `agentbox prepare --provider <name>` | One-time base image / snapshot build for `daytona`, `hetzner`, `vercel`, or `e2b` (e2b builds the base from a Dockerfile via `Template.build()`). With no `--provider`, prints status across all providers. |
 | `agentbox prune --provider <name>` | Clean up orphan boxes / images / snapshots for a provider (docker + daytona supported; hetzner pending). |
