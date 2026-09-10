@@ -81,6 +81,7 @@ import {
   toolRequestsEnabled,
 } from './host-tools.js';
 import { canAutoApproveTransfer } from './safe-transfer.js';
+import { recordAgents } from './registration-to-record.js';
 import { offerBrowserOpen } from './open-link.js';
 import type {
   CheckpointRpcParams,
@@ -117,6 +118,12 @@ export interface CloudActionExecutorDeps {
    * handed to an attached surface. See ./open-link.ts.
    */
   controlPlane?: boolean;
+  /**
+   * The agents the box was created for (`BoxRegistration.agent` / the
+   * BoxRecord's `agents`). Gates which `surface: 'service'` agents' units
+   * `agents.list` hands the box; undefined ships every agent's (legacy rows).
+   */
+  boxAgents?: readonly string[];
   /**
    * The box's REGISTERED origin URL (`BoxRegistration.originUrl`). Two uses:
    * pushing from a scratch repo when this host has no working checkout for the
@@ -370,7 +377,7 @@ export async function executeCloudAction(
   if (action.method === 'agents.list') {
     return {
       exitCode: 0,
-      stdout: JSON.stringify(buildAgentDescriptors()),
+      stdout: JSON.stringify(buildAgentDescriptors({ boxAgents: deps.boxAgents })),
       stderr: '',
     };
   }
@@ -753,6 +760,8 @@ export interface CloudBoxOwner {
   /** `cloud.backend` — which provider's executor the action needs. */
   backendName: string;
   autoApproveSafeHostActions?: boolean;
+  /** The agents the box runs, for the `agents.list` unit gate. */
+  agents?: readonly string[];
 }
 
 /**
@@ -775,6 +784,7 @@ export async function lookupCloudBoxOwner(boxId: string): Promise<CloudBoxOwner 
       name: hit.box.name,
       backendName,
       autoApproveSafeHostActions: hit.box.autoApproveSafeHostActions,
+      agents: recordAgents(hit.box),
     };
   } catch {
     return null;

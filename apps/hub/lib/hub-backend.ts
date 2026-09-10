@@ -1620,6 +1620,7 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+        agent: box.agents?.[0] ?? box.lastAgent,
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old

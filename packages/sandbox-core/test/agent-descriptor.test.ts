@@ -42,6 +42,39 @@ describe('buildAgentDescriptors', () => {
     }
   });
 
+  it('hands a service agent its units only to a box that runs it', () => {
+    // Every box asks `agents.list` at daemon start. Before the gate a claude
+    // box also received openclaw's units, ran `openclaw onboard` (exit 127, not
+    // installed) and showed a permanently `waiting` openclaw service.
+    const serviceSpecs = AGENT_SYNC_SPECS.filter((s) => s.caps.surface === 'service');
+    expect(serviceSpecs.length).toBeGreaterThan(0);
+    const claudeBox = buildAgentDescriptors({ boxAgents: ['claude'] });
+    for (const spec of serviceSpecs) {
+      const got = claudeBox.agents.find((a) => a.id === spec.id);
+      expect(got, spec.id).toBeDefined();
+      expect(got?.service, `${spec.id} shipped units to a claude box`).toBeUndefined();
+      expect(got?.configRender, `${spec.id} shipped a render to a claude box`).toBeUndefined();
+      // The row itself stays: its watch/activity fields are what every box wants.
+      expect(got?.surface).toBe('service');
+    }
+    for (const spec of serviceSpecs) {
+      const own = buildAgentDescriptors({ boxAgents: [spec.id] });
+      const got = own.agents.find((a) => a.id === spec.id);
+      expect(got?.service, spec.id).toBeDefined();
+      if (spec.configRender) expect(got?.configRender, spec.id).toBeDefined();
+    }
+  });
+
+  it('keeps shipping every service agent when the box never said its agent', () => {
+    // A registration from an older host carries no `agent`; starving an openclaw
+    // box of its daemon is worse than an idle unit in an unagented box.
+    const legacy = buildAgentDescriptors();
+    for (const spec of AGENT_SYNC_SPECS) {
+      if (!spec.service) continue;
+      expect(legacy.agents.find((a) => a.id === spec.id)?.service, spec.id).toBeDefined();
+    }
+  });
+
   it('ships the session name and activity sources for every agent', () => {
     // Without these ctl falls back to its BAKED list, which ends at the agents
     // that existed when the image was built — so an agent added afterwards would

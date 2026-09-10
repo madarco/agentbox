@@ -18,6 +18,7 @@ import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from '
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
 import { buildAgentDescriptors, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { registrationAgents } from './registration-to-record.js';
 import {
   isSanctionedPushBranch,
   isScratchBranch,
@@ -953,7 +954,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (body.method === 'agents.list') {
         send(res, 200, {
           exitCode: 0,
-          stdout: JSON.stringify(buildAgentDescriptors()),
+          stdout: JSON.stringify(buildAgentDescriptors({ boxAgents: registrationAgents(reg) })),
           stderr: '',
         });
         return;
@@ -980,6 +981,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
             controlPlane: opts.controlPlane === true,
             originUrl: reg.originUrl,
+            boxAgents: registrationAgents(reg),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -1630,6 +1632,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       controlPlane: opts.controlPlane === true,
                       originUrl: reg.originUrl,
+                      boxAgents: registrationAgents(reg),
                       log,
                     });
                     await respond(result);

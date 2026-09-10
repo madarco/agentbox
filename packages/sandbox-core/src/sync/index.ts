@@ -62,6 +62,7 @@ export {
   buildAgentDescriptors,
   type AgentDescriptor,
   type AgentDescriptorPayload,
+  type BuildAgentDescriptorsOptions,
   type AgentWatchDescriptor,
 } from './agent-descriptor.js';
 export {

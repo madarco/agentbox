@@ -160,7 +160,26 @@ export function serviceWithRunEnv(
   };
 }
 
-export function buildAgentDescriptors(): AgentDescriptorPayload {
+export interface BuildAgentDescriptorsOptions {
+  /**
+   * The agents the asking box was created FOR (its registration's `agent`).
+   * A `surface: 'service'` agent contributes its units and config render ONLY
+   * to a box that runs it: every box asks `agents.list` at daemon start, and
+   * without this gate a claude box also ran `openclaw onboard` (exit 127 — not
+   * installed) and showed a permanently `waiting` openclaw service. Undefined
+   * — a registration that predates the field — keeps the old ship-everything
+   * answer, so an openclaw box registered by an older host still gets its
+   * daemon. The credential/activity fields are unaffected: they are what
+   * makes a TUI agent's login fan out, and every box wants those.
+   */
+  boxAgents?: readonly string[];
+}
+
+export function buildAgentDescriptors(
+  opts: BuildAgentDescriptorsOptions = {},
+): AgentDescriptorPayload {
+  const runsHere = (id: string): boolean =>
+    opts.boxAgents === undefined || opts.boxAgents.includes(id);
   return {
     schema: 2,
     agents: AGENT_SYNC_SPECS.map((spec) => ({
@@ -168,8 +187,10 @@ export function buildAgentDescriptors(): AgentDescriptorPayload {
       sessionName: spec.sessionName,
       activitySource: spec.caps.activitySource,
       surface: spec.caps.surface ?? ('tui' as const),
-      ...(spec.service ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) } : {}),
-      ...(spec.configRender ? { configRender: spec.configRender } : {}),
+      ...(spec.service && runsHere(spec.id)
+        ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) }
+        : {}),
+      ...(spec.configRender && runsHere(spec.id) ? { configRender: spec.configRender } : {}),
       watch: [
         ...(spec.credential
           ? [

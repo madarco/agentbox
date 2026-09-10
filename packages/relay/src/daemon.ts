@@ -183,6 +183,7 @@ async function executeHostReachAction(
     prompts: deps.prompts,
     subscribers: deps.subscribers,
     autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
+    boxAgents: owner.agents,
     log: deps.log,
   });
   // File a copy with the control box so this same request answers when this

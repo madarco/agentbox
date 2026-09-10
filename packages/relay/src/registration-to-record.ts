@@ -50,6 +50,26 @@ export interface RegistrationToRecordOptions {
   freshToken: () => string;
 }
 
+/**
+ * The agents a registration says its box runs, or undefined when it never said.
+ * Feeds `agents.list`: a `surface: 'service'` agent's units go only to a box
+ * that runs it. Undefined (a row from an older host) keeps the ship-everything
+ * answer rather than starving an openclaw box of its daemon.
+ */
+export function registrationAgents(
+  reg: Pick<BoxRegistration, 'agent'>,
+): readonly string[] | undefined {
+  return reg.agent ? [reg.agent] : undefined;
+}
+
+/** Same answer from a BoxRecord: `agents` as created, else the last agent that ran. */
+export function recordAgents(
+  box: Pick<BoxRecord, 'agents' | 'lastAgent'>,
+): readonly string[] | undefined {
+  if (box.agents && box.agents.length > 0) return box.agents;
+  return box.lastAgent ? [box.lastAgent] : undefined;
+}
+
 /** Narrow a registration's free-form agent string to the record's union. */
 export function normalizeRegistrationAgent(agent: string | undefined): BoxRecord['lastAgent'] {
   return agent === 'claude' || agent === 'codex' || agent === 'opencode' ? agent : undefined;

@@ -406,6 +406,7 @@ export function createCloudProvider(
       projectIndex: box.projectIndex,
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+      agent: box.agents?.[0] ?? box.lastAgent,
     });
   }
 
@@ -681,6 +682,7 @@ export function createCloudProvider(
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
+          agent: box.agents?.[0] ?? box.lastAgent,
         });
       } catch {
         // best-effort
@@ -1382,6 +1384,7 @@ export function createCloudProvider(
               originUrl: req.inBoxClone
                 ? req.inBoxClone.originUrl
                 : await readGitOriginUrl(req.workspacePath).catch(() => undefined),
+              agent: req.agents?.[0] ?? req.agent,
             });
           } catch (err) {
             log(

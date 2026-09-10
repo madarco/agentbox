@@ -683,6 +683,12 @@ export interface RegisterBoxArgs {
    * boxes without a git origin.
    */
   originUrl?: string;
+  /**
+   * The agent the box was created for. The relay's `agents.list` hands a
+   * `surface: 'service'` agent's units only to a box that runs it; a
+   * registration without this gets every agent's (the pre-field answer).
+   */
+  agent?: string;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -708,6 +714,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     autoApproveHostActions: args.autoApproveHostActions,
     autoApproveSafeHostActions: args.autoApproveSafeHostActions,
     originUrl: args.originUrl,
+    agent: args.agent,
   });
 }
 

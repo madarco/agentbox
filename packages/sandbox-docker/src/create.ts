@@ -863,6 +863,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         autoApproveHostActions,
         autoApproveSafeHostActions,
         originUrl,
+        agent: opts.agents?.[0],
       });
       log(`registered box token with relay`);
     } catch (err) {

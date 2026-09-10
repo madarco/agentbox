@@ -377,7 +377,12 @@ declares instead of the TUI machinery:
   onboard, a config render). They ride the `agents.list` RPC into the box and
   the supervisor folds them in through its normal reload diff — which is what
   lets a box booted from a snapshot baked before the agent existed still run it.
-  A unit of the same name in `/workspace/agentbox.yaml` **wins**.
+  The host hands them **only to a box that runs the agent** (the box
+  registration's `agent`, set by every provider at create and re-register):
+  every box asks `agents.list` at daemon start, and a claude box must not run
+  `openclaw onboard`. A registration with no `agent` (an older host) still
+  gets every service agent's units. A unit of the same name in
+  `/workspace/agentbox.yaml` **wins**.
 - **`service.urlFields`** — values `<agent> url` prints beside the URL, and
   which of them belong IN it: a daemon generates its own auth token inside the
   box, so the host cannot know it any other way. Two sources, and `command` is

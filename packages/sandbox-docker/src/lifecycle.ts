@@ -547,6 +547,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         worktrees: box.gitWorktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+        agent: box.agents?.[0] ?? box.lastAgent,
       });
     } catch {
       // best-effort
