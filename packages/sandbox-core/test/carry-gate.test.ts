@@ -182,6 +182,37 @@ describe('the standing carry grant', () => {
     expect(r.decision === 'approve' && r.fromGrant).toBeUndefined();
   });
 
+  it('covers what a dir entry EXCLUDES, and the rewrites applied on the way', async () => {
+    // The prompt's row shows neither, and `bytes` — the only field that would
+    // have moved — is the one this digest drops. So dropping an `exclude:` from
+    // a committed agentbox.yaml would otherwise widen the copy silently.
+    const dir = join(root, 'tree2');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'a'), 'x');
+    const asDir = (over: Partial<CarryItem> = {}) => item({ src: dir, dest: '~/tree2', ...over });
+    const excluded = await grantFor([asDir({ exclude: ['secrets'] })]);
+    expect(await grantFor([asDir()])).not.toBe(excluded);
+    expect(await grantFor([asDir({ exclude: ['other'] })])).not.toBe(excluded);
+
+    const plain = await grantFor([item()]);
+    expect(await grantFor([item({ replaceEnvs: true })])).not.toBe(plain);
+    expect(await grantFor([item({ replace: [{ from: 'TOKEN', to: 'X' }] })])).not.toBe(plain);
+  });
+
+  it('reports whether a human was actually shown the table', async () => {
+    // What lets a caller withdraw a grant on a decline without a per-run
+    // `--carry skip` (which never reaches a human) doing the same.
+    const base = { projectRoot: root, items: [item()] };
+    expect((await runCarryGate({ ...base, ask: picks('skip-this-run') })).asked).toBe(true);
+    expect((await runCarryGate({ ...base, ask: picks('cancel') })).asked).toBe(true);
+    expect((await runCarryGate({ ...base, ask: refuses, carrySkip: true })).asked).toBeUndefined();
+    expect((await runCarryGate({ ...base, ask: refuses, carryYes: true })).asked).toBeUndefined();
+    const g = await grantFor([item()]);
+    expect(
+      (await runCarryGate({ ...base, ask: refuses, approvedGrantId: g })).asked,
+    ).toBeUndefined();
+  });
+
   it('is a different id space from the prompt', async () => {
     const { entries } = await resolveCarry([item()], { projectRoot: root });
     expect(carryGrantId(entries)).toMatch(/^carry-grant:[0-9a-f]{12}$/);

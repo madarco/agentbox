@@ -87,9 +87,16 @@ export type CarryGateResult =
        * and it is what keeps `--carry-yes` from minting a standing grant.
        */
       fromGrant?: boolean;
+      /**
+       * A human was actually shown the table. Distinguishes a decision from a
+       * short-circuit (`--carry-yes`, `--carry skip`, a matching grant), which
+       * is what lets a caller WITHDRAW a standing grant when someone re-reviews
+       * the list and says no — without a per-run `--carry skip` doing the same.
+       */
+      asked?: boolean;
     }
-  | { decision: 'skip'; entries: [] }
-  | { decision: 'cancel' };
+  | { decision: 'skip'; entries: []; asked?: boolean }
+  | { decision: 'cancel'; asked?: boolean };
 
 /**
  * Build the question for an already-resolved carry table.
@@ -156,6 +163,17 @@ export function carryGrantId(entries: ResolvedCarryEntry[]): string {
       ...(row.user !== undefined ? { user: row.user } : {}),
       flags: row.flags,
       ...(row.warn ? { warn: row.warn } : {}),
+      // WHAT a directory entry copies, which the prompt's row does not show:
+      // dropping an `exclude:` from a committed agentbox.yaml widens the copy
+      // (`~/.config` minus `gh` becomes `~/.config` WITH the token in it) while
+      // leaving src/dest/kind identical. Only `bytes` would have moved, and that
+      // is the one field this digest omits — so these have to be in it or the
+      // grant would approve a copy nobody agreed to.
+      ...(e.exclude?.length ? { exclude: e.exclude } : {}),
+      // Same for the content rewrites: `rules:` is expanded into `replace` by
+      // the resolver, so hashing these two covers replaceEnvs/replace/rules.
+      ...(e.replaceEnvs ? { replaceEnvs: true } : {}),
+      ...(e.replace?.length ? { replace: e.replace } : {}),
     };
   });
   return promptId(CARRY_GRANT_TOPIC, rows);
@@ -210,14 +228,18 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
       ? answer.value
       : 'cancel';
 
-  if (decision === 'cancel') return { decision: 'cancel' };
-  if (decision === 'skip-this-run') return skip(resolved.entries.length, emit);
-  return { decision: 'approve', entries: resolved.entries, grantId };
+  if (decision === 'cancel') return { decision: 'cancel', asked: true };
+  if (decision === 'skip-this-run') return skip(resolved.entries.length, emit, true);
+  return { decision: 'approve', entries: resolved.entries, grantId, asked: true };
 }
 
-function skip(count: number, emit: (line: string) => void): { decision: 'skip'; entries: [] } {
+function skip(
+  count: number,
+  emit: (line: string) => void,
+  asked = false,
+): { decision: 'skip'; entries: []; asked?: boolean } {
   emit(`carry: skipped (${String(count)} ${count === 1 ? 'file' : 'files'} not copied)`);
-  return { decision: 'skip', entries: [] };
+  return { decision: 'skip', entries: [], ...(asked ? { asked: true } : {}) };
 }
 
 function isCarryDecision(v: string): v is CarryDecision {

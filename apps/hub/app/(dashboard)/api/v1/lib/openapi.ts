@@ -723,6 +723,11 @@ export function buildOpenApi(): Record<string, unknown> {
                         description: "Host dir the clone's workspace was exported to.",
                       },
                       provider: { type: 'string' },
+                      carryAsk: {
+                        type: 'boolean',
+                        description:
+                          'Show the `carry:` question again for a list this project has already approved. A standing approval otherwise removes the prompt entirely, so this is how a client offers a review — and, by answering Skip/Cancel on the create, a way to withdraw it.',
+                      },
                       files: { type: 'integer' },
                       persistent: {
                         type: 'boolean',

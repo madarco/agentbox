@@ -182,6 +182,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     'credentialSync',
     'dangerouslySkipPermissions',
     'carryYes',
+    'carryAsk',
   ] as const;
   for (const f of boolFields) {
     const r = optionalBool(v[f], `opts.${f}`);
@@ -234,15 +235,25 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
 // Body of POST /api/v1/projects/:id/create-preflight. The project comes from the
 // path (resolved server-side, never a client path); the agent decides which
 // agent-specific gates run.
-export function parseCreatePreflight(body: unknown): Parsed<{ agent: string; provider?: string }> {
+export function parseCreatePreflight(
+  body: unknown,
+): Parsed<{ agent: string; provider?: string; carryAsk?: boolean }> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const agent = typeof body.agent === 'string' ? body.agent.trim() : '';
   if (agent.length === 0) return { ok: false, message: 'agent is required (string)' };
   const provider = optionalString(body.provider, 'provider');
   if (!provider.ok) return provider;
+  // `carryAsk` re-opens a carry approval this project already gave, so a client
+  // can show the table again — the preflight is where a GUI would offer that.
+  const carryAsk = optionalBool(body.carryAsk, 'carryAsk');
+  if (!carryAsk.ok) return carryAsk;
   return {
     ok: true,
-    value: { agent, ...(provider.value !== undefined ? { provider: provider.value } : {}) },
+    value: {
+      agent,
+      ...(provider.value !== undefined ? { provider: provider.value } : {}),
+      ...(carryAsk.value !== undefined ? { carryAsk: carryAsk.value } : {}),
+    },
   };
 }
 

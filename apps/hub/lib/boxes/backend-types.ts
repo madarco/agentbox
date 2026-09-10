@@ -190,6 +190,13 @@ export interface CreateBoxOpts {
    */
   carryYes?: boolean;
   /**
+   * Re-open a carry approval this project already gave — the API equivalent of
+   * `--carry ask`. A standing approval is otherwise invisible to a GUI client,
+   * which would leave no way to review or withdraw permission to copy host
+   * secrets from the web UI or the tray.
+   */
+  carryAsk?: boolean;
+  /**
    * Answers to the questions GET/POST create-preflight returned
    * (`PromptAnswer[]` from @agentbox/core — typed `unknown[]` here to keep that
    * package out of the Next bundle). A create that omits an answer to a
@@ -232,6 +239,12 @@ export interface CreatePreflightInput {
   projectId: string;
   agent: string;
   provider?: string;
+  /**
+   * Re-open a carry approval this project already gave, so the table is shown
+   * again — the API equivalent of `--carry ask`, and the only way a GUI client
+   * can review or withdraw a standing permission to copy host files.
+   */
+  carryAsk?: boolean;
 }
 
 // Input for creating a box. The client sends EITHER a `projectId` (a registered

@@ -9,7 +9,12 @@
  */
 
 import { log } from '@clack/prompts';
-import { loadEffectiveConfig, readCarryGrant, writeCarryGrant } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  readCarryGrant,
+  removeCarryGrant,
+  writeCarryGrant,
+} from '@agentbox/config';
 import type { ResolvedCarryEntry } from '@agentbox/core';
 import { loadCarrySpec } from '@agentbox/ctl';
 import {
@@ -28,11 +33,43 @@ export interface CarryGateArgs {
   yes: boolean;
   /** `--carry-yes` or AGENTBOX_CARRY_YES=1 — auto-approves. */
   carryYesFlag?: boolean;
-  /** `--carry skip` or AGENTBOX_CARRY=skip — skip carry for this run. */
-  carrySkipFlag?: boolean;
-  /** `--carry ask` — re-open the decision even though the list is already granted. */
-  carryAskFlag?: boolean;
+  /**
+   * The raw `--carry <mode>` value, unvalidated. Parsed here rather than by each
+   * caller so an unknown mode is REFUSED in one place: with no commander default
+   * left, a typo would otherwise be indistinguishable from "no flag" and fall
+   * into the granted-silent path — copying host secrets with no prompt.
+   */
+  carryMode?: string;
   onLog?: (line: string) => void;
+}
+
+/** `--carry <mode>`, or undefined for "no flag". Throws on anything else. */
+export function parseCarryMode(raw: string | undefined): 'skip' | 'ask' | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === 'skip' || raw === 'ask') return raw;
+  throw new Error(`--carry: expected 'skip' or 'ask', got "${raw}"`);
+}
+
+/**
+ * Resolve the three short-circuits from the flags and the environment.
+ *
+ * Pure so the precedence is testable without a box: `--carry ask` is a request
+ * to BE asked, so it beats both env bypasses. Resolving it as `flag ?? env`
+ * would let `AGENTBOX_CARRY=skip` silently win over an explicit flag and skip
+ * the copy the user just asked to review — inverting CLI > env.
+ */
+export function resolveCarryFlags(args: {
+  mode: 'skip' | 'ask' | undefined;
+  carryYesFlag?: boolean;
+  env?: { AGENTBOX_CARRY_YES?: string | undefined; AGENTBOX_CARRY?: string | undefined };
+}): { carryYes: boolean; carrySkip: boolean; carryAsk: boolean } {
+  const env = args.env ?? process.env;
+  if (args.mode === 'ask') return { carryYes: false, carrySkip: false, carryAsk: true };
+  return {
+    carryYes: args.carryYesFlag ?? env.AGENTBOX_CARRY_YES === '1',
+    carrySkip: args.mode === 'skip' || env.AGENTBOX_CARRY === 'skip',
+    carryAsk: false,
+  };
 }
 
 /**
@@ -48,8 +85,10 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
   if (items.length === 0) return { decision: 'approve', entries: [] };
 
   const cfg = await loadEffectiveConfig(args.projectRoot);
-  const carryYes = args.carryYesFlag ?? process.env.AGENTBOX_CARRY_YES === '1';
-  const carrySkip = args.carrySkipFlag ?? process.env.AGENTBOX_CARRY === 'skip';
+  const { carryYes, carrySkip, carryAsk } = resolveCarryFlags({
+    mode: parseCarryMode(args.carryMode),
+    ...(args.carryYesFlag !== undefined ? { carryYesFlag: args.carryYesFlag } : {}),
+  });
   // The standing approval for this project's list, if it has one. Read here
   // rather than in the shared gate so that package never touches ~/.agentbox.
   const granted = await readCarryGrant(args.projectRoot);
@@ -63,7 +102,7 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
     carryYes,
     carrySkip,
     ...(granted ? { approvedGrantId: granted.approvedId } : {}),
-    ...(args.carryAskFlag ? { carryAsk: true } : {}),
+    ...(carryAsk ? { carryAsk: true } : {}),
     ...(args.onLog ? { onLog: args.onLog } : {}),
   });
 
@@ -71,6 +110,14 @@ export async function runCarryGate(args: CarryGateArgs): Promise<CarryGateResult
   // `--carry-yes` is a one-shot bypass that must not leave a standing grant.
   if (result.decision === 'approve' && result.grantId && !result.fromGrant && !carryYes) {
     await recordGrant(args.projectRoot, result.grantId, result.entries);
+  }
+  // Someone was shown the table again and said no: withdraw the standing
+  // approval rather than let the next plain create silently copy what they just
+  // refused. Only a declined PROMPT revokes — a per-run `--carry skip` never
+  // reaches a human, so it leaves the grant alone.
+  if (result.decision !== 'approve' && result.asked && granted) {
+    await removeCarryGrant(args.projectRoot).catch(() => {});
+    args.onLog?.('carry: approval withdrawn for this project');
   }
   return result;
 }
@@ -120,8 +167,7 @@ export async function runQueuedCarryGate(args: {
       projectRoot: args.projectRoot,
       yes: !!args.opts.yes,
       carryYesFlag: args.opts.carryYes ? true : undefined,
-      carrySkipFlag: args.opts.carry === 'skip' ? true : undefined,
-      carryAskFlag: args.opts.carry === 'ask' ? true : undefined,
+      carryMode: args.opts.carry,
       ...(args.onLog ? { onLog: args.onLog } : {}),
     });
     if (gate.decision === 'cancel') {

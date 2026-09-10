@@ -637,11 +637,10 @@ export const createCommand = new Command('create')
       const gate = await runCarryGate({
         projectRoot,
         yes: !!opts.yes,
-        // Pass undefined when the flag wasn't set so the env-var fallback in
-        // runCarryGate (?? carryYesEnv / ?? carrySkipEnv) actually fires.
+        // Pass undefined when the flag wasn't set so the AGENTBOX_CARRY_YES
+        // fallback in runCarryGate actually fires.
         carryYesFlag: opts.carryYes ? true : undefined,
-        carrySkipFlag: opts.carry === 'skip' ? true : undefined,
-        carryAskFlag: opts.carry === 'ask' ? true : undefined,
+        carryMode: opts.carry,
         onLog: (line) => cmdLog.write(line),
       });
       if (gate.decision === 'cancel') {

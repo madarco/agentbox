@@ -58,6 +58,13 @@ export interface CreateGateInput {
    * missing from the list the client is shown.
    */
   collecting?: boolean;
+  /**
+   * Re-open a carry approval this project already gave — the API equivalent of
+   * `--carry ask`. Without it a granted list is unreachable from the web UI and
+   * the tray: they would never see the table again, and so could never withdraw
+   * an approval to copy host secrets.
+   */
+  carryAsk?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -75,6 +82,11 @@ export interface CreateGateResult {
    * now — so there is nothing new to record.
    */
   carryFromGrant?: boolean;
+  /**
+   * A human was shown the table and declined while the project HELD a grant:
+   * the caller should withdraw it.
+   */
+  carryDeclined?: boolean;
   /** Agents whose host login the box should be seeded with. */
   borrowCredentials: string[];
   /** True when the user asked to abandon the create. */
@@ -102,6 +114,7 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     ask: input.ask,
     ...(input.carryYes ? { carryYes: true } : {}),
     ...(granted ? { approvedGrantId: granted.approvedId } : {}),
+    ...(input.carryAsk ? { carryAsk: true } : {}),
     onLog: emit,
   });
   if (gate.decision === 'cancel' && !input.collecting) {
@@ -114,7 +127,12 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
   const carryGrant =
     gate.decision === 'approve' && gate.grantId
       ? { carryGrantId: gate.grantId, ...(gate.fromGrant ? { carryFromGrant: true } : {}) }
-      : {};
+      : // Declined after being shown the table: the caller withdraws the standing
+        // approval, so the next create asks rather than silently copying what was
+        // just refused.
+        gate.asked && granted
+        ? { carryDeclined: true }
+        : {};
 
   const spec = input.agent === 'none' ? undefined : findAgentSpec(input.agent);
   let borrowCredentials: string[] = [];

@@ -17,7 +17,7 @@
  * rather than an opaque hash for the same reason.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { projectCarryFile } from './paths.js';
@@ -88,4 +88,23 @@ export async function writeCarryGrant(projectRoot: string, grant: CarryGrant): P
     '# An agentbox.yaml `carry:` entry is a request until it is approved here.\n' +
     '# Change the list and the next create asks again; `--carry ask` re-asks now.\n';
   await writeFile(file, header + stringifyYaml({ ...grant }), 'utf8');
+}
+
+/**
+ * Withdraw a project's carry grant. Returns false when there was none.
+ *
+ * Called when someone is shown the table again and declines: a standing
+ * approval that survives an explicit "no" would be worse than never having
+ * remembered it, since the next plain create would silently copy the files the
+ * user just refused.
+ */
+export async function removeCarryGrant(projectRoot: string): Promise<boolean> {
+  const file = projectCarryFile(projectRoot);
+  try {
+    await readFile(file, 'utf8');
+  } catch {
+    return false;
+  }
+  await rm(file, { force: true });
+  return true;
 }

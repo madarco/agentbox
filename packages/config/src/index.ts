@@ -126,6 +126,7 @@ export {
 
 export {
   readCarryGrant,
+  removeCarryGrant,
   writeCarryGrant,
   type CarryGrant,
   type CarryGrantFile,

@@ -17,6 +17,7 @@ import {
   pruneOrphanProjectConfigs,
   recordProjectLastUsed,
   registerProject,
+  removeCarryGrant,
   writeCarryGrant,
   resolveDefaultCheckpoint,
   setConfigValue,
@@ -2533,6 +2534,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         if (gated.cancelled) return { ok: false, error: 'create cancelled' };
+        // Declined after a re-review: withdraw the standing approval, or the
+        // next create would silently copy what the user just refused.
+        if (gated.carryDeclined && !isHubWorkerClone(workspace)) {
+          void removeCarryGrant(workspace).catch(() => {});
+        }
         // Record the carry approval as this project's standing grant, so the
         // next create — from any surface — does not re-ask for the same list.
         // Only a fresh human approval: `carryFromGrant` is already stored, and
@@ -2649,6 +2655,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           agent: input.agent,
           ask: asker.ask,
           collecting: true,
+          ...(input.carryAsk ? { carryAsk: true } : {}),
         });
         return { prompts: asker.collected, unavailable: res.unavailable };
       } catch (err) {
