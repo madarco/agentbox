@@ -316,10 +316,13 @@ while :; do
   # The command exiting is NOT the browser being on screen: agent-browser hands
   # the request to its daemon and returns in milliseconds whenever one is
   # already up. Wait for the browser itself -- the CDP flag is how every
-  # agent-browser launch spells it, and both Google Chrome and Playwright's
-  # build end in "/chrome". The chromium-resolver wrapper ("/chromium ") is
-  # deliberately not matched: on arm64 seeing it means the download this
-  # window exists for is still running. Give up waiting 25s after
+  # agent-browser launch spells it, and both Google Chrome and the Playwright
+  # build end in "/chrome". NOTE: this whole body is a single-quoted `bash -c`
+  # argument, so it must never contain an apostrophe -- one closes the quote
+  # and the launcher becomes a syntax error that dies before it draws anything.
+  # The chromium-resolver wrapper ("/chromium ") is deliberately not matched:
+  # on arm64 seeing it means the download this window exists for is still
+  # running. Give up waiting 25s after
   # the launch returned, so an unrecognised browser closes the window instead of
   # stranding it.
   if [[ -n $rc ]]; then

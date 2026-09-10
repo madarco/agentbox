@@ -9,6 +9,19 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.31.2] - 2026-09-10
+
+### Fixed
+
+- **`agentbox screen` stopped auto-starting the box's browser** — the VNC
+  desktop opened blank. 0.31.0 added an apostrophe to a comment inside the
+  desktop launcher, which `agentbox-vnc-start` writes as one single-quoted
+  `bash -c` argument, so the launcher became a syntax error that died before
+  drawing anything. Every provider was affected. Docker boxes pick the fix up
+  with the next image build; a cloud box needs
+  `agentbox prepare --provider <name> --force`, since the script is baked into
+  the snapshot.
+
 ## [0.31.1] - 2026-09-10
 
 ### Fixed
