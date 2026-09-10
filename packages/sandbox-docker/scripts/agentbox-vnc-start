@@ -452,7 +452,12 @@ write_jwmrc() {
        screen at any size -- no width to hardcode, and it re-centres itself when
        a noVNC viewer resizes the desktop. maxwidth="1" is what makes the front
        one a spacer: its buttons shrink to a 1px sliver in the bottom-left
-       corner, and to nothing at all while no window is open.
+       corner, and to nothing at all while no window is open. Spacer is no
+       substitute for it: a Spacer takes a fixed width, and only a second
+       VARIABLE component splits the slack in two. The sliver stays a live
+       task button, so a click on the very corner pixel minimizes a window
+       with nothing visible to explain it -- 1px of a 1280px edge, against a
+       dock that is otherwise off-centre at every window count.
        The one thing the trick cannot do is grow symmetrically: the real
        TaskList still draws its icons left-to-right from the centre, so each
        open window pushes the row 24px right. Exact centring at every window

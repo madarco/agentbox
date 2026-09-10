@@ -101,7 +101,8 @@ describe('agentbox-vnc-start ~/.jwmrc generation', () => {
     // mirrors the real one behind them and the block lands dead centre at any
     // desktop size. Delete the front one (it looks redundant, it renders as a
     // 1px sliver) and the dock silently goes back to sitting left of centre.
-    const dock = jwmrc.slice(jwmrc.indexOf('<Tray valign="bottom"'), jwmrc.indexOf('</Tray>'));
+    const dockStart = jwmrc.indexOf('<Tray valign="bottom"');
+    const dock = jwmrc.slice(dockStart, jwmrc.indexOf('</Tray>', dockStart));
     expect(dock.slice(0, dock.indexOf('>'))).not.toMatch(/\bwidth="/);
     expect(dock.match(/<TaskList[^>]*>/g)).toEqual([
       '<TaskList labeled="false" maxwidth="1"/>',
