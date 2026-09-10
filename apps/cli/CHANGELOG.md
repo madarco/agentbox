@@ -9,37 +9,44 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
-## [Unreleased]
+## [0.31.0] - 2026-09-10
+
+### Breaking
+
+- **`agentbox sync` is now `agentbox upload`.** The command only ever moved host
+  -> box; `sync` implied a two-way reconcile that never existed. `POST
+  /api/v1/boxes/{id}/sync` moved with it, to `/upload`. `download`/`upload` name
+  the direction; `<provider> firewall sync` is untouched.
 
 ### Added
 
-- **`agentbox clone` of a bot gives you a second bot, not a copy of the first.**
+- **Persistent boxes.** `--persistent` (on `create` and on every agent command)
+  or `box.persistent` marks a box always-on: autopause skips it and it no longer
+  counts against `maxRunningBoxes`, the cloud keepalive renews it regardless of
+  agent activity, `prune` leaves it alone, `destroy -y` refuses without
+  `--force`, and the relay brings it back if it stops. Shown as `*` in
+  `agentbox list` and as a lock in the hub and the tray. Refused on e2b and
+  vercel, whose session cap the host can extend but not remove.
+- **Service agents, and `agentbox openclaw` as the first one.** An agent can now
+  be a daemon the box hosts instead of a TUI you attach to: it declares its own
+  supervisor units and its config-render command on its registry row, the box
+  publishes it on the box web URL, and the command ends at "ready + URL". Such a
+  box is persistent by default (`--no-persistent` opts out). OpenClaw is
+  installed on demand rather than baked, and its `openclaw:` block in
+  `agentbox.yaml` is layered onto the gateway's own config through OpenClaw's
+  patch command.
+- **`agentbox upload [box]` pushes the host workspace into a live box** — the
+  mirror of `download`, for git and non-git projects alike. The box wins every
+  conflict, and the skipped host paths are listed. Cloud `download` reached
+  docker's parity at the same time: `--dry-run`, the itemized change list and
+  the gitignore/exclude selection now work on every provider.
+- **`agentbox clone <box>` stands up a second box from a first one's workspace.**
   A clone of a service-agent box runs that agent, drops the files it regenerates,
   rewrites the ones naming the bot through an `identity` rule-set, and requires a
   per-box secrets file (`~/.agentbox/openclaw/<name>.env`) before it will proceed.
   Its workspace lands beside the source's backups, in `<project>/.agentbox/bots/`.
 - **An OpenClaw bot can write its own identity rules.** A new `agentbox-identity`
   skill, and a nudge in the box facts while `agentbox.yaml` declares no rule-set.
-- **`agentbox openclaw url` now prints a link that opens the Control UI signed
-  in.** The gateway reads its token from the URL fragment, so the URL and the
-  token on separate lines meant assembling `<url>/#token=…` by hand. The bare URL
-  stays on line one for `| head -1`.
-- **`agentbox url` resolves live and opens a bot signed in.** It goes through
-  the hub for every provider now, instead of reading the box list's recorded
-  URL for docker boxes. `--print` still writes the bare URL to stdout.
-- **`GET /api/v1/boxes/{id}/web` resolves a box's web URL at click time**
-  (`{ url, signInUrl }`), so the hub UI and the tray open a bot's dashboard
-  signed in rather than landing on a token prompt — and open the URL the box
-  actually serves, rather than the one recorded when it started. Same rule the
-  desktop already follows via `GET …/vnc`.
-
-- **Pick a box size when you create one, in the web hub and the macOS tray.** The
-  choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`
-  on Daytona — there is no common grammar), with a custom-value field where the
-  backend accepts free-form sizes. On Daytona and E2B, where the size is fixed
-  when the base is baked, choosing a different one rebuilds the base first and the
-  form says so. A community provider gets the same picker by declaring `sizes` on
-  its descriptor.
 - **`agentbox download --backup` captures a box as a restorable bundle.** It writes
   the workspace plus the agent's state dir — identity included — to
   `<project>/.agentbox/bots/<bot>/<timestamp>/`, so a bot can be recreated later or
@@ -50,6 +57,64 @@ CLI, not the raw commits.
   dir too, so the bot keeps its identity, pairings and history — on a different
   provider if you pass one. `agentbox create --restore` takes the workspace only.
   Refused while the backed-up box is still running, unless `--force`.
+- **Backup, clone and restore are in the web hub and the macOS tray**, not just
+  the CLI: `POST /api/v1/boxes/{id}/backup`, a per-project bot list, and restore
+  offered from the Create box form. The box payload grew `hasGit` and
+  `supportsBackup`, so both GUIs hide the git UI on a box with no repo and offer
+  Backup only where it captures an identity.
+- **A box can borrow one of the host's model logins (`--model-auth`).** A source
+  is another agent's login file or a provider API key in the host environment;
+  the flag is repeatable, `<agent>.modelAuth` persists it, and OpenClaw, Pi and
+  OpenCode can all run on the host's Codex login. Only OpenClaw asks at create
+  time — the others take the flag and stay silent. A seeded box cannot renew a
+  borrowed login itself; the credential fan-out re-pushing the host's is the
+  renewal path.
+- **Create-time questions now reach the web hub and the tray.** The `carry:` and
+  `--model-auth` gates used to be CLI-only, so a box created from a GUI skipped
+  them silently. `POST /api/v1/projects/{id}/create-preflight` returns the
+  questions, the client renders them (with a real file table for `carry:` and a
+  credential card for a login) and sends the answers back with the create. A
+  `required` gate that goes unanswered now fails the create loudly.
+- **A project's `carry:` list is approved once, not on every create.** The grant
+  lands in `~/.agentbox/projects/<hash>/carry.yaml`, keyed on the file list
+  rather than its contents — so editing an approved file does not re-ask, but a
+  file that changes mode, becomes a folder, or starts resolving through a symlink
+  out of `$HOME` does.
+- **A link opened from a box opens where you are.** `agentbox-ctl open` and the
+  box's `$BROWSER`/`xdg-open` shim no longer wait for approval — they are
+  rate-limited instead (2 per 30s, 10 per 10min, duplicates dropped) — and the
+  open happens on the machine you are attached from rather than on the relay
+  host, which on a control box meant a browser on the VPS and nothing on screen.
+- **`agentbox openclaw url` prints a link that opens the Control UI signed in.**
+  The gateway reads its token from the URL fragment, so the URL and the token on
+  separate lines meant assembling `<url>/#token=…` by hand. The bare URL stays on
+  line one for `| head -1`.
+- **`agentbox url` resolves live and opens a bot signed in.** It goes through the
+  hub for every provider now, instead of reading the box list's recorded URL for
+  docker boxes. `--print` still writes the bare URL to stdout.
+- **`GET /api/v1/boxes/{id}/web` resolves a box's web URL at click time**
+  (`{ url, signInUrl }`), so the hub UI and the tray open a bot's dashboard signed
+  in rather than landing on a token prompt — and open the URL the box actually
+  serves, rather than the one recorded when it started. `signInPending` tells a
+  client the token is merely not ready yet, so a click on a starting bot can wait
+  instead of opening a dead page.
+- **Pick a box size when you create one, in the web hub and the macOS tray.** The
+  choices come from the provider (`cx43` on Hetzner, `4` vCPU on Vercel, `4-8-10`
+  on Daytona — there is no common grammar), with a custom-value field where the
+  backend accepts free-form sizes. On Daytona and E2B, where the size is fixed
+  when the base is baked, choosing a different one rebuilds the base first and the
+  form says so. A community provider gets the same picker by declaring `sizes` on
+  its descriptor.
+- **Create a new project straight from the hub UI** — `POST /api/v1/projects`
+  takes `{ parent, name, git? }` and makes the folder (optionally a git repo with
+  an initial commit) before registering it.
+- **The create pickers open on what the project last used.** Provider and agent
+  are remembered per project instead of resetting to docker + claude on every
+  switch.
+- `@madarco/agentbox-provider-sdk` 4.2.0: providers declare `sizes` on their
+  descriptor, an agent may declare it has no credential, and the shared
+  runtime-asset list gained the chromium resolver. Additive — `SDK_API_VERSION`
+  is still 4.
 
 ### Changed
 
@@ -57,9 +122,28 @@ CLI, not the raw commits.
   amd64 now bake `google-chrome-stable` instead of Playwright's Chrome-for-Testing
   build, which painted a "for testing only" notice on the VNC desktop. arm64
   docker boxes keep the lazy Playwright Chromium.
+- **`upload` and `clone` run behind `/api/v1`** like the rest of the lifecycle,
+  so the web UI and the tray get them for free. `upload` is refused when a remote
+  control box owns the box — it would push the control box's copy of the project,
+  not yours; use `agentbox cp`.
 
 ### Fixed
 
+- **OpenClaw's Control UI was unreachable through a box's published URL, on every
+  provider.** The gateway rejects any proxied request, so the daemon's port is
+  now published directly. `/healthz` was exempt, which is why every smoke test
+  passed.
+- **A service-agent box could not be created from the hub, the tray or a
+  checkpoint.** `POST /api/v1/boxes` accepted `openclaw`, returned 202, then died
+  with `unknown agent kind`; the same hand-written agent list also blocked `pi` on
+  every cloud provider and silently built an agent-less box for any
+  `agentbox agent add` plugin agent.
+- **Every box was handed every service agent's units.** A claude box on docker or
+  e2b ran `openclaw onboard` (exit 127) and showed a permanently waiting service.
+- **`agentbox openclaw` could adopt someone else's box.** With one box in the
+  project it installed the daemon into a claude box; with two it built a second
+  gateway instead of asking. `<agent> stop` then `<agent>` now resumes, as
+  documented.
 - **OpenClaw on Hetzner and DigitalOcean worked in the wrong directory.** The
   agent's declared run-env never reached the box on a VPS, so onboarding ran
   against `~/.openclaw/workspace` instead of your project — silently, since the
@@ -68,6 +152,31 @@ CLI, not the raw commits.
 - **A host `.agentbox/` was copied into every new box.** The workspace seed applied
   no exclude, so a bot backup sitting in your project — gateway token and all —
   was seeded into each box created from it. `.agentbox/` now stays on the host.
+- **Every server-rendered hub page 500d.** A bogus `execa` external in the
+  standalone build killed each page with `ERR_MODULE_NOT_FOUND` while the API
+  routes kept answering, which is why the hub looked half-alive.
+- **A paused cloud box held a queue slot**, so stopped cloud boxes could keep `-i`
+  jobs waiting indefinitely.
+- **A box's SSH port forward is reused across processes.** Every command that
+  resolved a preview URL minted another forward on the same ControlMaster and
+  nothing reaped them (one box had seven), and each one moved the recorded
+  `webUrl` to a port nobody was using.
+- **The in-box forwarder raced portless for `:80` on Hetzner and DigitalOcean**,
+  publishing a URL that answered with a 302 into a 404. Both now use 8080, as
+  vercel and e2b already did.
+- **`agentbox-ctl git push` failed on a container-class Daytona box** driven from
+  a host action — the relay did not pass the sandbox class, so the exec wrap
+  added a `sudo -u vscode` the container refuses. The `cp` and browser RPCs were
+  hit the same way.
+- **In-box node processes ignored the portless CA on DigitalOcean.** The CA lands
+  under either `/root` or the box user's home depending on whether `sudo` resets
+  `HOME`; both are checked now.
+- **macOS `tar` seeded AppleDouble junk (`._*`) into boxes** on `upload` and on
+  every session-start resync of a git box from a Mac.
+- **`gh pr comment --attach` commented on the wrong PR.** gh 2.99 added the flag;
+  the shim read the file path as the PR ref.
+- **The VNC desktop dock is centred at any screen size**, and a browser launched
+  from the desktop opens on the signed service URL.
 
 ## [0.30.0] - 2026-09-05
 
