@@ -9,6 +9,14 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.31.4] - 2026-09-11
+
+### Fixed
+
+- **An OpenClaw box borrowing your Codex login could open on model setup and never recover.**
+  If the `@openclaw/codex` plugin install left OpenClaw not trusting the plugin, every
+  turn failed; the model-auth task now reinstalls it, including on the next restart.
+
 ## [0.31.3] - 2026-09-11
 
 ### Fixed
