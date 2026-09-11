@@ -208,6 +208,8 @@ Full guide: [Build a provider](https://agent-box.sh/docs/build-a-provider) (and 
 
 Bug reports, docs fixes, and provider work are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). First-time contributors sign a one-line [CLA](./.github/CLA.md) on their first pull request. Security issues go through [SECURITY.md](./SECURITY.md), not a public issue.
 
+For new sandbox providers, see [Build a provider](https://agent-box.sh/docs/build-a-provider) and the authoring reference [`docs/provider-plugins.md`](./docs/provider-plugins.md).
+
 # Author
 
 [Marco D'Alia](https://www.madarco.net) - [@madarco](https://x.com/madarco) - [Linkedin](https://www.linkedin.com/in/marcodalia/)
