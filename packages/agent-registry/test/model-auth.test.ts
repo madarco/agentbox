@@ -177,9 +177,26 @@ describe('openclaw-model-auth', () => {
     expect(script).not.toContain('--overwrite');
   });
 
-  it('installs the official codex plugin only when absent', () => {
-    expect(script).toContain('plugins install clawhub:@openclaw/codex');
-    expect(script).toMatch(/if \[ ! -d '[^']*\/\.openclaw\/extensions\/codex' \]/);
+  it('installs the official codex plugin unless openclaw trusts the install', () => {
+    // Measured on 2026.9.4: the directory can exist with no install record, and
+    // an untrusted plugin loads but cannot serve a turn. So the gate is
+    // openclaw's trust verdict, and `--force` replaces the leftover directory.
+    expect(script).toContain('plugins install clawhub:@openclaw/codex --force');
+    expect(script).toContain('openclaw plugins inspect codex --json');
+    expect(script).toContain('trust?.reason === ');
+    expect(script).toContain('trusted-official');
+    expect(script).not.toMatch(/if \[ ! -d '[^']*\/extensions\/codex' \]/);
+  });
+
+  it('checks the plugin before the already-imported gate, and again after the import', () => {
+    // An imported box whose plugin lost its record must heal on its next boot,
+    // not exit early on the marker.
+    const trustChecks = [...script.matchAll(/if ! codex_trusted; then/g)].map((m) => m.index);
+    const markerGate = script.indexOf('already imported');
+    const importAt = script.indexOf('openclaw migrate apply codex');
+    expect(trustChecks).toHaveLength(2);
+    expect(trustChecks[0]).toBeLessThan(markerGate);
+    expect(trustChecks[1]).toBeGreaterThan(importAt);
   });
 
   it('gates on the seed file`s hash, never on openclaw`s status view', () => {

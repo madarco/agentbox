@@ -198,6 +198,17 @@ const IDENTITY_NUDGE_TEXT = [
  *    indistinguishable from a real row — but a turn on it fails with
  *    `selected_auth_profile_unavailable`. So OpenClaw's own status is NOT the
  *    gate for "already imported"; the import is what makes the profile real.
+ *  - The plugin's install RECORD, not its directory, is what makes it usable.
+ *    Measured on 2026.9.4: an install can land the files yet persist no record
+ *    (`plugins inspect codex` -> `Trust: reason=record-missing`, the one failure
+ *    logged `persisted-registry-stale-policy` mid-import). The plugin still
+ *    loads, but untrusted it cannot open its store, so every turn fails with
+ *    "could not verify a usable inference route" and the Control UI drops to
+ *    model setup -- while `models status` reports the imported profile usable.
+ *    A plain `plugins registry --refresh` does not restore the record; a
+ *    `plugins install --force` does, and leaves the imported profile intact.
+ *    So the gate is openclaw's own trust verdict, checked on every boot and
+ *    again after the import, and a box that came up broken heals on restart.
  *  - The import applies on every run. After it OpenClaw owns the profile and
  *    refreshes it in its own store, and OpenAI does not invalidate the prior
  *    refresh token on rotation (two boxes seeded from one host file refreshed
@@ -209,7 +220,7 @@ const IDENTITY_NUDGE_TEXT = [
  * `.agentbox-overlay.json` once an import succeeds. Unchanged file, no work;
  * a re-pushed login (the host logged in again) imports again. Idempotent and
  * exit 0 on every "nothing to do": no seeded file, a file that is not a Codex
- * login, or one already imported. The gateway is ordered after this task
+ * login, or one already imported (with the plugin still trusted). The gateway is ordered after this task
  * (`needs`), so the plugin it installs is loaded on the gateway's first start
  * rather than needing a restart.
  */
@@ -225,15 +236,18 @@ function buildModelAuthScript(): string {
     // ingest" rather than a failed import.
     `if ! node -e ${sq(MODEL_AUTH_IS_CODEX_LOGIN)} "$auth"; then echo "openclaw-model-auth: $auth is not a Codex ChatGPT login"; exit 0; fi`,
     'seen=$(sha256sum "$auth" | cut -d" " -f1)',
+    `codex_trusted() { openclaw plugins inspect codex --json 2>/dev/null | node -e ${sq(MODEL_AUTH_PLUGIN_TRUSTED)}; }`,
+    // The plugin owns both the import command and the harness the default
+    // model runs on. Before the marker gate, so an imported box whose plugin
+    // lost its record is repaired rather than skipped. `--force` because the
+    // untrusted case leaves the directory behind.
+    'if ! codex_trusted; then',
+    '  echo "openclaw-model-auth: installing the @openclaw/codex plugin"',
+    '  openclaw plugins install clawhub:@openclaw/codex --force || exit 0',
+    'fi',
     'if [ -f "$marker" ] && [ "$(cat "$marker")" = "$seen" ]; then',
     '  echo "openclaw-model-auth: this Codex login is already imported"',
     '  exit 0',
-    'fi',
-    // The plugin owns both the import command and the harness the default
-    // model runs on.
-    `if [ ! -d ${sq(`${OPENCLAW_BOX_DIR}/extensions/codex`)} ]; then`,
-    '  echo "openclaw-model-auth: installing the @openclaw/codex plugin"',
-    '  openclaw plugins install clawhub:@openclaw/codex || exit 0',
     'fi',
     'echo "openclaw-model-auth: importing the Codex login into the OpenClaw auth store"',
     // `--no-backup --force`: the pre-migration archive would snapshot a state
@@ -242,12 +256,27 @@ function buildModelAuthScript(): string {
     `if openclaw migrate apply codex --from ${sq(home)} --include-secrets --item auth:openai --yes --no-backup --force; then`,
     '  printf %s "$seen" > "$marker" && chmod 600 "$marker"',
     'fi',
+    // The one record loss observed happened across the import, not the install.
+    'if ! codex_trusted; then',
+    '  echo "openclaw-model-auth: the @openclaw/codex plugin lost its install record; reinstalling"',
+    '  openclaw plugins install clawhub:@openclaw/codex --force || true',
+    'fi',
     'exit 0',
   ].join('\n');
 }
 
 /** Hash of the last seed imported. Beside the overlay record: AgentBox-owned, per box. */
 const MODEL_AUTH_MARKER = `${OPENCLAW_BOX_DIR}/.agentbox-model-auth.sha256`;
+
+/**
+ * stdin is `openclaw plugins inspect codex --json`. Exit 0 iff openclaw trusts
+ * the install; an absent plugin, unparseable output or `record-missing` is 1.
+ */
+const MODEL_AUTH_PLUGIN_TRUSTED = `
+let j;
+try { const s = require('fs').readFileSync(0, 'utf8'); j = JSON.parse(s.slice(s.indexOf('{'))); } catch { process.exit(1); }
+process.exit(j?.plugin?.trust?.reason === 'trusted-official' ? 0 : 1);
+`;
 
 /** argv[1] is the file. Exit 0 iff it is a Codex ChatGPT login with a refresh token. */
 const MODEL_AUTH_IS_CODEX_LOGIN = `
