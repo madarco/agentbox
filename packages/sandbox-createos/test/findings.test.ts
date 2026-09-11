@@ -52,7 +52,8 @@ vi.mock('../src/runtime-assets.js', () => ({
   resolveRuntimeAssets: () => assetsImpl(),
 }));
 
-const { createosBackend, CREATEOS_DEFAULT_RESOURCES } = await import('../src/backend.js');
+const { createosBackend, CREATEOS_DEFAULT_RESOURCES, CREATEOS_DEFAULT_BOX_IMAGE_REF } =
+  await import('../src/backend.js');
 
 beforeEach(() => {
   calls.created = [];
@@ -71,6 +72,7 @@ describe('provision: explicit --size disk', () => {
   it('sends the requested disk, not the provider default', async () => {
     await createosBackend.provision({
       name: 'review',
+      image: CREATEOS_DEFAULT_BOX_IMAGE_REF,
       size: '4-8-50',
       resources: { ...CREATEOS_DEFAULT_RESOURCES },
     });
@@ -80,6 +82,7 @@ describe('provision: explicit --size disk', () => {
   it('falls back to the scaffold default for a bare shape name', async () => {
     await createosBackend.provision({
       name: 'review',
+      image: CREATEOS_DEFAULT_BOX_IMAGE_REF,
       size: 's-4vcpu-8gb',
       resources: { ...CREATEOS_DEFAULT_RESOURCES, disk: 30 },
     });
@@ -91,7 +94,7 @@ describe('provision: explicit --size disk', () => {
 // user's own unrelated CreateOS sandboxes as deletion candidates.
 describe('list: ownership', () => {
   it('stamps an ownership marker at create time', async () => {
-    await createosBackend.provision({ name: 'review', resources: CREATEOS_DEFAULT_RESOURCES });
+    await createosBackend.provision({ name: 'review', image: CREATEOS_DEFAULT_BOX_IMAGE_REF, resources: CREATEOS_DEFAULT_RESOURCES });
     expect(calls.created.at(-1)?.envs).toHaveProperty('AGENTBOX_OWNED');
   });
 
@@ -107,6 +110,7 @@ describe('list: ownership', () => {
   it('preserves caller env alongside the marker', async () => {
     await createosBackend.provision({
       name: 'review',
+      image: CREATEOS_DEFAULT_BOX_IMAGE_REF,
       resources: CREATEOS_DEFAULT_RESOURCES,
       env: { FOO: 'bar' },
     });
@@ -121,7 +125,7 @@ describe('provision: cleanup on post-create failure', () => {
     execImpl = () => Promise.resolve({ result: { exit_code: 1, stderr: 'boom' } });
     assetsImpl = () => [];
     await expect(
-      createosBackend.provision({ name: 'review', resources: CREATEOS_DEFAULT_RESOURCES }),
+      createosBackend.provision({ name: 'review', image: CREATEOS_DEFAULT_BOX_IMAGE_REF, resources: CREATEOS_DEFAULT_RESOURCES }),
     ).rejects.toThrow(/runtime install failed/);
     expect(calls.destroyed).toEqual(['sb_test']);
   });
@@ -131,7 +135,7 @@ describe('provision: cleanup on post-create failure', () => {
       throw new Error('missing runtime asset');
     };
     await expect(
-      createosBackend.provision({ name: 'review', resources: CREATEOS_DEFAULT_RESOURCES }),
+      createosBackend.provision({ name: 'review', image: CREATEOS_DEFAULT_BOX_IMAGE_REF, resources: CREATEOS_DEFAULT_RESOURCES }),
     ).rejects.toThrow(/missing runtime asset/);
     expect(calls.created).toEqual([]);
     expect(calls.destroyed).toEqual([]);
