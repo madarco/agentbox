@@ -9,7 +9,7 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
-## [Unreleased]
+## [0.31.3] - 2026-09-11
 
 ### Fixed
 
