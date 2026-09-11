@@ -93,6 +93,23 @@ export interface CloudAgentAttachArgs {
   openIn?: AttachOpenIn;
 }
 
+/**
+ * Whether to create the agent's tmux session detached before attaching.
+ *
+ * CreateOS always does: its managed PTY can close during the first tmux paint
+ * when session creation and attach happen in one remote command, so a detached
+ * pre-start gives tmux a stable server before the interactive PTY connects.
+ * Every other provider only needs it for the new-terminal case above.
+ */
+export function shouldPrestartCloudSession(
+  providerName: string | undefined,
+  openIn: AttachOpenIn | undefined,
+  extraArgs: string[] | undefined,
+): boolean {
+  if (providerName === 'createos') return true;
+  return Boolean(openIn && openIn !== 'same' && extraArgs && extraArgs.length > 0);
+}
+
 export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void> {
   // Working with a control-box box means this machine should be draining the
   // `cp` actions that box parks for it. Nothing else on the hub-box path starts
@@ -184,14 +201,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // session detached here with the full command; the re-invoked attach then
   // finds it via `tmux has-session` and just attaches. (Inline attach runs the
   // full command itself, so it doesn't need this.)
-  // CreateOS additionally pre-starts unconditionally: its managed PTY can close
-  // during the first tmux paint when session creation and attach happen in one
-  // remote command, so the detached start gives tmux a stable server before the
-  // interactive PTY connects.
-  const needsPrestart =
-    (box.provider ?? 'docker') === 'createos' ||
-    Boolean(safeOpenIn && safeOpenIn !== 'same' && extraArgs && extraArgs.length > 0);
-  if (needsPrestart) {
+  if (shouldPrestartCloudSession(box.provider, safeOpenIn, extraArgs)) {
     await startDetachedSession(provider, box, args.sessionName, command);
   }
 

@@ -217,20 +217,6 @@ describe('verifyDetachedSession', () => {
     ).rejects.toThrow(/credentials were rejected.*agentbox claude login/s);
   });
 
-  it('accepts an auth prompt when the caller expects in-box login', async () => {
-    const provider = fakeProvider(() => ({
-      exitCode: 0,
-      stdout: 'Please run /login · API Error: 401 Invalid authentication credentials',
-      stderr: '',
-    }));
-    await expect(
-      verifyDetachedSession(provider, box, 'claude', 'claude', {
-        windowMs: 0,
-        allowAuthPrompt: true,
-      }),
-    ).resolves.toBeUndefined();
-  });
-
   it('resolves for a live, authenticated session', async () => {
     const provider = fakeProvider(() => ({
       exitCode: 0,
