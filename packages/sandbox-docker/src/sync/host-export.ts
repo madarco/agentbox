@@ -420,6 +420,8 @@ export async function copyHostFilesToBox(opts: CopyHostFilesOptions): Promise<{ 
     input: list.join('\0'),
     encoding: 'buffer',
     reject: false,
+    // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs.
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
   });
   if (packed.exitCode !== 0) {
     log(`warning: env-file tar pack failed: ${String(packed.stderr).slice(0, 300)}`);

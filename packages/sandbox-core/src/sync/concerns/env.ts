@@ -143,7 +143,12 @@ export async function pushEnvFiles(
     const packed = await execa(
       'tar',
       ['-C', ctx.hostWorkspace, '--null', '-T', '-', '-cf', localTar],
-      { input: list.join('\0'), reject: false },
+      {
+        input: list.join('\0'),
+        reject: false,
+        // COPYFILE_DISABLE silences macOS BSD tar's `._*` resource-fork stubs.
+        env: { ...process.env, COPYFILE_DISABLE: '1' },
+      },
     );
     if (packed.exitCode !== 0) {
       ctx.onLog(`warning: env-file tar pack failed: ${String(packed.stderr).slice(0, 300)}`);

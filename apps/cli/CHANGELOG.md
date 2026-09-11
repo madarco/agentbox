@@ -9,6 +9,16 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Fixed
+
+- **Env files pushed into a box from a Mac could arrive with `._*` junk beside
+  them.** The two env-file tars — the shared sync concern (every provider) and
+  docker's wizard-picked file copy — were the last archive-creating tars without
+  `COPYFILE_DISABLE`. A source scan now asserts every one of them sets it, so
+  the rule is a repo fact rather than a comment on the call sites that remembered.
+
 ## [0.31.2] - 2026-09-10
 
 ### Fixed
