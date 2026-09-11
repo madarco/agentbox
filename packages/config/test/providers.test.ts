@@ -138,9 +138,12 @@ describe('provider table is the single source of truth', () => {
 
     it('only providers that need a bake demand one', () => {
       // docker's base self-heals on create; remote-docker builds lazily on first
-      // create. Everything else is unusable until `agentbox prepare` has run.
+      // create; createos installs its runtime into each new sandbox, so valid
+      // credentials make it ready. Everything else is unusable until
+      // `agentbox prepare` has run.
       expect(PROVIDERS.filter((p) => !p.bake.required).map((p) => p.name)).toEqual([
         'docker',
+        'createos',
         'remote-docker',
       ]);
     });

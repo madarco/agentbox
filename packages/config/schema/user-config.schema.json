@@ -20,8 +20,8 @@
                 "vercel",
                 "e2b",
                 "digitalocean",
-                "remote-docker",
-                "createos"
+                "createos",
+                "remote-docker"
               ]
             },
             {
