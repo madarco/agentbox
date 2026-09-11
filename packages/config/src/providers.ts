@@ -490,7 +490,6 @@ export const PROVIDERS = [
     sizes: [
       { key: '2-2-20', label: '2 vCPU / 2 GB / 20 GB (default)' },
       { key: '4-8-40', label: '4 vCPU / 8 GB / 40 GB' },
-      { key: '8-16-80', label: '8 vCPU / 16 GB / 80 GB' },
     ],
     sizeHint: 'a CreateOS shape slug (e.g. s-2vcpu-2gb), or cpu-memory-disk in GB, e.g. 2-2-20',
     blurb: 'CreateOS Sandboxes',
