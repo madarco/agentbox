@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { connect } from 'node:net';
 import { execa } from 'execa';
@@ -384,6 +384,30 @@ function shellSingleQuote(s: string): string {
 }
 
 /**
+ * `SUDO_USER`/`SUDO_UID`/`SUDO_GID` assignments to prefix an elevated Portless
+ * command with, or `''` when we are already root and have nothing better to say.
+ *
+ * Load-bearing: Portless reads those three variables to learn *whose* machine it
+ * is running on. It picks the state directory from them, stamps them into the
+ * LaunchDaemon plist, and chowns everything it writes in `~/.portless` back to
+ * that uid/gid. `sudo` sets them; `osascript … with administrator privileges`
+ * does NOT — it just runs as root with the caller's HOME. Without this prefix
+ * Portless resolved uid/gid 0, baked `SUDO_UID=0` into the plist, and the
+ * boot-time proxy then chowned the user's own `~/.portless` files to root:wheel,
+ * breaking every later non-root `portless` command until a manual `chown -R`.
+ *
+ * Exported for tests.
+ */
+export function sudoIdentityEnvPrefix(
+  user: { uid: number; gid: number; username: string } = userInfo(),
+): string {
+  if (user.uid <= 0 || !user.username || user.username === 'root') return '';
+  return (
+    `SUDO_USER=${shellSingleQuote(user.username)} ` + `SUDO_UID=${user.uid} SUDO_GID=${user.gid} `
+  );
+}
+
+/**
  * Start the default Portless proxy — HTTPS on :443 — which requires root.
  * Portless self-elevates via its own `sudo`, so all we do is run
  * `portless proxy start && portless trust` once, as root, surfacing a single
@@ -401,7 +425,8 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
     if (process.platform === 'darwin') {
       // Both commands run in one elevated shell so the user is asked once.
       const q = shellSingleQuote(bin);
-      const shellCmd = `${q} proxy start && ${q} trust`;
+      const who = sudoIdentityEnvPrefix();
+      const shellCmd = `${who}${q} proxy start && ${who}${q} trust`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" ` +
         `with administrator privileges ` +
@@ -503,7 +528,8 @@ export async function installPortlessServiceDetailed(): Promise<{
         'for p in $(/usr/sbin/lsof -ti tcp:443 -sTCP:LISTEN); do ' +
         '/bin/ps -o command= -p $p | /usr/bin/grep -q portless && /bin/kill $p; done; ' +
         'sleep 1';
-      const shellCmd = `${stopListeners}; ${q} ${SUB_SERVICE_INSTALL.join(' ')} && ${q} trust`;
+      const who = sudoIdentityEnvPrefix();
+      const shellCmd = `${stopListeners}; ${who}${q} ${SUB_SERVICE_INSTALL.join(' ')} && ${who}${q} trust`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" ` +
         `with administrator privileges ` +
