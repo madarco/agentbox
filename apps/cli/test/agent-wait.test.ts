@@ -227,3 +227,58 @@ describe('runAgentWait', () => {
     if (result.kind === 'matched') expect(result.target.name).toBe('up');
   });
 });
+
+/**
+ * Bugbot #390: `wait-for` used to treat a hub it could not resolve AT THE START
+ * as terminal — instant exit 7, every other target dropped, no `--json`
+ * envelope — even though exit 7 is documented as "gone for the whole window".
+ * The command now enters the loop with no source for that target, which is the
+ * shape these two assert: a read that throws because there is no client yet is
+ * an ordinary transient failure, and the wait survives it.
+ */
+describe('a hub that was already down when the wait started', () => {
+  it('rides out a missing client and matches once one appears', async () => {
+    let client: string | null = null;
+    const result = await run<{ name: string }>({
+      targets: [target('a')],
+      state: 'idle',
+      timeoutMs: 60_000,
+      read: () => {
+        // Exactly what `sourceFor` throws before `onStale` resolves one.
+        if (!client) throw new Error('no hub reachable for this box yet');
+        return Promise.resolve(IDLE);
+      },
+      onStale: () => {
+        client = 'hub';
+        return Promise.resolve('ok');
+      },
+    });
+    expect(result.kind).toBe('matched');
+  });
+
+  it('reports unreachable — not timeout — when the hub never comes back', async () => {
+    const result = await run<{ name: string }>({
+      targets: [target('a')],
+      state: 'idle',
+      timeoutMs: 30_000,
+      read: () => Promise.reject(new Error('no hub reachable for this box yet')),
+      onStale: () => Promise.resolve('unreachable'),
+    });
+    expect(result.kind).toBe('unreachable');
+  });
+
+  it("one target's dead hub does not stop another target from matching", async () => {
+    const result = await run<{ name: string }>({
+      targets: [target('down'), target('up')],
+      state: 'idle',
+      timeoutMs: 60_000,
+      read: (t) => {
+        if (t.name === 'down') throw new Error('no hub reachable for this box yet');
+        return Promise.resolve(IDLE);
+      },
+      onStale: () => Promise.resolve('unreachable'),
+    });
+    expect(result.kind).toBe('matched');
+    if (result.kind === 'matched') expect(result.target.name).toBe('up');
+  });
+});

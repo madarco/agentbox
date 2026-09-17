@@ -37,6 +37,22 @@ export function decideDestroyBatch(outcomes: readonly DestroyOutcome[]): number 
   return 0;
 }
 
+/**
+ * The command's final exit code, given the batch outcomes and whatever
+ * `withHubClient` already put on `process.exitCode`.
+ *
+ * The hub's own code (3 unauthorized, 4 invalid_request, 5 conflict, 6
+ * backend_unavailable) is strictly more informative than the batch's generic 1,
+ * so an `error` outcome keeps it — a single-box destroy surfaced 3 long before
+ * this command learned to take several boxes, and flattening that was a
+ * regression. `refused` (2) and success (0) imply no hub error happened at all,
+ * so they are never overridden.
+ */
+export function resolveDestroyExit(outcomes: readonly DestroyOutcome[], hubCode: number): number {
+  const batch = decideDestroyBatch(outcomes);
+  return batch === 1 && hubCode > 1 ? hubCode : batch;
+}
+
 /** What to do after the hub attempt(s), given whether a hub reaped the box. */
 export type DestroyDecision = 'aborted' | 'reap-cleanup' | 'refused' | 'force-cleanup';
 
@@ -56,14 +72,20 @@ export function decideDestroy(
 }
 
 /**
- * Force-remove an orphan docker container that has no `state.json` record —
- * e.g. a create that died after `docker run` but before `recordBox`, or a box
- * whose record was lost. Returns the removed container name, or null when no
- * matching container exists (so the caller can fall through to the normal
- * not-found error). Tries `agentbox-<ref>` and, if the user passed a full
- * container name, `<ref>` verbatim.
+ * Identify an orphan docker container behind a ref that matches no `state.json`
+ * record — a create that died after `docker run` but before `recordBox`, or a box
+ * whose record was lost. Tries `agentbox-<ref>` and, if the user passed a full
+ * container name, `<ref>` verbatim; null when there is none, so the caller falls
+ * through to the normal not-found error.
+ *
+ * Deliberately READ-ONLY: it runs while refs are still being validated, so it
+ * must not delete anything a later bad ref (or a `no` at the confirmation) would
+ * have made the wrong call.
  */
-async function destroyOrphanContainer(ref: string): Promise<string | null> {
+async function findOrphanContainer(ref: string | undefined): Promise<string | null> {
+  if (ref === undefined) return null;
+  const project = await findProjectRoot(process.cwd());
+  if (resolveBoxRef(ref, await readState(), project.root).kind !== 'none') return null;
   const candidates = ref.startsWith('agentbox-') ? [ref] : [`agentbox-${ref}`, ref];
   for (const name of candidates) {
     const found = await execa(
@@ -71,20 +93,27 @@ async function destroyOrphanContainer(ref: string): Promise<string | null> {
       ['ps', '-a', '--filter', `name=^${name}$`, '--format', '{{.Names}}'],
       { reject: false },
     );
-    if (found.exitCode === 0 && found.stdout.trim() === name) {
-      const rm = await execa('docker', ['rm', '-f', name], { reject: false });
-      if (rm.exitCode === 0) {
-        // Best-effort: drop the portless aliases this box would have registered
-        // (`<name>` web + `vnc-<name>`). We have no state record to read them
-        // from, but they're derived from the box name, so unalias by convention.
-        const boxName = name.startsWith('agentbox-') ? name.slice('agentbox-'.length) : name;
-        await portlessUnalias(boxName).catch(() => {});
-        await portlessUnalias(`vnc-${boxName}`).catch(() => {});
-        return name;
-      }
-    }
+    if (found.exitCode === 0 && found.stdout.trim() === name) return name;
   }
   return null;
+}
+
+/** Remove a container {@link findOrphanContainer} already identified. */
+async function reapOrphanContainer(name: string): Promise<DestroyOutcome> {
+  const rm = await execa('docker', ['rm', '-f', name], { reject: false });
+  if (rm.exitCode !== 0) {
+    log.error(`could not remove orphan container ${name}: ${rm.stderr.trim()}`);
+    return 'error';
+  }
+  // Best-effort: drop the portless aliases this box would have registered
+  // (`<name>` web + `vnc-<name>`). We have no state record to read them from,
+  // but they're derived from the box name, so unalias by convention.
+  const boxName = name.startsWith('agentbox-') ? name.slice('agentbox-'.length) : name;
+  await portlessUnalias(boxName).catch(() => {});
+  await portlessUnalias(`vnc-${boxName}`).catch(() => {});
+  log.warn(`no state record for "${name}"; removed orphan container`);
+  log.info('run `agentbox prune -y` to clean any leftover volumes');
+  return 'destroyed';
 }
 
 export const destroyCommand = new Command('destroy')
@@ -116,9 +145,15 @@ export const destroyCommand = new Command('destroy')
       const refs = opts.box.length > 0 ? opts.box : [idOrName];
       const outcomes: DestroyOutcome[] = [];
       const boxes: BoxRecord[] = [];
+      // Orphans are IDENTIFIED here and reaped further down, after every ref has
+      // resolved and the user has confirmed. Reaping inside this loop deleted
+      // containers before a later typo aborted the run — and before a `no` at the
+      // prompt that could not undo them.
+      const orphans: string[] = [];
       for (const ref of refs) {
-        if (await reapOrphanContainer(ref)) {
-          outcomes.push('destroyed');
+        const orphan = await findOrphanContainer(ref);
+        if (orphan) {
+          if (!orphans.includes(orphan)) orphans.push(orphan);
           continue;
         }
         // A ref that resolves to nothing exits here, BEFORE anything in the
@@ -143,18 +178,22 @@ export const destroyCommand = new Command('destroy')
         }
         eligible.push(box);
       }
-      if (eligible.length === 0) {
+      if (eligible.length === 0 && orphans.length === 0) {
         process.exitCode = decideDestroyBatch(outcomes);
         return;
       }
 
       // ONE confirmation for the whole set — four boxes must not mean four prompts.
+      const total = eligible.length + orphans.length;
       if (!opts.yes) {
         log.warn('Will also wipe the box volume and agent work-in-progress');
-        log.info(eligible.map((b) => describeForDestroy(b, opts)).join('\n\n'));
+        const blocks = [
+          ...eligible.map((b) => describeForDestroy(b, opts)),
+          ...orphans.map((c) => `${c}\norphan container (no state record)`),
+        ];
+        log.info(blocks.join('\n\n'));
         const ok = await confirm({
-          message:
-            eligible.length > 1 ? `Destroy these ${eligible.length} boxes?` : 'Destroy this box?',
+          message: total > 1 ? `Destroy these ${total} boxes?` : 'Destroy this box?',
           initialValue: false,
         });
         if (!ok) {
@@ -163,40 +202,29 @@ export const destroyCommand = new Command('destroy')
         }
       }
 
+      // Orphans first: they are a local docker `rm -f` with no hub round trip, so
+      // doing them before the slow path keeps a confirmed teardown from being
+      // half-applied if a later hub call hangs.
+      for (const container of orphans) outcomes.push(await reapOrphanContainer(container));
+
       // Sequential: each is a hub round trip plus local cleanup, and one failure
       // must not strand the boxes behind it.
       for (const box of eligible) outcomes.push(await destroyOne(box, opts));
 
-      if (eligible.length > 1) {
+      if (total > 1) {
         // stderr: the `destroyed <box>` lines above are the parseable output,
         // and a summary glued onto them would break a caller reading stdout.
         const done = outcomes.filter((o) => o === 'destroyed').length;
         process.stderr.write(`destroyed ${done}/${outcomes.length}\n`);
       }
-      process.exitCode = decideDestroyBatch(outcomes);
+      process.exitCode = resolveDestroyExit(
+        outcomes,
+        typeof process.exitCode === 'number' ? process.exitCode : 0,
+      );
     } catch (err) {
       handleLifecycleError(err);
     }
   });
-
-/**
- * Resolve-by-container fallback: an explicit ref that matches no state record
- * may still be a live orphan container (create died before `recordBox`, or its
- * record was lost). Clean it up directly instead of failing with "no agentbox
- * matches" — local docker recovery, since the hub can't drive a box that was
- * never registered. True when it handled the ref.
- */
-async function reapOrphanContainer(ref: string | undefined): Promise<boolean> {
-  if (ref === undefined) return false;
-  const project = await findProjectRoot(process.cwd());
-  const hit = resolveBoxRef(ref, await readState(), project.root);
-  if (hit.kind !== 'none') return false;
-  const removed = await destroyOrphanContainer(ref);
-  if (!removed) return false;
-  log.warn(`no state record for "${ref}"; removed orphan container ${removed}`);
-  log.info('run `agentbox prune -y` to clean any leftover volumes');
-  return true;
-}
 
 /** The confirmation block for one box. */
 function describeForDestroy(box: BoxRecord, opts: DestroyOptions): string {

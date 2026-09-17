@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideDestroy, decideDestroyBatch } from '../src/commands/destroy.js';
+import { decideDestroy, decideDestroyBatch, resolveDestroyExit } from '../src/commands/destroy.js';
 
 /**
  * The core safety invariant of `agentbox destroy` (which-hub, Step 5): this
@@ -65,5 +65,29 @@ describe('decideDestroyBatch', () => {
 
   it('an empty batch is not a failure', () => {
     expect(decideDestroyBatch([])).toBe(0);
+  });
+});
+
+/**
+ * Bugbot #390: the batch folded EVERY hub failure into 1, overwriting the code
+ * `withHubClient` had already set — so `agentbox destroy <box>` stopped
+ * reporting 3/4/5/6 the moment the command learned to take several boxes.
+ */
+describe('resolveDestroyExit', () => {
+  it("keeps the hub's specific code instead of the generic 1", () => {
+    expect(resolveDestroyExit(['error'], 3)).toBe(3); // unauthorized
+    expect(resolveDestroyExit(['error'], 6)).toBe(6); // backend_unavailable
+  });
+
+  it('falls back to 1 when the hub set nothing useful', () => {
+    expect(resolveDestroyExit(['error'], 0)).toBe(1);
+    expect(resolveDestroyExit(['error'], 1)).toBe(1);
+  });
+
+  it('never lets a stale hub code override a refusal or a clean run', () => {
+    // Both imply no hub error happened, so there is no specific code to keep.
+    expect(resolveDestroyExit(['destroyed', 'refused'], 3)).toBe(2);
+    expect(resolveDestroyExit(['destroyed'], 3)).toBe(0);
+    expect(resolveDestroyExit(['cancelled'], 5)).toBe(0);
   });
 });

@@ -147,14 +147,26 @@ const agentWaitForCommand = new Command('wait-for')
         const targets: WaitTarget<BoxRecord>[] = [];
         for (const ref of refs) {
           const box = await resolveBoxOrExit(ref);
-          if (sources.has(box.id)) continue; // same box named twice
+          // Dedupe on the TARGET list, not on `sources`: a target whose hub was
+          // unreachable at resolve time has no source yet and would otherwise be
+          // added twice when the same box is named twice.
+          if (targets.some((t) => t.id === box.id)) continue;
           const resolved = await resolveWaitSource(box);
-          if (resolved.kind !== 'ok') {
-            // Nothing to wait ON yet: report the resolve itself, not a state.
-            process.exitCode = resolved.kind === 'unauthorized' ? 3 : EXIT_HUB_UNREACHABLE;
+          if (resolved.kind === 'unauthorized') {
+            // Fatal by design: a rejected credential is not something waiting
+            // longer can fix, and the wait would otherwise poll a hub it can
+            // never read.
+            process.exitCode = 3;
             return;
           }
-          sources.set(box.id, resolved.source);
+          // An UNREACHABLE hub is not terminal here — it is the very thing this
+          // wait exists to ride out. Starting a wait a second after `hub restart`
+          // must behave like losing the hub mid-wait: the target goes in without
+          // a source, `read` fails transiently, and `onStale` re-resolves (which
+          // restarts a local hub that died). Exiting 7 here would also contradict
+          // what 7 means — "gone for the whole window" — drop the other targets,
+          // and give a --json caller no envelope at all.
+          if (resolved.kind === 'ok') sources.set(box.id, resolved.source);
           targets.push({ id: box.id, name: box.name, box });
         }
         // Only a multi-box wait names the box in its output — a single-box wait
@@ -264,16 +276,25 @@ type ResolvedWaitSource =
 async function resolveWaitSource(box: BoxRecord): Promise<ResolvedWaitSource> {
   const source = await resolveBoxPromptSource(box);
   if (!source) {
-    log.error(`Could not reach a hub to read ${box.name}'s agent state.`);
+    // Not `log.error`: on the wait path this is a retryable condition the loop
+    // reports through `onNotice`, and an error line at resolve time read as a
+    // verdict the wait had not reached yet.
     return { kind: 'unreachable' };
   }
   if (reportedUnauthenticatedPlane(source)) return { kind: 'unauthorized' };
   return { kind: 'ok', source };
 }
 
+/**
+ * The hub client for a target, or a throw the wait loop classifies as transient.
+ *
+ * A missing entry is a normal state, not a bug: a target whose hub was already
+ * down when the wait started has no source until `onStale` re-resolves one. The
+ * throw is how that tick is reported as a failed read.
+ */
 function sourceFor(sources: Map<string, BoxPromptSource>, id: string): BoxPromptSource {
   const source = sources.get(id);
-  if (!source) throw new Error(`no hub resolved for box ${id}`);
+  if (!source) throw new Error('no hub reachable for this box yet');
   return source;
 }
 
