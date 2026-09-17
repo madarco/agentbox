@@ -9,6 +9,17 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [0.32.1] - 2026-09-17
+
+### Fixed
+
+- **`install portless` no longer hands `~/.portless` to root.** The elevated
+  install never told Portless who you are, so the startup service it wrote took
+  ownership of `routes.json` and the proxy state files as `root:wheel` and later
+  `portless` commands failed. If you already hit this, run
+  `sudo chown -R "$USER" ~/.portless` once and re-run `agentbox install portless`
+  to rewrite the service.
+
 ## [0.32.0] - 2026-09-15
 
 ### Added
