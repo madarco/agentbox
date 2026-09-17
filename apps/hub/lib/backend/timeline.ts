@@ -154,6 +154,43 @@ export function aggregateTimeline(events: TimelineEvent[]): TimelineItem[] {
   return [...items, ...plans].sort(newestFirst);
 }
 
+/** The boxes and create jobs one manager session owns, as the row filter needs them. */
+export interface ManagerScope {
+  id: string;
+  boxIds: Set<string>;
+  boxJobIds: Set<string>;
+}
+
+/**
+ * Rows that record a session taking a box on. Only these attribute a box through the log: a
+ * session's OTHER stamped rows can name someone else's box (a `task.assigned` onto it, a
+ * `manager.message` about its PR), and claiming it from those would let one session swallow
+ * another's whole lane.
+ */
+const BOX_CREATE_TYPES = new Set(['box.created', 'box.ready', 'box.failed']);
+
+/**
+ * The boxes a session owns. The manager record is the live answer, but reconciliation PRUNES a
+ * destroyed box from `boxIds` and writes that prune back — so a box that finished its work would
+ * drop out of its own session's history, which is the one place that history still matters. The
+ * log is append-only and still names the boxes this session created, so it is the durable half.
+ */
+export function managerScope(
+  managerId: string,
+  rows: readonly (TimelineItem | TimelineLiveItem)[],
+  rec?: { boxIds: string[]; boxJobIds: string[] },
+): ManagerScope {
+  const boxIds = new Set(rec?.boxIds ?? []);
+  const boxJobIds = new Set(rec?.boxJobIds ?? []);
+  for (const row of rows) {
+    if (row.managerId !== managerId || !BOX_CREATE_TYPES.has(row.type)) continue;
+    if (row.boxId) boxIds.add(row.boxId);
+    const job = 'key' in row ? jobIdOfKey(row.key) : undefined;
+    if (job) boxJobIds.add(job);
+  }
+  return { id: managerId, boxIds, boxJobIds };
+}
+
 /**
  * Whether a row is this manager session's. A row it stamped is unambiguous; a row on a box it
  * owns counts too, because most box, push and PR rows were never stamped — `managerId` is only
@@ -163,14 +200,14 @@ export function aggregateTimeline(events: TimelineEvent[]): TimelineItem[] {
  */
 export function rowBelongsToManager(
   row: TimelineItem | TimelineLiveItem,
-  rec: { id: string; boxIds: string[]; boxJobIds: string[] },
+  scope: ManagerScope,
 ): boolean {
-  if (row.managerId === rec.id) return true;
-  if (row.boxId && rec.boxIds.includes(row.boxId)) return true;
+  if (row.managerId === scope.id) return true;
+  if (row.boxId && scope.boxIds.has(row.boxId)) return true;
   const lane = row.lane;
-  if (lane?.kind === 'box' && rec.boxIds.includes(lane.id.slice('box:'.length))) return true;
+  if (lane?.kind === 'box' && scope.boxIds.has(lane.id.slice('box:'.length))) return true;
   const job = 'key' in row ? jobIdOfKey(row.key) : undefined;
-  return job !== undefined && rec.boxJobIds.includes(job);
+  return job !== undefined && scope.boxJobIds.has(job);
 }
 
 /**
@@ -414,11 +451,14 @@ export function createTimelineBackend(
       let approvalBoxIds = boxes.map((b) => b.id);
       if (q.managerId) {
         const rec = (await readReconciledManagers(wsId, ctx)).find((m) => m.id === q.managerId);
+        // Built over `all` — every row, before paging — so a box the record no longer lists is
+        // still attributed from the log. An id no manager has owns nothing and reads as empty.
+        const scope = managerScope(q.managerId, all, rec);
         const mine = (row: TimelineItem | TimelineLiveItem): boolean =>
-          rec !== undefined && rowBelongsToManager(row, rec);
+          rowBelongsToManager(row, scope);
         scoped = scoped.filter(mine);
         liveScoped = liveScoped.filter(mine);
-        approvalBoxIds = approvalBoxIds.filter((id) => rec?.boxIds.includes(id) ?? false);
+        approvalBoxIds = approvalBoxIds.filter((id) => scope.boxIds.has(id));
       }
       let items = scoped;
       if (q.before) items = items.filter((i) => i.at < q.before!);

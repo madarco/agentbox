@@ -850,6 +850,57 @@ describe('narrowed to one manager session', () => {
     expect(nobody!.items).toEqual([]);
     expect(nobody!.live).toEqual([]);
   });
+
+  it("keeps a destroyed box's history, which the manager record no longer lists", async () => {
+    const { h, wsId, a } = await twoSessions();
+    // Attached, then gone: it is not among the live boxes, so `readReconciledManagers` prunes it
+    // out of `boxIds` (and writes that back). Only the log still ties this box to the session.
+    await attachBoxToManager(wsId, a, { boxId: 'gone1' });
+    await recordTimelineEvent(wsId, {
+      type: 'box.created',
+      actor: 'manager',
+      managerId: a,
+      boxId: 'gone1',
+      boxName: 'retired',
+    });
+    // The row that matters: never stamped, so it hangs entirely off owning the box.
+    await recordTimelineEvent(wsId, {
+      type: 'git.push',
+      actor: 'box',
+      boxId: 'gone1',
+      branch: 'agentbox/retired',
+      additions: 7,
+      deletions: 1,
+    });
+
+    const timeline = createTimelineBackend(h.deps);
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+    expect(mine!.items.filter((i) => i.type === 'git.push' && i.boxId === 'gone1')).toHaveLength(1);
+  });
+
+  it("does not claim another session's box from a row it merely touched", async () => {
+    const { h, wsId, a, b } = await twoSessions();
+    // A assigns work onto B's box: stamped by A, naming box2. That must not hand A the box.
+    await recordTimelineEvent(wsId, {
+      type: 'task.assigned',
+      actor: 'manager',
+      managerId: a,
+      boxId: 'box2',
+      taskIds: ['T-9'],
+    });
+    await recordTimelineEvent(wsId, {
+      type: 'git.push',
+      actor: 'box',
+      boxId: 'box2',
+      branch: 'agentbox/refund-flow',
+    });
+
+    const timeline = createTimelineBackend(h.deps);
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+    expect(mine!.items.some((i) => i.type === 'git.push')).toBe(false);
+    const theirs = await timeline.getTimeline(wsId, { managerId: b, sync: false });
+    expect(theirs!.items.some((i) => i.type === 'git.push')).toBe(true);
+  });
 });
 
 describe('push rows', () => {
