@@ -182,11 +182,27 @@ export function managerScope(
 ): ManagerScope {
   const boxIds = new Set(rec?.boxIds ?? []);
   const boxJobIds = new Set(rec?.boxJobIds ?? []);
+  // A create job and its box are named on DIFFERENT rows: `box.created` is queued with the job
+  // key before the box has an id, and the `box.ready` that carries the id is written by the
+  // worker, often with no manager on it. Neither row attributes the box alone, so they are
+  // joined first — the same join `assignLanes` makes to keep both on one lane.
+  const boxOfJob = new Map<string, string>();
+  for (const row of rows) {
+    const job = 'key' in row ? jobIdOfKey(row.key) : undefined;
+    if (job && row.boxId) boxOfJob.set(job, row.boxId);
+  }
   for (const row of rows) {
     if (row.managerId !== managerId || !BOX_CREATE_TYPES.has(row.type)) continue;
     if (row.boxId) boxIds.add(row.boxId);
     const job = 'key' in row ? jobIdOfKey(row.key) : undefined;
     if (job) boxJobIds.add(job);
+  }
+  // Both directions: owning the job owns the box it became, and owning the box — from the record,
+  // or after reconciliation promoted the job into `boxIds` and dropped it from `boxJobIds` — owns
+  // that box's queue-time rows, which carry the job key and no id.
+  for (const [job, boxId] of boxOfJob) {
+    if (boxJobIds.has(job)) boxIds.add(boxId);
+    if (boxIds.has(boxId)) boxJobIds.add(job);
   }
   return { id: managerId, boxIds, boxJobIds };
 }

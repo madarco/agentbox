@@ -878,6 +878,39 @@ describe('narrowed to one manager session', () => {
     expect(mine!.items.filter((i) => i.type === 'git.push' && i.boxId === 'gone1')).toHaveLength(1);
   });
 
+  it('joins a create job to its box, the way the real rows are written', async () => {
+    const { h, wsId, a } = await twoSessions();
+    // The real shape, and the one a hand-written test gets wrong: the queued row carries the
+    // session and the job key but NO box id, and the row that finally carries the id is written
+    // by the worker without a manager. Neither row alone attributes the box.
+    await recordTimelineEvent(wsId, {
+      type: 'box.created',
+      actor: 'manager',
+      managerId: a,
+      key: 'job:J7:created',
+      boxName: 'late-riser',
+    });
+    await recordTimelineEvent(wsId, {
+      type: 'box.ready',
+      actor: 'hub',
+      key: 'job:J7:ready',
+      boxId: 'gone7',
+      boxName: 'late-riser',
+    });
+    // Destroyed since, so the manager record lists neither the job nor the box.
+    await recordTimelineEvent(wsId, {
+      type: 'git.push',
+      actor: 'box',
+      boxId: 'gone7',
+      branch: 'agentbox/late-riser',
+    });
+
+    const timeline = createTimelineBackend(h.deps);
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+    expect(mine!.items.filter((i) => i.type === 'git.push' && i.boxId === 'gone7')).toHaveLength(1);
+    expect(mine!.items.some((i) => i.boxId === 'gone7' && i.type === 'box.ready')).toBe(true);
+  });
+
   it("does not claim another session's box from a row it merely touched", async () => {
     const { h, wsId, a, b } = await twoSessions();
     // A assigns work onto B's box: stamped by A, naming box2. That must not hand A the box.
