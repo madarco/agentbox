@@ -25,6 +25,7 @@ import type { HubBackend } from '../lib/boxes/backend-types';
 import { hashProjectPath } from '@agentbox/config';
 import { scratchBranchName } from '@agentbox/sandbox-core';
 import {
+  attachBoxToManager,
   readTimeline,
   readWorkspace,
   recordTimelineEvent,
@@ -700,6 +701,154 @@ describe('stamps from routes that do not name a workspace', () => {
       managerId: c.manager.id,
     });
     expect((await readTimeline(b.workspace.id)).some((e) => e.type.startsWith('box.'))).toBe(false);
+  });
+});
+
+describe('narrowed to one manager session', () => {
+  /** Two sessions in one workspace, each with a box: A on `box1`, B on `box2`. */
+  async function twoSessions() {
+    const h = harness();
+    const { workspaces, managers } = backends(h);
+    const root = await folder();
+    h.alive.add(4242);
+    h.alive.add(4343);
+    const a = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S1,
+      cwd: root,
+      pid: 4242,
+      host: 'laptop',
+    });
+    if (!a.ok) throw new Error(a.error);
+    const b = await managers.detectManager({
+      agent: 'codex',
+      sessionId: S2,
+      cwd: root,
+      pid: 4343,
+      host: 'laptop',
+    });
+    if (!b.ok) throw new Error(b.error);
+    const wsId = a.workspace.id;
+    for (const [id, name] of [
+      ['box1', 'payment-retries'],
+      ['box2', 'refund-flow'],
+    ] as const) {
+      h.boxes.push({
+        id,
+        name,
+        branches: [`agentbox/${name}`],
+        state: 'running',
+        agent: 'claude',
+        projectRoot: root,
+        projectId: 'p1',
+      });
+    }
+    await attachBoxToManager(wsId, a.manager.id, { boxId: 'box1' });
+    await attachBoxToManager(wsId, b.manager.id, { boxId: 'box2' });
+    return { h, workspaces, managers, wsId, a: a.manager.id, b: b.manager.id };
+  }
+
+  it("keeps the session's own rows and its boxes', drops the other's, and narrows the summary", async () => {
+    const { h, wsId, a, b } = await twoSessions();
+    // Never stamped with a manager: the kind of row `managerIdForTarget` could not resolve, and
+    // the reason the filter has to fall back to the box.
+    await recordTimelineEvent(wsId, {
+      type: 'git.push',
+      actor: 'box',
+      boxId: 'box1',
+      branch: 'agentbox/payment-retries',
+      additions: 12,
+      deletions: 3,
+    });
+    await recordTimelineEvent(wsId, {
+      type: 'manager.note',
+      actor: 'manager',
+      managerId: b,
+      text: "B's own note",
+    });
+    await recordTimelineEvent(wsId, {
+      type: 'pr.merged',
+      actor: 'github',
+      boxId: 'box1',
+      pr: pr(1, { additions: 10, deletions: 2 }),
+    });
+    await recordTimelineEvent(wsId, {
+      type: 'pr.merged',
+      actor: 'github',
+      boxId: 'box2',
+      pr: pr(2, { additions: 500, deletions: 400 }),
+    });
+
+    const timeline = createTimelineBackend(h.deps);
+    const since = '2000-01-01T00:00:00.000Z';
+    const mine = await timeline.getTimeline(wsId, { managerId: a, since, sync: false });
+
+    expect(mine!.items.map((i) => i.type)).toContain('git.push');
+    expect(mine!.items.some((i) => i.boxId === 'box2')).toBe(false);
+    expect(mine!.items.some((i) => i.text === "B's own note")).toBe(false);
+    // The other session's 500/400 merge is not this session's work.
+    expect(mine!.summary).toMatchObject({ merged: 1, additions: 10, deletions: 2 });
+
+    const theirs = await timeline.getTimeline(wsId, { managerId: b, since, sync: false });
+    expect(theirs!.items.some((i) => i.text === "B's own note")).toBe(true);
+    expect(theirs!.items.some((i) => i.boxId === 'box1')).toBe(false);
+    expect(theirs!.summary).toMatchObject({ merged: 1, additions: 500, deletions: 400 });
+  });
+
+  it('narrows the live rows to the session whose box is working', async () => {
+    const { h, workspaces, wsId, a, b } = await twoSessions();
+    const added = await workspaces.addTask(wsId, { title: "B's task" });
+    if (!added.ok) throw new Error(added.error);
+    const assigned = await workspaces.assignTasks(wsId, [added.task.id], { boxId: 'box2' });
+    if (!assigned.ok) throw new Error(assigned.error);
+
+    const timeline = createTimelineBackend(h.deps);
+    const theirs = await timeline.getTimeline(wsId, { managerId: b, sync: false });
+    expect(theirs!.live).toEqual([
+      expect.objectContaining({ type: 'task.in_progress', boxId: 'box2' }),
+    ]);
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+    expect(mine!.live).toEqual([]);
+  });
+
+  it('assigns lanes over the whole log, so a narrowed read keeps the unfiltered lane ids', async () => {
+    const { h, wsId, a } = await twoSessions();
+    for (const boxId of ['box1', 'box2', 'box1']) {
+      await recordTimelineEvent(wsId, {
+        type: 'git.push',
+        actor: 'box',
+        boxId,
+        branch: `agentbox/${boxId}`,
+      });
+    }
+    const timeline = createTimelineBackend(h.deps);
+    const full = await timeline.getTimeline(wsId, { sync: false });
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+
+    const lanesById = new Map(full!.items.map((i) => [i.id, i.lane]));
+    expect(mine!.items.length).toBeGreaterThan(0);
+    for (const item of mine!.items) expect(item.lane).toEqual(lanesById.get(item.id));
+  });
+
+  it('counts a box that is still building by its job, and reads an unknown session as empty', async () => {
+    const { h, wsId, a } = await twoSessions();
+    await attachBoxToManager(wsId, a, { boxJobId: 'J1' });
+    // Written at queue time: the box has no id yet, so only the job key ties it to the manager.
+    await recordTimelineEvent(wsId, {
+      type: 'box.created',
+      actor: 'hub',
+      key: 'job:J1:created',
+      boxName: 'not-up-yet',
+    });
+
+    const timeline = createTimelineBackend(h.deps);
+    const mine = await timeline.getTimeline(wsId, { managerId: a, sync: false });
+    expect(mine!.items.some((i) => i.boxName === 'not-up-yet')).toBe(true);
+
+    const nobody = await timeline.getTimeline(wsId, { managerId: 'ffffffffffffffff', sync: false });
+    expect(nobody).not.toBeNull();
+    expect(nobody!.items).toEqual([]);
+    expect(nobody!.live).toEqual([]);
   });
 });
 

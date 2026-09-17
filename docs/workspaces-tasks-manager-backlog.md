@@ -53,6 +53,7 @@ Design in [`workspaces-tasks-manager-plan.md`](./workspaces-tasks-manager-plan.m
 |---|------|------|-------|
 | 14 | **Hub: lanes on the timeline API** | done | `lane: {id, kind, from?, into?, branch?, open?}` on every item and live row, assigned at read time before paging (`timeline-lanes.ts`). `base` on `box.created`/`box.ready`, `box.branch` after checkout/new branch. OpenAPI + api.mdx. |
 | 15 | **Tray: draw the graph** | in progress | Column packing (`TimelineGraph.layout`), lane colours, curves at forks and merges, an inline type glyph before the title. |
+| 16 | **Filter a workspace to one manager session** | done | `?managerId=` on the timeline API narrows items, live rows and the summary to one session: what it stamped, plus what happened on a box it owns (`rowBelongsToManager`). Applied after `assignLanes` and before paging, so lane ids and forks are unchanged. In the tray a "This session" toggle in `WorkspacePaneHeader` drives it and revives `managerTaskFilter`, so one control narrows both the task list and the Timeline. |
 
 ## Parked (decided to look at later)
 

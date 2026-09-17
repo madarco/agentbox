@@ -1943,6 +1943,13 @@ export function buildOpenApi(): Record<string, unknown> {
               description:
                 '`0`: do not start a GitHub sync; `github` reports the last one (`syncing` before any). For a small read on every refresh. Any other value, or none, keeps the default.',
             },
+            {
+              name: 'managerId',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                "Only one manager session's rows — the ones it stamped, and the ones on a box it owns (most box, push and PR rows carry no `managerId` of their own). Narrows `items`, `live` and the `summary` alike. An id no manager in this workspace has yields an empty timeline, not an error. Lanes are still assigned over the whole log before the filter, so a kept row may fork from or merge into a lane with no rows left on the page.",
+            },
           ],
           responses: {
             '200': {

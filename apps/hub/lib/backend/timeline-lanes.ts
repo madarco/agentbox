@@ -24,8 +24,13 @@ function branchOf(row: Row): string | undefined {
   return row.pr?.head || row.branch || undefined;
 }
 
+/** The create job a row's dedupe key names, if it names one. */
+export function jobIdOfKey(key: string | undefined): string | undefined {
+  return key ? JOB_KEY.exec(key)?.[1] : undefined;
+}
+
 function jobOf(row: Row): string | undefined {
-  return 'key' in row && row.key ? JOB_KEY.exec(row.key)?.[1] : undefined;
+  return 'key' in row ? jobIdOfKey(row.key) : undefined;
 }
 
 function oldestFirst(a: { at: string; id: string }, b: { at: string; id: string }): number {

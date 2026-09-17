@@ -10,6 +10,7 @@ import {
   pushLineStat,
   readRefTip,
   listWorkspaces,
+  readReconciledManagers,
   readReconciledTasks,
   readTasks,
   readTimeline,
@@ -28,7 +29,7 @@ import {
 import { inBackground } from './background';
 import { reconcileContext, type BackendDeps, type DiffStat, type TimelineBoxFact } from './deps';
 import { createGithubPrSync, type GithubPrSync } from './github-prs';
-import { assignLanes } from './timeline-lanes';
+import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
   HubBackend,
   TimelineBackend,
@@ -154,6 +155,25 @@ export function aggregateTimeline(events: TimelineEvent[]): TimelineItem[] {
 }
 
 /**
+ * Whether a row is this manager session's. A row it stamped is unambiguous; a row on a box it
+ * owns counts too, because most box, push and PR rows were never stamped — `managerId` is only
+ * written when `managerIdForTarget` could resolve one as the row was recorded. The box LANE is
+ * checked as well as `boxId`: a `git.push` or `pr.*` row reaches a box's lane through the branch
+ * carrier without ever naming the box.
+ */
+export function rowBelongsToManager(
+  row: TimelineItem | TimelineLiveItem,
+  rec: { id: string; boxIds: string[]; boxJobIds: string[] },
+): boolean {
+  if (row.managerId === rec.id) return true;
+  if (row.boxId && rec.boxIds.includes(row.boxId)) return true;
+  const lane = row.lane;
+  if (lane?.kind === 'box' && rec.boxIds.includes(lane.id.slice('box:'.length))) return true;
+  const job = 'key' in row ? jobIdOfKey(row.key) : undefined;
+  return job !== undefined && rec.boxJobIds.includes(job);
+}
+
+/**
  * Ready PRs not merged or closed since, newest first, with whether a message
  * approved them. With `synced` false (no GitHub sync has completed since the hub
  * started), a PR the sync has not confirmed is left out: the log alone cannot
@@ -202,7 +222,9 @@ export function liveReadyItems(
 }
 
 export function buildTimelineSummary(
-  events: TimelineEvent[],
+  // Widened past `TimelineEvent` so the caller can hand it the aggregated, `?managerId=`-narrowed
+  // rows: the summary must count what the reader is shown, and a `plan` item is not an event type.
+  events: readonly Pick<TimelineItem, 'at' | 'type' | 'pr' | 'task'>[],
   since: string,
   live: TimelineLiveItem[],
   pendingApprovals: number,
@@ -384,7 +406,21 @@ export function createTimelineBackend(
         ...liveReadyItems(events, (repo, n) => sync.prState(repo, n), sync.synced(wsId)),
       ];
       assignLanes(all, live, boxes);
-      let items = all;
+      // Narrowing runs AFTER lanes are assigned and BEFORE paging: a kept row keeps the lane id
+      // and fork it has in the whole log, so its `from`/`into` may name a lane with no rows left
+      // here — which a graph already handles for a lane that paged off the bottom.
+      let scoped = all;
+      let liveScoped = live;
+      let approvalBoxIds = boxes.map((b) => b.id);
+      if (q.managerId) {
+        const rec = (await readReconciledManagers(wsId, ctx)).find((m) => m.id === q.managerId);
+        const mine = (row: TimelineItem | TimelineLiveItem): boolean =>
+          rec !== undefined && rowBelongsToManager(row, rec);
+        scoped = scoped.filter(mine);
+        liveScoped = liveScoped.filter(mine);
+        approvalBoxIds = approvalBoxIds.filter((id) => rec?.boxIds.includes(id) ?? false);
+      }
+      let items = scoped;
       if (q.before) items = items.filter((i) => i.at < q.before!);
       items = items.slice(0, q.limit ?? TIMELINE_DEFAULT_LIMIT);
       // Links come from the sync's cache only: a read never waits on `gh`.
@@ -399,13 +435,15 @@ export function createTimelineBackend(
         },
       };
       items = items.map((i) => withBranchUrl(i, lookup));
-      const liveRows = live.map((l) => withBranchUrl(l, lookup));
-      const boxIds = new Set(boxes.map((b) => b.id));
+      const liveRows = liveScoped.map((l) => withBranchUrl(l, lookup));
+      const boxIds = new Set(approvalBoxIds);
       const pending = (deps.pendingApprovalBoxIds?.() ?? []).filter((id) => boxIds.has(id)).length;
       return {
         items,
         live: liveRows,
-        ...(q.since ? { summary: buildTimelineSummary(events, q.since, liveRows, pending) } : {}),
+        // Counted over `scoped`, not the raw log: the summary must describe the rows on screen,
+        // so `?managerId=` narrows it too. Aggregation drops nothing the summary counts.
+        ...(q.since ? { summary: buildTimelineSummary(scoped, q.since, liveRows, pending) } : {}),
         github,
       };
     },

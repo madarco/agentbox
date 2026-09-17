@@ -1068,6 +1068,11 @@ export interface TimelineQuery {
   limit?: number;
   /** `false`: report the GitHub sync's last status without starting one (a frequent, cheap read). */
   sync?: boolean;
+  /**
+   * Only one manager session's rows: the ones it stamped, and the ones on a box it owns.
+   * An id no manager in the workspace has yields an empty timeline, not an error.
+   */
+  managerId?: string;
 }
 
 export type ManagerNoteResult = { ok: true; event: TimelineEvent } | { ok: false; error: string };
