@@ -148,7 +148,23 @@ agentbox agent wait-for end-plan 1                  # Claude just called ExitPla
 agentbox agent wait-for question 1                  # an AskUserQuestion picker is up
 agentbox agent get-plan-question 1                  # read the pending plan body or question + options
 agentbox agent state 1 --agent codex                # read a specific agent, not the box's most active one
+
+agentbox agent wait-for input-needed --box design --box tests --box docs   # race N boxes, first to need you wins
 ```
+
+`--box` is repeatable: one waiter covers a whole fan-out instead of one background process per box. It returns as soon as **any** of them matches, and prints `<box>\t<state>` (with `--json`, `{ "box": { "id", "name" }, "state", "agent" }`) so you know which one woke. A single-box wait prints just the state, exactly as before.
+
+A wait rides out a hub restart: the host relay going away mid-wait is retried with backoff until your `--timeout` elapses, not treated as the end of the wait. The exit code says which kind of ending you got:
+
+| Exit | `agent wait-for`                                                         |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | matched — the state is on stdout                                         |
+| `1`  | timed out; the hub was answering, the agent just never got there         |
+| `2`  | unknown state name, or the box is not on the hub that owns it            |
+| `3`  | the hub rejected the credential                                          |
+| `7`  | the hub never answered — the agent's state is **unknown**, not unmatched |
+
+Only the value goes to stdout — progress, warnings and errors go to stderr — so `STATE=$(agentbox agent wait-for input-needed 1)` is always clean.
 
 **`input-needed` is the most important orchestration event** — the single signal that _you_ (or the orchestrating agent) need to take action. It fires whenever the agent stops working and wants a human, whether because the **task finished and the prompt is ready** for the next message, or because the **subagent is blocked** on a question, a plan to approve, a permission prompt, or an error. It's the robust replacement for chaining separate `wait-for end-plan` / `wait-for question` / `wait-for prompt` calls — each of those hangs until _its_ timeout if the agent happens to reach a _different_ state. `wait-for input-needed` also prints the concrete state it matched (`prompt` / `end-plan` / `question` / `waiting` / `error`), so a script can branch on _why_ it woke.
 

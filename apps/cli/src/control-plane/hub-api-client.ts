@@ -643,7 +643,12 @@ export class HubApiClient {
     return this.sessionValue;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<T> {
     const session = await this.sessionHeader();
     const res = await this.fetchImpl(`${this.base}/api/v1${path}`, {
       method,
@@ -653,6 +658,10 @@ export class HubApiClient {
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      // Opt-in per call: a half-open socket (a killed hub still holding the
+      // connection, a laptop that slept) otherwise hangs a caller forever. A
+      // poll loop that must re-check its own wall clock passes one.
+      ...(opts.timeoutMs !== undefined ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
     });
     if (res.status === 204) return undefined as T;
     const text = await res.text();
@@ -1074,9 +1083,19 @@ export class HubApiClient {
 
   // ── agent state ──
 
-  /** The box's in-box agent status snapshot (activity/plan/question, per agent). */
-  getAgentState(id: string): Promise<HubApiAgentState> {
-    return this.request<HubApiAgentState>('GET', `/boxes/${encodeURIComponent(id)}/agent`);
+  /**
+   * The box's in-box agent status snapshot (activity/plan/question, per agent).
+   *
+   * `timeoutMs` is for the wait loop: it re-checks its own deadline between
+   * reads, which a hung socket would otherwise prevent it from ever doing.
+   */
+  getAgentState(id: string, opts: { timeoutMs?: number } = {}): Promise<HubApiAgentState> {
+    return this.request<HubApiAgentState>(
+      'GET',
+      `/boxes/${encodeURIComponent(id)}/agent`,
+      undefined,
+      opts,
+    );
   }
 
   // ── box service logs ──

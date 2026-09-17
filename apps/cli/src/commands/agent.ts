@@ -8,7 +8,6 @@ import {
   AGENT_WAIT_STATES,
   derivedAgentState,
   isAgentWaitState,
-  matchesAgentWaitState,
   type AgentWaitState,
 } from '../lib/wait/agent-state.js';
 import {
@@ -23,6 +22,15 @@ import {
 import { resolveDriveSession } from '../lib/drive/session.js';
 import { sendKey, sendLiteral } from '../lib/drive/tmux.js';
 import { providerForBox } from '../provider/registry.js';
+import { collect } from '../lib/collect.js';
+import { withCleanStdout, type MachineOutput } from '../lib/machine-output.js';
+import {
+  classifyHubFailure,
+  runAgentWait,
+  type WaitNotice,
+  type WaitTarget,
+} from '../lib/wait/agent-wait.js';
+import { EXIT_HUB_UNREACHABLE } from '../control-plane/with-hub.js';
 import { resolveBoxPromptSource, type BoxPromptSource } from '../control-plane/box-plane.js';
 import { resolveHubApiClient } from './control-plane.js';
 import { HubApiError } from '../control-plane/hub-api-client.js';
@@ -32,6 +40,14 @@ import { handleLifecycleError } from './_errors.js';
 import { agentPluginCommands } from './agent-plugin.js';
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+/**
+ * Cap on a single agent-state read. Without one a half-open socket (a killed
+ * hub still holding the connection) hangs the caller forever — for `wait-for`
+ * that means never re-checking its own deadline.
+ */
+const READ_TIMEOUT_MS = 10_000;
+/** Bounded retry for the ONE-SHOT readers, so they don't flake on a hub restart. */
+const ONE_SHOT_RETRY_DELAYS_MS = [250, 500, 1000];
 
 export const agentCommand = new Command('agent').description(
   "Query and wait on the in-box coding agent's state, and manage installed agent packages.",
@@ -53,29 +69,33 @@ const agentStateCommand = new Command('state')
   .option('--json', 'emit the full agent status payload as JSON')
   .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
-    try {
-      const box = await resolveBoxOrExit(boxRef);
-      // The status snapshot lives on whichever hub owns the box (its relay writes
-      // status.json), so read it through the owning hub — a box on a control box
-      // has no snapshot on this laptop's disk.
-      const claude = await fetchAgentClaude(box, opts.agent);
-      if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
-      if (claude === HUB_NOT_FOUND) {
-        reportAgentBoxNotFound(box, opts.json === true);
-        return;
+    // Everything but the state line goes to stderr: this command's stdout IS
+    // the value a script captures. See lib/machine-output.ts.
+    await withCleanStdout(async (out) => {
+      try {
+        const box = await resolveBoxOrExit(boxRef);
+        // The status snapshot lives on whichever hub owns the box (its relay writes
+        // status.json), so read it through the owning hub — a box on a control box
+        // has no snapshot on this laptop's disk.
+        const claude = await fetchAgentClaude(box, opts.agent);
+        if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
+        if (claude === HUB_NOT_FOUND) {
+          reportAgentBoxNotFound(out, box, opts.json === true);
+          return;
+        }
+        if (opts.json === true) {
+          out.emit(JSON.stringify(claude ?? null) + '\n');
+          return;
+        }
+        if (!claude) {
+          log.info('no status snapshot yet for this box (hooks may not have fired)');
+          return;
+        }
+        out.emit(statusDisplay(claude) + '\n');
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      if (opts.json === true) {
-        process.stdout.write(JSON.stringify(claude ?? null) + '\n');
-        return;
-      }
-      if (!claude) {
-        log.info('no status snapshot yet for this box (hooks may not have fired)');
-        return;
-      }
-      process.stdout.write(statusDisplay(claude) + '\n');
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 interface WaitForOpts {
@@ -83,6 +103,8 @@ interface WaitForOpts {
   json?: boolean;
   /** Which agent to wait on; default is the box's most active. */
   agent?: string;
+  /** Repeatable `--box`: wait on several boxes at once, first match wins. */
+  box: string[];
 }
 
 const agentWaitForCommand = new Command('wait-for')
@@ -92,66 +114,184 @@ const agentWaitForCommand = new Command('wait-for')
   .option('--timeout <ms>', `wall-clock cap (default: ${String(DEFAULT_WAIT_TIMEOUT_MS)})`)
   .option('--json', 'emit the matched agent payload as JSON')
   .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
+  .option(
+    '--box <ref>',
+    'box to wait on; repeatable — the wait returns as soon as ANY of them matches',
+    collect,
+    [] as string[],
+  )
   .action(async (state: string, boxRef: string | undefined, opts: WaitForOpts) => {
-    try {
-      if (!isAgentWaitState(state)) {
-        log.error(`unknown state '${state}' (one of: ${AGENT_WAIT_STATES.join(', ')})`);
-        process.exit(2);
-      }
-      const target: AgentWaitState = state;
-      const box = await resolveBoxOrExit(boxRef);
-      const timeoutMs =
-        opts.timeout !== undefined
-          ? parsePositiveInt(opts.timeout, '--timeout')
-          : DEFAULT_WAIT_TIMEOUT_MS;
-
-      // Poll the box's agent snapshot on the hub that owns it until it reaches the
-      // target state (or the timeout elapses). Polling — not an event subscription
-      // — because `/api/v1` carries no agent-event stream; the command's own docs
-      // already sanction it, and `agent approvals --wait` polls the same way. The
-      // source is resolved ONCE, outside the loop.
-      const source = await resolveBoxPromptSource(box);
-      if (!source) {
-        log.error("Could not reach a hub to read this box's agent state.");
-        process.exit(1);
-      }
-      // Never poll the local hub for a box we know lives on a plane we can't
-      // reach: it would answer `{claude: null}` for the full timeout, then
-      // report the agent "did not reach" a state nobody ever asked about.
-      if (reportedUnauthenticatedPlane(source)) process.exit(1);
-      let matched: AgentStatusEntry | undefined;
-      let elapsedMs = 0;
-      const start = Date.now();
-      for (;;) {
-        const claude = await agentClaudeFrom(source, box.id, opts.agent).catch((err: unknown) => {
-          if (err instanceof HubApiError && err.code === 'not_found') {
-            log.error(`box ${box.name} was not found on ${describeHub(source)}.`);
-            process.exit(2);
-          }
-          throw err;
-        });
-        if (claude && matchesAgentWaitState(claude, target)) {
-          matched = claude;
-          break;
+    await withCleanStdout(async (out) => {
+      try {
+        if (!isAgentWaitState(state)) {
+          log.error(`unknown state '${state}' (one of: ${AGENT_WAIT_STATES.join(', ')})`);
+          process.exitCode = 2;
+          return;
         }
-        elapsedMs = Date.now() - start;
-        if (elapsedMs >= timeoutMs) break;
-        await sleep(Math.min(500, timeoutMs - elapsedMs));
+        if (boxRef !== undefined && opts.box.length > 0) {
+          log.error('pass the box as an argument OR with --box (repeatable), not both');
+          process.exitCode = 2;
+          return;
+        }
+        const target: AgentWaitState = state;
+        const timeoutMs =
+          opts.timeout !== undefined
+            ? parsePositiveInt(opts.timeout, '--timeout')
+            : DEFAULT_WAIT_TIMEOUT_MS;
+
+        // Resolve every box's owning hub ONCE, and sequentially: there is no
+        // in-process lock around the local-hub autostart, so resolving N boxes
+        // in parallel would fire N `ensureHub` calls (and N spinners).
+        const refs = opts.box.length > 0 ? opts.box : [boxRef];
+        const sources = new Map<string, BoxPromptSource>();
+        const targets: WaitTarget<BoxRecord>[] = [];
+        for (const ref of refs) {
+          const box = await resolveBoxOrExit(ref);
+          if (sources.has(box.id)) continue; // same box named twice
+          const resolved = await resolveWaitSource(box);
+          if (resolved.kind !== 'ok') {
+            // Nothing to wait ON yet: report the resolve itself, not a state.
+            process.exitCode = resolved.kind === 'unauthorized' ? 3 : EXIT_HUB_UNREACHABLE;
+            return;
+          }
+          sources.set(box.id, resolved.source);
+          targets.push({ id: box.id, name: box.name, box });
+        }
+        // Only a multi-box wait names the box in its output — a single-box wait
+        // keeps the contract every existing script reads.
+        const multi = targets.length > 1;
+
+        // Polls rather than subscribing. `/api/v1/boxes/:id/stream` does carry
+        // `box-status`, but one cadence covering N boxes beats one long-lived
+        // socket per box, and the loop's own retry is what has to survive a hub
+        // restart either way (a stream would need the same logic around it).
+        const result = await runAgentWait<BoxRecord>({
+          targets,
+          state: target,
+          timeoutMs,
+          read: (t) =>
+            agentClaudeFrom(sourceFor(sources, t.id), t.box.id, opts.agent, READ_TIMEOUT_MS),
+          // A hub that went away for good (a local hub that died) is re-resolved,
+          // which restarts it. Re-checking the plane matters: an unauthenticated
+          // one degrades to the LOCAL hub, which would answer `null` forever.
+          onStale: async (t) => {
+            const resolved = await resolveWaitSource(t.box);
+            if (resolved.kind !== 'ok') return resolved.kind;
+            sources.set(t.id, resolved.source);
+            return 'ok';
+          },
+          onNotice: (n) => noteWaitTransition(n, multi),
+        });
+
+        if (result.kind === 'matched') {
+          // Explicit: a transient failure the wait RECOVERED from may have set a
+          // code on the way through (reportedUnauthenticatedPlane does), and a
+          // match must not inherit it.
+          process.exitCode = 0;
+          emitMatch(out, result.target, result.entry, opts.json === true, multi);
+          return;
+        }
+        if (result.kind === 'fatal') {
+          if (result.reason === 'not-found') {
+            log.error(`box ${result.target.name} was not found on the hub that owns it.`);
+            process.exitCode = 2;
+          } else {
+            log.error(
+              `the hub rejected the credential while waiting on ${result.target.name}: ${result.message}`,
+            );
+            process.exitCode = 3;
+          }
+          return;
+        }
+        const names = targets.map((t) => t.name);
+        if (result.kind === 'unreachable') {
+          if (opts.json === true) {
+            out.emit(
+              JSON.stringify({
+                matched: false,
+                elapsedMs: result.elapsedMs,
+                unreachable: true,
+                error: result.lastError,
+                ...(multi ? { boxes: names } : {}),
+              }) + '\n',
+            );
+          } else {
+            log.error(
+              `no answer from the hub for ${names.join(', ')} within ${String(timeoutMs)}ms ` +
+                `(last error: ${result.lastError}) — the agent's state is unknown, not unmatched`,
+            );
+          }
+          process.exitCode = EXIT_HUB_UNREACHABLE;
+          return;
+        }
+        if (opts.json === true) {
+          out.emit(
+            JSON.stringify({
+              matched: false,
+              elapsedMs: result.elapsedMs,
+              ...(multi ? { boxes: names } : {}),
+            }) + '\n',
+          );
+        } else {
+          log.error(`agent did not reach '${target}' within ${String(timeoutMs)}ms`);
+        }
+        process.exitCode = 1;
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      if (matched) {
-        emitMatch(matched, opts.json === true);
-        return;
-      }
-      if (opts.json === true) {
-        process.stdout.write(JSON.stringify({ matched: false, elapsedMs }) + '\n');
-      } else {
-        log.error(`agent did not reach '${target}' within ${String(timeoutMs)}ms`);
-      }
-      process.exit(1);
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
+
+type ResolvedWaitSource =
+  | { kind: 'ok'; source: BoxPromptSource }
+  | { kind: 'unreachable' }
+  | { kind: 'unauthorized' };
+
+/**
+ * The hub that owns a box, for the wait loop.
+ *
+ * Reports rather than exits, and deliberately does NOT set an exit code: this
+ * runs again mid-wait (the re-resolve that restarts a dead local hub), and a
+ * code set by a failure the wait then recovered from would be the code the
+ * whole command exited with. The caller maps the final outcome.
+ *
+ * Two failures, kept apart: a hub we couldn't bring up is worth waiting on, a
+ * plane we hold no key for never will be. The latter also matters because
+ * `resolveBoxPromptSource` silently falls back to the LOCAL hub for it, which
+ * would answer `{claude: null}` for the full timeout and then report the agent
+ * "did not reach" a state nobody ever asked about.
+ */
+async function resolveWaitSource(box: BoxRecord): Promise<ResolvedWaitSource> {
+  const source = await resolveBoxPromptSource(box);
+  if (!source) {
+    log.error(`Could not reach a hub to read ${box.name}'s agent state.`);
+    return { kind: 'unreachable' };
+  }
+  if (reportedUnauthenticatedPlane(source)) return { kind: 'unauthorized' };
+  return { kind: 'ok', source };
+}
+
+function sourceFor(sources: Map<string, BoxPromptSource>, id: string): BoxPromptSource {
+  const source = sources.get(id);
+  if (!source) throw new Error(`no hub resolved for box ${id}`);
+  return source;
+}
+
+/**
+ * One line when a box's hub goes away, one when it comes back — on stderr, and
+ * never per tick. A silent 50-minute wait that turns out to have been talking
+ * to nothing is the failure this whole path exists to prevent.
+ */
+function noteWaitTransition(notice: WaitNotice<BoxRecord>, multi: boolean): void {
+  const who = multi ? ` for ${notice.target.name}` : '';
+  if (notice.kind === 'unreachable') {
+    process.stderr.write(
+      `note: hub unreachable${who} (${notice.message}) — retrying until the timeout\n`,
+    );
+    return;
+  }
+  process.stderr.write(`note: hub reachable again${who} — still waiting\n`);
+}
 
 const agentGetPlanQuestionCommand = new Command('get-plan-question')
   .description(
@@ -161,37 +301,38 @@ const agentGetPlanQuestionCommand = new Command('get-plan-question')
   .option('--json', 'emit the structured payload as JSON instead of a human render')
   .option('--agent <id>', "which agent's state to read (default: the box's most active agent)")
   .action(async (boxRef: string | undefined, opts: BoxRefOpts) => {
-    try {
-      const box = await resolveBoxOrExit(boxRef);
-      const claude = await fetchAgentClaude(box, opts.agent);
-      if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
-      if (claude === HUB_NOT_FOUND) {
-        reportAgentBoxNotFound(box, opts.json === true);
-        return;
-      }
-      if (opts.json === true) {
-        const out = claude?.plan ?? claude?.question ?? null;
-        process.stdout.write(JSON.stringify(out) + '\n');
-        return;
-      }
-      if (claude?.plan) {
-        process.stdout.write(claude.plan.plan + '\n');
-        return;
-      }
-      if (claude?.question) {
-        for (const q of claude.question.questions) {
-          process.stdout.write(`${q.question}\n`);
-          for (const o of q.options) {
-            process.stdout.write(`  - ${o.label}${o.description ? ` — ${o.description}` : ''}\n`);
-          }
+    await withCleanStdout(async (out) => {
+      try {
+        const box = await resolveBoxOrExit(boxRef);
+        const claude = await fetchAgentClaude(box, opts.agent);
+        if (claude === HUB_ERROR) return; // withHubClient reported + set the exit code
+        if (claude === HUB_NOT_FOUND) {
+          reportAgentBoxNotFound(out, box, opts.json === true);
+          return;
         }
-        return;
+        if (opts.json === true) {
+          out.emit(JSON.stringify(claude?.plan ?? claude?.question ?? null) + '\n');
+          return;
+        }
+        if (claude?.plan) {
+          out.emit(claude.plan.plan + '\n');
+          return;
+        }
+        if (claude?.question) {
+          for (const q of claude.question.questions) {
+            out.emit(`${q.question}\n`);
+            for (const o of q.options) {
+              out.emit(`  - ${o.label}${o.description ? ` — ${o.description}` : ''}\n`);
+            }
+          }
+          return;
+        }
+        log.info('no pending plan or question for this box');
+        process.exitCode = 1;
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      log.info('no pending plan or question for this box');
-      process.exit(1);
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 interface ApprovalsOpts {
@@ -212,76 +353,78 @@ const agentApprovalsCommand = new Command('approvals')
     'block until at least one approval is pending (or this wall-clock cap elapses), then print',
   )
   .action(async (boxRef: string | undefined, opts: ApprovalsOpts) => {
-    try {
-      const box = await resolveBoxOrExit(boxRef);
-      // A box created against a control box parks its host-action approvals
-      // THERE, not on this laptop's hub — ask the one it actually registered
-      // with, or a blocked box reads as "nothing pending". Resolving the source
-      // brings up the local hub when the box answers here (its `/api/v1` is what
-      // this reads); a control-plane box's mailbox is the remote hub.
-      const source = await resolveBoxPromptSource(box);
-      if (!source) {
-        log.error("Could not reach a hub to read this box's approvals.");
-        process.exit(1);
-      }
-      const waitMs = opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
-
-      let gathered = await gatherApprovals(source, box);
-      if (waitMs !== undefined && gathered.rows.length === 0) {
-        const start = Date.now();
-        while (gathered.rows.length === 0 && Date.now() - start < waitMs) {
-          await sleep(Math.min(500, waitMs - (Date.now() - start)));
-          gathered = await gatherApprovals(source, box);
+    await withCleanStdout(async (out) => {
+      try {
+        const box = await resolveBoxOrExit(boxRef);
+        // A box created against a control box parks its host-action approvals
+        // THERE, not on this laptop's hub — ask the one it actually registered
+        // with, or a blocked box reads as "nothing pending". Resolving the source
+        // brings up the local hub when the box answers here (its `/api/v1` is what
+        // this reads); a control-plane box's mailbox is the remote hub.
+        const source = await resolveBoxPromptSource(box);
+        if (!source) {
+          log.error("Could not reach a hub to read this box's approvals.");
+          process.exit(1);
         }
-      }
-      const rows = gathered.rows;
-      const missing = missingHalves(gathered);
-      const where = source.remote ? 'control box' : 'hub';
+        const waitMs = opts.wait !== undefined ? parsePositiveInt(opts.wait, '--wait') : undefined;
 
-      if (opts.json === true) {
-        // Array shape is a contract (orchestration reads it) — keep stdout pure
-        // and put the degraded-read warning on stderr.
-        if (missing.length > 0) {
-          process.stderr.write(
-            `warning: could not read ${missing.join(' or ')} from the ${where}; those rows may be missing\n`,
-          );
+        let gathered = await gatherApprovals(source, box);
+        if (waitMs !== undefined && gathered.rows.length === 0) {
+          const start = Date.now();
+          while (gathered.rows.length === 0 && Date.now() - start < waitMs) {
+            await sleep(Math.min(500, waitMs - (Date.now() - start)));
+            gathered = await gatherApprovals(source, box);
+          }
         }
-        process.stdout.write(JSON.stringify(rows) + '\n');
-        if (missing.length > 0) process.exitCode = 1;
-        return;
-      }
-      if (missing.length > 0) {
-        // Whatever the other half DID answer is still shown — but a half we
-        // could not read must never render as "nothing pending".
-        log.warn(
-          `could not read ${missing.join(' or ')} from the ${where} — those rows are not shown.`,
-        );
-        process.exitCode = 1;
-      }
-      if (rows.length === 0) {
-        // Don't claim "nothing pending" when we couldn't actually reach the
-        // mailbox — an empty list is only meaningful if we got an answer.
-        if (source.unauthenticatedPlane !== undefined) {
-          log.warn(
-            `this box's approvals live on ${source.unauthenticatedPlane}, but no hub API key is available here — ` +
-              'set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to see them.',
-          );
-          process.exitCode = 1;
+        const rows = gathered.rows;
+        const missing = missingHalves(gathered);
+        const where = source.remote ? 'control box' : 'hub';
+
+        if (opts.json === true) {
+          // Array shape is a contract (orchestration reads it) — keep stdout pure
+          // and put the degraded-read warning on stderr.
+          if (missing.length > 0) {
+            process.stderr.write(
+              `warning: could not read ${missing.join(' or ')} from the ${where}; those rows may be missing\n`,
+            );
+          }
+          out.emit(JSON.stringify(rows) + '\n');
+          if (missing.length > 0) process.exitCode = 1;
           return;
         }
-        if (missing.length === 0) {
-          log.info(
-            'nothing pending for this box (no host-action approvals, agent not parked on a prompt)',
+        if (missing.length > 0) {
+          // Whatever the other half DID answer is still shown — but a half we
+          // could not read must never render as "nothing pending".
+          log.warn(
+            `could not read ${missing.join(' or ')} from the ${where} — those rows are not shown.`,
           );
+          process.exitCode = 1;
         }
-        return;
+        if (rows.length === 0) {
+          // Don't claim "nothing pending" when we couldn't actually reach the
+          // mailbox — an empty list is only meaningful if we got an answer.
+          if (source.unauthenticatedPlane !== undefined) {
+            log.warn(
+              `this box's approvals live on ${source.unauthenticatedPlane}, but no hub API key is available here — ` +
+                'set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to see them.',
+            );
+            process.exitCode = 1;
+            return;
+          }
+          if (missing.length === 0) {
+            log.info(
+              'nothing pending for this box (no host-action approvals, agent not parked on a prompt)',
+            );
+          }
+          return;
+        }
+        for (const row of rows) {
+          out.emit(approvalDisplay(row) + '\n');
+        }
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      for (const row of rows) {
-        process.stdout.write(approvalDisplay(row) + '\n');
-      }
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 interface ApproveOpts {
@@ -305,15 +448,17 @@ const agentApproveCommand = new Command('approve')
     'in-TUI question/permission: pick this 1-based option (or match its label) instead of the default',
   )
   .action(async (id: string, opts: ApproveOpts) => {
-    try {
-      if (isTuiId(id)) {
-        await approveInTui(id, opts);
-        return;
+    await withCleanStdout(async () => {
+      try {
+        if (isTuiId(id)) {
+          await approveInTui(id, opts);
+          return;
+        }
+        await approveRelay(id, opts);
+      } catch (err) {
+        handleLifecycleError(err);
       }
-      await approveRelay(id, opts);
-    } catch (err) {
-      handleLifecycleError(err);
-    }
+    });
   });
 
 /**
@@ -430,7 +575,7 @@ async function approveInTui(id: string, opts: ApproveOpts): Promise<void> {
   if (reportedUnauthenticatedPlane(source)) process.exit(1);
   let claude: AgentStatusEntry | null;
   try {
-    claude = await agentClaudeFrom(source, box.id);
+    claude = await readAgentWithRetry(source, box.id);
   } catch (err) {
     log.error(
       `could not read the agent snapshot for ${box.name} from ${describeHub(source)}: ` +
@@ -554,8 +699,12 @@ async function agentClaudeFrom(
   source: BoxPromptSource,
   boxId: string,
   agent?: string,
+  timeoutMs?: number,
 ): Promise<AgentStatusEntry | null> {
-  const res = await source.client.getAgentState(boxId);
+  const res = await source.client.getAgentState(
+    boxId,
+    timeoutMs !== undefined ? { timeoutMs } : {},
+  );
   const map = normalizeAgentStatus(res.agents ? { agents: res.agents } : { claude: res.claude });
   if (agent) return (map[agent] ?? null) as AgentStatusEntry | null;
   return (pickPrimaryAgent(map)?.entry ?? null) as AgentStatusEntry | null;
@@ -713,15 +862,45 @@ async function fetchAgentClaude(
   }
   if (reportedUnauthenticatedPlane(source)) return HUB_ERROR;
   try {
-    return await agentClaudeFrom(source, box.id, agent);
+    return await readAgentWithRetry(source, box.id, agent);
   } catch (err) {
     if (err instanceof HubApiError && err.code === 'not_found') return HUB_NOT_FOUND;
     log.error(
       `could not read the agent snapshot for ${box.name} from ${describeHub(source)}: ` +
         (err instanceof Error ? err.message : String(err)),
     );
-    process.exitCode = 1;
+    // A hub that never answered is its own outcome (7), distinct from a hub
+    // that answered with bad news — the retries above already rode out a blip.
+    const kind = classifyHubFailure(err);
+    process.exitCode =
+      kind === 'transient' ? EXIT_HUB_UNREACHABLE : kind === 'unauthorized' ? 3 : 1;
     return HUB_ERROR;
+  }
+}
+
+/**
+ * One agent-state read, retried through a transient failure.
+ *
+ * For the ONE-SHOT readers only (`state`, `get-plan-question`, and `approve`'s
+ * race guard): a script polling `agentbox agent state` in a loop used to flake
+ * on any `hub restart`, because a single `fetch failed` was reported as the
+ * answer. Deliberately NOT pushed down into `agentClaudeFrom`, which is also the
+ * inner read of `gatherApprovals` — retrying there would slow `approvals --wait`'s
+ * own poll loop, which already retries by construction.
+ */
+async function readAgentWithRetry(
+  source: BoxPromptSource,
+  boxId: string,
+  agent?: string,
+): Promise<AgentStatusEntry | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await agentClaudeFrom(source, boxId, agent, READ_TIMEOUT_MS);
+    } catch (err) {
+      const delay = ONE_SHOT_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || classifyHubFailure(err) !== 'transient') throw err;
+      await sleep(delay);
+    }
   }
 }
 
@@ -753,21 +932,39 @@ function reportedUnauthenticatedPlane(source: BoxPromptSource): boolean {
  * `get-plan-question`) — exit 2, matching `wait-for`. Distinct from a null
  * snapshot: the box is genuinely unknown, not merely un-reported-on yet.
  */
-function reportAgentBoxNotFound(box: BoxRecord, asJson: boolean): void {
+function reportAgentBoxNotFound(out: MachineOutput, box: BoxRecord, asJson: boolean): void {
   if (asJson) {
-    process.stdout.write(JSON.stringify(null) + '\n');
+    out.emit(JSON.stringify(null) + '\n');
   } else {
     log.error(`box ${box.name} was not found on the hub that owns it.`);
   }
-  process.exit(2);
+  // exitCode, not exit(): `process.exit` truncates a pending pipe write, which
+  // for a `--json` caller means losing the payload we just emitted.
+  process.exitCode = 2;
 }
 
-function emitMatch(claude: AgentStatusEntry, asJson: boolean): void {
+/**
+ * The matched state on stdout. A multi-box wait prefixes the box name (and, in
+ * JSON, envelopes the entry) because the caller raced several boxes and has to
+ * know which one woke; a single-box wait prints exactly what it always has.
+ */
+function emitMatch(
+  out: MachineOutput,
+  target: WaitTarget<BoxRecord>,
+  claude: AgentStatusEntry,
+  asJson: boolean,
+  multi: boolean,
+): void {
+  const state = derivedAgentState(claude);
   if (asJson) {
-    process.stdout.write(JSON.stringify(claude) + '\n');
-  } else {
-    process.stdout.write(derivedAgentState(claude) + '\n');
+    out.emit(
+      JSON.stringify(
+        multi ? { box: { id: target.box.id, name: target.name }, state, agent: claude } : claude,
+      ) + '\n',
+    );
+    return;
   }
+  out.emit((multi ? `${target.name}\t${state}` : state) + '\n');
 }
 
 function statusDisplay(claude: AgentStatusEntry): string {

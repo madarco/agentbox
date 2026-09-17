@@ -132,11 +132,21 @@ agentbox agent get-plan-question 1            # print the plan body OR question 
 agentbox agent get-plan-question 1 --json     # structured payload
 ```
 
+Stdout carries **only** the value — spinners, notices and errors all go to stderr — so `S=$(agentbox agent state 1)` is safe to capture directly. `--json` is for structure (the full entry), not a workaround for dirty output.
+
 **For orchestration, `agent wait-for input-needed` is the tool to reach for.** It is the single sync point that wakes whenever the agent needs *you* — whether the turn **finished and it's ready for the next message**, or it's **blocked** on a question, a plan to approve, a permission prompt, or an error. It matches every state except `working` / `compacting`, and prints the concrete state it matched so you can branch on *why* it woke:
 
 ```sh
 agentbox agent wait-for input-needed 1 --timeout 600000   # → prints: prompt | end-plan | question | waiting | error
+
+# Race a whole fan-out with ONE waiter — `--box` is repeatable, first box to match wins.
+agentbox agent wait-for input-needed --box design --box tests --box docs --timeout 1200000
+# → prints "<box>\t<state>" (with --json: { "box": { "id", "name" }, "state", "agent" })
 ```
+
+Use the multi-box form instead of one background waiter per box: it returns as soon as *any* of them needs you, and tells you which. A single-box wait still prints the bare state.
+
+A wait **survives a hub restart** — the relay going away mid-wait is retried with backoff until your `--timeout` actually elapses.
 
 Prefer it over waiting on one specific transition — a narrow `wait-for end-plan` hangs to its timeout if the agent instead asks a question, hits a permission prompt, finishes, or errors. The granular states are still waitable when you *know* exactly what to expect: `prompt` (ready for next message), `idle` (Stop hook fired), `end-plan`, `question`, `waiting`, `compacting`, `error` — e.g. `agentbox agent wait-for prompt 1`.
 
@@ -151,7 +161,17 @@ agentbox queue wait-for box-stopped --box 2
 agentbox queue wait-for job-done --job b45f1603841bd2b5  # terminal status (done/failed/cancelled)
 ```
 
-All wait-for commands exit 0 on match, exit 1 on timeout, and accept `--json` for parseable output.
+All wait-for commands accept `--json` for parseable output. `agent wait-for` exit codes:
+
+| Exit | Meaning |
+| ---- | ------- |
+| `0` | matched — the state is on stdout |
+| `1` | timed out: the hub was answering, the agent just never reached the state |
+| `2` | unknown state name, or the box is not on the hub that owns it |
+| `3` | the hub rejected the credential |
+| `7` | the hub never answered at all — the agent's state is **unknown**, not unmatched |
+
+Treat `7` as "my relay is down", not "my agent is stuck": the wait already retried for the whole window before reporting it. `queue wait-for` still exits 0 on match / 1 on timeout.
 
 ### Recipe: drive a Claude Code from another Claude Code
 
@@ -173,6 +193,23 @@ esac
 
 # 3. Block until the whole batch settles before reporting back.
 agentbox queue wait-for empty-queue --timeout 3600000
+```
+
+Driving several boxes at once is the same loop with one waiter over all of them — no background waiter per box:
+
+```sh
+while :; do
+  HIT=$(agentbox agent wait-for input-needed --box design --box tests --timeout 1800000) || break
+  BOX=$(printf '%s' "$HIT" | cut -f1); STATE=$(printf '%s' "$HIT" | cut -f2)  # the line is <box>TAB<state>
+  case "$STATE" in
+    end-plan|question|waiting) agentbox drive keypress "$BOX" "<Enter>" ;;
+    prompt|idle)               echo "$BOX finished" ;;
+    error)                     echo "$BOX errored — agentbox drive snapshot $BOX" ;;
+  esac
+done
+# `|| break` catches exit 1 (timeout) and exit 7 (the hub never answered).
+
+agentbox destroy --box design --box tests -y   # tear the fan-out down in one call
 ```
 
 Wrap step 2 in a loop to babysit a box across many turns. Use the narrow `wait-for <state>` forms only when a step must gate on one specific transition.
@@ -292,7 +329,7 @@ For **Claude desktop**, there's no deep link — tell the user to add an SSH con
 ## Operating principles
 
 1. **Never assume the host needs SSH keys forwarded into a box** — git is handled by the relay, by design.
-2. **Destroy boxes when they're done** — `agentbox destroy <box>` when the work is done, but feel free to reuse boxes for slower providers like Hetzner, AWS, DigitalOcean.
+2. **Destroy boxes when they're done** — `agentbox destroy <box>` when the work is done (or `agentbox destroy --box a --box b -y` for a whole fan-out, one confirmation), but feel free to reuse boxes for slower providers like Hetzner, AWS, DigitalOcean.
 3. **Use workspaces, tasks and the timeline when you manage** — `agentbox tasks add "…"` to split or parallelize work across boxes, then `agentbox claude -i --tasks T-1,T-2` to start boxes with them, or `agentbox tasks assign T-3 --box <box>` to hand one to a running box.
 4. **Use `-i` whenever the user asks for parallel agent work** rather than spawning multiple foreground sessions. Then point them at `agentbox dashboard` to watch progress.
 5. **Pick the provider deliberately.** `docker` is the fast default. `--provider hetzner` gives a real VPS (heavier, isolated, requires `agentbox prepare --provider hetzner` once). `--provider vercel` is the managed cloud option.

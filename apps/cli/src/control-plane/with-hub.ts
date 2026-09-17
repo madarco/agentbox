@@ -51,6 +51,18 @@ const EXIT_BY_CODE: Record<string, number> = {
   backend_unavailable: 6,
 };
 
+/**
+ * "Never got an answer from the hub at all" — a transport failure, not an error
+ * the hub reported. Distinct from every code above because a caller has to be
+ * able to tell a dead relay from a hub that answered with bad news; `agentbox
+ * agent wait-for` uses it after retrying for the whole wall clock.
+ *
+ * Not globally reserved: `exitCodeForHubError` passes a box command's own
+ * `details.exitCode` straight through, so a box that itself exits 7 still
+ * surfaces 7.
+ */
+export const EXIT_HUB_UNREACHABLE = 7;
+
 /** The CLI exit code for a hub `/api/v1` error code. */
 export function exitCodeForApiError(code: string): number {
   return EXIT_BY_CODE[code] ?? 1;

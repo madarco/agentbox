@@ -1,5 +1,6 @@
 import { log } from '@clack/prompts';
 import { Command } from 'commander';
+import { collect } from '../lib/collect.js';
 import {
   findProjectRoot,
   GLOBAL_TOOLS_FILE,
@@ -26,11 +27,6 @@ import {
 export const toolsCommand = new Command('tools').description(
   'Grant host CLIs to boxes (the host runs the real binary with host credentials; the box never sees a token)',
 );
-
-function collect(val: string, acc: string[]): string[] {
-  acc.push(val);
-  return acc;
-}
 
 async function scopeFile(global: boolean): Promise<string> {
   if (global) return GLOBAL_TOOLS_FILE;

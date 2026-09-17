@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideDestroy } from '../src/commands/destroy.js';
+import { decideDestroy, decideDestroyBatch } from '../src/commands/destroy.js';
 
 /**
  * The core safety invariant of `agentbox destroy` (which-hub, Step 5): this
@@ -37,5 +37,33 @@ describe('decideDestroy', () => {
     expect(drops('not-found', false)).toBe(false); // <- the safety property
     expect(drops('not-found', true)).toBe(true);
     expect(drops(undefined, false)).toBe(false);
+  });
+});
+
+/**
+ * A batch destroy (`--box a --box b`) folds per-box outcomes into ONE exit code.
+ * The property that matters: a batch never reports success because *some* box
+ * was destroyed — a caller scripting a fan-out teardown has to be able to tell
+ * that one of its boxes was left standing.
+ */
+describe('decideDestroyBatch', () => {
+  it('all destroyed -> 0', () => {
+    expect(decideDestroyBatch(['destroyed', 'destroyed'])).toBe(0);
+  });
+
+  it("a user's own cancel is not a failure", () => {
+    expect(decideDestroyBatch(['cancelled'])).toBe(0);
+  });
+
+  it('a refused box surfaces as 2, even alongside successes', () => {
+    expect(decideDestroyBatch(['destroyed', 'refused'])).toBe(2);
+  });
+
+  it('a hub error outranks a refusal', () => {
+    expect(decideDestroyBatch(['destroyed', 'refused', 'error'])).toBe(1);
+  });
+
+  it('an empty batch is not a failure', () => {
+    expect(decideDestroyBatch([])).toBe(0);
   });
 });
