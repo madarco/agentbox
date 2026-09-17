@@ -7,8 +7,10 @@
  * supervisor launches, so the first declared task sees the carry files
  * already in place.
  *
- * Best-effort per-entry: a single failed entry is recorded in `errors` and
- * the function returns — the box stays usable; the caller logs the misses.
+ * Per-entry: a failed entry is recorded in `errors` and the loop continues, so
+ * every entry is attempted and the caller reports them together. Not tolerable,
+ * though — `create` turns a non-empty `errors` into a `CarryCopyError` and fails
+ * the create.
  */
 
 import { mkdtemp, rm } from 'node:fs/promises';

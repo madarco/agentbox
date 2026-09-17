@@ -122,6 +122,7 @@ export {
 } from './concerns/env.js';
 export {
   planCarryEntry,
+  CarryCopyError,
   BOX_HOME,
   dirnameUnix,
   basenameUnix,

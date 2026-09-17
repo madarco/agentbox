@@ -154,6 +154,23 @@ describe('parseCreateBox', () => {
     expect(r.value.opts?.borrowCredentials).toEqual(['codex']);
   });
 
+  it('threads the three carry decision flags through', () => {
+    // `carrySkip` is the one a CLI create needs to say "the human already
+    // declined": without it the hub re-asked the `required` carry prompt with no
+    // terminal attached and refused the create.
+    const r = parseCreateBox({
+      projectId: 'p',
+      agent: 'none',
+      opts: { carryYes: true, carrySkip: false, carryAsk: true },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.opts).toMatchObject({ carryYes: true, carrySkip: false, carryAsk: true });
+    expect(parseCreateBox({ projectId: 'p', agent: 'none', opts: { carrySkip: 'yes' } }).ok).toBe(
+      false,
+    );
+  });
+
   it('rejects a malformed promptAnswers entry', () => {
     const bad = (promptAnswers: unknown) =>
       parseCreateBox({ projectId: 'p', agent: 'none', opts: { promptAnswers } }).ok;

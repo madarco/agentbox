@@ -4408,6 +4408,16 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                   },
                 },
+                carryYes: {
+                  type: 'boolean',
+                  description:
+                    "Approve the project's `carry:` block without asking — the API twin of `--carry-yes`. Use it instead of `promptAnswers` when the decision is already made (a scripted create, a clone): the create then needs no terminal. Per-run, so it leaves no standing approval behind.",
+                },
+                carrySkip: {
+                  type: 'boolean',
+                  description:
+                    "Decline the project's `carry:` block without asking — the API twin of `--carry skip`. A decline has to be sayable rather than merely absent: an omitted answer to the `required` carry prompt fails the create, so without this a scripted skip could not get through. Leaves any standing approval intact.",
+                },
                 borrowCredentials: {
                   type: 'array',
                   items: { type: 'string' },

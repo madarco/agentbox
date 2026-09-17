@@ -360,7 +360,7 @@ The same approval happens when you create a box from the **hub web UI** or the *
 
 A remembered approval works there too — the preflight runs the same gate, so once a project's list is approved (from any surface) the web form and the tray card stop showing the question and go straight to the build. Both endpoints accept `carryAsk: true` to show the table again for a granted list, which is how a client offers a review-and-revoke.
 
-A client that skips that step does not silently drop your files: carry has no safe default answer, so the create is refused with the same message the terminal gives you. Answers are content-addressed to the question, so one collected against a `carry:` block that has since changed is refused rather than applied to the new one.
+A client that skips that step does not silently drop your files: carry has no safe default answer, so the create is refused with the same message the terminal gives you. A client that already has an answer sends it as a decision instead of an answer list — `opts.carryYes` to approve, `opts.carrySkip` to decline — which is how a scripted `agentbox create --carry-yes` or `--carry skip` gets through without a terminal. Answers are content-addressed to the question, so one collected against a `carry:` block that has since changed is refused rather than applied to the new one.
 
 One case genuinely cannot ask: a **remote control box** has no checkout of your project and cannot read the files a `carry:` block names. It reports that (`unavailable`) and the UI tells you, instead of building a box quietly missing them. Create from the CLI on the machine that holds the files, which uploads the approved material with the create.
 
@@ -370,7 +370,9 @@ One case genuinely cannot ask: a **remote control box** has no checkout of your 
   per-entry cap is `box.cpMaxBytes` (default 100 MiB), the same limit `agentbox cp` enforces.
 </Callout>
 
-Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).
+Mark credential entries `optional: true` so a box still comes up when a given file or agent isn't installed on the host. `optional` covers exactly one case — the source **does not exist**. It is not a blanket "ignore problems": once a file is there and approved, a copy that fails (unreadable source, a destination the box refuses, a mode that won't set) **fails the create** and names every entry that failed. A box that came up reporting success while quietly missing a credential was the worse outcome.
+
+For how non-carry env files reach the box, see [environment](/docs/environment); for how git state is seeded, see [sync and git](/docs/sync-and-git) and [teleport a project](/docs/teleport-a-project).
 
 ## tools
 

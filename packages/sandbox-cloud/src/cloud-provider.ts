@@ -55,6 +55,7 @@ import {
   readState,
   recordBox,
   removeBoxRecord,
+  CarryCopyError,
   withPerBoxCarry,
   borrowedCredentialCarry,
 } from '@agentbox/sandbox-core';
@@ -1073,6 +1074,11 @@ export function createCloudProvider(
           if (result.applied.length > 0) {
             carrySummary = { count: result.applied.length, entries: result.applied };
           }
+          // Same rule as docker: an approved entry that failed to land fails the
+          // create. A missing OPTIONAL source never reaches here, so what does is
+          // a real permission/write failure, and a box that silently lacks the
+          // file is worse than a create that says so.
+          if (result.errors.length > 0) throw new CarryCopyError(result.errors);
         }
 
         // git.pushMode=direct: the credential files were just carried in; wire

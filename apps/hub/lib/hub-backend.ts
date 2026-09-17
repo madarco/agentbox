@@ -2610,6 +2610,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             // `borrowCredentials` (a deliberate "none") cannot lose to a
             // fall-through.
             ...(o.carryYes ? { carryYes: true } : {}),
+            // A CLI create ran this same gate on the host and posts its answer;
+            // a skip has to arrive as a decision, not as an absent one, or the
+            // `required` carry prompt is re-asked with nobody there to answer.
+            ...(o.carrySkip ? { carrySkip: true } : {}),
+            // `--carry ask`'s API twin. Accepted on the wire since the preflight
+            // shipped but never threaded here, so a GUI client could show the
+            // table again and then create a box that silently reused the grant.
+            ...(o.carryAsk ? { carryAsk: true } : {}),
             ...(o.borrowCredentials !== undefined
               ? { borrowCredentials: o.borrowCredentials }
               : {}),

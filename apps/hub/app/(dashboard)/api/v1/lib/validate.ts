@@ -185,6 +185,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     'credentialSync',
     'dangerouslySkipPermissions',
     'carryYes',
+    'carrySkip',
     'carryAsk',
   ] as const;
   for (const f of boolFields) {

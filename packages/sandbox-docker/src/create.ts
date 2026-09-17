@@ -11,6 +11,7 @@ import {
   makeSyncContext,
   relayPort,
   syncAgentboxSshConfig,
+  CarryCopyError,
   withPerBoxCarry,
   type AgentSyncSpec,
 } from '@agentbox/sandbox-core';
@@ -1183,6 +1184,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     if (result.applied.length > 0) {
       carrySummary = { count: result.applied.length, entries: result.applied };
     }
+    // An approved entry that failed to land fails the create. A missing OPTIONAL
+    // source is not in here — that one is skipped by design — so everything that
+    // reaches this point is a permission/write/mode failure the user has to know
+    // about: the box would otherwise come up looking fine and missing the file
+    // the whole `carry:` block exists to deliver.
+    if (result.errors.length > 0) throw new CarryCopyError(result.errors);
   }
 
   // dockerd: always-on, mirrors launchVncDaemon. Launched (and awaited ready)

@@ -216,6 +216,13 @@ export interface CreateBoxOpts {
    */
   carryYes?: boolean;
   /**
+   * Decline the project's `carry:` block without asking — the API equivalent of
+   * the CLI's `--carry skip` / `AGENTBOX_CARRY=skip`. A CLI create runs the gate
+   * on the host and posts its ANSWER here; without this the hub would re-ask a
+   * `required` prompt with nobody to answer it and refuse the create.
+   */
+  carrySkip?: boolean;
+  /**
    * Re-open a carry approval this project already gave — the API equivalent of
    * `--carry ask`. A standing approval is otherwise invisible to a GUI client,
    * which would leave no way to review or withdraw permission to copy host

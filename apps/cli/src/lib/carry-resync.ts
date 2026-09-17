@@ -14,6 +14,13 @@ export interface ResyncCarryResult {
   recopied: number;
   /** Carry declarations not previously approved — skipped (need a fresh create to approve). */
   skippedNew: number;
+  /**
+   * Approved entries whose re-copy FAILED (permission, write, mode — never a
+   * missing optional source). Returned rather than only logged: the log here
+   * goes to a transient spinner line, so a silent failure left the box holding a
+   * stale version of a file the user had already approved.
+   */
+  failures: string[];
 }
 
 /**
@@ -33,10 +40,10 @@ export async function resyncCarryFiles(args: {
 }): Promise<ResyncCarryResult> {
   const log = args.onLog ?? (() => {});
   const prior = args.box.carry?.entries ?? [];
-  if (prior.length === 0) return { recopied: 0, skippedNew: 0 };
+  if (prior.length === 0) return { recopied: 0, skippedNew: 0, failures: [] };
 
   const items = await loadCarrySection(join(args.projectRoot, 'agentbox.yaml'));
-  if (items.length === 0) return { recopied: 0, skippedNew: 0 };
+  if (items.length === 0) return { recopied: 0, skippedNew: 0, failures: [] };
 
   // Resolve (incl. safety checks). On a hard resolver error we skip resync
   // rather than block the box start — the create-time gate is the gating point.
@@ -47,7 +54,7 @@ export async function resyncCarryFiles(args: {
   });
   if (resolved.errors.length > 0) {
     log(`carry: resync skipped (resolve errors: ${resolved.errors.length})`);
-    return { recopied: 0, skippedNew: 0 };
+    return { recopied: 0, skippedNew: 0, failures: [] };
   }
 
   const priorByDest = new Map(prior.map((e) => [e.dest, e]));
@@ -69,7 +76,7 @@ export async function resyncCarryFiles(args: {
       `carry: ${String(skippedNew)} new entry/entries not applied on resync — recreate the box to approve`,
     );
   }
-  if (changed.length === 0) return { recopied: 0, skippedNew };
+  if (changed.length === 0) return { recopied: 0, skippedNew, failures: [] };
 
   const result = await copyCarryPathsToBox({
     container: args.box.container,
@@ -89,5 +96,5 @@ export async function resyncCarryFiles(args: {
   if (result.applied.length > 0) {
     log(`carry: re-copied ${String(result.applied.length)} changed file(s)`);
   }
-  return { recopied: result.applied.length, skippedNew };
+  return { recopied: result.applied.length, skippedNew, failures: result.errors };
 }

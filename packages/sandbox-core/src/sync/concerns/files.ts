@@ -135,3 +135,29 @@ export function planCarryEntry(entry: ResolvedCarryEntry): CarryPlan | null {
     parentChainNeeded,
   };
 }
+
+/**
+ * One or more approved `carry:` entries could not be copied into the box.
+ *
+ * Raised by a provider's create AFTER the whole list has been attempted, so the
+ * message names every failure rather than only the first — a run that fails on
+ * entry 1 of 5 should still tell you about entries 3 and 4.
+ *
+ * An OPTIONAL entry that is simply absent on the host is NOT one of these: the
+ * user asked for it to be skipped when missing, and {@link planCarryEntry}
+ * returns `null` for it. What lands here is a real apply failure — an unreadable
+ * source, a destination the box refused to write, a mode that would not set.
+ * Those used to be a log line inside a create that reported success, which left
+ * the user with a box they believed held their files.
+ */
+export class CarryCopyError extends Error {
+  constructor(public readonly failures: readonly string[]) {
+    super(
+      [
+        `carry: ${String(failures.length)} approved ${failures.length === 1 ? 'entry' : 'entries'} could not be copied into the box:`,
+        ...failures.map((f) => `  - ${f}`),
+      ].join('\n'),
+    );
+    this.name = 'CarryCopyError';
+  }
+}

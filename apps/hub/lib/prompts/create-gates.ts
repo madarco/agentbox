@@ -43,6 +43,14 @@ export interface CreateGateInput {
    */
   carryYes?: boolean;
   /**
+   * Decline the project's `carry:` block without asking — the API equivalent of
+   * the CLI's `--carry skip` / `AGENTBOX_CARRY=skip`. Needed for the same reason
+   * {@link carryYes} is: a CLI that already ran this gate on the host has an
+   * answer, and without a way to say "skipped" the hub would re-ask a `required`
+   * prompt nobody is there to answer and fail the create.
+   */
+  carrySkip?: boolean;
+  /**
    * Model-auth chosen up front, the API equivalent of `--model-auth`. Takes
    * precedence over asking, exactly as the flag does; an empty array means an
    * explicit "none", which is why it is threaded here rather than merged with
@@ -113,6 +121,7 @@ export async function runCreateGates(input: CreateGateInput): Promise<CreateGate
     maxBytes: cfg.effective.box.cpMaxBytes,
     ask: input.ask,
     ...(input.carryYes ? { carryYes: true } : {}),
+    ...(input.carrySkip ? { carrySkip: true } : {}),
     ...(granted ? { approvedGrantId: granted.approvedId } : {}),
     ...(input.carryAsk ? { carryAsk: true } : {}),
     onLog: emit,

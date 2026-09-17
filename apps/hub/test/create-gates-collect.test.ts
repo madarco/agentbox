@@ -123,6 +123,27 @@ describe('runCreateGates in collecting mode', () => {
     expect(res.cancelled).toBe(false);
   });
 
+  it('carrySkip declines without asking - the --carry skip path', async () => {
+    // The bug this guards: a CLI create runs this gate on the host, and a
+    // `--carry skip` / AGENTBOX_CARRY=skip answer had no way to reach the hub.
+    // The hub then re-asked a `required` prompt with no terminal attached and
+    // refused the create with 'Waiting on an answer: "Copy these files into the
+    // box?"'. A skip has to be sayable, not merely absent.
+    const res = await runCreateGates({
+      workspace: root,
+      agent: 'none',
+      ask: () => {
+        throw new Error('must not ask when carrySkip was set');
+      },
+      carrySkip: true,
+    });
+    expect(res.cancelled).toBe(false);
+    expect(res.carry).toEqual([]);
+    // A per-run skip is not a review, so it leaves any standing grant alone.
+    expect(res.carryDeclined).toBeUndefined();
+    expect(res.carryGrantId).toBeUndefined();
+  });
+
   it('asks nothing for a project with no carry block and no borrowing agent', async () => {
     const bare = await mkdtemp(join(tmpdir(), 'agentbox-preflight-bare-'));
     const asker = collectAsker();

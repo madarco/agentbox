@@ -68,7 +68,7 @@ agentbox claude attach <name|n>       # reattach to a specific box
 
 `-i` works on every provider — pass `--provider daytona|hetzner|vercel|e2b` (or set `box.provider`) and the queued job creates a cloud box and pre-starts the seeded agent session detached, same as docker. The host must have valid agent credentials. Extra args after `--` are forwarded to the in-box agent (e.g. `agentbox claude -i "<prompt>" --provider vercel -- --permission-mode=plan`).
 
-`-i` honors the project's `carry:` block: the carry gate runs on the host when you submit (it prompts there, since you're at the terminal), and the approved files ride the queued job and land in the box at create time. Auto-approve non-interactively with `--carry-yes` (or `AGENTBOX_CARRY_YES=1`); skip with `--carry skip` (or `AGENTBOX_CARRY=skip`).
+`-i` honors the project's `carry:` block: the carry gate runs on the host when you submit (it prompts there, since you're at the terminal), and the approved files ride the queued job and land in the box at create time. Auto-approve non-interactively with `--carry-yes` (or `AGENTBOX_CARRY_YES=1`); skip with `--carry skip` (or `AGENTBOX_CARRY=skip`). The same three work on a plain `agentbox create` with no TTY. A file that IS present and approved but cannot be copied (permissions, an unwritable dest) fails the create and names the entry — only `optional: true` sources that are simply absent are skipped silently.
 
 ## Forking the current session into a box
 

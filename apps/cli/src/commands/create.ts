@@ -643,6 +643,12 @@ export const createCommand = new Command('create')
     // wizard so the user sees the host-secrets prompt while still in the
     // pre-create phase. Cancel aborts; skip proceeds with no carry payload.
     let carryEntries: import('@agentbox/core').ResolvedCarryEntry[] = [];
+    // The gate's verdict, forwarded to the hub below. The hub runs the SAME gate
+    // before it queues the job, so without the answer this machine just produced
+    // it would re-ask a `required` prompt that no terminal is attached to — which
+    // is how `--carry-yes` / `AGENTBOX_CARRY_YES=1` / `--carry skip` all died on
+    // "Waiting on an answer: Copy these files into the box?".
+    let carryApproved = true;
     try {
       const gate = await runCarryGate({
         projectRoot,
@@ -659,6 +665,7 @@ export const createCommand = new Command('create')
         process.exit(0);
       }
       if (gate.decision === 'approve') carryEntries = gate.entries;
+      else carryApproved = false;
     } catch (err) {
       log.error(err instanceof Error ? err.message : String(err));
       cmdLog.close();
@@ -832,9 +839,17 @@ export const createCommand = new Command('create')
           imageRegistry: cfg.effective.box.imageRegistry,
           gitPushMode: cfg.effective.git.pushMode,
           remoteHost,
-          // carry rides to the worker on THIS machine (same host), which reads the
-          // approved host files at box-create time.
+          // The resolved list, for a worker on THIS machine to read the approved
+          // host files with. NOTE: the hub re-resolves `agentbox.yaml`'s block
+          // server-side and its answer wins over this echo, so entries that only
+          // exist here — the `--dangerously-with-credentials` git credentials
+          // added below the gate — do not currently survive a hub-routed create.
           carry: carryEntries,
+          // The ANSWER, which is ours to give: the hub runs the same gate before
+          // queuing, and the decision was made here, in front of the human (or by
+          // a flag they set). Sending it is what stops the hub asking a second
+          // time with no terminal attached.
+          ...(carryApproved ? { carryYes: true } : { carrySkip: true }),
         },
       });
       cmdLog.write(`enqueued: job ${jobId}`);

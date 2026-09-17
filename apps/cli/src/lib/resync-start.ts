@@ -1,3 +1,4 @@
+import { log } from '@clack/prompts';
 import type { BoxRecord } from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
 import { resyncCarryFiles } from './carry-resync.js';
@@ -29,7 +30,16 @@ export async function maybeResyncWorkspace(args: {
   // get workspace resync only. Gate so a cloud box with approved carry entries
   // doesn't hit docker's copyCarryPathsToBox.
   if ((args.box.provider ?? 'docker') === 'docker') {
-    await resyncCarryFiles({ box: args.box, projectRoot: args.projectRoot, onLog });
+    const carry = await resyncCarryFiles({
+      box: args.box,
+      projectRoot: args.projectRoot,
+      onLog,
+    });
+    // A start is not failed over a stale carry file — the box is already up and
+    // the agent is about to run — but the miss has to be SEEN. `onLog` only
+    // repaints the spinner, so these would otherwise vanish the moment the next
+    // line landed.
+    for (const failure of carry.failures) log.warn(`carry: ${failure}`);
   }
   return buildResyncWarning(result);
 }

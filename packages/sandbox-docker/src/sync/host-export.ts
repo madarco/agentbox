@@ -741,7 +741,9 @@ function carryRelExcluded(relPath: string, patterns: string[]): boolean {
  *
  * `missing` entries (optional + absent on host) are silently skipped.
  * Per-entry failures are recorded in `errors` and the function returns rather
- * than throwing — the box stays usable; the caller logs the misses.
+ * than throwing, so EVERY entry is attempted and the caller can report them
+ * together. They are not tolerable, though: `create` turns a non-empty `errors`
+ * into a `CarryCopyError` and fails the create.
  */
 export async function copyCarryPathsToBox(opts: CopyCarryOptions): Promise<CopyCarryResult> {
   const log = opts.onLog ?? (() => {});

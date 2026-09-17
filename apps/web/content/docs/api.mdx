@@ -239,8 +239,8 @@ session's first user turn when the hub can read the agent's store.
 What happened in a workspace, from an append-only log every mutation writes to — task, manager, box,
 push and pull-request events — plus the rows that are true right now.
 
-| Endpoint                        | Description                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint                        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /workspaces/{id}/timeline` | `{ items, live, summary?, github }`, items newest first. `?before=<iso>&limit=` (default 100, max 500) pages back; `?since=<iso>` adds `summary: { since, merged, additions, deletions, tasksDone, awaiting }` and does not filter the items. `?sync=0` skips starting the background GitHub PR sync (`github` reports the last one). `?managerId=` narrows `items`, `live` and `summary` to one manager session: the rows it stamped, plus the rows on a box it owns (most box, push and PR rows carry no `managerId` of their own). An unknown id reads as an empty timeline, not an error. |
 
 An event is `{ id, at, type, actor, managerId?, turn?, prompt?, boxId?, boxName?, agent?, branch?,
@@ -429,6 +429,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/jso
 ```
 
 Once a project's `carry:` list is approved it stops being asked at all — the approval is remembered host-side (see [carry](/docs/agentbox-yaml#carry)), so the preflight returns no `carry` prompt until the list changes. Send `carryAsk: true` to show it again for a granted list; answering **Skip** or **Cancel** on the create that follows withdraws the standing approval.
+
+A client that already holds the answer can skip the two-step conversation and post the **decision** instead of an answer list: `opts.carryYes` approves the block, `opts.carrySkip` declines it. Both are per-run and leave no standing grant, which makes them the API twins of the CLI's `--carry-yes` and `--carry skip` — and the way a scripted create gets through with no terminal to prompt at.
 
 A `PromptRequest` has two halves. The generic one — `kind` (`confirm` /
 `select` / `text`), `title`, `body`, `choices` — is enough to render and answer
