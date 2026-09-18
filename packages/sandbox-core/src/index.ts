@@ -38,7 +38,12 @@ export {
   type SshAliasOptions,
   type SshTarget,
 } from './ssh-config.js';
-export { EXPOSED_HUB_PROFILE, buildExposedHubEnv, parseEnvFileBody } from './hub-expose.js';
+export {
+  EXPOSED_HUB_PROFILE,
+  buildExposedHubEnv,
+  parseEnvFileBody,
+  scrubControlPlaneHubEnv,
+} from './hub-expose.js';
 export {
   resolveCloudSshTarget,
   ensureCloudSshAlias,

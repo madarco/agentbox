@@ -6,7 +6,12 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { scrubAgentSessionEnv } from './agent-session-env.js';
-import { buildExposedHubEnv, EXPOSED_HUB_PROFILE, parseEnvFileBody } from './hub-expose.js';
+import {
+  buildExposedHubEnv,
+  EXPOSED_HUB_PROFILE,
+  parseEnvFileBody,
+  scrubControlPlaneHubEnv,
+} from './hub-expose.js';
 import { controlPlaneDeployPath, type ControlPlaneDeployRecord } from './ssh-config.js';
 import { resolveStagedRuntimeRoot, RUNTIME_ROOT_ENV } from './runtime-root.js';
 import { isValidRelayPort, relayPort, setRelayPort } from './relay-port.js';
@@ -384,8 +389,9 @@ async function spawnHub(
     stdio: ['ignore', logFd, logFd],
     env: {
       // A hub started from inside an agent session must not pass that session's
-      // identity to the managers it runs.
-      ...scrubAgentSessionEnv(process.env),
+      // identity to the managers it runs, and a hub on a machine with a control
+      // box configured must not inherit THAT box's profile and credentials.
+      ...scrubControlPlaneHubEnv(scrubAgentSessionEnv(process.env)),
       // The staged hub is a production Next build; force production so server.ts
       // takes the standalone path (dev mode would load webpack, which the
       // standalone build prunes).

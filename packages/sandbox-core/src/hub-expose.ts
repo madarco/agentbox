@@ -66,3 +66,32 @@ export function buildExposedHubEnv(
   }
   return out;
 }
+
+/**
+ * Env keys that decide a hub's OWN identity: the profile it serves, whether it
+ * demands a password login, and the credentials that login checks.
+ *
+ * `agentbox create` merges the whole of `control-plane.env` into `process.env`
+ * (the provider registry needs the plane's admin token and App creds from it),
+ * so on a machine with a control box configured these keys are ambient — and a
+ * hub spawned from that process would come up in the DEPLOYED box's profile,
+ * rejecting this machine's own `~/.agentbox/hub/token`. An exposed hub gets them
+ * back from {@link buildExposedHubEnv}, which is applied after the scrub.
+ */
+const CONTROL_PLANE_HUB_IDENTITY_ENV = [
+  'AGENTBOX_HUB_PROFILE',
+  'AGENTBOX_HUB_AUTH',
+  'AGENTBOX_HUB_API_KEY',
+  'AGENTBOX_HUB_PUBLIC_URL',
+  'AGENTBOX_HUB_ADMIN_CIDR',
+  'BETTER_AUTH_SECRET',
+  'AGENTBOX_HUB_ADMIN_EMAIL',
+  'AGENTBOX_HUB_ADMIN_PASSWORD',
+] as const;
+
+/** `env` without the control box's identity keys (see the constant's note). */
+export function scrubControlPlaneHubEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const key of CONTROL_PLANE_HUB_IDENTITY_ENV) delete out[key];
+  return out;
+}
