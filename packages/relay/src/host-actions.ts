@@ -16,7 +16,13 @@
 
 import { execa } from 'execa';
 import { toHttpsUrl } from './git-pat.js';
-import { recordBoxGhResult, recordBoxGitPush, type BoxTimelineContext } from './timeline-hooks.js';
+import {
+  recordBoxGhResult,
+  recordBoxGitPush,
+  recordBoxPushed,
+  type BoxPushNotice,
+  type BoxTimelineContext,
+} from './timeline-hooks.js';
 import { pushedRef, readRefTip, type PushStatInput } from './workspaces/push-stat.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -401,6 +407,19 @@ export async function executeCloudAction(
       }
       return result;
     });
+  }
+  if (action.method === 'git.pushed') {
+    // A push the box made with its own credentials, reported so the timeline
+    // gets its row. It executes nothing here (see `recordBoxPushed`), so it is
+    // ungated and always answers 0.
+    const ctx = (await cloudTimelineContext(deps)) ?? {
+      boxId: deps.boxId,
+      ...(deps.boxName ? { boxName: deps.boxName } : {}),
+      hostPath: '',
+      ...(deps.originUrl ? { originUrl: deps.originUrl } : {}),
+    };
+    await recordBoxPushed(ctx, (action.params as BoxPushNotice | undefined) ?? {});
+    return { exitCode: 0, stdout: '', stderr: '' };
   }
   if (action.method === 'cp.toHost' || action.method === 'cp.fromHost') {
     return runCpRpc(action, deps);

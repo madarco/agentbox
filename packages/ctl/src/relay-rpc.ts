@@ -27,6 +27,12 @@ export interface RelayRpcResult {
 export interface PostRpcOptions {
   /** Override label used in error prefixes (default: 'agentbox-ctl rpc'). */
   errorPrefix?: string;
+  /**
+   * Write nothing to stderr, whatever goes wrong. For a call whose failure is
+   * not the user's problem — a best-effort notification sent after the command
+   * it reports on has already succeeded.
+   */
+  quiet?: boolean;
 }
 
 export interface PostRpcOutcome<TResult> {
@@ -51,10 +57,13 @@ interface RelayTarget {
 }
 
 /** Resolve the relay endpoint from env or the 0600 relay.env file, or null (after writing the error). */
-function resolveRelayTarget(prefix: string): RelayTarget | null {
+function resolveRelayTarget(prefix: string, quiet = false): RelayTarget | null {
+  const warn = (line: string): void => {
+    if (!quiet) process.stderr.write(line);
+  };
   const { url: urlStr, token } = resolveRelayEnv();
   if (!urlStr || !token) {
-    process.stderr.write(
+    warn(
       `${prefix}: AGENTBOX_RELAY_URL / AGENTBOX_RELAY_TOKEN not set (and ${relayEnvFilePath()} absent); no relay configured for this box.\n`,
     );
     return null;
@@ -63,7 +72,7 @@ function resolveRelayTarget(prefix: string): RelayTarget | null {
   try {
     url = new URL(urlStr);
   } catch {
-    process.stderr.write(`${prefix}: invalid AGENTBOX_RELAY_URL: ${urlStr}\n`);
+    warn(`${prefix}: invalid AGENTBOX_RELAY_URL: ${urlStr}\n`);
     return null;
   }
   const isHttps = url.protocol === 'https:';
@@ -93,7 +102,7 @@ export function postRpc<TParams>(
   opts: PostRpcOptions = {},
 ): Promise<PostRpcOutcome<RelayRpcResult>> {
   const prefix = opts.errorPrefix ?? 'agentbox-ctl rpc';
-  const target = resolveRelayTarget(prefix);
+  const target = resolveRelayTarget(prefix, opts.quiet);
   if (!target) return Promise.resolve({ status: 0, parsed: null, raw: '', internalExitCode: 65 });
 
   const body = JSON.stringify({ method, params });
@@ -122,7 +131,7 @@ export function postRpc<TParams>(
       },
     );
     req.on('error', (err) => {
-      process.stderr.write(`${prefix}: ${String(err.message ?? err)}\n`);
+      if (!opts.quiet) process.stderr.write(`${prefix}: ${String(err.message ?? err)}\n`);
       resolve({ status: 0, parsed: null, raw: '', internalExitCode: 126 });
     });
     req.write(body);

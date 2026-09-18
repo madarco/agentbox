@@ -1,4 +1,9 @@
-import { recordBoxGhResult, recordBoxGitPush } from './timeline-hooks.js';
+import {
+  recordBoxGhResult,
+  recordBoxGitPush,
+  recordBoxPushed,
+  type BoxPushNotice,
+} from './timeline-hooks.js';
 import { pushedRef, readRefTip } from './workspaces/push-stat.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -959,6 +964,29 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           stdout: JSON.stringify(buildAgentDescriptors({ boxAgents: registrationAgents(reg) })),
           stderr: '',
         });
+        return;
+      }
+      if (body.method === 'git.pushed') {
+        // A REPORT, not a push: the box pushed with its own credentials (a
+        // leased control-plane token, or `git.pushMode=direct`), so it never
+        // reached the executor that records every other push. Nothing here runs
+        // git or touches a remote — the host-repo guard on the real push stands
+        // untouched — and it answers 0 either way: a row is not worth failing a
+        // push that already succeeded.
+        const notice = body.params as (GitRpcParams & BoxPushNotice) | undefined;
+        const tree = resolveWorktree(reg, notice?.path ?? '/workspace');
+        const sanctioned = tree?.sanctionedBranch ?? tree?.branch;
+        void recordBoxPushed(
+          {
+            boxId: reg.boxId,
+            boxName: reg.name,
+            hostPath: tree?.hostMainRepo ?? '',
+            ...(sanctioned ? { branch: sanctioned } : {}),
+            ...(reg.originUrl ? { originUrl: reg.originUrl } : {}),
+          },
+          notice ?? {},
+        );
+        send(res, 200, { exitCode: 0, stdout: '', stderr: '' });
         return;
       }
       if (body.method === 'git.push' || body.method === 'git.fetch') {

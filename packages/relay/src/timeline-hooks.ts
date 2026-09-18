@@ -7,7 +7,12 @@ import { readState } from '@agentbox/sandbox-core';
 import { ghRunContext, ghVerbArgv, resolveGhTarget, runHostGh } from './gh.js';
 import type { QueueJob } from './queue.js';
 import { managerIdForTarget } from './workspaces/manager.js';
-import { pushLineStat, type PushStatInput } from './workspaces/push-stat.js';
+import {
+  boxPushStat,
+  pushLineStat,
+  type PushLineStat,
+  type PushStatInput,
+} from './workspaces/push-stat.js';
 import { readTasks } from './workspaces/task-store.js';
 import { GH_PR_JSON_FIELDS, parsePrUrl, prTimelineEvents } from './workspaces/timeline-pr.js';
 import type { GhPrJson } from './workspaces/timeline-pr.js';
@@ -49,6 +54,29 @@ export interface GitPushOrigin {
 }
 
 /**
+ * The +/- lines of a push: off the host repo when this machine has one, else
+ * from inside the box. A control box only ever has the second.
+ */
+function pushDiff(
+  boxId: string,
+  stat: PushStatInput | undefined,
+  before: string | undefined,
+): Promise<PushLineStat | undefined> {
+  if (stat) return pushLineStat(stat);
+  const inBox = boxPushStat();
+  if (!inBox) return Promise.resolve(undefined);
+  return inBox(boxId, before ? { before } : {}).catch(() => undefined);
+}
+
+/** Extras a caller that is not the push executor itself has to supply. */
+export interface BoxGitPushOptions {
+  /** Dedupe key; a notification the box may retry needs one, an RPC does not. */
+  key?: string;
+  /** The pushed ref's tip before the push, as the BOX knows it. */
+  boxBefore?: string;
+}
+
+/**
  * A push the box itself asked for. A host-initiated one came from the hub's git
  * route (or the CLI through it), which records it with the real caller; a
  * host-only landing publishes nothing and is recorded by that route too.
@@ -57,8 +85,9 @@ export async function recordBoxGitPush(
   ctx: BoxTimelineContext,
   origin: GitPushOrigin,
   result: { exitCode: number },
-  /** Where to read the push's +/- lines; the row has no diff without it. */
+  /** Where to read the push's +/- lines on the host; the box answers without it. */
   stat?: PushStatInput,
+  opts: BoxGitPushOptions = {},
 ): Promise<void> {
   if (result.exitCode !== 0 || origin.hostInitiated || origin.hostOnly) return;
   try {
@@ -67,12 +96,13 @@ export async function recordBoxGitPush(
     const [taskIds, managerId, diff] = await Promise.all([
       boxTaskIds(ws.id, ctx.boxId),
       managerIdForTarget({ boxId: ctx.boxId }, { workspaceId: ws.id }),
-      stat ? pushLineStat(stat) : undefined,
+      pushDiff(ctx.boxId, stat, opts.boxBefore),
     ]);
     await timelineSink().record(ws.id, {
       type: 'git.push',
       actor: 'box',
       boxId: ctx.boxId,
+      ...(opts.key ? { key: opts.key } : {}),
       ...(ctx.boxName ? { boxName: ctx.boxName } : {}),
       ...(ctx.branch ? { branch: ctx.branch } : {}),
       ...(managerId ? { managerId } : {}),
@@ -82,6 +112,46 @@ export async function recordBoxGitPush(
   } catch {
     /* best-effort */
   }
+}
+
+/** What a box reports after a push this host did not run. */
+export interface BoxPushNotice {
+  branch?: string;
+  before?: string;
+  after?: string;
+}
+
+const PUSHED_SHA_RE = /^[0-9a-f]{7,64}$/u;
+const PUSHED_BRANCH_RE = /^[\w][\w./+-]{0,200}$/u;
+
+/**
+ * A push the box made with its OWN credentials — a leased control-plane token,
+ * or `git.pushMode=direct` — reported after the fact so the workspace timeline
+ * still gets its row. Nothing here pushes, publishes or unlocks anything: the
+ * box already did the work, and the host-repo guard that governs a relayed push
+ * is untouched. The key is the resulting tip, so a retried report logs once.
+ */
+export async function recordBoxPushed(
+  ctx: BoxTimelineContext,
+  notice: BoxPushNotice,
+): Promise<void> {
+  const after = notice.after?.trim().toLowerCase();
+  if (!after || !PUSHED_SHA_RE.test(after)) return;
+  const before = notice.before?.trim().toLowerCase();
+  const branch = notice.branch?.trim();
+  await recordBoxGitPush(
+    {
+      ...ctx,
+      ...(branch && PUSHED_BRANCH_RE.test(branch) ? { branch } : {}),
+    },
+    { hostInitiated: false, hostOnly: false },
+    { exitCode: 0 },
+    undefined,
+    {
+      key: `push:${ctx.boxId}:${after}`,
+      ...(before && PUSHED_SHA_RE.test(before) ? { boxBefore: before } : {}),
+    },
+  );
 }
 
 /** Flags of `gh pr merge` that consume the next argv element. */

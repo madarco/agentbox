@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
 import { resolveRemote, type GitRpcParams } from '@agentbox/core';
 import { spawn } from 'node:child_process';
-import { postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
+import { postRpc, postRpcAndExit, postRpcAwait } from '../relay-rpc.js';
 import { buildPrCommand } from './pr-subcommands.js';
 
 /**
@@ -103,6 +103,52 @@ function runRealGit(args: string[], cwd: string): Promise<number> {
   });
 }
 
+/** How long the push waits on its own report before giving up on it. */
+const PUSHED_NOTICE_TIMEOUT_MS = 5000;
+
+/** The branch's remote tip (empty on a first push) and the commit about to become it. */
+async function pushTips(
+  cwd: string,
+  remote: string,
+  branch: string,
+): Promise<{ before: string; after: string }> {
+  const [before, after] = await Promise.all([
+    captureGit(['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`], cwd),
+    captureGit(['rev-parse', 'HEAD'], cwd),
+  ]);
+  return { before, after };
+}
+
+/**
+ * Tell the relay about a push it did not run, so the workspace timeline still
+ * gets its row. A direct or leased push never reaches the relay's push executor,
+ * which is where every other push is recorded. Best-effort and silent: the push
+ * has already succeeded, a box with no relay logs nothing, and the report is
+ * capped so a slow host never holds up the command.
+ */
+async function notifyPushed(
+  opts: CommonOptions,
+  branch: string,
+  tips: { before: string; after: string },
+): Promise<void> {
+  if (!tips.after) return;
+  const params = {
+    path: opts.cwd ?? process.cwd(),
+    branch,
+    ...(tips.before ? { before: tips.before } : {}),
+    after: tips.after,
+  };
+  await Promise.race([
+    postRpc('git.pushed', params, { errorPrefix: 'agentbox-ctl git', quiet: true }).catch(
+      () => undefined,
+    ),
+    new Promise((resolve) => {
+      const t = setTimeout(resolve, PUSHED_NOTICE_TIMEOUT_MS);
+      t.unref?.();
+    }),
+  ]);
+}
+
 /**
  * Direct-mode network op (push/fetch): resolve the remote + current branch
  * locally (the relay isn't involved) and run real git. Returns the git exit
@@ -120,7 +166,11 @@ async function runDirectNetworkOp(
     process.stderr.write('agentbox-ctl git: could not resolve current branch\n');
     return 1;
   }
-  return runRealGit([op, remote, branch, ...extra], cwd);
+  // Read before the push moves the tracking ref, report after it landed.
+  const tips = op === 'push' ? await pushTips(cwd, remote, branch) : undefined;
+  const code = await runRealGit([op, remote, branch, ...extra], cwd);
+  if (code === 0 && tips) await notifyPushed(opts, branch, tips);
+  return code;
 }
 
 /**
@@ -233,15 +283,19 @@ async function leaseAndPush(opts: CommonOptions, extra: string[]): Promise<numbe
     return 1;
   }
   const originalUrl = await captureGit(['remote', 'get-url', remote], cwd);
+  const tips = await pushTips(cwd, remote, branch);
   // Real git, not the PATH shim: the shim intercepts `push` and refuses the
   // positional remote/branch, and a baked box always has the shim first on
   // PATH — spawning bare `git push` here would die (or loop) inside it.
   await runRealGit(['remote', 'set-url', remote, remoteUrl], cwd);
+  let code: number;
   try {
-    return await runRealGit(['push', remote, branch, ...extra], cwd);
+    code = await runRealGit(['push', remote, branch, ...extra], cwd);
   } finally {
     if (originalUrl) await runRealGit(['remote', 'set-url', remote, originalUrl], cwd);
   }
+  if (code === 0) await notifyPushed(opts, branch, tips);
+  return code;
 }
 
 /**
