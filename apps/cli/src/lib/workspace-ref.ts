@@ -104,7 +104,9 @@ export async function resolveWorkspaceAndManager(
     hint = undefined;
   }
   if (hint) {
-    const registered = await registerHostManager(client, hint);
+    // The listing this resolution already fetched: the register call needs it to
+    // decide whether the hub must be sent a folder scan.
+    const registered = await registerHostManager(client, hint, undefined, { workspaces });
     if (registered && !picked) {
       return { workspace: registered.workspace, managerId: registered.managerId };
     }

@@ -11,6 +11,7 @@ import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { log } from '@agentbox/cli-kit';
+import { findWorkspaceContaining } from '@agentbox/relay';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 import type { AgentId } from '@agentbox/core';
 import { HubApiError } from '../control-plane/hub-api-client.js';
@@ -311,18 +312,52 @@ export interface RegisteredManager {
 }
 
 /**
+ * Does the hub need this machine's folder scan for a detect at `cwd`?
+ *
+ * ONLY to create a workspace: a detect that lands in a registered one never
+ * reads `projects`, and the scan is a readdir plus a `git remote` per subfolder —
+ * on every `agentbox tasks`/`create` call from inside a session. The folders the
+ * hub refuses to create a workspace at are answered here, without reading disk.
+ */
+async function scanNeededFor(
+  client: Pick<HubApiClient, 'listWorkspaces'>,
+  hint: HostSessionHint,
+  fetched?: HubApiWorkspace[],
+): Promise<boolean> {
+  const cwd = hint.cwd;
+  const home = homedir().replace(/\/+$/, '');
+  if (cwd === '/' || cwd === home || home.startsWith(`${cwd}/`)) return false;
+  try {
+    const workspaces = fetched ?? (await client.listWorkspaces());
+    // This machine's own name, as the hint reports it: a folder mapping under
+    // any other host names a path somewhere else.
+    return findWorkspaceContaining(workspaces, cwd, hint.host || hostname()) === null;
+  } catch {
+    // The listing is only how we AVOID the scan; a hub that cannot answer still
+    // gets the facts it may need to register the folder.
+    return true;
+  }
+}
+
+/**
  * Register the session with the hub. Never fails the caller: a manager is
  * bookkeeping around a create or a task, and losing it is a warning.
+ *
+ * `workspaces` is the listing the caller already fetched, so resolving a
+ * workspace and registering a session share one round trip.
  */
 export async function registerHostManager(
-  client: Pick<HubApiClient, 'detectManager'>,
+  client: Pick<HubApiClient, 'detectManager' | 'listWorkspaces'>,
   hint: HostSessionHint,
   attach?: { boxId: string } | { boxJobId: string },
+  opts: { workspaces?: HubApiWorkspace[] } = {},
 ): Promise<RegisteredManager | undefined> {
   try {
-    // The scan and `$HOME` ride along: when no workspace contains this folder the
-    // hub registers one, and it cannot see (or stat) a folder on this machine.
-    const scan = await scanWorkspace(hint.cwd).catch(() => undefined);
+    // The scan and `$HOME` ride along when no workspace contains this folder: the
+    // hub registers one then, and it cannot see (or stat) a folder on this machine.
+    const scan = (await scanNeededFor(client, hint, opts.workspaces))
+      ? await scanWorkspace(hint.cwd).catch(() => undefined)
+      : undefined;
     const body: HubApiManagerDetect = {
       ...hint,
       ...(attach ?? {}),

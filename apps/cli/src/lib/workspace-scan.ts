@@ -23,15 +23,38 @@ export interface WorkspaceScan {
   projects: ScannedProject[];
 }
 
+/**
+ * How many `git remote get-url` spawns run at once. A folder of forty repos is
+ * an ordinary workspace, and forty concurrent gits are not.
+ */
+const ORIGIN_CONCURRENCY = 8;
+
+/** `Promise.all` with a ceiling, results in input order. */
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length) as R[];
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 /** Scan `root` on this machine: its projects and their origins. */
 export async function scanWorkspace(root: string): Promise<WorkspaceScan> {
   const canonical = await canonicalWorkspaceRoot(root);
   const paths = await scanWorkspaceProjects(canonical);
-  const projects = await Promise.all(
-    paths.map(async (path): Promise<ScannedProject> => {
+  const projects = await mapLimit(
+    paths,
+    ORIGIN_CONCURRENCY,
+    async (path): Promise<ScannedProject> => {
       const repoUrl = await readGitOriginUrl(path).catch(() => undefined);
       return { path, name: basename(path), ...(repoUrl ? { repoUrl } : {}) };
-    }),
+    },
   );
   return { host: hostname(), root: canonical, projects };
 }

@@ -1,7 +1,8 @@
+import { homedir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { pickWorkspace, resolveWorkspaceAndManager } from '../src/lib/workspace-ref.js';
 import type { HostSessionHint } from '../src/lib/host-session.js';
-import type { HubApiWorkspace } from '../src/control-plane/hub-api-client.js';
+import type { HubApiManagerDetect, HubApiWorkspace } from '../src/control-plane/hub-api-client.js';
 
 /** This machine, as the hub records it. Every match here is keyed by it. */
 const HERE = 'laptop';
@@ -93,7 +94,7 @@ describe('resolveWorkspaceAndManager', () => {
   function client(detected?: HubApiWorkspace) {
     return {
       listWorkspaces: vi.fn(async () => all),
-      detectManager: vi.fn(async () => ({
+      detectManager: vi.fn(async (_body: HubApiManagerDetect) => ({
         manager: { id: 'm1' } as never,
         workspace: detected ?? all[0]!,
       })),
@@ -133,6 +134,41 @@ describe('resolveWorkspaceAndManager', () => {
     );
     expect(c.detectManager).toHaveBeenCalled();
     expect(res).toEqual({ workspace: all[0] });
+  });
+
+  // The scan is a readdir plus a `git remote` per subfolder, and the hub reads
+  // `projects` only when it has to CREATE a workspace.
+  it('sends the folder scan only when no registered workspace contains the cwd', async () => {
+    const inside = client();
+    await resolveWorkspaceAndManager(
+      inside,
+      undefined,
+      { register: true },
+      { env: {}, host: HERE, cwd: '/code/store', detect: () => hint('/code/store/pkg') },
+    );
+    expect(inside.detectManager.mock.calls[0]?.[0].projects).toBeUndefined();
+    // Only the listing the resolution already fetched is read.
+    expect(inside.listWorkspaces).toHaveBeenCalledTimes(1);
+
+    const outside = client(ws({ id: 'w9', root: '/new/repo' }));
+    await resolveWorkspaceAndManager(
+      outside,
+      undefined,
+      { register: true },
+      { env: {}, host: HERE, cwd: '/new/repo', detect: () => hint('/new/repo') },
+    );
+    expect(outside.detectManager.mock.calls[0]?.[0].projects).toBeDefined();
+  });
+
+  it('never scans the home folder or its parents, registered or not', async () => {
+    const c = client(ws({ id: 'w9', root: homedir() }));
+    await resolveWorkspaceAndManager(
+      c,
+      undefined,
+      { register: true },
+      { env: {}, host: HERE, cwd: homedir(), detect: () => hint(homedir()) },
+    );
+    expect(c.detectManager.mock.calls[0]?.[0].projects).toBeUndefined();
   });
 
   it('takes the workspace a detect created when none was picked', async () => {
