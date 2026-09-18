@@ -43,6 +43,8 @@ import {
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient } from '../control-plane/with-hub.js';
+import { workspaceHub } from '../lib/workspace-ref.js';
+import { readCurrentBranch } from '@agentbox/relay';
 import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 import { resolveBoxOrExit } from '../box-ref.js';
@@ -254,6 +256,10 @@ async function runCreateViaHubApi(
     ...(opts.build === true ? { build: true } : {}),
     ...(opts.credentialSync === false ? { credentialSync: false } : {}),
   };
+  // The base the box forks from, which the control box cannot read for itself:
+  // it holds no checkout, so an absent `fromBranch` there means "the repo's
+  // default branch", not "the branch you are on".
+  const baseBranch = opts.fromBranch?.trim() || (await readCurrentBranch(projectRoot));
   const outcome = await withHubClient({ url: opts.url }, async (client) => {
     const manager = await registerCurrentSession(client);
     const { jobId } = await client.createBox({
@@ -262,7 +268,7 @@ async function runCreateViaHubApi(
       provider: providerSpecFor(providerName, remoteHost),
       agent: 'none',
       name: opts.name?.trim() || undefined,
-      fromBranch: opts.fromBranch?.trim() || undefined,
+      fromBranch: baseBranch,
       ...(Object.keys(remoteOpts).length > 0 ? { opts: remoteOpts } : {}),
     });
     cmdLog.write(`enqueued on the control box: job ${jobId}`);
@@ -796,15 +802,29 @@ export const createCommand = new Command('create')
     // `agentbox create` builds a PLAIN box (no agent). The worker seeds the box
     // from the local workspace tree, so untracked/.env arrive as they always did.
     const taskIds = opts.tasks ? parseTaskIdsOrExit(opts.tasks) : [];
-    const outcome = await withHubClient({ preferLocal: true }, async (client) => {
+    // The store (tasks, workspaces, managers) is on the configured hub; the box
+    // itself is built by the hub that owns it. With no control box the two are
+    // one hub and this is the same round trip it always was.
+    const store = await withHubClient(workspaceHub(), async (client) => {
       // Validate the task ids BEFORE anything is provisioned: a typo should cost
       // nothing, not leave a box nobody wanted.
       const taskWorkspace =
         taskIds.length > 0 ? await preflightOrExit(client, projectRoot, taskIds) : null;
       // Inside a claude/codex session the box groups under that session.
       const manager = await registerCurrentSession(client);
+      return { taskWorkspace, managerId: manager?.managerId };
+    });
+    // A workspace hub that could not answer only fails the create when tasks were
+    // asked for: a box with no tasks does not need the store to exist.
+    if (!store && taskIds.length > 0) {
+      s.stop('failed');
+      cmdLog.close();
+      process.exit(process.exitCode || 1);
+    }
+    const taskWorkspace = store?.taskWorkspace ?? null;
+    const outcome = await withHubClient({ preferLocal: true }, async (client) => {
       const { jobId } = await client.createBox({
-        ...(manager ? { managerId: manager.managerId } : {}),
+        ...(store?.managerId ? { managerId: store.managerId } : {}),
         projectId: hashProjectPath(projectRoot),
         provider: opts.provider ?? providerName,
         agent: 'none',
@@ -854,9 +874,13 @@ export const createCommand = new Command('create')
       });
       cmdLog.write(`enqueued: job ${jobId}`);
       // The box does not exist yet; the hub promotes this job id to the box id
-      // once the worker records it.
-      if (taskWorkspace)
-        await assignTasksBestEffort(client, taskWorkspace, taskIds, { boxJobId: jobId });
+      // once the worker records it. Assigned on the STORE's hub, which need not
+      // be the one building the box.
+      if (taskWorkspace) {
+        await withHubClient(workspaceHub(), (store2) =>
+          assignTasksBestEffort(store2, taskWorkspace, taskIds, { boxJobId: jobId }),
+        );
+      }
       return await streamJobToCompletion(client, jobId, {
         onLine: (line) => {
           s.message(line);

@@ -31,6 +31,7 @@ import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '@agentbox/cli-kit';
 import type { AgentId } from '@agentbox/core';
 import { registerCurrentSession } from '../lib/host-session.js';
+import { readCurrentBranch } from '@agentbox/relay';
 
 /**
  * Run a hub create under ONE self-updating status line.
@@ -191,7 +192,10 @@ export async function createCloudBoxViaHubAndAdopt(
     provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
-    fromBranch: fromBranch?.trim() || undefined,
+    // The base the box forks from. Defaulted HERE because the control box holds
+    // no checkout: without it the box (and its timeline row) takes the repo's
+    // default branch rather than the branch this machine is on.
+    fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
     ...(persistent !== undefined ? { opts: { persistent } } : {}),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
@@ -306,7 +310,10 @@ export async function enqueueAgentJobViaHub(
     provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
-    fromBranch: fromBranch?.trim() || undefined,
+    // The base the box forks from. Defaulted HERE because the control box holds
+    // no checkout: without it the box (and its timeline row) takes the repo's
+    // default branch rather than the branch this machine is on.
+    fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
     ...(persistent !== undefined ? { opts: { persistent } } : {}),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.

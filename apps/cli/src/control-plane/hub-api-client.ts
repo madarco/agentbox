@@ -641,6 +641,12 @@ export interface HubApiTarget {
    * session this process runs inside; `null` sends none.
    */
   session?: string | null;
+  /**
+   * The `X-AgentBox-Session-Turn` value (`<turn>[;<prompt>]`). Undefined reads
+   * it from this machine's transcript; `null` sends none. Only sent alongside a
+   * session header, which is what gives it a meaning.
+   */
+  sessionTurn?: string | null;
 }
 
 /** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
@@ -671,13 +677,16 @@ export class HubApiClient {
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sessionOverride: string | null | undefined;
+  private readonly sessionTurnOverride: string | null | undefined;
   private sessionValue: Promise<string | undefined> | undefined;
+  private sessionTurnValue: Promise<string | undefined> | undefined;
 
   constructor(target: HubApiTarget) {
     this.base = target.url.replace(/\/+$/, '');
     this.token = target.apiKey;
     this.fetchImpl = target.fetchImpl ?? fetch;
     this.sessionOverride = target.session;
+    this.sessionTurnOverride = target.sessionTurn;
   }
 
   /** Which host agent session is calling, so the hub can stamp its timeline. */
@@ -692,6 +701,21 @@ export class HubApiClient {
     return this.sessionValue;
   }
 
+  /**
+   * Which turn that session is on, read from the transcript on THIS machine. A
+   * hub holding the manager record on another host cannot read it, so the caller
+   * states it; the hub trusts it only for a manager whose store is elsewhere.
+   */
+  private sessionTurnHeader(): Promise<string | undefined> {
+    if (this.sessionTurnOverride !== undefined) {
+      return Promise.resolve(this.sessionTurnOverride ?? undefined);
+    }
+    this.sessionTurnValue ??= import('../lib/host-session.js')
+      .then((m) => m.currentSessionTurnHeader())
+      .catch(() => undefined);
+    return this.sessionTurnValue;
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -699,11 +723,14 @@ export class HubApiClient {
     opts: { timeoutMs?: number } = {},
   ): Promise<T> {
     const session = await this.sessionHeader();
+    // Only with a session: a turn on its own names nobody.
+    const turn = session ? await this.sessionTurnHeader() : undefined;
     const res = await this.fetchImpl(`${this.base}/api/v1${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
         ...(session ? { 'X-AgentBox-Session': session } : {}),
+        ...(turn ? { 'X-AgentBox-Session-Turn': turn } : {}),
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

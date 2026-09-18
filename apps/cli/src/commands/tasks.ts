@@ -12,6 +12,7 @@ import { withHubClient } from '../control-plane/with-hub.js';
 import {
   resolveWorkspace,
   resolveWorkspaceAndManager,
+  workspaceHub,
   WorkspaceRefError,
 } from '../lib/workspace-ref.js';
 import { detectHostSession } from '../lib/host-session.js';
@@ -134,7 +135,7 @@ const addCommand = new Command('add')
         json?: boolean;
       },
     ) => {
-      await withHubClient({ preferLocal: true }, async (client) => {
+      await withHubClient(workspaceHub(), async (client) => {
         // Inside a claude/codex session the task belongs to that session, and a
         // folder with no workspace gets one — registering the session creates it.
         const { workspace: ws, managerId } = await mustResolveWith(() =>
@@ -181,7 +182,7 @@ const listCommand = new Command('list')
         json?: boolean;
       },
     ) => {
-      await withHubClient({ preferLocal: true }, async (client) => {
+      await withHubClient(workspaceHub(), async (client) => {
         const ws = await mustResolve(client, opts.workspace);
         const status = mustStatus(opts.status);
         let managerId = opts.manager;
@@ -229,7 +230,7 @@ const showCommand = new Command('show')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('-j, --json', 'print the task as JSON')
   .action(async (id: string, opts: WorkspaceOpt & { json?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       const task = await client.getTask(ws.id, mustIds([id])[0]!);
       if (opts.json) {
@@ -272,7 +273,7 @@ const updateCommand = new Command('update')
         json?: boolean;
       },
     ) => {
-      await withHubClient({ preferLocal: true }, async (client) => {
+      await withHubClient(workspaceHub(), async (client) => {
         const ws = await mustResolve(client, opts.workspace);
         const status = mustStatus(opts.status);
         // commander turns `--no-project` into `project === false`.
@@ -308,7 +309,7 @@ const doneCommand = new Command('done')
   .argument('<ids...>', 'task ids (e.g. T-11 T-12)')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .action(async (ids: string[], opts: WorkspaceOpt) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       for (const id of mustIds(ids)) {
         const task = await client.completeTask(ws.id, id);
@@ -324,7 +325,7 @@ const assignCommand = new Command('assign')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('--note <text>', 'why: recorded on the workspace timeline next to the assignment')
   .action(async (ids: string[], opts: WorkspaceOpt & { box: string; note?: string }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       const taskIds = mustIds(ids);
       if (opts.box === 'none') {
@@ -349,7 +350,7 @@ const reorderCommand = new Command('reorder')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('--note <text>', 'why the order changed: recorded on the workspace timeline')
   .action(async (ids: string[], opts: WorkspaceOpt & { note?: string }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       const tasks = await client.reorderTasks(
         ws.id,
@@ -367,7 +368,7 @@ const removeCommand = new Command('remove')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('-y, --yes', 'skip the confirmation')
   .action(async (ids: string[], opts: WorkspaceOpt & { yes?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       const taskIds = mustIds(ids);
       if (!opts.yes) {

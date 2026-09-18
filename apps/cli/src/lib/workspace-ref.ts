@@ -17,9 +17,22 @@
 import { hostname } from 'node:os';
 import { findWorkspaceContaining } from '@agentbox/relay';
 import { detectHostSession, registerHostManager, type HostSessionHint } from './host-session.js';
+import type { WithHubOptions } from '../control-plane/with-hub.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
 
 export class WorkspaceRefError extends Error {}
+
+/**
+ * Which hub every workspace / task / manager-registration call goes to: the
+ * CONFIGURED one. The store lives on the hub that owns the boxes, so with a
+ * control box configured it is there and this machine has no copy to read.
+ * Deliberately never `preferLocal` — `resolveHubTarget` already falls back to
+ * the local hub when no control box is configured, which is the whole local
+ * case. One helper so the choice is made once rather than per call site.
+ */
+export function workspaceHub(): WithHubOptions {
+  return {};
+}
 
 /** Pure: apply the resolution order to an already-fetched listing. */
 export function pickWorkspace(

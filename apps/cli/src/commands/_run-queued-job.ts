@@ -42,6 +42,7 @@ import { startOpencodeSession, ensureOpencodeInstalled } from '@agentbox/agent-o
 import { startPiSession, ensurePiInstalled } from '@agentbox/agent-pi';
 import { startCodexSession, ensureCodexInstalled } from '@agentbox/agent-codex';
 import {
+  configureTimelineSinkFromConfig,
   readJob,
   takeQueueLoginCode,
   recordCreateJobTimeline,
@@ -215,6 +216,11 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
   .action(async (id: string) => {
     const log = openCommandLog(`queue-${id}`);
     log.write(`worker pid=${String(process.pid)} starting for job ${id}`);
+    // This process writes its own timeline rows (`box.ready` / `box.failed`), so
+    // it must pick the same sink the hub does: with a control box configured the
+    // store is there, and a row written to this disk has no workspace to land in.
+    const sink = await configureTimelineSinkFromConfig({ warn: (line) => log.write(line) });
+    if (sink.kind === 'remote') log.write('timeline events forward to the control box');
     let job: QueueJob | null = null;
     try {
       job = await readJob(id);

@@ -4,7 +4,8 @@
  *
  * A thin client over the hub's `/api/v1/workspaces`, except the folder SCAN,
  * which runs here: the folders are on this machine, and the hub may be a control
- * box that has none of them. `preferLocal` throughout until routing moves.
+ * box that has none of them. Every call goes to `workspaceHub()` — the
+ * configured hub, which is where the store lives.
  */
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
@@ -12,7 +13,7 @@ import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { scanWorkspace } from '../lib/workspace-scan.js';
-import { resolveWorkspace, WorkspaceRefError } from '../lib/workspace-ref.js';
+import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/workspace-ref.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
 import { renderTable } from '../lib/text-table.js';
 
@@ -60,7 +61,7 @@ const addCommand = new Command('add')
   .option('--name <name>', 'display name (default: the folder basename)')
   .option('-j, --json', 'print the workspace as JSON')
   .action(async (path: string | undefined, opts: GlobalOpts & { name?: string }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       // The scan runs HERE: the hub records the folders under this machine's
       // hostname and never looks for them on its own disk.
       const scan = await scanWorkspace(resolve(path ?? process.cwd()));
@@ -84,7 +85,7 @@ const listCommand = new Command('list')
   .description('List registered workspaces')
   .option('-j, --json', 'print the listing as JSON')
   .action(async (opts: GlobalOpts) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const workspaces = await client.listWorkspaces();
       if (opts.json) {
         process.stdout.write(JSON.stringify(workspaces, null, 2) + '\n');
@@ -115,7 +116,7 @@ const showCommand = new Command('show')
   .argument('[workspace]', 'workspace id or path (default: the one containing the cwd)')
   .option('-j, --json', 'print the workspace as JSON')
   .action(async (ref: string | undefined, opts: GlobalOpts) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, ref);
       if (opts.json) {
         process.stdout.write(JSON.stringify(ws, null, 2) + '\n');
@@ -129,7 +130,7 @@ const rescanCommand = new Command('rescan')
   .description('Re-discover the projects in a workspace folder')
   .argument('[workspace]', 'workspace id or path (default: the one containing the cwd)')
   .action(async (ref: string | undefined) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, ref);
       const root = ws.hosts[hostname()]?.root;
       if (!root) {
@@ -148,7 +149,7 @@ const renameCommand = new Command('rename')
   .argument('<name>', 'new display name')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .action(async (name: string, opts: { workspace?: string }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, opts.workspace);
       printWorkspace(await client.renameWorkspace(ws.id, name));
     });
@@ -161,7 +162,7 @@ const removeCommand = new Command('remove')
   .option('-y, --yes', 'skip the confirmation')
   .option('--force', 'remove it even while one of its managers reads as running')
   .action(async (ref: string | undefined, opts: { yes?: boolean; force?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, ref);
       if (!opts.yes) {
         const open = ws.taskCounts?.open ?? 0;

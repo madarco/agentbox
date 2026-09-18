@@ -80,6 +80,8 @@ import { RESUME_SEED } from '@agentbox/cli-kit';
 import type { AgentCliSpec, AgentCreateContext, AgentPreflight } from '@agentbox/cli-kit';
 import { makeHostServices } from './host-services.js';
 import { detectHostSession, registerHostManager } from '../../lib/host-session.js';
+import { workspaceHub } from '../../lib/workspace-ref.js';
+import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {
@@ -223,7 +225,7 @@ export async function runAgentCreate(
   let taskWorkspaceId: string | null = null;
   if (taskIds.length > 0) {
     taskWorkspaceId =
-      (await withHubClient({ preferLocal: true }, (client) =>
+      (await withHubClient(workspaceHub(), (client) =>
         preflightOrExit(client, projectRoot, taskIds),
       )) ?? null;
     if (!taskWorkspaceId) process.exit(process.exitCode || 1);
@@ -240,7 +242,10 @@ export async function runAgentCreate(
     if (sessionHint) {
       // Quiet: a docker create never needed the hub, so an unreachable one must
       // not print an error, set a failing exit code, or get auto-started here.
-      const registered = await withHubClientQuiet({ preferLocal: true }, (client) =>
+      // The SAME hub the create went to (`workspaceHub()`), so a hub-routed
+      // create that already registered this session here only attaches its box
+      // to that record instead of minting a second manager on another hub.
+      const registered = await withHubClientQuiet(workspaceHub(), (client) =>
         registerHostManager(client, sessionHint, target),
       );
       if (!registered.ok) {
@@ -250,7 +255,7 @@ export async function runAgentCreate(
       }
     }
     if (!taskWorkspaceId) return;
-    await withHubClient({ preferLocal: true }, (client) =>
+    await withHubClient(workspaceHub(), (client) =>
       assignTasksBestEffort(client, taskWorkspaceId!, taskIds, target),
     );
   };
@@ -475,6 +480,9 @@ export async function runAgentCreate(
       onLog: (line) => cmdLog.write(line),
       onClose: () => cmdLog.close(),
     });
+    // The repo the job belongs to: the only workspace key that still joins when
+    // the job's folder is not one the recording hub knows.
+    const queueRepoUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
     const result = await submitQueueJob({
       agent: a.spec.wireId ?? a.id,
       boxName: opts.name ?? '',
@@ -483,7 +491,12 @@ export async function runAgentCreate(
       agentArgs,
       // `persistent` rides RESOLVED, not raw: the worker replays flags, and the
       // agent-surface default is not one of them.
-      createOpts: { ...pickQueueCreateOpts(a, opts), persistent, carry: carryForQueue },
+      createOpts: {
+        ...pickQueueCreateOpts(a, opts),
+        persistent,
+        carry: carryForQueue,
+        ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
+      },
       maxRunningOverride,
       maxWorkingOverride,
       openTerminal: captureOpenTerminalContext(cfg.queue.openIn),

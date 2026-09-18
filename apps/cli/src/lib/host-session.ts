@@ -11,7 +11,7 @@ import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { log } from '@agentbox/cli-kit';
-import { findWorkspaceContaining } from '@agentbox/relay';
+import { findWorkspaceContaining, sessionTurn } from '@agentbox/relay';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 import type { AgentId } from '@agentbox/core';
 import { HubApiError } from '../control-plane/hub-api-client.js';
@@ -404,4 +404,27 @@ export function currentSessionHeader(): string | undefined {
     sessionHeaderMemo = { value: hint ? `${hint.agent}:${hint.sessionId}` : undefined };
   }
   return sessionHeaderMemo.value;
+}
+
+let sessionTurnMemo: Promise<string | undefined> | undefined;
+
+/**
+ * `X-AgentBox-Session-Turn` for this process: `<turn>[;<prompt>]`, where the
+ * prompt is percent-encoded (a header is bytes, a prompt is arbitrary text).
+ *
+ * The turn is read from the agent's transcript, which lives HERE — a control box
+ * that holds the manager record cannot read it, so the PC states it. Memoized
+ * like {@link currentSessionHeader}: one CLI invocation is one turn.
+ */
+export function currentSessionTurnHeader(): Promise<string | undefined> {
+  sessionTurnMemo ??= (async () => {
+    const hint = detectHostSession({ pidless: true });
+    if (!hint) return undefined;
+    const turn = await sessionTurn(hint.agent, hint.cwd, hint.sessionId).catch(() => undefined);
+    if (!turn) return undefined;
+    return turn.prompt
+      ? `${String(turn.turn)};${encodeURIComponent(turn.prompt)}`
+      : String(turn.turn);
+  })();
+  return sessionTurnMemo;
 }
