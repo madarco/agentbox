@@ -29,6 +29,15 @@ let lastIdMs = -1;
 let lastIdSeq = 0;
 
 /**
+ * The suffix is 24 bits, but a millisecond's starting point is only ever 23 of
+ * them: the counter has to climb without wrapping for the whole millisecond, and
+ * a seed in the top half would wrap back to zero — putting the later row FIRST,
+ * which is the bug the counter exists to fix. 8.4M ids in one millisecond is not
+ * reachable, so the `%` below is a belt, not a strap.
+ */
+const ID_SEQ_SEED_MASK = 0x7fffff;
+
+/**
  * Zero-padded so ids sort lexicographically in time order, like the events they
  * name. Within ONE millisecond the suffix counts up, because a reader breaks a
  * timestamp tie with the id and the row written second is the newer one — a
@@ -40,7 +49,7 @@ export function newTimelineEventId(ms: number = Date.now()): string {
   if (ms === lastIdMs) lastIdSeq = (lastIdSeq + 1) % 0x1000000;
   else {
     lastIdMs = ms;
-    lastIdSeq = randomBytes(3).readUIntBE(0, 3);
+    lastIdSeq = randomBytes(3).readUIntBE(0, 3) & ID_SEQ_SEED_MASK;
   }
   return `${ms.toString(36).padStart(9, '0')}-${lastIdSeq.toString(16).padStart(6, '0')}`;
 }
