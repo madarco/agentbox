@@ -66,7 +66,11 @@ import {
   runHostGh,
   type GhExecRpcParams,
 } from './gh.js';
-import { hashRpcParams, type HostInitiatedTokens } from './host-initiated.js';
+import {
+  decideHostInitiatedPush,
+  hashRpcParams,
+  type HostInitiatedTokens,
+} from './host-initiated.js';
 import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc.js';
 import { captureCpCacheEntry, type CpCacheCaptureDeps } from './cp-cache-capture.js';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
@@ -1434,20 +1438,30 @@ async function runGitRpc(
   // one-time token. If a token is *present* but invalid (mutated args,
   // replayed, expired), reject hard: that's an attack signal. Only fall
   // through to the prompt when no token was claimed.
-  const tokenClaimedGit = typeof params.hostInitiated === 'string';
+  //
+  // The token is validated on the BYPASS path too (see
+  // `decideHostInitiatedPush`): it is also the only way this relay knows the
+  // host drove the push, which decides who owns its timeline row. The hard
+  // rejection stays gate-only, so a scratch-branch push that works today cannot
+  // start failing.
   const incomingHashGit = hashRpcParams(params);
-  const hostInitiatedOk =
-    !bypassPushGate &&
-    tokenClaimedGit &&
-    (deps.hostInitiatedTokens?.consume(
-      params.hostInitiated,
-      deps.boxId,
-      'git.push',
-      incomingHashGit,
-    ) ??
-      false);
+  const pushDecision =
+    action.method === 'git.push'
+      ? decideHostInitiatedPush({
+          bypassPushGate,
+          tokenClaimed: typeof params.hostInitiated === 'string',
+          consume: () =>
+            deps.hostInitiatedTokens?.consume(
+              params.hostInitiated,
+              deps.boxId,
+              'git.push',
+              incomingHashGit,
+            ) ?? false,
+        })
+      : { hostInitiated: false, reject: false };
+  const hostInitiatedOk = pushDecision.hostInitiated;
   trace.hostInitiated = hostInitiatedOk;
-  if (action.method === 'git.push' && !bypassPushGate && tokenClaimedGit && !hostInitiatedOk) {
+  if (pushDecision.reject) {
     return {
       exitCode: 10,
       stdout: '',

@@ -103,6 +103,44 @@ function canonicalJson(v: unknown): string {
   return 'null';
 }
 
+/**
+ * The two answers a claimed host-initiated token yields for `git.push`, in the
+ * one place both push paths (`/rpc` in `server.ts`, the cloud executor in
+ * `host-actions.ts`) read them.
+ *
+ * The token is validated even when the push BYPASSES the confirm gate (a
+ * `agentbox/*` scratch branch). The prompt is not the only thing the answer
+ * decides: a consumed token is also how the relay knows the HOST drove the
+ * push, and a push it thinks the box drove gets its own `git.push` timeline row
+ * on top of the one the hub's git route already wrote. Validating on the bypass
+ * path is what collapses those two rows back into one.
+ *
+ * The HARD REJECTION stays behind `!bypassPushGate`, exactly as before: a
+ * claimed-but-invalid token is an attack signal only where a token is what
+ * unlocks the push. On a scratch branch the push was always allowed without
+ * one, so a bad token must not start failing a push that works today — it
+ * simply does not count as host-initiated.
+ */
+export interface HostInitiatedPush {
+  /** The host drove this push: skip the prompt, and let the hub own its timeline row. */
+  hostInitiated: boolean;
+  /** Refuse the RPC outright (exit 10): a token was claimed where one matters, and it did not validate. */
+  reject: boolean;
+}
+
+export function decideHostInitiatedPush(input: {
+  bypassPushGate: boolean;
+  tokenClaimed: boolean;
+  /** Consumes the token; one-shot, so it is called at most once. */
+  consume: () => boolean;
+}): HostInitiatedPush {
+  const hostInitiated = input.tokenClaimed && input.consume();
+  return {
+    hostInitiated,
+    reject: !input.bypassPushGate && input.tokenClaimed && !hostInitiated,
+  };
+}
+
 export class HostInitiatedTokens {
   private readonly store = new Map<string, TokenRecord>();
 

@@ -51,7 +51,7 @@ import {
   runHostGh,
   type GhExecRpcParams,
 } from './gh.js';
-import { hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
+import { decideHostInitiatedPush, hashRpcParams, HostInitiatedTokens } from './host-initiated.js';
 import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './github-app.js';
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
@@ -1073,14 +1073,26 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           // mint one host-side, and a legitimate host call always sends what
           // it minted for). Fall through to the prompt only when no token was
           // claimed — that's the normal agent-initiated path.
-          const tokenClaimed = typeof params?.hostInitiated === 'string';
+          //
+          // The token is validated on the BYPASS path too (see
+          // `decideHostInitiatedPush`): it is also the only way the relay knows
+          // the host drove this push, which decides who owns its timeline row.
+          // The hard rejection stays gate-only, so a scratch-branch push that
+          // works today cannot start failing.
           const incomingHash = hashRpcParams(params);
-          const hostInitiatedOk =
-            !bypassPushGate &&
-            tokenClaimed &&
-            hostInitiatedTokens.consume(params?.hostInitiated, reg.boxId, 'git.push', incomingHash);
-          pushHostInitiated = hostInitiatedOk;
-          if (!bypassPushGate && tokenClaimed && !hostInitiatedOk) {
+          const decision = decideHostInitiatedPush({
+            bypassPushGate,
+            tokenClaimed: typeof params?.hostInitiated === 'string',
+            consume: () =>
+              hostInitiatedTokens.consume(
+                params?.hostInitiated,
+                reg.boxId,
+                'git.push',
+                incomingHash,
+              ),
+          });
+          pushHostInitiated = decision.hostInitiated;
+          if (decision.reject) {
             send(res, 500, {
               exitCode: 10,
               stdout: '',
@@ -1089,7 +1101,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             });
             return;
           }
-          if (!bypassPushGate && !hostInitiatedOk) {
+          if (!bypassPushGate && !decision.hostInitiated) {
             const gate = await gateApproval(gateDeps, reg.boxId, 'git.push', body.params, {
               kind: 'confirm',
               message: `Allow git push from box ${reg.name}?`,
