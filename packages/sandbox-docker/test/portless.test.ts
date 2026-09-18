@@ -37,6 +37,8 @@ import {
   detectPortless,
   ensurePortlessProxy,
   installPortless,
+  installPortlessServiceDetailed,
+  sudoIdentityEnvPrefix,
   portlessAlias,
   portlessBrowserEnv,
   portlessGetUrl,
@@ -302,6 +304,45 @@ describe('installPortless / startPortlessProxy', () => {
   it('startPortlessProxy never throws when execa rejects', async () => {
     portlessResult = new Error('ENOENT');
     expect(await startPortlessProxy()).toBe(false);
+  });
+});
+
+describe('sudoIdentityEnvPrefix', () => {
+  it('names the invoking user so Portless chowns its state back to them', () => {
+    expect(sudoIdentityEnvPrefix({ uid: 501, gid: 20, username: 'jo' })).toBe(
+      "SUDO_USER='jo' SUDO_UID=501 SUDO_GID=20 ",
+    );
+  });
+
+  it('quotes a username the shell would word-split', () => {
+    expect(sudoIdentityEnvPrefix({ uid: 501, gid: 20, username: 'jo smith' })).toBe(
+      "SUDO_USER='jo smith' SUDO_UID=501 SUDO_GID=20 ",
+    );
+  });
+
+  it('says nothing when already root', () => {
+    expect(sudoIdentityEnvPrefix({ uid: 0, gid: 0, username: 'root' })).toBe('');
+  });
+});
+
+describe('installPortlessServiceDetailed', () => {
+  const realPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+  });
+
+  // Without this, Portless resolves uid/gid 0 under `osascript … with administrator
+  // privileges` (no SUDO_* the way sudo sets them), bakes SUDO_UID=0 into the
+  // LaunchDaemon, and the boot proxy chowns the user's ~/.portless to root:wheel.
+  it('carries the invoking user into the elevated install', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    portlessResult = ok();
+    await installPortlessServiceDetailed();
+    const call = execaMock.mock.calls.find((c) => c[0] === 'osascript');
+    const script = String((call?.[1] as string[] | undefined)?.[1] ?? '');
+    const who = sudoIdentityEnvPrefix();
+    expect(script).toContain(`${who}'portless' service install`);
+    expect(script).toContain(`${who}'portless' trust`);
   });
 });
 
