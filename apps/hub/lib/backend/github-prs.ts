@@ -4,20 +4,21 @@
 // polling `gh pr list` for the repos behind the workspace's projects. The dedupe
 // keys are shared with the shim (`prTimelineEvents`), so both paths land once.
 import { stat } from 'node:fs/promises';
+import { hostname as osHostname } from 'node:os';
 import { join } from 'node:path';
 import { hashProjectPath } from '@agentbox/config';
 import { execa } from 'execa';
 import {
   appendTimelineEvent,
-  findWorkspaceContaining,
   GH_PR_JSON_FIELDS,
   isPrReady,
   listWorkspaces,
   prTimelineEvents,
   readTasks,
   readTimeline,
-  scanWorkspaceProjects,
   TIMELINE_RETENTION_MS,
+  workspaceForBox,
+  workspaceProjectRootsOn,
   type GhPrJson,
   type TimelineEvent,
   type WorkspaceRecord,
@@ -91,7 +92,7 @@ interface RepoRef {
 
 export function createGithubPrSync(
   deps: BackendDeps,
-  opts: { now?: () => number; intervalMs?: number } = {},
+  opts: { now?: () => number; intervalMs?: number; hostname?: () => string } = {},
 ): GithubPrSync {
   const gh = deps.ghExec ?? defaultGhExec;
   const now = opts.now ?? Date.now;
@@ -149,7 +150,9 @@ export function createGithubPrSync(
   async function sync(ws: WorkspaceRecord): Promise<GithubSyncStatus> {
     const user = await currentUser();
     if (user === null) return 'unavailable';
-    const roots = await scanWorkspaceProjects(ws.root);
+    // This machine's checkouts of the workspace's projects: `gh` reads the repo
+    // from a folder, so a workspace with no folder here has nothing to sync yet.
+    const roots = workspaceProjectRootsOn(ws, (opts.hostname ?? osHostname)());
     const repos = new Map<string, RepoRef>();
     for (const root of roots) {
       const ref = await repoOf(root);
@@ -163,9 +166,7 @@ export function createGithubPrSync(
       readTasks(ws.id).catch(() => []),
       listWorkspaces(),
     ]);
-    const boxes = facts.filter(
-      (b) => findWorkspaceContaining(workspaces, b.projectRoot)?.id === ws.id,
-    );
+    const boxes = facts.filter((b) => workspaceForBox(workspaces, b)?.id === ws.id);
     const known = new Set<string>();
     for (const b of boxes) for (const br of b.branches) known.add(br);
     for (const ev of events) if (ev.branch) known.add(ev.branch);

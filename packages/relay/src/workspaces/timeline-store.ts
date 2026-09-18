@@ -1,13 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { appendFile, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { withFileLock } from '@agentbox/config';
 import {
   canonicalWorkspaceRoot,
-  findWorkspaceContaining,
   listWorkspaces,
   resolveWorkspaceDir,
   timelineFile,
+  workspaceForBox,
   WORKSPACE_LOCK,
+  type BoxWorkspaceKey,
 } from './workspace-store.js';
 import type { TimelineEvent, TimelineStamp, WorkspaceRecord } from './types.js';
 
@@ -230,25 +232,21 @@ export async function hasTimelineKey(wsId: string, key: string): Promise<boolean
 }
 
 /**
- * The workspace a path belongs to, for writers that only know a box's project
- * root or a create job's folder.
+ * The workspace a box belongs to, for writers that know its origin and/or the
+ * folder its project sits in. A folder is canonicalised first (the records hold
+ * realpath'd roots) and only when it is on this machine — another host's path
+ * means nothing to `realpath` here.
  */
-export async function workspaceForPath(path: string): Promise<WorkspaceRecord | null> {
-  if (!path) return null;
+export async function readWorkspaceForBox(key: BoxWorkspaceKey): Promise<WorkspaceRecord | null> {
   const records = await listWorkspaces();
   if (records.length === 0) return null;
-  return findWorkspaceContaining(records, await canonicalWorkspaceRoot(path));
-}
-
-/** Best-effort append into the workspace containing `path`; nothing when none does. */
-export async function recordTimelineForPath(
-  path: string,
-  input: TimelineEventInput,
-): Promise<TimelineEvent | null> {
-  try {
-    const ws = await workspaceForPath(path);
-    return ws ? await recordTimelineEvent(ws.id, input) : null;
-  } catch {
-    return null;
-  }
+  const local = hostname();
+  const projectRoot =
+    key.projectRoot && key.host === local
+      ? await canonicalWorkspaceRoot(key.projectRoot)
+      : key.projectRoot;
+  return workspaceForBox(records, {
+    ...key,
+    ...(projectRoot ? { projectRoot } : {}),
+  });
 }

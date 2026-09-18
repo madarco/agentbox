@@ -14,6 +14,7 @@ import { log } from '@agentbox/cli-kit';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 import type { AgentId } from '@agentbox/core';
 import { HubApiError } from '../control-plane/hub-api-client.js';
+import { scanWorkspace } from './workspace-scan.js';
 import type {
   HubApiClient,
   HubApiManagerDetect,
@@ -319,7 +320,15 @@ export async function registerHostManager(
   attach?: { boxId: string } | { boxJobId: string },
 ): Promise<RegisteredManager | undefined> {
   try {
-    const body: HubApiManagerDetect = { ...hint, ...(attach ?? {}) };
+    // The scan and `$HOME` ride along: when no workspace contains this folder the
+    // hub registers one, and it cannot see (or stat) a folder on this machine.
+    const scan = await scanWorkspace(hint.cwd).catch(() => undefined);
+    const body: HubApiManagerDetect = {
+      ...hint,
+      ...(attach ?? {}),
+      ...(scan ? { projects: scan.projects } : {}),
+      home: homedir(),
+    };
     const res = await client.detectManager(body);
     return { managerId: res.manager.id, workspace: res.workspace };
   } catch (err) {

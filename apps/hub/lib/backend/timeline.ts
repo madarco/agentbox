@@ -4,7 +4,6 @@
 // which are built at read time and never stored.
 import {
   findManager,
-  findWorkspaceContaining,
   parseShortstat,
   pushedRef,
   pushLineStat,
@@ -18,7 +17,9 @@ import {
   recordTimelineEvent,
   sortTasksByOrder,
   stampFields,
-  workspaceForPath,
+  readWorkspaceForBox,
+  workspaceForBox,
+  workspaceProjectIds,
   type TimelineEvent,
   type TimelineEventInput,
   type TimelinePr,
@@ -449,9 +450,7 @@ export function createTimelineBackend(
         reconcileContext(deps),
       ]);
       const tasks = await readReconciledTasks(wsId, ctx);
-      const boxes = facts.filter(
-        (b) => findWorkspaceContaining(workspaces, b.projectRoot)?.id === wsId,
-      );
+      const boxes = facts.filter((b) => workspaceForBox(workspaces, b)?.id === wsId);
       // Copies: an aggregated item can be the parsed event itself, and lanes are never stored.
       const all = aggregateTimeline(events).map((i) => ({ ...i }));
       const live = [
@@ -562,6 +561,12 @@ export interface BoxTimelineSeams {
   deps: BackendDeps;
   /** A manager's stamp (turn + prompt), only when it is a manager of `wsId`. */
   stampFor: StampFor;
+  /**
+   * Return every task pointing at this box to the backlog. A destroy is the only
+   * evidence a box is gone — reconciliation no longer infers it from a hub's own
+   * inventory — so the one place that knows says so.
+   */
+  unassignBox?(boxId: string): Promise<void>;
 }
 
 /**
@@ -614,13 +619,15 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     const res = await op();
     if (!res.ok) return res;
     inBackground(async () => {
+      // Isolated: a failed unassign must not cost the box its `box.destroyed` row.
+      if (type === 'box.destroyed') await seams.unassignBox?.(id).catch(() => {});
       // A switch is the branch the hub sanctioned after the op: a checkout that
       // left HEAD detached sanctions nothing, and is not one.
       const after = branchSwitch ? await factOf(id) : undefined;
       if (branchSwitch && (!after?.branches[0] || after.branches[0] === previous)) return;
       const fact = after ?? before ?? (type === 'box.destroyed' ? undefined : await factOf(id));
       if (!fact) return;
-      const ws = await workspaceForPath(fact.projectRoot);
+      const ws = await readWorkspaceForBox(fact);
       if (!ws) return;
       const [stamp, base, diff] = await Promise.all([
         stampInWorkspace(meta, ws.id, seams.stampFor),
@@ -653,7 +660,11 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     if (!res.ok || !input.projectId) return res;
     const projectId = input.projectId;
     inBackground(async () => {
-      const ws = (await listWorkspaces()).find((w) => w.projectIds.includes(projectId));
+      const records = await listWorkspaces();
+      // The repo first: a hub-routed create names one and may hold no folder for it.
+      const ws =
+        (input.repoUrl ? workspaceForBox(records, { originUrl: input.repoUrl }) : null) ??
+        records.find((w) => workspaceProjectIds(w).includes(projectId));
       if (!ws) return;
       // The manager a create names is the one the box belongs to, whoever sent it.
       const named = input.managerId

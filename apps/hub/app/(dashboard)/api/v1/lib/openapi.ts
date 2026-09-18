@@ -989,9 +989,9 @@ export function buildOpenApi(): Record<string, unknown> {
         },
         post: {
           tags: ['Workspaces'],
-          summary: 'Register a folder as a workspace',
+          summary: "Register a workspace from the caller's scan",
           description:
-            'Scans the folder and its immediate subfolders for projects (a `.git` or an `agentbox.yaml`) and registers each one, so they appear in `GET /projects` too. Idempotent: re-posting a registered root rescans it.',
+            "The CLIENT scans its own folder (depth 1: a `.git` or an `agentbox.yaml`) and posts what it found; the hub stats nothing, so a hub that holds no checkout of these repos registers the same workspace. Idempotent, matched in order by `id`, then by (`host`, `root`), then by any shared repo — in the last case the caller's folder mapping is merged into the existing record. Project folders on the HUB's own machine are registered in `GET /projects` too.",
           requestBody: {
             required: true,
             content: {
@@ -999,13 +999,40 @@ export function buildOpenApi(): Record<string, unknown> {
                 schema: {
                   type: 'object',
                   properties: {
-                    path: { type: 'string', description: 'Absolute path on the hub host.' },
+                    host: {
+                      type: 'string',
+                      description: '`os.hostname()` of the machine the folders are on.',
+                    },
+                    root: { type: 'string', description: 'Absolute folder path on `host`.' },
                     name: {
                       type: 'string',
                       description: 'Display name (default: folder basename).',
                     },
+                    projects: {
+                      type: 'array',
+                      description: 'The projects found under `root`.',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          path: { type: 'string', description: 'Absolute path on `host`.' },
+                          name: { type: 'string' },
+                          repoUrl: {
+                            type: 'string',
+                            description:
+                              "The project's `origin` remote. Without one the project is host-local: no other machine can join a box to it.",
+                          },
+                        },
+                        required: ['path'],
+                      },
+                    },
+                    id: {
+                      type: 'string',
+                      pattern: '^[0-9a-f]{16}$',
+                      description:
+                        'Refresh this workspace (what `agentbox workspace rescan` sends) instead of matching by folder or repo.',
+                    },
                   },
-                  required: ['path'],
+                  required: ['host', 'root', 'projects'],
                 },
               },
             },
@@ -1116,34 +1143,6 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '400': errorResponse,
-            '401': errorResponse,
-            '404': errorResponse,
-            '503': errorResponse,
-          },
-        },
-      },
-      '/workspaces/{id}/rescan': {
-        post: {
-          tags: ['Workspaces'],
-          summary: 'Re-discover the projects under a workspace',
-          description:
-            'A repo cloned into the folder after registration is invisible until this runs.',
-          parameters: [
-            {
-              name: 'id',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' },
-              description: 'Workspace id.',
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'The workspace',
-              content: {
-                'application/json': { schema: { $ref: '#/components/schemas/Workspace' } },
-              },
-            },
             '401': errorResponse,
             '404': errorResponse,
             '503': errorResponse,
@@ -1651,7 +1650,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Managers'],
           summary: 'Register the host session a CLI call came from',
           description:
-            "Matched by `(agent, sessionId)`, so repeating it refreshes one record (`lastSeenAt`, `pid`). A `managerId` (the caller's `$AGENTBOX_MANAGER`) joins the session to the hub-run manager it runs in. When no workspace contains `cwd`, one is created there, named after the folder — except at `/`, the hub user's home folder or a folder above it, or a `cwd` that is not a folder on this hub, which answer 400. A session already registered stays in its workspace. `boxId` / `boxJobId` attaches a box this session just made in the same call. 201 when a manager or workspace was created, 200 when an existing one was refreshed.",
+            "Matched by `(agent, sessionId)`, so repeating it refreshes one record (`lastSeenAt`, `pid`). A `managerId` (the caller's `$AGENTBOX_MANAGER`) joins the session to the hub-run manager it runs in. When no workspace on `host` contains `cwd`, one is created there from the caller's `projects` scan, named after the folder — except at `/`, the caller's `home`, or a folder above it, which answer 400. The folder is never stat'd: it is on the CALLER's machine. A session already registered stays in its workspace. `boxId` / `boxJobId` attaches a box this session just made in the same call. 201 when a manager or workspace was created, 200 when an existing one was refreshed.",
           requestBody: {
             required: true,
             content: {
@@ -1693,6 +1692,25 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     boxId: { type: 'string' },
                     boxJobId: { type: 'string' },
+                    projects: {
+                      type: 'array',
+                      description:
+                        "The caller's scan of `cwd` (same shape as POST /workspaces), used only when a workspace has to be created here.",
+                      items: {
+                        type: 'object',
+                        properties: {
+                          path: { type: 'string' },
+                          name: { type: 'string' },
+                          repoUrl: { type: 'string' },
+                        },
+                        required: ['path'],
+                      },
+                    },
+                    home: {
+                      type: 'string',
+                      description:
+                        "The caller's `$HOME`: a workspace is refused at it or above it.",
+                    },
                   },
                   required: ['agent', 'sessionId', 'cwd'],
                 },
@@ -3606,18 +3624,62 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           required: ['id', 'projectId', 'status', 'agent'],
         },
-        Workspace: {
+        WorkspaceProject: {
           type: 'object',
           description:
-            'A folder on the hub host grouping one or more projects, owning a task list and a manager.',
+            'One project in a workspace, identified by its REPO: the same repo is a different folder on every machine, and a control box has no folder at all.',
           properties: {
             id: {
               type: 'string',
-              description: 'Hash of the canonical root (same key space as a project id).',
+              description:
+                'Hash of the normalised repo URL, or of `<host>:<folder>` for a project with no remote.',
             },
             name: { type: 'string' },
-            root: { type: 'string', description: 'Absolute folder path on the hub host.' },
-            projectIds: { type: 'array', items: { type: 'string' } },
+            repoUrl: { type: 'string', description: 'The `origin` remote, as the scanner saw it.' },
+          },
+          required: ['id', 'name'],
+        },
+        WorkspaceHost: {
+          type: 'object',
+          description: "One machine's folders for a workspace.",
+          properties: {
+            root: { type: 'string', description: 'Absolute folder path on that machine.' },
+            projectRoots: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description: 'Project id -> absolute path on that machine.',
+            },
+            seenAt: { type: 'string' },
+          },
+          required: ['root', 'projectRoots', 'seenAt'],
+        },
+        Workspace: {
+          type: 'object',
+          description:
+            'One or more projects grouped together, owning a task list and its managers. Machine-independent: `projects` are repos and `hosts` maps each machine that has a checkout to its folders.',
+          properties: {
+            id: { type: 'string', description: 'Random 16 hex; NOT derived from a path.' },
+            name: { type: 'string' },
+            projects: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/WorkspaceProject' },
+            },
+            hosts: {
+              type: 'object',
+              additionalProperties: { $ref: '#/components/schemas/WorkspaceHost' },
+              description: 'Keyed by `os.hostname()` of the machine holding the folders.',
+            },
+            root: {
+              type: 'string',
+              description:
+                "This HUB's own folder for the workspace; absent when it has no checkout.",
+            },
+            projectIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Every project id a client may hold: the repo-keyed ids, plus the path hash of each folder the hub itself has (what a box record and `GET /projects` key by).',
+            },
             taskCounts: {
               type: 'object',
               properties: { open: { type: 'number' }, done: { type: 'number' } },
@@ -3632,7 +3694,7 @@ export function buildOpenApi(): Record<string, unknown> {
             createdAt: { type: 'string' },
             updatedAt: { type: 'string' },
           },
-          required: ['id', 'name', 'root', 'projectIds', 'createdAt', 'updatedAt'],
+          required: ['id', 'name', 'projects', 'hosts', 'projectIds', 'createdAt', 'updatedAt'],
         },
         WorkTaskExternalRef: {
           type: 'object',

@@ -1,14 +1,17 @@
 /**
- * `agentbox workspace` — register and inspect workspaces: a host folder grouping
- * one or more projects, owning a task list and its manager sessions.
+ * `agentbox workspace` — register and inspect workspaces: one or more projects
+ * grouped together, owning a task list and its manager sessions.
  *
- * A thin client over the hub's `/api/v1/workspaces`. `preferLocal` throughout:
- * the folder is on a machine, and the one the user means is theirs.
+ * A thin client over the hub's `/api/v1/workspaces`, except the folder SCAN,
+ * which runs here: the folders are on this machine, and the hub may be a control
+ * box that has none of them. `preferLocal` throughout until routing moves.
  */
+import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
+import { scanWorkspace } from '../lib/workspace-scan.js';
 import { resolveWorkspace, WorkspaceRefError } from '../lib/workspace-ref.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
 import { renderTable } from '../lib/text-table.js';
@@ -31,9 +34,14 @@ async function mustResolve(client: HubApiClient, ref?: string): Promise<HubApiWo
 }
 
 function printWorkspace(ws: HubApiWorkspace): void {
+  const here = ws.hosts[hostname()]?.root;
   log.info(`${ws.name}  (${ws.id})`);
-  process.stdout.write(`  root      ${ws.root}\n`);
-  process.stdout.write(`  projects  ${String(ws.projectIds.length)}\n`);
+  process.stdout.write(`  root      ${here ?? '(no folder on this machine)'}\n`);
+  process.stdout.write(`  projects  ${String(ws.projects.length)}\n`);
+  const elsewhere = Object.entries(ws.hosts).filter(([h]) => h !== hostname());
+  for (const [host, m] of elsewhere) {
+    process.stdout.write(`  on ${host}  ${m.root}\n`);
+  }
   if (ws.taskCounts) {
     process.stdout.write(
       `  tasks     ${String(ws.taskCounts.open)} open, ${String(ws.taskCounts.done)} done\n`,
@@ -53,9 +61,11 @@ const addCommand = new Command('add')
   .option('-j, --json', 'print the workspace as JSON')
   .action(async (path: string | undefined, opts: GlobalOpts & { name?: string }) => {
     await withHubClient({ preferLocal: true }, async (client) => {
-      // The hub resolves the path on ITS machine, so send an absolute one.
+      // The scan runs HERE: the hub records the folders under this machine's
+      // hostname and never looks for them on its own disk.
+      const scan = await scanWorkspace(resolve(path ?? process.cwd()));
       const ws = await client.addWorkspace({
-        path: resolve(path ?? process.cwd()),
+        ...scan,
         ...(opts.name ? { name: opts.name } : {}),
       });
       if (opts.json) {
@@ -63,7 +73,7 @@ const addCommand = new Command('add')
         return;
       }
       printWorkspace(ws);
-      if (ws.projectIds.length === 0) {
+      if (scan.projects.length === 0) {
         log.warn('no projects found in this folder (looked for .git or agentbox.yaml, depth 1)');
       }
     });
@@ -89,12 +99,12 @@ const listCommand = new Command('list')
         workspaces.map((w) => [
           w.id,
           w.name,
-          String(w.projectIds.length),
+          String(w.projects.length),
           w.taskCounts
             ? `${String(w.taskCounts.open)}/${String(w.taskCounts.open + w.taskCounts.done)}`
             : '-',
           w.managers ? `${String(w.managers.running)}/${String(w.managers.total)}` : '-',
-          w.root,
+          w.hosts[hostname()]?.root ?? '-',
         ]),
       );
     });
@@ -121,7 +131,15 @@ const rescanCommand = new Command('rescan')
   .action(async (ref: string | undefined) => {
     await withHubClient({ preferLocal: true }, async (client) => {
       const ws = await mustResolve(client, ref);
-      printWorkspace(await client.rescanWorkspace(ws.id));
+      const root = ws.hosts[hostname()]?.root;
+      if (!root) {
+        log.error(
+          `${ws.name} has no folder on ${hostname()}; rescan it from the machine that has one.`,
+        );
+        process.exit(2);
+      }
+      // A rescan IS an add of the same folder, aimed at this record.
+      printWorkspace(await client.addWorkspace({ ...(await scanWorkspace(root)), id: ws.id }));
     });
   });
 

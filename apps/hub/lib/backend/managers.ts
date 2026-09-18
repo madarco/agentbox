@@ -2,7 +2,6 @@
 // workspace. A manager is either `external` (a claude/codex session in the
 // user's own terminal, registered when the CLI runs inside it) or `hub` (one
 // this hub started in tmux). State lives in @agentbox/relay's workspace store.
-import { stat } from 'node:fs/promises';
 import { homedir, hostname as osHostname } from 'node:os';
 import {
   addWorkspace,
@@ -48,6 +47,7 @@ import {
   UNTITLED_SESSION,
   upsertDetectedManager,
   usesLegacySession,
+  workspaceRootOn,
   RESUMABLE_MANAGER_AGENTS,
   type BackgroundSessionLookup,
   type BackgroundSession,
@@ -312,8 +312,13 @@ export function createManagerBackend(
    * from `/` or the home folder would otherwise claim every project under it,
    * and a caller's path that is not a folder here would register a phantom.
    */
-  async function autoWorkspaceRefusal(cwd: string): Promise<string | null> {
-    const home = await canonicalWorkspaceRoot(homedir());
+  async function autoWorkspaceRefusal(cwd: string, callerHome?: string): Promise<string | null> {
+    // The caller's home when it sent one: the folder is on ITS machine, and this
+    // hub's own `$HOME` says nothing about a session running elsewhere. The
+    // folder itself is never stat'd here for the same reason.
+    const home = callerHome
+      ? callerHome.replace(/\/+$/, '')
+      : await canonicalWorkspaceRoot(homedir());
     const what =
       cwd === '/'
         ? 'is the filesystem root'
@@ -325,8 +330,6 @@ export function createManagerBackend(
     if (what) {
       return `not creating a workspace at ${cwd}: it ${what}. Register the project folder instead: agentbox workspace add <project folder>`;
     }
-    const st = await stat(cwd).catch(() => null);
-    if (!st?.isDirectory()) return `folder does not exist on this hub: ${cwd}`;
     return null;
   }
 
@@ -428,12 +431,16 @@ export function createManagerBackend(
       let ws = known ? await readWorkspace(known.workspaceId) : null;
       let workspaceCreated = false;
       if (!ws) {
-        ws = findWorkspaceContaining(await listWorkspaces(), cwd);
+        ws = findWorkspaceContaining(await listWorkspaces(), cwd, input.host ?? hostname());
         if (!ws) {
-          const refusal = await autoWorkspaceRefusal(cwd);
+          const refusal = await autoWorkspaceRefusal(cwd, input.home);
           if (refusal) return invalid(refusal);
           try {
-            ws = await addWorkspace(cwd);
+            ws = await addWorkspace({
+              host: input.host ?? hostname(),
+              root: cwd,
+              projects: input.projects ?? [],
+            });
             workspaceCreated = true;
           } catch (e) {
             return err(`could not register a workspace at ${cwd}: ${messageOf(e)}`);
@@ -530,13 +537,21 @@ export function createManagerBackend(
           return answer(existing.id);
         }
       }
+      // A manager is a process in the folder, so it can only start where the
+      // folder is. A workspace registered from another machine has none here.
+      const root = workspaceRootOn(ws, hostname());
+      if (!root) {
+        return err(
+          `workspace ${ws.name} has no folder on ${hostname()}; start its manager on the machine that has one`,
+        );
+      }
       const at = new Date().toISOString();
       const manager: ManagerRecord = {
         id: newManagerId(),
         workspaceId: ws.id,
         agent: input.agent,
         kind: 'hub',
-        cwd: ws.root,
+        cwd: root,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         boxIds: [],
         boxJobIds: [],
@@ -651,7 +666,11 @@ export function createManagerBackend(
     async listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsResult | null> {
       const ws = await readWorkspace(wsId);
       if (!ws) return null;
-      return listResumableHostSessions(ws.root, agent ?? 'claude');
+      // The agent's sessions are files in the folder's own store: nothing to
+      // list for a workspace whose folder is on another machine.
+      const root = workspaceRootOn(ws, hostname());
+      if (!root) return { agent: agent ?? 'claude', supported: true, sessions: [] };
+      return listResumableHostSessions(root, agent ?? 'claude');
     },
 
     timelineStamp,

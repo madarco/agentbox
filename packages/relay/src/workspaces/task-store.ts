@@ -306,7 +306,15 @@ export async function reorderTasks(wsId: string, ids: string[]): Promise<WorkTas
   });
 }
 
-/** The live-box facts reconciliation needs, so it stays pure and testable. */
+/**
+ * The live-box facts reconciliation needs, so it stays pure and testable.
+ *
+ * `liveBoxIds` is read by the MANAGER reconciler only. A task's box assignment
+ * is not healed from it: a hub holds the inventory of the boxes IT knows, and a
+ * box created on another machine (a docker box on the PC, with the store on a
+ * control box) is simply absent — unassigning on that would empty the task list
+ * of every box the hub does not run. A destroy says the box is gone.
+ */
 export interface ReconcileContext {
   /** Ids of boxes that exist right now (local records + store registrations). */
   liveBoxIds: Set<string>;
@@ -317,8 +325,13 @@ const FAILED_JOB_STATUSES = new Set(['failed', 'cancelled']);
 
 /**
  * Heal assignments against reality. A task assigned at create time carries a job
- * id until the worker records the box; a task whose box was destroyed must fall
- * back to the backlog instead of pointing at nothing.
+ * id until the worker records the box; the pointer is cleared when that create
+ * explicitly failed.
+ *
+ * A box id is NOT healed here: only an explicit destroy (which unassigns the
+ * box's tasks as it happens) is evidence the box is gone. Absence from this
+ * hub's inventory is not — the box may live on another machine reporting to the
+ * same store.
  *
  * Status is deliberately untouched: a half-finished task whose box went away is
  * still half-finished, and only a human (or the manager) decides otherwise.
@@ -350,19 +363,6 @@ export function reconcileTasks(
         return next;
       }
       return t;
-    }
-    if (t.boxId && !ctx.liveBoxIds.has(t.boxId)) {
-      // A job that already recorded this box id but has not finished is the
-      // create still in flight — the box is not in the registry yet, and
-      // unassigning here would undo the assignment a second later.
-      const pending = ctx.jobs.some(
-        (j) => j.boxId === t.boxId && !FAILED_JOB_STATUSES.has(j.status) && j.status !== 'done',
-      );
-      if (pending) return t;
-      changed = true;
-      const next = { ...t };
-      delete next.boxId;
-      return next;
     }
     return t;
   });

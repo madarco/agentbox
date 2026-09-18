@@ -7,6 +7,7 @@ import type {
 } from './types';
 import type { AgentId } from '@agentbox/core';
 import type {
+  AddWorkspaceInput,
   BoxTaskSummary,
   HostSession,
   ManagerStatus,
@@ -15,6 +16,7 @@ import type {
   TimelineNoteKind,
   TimelinePr,
   TimelineStamp,
+  WorkspaceProjectInput,
   WorkTask,
   WorkTaskExternalRef,
   WorkTaskStatus,
@@ -1193,6 +1195,14 @@ export interface DetectManagerInput {
   /** A box (or create job) this session just made, attached in the same call. */
   boxId?: string;
   boxJobId?: string;
+  /**
+   * The caller's scan of `cwd`, used only when no workspace contains it and one
+   * is created here. The folders are on the caller's machine, so the hub cannot
+   * scan them itself.
+   */
+  projects?: WorkspaceProjectInput[];
+  /** The caller's `$HOME`: the folder rules refuse a workspace at (or above) it. */
+  home?: string;
 }
 
 export interface ManagerFilter {
@@ -1256,9 +1266,11 @@ export interface ManagerBackend {
 export interface WorkspaceBackend {
   listWorkspaces(): Promise<WorkspaceView[]>;
   getWorkspace(id: string): Promise<WorkspaceView | null>;
-  /** Register a folder (absolute, on the hub's machine) and its projects. Idempotent. */
-  addWorkspace(input: { path: string; name?: string }): Promise<WorkspaceResult>;
-  rescanWorkspace(id: string): Promise<WorkspaceResult>;
+  /**
+   * Register (or refresh) a workspace from a scan the CLIENT ran: the folders
+   * are on `input.host`, which need not be this hub's machine. Idempotent.
+   */
+  addWorkspace(input: AddWorkspaceInput): Promise<WorkspaceResult>;
   renameWorkspace(id: string, name: string): Promise<WorkspaceResult>;
   /** Unregister. The folder, its projects and their boxes are untouched. Refused while a manager runs, unless `force`. */
   removeWorkspace(id: string, opts?: { force?: boolean }): Promise<ActionResult>;
@@ -1283,6 +1295,8 @@ export interface WorkspaceBackend {
     meta?: TimelineMeta,
   ): Promise<TasksResult>;
   unassignTasks(wsId: string, ids: string[], meta?: TimelineMeta): Promise<TasksResult>;
+  /** Every task on this box goes back to the backlog (the box was destroyed). */
+  unassignBox(boxId: string): Promise<void>;
   /** `ids` must be an exact permutation of the workspace's tasks. */
   reorderTasks(wsId: string, ids: string[], meta?: TimelineMeta): Promise<TasksResult>;
 

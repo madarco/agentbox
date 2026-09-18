@@ -423,15 +423,43 @@ export interface HubApiHealth {
 // ── workspaces / tasks / manager ──
 
 /** A folder on the hub host grouping one or more projects (`GET /workspaces`). */
+export interface HubApiWorkspaceProject {
+  id: string;
+  name: string;
+  repoUrl?: string;
+}
+
+/** Where one machine keeps a workspace's folders. */
+export interface HubApiWorkspaceHost {
+  root: string;
+  /** Project id -> absolute path on that machine. */
+  projectRoots: Record<string, string>;
+  seenAt: string;
+}
+
 export interface HubApiWorkspace {
   id: string;
   name: string;
-  root: string;
+  projects: HubApiWorkspaceProject[];
+  /** Keyed by hostname; a workspace can be checked out on several machines. */
+  hosts: Record<string, HubApiWorkspaceHost>;
+  /** The HUB's own folder for it; absent when the hub holds no checkout. */
+  root?: string;
   projectIds: string[];
   taskCounts?: { open: number; done: number };
   managers?: { running: number; total: number };
   createdAt: string;
   updatedAt: string;
+}
+
+/** `POST /workspaces`: the scan the client ran on its own machine. */
+export interface HubApiWorkspaceAdd {
+  host: string;
+  root: string;
+  name?: string;
+  projects: { path: string; name?: string; repoUrl?: string }[];
+  /** Refresh this record instead of matching by (host, root) then by repo. */
+  id?: string;
 }
 
 export type HubApiTaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
@@ -532,6 +560,10 @@ export interface HubApiManagerDetect {
   tmuxSession?: string;
   boxId?: string;
   boxJobId?: string;
+  /** This machine's scan of `cwd`, for the workspace the hub may have to create. */
+  projects?: { path: string; name?: string; repoUrl?: string }[];
+  /** This machine's `$HOME`, so the hub refuses a workspace at (or above) it. */
+  home?: string;
 }
 
 /** One event on a workspace timeline (`POST /managers/{id}/notes` answers with it). */
@@ -1201,10 +1233,11 @@ export class HubApiClient {
   }
 
   /**
-   * Register a folder ON THE HUB'S MACHINE as a workspace. The path is resolved
-   * and scanned there, so a remote hub registers ITS folder, not the caller's.
+   * Register a workspace from a scan this machine ran (`scanWorkspace`). The hub
+   * stores the folders under the host that has them and never stats them, so a
+   * remote hub registers the CALLER's folders, not its own.
    */
-  addWorkspace(body: { path: string; name?: string }): Promise<HubApiWorkspace> {
+  addWorkspace(body: HubApiWorkspaceAdd): Promise<HubApiWorkspace> {
     return this.request<HubApiWorkspace>('POST', '/workspaces', body);
   }
 
@@ -1217,10 +1250,6 @@ export class HubApiClient {
     return this.request<HubApiWorkspace>('POST', `/workspaces/${encodeURIComponent(id)}/rename`, {
       name,
     });
-  }
-
-  rescanWorkspace(id: string): Promise<HubApiWorkspace> {
-    return this.request<HubApiWorkspace>('POST', `/workspaces/${encodeURIComponent(id)}/rescan`);
   }
 
   async listTasks(wsId: string, filter: HubApiTaskFilter = {}): Promise<HubApiTask[]> {

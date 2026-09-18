@@ -1047,18 +1047,67 @@ export function isTaskStatus(v: unknown): v is TaskStatusValue {
   return typeof v === 'string' && (TASK_STATUSES as readonly string[]).includes(v);
 }
 
-export interface WorkspaceAddInput {
+export interface WorkspaceProjectInput {
   path: string;
   name?: string;
+  repoUrl?: string;
 }
 
+export interface WorkspaceAddInput {
+  /** `os.hostname()` of the machine that scanned the folders. */
+  host: string;
+  /** Absolute folder on `host`. */
+  root: string;
+  name?: string;
+  projects: WorkspaceProjectInput[];
+  /** Refresh this record, rather than matching by (host, root) then by repo. */
+  id?: string;
+}
+
+const WORKSPACE_ID_RE = /^[0-9a-f]{16}$/;
+
+function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
+  if (v === undefined) return { ok: true, value: [] };
+  if (!Array.isArray(v)) return { ok: false, message: 'projects must be an array' };
+  if (v.length > 200) return { ok: false, message: 'too many projects (max 200)' };
+  const out: WorkspaceProjectInput[] = [];
+  for (const raw of v) {
+    if (!isObject(raw)) return { ok: false, message: 'each project must be an object' };
+    const { path, name, repoUrl } = raw;
+    if (typeof path !== 'string' || !path.startsWith('/') || path.length > 4096) {
+      return { ok: false, message: 'project.path must be an absolute path' };
+    }
+    const parsedName = optionalString(name, 'project.name');
+    if (!parsedName.ok) return parsedName;
+    const parsedRepo = optionalString(repoUrl, 'project.repoUrl');
+    if (!parsedRepo.ok) return parsedRepo;
+    if ((parsedRepo.value?.length ?? 0) > 1024) {
+      return { ok: false, message: 'project.repoUrl too long (max 1024 chars)' };
+    }
+    out.push({
+      path,
+      ...(parsedName.value ? { name: parsedName.value } : {}),
+      ...(parsedRepo.value ? { repoUrl: parsedRepo.value } : {}),
+    });
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * The folders are the CLIENT's: it scans them and posts the facts, so a hub that
+ * holds no checkout (a control box) registers the same workspace. Nothing here
+ * touches the filesystem.
+ */
 export function parseWorkspaceAdd(body: unknown): Parsed<WorkspaceAddInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { path, name } = body;
-  if (typeof path !== 'string' || path.length === 0) {
-    return { ok: false, message: 'path is required (absolute path on the hub host)' };
+  const { host, root, name, projects, id } = body;
+  if (typeof host !== 'string' || host.trim().length === 0 || host.length > 255) {
+    return { ok: false, message: 'host is required (the hostname the folders are on)' };
   }
-  if (!path.startsWith('/')) return { ok: false, message: 'path must be absolute' };
+  if (typeof root !== 'string' || root.length === 0) {
+    return { ok: false, message: 'root is required (absolute folder path on `host`)' };
+  }
+  if (!root.startsWith('/')) return { ok: false, message: 'root must be absolute' };
   const parsedName = optionalString(name, 'name');
   if (!parsedName.ok) return parsedName;
   if (parsedName.value !== undefined && parsedName.value.trim().length === 0) {
@@ -1067,7 +1116,23 @@ export function parseWorkspaceAdd(body: unknown): Parsed<WorkspaceAddInput> {
   if ((parsedName.value?.length ?? 0) > 60) {
     return { ok: false, message: 'name too long (max 60 chars)' };
   }
-  return { ok: true, value: { path, ...(parsedName.value ? { name: parsedName.value } : {}) } };
+  const parsedProjects = parseWorkspaceProjects(projects);
+  if (!parsedProjects.ok) return parsedProjects;
+  const parsedId = optionalString(id, 'id');
+  if (!parsedId.ok) return parsedId;
+  if (parsedId.value !== undefined && !WORKSPACE_ID_RE.test(parsedId.value)) {
+    return { ok: false, message: 'id must be a workspace id (16 hex chars)' };
+  }
+  return {
+    ok: true,
+    value: {
+      host,
+      root,
+      projects: parsedProjects.value,
+      ...(parsedName.value ? { name: parsedName.value } : {}),
+      ...(parsedId.value ? { id: parsedId.value } : {}),
+    },
+  };
 }
 
 export function parseWorkspaceRename(body: unknown): Parsed<{ name: string }> {
@@ -1382,6 +1447,10 @@ export interface ManagerDetectInput {
   tmuxSession?: string;
   boxId?: string;
   boxJobId?: string;
+  /** The caller's scan of `cwd`, for the workspace this may have to create. */
+  projects?: WorkspaceProjectInput[];
+  /** The caller's `$HOME`: a workspace at or above it is refused. */
+  home?: string;
 }
 
 /**
@@ -1397,8 +1466,20 @@ export function parseManagerDetect(
   allowedAgents: readonly string[] = MANAGER_AGENT_NAMES,
 ): Parsed<ManagerDetectInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { agent, sessionId, cwd, pid, host, managerId, boxId, boxJobId, tmuxPane, tmuxSession } =
-    body;
+  const {
+    agent,
+    sessionId,
+    cwd,
+    pid,
+    host,
+    managerId,
+    boxId,
+    boxJobId,
+    tmuxPane,
+    tmuxSession,
+    projects,
+    home,
+  } = body;
   if (tmuxPane !== undefined && (typeof tmuxPane !== 'string' || !/^%\d+$/.test(tmuxPane))) {
     return { ok: false, message: 'tmuxPane must be a tmux pane id like %3' };
   }
@@ -1427,6 +1508,13 @@ export function parseManagerDetect(
   }
   const parsedManager = optionalManagerId(managerId, 'managerId');
   if (!parsedManager.ok) return parsedManager;
+  const parsedProjects = parseWorkspaceProjects(projects);
+  if (!parsedProjects.ok) return parsedProjects;
+  const parsedHome = optionalString(home, 'home');
+  if (!parsedHome.ok) return parsedHome;
+  if (parsedHome.value !== undefined && !parsedHome.value.startsWith('/')) {
+    return { ok: false, message: 'home must be an absolute path' };
+  }
   const parsedBox = optionalString(boxId, 'boxId');
   if (!parsedBox.ok) return parsedBox;
   const parsedJob = optionalString(boxJobId, 'boxJobId');
@@ -1447,6 +1535,8 @@ export function parseManagerDetect(
       ...(typeof tmuxSession === 'string' ? { tmuxSession } : {}),
       ...(parsedBox.value ? { boxId: parsedBox.value } : {}),
       ...(parsedJob.value ? { boxJobId: parsedJob.value } : {}),
+      ...(projects !== undefined ? { projects: parsedProjects.value } : {}),
+      ...(parsedHome.value ? { home: parsedHome.value } : {}),
     },
   };
 }

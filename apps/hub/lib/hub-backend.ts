@@ -2103,6 +2103,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       listBoxes: () => listBoxes(),
       readBoxRecord: async (id) => (await readState()).boxes.find((b) => b.id === id),
       providerForBox,
+      // The repo behind a box, for the workspace join. A host checkout answers
+      // from `git remote`; a box this hub only drives through its registration
+      // (no clone here) answers from what the registration recorded.
+      async originUrlOf(box) {
+        const root = box.projectRoot;
+        if (root && !isHubWorkerClone(root) && existsSync(root)) {
+          const origin = await hostOriginOf(root);
+          if (origin) return origin;
+        }
+        const reg = await handle.store.getBox(box.id).catch(() => undefined);
+        return reg?.originUrl ?? undefined;
+      },
     }),
     pendingApprovalBoxIds: () => handle.prompts.all().map((p) => p.boxId),
     async projectBranch(projectId) {
@@ -3913,5 +3925,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return withBoxTimeline(hub, {
     deps: backendDeps,
     stampFor: (ref, wsId) => managers.timelineStamp(ref, wsId),
+    unassignBox: (boxId) => workspaces.unassignBox(boxId),
   });
 }

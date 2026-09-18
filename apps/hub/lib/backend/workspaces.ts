@@ -1,9 +1,8 @@
 // The workspace domain: workspaces and their tasks (managers are their own
 // slice, `managers.ts`). Everything here reaches state through @agentbox/relay's
 // workspace store; nothing here knows about providers, containers or git.
-import { existsSync } from 'node:fs';
+import { hostname as osHostname } from 'node:os';
 import { isAbsolute } from 'node:path';
-import { statSync } from 'node:fs';
 import {
   addTask,
   addWorkspace,
@@ -22,12 +21,13 @@ import {
   removeWorkspace,
   renameWorkspace,
   reorderTasks,
-  rescanWorkspace,
   setTaskDone,
   stampFields,
   taskSummaryForBox,
   toWorkspaceView,
   unassignTasks,
+  workspaceProjectIds,
+  type AddWorkspaceInput,
   type BoxTaskSummary,
   type ManagerProbe,
   type ReconcileContext,
@@ -92,7 +92,7 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
   ): Promise<WorkspaceView | null> {
     if (!rec) return null;
     const [tasks, managers] = await Promise.all([tasksOf(rec.id, ctx), managerCounts(rec.id)]);
-    const base: Workspace = toWorkspaceView(rec);
+    const base: Workspace = toWorkspaceView(rec, (deps.hostname ?? osHostname)());
     return {
       ...base,
       taskCounts: {
@@ -147,6 +147,23 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
     return (await readTasks(wsId).catch(() => [])).find((t) => t.id === taskId);
   }
 
+  /** Unassign, log it, and fan out — shared by the route and by a box's destroy. */
+  async function dropAssignment(
+    wsId: string,
+    ids: string[],
+    meta?: TimelineMeta,
+  ): Promise<WorkTask[]> {
+    const tasks = await unassignTasks(wsId, ids);
+    await record(wsId, {
+      type: 'task.unassigned',
+      ...stampFields(meta?.stamp),
+      taskIds: tasks.map((t) => t.id),
+      ...(tasks.length === 1 ? { task: { id: tasks[0]!.id, title: tasks[0]!.title } } : {}),
+    });
+    deps.notify();
+    return tasks;
+  }
+
   /** A box id must exist; a job id must be a create job that has not failed. */
   async function validateTarget(target: AssignTarget): Promise<string | null> {
     if ('boxId' in target) {
@@ -172,28 +189,23 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
       return viewOf(await readWorkspace(id));
     },
 
-    async addWorkspace(input: { path: string; name?: string }): Promise<WorkspaceResult> {
-      const path = input.path;
-      if (!isAbsolute(path)) return err('an absolute path is required');
-      if (!existsSync(path) || !statSync(path).isDirectory()) {
-        return err(`not a directory: ${path}`);
-      }
+    /**
+     * The folders are on the CLIENT's machine, not necessarily this hub's: the
+     * scan runs there and arrives as facts. Nothing here stats a path — a
+     * control box holds no checkout of the repos it owns boxes for.
+     */
+    async addWorkspace(input: AddWorkspaceInput): Promise<WorkspaceResult> {
+      if (!isAbsolute(input.root)) return err('an absolute path is required');
+      const bad = input.projects.find((p) => !isAbsolute(p.path));
+      if (bad) return err(`project paths must be absolute: ${bad.path}`);
       try {
-        const rec = await addWorkspace(path, input.name ? { name: input.name } : {});
+        const rec = await addWorkspace(input);
         deps.notify();
         const view = await viewOf(rec);
         return view ? { ok: true, workspace: view } : err('workspace was not written');
       } catch (e) {
         return err(e instanceof Error ? e.message : String(e));
       }
-    },
-
-    async rescanWorkspace(id: string): Promise<WorkspaceResult> {
-      const rec = await rescanWorkspace(id);
-      if (!rec) return unknownWorkspace(id);
-      deps.notify();
-      const view = await viewOf(rec);
-      return view ? { ok: true, workspace: view } : unknownWorkspace(id);
     },
 
     async renameWorkspace(id: string, name: string): Promise<WorkspaceResult> {
@@ -372,17 +384,23 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
     async unassignTasks(wsId: string, ids: string[], meta?: TimelineMeta): Promise<TasksResult> {
       if (!(await readWorkspace(wsId))) return unknownWorkspace(wsId);
       try {
-        const tasks = await unassignTasks(wsId, ids);
-        await record(wsId, {
-          type: 'task.unassigned',
-          ...stampFields(meta?.stamp),
-          taskIds: tasks.map((t) => t.id),
-          ...(tasks.length === 1 ? { task: { id: tasks[0]!.id, title: tasks[0]!.title } } : {}),
-        });
-        deps.notify();
-        return { ok: true, tasks };
+        return { ok: true, tasks: await dropAssignment(wsId, ids, meta) };
       } catch (e) {
         return err(e instanceof Error ? e.message : String(e));
+      }
+    },
+
+    /**
+     * A destroyed box's tasks go back to the backlog. Reconciliation cannot do
+     * this from a box listing any more — a box absent from THIS hub's inventory
+     * may simply live on another machine — so the destroy says it explicitly.
+     */
+    async unassignBox(boxId: string): Promise<void> {
+      for (const ws of await listWorkspaces()) {
+        const ids = (await readTasks(ws.id).catch(() => []))
+          .filter((t) => t.boxId === boxId)
+          .map((t) => t.id);
+        if (ids.length) await dropAssignment(ws.id, ids);
       }
     },
 
@@ -403,8 +421,9 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
 
     async workspaceIdByProject(): Promise<Map<string, string>> {
       const out = new Map<string, string>();
+      const host = (deps.hostname ?? osHostname)();
       for (const ws of await listWorkspaces()) {
-        for (const pid of ws.projectIds) out.set(pid, ws.id);
+        for (const pid of workspaceProjectIds(ws, host)) out.set(pid, ws.id);
       }
       return out;
     },

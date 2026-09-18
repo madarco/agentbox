@@ -1,6 +1,8 @@
-// GET  /api/v1/workspaces — registered workspaces (a folder grouping projects).
-// POST /api/v1/workspaces — register `{ path }` (absolute, on the hub host) and
-//   discover the projects under it. Idempotent: re-posting a known root rescans.
+// GET  /api/v1/workspaces — registered workspaces (projects + per-host folders).
+// POST /api/v1/workspaces — register `{ host, root, projects }`, the scan the
+//   CLIENT ran on its own machine. Idempotent: matched by id, then by
+//   (host, root), then by a shared repo — a second machine's checkout of the
+//   same repos merges its folder mapping into the existing record.
 import { backendOrNull } from '../lib/backend';
 import { fail, failFromAction, ok } from '../lib/envelope';
 import { parseWorkspaceAdd, readJson } from '../lib/validate';

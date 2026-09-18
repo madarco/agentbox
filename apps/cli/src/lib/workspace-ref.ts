@@ -9,10 +9,12 @@
  *   4. inside a claude/codex session: the workspace registering that session
  *      creates at its folder
  *
- * The listing comes from the hub, so a remote hub's workspaces resolve the same
- * way — with the caveat that its roots are ITS paths, which a local cwd will not
- * match. That is correct: the folder is on the hub's machine.
+ * The listing comes from the hub, but the cwd is matched against THIS machine's
+ * folder mapping (`hosts[hostname()]`), so a remote hub's workspaces resolve
+ * here exactly as a local one's: the record names the folder on every machine
+ * that has one.
  */
+import { hostname } from 'node:os';
 import { findWorkspaceContaining } from '@agentbox/relay';
 import { detectHostSession, registerHostManager, type HostSessionHint } from './host-session.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
@@ -22,15 +24,16 @@ export class WorkspaceRefError extends Error {}
 /** Pure: apply the resolution order to an already-fetched listing. */
 export function pickWorkspace(
   workspaces: HubApiWorkspace[],
-  opts: { ref?: string; env?: string; cwd: string },
+  opts: { ref?: string; env?: string; cwd: string; host?: string },
 ): HubApiWorkspace | null {
+  const host = opts.host ?? hostname();
   const explicit = opts.ref ?? opts.env;
   if (explicit) {
     const byId = workspaces.find((w) => w.id === explicit);
     if (byId) return byId;
     const normalized =
       explicit.length > 1 && explicit.endsWith('/') ? explicit.slice(0, -1) : explicit;
-    const byRoot = workspaces.find((w) => w.root === normalized);
+    const byRoot = workspaces.find((w) => w.hosts[host]?.root === normalized);
     if (byRoot) return byRoot;
     const byName = workspaces.filter((w) => w.name === explicit);
     // A name is a label, not a key: two workspaces can share one, and picking
@@ -38,7 +41,7 @@ export function pickWorkspace(
     if (byName.length === 1) return byName[0]!;
     return null;
   }
-  return findWorkspaceContaining(workspaces, opts.cwd);
+  return findWorkspaceContaining(workspaces, opts.cwd, host);
 }
 
 /** Resolve, or throw a message that says how to fix it. */
@@ -53,6 +56,7 @@ export async function resolveWorkspace(
 export interface WorkspaceRefDeps {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  host?: string;
   detect?: () => HostSessionHint | undefined;
 }
 
@@ -75,10 +79,12 @@ export async function resolveWorkspaceAndManager(
   const env = (deps.env ?? process.env)['AGENTBOX_WORKSPACE'];
   const cwd = deps.cwd ?? process.cwd();
   const explicit = ref ?? env;
+  const host = deps.host ?? hostname();
   const picked = pickWorkspace(workspaces, {
     ...(ref ? { ref } : {}),
     ...(env ? { env } : {}),
     cwd,
+    host,
   });
   if (!picked && explicit) {
     throw new WorkspaceRefError(
@@ -93,7 +99,7 @@ export async function resolveWorkspaceAndManager(
     hint &&
     picked &&
     explicit &&
-    findWorkspaceContaining(workspaces, hint.cwd)?.id !== picked.id
+    findWorkspaceContaining(workspaces, hint.cwd, host)?.id !== picked.id
   ) {
     hint = undefined;
   }

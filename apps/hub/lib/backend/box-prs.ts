@@ -3,6 +3,7 @@
 // few seconds, so each workspace's index is rebuilt only when its log file or
 // the sync's states change.
 import { stat } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import {
   findWorkspaceContaining,
   listWorkspaces,
@@ -202,7 +203,9 @@ export function createBoxPrLookup(opts: BoxPrLookupOptions = {}): BoxPrLookup {
         return (box) => {
           const wsId =
             wsByProject.get(box.projectId) ??
-            (box.projectRoot ? findWorkspaceContaining(records, box.projectRoot)?.id : undefined);
+            (box.projectRoot
+              ? findWorkspaceContaining(records, box.projectRoot, hostname())?.id
+              : undefined);
           return prForBox(box, indexes, wsId);
         };
       } catch {

@@ -152,3 +152,45 @@ export function prTimelineEvents(
   }
   return out;
 }
+
+/**
+ * One key for every spelling of a single repo, so a box's `origin` and a
+ * workspace project's `repoUrl` join without caring how each was written:
+ * `git@github.com:owner/repo.git`, `https://github.com/owner/repo`,
+ * `ssh://git@github.com/owner/repo/` all become `github.com/owner/repo`.
+ *
+ * Lowercased whole: git hosts treat owner/repo case-insensitively, and the same
+ * repo routinely appears in both spellings across a fleet. A local path origin
+ * keeps its path (it is still a usable key, just a host-local one); an empty or
+ * unparseable value yields undefined, which never matches anything.
+ */
+export function normalizeRepoUrl(raw: string | undefined | null): string | undefined {
+  const url = (raw ?? '').trim();
+  if (!url) return undefined;
+  const strip = (s: string): string => {
+    let out = s;
+    while (out.endsWith('/')) out = out.slice(0, -1);
+    if (out.endsWith('.git')) out = out.slice(0, -'.git'.length);
+    return out.toLowerCase();
+  };
+  if (url.startsWith('/')) return strip(url) || undefined;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(url);
+  if (scheme) {
+    const rest = scheme[2]!;
+    const authEnd = rest.indexOf('@');
+    const afterAuth = authEnd === -1 ? rest : rest.slice(authEnd + 1);
+    const slash = afterAuth.indexOf('/');
+    if (slash === -1) return undefined;
+    // The port is part of the address, not of the repo's identity: the same
+    // repo reached over https (443) and ssh (22) must land on one key.
+    const host = afterAuth.slice(0, slash).replace(/:\d+$/, '');
+    const path = afterAuth.slice(slash + 1);
+    // `file:///a/b` has no host: it is a local path key, like a bare `/a/b`.
+    if (!path) return undefined;
+    return strip(host ? `${host}/${path}` : `/${path}`) || undefined;
+  }
+  // scp-like: `[user@]host:path`.
+  const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/.exec(url);
+  if (scp) return strip(`${scp[1]!}/${scp[2]!}`) || undefined;
+  return strip(url) || undefined;
+}

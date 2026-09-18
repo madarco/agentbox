@@ -6,22 +6,52 @@ import type { AgentId } from '@agentbox/core';
 export const WORKSPACES_DIR = join(STATE_DIR, 'workspaces');
 
 /**
- * A workspace is a host FOLDER that groups one or more projects and owns a task
- * list plus (optionally) a manager agent session. It is deliberately not a
- * project: a project is one repo/agentbox.yaml root a box is built from, while a
- * workspace is the unit a human (and its managers) plan across.
- *
- * `id` is `hashProjectPath(root)` — the same key space as the project registry,
- * so a single-project folder registered as both shares one id and a client can
- * join the two without a lookup table.
+ * One project inside a workspace. Identified by its REPO, not by a folder: the
+ * same repo is checked out at a different path on every machine, and a control
+ * box holds no checkout at all, so a folder-keyed id cannot join a box to its
+ * workspace from anywhere but the machine that cloned it.
  */
-export interface WorkspaceRecord {
+export interface WorkspaceProject {
+  /**
+   * `hashProjectPath(normalizeRepoUrl(repoUrl))` when the project has a remote,
+   * else `hashProjectPath('<host>:<folder>')` — a project with no remote exists
+   * only on the machine holding it, so its id says so.
+   */
   id: string;
   name: string;
-  /** Absolute, realpath'd folder. */
+  /** The `origin` remote, as the scanning host spelled it. */
+  repoUrl?: string;
+}
+
+/** Where one machine keeps a workspace's folders. */
+export interface WorkspaceHost {
+  /** Absolute, realpath'd folder on that machine. */
   root: string;
-  /** Project ids (`hashProjectPath`) discovered under `root` and registered. */
-  projectIds: string[];
+  /** `WorkspaceProject.id` → the project's absolute path on that machine. */
+  projectRoots: Record<string, string>;
+  seenAt: string;
+}
+
+/**
+ * A workspace groups one or more projects and owns a task list plus
+ * (optionally) manager agent sessions. It is deliberately not a project: a
+ * project is one repo/agentbox.yaml root a box is built from, while a workspace
+ * is the unit a human (and its managers) plan across.
+ *
+ * The record is machine-independent: `projects` are repos, and `hosts` maps each
+ * machine that has a checkout to its folders. A hub that owns boxes for a repo
+ * it never cloned (a control box) still joins those boxes to this workspace.
+ *
+ * `id` is random (16 hex, the manager-id generator), not a path hash: the same
+ * workspace has a different root on every machine.
+ */
+export interface WorkspaceRecord {
+  version: 2;
+  id: string;
+  name: string;
+  projects: WorkspaceProject[];
+  /** Keyed by `os.hostname()` of the machine. */
+  hosts: Record<string, WorkspaceHost>;
   /**
    * Monotonic counter behind `T-<n>` task ids. Never decremented, so a deleted
    * task's id is not handed to a later one — stale references in a manager
@@ -32,8 +62,21 @@ export interface WorkspaceRecord {
   updatedAt: string;
 }
 
-/** API view of a workspace: the record minus its internal id counter. */
-export type Workspace = Omit<WorkspaceRecord, 'taskCounter'>;
+/**
+ * API view of a workspace: the record minus its internal counter and on-disk
+ * version, plus what a client joins on — the project ids visible from the
+ * reading hub, and that hub's own folder when it has one.
+ */
+export type Workspace = Omit<WorkspaceRecord, 'taskCounter' | 'version'> & {
+  /**
+   * The ids a client may hold for these projects: each `WorkspaceProject.id`,
+   * plus `hashProjectPath(folder)` of every folder the reading hub has locally
+   * — that is the id the project registry and a box record use.
+   */
+  projectIds: string[];
+  /** `hosts[<the reading hub's hostname>].root`; absent when it has no checkout. */
+  root?: string;
+};
 
 export type WorkTaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
 

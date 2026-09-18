@@ -2,6 +2,7 @@
 // box sends the relay (`git.push`, the `gh` shim) and create jobs a queue worker
 // finishes. Each runs after the real work has answered, so every one swallows
 // its own failures — a log miss must never change an RPC result or a job status.
+import { hostname } from 'node:os';
 import { readState } from '@agentbox/sandbox-core';
 import { ghRunContext, ghVerbArgv, resolveGhTarget, runHostGh } from './gh.js';
 import type { QueueJob } from './queue.js';
@@ -10,7 +11,8 @@ import { pushLineStat, type PushStatInput } from './workspaces/push-stat.js';
 import { readTasks } from './workspaces/task-store.js';
 import { GH_PR_JSON_FIELDS, parsePrUrl, prTimelineEvents } from './workspaces/timeline-pr.js';
 import type { GhPrJson } from './workspaces/timeline-pr.js';
-import { recordTimelineEvent, workspaceForPath } from './workspaces/timeline-store.js';
+import type { BoxWorkspaceKey } from './workspaces/workspace-store.js';
+import { readWorkspaceForBox, recordTimelineEvent } from './workspaces/timeline-store.js';
 
 export interface BoxTimelineContext {
   boxId: string;
@@ -20,6 +22,18 @@ export interface BoxTimelineContext {
   /** The branch the box pushes (its host-sanctioned branch). */
   branch?: string;
   originUrl?: string;
+}
+
+/**
+ * How a box picks its workspace: its repo first, then the host folder. The relay
+ * runs on the machine holding `hostPath`, so its own hostname is that folder's.
+ */
+function boxWorkspaceKey(ctx: BoxTimelineContext): BoxWorkspaceKey {
+  return {
+    ...(ctx.originUrl ? { originUrl: ctx.originUrl } : {}),
+    host: hostname(),
+    ...(ctx.hostPath ? { projectRoot: ctx.hostPath } : {}),
+  };
 }
 
 async function boxTaskIds(wsId: string, boxId: string): Promise<string[]> {
@@ -48,7 +62,7 @@ export async function recordBoxGitPush(
 ): Promise<void> {
   if (result.exitCode !== 0 || origin.hostInitiated || origin.hostOnly) return;
   try {
-    const ws = await workspaceForPath(ctx.hostPath);
+    const ws = await readWorkspaceForBox(boxWorkspaceKey(ctx));
     if (!ws) return;
     const [taskIds, managerId, diff] = await Promise.all([
       boxTaskIds(ws.id, ctx.boxId),
@@ -142,7 +156,7 @@ export async function recordBoxGhResult(
   const verb = ghVerbArgv(args);
   if (verb[0] !== 'pr' || (verb[1] !== 'create' && verb[1] !== 'merge')) return;
   try {
-    const ws = await workspaceForPath(ctx.hostPath);
+    const ws = await readWorkspaceForBox(boxWorkspaceKey(ctx));
     if (!ws) return;
     const target =
       verb[1] === 'create'
@@ -195,7 +209,10 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
   if (job.kind === 'prepare') return;
   if (job.status !== 'done' && job.status !== 'failed') return;
   try {
-    const ws = await workspaceForPath(job.createOpts.workspace);
+    const ws = await readWorkspaceForBox({
+      host: hostname(),
+      projectRoot: job.createOpts.workspace,
+    });
     if (!ws) return;
     const box = job.boxId
       ? (await readState().catch(() => null))?.boxes.find((b) => b.id === job.boxId)

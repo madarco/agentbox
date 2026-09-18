@@ -1,6 +1,7 @@
 // The box seams the timeline reads (`BackendDeps.boxFacts` / `boxFact` /
 // `boxDiffStat`), built from the host's box records. Kept out of
 // `hub-backend.ts`, which only hands in the functions it owns.
+import { hostname as osHostname } from 'node:os';
 import { hashProjectPath } from '@agentbox/config';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { BOX_WORKSPACE } from '@agentbox/sandbox-core';
@@ -13,11 +14,21 @@ export interface BoxFactSources {
   /** The persisted record for one box (`state.json`), with no per-box probing. */
   readBoxRecord(id: string): Promise<BoxRecord | undefined>;
   providerForBox(box: BoxRecord): Promise<Provider>;
+  /**
+   * The box repo's `origin`: `git remote` in its host checkout, or the box's
+   * Store registration when there is no checkout here. Absent in a test, where
+   * the folder join is the only one exercised.
+   */
+  originUrlOf?(box: BoxRecord): Promise<string | undefined>;
+  hostname?(): string;
 }
 
 const STATE_PROBE_TIMEOUT_MS = 3000;
 
-export function boxFactOf(b: BoxRecord & { state?: string }): TimelineBoxFact {
+export function boxFactOf(
+  b: BoxRecord & { state?: string },
+  extra: { originUrl?: string; host?: string } = {},
+): TimelineBoxFact {
   const root = b.projectRoot ?? b.workspacePath ?? b.id;
   const tree = b.gitWorktrees?.[0];
   const branches = [
@@ -35,6 +46,8 @@ export function boxFactOf(b: BoxRecord & { state?: string }): TimelineBoxFact {
     ...(agent ? { agent } : {}),
     projectRoot: root,
     projectId: hashProjectPath(root),
+    ...(extra.originUrl ? { originUrl: extra.originUrl } : {}),
+    ...(extra.host ? { host: extra.host } : {}),
   };
 }
 
@@ -67,9 +80,30 @@ export function createBoxFactSeams(src: BoxFactSources): {
     recordOf.set(fact, rec);
     return fact;
   };
+  const host = src.hostname ?? osHostname;
+  // Resolving an origin spawns git (or reads the Store), and `boxFacts()` runs on
+  // the timeline poll path for the whole fleet: memoized per box for the life of
+  // the hub, since a box's repo does not change under it.
+  const origins = new Map<string, Promise<string | undefined>>();
+  const originOf = (rec: BoxRecord): Promise<string | undefined> => {
+    if (!src.originUrlOf) return Promise.resolve(undefined);
+    let hit = origins.get(rec.id);
+    if (!hit) {
+      hit = src.originUrlOf(rec).catch(() => undefined);
+      origins.set(rec.id, hit);
+    }
+    return hit;
+  };
+  const factOf = async (
+    rec: BoxRecord & { state?: string },
+    source: BoxRecord,
+  ): Promise<TimelineBoxFact> => {
+    const originUrl = await originOf(source);
+    return remember(boxFactOf(rec, { host: host(), ...(originUrl ? { originUrl } : {}) }), source);
+  };
   return {
     async boxFacts() {
-      return (await src.listBoxes()).map((b) => remember(boxFactOf(b), b));
+      return Promise.all((await src.listBoxes()).map((b) => factOf(b, b)));
     },
     async boxFact(id, opts) {
       const rec = await src.readBoxRecord(id);
@@ -84,7 +118,7 @@ export function createBoxFactSeams(src: BoxFactSources): {
                 STATE_PROBE_TIMEOUT_MS,
               );
       }
-      return remember(boxFactOf(state ? { ...rec, state } : rec), rec);
+      return factOf(state ? { ...rec, state } : rec, rec);
     },
     async boxDiffStat(fact) {
       const box = recordOf.get(fact) ?? (await src.readBoxRecord(fact.id));

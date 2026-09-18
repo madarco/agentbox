@@ -18,6 +18,14 @@ export interface TimelineBoxFact {
   agent?: string;
   projectRoot: string;
   projectId: string;
+  /**
+   * The box repo's `origin`, when this hub can name it. The only workspace key
+   * that survives a box with no checkout here (a cloud box, or one another
+   * machine created), so the timeline joins on it before the folder.
+   */
+  originUrl?: string;
+  /** The machine `projectRoot` is on — this hub's own hostname for a local record. */
+  host?: string;
 }
 
 export interface DiffStat {
