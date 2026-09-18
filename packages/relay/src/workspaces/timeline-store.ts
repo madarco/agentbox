@@ -25,9 +25,24 @@ export const TIMELINE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 /** What a writer supplies; `id` and `at` are stamped when absent. */
 export type TimelineEventInput = Omit<TimelineEvent, 'id' | 'at'> & { id?: string; at?: string };
 
-/** Zero-padded so ids sort lexicographically in time order, like the events they name. */
+let lastIdMs = -1;
+let lastIdSeq = 0;
+
+/**
+ * Zero-padded so ids sort lexicographically in time order, like the events they
+ * name. Within ONE millisecond the suffix counts up, because a reader breaks a
+ * timestamp tie with the id and the row written second is the newer one — a
+ * purely random suffix put two rows of the same millisecond in either order.
+ * Each millisecond starts from a random point, so two processes appending to one
+ * log still do not collide.
+ */
 export function newTimelineEventId(ms: number = Date.now()): string {
-  return `${ms.toString(36).padStart(9, '0')}-${randomBytes(3).toString('hex')}`;
+  if (ms === lastIdMs) lastIdSeq = (lastIdSeq + 1) % 0x1000000;
+  else {
+    lastIdMs = ms;
+    lastIdSeq = randomBytes(3).readUIntBE(0, 3);
+  }
+  return `${ms.toString(36).padStart(9, '0')}-${lastIdSeq.toString(16).padStart(6, '0')}`;
 }
 
 /** The actor fields of an event, from a mutation's stamp. */
