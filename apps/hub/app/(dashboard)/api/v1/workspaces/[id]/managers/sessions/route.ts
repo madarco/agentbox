@@ -3,7 +3,7 @@
 // session" picker before a manager is started. `supported: false` means this
 // agent's session format is not one we can resume, which is not an error.
 import { backendOrNull } from '../../../../lib/backend';
-import { fail, ok } from '../../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../../lib/envelope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,5 +18,6 @@ export async function GET(
   const agent = new URL(req.url).searchParams.get('agent') ?? undefined;
   const res = await backend.listManagerSessions(id, agent);
   if (!res) return fail('not_found', `unknown workspace ${id}`);
-  return ok(res);
+  if (!res.ok) return failFromManager(res);
+  return ok(res.sessions);
 }

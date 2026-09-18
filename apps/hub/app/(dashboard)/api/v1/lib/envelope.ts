@@ -10,6 +10,7 @@ export type ApiErrorCode =
   | 'backend_unavailable'
   | 'conflict'
   | 'manager_unreachable'
+  | 'wrong_host'
   | 'internal';
 
 const STATUS_HINT: Record<ApiErrorCode, number> = {
@@ -18,6 +19,9 @@ const STATUS_HINT: Record<ApiErrorCode, number> = {
   not_found: 404,
   conflict: 409,
   manager_unreachable: 409,
+  // The op is fine, this hub is the wrong machine for it: `details.host` names
+  // the one that runs the manager, and the client retries there.
+  wrong_host: 409,
   backend_unavailable: 503,
   internal: 500,
 };
@@ -32,6 +36,22 @@ export function fail(code: ApiErrorCode, message: string, details?: unknown): Re
     { error: { code, message, ...(details === undefined ? {} : { details }) } },
     { status },
   );
+}
+
+/**
+ * A manager op's refusal. `wrong_host` keeps its `details.host` so the client
+ * can retry against the hub on that machine; everything else falls through to
+ * the not-found/conflict split.
+ */
+export function failFromManager(
+  res: { error: string; code?: string; details?: unknown },
+  extra?: unknown,
+): Response {
+  if (res.code === 'wrong_host') return fail('wrong_host', res.error, res.details);
+  if (res.code === 'manager_unreachable') {
+    return fail('manager_unreachable', res.error, res.details);
+  }
+  return failFromAction(res.error, extra);
 }
 
 // Map a backend ActionResult error into an envelope. Genuine missing-resource

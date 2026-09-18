@@ -377,10 +377,14 @@ const targetSub = new Command('target')
     'Print the hub the CLI talks to — the remote control box when configured, else the local hub — with its API token. The seam the macOS tray follows to point at the same hub.',
   )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
-  .option('--json', 'emit { mode, url, token } as JSON (consumed by the tray)')
-  .action(async (opts: { url?: string; json?: boolean }) => {
+  .option('--json', 'emit { mode, url, token, onThisMachine } as JSON (consumed by the tray)')
+  .option(
+    '--local',
+    'the hub on THIS machine, even with a control box configured: where a manager process, and anything else that needs this filesystem, is driven',
+  )
+  .action(async (opts: { url?: string; json?: boolean; local?: boolean }) => {
     try {
-      const t = await resolveHubTarget(opts.url);
+      const t = await resolveHubTarget(opts.url, { preferLocal: Boolean(opts.local) });
       if (opts.json) {
         process.stdout.write(JSON.stringify(t) + '\n');
         return;

@@ -5,7 +5,7 @@
 // holds resumes THAT manager instead of creating a second one.
 import { backendOrNull } from '../../../../lib/backend';
 import { timelineMeta } from '../../../../lib/actor';
-import { fail, failFromAction, ok } from '../../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../../lib/envelope';
 import { MANAGER_AGENT_NAMES, parseManagerStart, readJson } from '../../../../lib/validate';
 import { TMUX_MISSING } from '@/lib/backend/errors';
 
@@ -55,7 +55,7 @@ export async function POST(
     // A host without tmux cannot host a manager at all — that is an environment
     // gap on the hub's machine, not a bad request.
     if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
-    return failFromAction(res.error);
+    return failFromManager(res);
   }
   return ok(res.manager);
 }

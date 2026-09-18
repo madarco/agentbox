@@ -35,7 +35,9 @@ import {
   registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
-import { configureTimelineSinkFromConfig } from '@agentbox/relay';
+import { HEARTBEAT_INTERVAL_MS } from './lib/backend/managers';
+import { startManagerHeartbeats } from './lib/manager-heartbeat';
+import { configureManagerStoreFromConfig, configureTimelineSinkFromConfig } from '@agentbox/relay';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
@@ -214,16 +216,27 @@ async function main(): Promise<void> {
   // the /api/events SSE stream. __AGENTBOX_BOX_SOURCE (the Store) is kept for the
   // deferred poll-mode path only.
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
+  // Where this hub's timeline rows go, and where its manager records live. With
+  // a control box configured the store (workspaces, tasks, log, managers) is
+  // THERE, so the rows this hub produces for its own boxes are forwarded rather
+  // than written to a disk that has no workspace on it, and a manager it starts
+  // in tmux here is registered there. A control box resolves to none — it IS the
+  // store. Both are chosen BEFORE the backend is built, which reads them once.
+  const warn = (line: string): void => void process.stdout.write(`agentbox-hub: ${line}\n`);
+  const sink = await configureTimelineSinkFromConfig({ warn });
+  const managerRecords = await configureManagerStoreFromConfig({ warn });
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
-  // Where this hub's timeline rows go. With a control box configured the store
-  // (workspaces, tasks, log) is THERE, so the rows this hub produces for its own
-  // boxes are forwarded rather than written to a disk that has no workspace on
-  // it. A control box resolves to none — it is the store.
-  const sink = await configureTimelineSinkFromConfig({
-    warn: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
-  });
   if (sink.kind === 'remote') {
     process.stdout.write('agentbox-hub: timeline events forward to the control box\n');
+  }
+  if (managerRecords.kind === 'remote') {
+    // The managers themselves keep running here; only their records travel.
+    process.stdout.write('agentbox-hub: manager records live on the control box\n');
+    startManagerHeartbeats({
+      backend: globalThis.__AGENTBOX_HUB_BACKEND,
+      intervalMs: HEARTBEAT_INTERVAL_MS,
+      warn,
+    });
   }
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
   // Payload-carrying prompt fan-out for the `/api/v1` prompt-stream route (the

@@ -147,10 +147,14 @@ export type ManagerAgent = AgentId;
 
 /**
  * `external` is a session the user runs in their own terminal — the hub only
- * observes it, through detection. `hub` is one the hub started (or resumed) in a
- * tmux session it owns, so it can also be attached to and stopped.
+ * observes it, through detection. `tmux` is one a hub started (or resumed) in a
+ * tmux session on its own machine, so it can also be attached to and stopped.
+ *
+ * Named after the session, not after "the hub", because the hub that RUNS it and
+ * the hub that STORES it need not be the same machine: a manager runs on the
+ * user's PC while its record lives on the control box.
  */
-export type ManagerKind = 'external' | 'hub';
+export type ManagerKind = 'external' | 'tmux';
 
 /**
  * A manager is a HOST agent session that orchestrates boxes: many per workspace.
@@ -169,8 +173,13 @@ export interface ManagerRecord {
   sessionId?: string;
   /** Cached first-turn title, scraped lazily from the agent's own store. */
   title?: string;
-  /** `os.hostname()` of the process; a pid is only probed when this matches the hub's. */
-  host?: string;
+  /**
+   * `os.hostname()` of the machine the session runs on. Required: a manager is a
+   * process in a folder, and every probe (pid, tmux, transcript) is only
+   * meaningful there. A hub whose hostname differs holds the record, not the
+   * session.
+   */
+  host: string;
   /** External only. */
   pid?: number;
   /**
@@ -183,9 +192,9 @@ export interface ManagerRecord {
    * tmux. The only way the hub can type into a session it did not start.
    */
   tmuxPane?: string;
-  /** Hub only. */
+  /** `tmux` only. */
   tmuxSession?: string;
-  /** Hub only: what was started, so a restart can reuse it. */
+  /** `tmux` only: what was started, so a restart can reuse it. */
   argv?: string[];
   /** Boxes this session created. Reconciled on read: dropped when the box is gone. */
   boxIds: string[];
@@ -196,6 +205,58 @@ export interface ManagerRecord {
   startedAt?: string;
   stoppedAt?: string;
   lastExit?: number;
+  /**
+   * When the hosting hub last reported (`POST /managers/{id}/heartbeat`). Only
+   * ever set on a hub that does NOT host this manager: its own machine reads the
+   * process instead of believing a report.
+   */
+  reportedAt?: string;
+  /** The last heartbeat's payload; read by `toManagerView` when the host differs. */
+  reported?: ManagerHeartbeat;
+}
+
+/**
+ * What the machine a manager runs on reports about it, so a hub that only holds
+ * the record can still show a live status, title and turn. Every field is
+ * derived from a probe there (`managerStatus`, `sessionTitle`, `sessionTurn`,
+ * `createBackgroundSessionLookup`), never from the record.
+ */
+export interface ManagerHeartbeat {
+  status: ManagerStatus;
+  sessionId?: string;
+  title?: string;
+  turn?: number;
+  prompt?: string;
+  lastExit?: number;
+  background?: ManagerBackground;
+  terminalSession?: string;
+  /** The tmux session that shows it right now, when one does. */
+  tmuxSession?: string;
+}
+
+/**
+ * A JSON-serialisable change to one record: a field set to a value, or to `null`
+ * to unset it. Serialisable because the store it is applied to may be another
+ * machine's — a closure could not travel.
+ */
+export type ManagerRecordPatch = {
+  [K in keyof ManagerRecord]?: ManagerRecord[K] | null;
+};
+
+/**
+ * The record a tmux start or resume produced, as the machine that ran it
+ * describes it. `id` names an existing record to move; without one a new manager
+ * is minted.
+ */
+export interface ManagerRegistration {
+  id?: string;
+  agent: ManagerAgent;
+  kind: 'tmux';
+  host: string;
+  cwd: string;
+  tmuxSession: string;
+  sessionId?: string;
+  argv?: string[];
 }
 
 /** On-disk shape of `managers.json`. */
@@ -207,15 +268,26 @@ export interface ManagerFile {
 /** Derived from the process (tmux session or pid), never stored. */
 export type ManagerStatus = 'running' | 'stopped';
 
-/** Why a manager cannot be resumed right now. */
-export type ManagerResumeBlock = 'running' | 'other-host' | 'unsupported-agent' | 'no-session';
+/**
+ * Why a manager cannot be resumed right now. There is deliberately no
+ * "other host" value: whether a client may resume a manager is `host` against
+ * its own hostname, which it can answer without the hub's help.
+ */
+export type ManagerResumeBlock = 'running' | 'unsupported-agent' | 'no-session';
 
-export interface ManagerView extends Omit<ManagerRecord, 'argv'> {
+export interface ManagerView extends Omit<ManagerRecord, 'argv' | 'reported' | 'reportedAt'> {
   status: ManagerStatus;
   /**
+   * Whether the hub answering this call is the machine the manager runs on. A
+   * client attaches, resumes, stops or types only where this is true; against
+   * any other hub those are `wrong_host`, and the client retries on the hub
+   * whose hostname is `host`.
+   */
+  hostIsHub: boolean;
+  /**
    * Whether a resume would be accepted now: false while it runs, without a
-   * session id, for an agent we cannot resume, and for a session that ran on
-   * another machine (its transcript is not on the hub's disk).
+   * session id, and for an agent we cannot resume. Says nothing about WHERE —
+   * that is `hostIsHub`.
    */
   resumable: boolean;
   /** Why `resumable` is false; absent when it is true. */

@@ -20,7 +20,6 @@ import {
   scrubAgentSessionEnv,
 } from '@agentbox/sandbox-core';
 import {
-  legacyManagerFiles,
   listWorkspaces,
   managerExitFile,
   managersFile,
@@ -35,7 +34,11 @@ import type {
   ManagerAgent,
   ManagerBackground,
   ManagerFile,
+  ManagerHeartbeat,
+  ManagerKind,
   ManagerRecord,
+  ManagerRecordPatch,
+  ManagerRegistration,
   ManagerResumeBlock,
   ManagerStatus,
   ManagerView,
@@ -253,7 +256,9 @@ async function dirFor(wsId: string): Promise<string> {
 async function readManagerFile(dir: string): Promise<ManagerRecord[] | null> {
   try {
     const parsed = JSON.parse(await readFile(managersFile(dir), 'utf8')) as ManagerFile;
-    return Array.isArray(parsed.managers) ? parsed.managers : [];
+    return Array.isArray(parsed.managers)
+      ? (parsed.managers as StoredManagerRecord[]).map(migrateRecord)
+      : [];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     // Malformed: an empty list, like a missing tasks.json. The next write replaces it.
@@ -261,82 +266,27 @@ async function readManagerFile(dir: string): Promise<ManagerRecord[] | null> {
   }
 }
 
-interface LegacyManagerRecord {
-  agent: ManagerAgent;
-  argv?: string[];
-  cwd: string;
-  sessionId?: string;
-  tmuxSession?: string;
-  startedAt?: string;
-  stoppedAt?: string;
-  lastExit?: number;
-}
-
 /**
- * The one record the single-manager layout wrote, as a `hub` manager. Its tmux
- * session name is KEPT: a session started under the old name may still be
- * running, and renaming it here would report a live agent as stopped and leave
- * `stop` unable to reach it.
- *
- * `exitConsumed` says the old exit file's code is now on the record, so the file
- * is spent. Otherwise it stays: a session still running writes it there on exit.
+ * A record written before the kind was named after its session: `hub` is today's
+ * `tmux`. A record with no `host` predates the field being required and names a
+ * session on the machine holding the file — the only machine that wrote it.
  */
-async function readLegacyManager(
-  dir: string,
-  wsId: string,
-): Promise<{ record: ManagerRecord; exitConsumed: boolean } | null> {
-  const files = legacyManagerFiles(dir);
-  let legacy: LegacyManagerRecord;
-  try {
-    legacy = JSON.parse(await readFile(files.rec, 'utf8')) as LegacyManagerRecord;
-  } catch {
-    return null;
-  }
-  if (typeof legacy.agent !== 'string' || typeof legacy.cwd !== 'string') return null;
-  let lastExit = legacy.lastExit;
-  let exitConsumed = false;
-  if (lastExit === undefined) {
-    lastExit = await readExitFile(files.exit);
-    exitConsumed = lastExit !== undefined;
-  }
-  const at = legacy.startedAt ?? new Date().toISOString();
-  const record: ManagerRecord = {
-    id: newManagerId(),
-    workspaceId: wsId,
-    agent: legacy.agent,
-    kind: 'hub',
-    cwd: legacy.cwd,
-    tmuxSession: legacy.tmuxSession ?? `agentbox-manager-${wsId}`,
-    ...(legacy.argv ? { argv: legacy.argv } : {}),
-    ...(legacy.sessionId ? { sessionId: legacy.sessionId } : {}),
-    boxIds: [],
-    boxJobIds: [],
-    createdAt: at,
-    lastSeenAt: legacy.stoppedAt ?? at,
-    startedAt: at,
-    ...(legacy.stoppedAt ? { stoppedAt: legacy.stoppedAt } : {}),
-    ...(lastExit === undefined ? {} : { lastExit }),
-  };
-  return { record, exitConsumed };
+type StoredManagerRecord = Omit<ManagerRecord, 'kind' | 'host'> & {
+  kind: ManagerKind | 'hub';
+  host?: string;
+};
+
+function migrateRecord(rec: StoredManagerRecord): ManagerRecord {
+  const kind: ManagerKind = rec.kind === 'hub' ? 'tmux' : rec.kind;
+  return kind === rec.kind && rec.host
+    ? (rec as ManagerRecord)
+    : { ...rec, kind, host: rec.host ?? osHostname() };
 }
 
 async function readExitFile(file: string): Promise<number | undefined> {
   const raw = await readFile(file, 'utf8').catch(() => '');
   const n = Number.parseInt(raw.trim(), 10);
   return Number.isNaN(n) ? undefined : n;
-}
-
-/**
- * A hub record migrated from the single-manager layout whose tmux session still
- * has the old name: its agent writes its exit code to the old `manager.exit`, and
- * it was started with `AGENTBOX_MANAGER=1`, which names no record.
- */
-export function usesLegacySession(rec: ManagerRecord): boolean {
-  return (
-    rec.kind === 'hub' &&
-    rec.tmuxSession !== undefined &&
-    rec.tmuxSession !== managerSessionName(rec.id)
-  );
 }
 
 async function writeManagerFile(dir: string, managers: ManagerRecord[]): Promise<void> {
@@ -359,20 +309,8 @@ export async function updateManagers<T>(
   return withFileLock(
     managersFile(dir),
     async () => {
-      const current = await readManagerFile(dir);
-      const legacy = current === null ? await readLegacyManager(dir, wsId) : null;
-      const { managers, result } = await fn(current ?? (legacy ? [legacy.record] : []));
+      const { managers, result } = await fn((await readManagerFile(dir)) ?? []);
       await writeManagerFile(dir, managers);
-      if (legacy) {
-        // Removed only AFTER managers.json is on disk: a crash in between leaves
-        // both files, and managers.json wins on the next read.
-        const files = legacyManagerFiles(dir);
-        await rm(files.rec, { force: true }).catch(() => {});
-        // An exit file not read into the record belongs to a session that may
-        // still write it: `readManagerExit` falls back to it and the next stop
-        // deletes it. One that WAS read is spent.
-        if (legacy.exitConsumed) await rm(files.exit, { force: true }).catch(() => {});
-      }
       return result;
     },
     WORKSPACE_LOCK,
@@ -382,12 +320,7 @@ export async function updateManagers<T>(
 export async function readManagers(wsId: string): Promise<ManagerRecord[]> {
   const dir = await resolveWorkspaceDir(wsId);
   if (!dir) return [];
-  const current = await readManagerFile(dir);
-  if (current !== null) return current;
-  // One-time migration of the single-manager layout. Cheap to test for: the
-  // common case is that neither file exists and nothing is written.
-  if ((await stat(legacyManagerFiles(dir).rec).catch(() => null)) === null) return [];
-  return updateManagers(wsId, (managers) => ({ managers, result: managers }));
+  return (await readManagerFile(dir)) ?? [];
 }
 
 /** Every workspace's managers, for a lookup by id or session. */
@@ -423,6 +356,65 @@ export async function managerIdForTarget(
       ('boxId' in target ? m.boxIds.includes(target.boxId) : m.boxJobIds.includes(target.boxJobId)),
   );
   return hit?.id;
+}
+
+/**
+ * Apply a serialisable patch: a value sets the field, `null` unsets it. The one
+ * place a patch is interpreted, so the file store and the remote one agree.
+ */
+export function applyManagerPatch(rec: ManagerRecord, patch: ManagerRecordPatch): ManagerRecord {
+  const next: Record<string, unknown> = { ...rec };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else if (value !== undefined) next[key] = value;
+  }
+  return next as unknown as ManagerRecord;
+}
+
+/**
+ * The record a registration names: an existing one moved onto the session it
+ * describes, or a new `tmux` manager. A start clears what belonged to the
+ * previous run (its pid, its terminal pane, its ending).
+ */
+export function registeredManager(
+  wsId: string,
+  input: ManagerRegistration,
+  previous?: ManagerRecord,
+  now: Date = new Date(),
+): ManagerRecord {
+  const at = now.toISOString();
+  const base: ManagerRecord = previous ?? {
+    id: input.id ?? newManagerId(),
+    workspaceId: wsId,
+    agent: input.agent,
+    kind: 'tmux',
+    cwd: input.cwd,
+    host: input.host,
+    boxIds: [],
+    boxJobIds: [],
+    createdAt: at,
+    lastSeenAt: at,
+  };
+  const next: ManagerRecord = {
+    ...base,
+    agent: input.agent,
+    kind: 'tmux',
+    cwd: input.cwd,
+    host: input.host,
+    tmuxSession: input.tmuxSession,
+    ...(input.argv ? { argv: input.argv } : {}),
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    startedAt: at,
+    lastSeenAt: at,
+  };
+  delete next.pid;
+  delete next.pidStartedAt;
+  delete next.tmuxPane;
+  delete next.stoppedAt;
+  delete next.lastExit;
+  delete next.reported;
+  delete next.reportedAt;
+  return next;
 }
 
 /** Locked update of one record; `null` when it is not there. */
@@ -502,14 +494,14 @@ export async function managerStatus(
   rec: ManagerRecord,
   probe: ManagerProbe = {},
 ): Promise<ManagerStatus> {
-  if (rec.kind === 'hub') {
+  const host = (probe.hostname ?? osHostname)();
+  if (rec.kind === 'tmux' && rec.host === host) {
     const session = rec.tmuxSession ?? managerSessionName(rec.id);
     return (await tmuxSessionExists(session, probe.exec ?? defaultExec)) ? 'running' : 'stopped';
   }
-  const host = (probe.hostname ?? osHostname)();
   // A pid is only meaningful on the machine it came from: probing it on a remote
   // hub would ask about whatever unrelated process holds that number there.
-  if (rec.pid !== undefined && rec.host !== undefined && rec.host === host) {
+  if (rec.pid !== undefined && rec.host === host) {
     if (!(probe.isPidAlive ?? isPidAlive)(rec.pid)) return 'stopped';
     if (rec.pidStartedAt) {
       // An unreadable start time is not evidence the process changed.
@@ -523,36 +515,28 @@ export async function managerStatus(
   return !Number.isNaN(seen) && now - seen < MANAGER_SEEN_WINDOW_MS ? 'running' : 'stopped';
 }
 
-/** The agent's exit code; `legacy` also reads the old layout's file (see `usesLegacySession`). */
-export async function readManagerExit(
-  wsId: string,
-  id: string,
-  opts: { legacy?: boolean } = {},
-): Promise<number | undefined> {
-  const dir = await dirFor(wsId);
-  const current = await readExitFile(managerExitFile(dir, id));
-  if (current !== undefined || !opts.legacy) return current;
-  return readExitFile(legacyManagerFiles(dir).exit);
+/** The agent's exit code, written by the wrapper the hub started it under. */
+export async function readManagerExit(wsId: string, id: string): Promise<number | undefined> {
+  return readExitFile(managerExitFile(await dirFor(wsId), id));
 }
 
 /**
- * The session's transcript is only on the machine it ran on, so an external
- * manager reported from another host cannot be resumed by this one.
+ * The session's transcript, tmux server and pid are only on the machine it runs
+ * on, so no other hub can resume it — whatever kind it is.
  */
-function ranElsewhere(rec: ManagerRecord, host: string): boolean {
-  return rec.kind === 'external' && Boolean(rec.host) && rec.host !== host;
+export function ranElsewhere(rec: ManagerRecord, host: string): boolean {
+  return rec.host !== host;
 }
 
 /**
  * Why `resumeManagerSession` would refuse this manager right now, checked in the
  * order it checks, so a client's wording matches the error a resume would get.
+ * WHERE it may be resumed is `host`, which the caller compares itself.
  */
 export function managerResumeBlock(
   rec: ManagerRecord,
   status: ManagerStatus,
-  host: string = osHostname(),
 ): ManagerResumeBlock | undefined {
-  if (ranElsewhere(rec, host)) return 'other-host';
   if (status === 'running') return 'running';
   if (!rec.sessionId) return 'no-session';
   if (!isResumableManagerAgent(rec.agent)) return 'unsupported-agent';
@@ -560,12 +544,8 @@ export function managerResumeBlock(
 }
 
 /** Whether `resumeManagerSession` would accept this manager right now. */
-export function isManagerResumable(
-  rec: ManagerRecord,
-  status: ManagerStatus,
-  host: string = osHostname(),
-): boolean {
-  return managerResumeBlock(rec, status, host) === undefined;
+export function isManagerResumable(rec: ManagerRecord, status: ManagerStatus): boolean {
+  return managerResumeBlock(rec, status) === undefined;
 }
 
 /** The API view: the record without its argv, plus what a list row shows. */
@@ -576,7 +556,7 @@ export function toManagerView(
     workspaceName: string;
     tasks: WorkTask[];
     lastExit?: number;
-    /** The hub's hostname, for `resumable`; defaults to this machine's. */
+    /** The reading hub's hostname, for `hostIsHub`; defaults to this machine's. */
     hostname?: string;
     /** The manager's detached Claude background session (see `backgroundFor`). */
     background?: ManagerBackground;
@@ -590,10 +570,15 @@ export function toManagerView(
     terminalSession?: string;
   },
 ): ManagerView {
-  const block = managerResumeBlock(rec, ctx.status, ctx.hostname);
-  const view: ManagerView & { argv?: string[] } = {
+  const block = managerResumeBlock(rec, ctx.status);
+  const view: ManagerView & {
+    argv?: string[];
+    reported?: ManagerHeartbeat;
+    reportedAt?: string;
+  } = {
     ...rec,
     status: ctx.status,
+    hostIsHub: rec.host === (ctx.hostname ?? osHostname()),
     resumable: block === undefined,
     ...(block ? { resumeBlockedBy: block } : {}),
     workspaceName: ctx.workspaceName,
@@ -603,6 +588,8 @@ export function toManagerView(
     },
   };
   delete view.argv;
+  delete view.reported;
+  delete view.reportedAt;
   if (ctx.terminalSession) view.terminalSession = ctx.terminalSession;
   if (ctx.background) {
     view.background = ctx.background;
@@ -614,7 +601,7 @@ export function toManagerView(
     // A live session next to a previous run's ending reads as contradictory state.
     delete view.stoppedAt;
     delete view.lastExit;
-    if (rec.kind === 'hub' && !ctx.background) {
+    if (rec.kind === 'tmux' && !ctx.background) {
       view.attachCommand = managerAttachCommand(rec.tmuxSession ?? managerSessionName(rec.id));
     }
   } else if (view.lastExit === undefined && ctx.lastExit !== undefined) {
@@ -633,7 +620,8 @@ export interface DetectManagerInput {
   pid?: number;
   /** The pid's start time on the hub's machine; only when `host` is the hub's. */
   pidStartedAt?: string;
-  host?: string;
+  /** `os.hostname()` of the machine the session runs on. */
+  host: string;
   /** `$AGENTBOX_MANAGER` of the caller: set inside a hub-run manager's own session. */
   managerId?: string;
   /** `$TMUX_PANE` when the session's terminal runs inside tmux. */
@@ -641,7 +629,7 @@ export interface DetectManagerInput {
   /**
    * An AgentBox manager tmux session the caller runs in, already checked by the
    * hub to exist on this machine and to start in `cwd`. The record is run from
-   * that session from now on (`hub`), whatever it was before.
+   * that session from now on (`tmux`), whatever it was before.
    */
   tmuxSession?: string;
 }
@@ -673,10 +661,10 @@ export async function upsertDetectedManager(
               id: newManagerId(),
               workspaceId: wsId,
               agent: input.agent,
-              kind: 'hub',
+              kind: 'tmux',
               cwd: input.cwd,
               sessionId: input.sessionId,
-              ...(input.host ? { host: input.host } : {}),
+              host: input.host,
               tmuxSession: input.tmuxSession,
               boxIds: [],
               boxJobIds: [],
@@ -690,7 +678,7 @@ export async function upsertDetectedManager(
               kind: 'external',
               cwd: input.cwd,
               sessionId: input.sessionId,
-              ...(input.host ? { host: input.host } : {}),
+              host: input.host,
               ...(input.pid !== undefined ? { pid: input.pid } : {}),
               ...(input.pid !== undefined && input.pidStartedAt
                 ? { pidStartedAt: input.pidStartedAt }
@@ -715,14 +703,14 @@ export async function upsertDetectedManager(
       if (input.tmuxSession) {
         // Run from an AgentBox tmux session: that session is its home, whatever
         // was detected before (an external record from the same session's pid).
-        next.kind = 'hub';
+        next.kind = 'tmux';
         next.tmuxSession = input.tmuxSession;
         delete next.pid;
         delete next.pidStartedAt;
         delete next.tmuxPane;
         delete next.stoppedAt;
         delete next.lastExit;
-      } else if (prev.kind === 'hub' && !fromOwnSession && input.pid !== undefined) {
+      } else if (prev.kind === 'tmux' && !fromOwnSession && input.pid !== undefined) {
         // The session is being run from somewhere other than the hub's tmux — the
         // user resumed it in a terminal. Observe that process from now on.
         next.kind = 'external';
@@ -732,12 +720,12 @@ export async function upsertDetectedManager(
         delete next.stoppedAt;
         delete next.lastExit;
       }
+      next.host = input.host;
       if (next.kind === 'external') {
         if (input.pid !== undefined) next.pid = input.pid;
         else delete next.pid;
         if (input.pid !== undefined && input.pidStartedAt) next.pidStartedAt = input.pidStartedAt;
         else delete next.pidStartedAt;
-        if (input.host) next.host = input.host;
         if (input.tmuxPane) next.tmuxPane = input.tmuxPane;
         else delete next.tmuxPane;
       }
@@ -904,17 +892,23 @@ export interface StartManagerSessionInput {
   argv: string[];
   exec?: ManagerExec;
   env?: NodeJS.ProcessEnv;
+  /** This machine's hostname, for the registration's `host`. */
+  hostname?: () => string;
 }
 
 /**
- * Start a manager in a detached tmux session on the hub's own machine, and
- * persist its record as `hub`.
+ * Start a manager in a detached tmux session on THIS machine and describe the
+ * record it produced. Nothing is written here: the caller persists the
+ * registration through its `ManagerRecordStore`, which on a PC with a control
+ * box configured is the control box's.
  *
  * The session is the process's home: a client attaches to it instead of the hub
  * proxying a PTY, which is what lets the CLI, the tray and a plain terminal all
  * reach the same running agent.
  */
-export async function startManagerSession(input: StartManagerSessionInput): Promise<ManagerRecord> {
+export async function startManagerSession(
+  input: StartManagerSessionInput,
+): Promise<ManagerRegistration> {
   const exec = input.exec ?? defaultExec;
   const rec = input.manager;
   const session = managerSessionName(rec.id);
@@ -944,27 +938,16 @@ export async function startManagerSession(input: StartManagerSessionInput): Prom
     exec,
     ...(input.env ? { env: input.env } : {}),
   });
-  const at = new Date().toISOString();
-  const next: ManagerRecord = {
-    ...rec,
-    kind: 'hub',
+  return {
+    id: rec.id,
+    agent: rec.agent,
+    kind: 'tmux',
+    host: (input.hostname ?? osHostname)(),
+    cwd: rec.cwd,
     tmuxSession: session,
     argv: input.argv,
-    startedAt: at,
-    lastSeenAt: at,
+    ...(rec.sessionId ? { sessionId: rec.sessionId } : {}),
   };
-  delete next.pid;
-  delete next.pidStartedAt;
-  delete next.tmuxPane;
-  delete next.stoppedAt;
-  delete next.lastExit;
-  return updateManagers(input.wsId, (managers) => {
-    const idx = managers.findIndex((m) => m.id === rec.id);
-    const out = [...managers];
-    if (idx === -1) out.push(next);
-    else out[idx] = next;
-    return { managers: out, result: next };
-  });
 }
 
 /**
@@ -1206,9 +1189,9 @@ export function backgroundFor(
   if (!s) return undefined;
   const own = managerSessionName(rec.id);
   const ownLive = snap.managerTmux.some((t) => t.session === own);
-  const hubSession = rec.kind === 'hub' ? (rec.tmuxSession ?? own) : undefined;
-  // A hub-run manager whose tmux session is up is shown there, unless that
-  // session is the attach this function allowed.
+  const hubSession = rec.kind === 'tmux' ? (rec.tmuxSession ?? own) : undefined;
+  // A tmux-run manager whose session is up is shown there, unless that session
+  // is the attach this function allowed.
   if (hubSession && hubSession !== own && snap.managerTmux.some((t) => t.session === hubSession)) {
     return undefined;
   }
@@ -1246,9 +1229,9 @@ export function terminalSessionFor(
 const BACKGROUND_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 /**
- * Open a Claude background session in this manager's hub tmux session (`claude
- * attach <id>`), reusing the session when it already runs. The record only
- * learns the session's name: its kind, session id and pid stay the detected
+ * Open a Claude background session in this manager's tmux session (`claude
+ * attach <id>`), reusing the session when it already runs. The patch only names
+ * that session: the record's kind, session id and pid stay the detected
  * process's, and the agent keeps running in Claude's daemon when this ends.
  */
 export async function attachBackgroundSession(input: {
@@ -1257,7 +1240,7 @@ export async function attachBackgroundSession(input: {
   backgroundId: string;
   exec?: ManagerExec;
   env?: NodeJS.ProcessEnv;
-}): Promise<ManagerRecord> {
+}): Promise<ManagerRecordPatch> {
   const exec = input.exec ?? defaultExec;
   const rec = input.manager;
   if (!BACKGROUND_ID_RE.test(input.backgroundId)) {
@@ -1281,11 +1264,7 @@ export async function attachBackgroundSession(input: {
       ...(input.env ? { env: input.env } : {}),
     });
   }
-  const next = await patchManager(input.wsId, rec.id, (cur) =>
-    cur.tmuxSession === session ? cur : { ...cur, tmuxSession: session },
-  );
-  if (!next) throw new Error(`unknown manager ${rec.id}`);
-  return next;
+  return { tmuxSession: session };
 }
 
 /**
@@ -1293,20 +1272,13 @@ export async function attachBackgroundSession(input: {
  * daemon. Only the attach client goes: the background session keeps running.
  */
 export async function detachBackgroundSession(
-  wsId: string,
-  id: string,
+  rec: ManagerRecord,
   exec: ManagerExec = defaultExec,
-): Promise<ManagerRecord | null> {
-  const rec = (await readManagers(wsId)).find((m) => m.id === id);
-  if (!rec) return null;
+): Promise<ManagerRecordPatch | null> {
   const session = managerSessionName(rec.id);
   await exec('tmux', ['kill-session', '-t', exactTarget(session)]).catch(() => {});
-  if (rec.tmuxSession !== session || rec.kind === 'hub') return rec;
-  return patchManager(wsId, id, (cur) => {
-    const next = { ...cur };
-    delete next.tmuxSession;
-    return next;
-  });
+  if (rec.tmuxSession !== session || rec.kind === 'tmux') return null;
+  return { tmuxSession: null };
 }
 
 /**
@@ -1315,17 +1287,15 @@ export async function detachBackgroundSession(
  * writing one transcript corrupt it.
  */
 export async function resumeManagerSession(
-  wsId: string,
-  id: string,
+  rec: ManagerRecord,
   probe: ManagerProbe & { env?: NodeJS.ProcessEnv } = {},
   opts: { prompt?: string } = {},
-): Promise<ManagerRecord> {
-  const rec = (await readManagers(wsId)).find((m) => m.id === id);
-  if (!rec) throw new Error(`unknown manager ${id}`);
+): Promise<ManagerRegistration> {
+  const id = rec.id;
   const host = (probe.hostname ?? osHostname)();
   if (ranElsewhere(rec, host)) {
     throw new ManagerConflictError(
-      `manager ${id} ran on ${rec.host ?? ''}; its transcript is not on this machine (${host}), so it cannot be resumed here`,
+      `manager ${id} runs on ${rec.host}; its transcript is not on this machine (${host}), so it cannot be resumed here`,
     );
   }
   if ((await managerStatus(rec, probe)) === 'running') {
@@ -1346,9 +1316,10 @@ export async function resumeManagerSession(
     );
   }
   return startManagerSession({
-    wsId,
+    wsId: rec.workspaceId,
     manager: rec,
     argv: buildManagerArgv(rec.agent, rec.sessionId, opts.prompt),
+    ...(probe.hostname ? { hostname: probe.hostname } : {}),
     ...(probe.exec ? { exec: probe.exec } : {}),
     ...(probe.env ? { env: probe.env } : {}),
   });
@@ -1398,40 +1369,31 @@ export async function sendKeysToManager(
 }
 
 /**
- * Kill a hub-run manager's session. Idempotent: a session that is already gone
- * is fine, and the record is kept so it can be resumed. An external manager is
- * the user's own process, which the hub does not signal.
+ * Kill a tmux-run manager's session and describe the record change. Idempotent:
+ * a session that is already gone is fine, and the record is kept so it can be
+ * resumed. An external manager is the user's own process, which the hub does not
+ * signal — `null` says there is nothing to persist.
  */
 export async function stopManagerSession(
-  wsId: string,
-  id: string,
+  rec: ManagerRecord,
   probe: ManagerProbe = {},
-): Promise<ManagerRecord | null> {
-  const rec = (await readManagers(wsId)).find((m) => m.id === id);
-  if (!rec) return null;
+): Promise<ManagerRecordPatch | null> {
   if (rec.kind === 'external') {
     if ((await managerStatus(rec, probe)) === 'running') {
       throw new ManagerConflictError(
-        `manager ${id} runs in your terminal; the hub does not stop a process it did not start`,
+        `manager ${rec.id} runs in your terminal; the hub does not stop a process it did not start`,
       );
     }
-    return rec;
+    return null;
   }
   const exec = probe.exec ?? defaultExec;
   const session = rec.tmuxSession ?? managerSessionName(rec.id);
   await exec('tmux', ['kill-session', '-t', exactTarget(session)]).catch(() => {});
-  const legacy = usesLegacySession(rec);
-  const lastExit = await readManagerExit(wsId, id, { legacy });
-  const stopped = await patchManager(wsId, id, (current) => ({
-    ...current,
+  const lastExit = await readManagerExit(rec.workspaceId, rec.id);
+  return {
     stoppedAt: new Date().toISOString(),
     ...(lastExit === undefined ? {} : { lastExit }),
-  }));
-  // The old layout's exit file is spent once its code is on the record.
-  if (legacy) {
-    await rm(legacyManagerFiles(await dirFor(wsId)).exit, { force: true }).catch(() => {});
-  }
-  return stopped;
+  };
 }
 
 // ── session turns ──

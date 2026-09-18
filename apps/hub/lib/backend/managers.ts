@@ -1,7 +1,15 @@
 // The manager domain: host agent sessions that orchestrate boxes, many per
 // workspace. A manager is either `external` (a claude/codex session in the
-// user's own terminal, registered when the CLI runs inside it) or `hub` (one
-// this hub started in tmux). State lives in @agentbox/relay's workspace store.
+// user's own terminal, registered when the CLI runs inside it) or `tmux` (one a
+// hub started in a tmux session on its own machine).
+//
+// A manager RUNS on one machine and its record is STORED on another whenever a
+// control box is configured: the folder, the tmux server and the transcript are
+// on the user's PC, while the workspace that owns the record is on the box. Two
+// rules follow, and everything here is one of them:
+//   - a process op (start/resume/attach/stop/sessions/type) is refused unless
+//     `rec.host` is this machine — `wrong_host`, with the host to retry against;
+//   - a record this hub does not host is shown from its last heartbeat.
 import { homedir, hostname as osHostname } from 'node:os';
 import {
   addWorkspace,
@@ -12,28 +20,24 @@ import {
   canonicalWorkspaceRoot,
   createBackgroundSessionLookup,
   detachBackgroundSession,
-  findManager,
-  findManagerBySession,
   findWorkspaceContaining,
   isResumableManagerAgent,
   listResumableHostSessions,
   listTmuxSessions,
   listWorkspaces,
   liveBackgroundSession,
-  MANAGER_SESSION_RE,
+  MANAGER_SEEN_WINDOW_MS,
   managerSessionName,
   managerStatus,
+  managerStore,
+  MANAGER_SESSION_RE,
   newManagerId,
-  patchManager,
   processStartTime,
   readManagerExit,
-  readManagers,
-  readReconciledManagers,
   readTasks,
   readTimeline,
-  readWorkspace,
+  reconcileManagers,
   timelineSink,
-  removeManagerRecord,
   resumeManagerSession,
   sendKeysToManager,
   sessionTitle,
@@ -45,21 +49,22 @@ import {
   tmuxAvailable,
   toManagerView,
   UNTITLED_SESSION,
-  upsertDetectedManager,
-  usesLegacySession,
   workspaceRootOn,
   RESUMABLE_MANAGER_AGENTS,
   type BackgroundSessionLookup,
   type BackgroundSession,
   type BackgroundSessionSnapshot,
+  type ManagerHeartbeat,
   type ManagerProbe,
   type ManagerRecord,
+  type ManagerRecordStore,
+  type ManagerWorkspace,
+  type ManagerRegistration,
   type ReconcileContext,
   type TimelineEvent,
   type TimelineEventType,
   type TimelinePr,
   type TimelineStamp,
-  type WorkspaceRecord,
 } from '@agentbox/relay';
 import { reconcileContext, type BackendDeps } from './deps';
 import { stampInWorkspace } from './timeline';
@@ -74,7 +79,7 @@ import type {
   ManagerMessageResult,
   ManagerNoteResult,
   ManagerResult,
-  ManagerSessionsResult,
+  ManagerSessionsAnswer,
   StartManagerInput,
   TimelineMeta,
   TimelineSessionRef,
@@ -90,6 +95,22 @@ function invalid(message: string): { ok: false; error: string; invalid: true } {
   return { ok: false, error: message, invalid: true };
 }
 
+/**
+ * "That manager does not run here." The client retries against the hub on
+ * `host` — its own local hub, when `host` is its own hostname.
+ */
+function wrongHost(
+  message: string,
+  host: string,
+): {
+  ok: false;
+  error: string;
+  code: 'wrong_host';
+  details: { host: string };
+} {
+  return { ok: false, error: message, code: 'wrong_host', details: { host } };
+}
+
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -97,6 +118,12 @@ function messageOf(e: unknown): string {
 export interface ManagerBackendOptions {
   /** The workspace slice's view, so a detect answers with the same shape `GET /workspaces` does. */
   workspaceView(id: string): Promise<WorkspaceView | null>;
+  /**
+   * Where manager records are persisted: this disk, or the control box that owns
+   * the workspace. Defaults to the process-wide store
+   * (`configureManagerStoreFromConfig`).
+   */
+  store?: ManagerRecordStore;
   /** Seams for the title lookup and its retry clock; production reads the agent's store. */
   sessionTitle?: typeof sessionTitle;
   now?: () => number;
@@ -118,11 +145,22 @@ export const BACKGROUND_STOP_NOTICE =
  */
 const TITLE_RETRY_MS = 10 * 60 * 1000;
 
+/** How often the hosting hub reports a manager it runs. */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * After this long with no heartbeat the report is stale and the record falls
+ * back to its `lastSeenAt` window — three intervals, so one slow round trip (or
+ * a hub restart) does not flip a live manager to `stopped`.
+ */
+export const HEARTBEAT_STALE_MS = 3 * HEARTBEAT_INTERVAL_MS;
+
 export function createManagerBackend(
   deps: BackendDeps,
   opts: ManagerBackendOptions,
 ): ManagerBackend {
   const hostname = deps.hostname ?? osHostname;
+  const store = opts.store ?? managerStore();
   const probe: ManagerProbe = {
     hostname,
     ...(deps.managerExec ? { exec: deps.managerExec } : {}),
@@ -131,11 +169,12 @@ export function createManagerBackend(
   };
 
   /**
-   * The agent's store is only on the machine the session ran on: a hub-run
-   * manager is always here, an external one only when it reported this host.
+   * Whether this hub is the machine the manager runs on. Everything that reads
+   * the session — its process, its tmux server, its transcript, Claude's daemon
+   * — is only true there, and everything that drives it is refused elsewhere.
    */
   function storeIsLocal(rec: ManagerRecord): boolean {
-    return rec.kind === 'hub' || rec.host === hostname();
+    return rec.host === hostname();
   }
 
   const lookupTitle = opts.sessionTitle ?? sessionTitle;
@@ -166,12 +205,12 @@ export function createManagerBackend(
     }
     titleMisses.delete(rec.id);
     // Guarded on the session id: a detect that moved the record to a new session
-    // meanwhile must not get the old session's title written over it.
-    await patchManager(rec.workspaceId, rec.id, (cur) =>
-      cur.sessionId === sessionId && (!cur.title || cur.title === UNTITLED_SESSION)
-        ? { ...cur, title }
-        : cur,
-    ).catch(() => null);
+    // meanwhile must not get the old session's title written over it. Only the
+    // store that HOLDS the record can check that, so a remote one learns the
+    // title from the heartbeat instead.
+    if (store.kind === 'file') {
+      await store.patchManager(rec.workspaceId, rec.id, { title }).catch(() => null);
+    }
     return { ...rec, title };
   }
 
@@ -194,8 +233,23 @@ export function createManagerBackend(
     return managerStatus(rec, probe);
   }
 
+  /** The last heartbeat, while it is fresh enough to believe. */
+  function freshReport(rec: ManagerRecord): ManagerHeartbeat | undefined {
+    if (!rec.reported || !rec.reportedAt) return undefined;
+    const at = Date.parse(rec.reportedAt);
+    if (Number.isNaN(at) || now() - at >= HEARTBEAT_STALE_MS) return undefined;
+    return rec.reported;
+  }
+
   function backgroundResumeRefusal(rec: ManagerRecord, s: BackgroundSession): string {
     return `manager ${rec.id} is still running as a Claude background session (${s.id}); attach to it instead of resuming it`;
+  }
+
+  function elsewhere(rec: ManagerRecord, what: string): ReturnType<typeof wrongHost> {
+    return wrongHost(
+      `manager ${rec.id} runs on ${rec.host}, not on ${hostname()}; ${what} there`,
+      rec.host,
+    );
   }
 
   const lookupTurn = opts.sessionTurn ?? sessionTurn;
@@ -205,19 +259,21 @@ export function createManagerBackend(
    *
    * The transcript is the truth when it is HERE. When it is not — the manager
    * runs on a PC and this is its control box — the only reader is that PC, so
-   * the turn it reported with the call is used instead. `reported` is
-   * client-asserted, hence never preferred over a transcript this hub can read.
+   * the turn it reported with the call is used instead, falling back to the one
+   * its last heartbeat carried. `reported` is client-asserted, hence never
+   * preferred over a transcript this hub can read.
    */
   async function managerStamp(
     rec: ManagerRecord,
     reported?: { turn?: number; prompt?: string },
   ): Promise<TimelineStamp> {
     const local = storeIsLocal(rec);
+    const asserted = reported?.turn !== undefined ? reported : freshReport(rec);
     const turn =
       rec.sessionId && local
         ? await lookupTurn(rec.agent, rec.cwd, rec.sessionId).catch(() => undefined)
-        : !local && reported?.turn !== undefined
-          ? { turn: reported.turn, ...(reported.prompt ? { prompt: reported.prompt } : {}) }
+        : !local && asserted?.turn !== undefined
+          ? { turn: asserted.turn, ...(asserted.prompt ? { prompt: asserted.prompt } : {}) }
           : undefined;
     return {
       actor: 'manager',
@@ -232,8 +288,8 @@ export function createManagerBackend(
   ): Promise<TimelineStamp | undefined> {
     const rec =
       'managerId' in ref
-        ? await findManager(ref.managerId)
-        : await findManagerBySession(ref.agent, ref.sessionId);
+        ? await store.findManager(ref.managerId)
+        : await store.findManagerBySession(ref.agent, ref.sessionId);
     if (!rec || (wsId !== undefined && rec.workspaceId !== wsId)) return undefined;
     return managerStamp(rec, 'managerId' in ref ? undefined : ref);
   }
@@ -266,8 +322,22 @@ export function createManagerBackend(
     return { repo: repo ?? '', number, title: '', url: '', base: '', head: '' };
   }
 
-  async function viewsOf(ws: WorkspaceRecord, ctx: ReconcileContext): Promise<ManagerView[]> {
-    const records = await readReconciledManagers(ws.id, ctx);
+  /** A workspace's records with their box pointers healed; written back only where they live. */
+  async function reconciled(wsId: string, ctx: ReconcileContext): Promise<ManagerRecord[]> {
+    const current = await store.readManagers(wsId);
+    const { managers, changed } = reconcileManagers(current, ctx);
+    if (changed && store.kind === 'file') {
+      for (const m of managers) {
+        await store
+          .patchManager(wsId, m.id, { boxIds: m.boxIds, boxJobIds: m.boxJobIds })
+          .catch(() => null);
+      }
+    }
+    return managers;
+  }
+
+  async function viewsOf(ws: ManagerWorkspace, ctx: ReconcileContext): Promise<ManagerView[]> {
+    const records = await reconciled(ws.id, ctx);
     if (records.length === 0) return [];
     const tasks = await readTasks(ws.id);
     // Only a claude session on this machine can be in Claude's daemon or in a
@@ -285,7 +355,8 @@ export function createManagerBackend(
     return Promise.all(
       records.map(async (raw) => {
         const rec = await withTitle(raw);
-        const local = snap !== undefined && rec.agent === 'claude' && storeIsLocal(rec);
+        if (!storeIsLocal(rec)) return reportedView(rec, ws, tasks);
+        const local = snap !== undefined && rec.agent === 'claude';
         const background = local ? backgroundFor(rec, snap) : undefined;
         const inDaemon = local ? liveBackgroundSession(rec, snap) : undefined;
         const status = background || inDaemon ? 'running' : await managerStatus(rec, probe);
@@ -297,8 +368,8 @@ export function createManagerBackend(
             ? terminalSessionFor(rec, snap, claimed)
             : undefined;
         const lastExit =
-          status === 'stopped' && rec.kind === 'hub' && rec.lastExit === undefined
-            ? await readManagerExit(ws.id, rec.id, { legacy: usesLegacySession(rec) })
+          status === 'stopped' && rec.kind === 'tmux' && rec.lastExit === undefined
+            ? await readManagerExit(ws.id, rec.id)
             : undefined;
         return toManagerView(rec, {
           status,
@@ -313,10 +384,58 @@ export function createManagerBackend(
     );
   }
 
+  /**
+   * A manager this hub only holds the record for, as its machine last reported
+   * it. Nothing here is probed: a pid, a tmux session and a transcript all
+   * belong to the other machine. A stale report falls back to `managerStatus`,
+   * which for a record with no probe of its own is the `lastSeenAt` window.
+   */
+  function reportedView(
+    rec: ManagerRecord,
+    ws: ManagerWorkspace,
+    tasks: Awaited<ReturnType<typeof readTasks>>,
+  ): ManagerView {
+    const beat = freshReport(rec);
+    const withReported: ManagerRecord = beat
+      ? {
+          ...rec,
+          ...(beat.sessionId ? { sessionId: beat.sessionId } : {}),
+          ...(beat.title ? { title: beat.title } : {}),
+          ...(beat.tmuxSession ? { tmuxSession: beat.tmuxSession } : {}),
+        }
+      : rec;
+    const status = beat ? beat.status : seenWindowStatus(rec);
+    return toManagerView(withReported, {
+      status,
+      hostname: hostname(),
+      workspaceName: ws.name,
+      tasks,
+      ...(beat?.background
+        ? {
+            background: beat.background,
+            attachSession:
+              beat.tmuxSession === managerSessionName(rec.id) ? managerSessionName(rec.id) : null,
+          }
+        : {}),
+      ...(beat?.terminalSession ? { terminalSession: beat.terminalSession } : {}),
+      ...(beat?.lastExit === undefined ? {} : { lastExit: beat.lastExit }),
+    });
+  }
+
+  /** The no-probe fallback `managerStatus` applies to a record from another machine. */
+  function seenWindowStatus(rec: ManagerRecord): 'running' | 'stopped' {
+    const seen = Date.parse(rec.lastSeenAt);
+    return !Number.isNaN(seen) && now() - seen < MANAGER_SEEN_WINDOW_MS ? 'running' : 'stopped';
+  }
+
   async function viewOf(id: string): Promise<ManagerView | null> {
-    const rec = await findManager(id);
+    // A remote store's hub renders the view: it holds the workspace name, the
+    // tasks and every other machine's heartbeats.
+    const remote = await store.managerView(id);
+    if (remote !== undefined) return remote;
+    const rec = await store.findManager(id);
     if (!rec) return null;
-    const ws = await readWorkspace(rec.workspaceId);
+    const ws = await store.readWorkspace(rec.workspaceId);
     if (!ws) return null;
     return (await viewsOf(ws, await reconcileContext(deps))).find((m) => m.id === id) ?? null;
   }
@@ -348,66 +467,33 @@ export function createManagerBackend(
   }
 
   /**
-   * The migrated single-manager record a detect with no `managerId` comes from.
-   * That layout started its agent with `AGENTBOX_MANAGER=1`, which names no
-   * record, so its first detect would otherwise register a duplicate external
-   * manager beside the running hub one. Limited to records still on the old tmux
-   * name: a current hub-run manager exports its own id, and a terminal session in
-   * the same folder must not be folded into it.
-   */
-  async function legacyManagerFor(
-    wsId: string,
-    agent: string,
-    cwd: string,
-  ): Promise<string | undefined> {
-    const candidates = (await readManagers(wsId)).filter(
-      (m) => usesLegacySession(m) && !m.sessionId && m.agent === agent && m.cwd === cwd,
-    );
-    const running: string[] = [];
-    for (const m of candidates) {
-      if ((await managerStatus(m, probe)) === 'running') running.push(m.id);
-    }
-    return running.length === 1 ? running[0] : undefined;
-  }
-
-  /**
    * The record a detect's `managerId` hint names, when it can be believed. Claude's
    * daemon hands the env of the client that spawned it to every session it hosts,
    * so `$AGENTBOX_MANAGER` reaches sessions that have nothing to do with that
    * manager. Believed only for a record in the same folder that has no session
-   * yet (a hub start whose agent reports for the first time) or that is hub-run
-   * and running (its agent after a `/clear`).
+   * yet (a start whose agent reports for the first time) or that runs in a tmux
+   * session here and is running (its agent after a `/clear`).
    */
   async function trustedHint(
     managerId: string | undefined,
     cwd: string,
   ): Promise<ManagerRecord | undefined> {
     if (!managerId) return undefined;
-    const rec = await findManager(managerId);
+    const rec = await store.findManager(managerId);
     if (!rec || rec.cwd !== cwd) return undefined;
     if (!rec.sessionId) return rec;
-    if (rec.kind === 'hub' && (await managerStatus(rec, probe)) === 'running') return rec;
-    return undefined;
-  }
-
-  async function findManagerByTmux(session: string): Promise<ManagerRecord | undefined> {
-    for (const ws of await listWorkspaces()) {
-      const hit = (await readManagers(ws.id)).find((m) => m.tmuxSession === session);
-      if (hit) return hit;
-    }
+    if (rec.kind === 'tmux' && (await managerStatus(rec, probe)) === 'running') return rec;
     return undefined;
   }
 
   /**
    * The AgentBox tmux session a detect says it runs in, when it exists on this
-   * machine and started in the detect's folder: the manager that owns it, or the
-   * session itself to adopt when none does (the single-manager layout's
-   * `agentbox-manager-<workspaceId>`, whose migrated record was never written).
+   * machine and started in the detect's folder, and the manager that owns it.
    */
   async function tmuxHome(
     input: DetectManagerInput,
     cwd: string,
-  ): Promise<{ owner?: ManagerRecord; adopt?: string } | undefined> {
+  ): Promise<{ owner: ManagerRecord; session: string } | undefined> {
     const name = input.tmuxSession;
     if (!name || !MANAGER_SESSION_RE.test(name) || input.host !== hostname()) return undefined;
     const found = (await listTmuxSessions(deps.managerExec)).find((t) => t.session === name);
@@ -415,10 +501,9 @@ export function createManagerBackend(
     const path = await canonicalWorkspaceRoot(found.path).catch(() => found.path);
     if (path !== cwd) return undefined;
     const owner =
-      (await findManager(name.slice('agentbox-manager-'.length))) ??
-      (await findManagerByTmux(name));
-    if (owner) return owner.cwd === cwd ? { owner } : undefined;
-    return { adopt: name };
+      (await store.findManager(name.slice('agentbox-manager-'.length))) ??
+      (await store.listManagers()).find((m) => m.tmuxSession === name);
+    return owner?.cwd === cwd ? { owner, session: name } : undefined;
   }
 
   /** Running first, then the most recently seen. */
@@ -434,27 +519,88 @@ export function createManagerBackend(
     return view ? { ok: true, manager: view } : err(`unknown manager ${id}`);
   }
 
+  /**
+   * What this machine's probes see for a manager it runs, as the hub that holds
+   * the record would otherwise have to guess.
+   */
+  async function heartbeatFor(
+    rec: ManagerRecord,
+    claimed: ReadonlySet<string>,
+  ): Promise<ManagerHeartbeat> {
+    const snap = rec.agent === 'claude' ? await lookupBackground() : undefined;
+    const background = snap ? backgroundFor(rec, snap) : undefined;
+    const inDaemon = snap ? liveBackgroundSession(rec, snap) : undefined;
+    const status = background || inDaemon ? 'running' : await managerStatus(rec, probe);
+    const own = managerSessionName(rec.id);
+    const showing =
+      rec.kind === 'tmux'
+        ? (rec.tmuxSession ?? own)
+        : snap?.managerTmux.some((t) => t.session === own)
+          ? own
+          : undefined;
+    const title = rec.sessionId
+      ? await lookupTitle(rec.agent, rec.cwd, rec.sessionId).catch(() => null)
+      : null;
+    const turn =
+      rec.sessionId && status === 'running'
+        ? await lookupTurn(rec.agent, rec.cwd, rec.sessionId).catch(() => undefined)
+        : undefined;
+    const terminalSession =
+      snap && rec.kind === 'external' && status === 'running'
+        ? terminalSessionFor(rec, snap, claimed)
+        : undefined;
+    const lastExit =
+      status === 'stopped' && rec.kind === 'tmux'
+        ? (rec.lastExit ?? (await readManagerExit(rec.workspaceId, rec.id)))
+        : undefined;
+    return {
+      status,
+      ...(rec.sessionId ? { sessionId: rec.sessionId } : {}),
+      ...(title && title !== UNTITLED_SESSION ? { title } : {}),
+      ...(turn ? { turn: turn.turn, ...(turn.prompt ? { prompt: turn.prompt } : {}) } : {}),
+      ...(lastExit === undefined ? {} : { lastExit }),
+      ...(background ? { background } : {}),
+      ...(terminalSession ? { terminalSession } : {}),
+      ...(showing ? { tmuxSession: showing } : {}),
+    };
+  }
+
+  /** Report one manager this machine runs, best-effort. */
+  async function beat(rec: ManagerRecord): Promise<void> {
+    if (store.kind !== 'remote' || !storeIsLocal(rec)) return;
+    const claimed = new Set<string>();
+    for (const m of await store.listManagers()) {
+      claimed.add(managerSessionName(m.id));
+      if (m.tmuxSession) claimed.add(m.tmuxSession);
+    }
+    await store.reportManager(rec.id, await heartbeatFor(rec, claimed)).catch(() => {});
+  }
+
+  /** Kill the session and persist the ending, through whichever store holds it. */
+  async function persistStop(rec: ManagerRecord): Promise<void> {
+    const patch = await stopManagerSession(rec, probe);
+    if (patch) await store.patchManager(rec.workspaceId, rec.id, patch);
+  }
+
   return {
     async detectManager(input: DetectManagerInput): Promise<DetectManagerResult> {
+      const host = input.host ?? hostname();
       const cwd = await canonicalWorkspaceRoot(input.cwd);
       const home = await tmuxHome(input, cwd);
       const hinted = home?.owner ?? (await trustedHint(input.managerId, cwd));
       // A session already registered stays where it is, even when this call came
       // from a subfolder another workspace contains.
-      const known = (await findManagerBySession(input.agent, input.sessionId)) ?? hinted ?? null;
-      let ws = known ? await readWorkspace(known.workspaceId) : null;
+      const known =
+        (await store.findManagerBySession(input.agent, input.sessionId)) ?? hinted ?? null;
+      let ws = known ? await store.readWorkspace(known.workspaceId) : null;
       let workspaceCreated = false;
       if (!ws) {
-        ws = findWorkspaceContaining(await listWorkspaces(), cwd, input.host ?? hostname());
+        ws = findWorkspaceContaining(await listWorkspaces(), cwd, host);
         if (!ws) {
           const refusal = await autoWorkspaceRefusal(cwd, input.home);
           if (refusal) return invalid(refusal);
           try {
-            ws = await addWorkspace({
-              host: input.host ?? hostname(),
-              root: cwd,
-              projects: input.projects ?? [],
-            });
+            ws = await addWorkspace({ host, root: cwd, projects: input.projects ?? [] });
             workspaceCreated = true;
           } catch (e) {
             return err(`could not register a workspace at ${cwd}: ${messageOf(e)}`);
@@ -463,28 +609,26 @@ export function createManagerBackend(
       }
       // Only a pid from this machine can be stamped: elsewhere it names another process.
       const pidStartedAt =
-        input.pid !== undefined && input.host === hostname()
+        input.pid !== undefined && host === hostname()
           ? await (deps.processStartTime ?? processStartTime)(input.pid).catch(() => undefined)
           : undefined;
-      const managerId =
-        hinted?.id ?? (known ? undefined : await legacyManagerFor(ws.id, input.agent, cwd));
-      const { manager, created, sessionChanged } = await upsertDetectedManager(ws.id, {
+      const { manager, created, sessionChanged } = await store.upsertDetectedManager(ws.id, {
         agent: input.agent,
         sessionId: input.sessionId,
         cwd,
+        host,
         ...(input.pid !== undefined ? { pid: input.pid } : {}),
         ...(pidStartedAt ? { pidStartedAt } : {}),
-        ...(input.host ? { host: input.host } : {}),
-        ...(managerId ? { managerId } : {}),
+        ...(hinted ? { managerId: hinted.id } : {}),
         ...(input.tmuxPane ? { tmuxPane: input.tmuxPane } : {}),
-        ...(home?.adopt ? { tmuxSession: home.adopt } : {}),
+        ...(home ? { tmuxSession: home.session } : {}),
       });
       if (input.boxId) await attachBoxToManager(ws.id, manager.id, { boxId: input.boxId });
       else if (input.boxJobId) {
         await attachBoxToManager(ws.id, manager.id, { boxJobId: input.boxJobId });
       }
       // A detect runs on nearly every CLI call; only a new record or a new
-      // session in an existing one (`/clear`, a hub-run agent's first call) is news.
+      // session in an existing one (`/clear`, a started agent's first call) is news.
       if (created || sessionChanged) {
         await recordManagerEvent(manager, 'manager.joined', { stamp: { actor: 'manager' } });
       }
@@ -495,6 +639,14 @@ export function createManagerBackend(
     },
 
     async listManagers(filter?: ManagerFilter): Promise<ManagerView[]> {
+      const remote = await store.managerViews(
+        filter?.workspaceId ? { workspaceId: filter.workspaceId } : {},
+      );
+      if (remote) {
+        return sortViews(
+          filter?.status ? remote.filter((v) => v.status === filter.status) : remote,
+        );
+      }
       const all = await listWorkspaces();
       const wanted = filter?.workspaceId ? all.filter((w) => w.id === filter.workspaceId) : all;
       if (wanted.length === 0) return [];
@@ -506,7 +658,9 @@ export function createManagerBackend(
     getManager: viewOf,
 
     async listWorkspaceManagers(wsId: string): Promise<ManagerView[] | null> {
-      const ws = await readWorkspace(wsId);
+      const remote = await store.managerViews({ workspaceId: wsId });
+      if (remote) return sortViews(remote);
+      const ws = await store.readWorkspace(wsId);
       if (!ws) return null;
       return sortViews(await viewsOf(ws, await reconcileContext(deps)));
     },
@@ -516,13 +670,12 @@ export function createManagerBackend(
       input: StartManagerInput,
       meta?: TimelineMeta,
     ): Promise<ManagerResult> {
-      const ws = await readWorkspace(wsId);
+      const ws = await store.readWorkspace(wsId);
       if (!ws) return err(`unknown workspace ${wsId}`);
-      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
-      // The route validator is the accept-list for `agent`; here we only need the
-      // one rule it cannot express — only some agents can be resumed, and
-      // starting a FRESH agent that looks resumed is worse than a 400.
       if (input.sessionId && !isResumableManagerAgent(input.agent)) {
+        // The route validator is the accept-list for `agent`; here we only need
+        // the one rule it cannot express — starting a FRESH agent that looks
+        // resumed is worse than a 400.
         return err(
           `session resume is only supported for ${RESUMABLE_MANAGER_AGENTS.join(', ')}, not ${input.agent}`,
         );
@@ -530,42 +683,50 @@ export function createManagerBackend(
       if (input.sessionId) {
         // A session some manager already holds is resumed AS that manager, so the
         // boxes and tasks it collected stay with it instead of forking a duplicate.
-        const existing = await findManagerBySession(input.agent, input.sessionId);
+        const existing = await store.findManagerBySession(input.agent, input.sessionId);
         if (existing) {
+          if (!storeIsLocal(existing)) return elsewhere(existing, 'resume it');
+          if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
           const inDaemon = await daemonSession(existing, true);
           if (inDaemon) return err(backgroundResumeRefusal(existing, inDaemon));
           try {
             if (
               input.restart &&
-              existing.kind === 'hub' &&
+              existing.kind === 'tmux' &&
               (await managerStatus(existing, probe)) === 'running'
             ) {
-              await stopManagerSession(existing.workspaceId, existing.id, probe);
+              await persistStop(existing);
             }
-            await resumeManagerSession(existing.workspaceId, existing.id, probe);
+            await store.registerManager(
+              existing.workspaceId,
+              await resumeManagerSession(existing, probe),
+            );
           } catch (e) {
             return err(messageOf(e));
           }
           await recordManagerEvent(existing, 'manager.resumed', meta);
+          await beat(existing);
           deps.notify();
           return answer(existing.id);
         }
       }
+      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
       // A manager is a process in the folder, so it can only start where the
       // folder is. A workspace registered from another machine has none here.
       const root = workspaceRootOn(ws, hostname());
       if (!root) {
-        return err(
-          `workspace ${ws.name} has no folder on ${hostname()}; start its manager on the machine that has one`,
-        );
+        const elsewhereHost = Object.keys(ws.hosts)[0];
+        const message = `workspace ${ws.name} has no folder on ${hostname()}; start its manager on the machine that has one`;
+        return elsewhereHost ? wrongHost(message, elsewhereHost) : err(message);
       }
       const at = new Date().toISOString();
       const manager: ManagerRecord = {
         id: newManagerId(),
         workspaceId: ws.id,
         agent: input.agent,
-        kind: 'hub',
+        kind: 'tmux',
         cwd: root,
+        host: hostname(),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         boxIds: [],
         boxJobIds: [],
@@ -573,43 +734,92 @@ export function createManagerBackend(
         lastSeenAt: at,
       };
       try {
-        await startManagerSession({
+        const registration = await startManagerSession({
           wsId: ws.id,
           manager,
           argv: buildManagerArgv(input.agent, input.sessionId),
+          hostname,
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
         });
+        await store.registerManager(ws.id, registration);
       } catch (e) {
         return err(`could not start the manager: ${messageOf(e)}`);
       }
       await recordManagerEvent(manager, 'manager.started', meta);
+      await beat(manager);
       deps.notify();
       return answer(manager.id);
     },
 
-    async resumeManager(id: string, meta?: TimelineMeta): Promise<ManagerResult> {
-      const rec = await findManager(id);
+    /**
+     * Record a session another machine opened. The record is minted (or moved)
+     * here, where the workspace is, and the event says which it was: a
+     * registration naming an existing manager is that manager resumed.
+     */
+    async registerManager(
+      wsId: string,
+      input: ManagerRegistration,
+      meta?: TimelineMeta,
+    ): Promise<ManagerResult> {
+      const ws = await store.readWorkspace(wsId);
+      if (!ws) return err(`unknown workspace ${wsId}`);
+      const previous = input.id ? await store.findManager(input.id) : null;
+      if (previous && previous.workspaceId !== wsId) {
+        return err(`manager ${input.id ?? ''} belongs to another workspace`);
+      }
+      const manager = await store.registerManager(wsId, input);
+      if (!manager) return err('the manager was not written');
+      await recordManagerEvent(manager, previous ? 'manager.resumed' : 'manager.started', meta);
+      deps.notify();
+      return answer(manager.id);
+    },
+
+    async reportManager(id: string, beat: ManagerHeartbeat): Promise<ManagerResult> {
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
+      if (storeIsLocal(rec)) {
+        // Here the process itself is readable, and a report — which nothing can
+        // check — would let a stale claim override what this hub can see.
+        return wrongHost(
+          `manager ${id} runs on this hub (${hostname()}); its state is probed here, not reported`,
+          rec.host,
+        );
+      }
+      await store.patchManager(rec.workspaceId, id, {
+        reported: beat,
+        reportedAt: new Date(now()).toISOString(),
+        // A record detected before its agent had a session (or a title) learns
+        // both from the machine that can read the transcript.
+        ...(beat.sessionId && !rec.sessionId ? { sessionId: beat.sessionId } : {}),
+        ...(beat.title && !rec.title ? { title: beat.title } : {}),
+      });
+      deps.notify();
+      return answer(id);
+    },
+
+    async resumeManager(id: string, meta?: TimelineMeta): Promise<ManagerResult> {
+      const rec = await store.findManager(id);
+      if (!rec) return err(`unknown manager ${id}`);
+      if (!storeIsLocal(rec)) return elsewhere(rec, 'resume it');
       const inDaemon = await daemonSession(rec, true);
       if (inDaemon) return err(backgroundResumeRefusal(rec, inDaemon));
       if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
       try {
-        await resumeManagerSession(rec.workspaceId, id, probe);
+        await store.registerManager(rec.workspaceId, await resumeManagerSession(rec, probe));
       } catch (e) {
         return err(messageOf(e));
       }
       await recordManagerEvent(rec, 'manager.resumed', meta);
+      await beat(rec);
       deps.notify();
       return answer(id);
     },
 
     async attachManager(id: string): Promise<ManagerResult> {
-      const rec = await findManager(id);
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      const snap =
-        rec.agent === 'claude' && storeIsLocal(rec)
-          ? await lookupBackground({ fresh: true })
-          : undefined;
+      if (!storeIsLocal(rec)) return elsewhere(rec, 'attach to it');
+      const snap = rec.agent === 'claude' ? await lookupBackground({ fresh: true }) : undefined;
       const background = snap ? backgroundFor(rec, snap) : undefined;
       if (!background) {
         return err(
@@ -620,29 +830,34 @@ export function createManagerBackend(
       }
       if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
       try {
-        await attachBackgroundSession({
+        const patch = await attachBackgroundSession({
           wsId: rec.workspaceId,
           manager: rec,
           backgroundId: background.id,
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
         });
+        await store.patchManager(rec.workspaceId, rec.id, patch);
       } catch (e) {
         return err(`could not attach: ${messageOf(e)}`);
       }
       // The snapshot predates the session just started; the answer must show it.
       await lookupBackground({ fresh: true });
+      await beat(rec);
       deps.notify();
       return answer(id);
     },
 
     async stopManager(id: string, meta?: TimelineMeta): Promise<ManagerResult> {
-      const rec = await findManager(id);
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
+      if (!storeIsLocal(rec)) return elsewhere(rec, 'stop it');
       const inDaemon = await daemonSession(rec, true);
       if (inDaemon && rec.kind === 'external') {
         // Its session is Claude's daemon's, not the hub's: only the attach client goes.
-        await detachBackgroundSession(rec.workspaceId, id, deps.managerExec);
+        const patch = await detachBackgroundSession(rec, deps.managerExec);
+        if (patch) await store.patchManager(rec.workspaceId, id, patch);
         await lookupBackground({ fresh: true });
+        await beat(rec);
         deps.notify();
         const view = await viewOf(id);
         return view
@@ -651,46 +866,54 @@ export function createManagerBackend(
       }
       const wasRunning = (await managerStatus(rec, probe)) === 'running';
       try {
-        await stopManagerSession(rec.workspaceId, id, probe);
+        await persistStop(rec);
       } catch (e) {
         return err(messageOf(e));
       }
       // Stop is idempotent: stopping a session that had already ended is not an event.
       if (wasRunning) await recordManagerEvent(rec, 'manager.stopped', meta);
+      await beat(rec);
       deps.notify();
       const stopped = await answer(id);
       return stopped.ok && inDaemon ? { ...stopped, notice: BACKGROUND_STOP_NOTICE } : stopped;
     },
 
     async removeManager(id: string, opts: { force?: boolean } = {}): Promise<ActionResult> {
-      const rec = await findManager(id);
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
       // A record is the only handle on a running process: forgetting it would
       // leave a tmux session (or a terminal session's boxes) nothing points at.
       // `force` is the way out when the status is wrong (a pid the probe cannot
       // tell apart, a last-seen window that has not lapsed yet).
-      if (!opts.force && (await effectiveStatus(rec)) === 'running') {
+      const running = storeIsLocal(rec)
+        ? (await effectiveStatus(rec)) === 'running'
+        : (freshReport(rec)?.status ?? seenWindowStatus(rec)) === 'running';
+      if (!opts.force && running) {
         return err(`manager ${id} is running; stop it before forgetting it (or force it)`);
       }
-      await removeManagerRecord(rec.workspaceId, id);
+      await store.removeManagerRecord(rec.workspaceId, id);
       deps.notify();
       return { ok: true };
     },
 
-    async listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsResult | null> {
-      const ws = await readWorkspace(wsId);
+    async listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsAnswer | null> {
+      const ws = await store.readWorkspace(wsId);
       if (!ws) return null;
       // The agent's sessions are files in the folder's own store: nothing to
       // list for a workspace whose folder is on another machine.
       const root = workspaceRootOn(ws, hostname());
-      if (!root) return { agent: agent ?? 'claude', supported: true, sessions: [] };
-      return listResumableHostSessions(root, agent ?? 'claude');
+      if (!root) {
+        const elsewhereHost = Object.keys(ws.hosts)[0];
+        const message = `workspace ${ws.name} has no folder on ${hostname()}; its agent sessions are on the machine that has one`;
+        return elsewhereHost ? wrongHost(message, elsewhereHost) : err(message);
+      }
+      return { ok: true, sessions: await listResumableHostSessions(root, agent ?? 'claude') };
     },
 
     timelineStamp,
 
     async addManagerNote(id, input): Promise<ManagerNoteResult> {
-      const rec = await findManager(id);
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
       const event = await timelineSink().record(rec.workspaceId, {
         type: 'manager.note',
@@ -705,12 +928,23 @@ export function createManagerBackend(
     },
 
     async sendManagerMessage(id, input, meta): Promise<ManagerMessageResult> {
-      const rec = await findManager(id);
+      const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
+      if (!storeIsLocal(rec)) {
+        // Typing needs the tmux server the session runs under. The client
+        // retries against the hub on that machine, which is its own when the
+        // host is its hostname.
+        return {
+          ok: false,
+          code: 'manager_unreachable',
+          error: `manager ${id} runs on ${rec.host}; this hub (${hostname()}) cannot type into it`,
+          details: { host: rec.host },
+        };
+      }
       const status = await managerStatus(rec, probe);
       let delivered: ManagerMessageDelivery;
       try {
-        if (status === 'running' && rec.kind === 'hub') {
+        if (status === 'running' && rec.kind === 'tmux') {
           await sendKeysToManager(
             { session: rec.tmuxSession ?? managerSessionName(rec.id) },
             input.text,
@@ -719,19 +953,21 @@ export function createManagerBackend(
           );
           delivered = 'session';
         } else if (status === 'running') {
-          // A pane is only reachable on the machine whose tmux server holds it.
-          if (!rec.tmuxPane || !storeIsLocal(rec)) {
+          if (!rec.tmuxPane) {
             return {
               ok: false,
               code: 'manager_unreachable',
-              error: `manager ${id} runs in your terminal${rec.tmuxPane ? ' on another machine' : ' outside tmux'}, where the hub cannot type; paste the message into that session`,
+              error: `manager ${id} runs in your terminal outside tmux, where the hub cannot type; paste the message into that session`,
             };
           }
           await sendKeysToManager({ pane: rec.tmuxPane }, input.text, deps.managerExec, opts.sleep);
           delivered = 'pane';
         } else {
           if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
-          await resumeManagerSession(rec.workspaceId, id, probe, { prompt: input.text });
+          await store.registerManager(
+            rec.workspaceId,
+            await resumeManagerSession(rec, probe, { prompt: input.text }),
+          );
           delivered = 'resumed';
         }
       } catch (e) {
@@ -750,6 +986,7 @@ export function createManagerBackend(
         text: input.text,
         ...(pr ? { pr } : {}),
       });
+      await beat(rec);
       deps.notify();
       const view = await viewOf(id);
       if (!view) return err(`unknown manager ${id}`);
@@ -757,23 +994,34 @@ export function createManagerBackend(
     },
 
     async attachJob(managerId: string, jobId: string): Promise<ActionResult> {
-      const rec = await findManager(managerId);
+      const rec = await store.findManager(managerId);
       if (!rec) return err(`unknown manager ${managerId}`);
       await attachBoxToManager(rec.workspaceId, managerId, { boxJobId: jobId });
       deps.notify();
       return { ok: true };
     },
 
+    async reportManagers(): Promise<number> {
+      if (store.kind !== 'remote') return 0;
+      const records = (await store.listManagers()).filter(storeIsLocal);
+      if (records.length === 0) return 0;
+      const claimed = new Set<string>();
+      for (const m of records) {
+        claimed.add(managerSessionName(m.id));
+        if (m.tmuxSession) claimed.add(m.tmuxSession);
+      }
+      for (const rec of records) {
+        await store.reportManager(rec.id, await heartbeatFor(rec, claimed)).catch(() => {});
+      }
+      return records.length;
+    },
+
     async managerByBox(): Promise<Map<string, string>> {
       const out = new Map<string, string>();
-      const all = await listWorkspaces();
-      if (all.length === 0) return out;
       const ctx = await reconcileContext(deps);
-      for (const ws of all) {
-        for (const m of await readReconciledManagers(ws.id, ctx)) {
-          for (const boxId of m.boxIds) out.set(boxId, m.id);
-          for (const jobId of m.boxJobIds) out.set(jobId, m.id);
-        }
+      for (const m of reconcileManagers(await store.listManagers(), ctx).managers) {
+        for (const boxId of m.boxIds) out.set(boxId, m.id);
+        for (const jobId of m.boxJobIds) out.set(jobId, m.id);
       }
       return out;
     },

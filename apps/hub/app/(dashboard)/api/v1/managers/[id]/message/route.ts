@@ -6,7 +6,7 @@
 // 409 `manager_unreachable`, and the client offers the text to paste instead.
 import { backendOrNull } from '../../../lib/backend';
 import { timelineMeta } from '../../../lib/actor';
-import { fail, failFromAction, ok } from '../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../lib/envelope';
 import { parseManagerMessage, readJson } from '../../../lib/validate';
 import { TMUX_MISSING } from '@/lib/backend/errors';
 
@@ -26,9 +26,8 @@ export async function POST(
   if (!parsed.ok) return fail('invalid_request', parsed.message);
   const res = await backend.sendManagerMessage(id, parsed.value, await timelineMeta(req, backend));
   if (!res.ok) {
-    if (res.code === 'manager_unreachable') return fail('manager_unreachable', res.error);
     if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
-    return failFromAction(res.error);
+    return failFromManager(res);
   }
   return ok({ delivered: res.delivered, manager: res.manager, event: res.event });
 }

@@ -4,7 +4,7 @@
 // Claude's daemon when that tmux session ends. 409 unless the session is running
 // in the daemon and nothing the hub can see already shows it; 503 without tmux.
 import { backendOrNull } from '../../../lib/backend';
-import { fail, failFromAction, ok } from '../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../lib/envelope';
 import { TMUX_MISSING } from '@/lib/backend/errors';
 
 export const runtime = 'nodejs';
@@ -20,7 +20,7 @@ export async function POST(
   const res = await backend.attachManager(id);
   if (!res.ok) {
     if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
-    return failFromAction(res.error);
+    return failFromManager(res);
   }
   return ok(res.manager);
 }

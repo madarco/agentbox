@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './workspace-store.js';
 export * from './task-store.js';
 export * from './manager.js';
+export * from './manager-store.js';
 export * from './timeline-store.js';
 export * from './timeline-sink.js';
 export * from './control-box.js';

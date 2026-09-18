@@ -1609,6 +1609,9 @@ export function parseManagerStart(
 /** A manager id as the store mints it: 16 lowercase hex. */
 export const MANAGER_ID_RE = /^[0-9a-f]{16}$/;
 
+/** The only tmux session name AgentBox runs a manager under. */
+const MANAGER_TMUX_SESSION_RE = /^agentbox-manager-[0-9a-f]{16}$/;
+
 export function isManagerId(v: unknown): v is string {
   return typeof v === 'string' && MANAGER_ID_RE.test(v);
 }
@@ -1674,7 +1677,7 @@ export function parseManagerDetect(
   }
   if (
     tmuxSession !== undefined &&
-    (typeof tmuxSession !== 'string' || !/^agentbox-manager-[0-9a-f]{16}$/.test(tmuxSession))
+    (typeof tmuxSession !== 'string' || !MANAGER_TMUX_SESSION_RE.test(tmuxSession))
   ) {
     return { ok: false, message: 'tmuxSession must be an agentbox-manager-<16 hex> session name' };
   }
@@ -1726,6 +1729,192 @@ export function parseManagerDetect(
       ...(parsedJob.value ? { boxJobId: parsedJob.value } : {}),
       ...(projects !== undefined ? { projects: parsedProjects.value } : {}),
       ...(parsedHome.value ? { home: parsedHome.value } : {}),
+    },
+  };
+}
+
+const MANAGER_HOST_MAX = 255;
+const MANAGER_TITLE_MAX = 200;
+const MANAGER_PROMPT_MAX = 500;
+const MANAGER_ARGV_MAX = 32;
+const MANAGER_ARG_MAX = 512;
+
+export interface ManagerRegisterInput {
+  id?: string;
+  agent: string;
+  kind: 'tmux';
+  host: string;
+  cwd: string;
+  tmuxSession: string;
+  sessionId?: string;
+  argv?: string[];
+}
+
+/**
+ * The body a hub sends after opening a manager session in tmux on its own
+ * machine (`POST /workspaces/{id}/managers/register`).
+ *
+ * `argv` is RECORDED here, never executed: the hub that holds the record has no
+ * folder to run it in, and a later resume rebuilds the argv from the agent and
+ * the session id. It is still bounded and held to plain strings, and `sessionId`
+ * keeps the exact shape a start demands, because that value DOES reach an
+ * agent's argv on the machine that resumes it.
+ */
+export function parseManagerRegister(
+  body: unknown,
+  allowedAgents: readonly string[] = MANAGER_AGENT_NAMES,
+): Parsed<ManagerRegisterInput> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { id, agent, kind, host, cwd, tmuxSession, sessionId, argv } = body;
+  const parsedId = optionalManagerId(id, 'id');
+  if (!parsedId.ok) return parsedId;
+  if (typeof agent !== 'string' || !allowedAgents.includes(agent)) {
+    return { ok: false, message: `agent must be one of ${allowedAgents.join(', ')}` };
+  }
+  if (kind !== 'tmux') return { ok: false, message: 'kind must be "tmux"' };
+  if (typeof host !== 'string' || host.length === 0 || host.length > MANAGER_HOST_MAX) {
+    return { ok: false, message: `host is required (max ${String(MANAGER_HOST_MAX)} chars)` };
+  }
+  if (typeof cwd !== 'string' || !cwd.startsWith('/') || cwd.length > 4096) {
+    return { ok: false, message: 'cwd must be an absolute path' };
+  }
+  if (typeof tmuxSession !== 'string' || !MANAGER_TMUX_SESSION_RE.test(tmuxSession)) {
+    return { ok: false, message: 'tmuxSession must be an agentbox-manager-<16 hex> session name' };
+  }
+  const parsedSession = optionalString(sessionId, 'sessionId');
+  if (!parsedSession.ok) return parsedSession;
+  if (parsedSession.value !== undefined && !SESSION_ID_RE.test(parsedSession.value)) {
+    return { ok: false, message: 'sessionId must be alphanumeric with - or _' };
+  }
+  const parsedArgv = optionalStringArray(argv, 'argv');
+  if (!parsedArgv.ok) return parsedArgv;
+  if (parsedArgv.value) {
+    if (parsedArgv.value.length > MANAGER_ARGV_MAX) {
+      return { ok: false, message: `argv must have at most ${String(MANAGER_ARGV_MAX)} entries` };
+    }
+    if (parsedArgv.value.some((a) => a.length > MANAGER_ARG_MAX || a.includes('\0'))) {
+      return { ok: false, message: 'argv entries must be plain strings under 512 chars' };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      ...(parsedId.value ? { id: parsedId.value } : {}),
+      agent,
+      kind: 'tmux',
+      host,
+      cwd,
+      tmuxSession,
+      ...(parsedSession.value ? { sessionId: parsedSession.value } : {}),
+      ...(parsedArgv.value ? { argv: parsedArgv.value } : {}),
+    },
+  };
+}
+
+export interface ManagerHeartbeatInput {
+  status: 'running' | 'stopped';
+  sessionId?: string;
+  title?: string;
+  turn?: number;
+  prompt?: string;
+  lastExit?: number;
+  background?: { id: string; status?: string; state?: string; name?: string };
+  terminalSession?: string;
+  tmuxSession?: string;
+}
+
+const BACKGROUND_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * What the machine a manager runs on reports about it. Everything here is
+ * client-asserted by construction — the reporting hub is the only reader of that
+ * process — so each field is bounded and none of it is ever executed.
+ */
+export function parseManagerHeartbeat(body: unknown): Parsed<ManagerHeartbeatInput> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const {
+    status,
+    sessionId,
+    title,
+    turn,
+    prompt,
+    lastExit,
+    background,
+    terminalSession,
+    tmuxSession,
+  } = body;
+  if (!isManagerStatus(status)) return { ok: false, message: 'status must be running or stopped' };
+  const parsedSession = optionalString(sessionId, 'sessionId');
+  if (!parsedSession.ok) return parsedSession;
+  if (parsedSession.value !== undefined && !SESSION_ID_RE.test(parsedSession.value)) {
+    return { ok: false, message: 'sessionId must be alphanumeric with - or _' };
+  }
+  const parsedTitle = optionalString(title, 'title');
+  if (!parsedTitle.ok) return parsedTitle;
+  if (parsedTitle.value !== undefined && parsedTitle.value.length > MANAGER_TITLE_MAX) {
+    return { ok: false, message: `title too long (max ${String(MANAGER_TITLE_MAX)} chars)` };
+  }
+  const parsedTurn = optionalNumber(turn, 'turn');
+  if (!parsedTurn.ok) return parsedTurn;
+  if (
+    parsedTurn.value !== undefined &&
+    (!Number.isInteger(parsedTurn.value) || parsedTurn.value < 1)
+  ) {
+    return { ok: false, message: 'turn must be a positive integer' };
+  }
+  const parsedPrompt = optionalString(prompt, 'prompt');
+  if (!parsedPrompt.ok) return parsedPrompt;
+  if (parsedPrompt.value !== undefined && parsedPrompt.value.length > MANAGER_PROMPT_MAX) {
+    return { ok: false, message: `prompt too long (max ${String(MANAGER_PROMPT_MAX)} chars)` };
+  }
+  const parsedExit = optionalNumber(lastExit, 'lastExit');
+  if (!parsedExit.ok) return parsedExit;
+  if (
+    parsedExit.value !== undefined &&
+    (!Number.isInteger(parsedExit.value) || parsedExit.value < -1 || parsedExit.value > 255)
+  ) {
+    return { ok: false, message: 'lastExit must be an exit code (-1 to 255)' };
+  }
+  let bg: ManagerHeartbeatInput['background'];
+  if (background !== undefined) {
+    if (
+      !isObject(background) ||
+      typeof background.id !== 'string' ||
+      !BACKGROUND_ID_RE.test(background.id)
+    ) {
+      return { ok: false, message: 'background.id must be a background session id' };
+    }
+    const parts: Record<string, string> = {};
+    for (const field of ['status', 'state', 'name'] as const) {
+      const v = background[field];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || v.length > 100) {
+        return { ok: false, message: `background.${field} must be a short string` };
+      }
+      parts[field] = v;
+    }
+    bg = { id: background.id, ...parts };
+  }
+  for (const [field, v] of [
+    ['terminalSession', terminalSession],
+    ['tmuxSession', tmuxSession],
+  ] as const) {
+    if (v !== undefined && (typeof v !== 'string' || !MANAGER_TMUX_SESSION_RE.test(v))) {
+      return { ok: false, message: `${field} must be an agentbox-manager-<16 hex> session name` };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      status,
+      ...(parsedSession.value ? { sessionId: parsedSession.value } : {}),
+      ...(parsedTitle.value ? { title: parsedTitle.value } : {}),
+      ...(parsedTurn.value !== undefined ? { turn: parsedTurn.value } : {}),
+      ...(parsedPrompt.value ? { prompt: parsedPrompt.value } : {}),
+      ...(parsedExit.value !== undefined ? { lastExit: parsedExit.value } : {}),
+      ...(bg ? { background: bg } : {}),
+      ...(typeof terminalSession === 'string' ? { terminalSession } : {}),
+      ...(typeof tmuxSession === 'string' ? { tmuxSession } : {}),
     },
   };
 }

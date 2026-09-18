@@ -10,6 +10,8 @@ import type {
   AddWorkspaceInput,
   BoxTaskSummary,
   HostSession,
+  ManagerHeartbeat,
+  ManagerRegistration,
   ManagerStatus,
   TimelineEvent,
   TimelineEventInput,
@@ -1111,7 +1113,25 @@ export type ManagerMessageResult =
       manager: ManagerView;
       event: TimelineEvent | null;
     }
-  | { ok: false; error: string; code?: 'manager_unreachable' };
+  | {
+      ok: false;
+      error: string;
+      code?: 'manager_unreachable';
+      /** The machine the manager runs on: where the client retries. */
+      details?: { host: string };
+    };
+
+/**
+ * A manager op refused because this hub is not the machine the manager runs on.
+ * `details.host` is where it does run — its own hostname, for a client whose
+ * local hub holds the process while a control box holds the record.
+ */
+export interface ManagerWrongHost {
+  ok: false;
+  error: string;
+  code: 'wrong_host';
+  details: { host: string };
+}
 
 /** The timeline domain slice (`lib/backend/timeline.ts`). */
 /**
@@ -1149,7 +1169,8 @@ export type ManagerResult =
       /** Said with a stop that left the agent's session running (Claude's background daemon). */
       notice?: string;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string }
+  | ManagerWrongHost;
 export type DetectManagerResult =
   | { ok: true; manager: ManagerView; workspace: WorkspaceView; created: boolean }
   | { ok: false; error: string; invalid?: true };
@@ -1161,6 +1182,15 @@ export interface ManagerSessionsResult {
   supported: boolean;
   sessions: HostSession[];
 }
+
+/**
+ * The sessions listing, or a refusal — an agent's sessions are files in the
+ * folder, so only the machine that has the folder can list them.
+ */
+export type ManagerSessionsAnswer =
+  | { ok: true; sessions: ManagerSessionsResult }
+  | { ok: false; error: string }
+  | ManagerWrongHost;
 
 export interface TaskFilter {
   projectId?: string;
@@ -1254,6 +1284,18 @@ export interface ManagerBackend {
   /** `null` = unknown workspace. */
   listWorkspaceManagers(wsId: string): Promise<ManagerView[] | null>;
   startManager(wsId: string, input: StartManagerInput, meta?: TimelineMeta): Promise<ManagerResult>;
+  /**
+   * Record a manager session another machine opened in tmux (its hub started the
+   * process; this hub owns the workspace). One of the only two manager writes a
+   * control box takes from another host — the other is `reportManager`.
+   */
+  registerManager(
+    wsId: string,
+    input: ManagerRegistration,
+    meta?: TimelineMeta,
+  ): Promise<ManagerResult>;
+  /** Store what the machine a manager runs on reports about it. */
+  reportManager(id: string, beat: ManagerHeartbeat): Promise<ManagerResult>;
   resumeManager(id: string, meta?: TimelineMeta): Promise<ManagerResult>;
   stopManager(id: string, meta?: TimelineMeta): Promise<ManagerResult>;
   /**
@@ -1283,7 +1325,14 @@ export interface ManagerBackend {
   ): Promise<ManagerMessageResult>;
   /** Forget a manager record. Refused while it runs, unless `force`. */
   removeManager(id: string, opts?: { force?: boolean }): Promise<ActionResult>;
-  listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsResult | null>;
+  /**
+   * Report every manager THIS machine runs to the hub that holds its record, so
+   * a control box can show a live status for a session it cannot probe. A no-op
+   * (0) when the records are on this disk. Driven by the hub daemon's heartbeat
+   * loop and after every manager mutation.
+   */
+  reportManagers(): Promise<number>;
+  listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsAnswer | null>;
   /** Record that a manager's create produced this job. Best-effort from `create()`. */
   attachJob(managerId: string, jobId: string): Promise<ActionResult>;
   /** boxId | create-job id -> managerId, for `Box.managerId` in getData(). */

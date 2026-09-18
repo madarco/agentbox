@@ -173,7 +173,7 @@ export function workspaceProjectId(host: string, path: string, repoUrl?: string)
 
 /** This machine's folder for a workspace, when it has one. */
 export function workspaceRootOn(
-  rec: Pick<WorkspaceRecord, 'hosts'>,
+  rec: { hosts: Record<string, { root: string }> },
   host: string,
 ): string | undefined {
   return rec.hosts[host]?.root;

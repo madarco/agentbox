@@ -9,12 +9,21 @@
  * session that made these boxes" becomes a manager any client can reopen.
  * That is why `start`/`resume`/`stop` go through the API while `attach` is a
  * local `tmux attach`.
+ *
+ * A manager RUNS on one machine and its RECORD lives on the hub that owns the
+ * boxes, which with a control box configured is a different one. So the two
+ * halves of this command go to different hubs: the process ops (start, resume,
+ * stop, attach, sessions) to the hub on THIS machine, and the record ops (list,
+ * status, note, forget) to the configured one. `manager.host` says which machine
+ * a given manager is on, and `hostIsHub` whether the hub that answered is it.
  */
 import { spawnSync } from 'node:child_process';
+import { hostname } from 'node:os';
 import { confirm, isCancel, log, select } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
-import { resolveWorkspace, WorkspaceRefError } from '../lib/workspace-ref.js';
+import { HubApiError } from '../control-plane/hub-api-client.js';
+import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/workspace-ref.js';
 import { detectHostSession, registerHostManager } from '../lib/host-session.js';
 import { renderTable } from '../lib/text-table.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
@@ -72,6 +81,18 @@ export function pickManager(managers: HubApiManager[], ref: string): HubApiManag
   );
 }
 
+/**
+ * The workspace a process op is about, resolved on the hub that HOLDS the
+ * record. The op itself then goes to the hub on this machine — where the folder,
+ * the tmux server and the transcripts are — which reads the same workspace back
+ * through its own store.
+ */
+async function resolveOn(ref?: string): Promise<HubApiWorkspace> {
+  const ws = await withHubClient(workspaceHub(), (client) => mustResolve(client, ref));
+  if (!ws) process.exit(1);
+  return ws;
+}
+
 async function mustManager(client: HubApiClient, ref: string): Promise<HubApiManager> {
   try {
     return pickManager(await client.listManagers(), ref);
@@ -99,14 +120,14 @@ function label(m: HubApiManager): string {
 
 function printManager(m: HubApiManager): void {
   log.info(
-    `manager ${m.id}: ${m.status} (${m.agent}, ${m.kind === 'hub' ? 'hub-run' : 'external'})`,
+    `manager ${m.id}: ${m.status} (${m.agent}, ${m.kind === 'tmux' ? 'tmux-run' : 'external'})`,
   );
   process.stdout.write(`  workspace ${m.workspaceName}\n`);
   process.stdout.write(`  folder    ${m.cwd}\n`);
+  process.stdout.write(`  host      ${m.host}${runsHere(m) ? ' (this machine)' : ''}\n`);
   if (m.title) process.stdout.write(`  title     ${m.title}\n`);
   if (m.sessionId) process.stdout.write(`  session   ${m.sessionId}\n`);
-  if (m.pid !== undefined)
-    process.stdout.write(`  pid       ${String(m.pid)}${m.host ? ` on ${m.host}` : ''}\n`);
+  if (m.pid !== undefined) process.stdout.write(`  pid       ${String(m.pid)}\n`);
   process.stdout.write(`  boxes     ${String(m.boxIds.length + m.boxJobIds.length)}\n`);
   process.stdout.write(
     `  tasks     ${String(m.taskCounts.open)} open, ${String(m.taskCounts.done)} done\n`,
@@ -142,17 +163,28 @@ function ago(iso: string): string {
 }
 
 /**
- * True when the hub this command is talking to runs on THIS machine.
+ * True when the manager's tmux session is on THIS machine.
  *
- * A hub-run manager's tmux session lives on the hub's host, so attaching to it is
- * only a local `tmux attach` when the hub is local. Against a control box the
- * session is on the VPS, and running tmux here would fail with a bare non-zero
- * exit that reads as a broken manager.
+ * The record can be served by any hub, so `attachCommand` alone says nothing
+ * about where to run it: `host` does. Running tmux against a session on another
+ * machine fails with a bare non-zero exit that reads as a broken manager.
  */
-async function hubIsLocal(): Promise<boolean> {
-  const { resolveHubTarget } = await import('./hub.js');
-  const target = await resolveHubTarget(undefined, { preferLocal: true });
-  return target?.onThisMachine ?? true;
+export function runsHere(m: Pick<HubApiManager, 'host'>, host: string = hostname()): boolean {
+  return m.host === host;
+}
+
+/**
+ * Whether a refusal from one hub should be retried against this machine's own.
+ *
+ * `wrong_host` and `manager_unreachable` both carry the machine the manager runs
+ * on; when that is this one, the local hub CAN do it — the record simply lives
+ * somewhere else.
+ */
+export function retryOnLocalHub(err: unknown, host: string = hostname()): boolean {
+  if (!(err instanceof HubApiError)) return false;
+  if (err.code !== 'wrong_host' && err.code !== 'manager_unreachable') return false;
+  const named = (err.details as { host?: unknown } | undefined)?.host;
+  return typeof named === 'string' && named === host;
 }
 
 /** Attach to a hub-run manager's tmux session in this terminal (or a new pane). */
@@ -163,9 +195,9 @@ async function attachToSession(m: HubApiManager, openIn?: AttachOpenIn): Promise
     );
     return false;
   }
-  if (!(await hubIsLocal())) {
+  if (!runsHere(m)) {
     log.error(
-      `the manager runs on the hub's machine, not this one. Reach its session there with:\n  ${m.attachCommand}`,
+      `manager ${m.id} runs on ${m.host}, not on this machine. Reach its session there with:\n  ${m.attachCommand}`,
     );
     return false;
   }
@@ -218,7 +250,7 @@ const listCommand = new Command('list')
   .option('--running', 'only running managers')
   .option('-j, --json', 'print the listing as JSON')
   .action(async (opts: WorkspaceOpt & { running?: boolean; json?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const ws = opts.workspace ? await mustResolve(client, opts.workspace) : undefined;
       const managers = await client.listManagers({
         ...(ws ? { workspaceId: ws.id } : {}),
@@ -244,7 +276,7 @@ const statusCommand = new Command('status')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('-j, --json', 'print the state as JSON')
   .action(async (id: string | undefined, opts: WorkspaceOpt & { json?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const one = id
         ? await mustManager(client, id)
         : opts.workspace
@@ -295,8 +327,8 @@ const startCommand = new Command('start')
         log.error(`unknown agent "${opts.agent}" (expected ${agents.join(', ')})`);
         process.exit(4);
       }
+      const ws = await resolveOn(opts.workspace);
       await withHubClient({ preferLocal: true }, async (client) => {
-        const ws = await mustResolve(client, opts.workspace);
         let sessionId = opts.session;
         // Offer to resume only when the user said neither --session nor --new,
         // and only where a resumable session actually exists.
@@ -368,15 +400,15 @@ const attachCommand = new Command('attach')
       let manager: HubApiManager;
       if (id) manager = await mustManager(client, id);
       else {
-        const ws = await mustResolve(client, opts.workspace);
+        const ws = await resolveOn(opts.workspace);
         const running = (await client.listWorkspaceManagers(ws.id)).filter(
-          (m) => m.kind === 'hub' && m.status === 'running',
+          (m) => m.kind === 'tmux' && m.status === 'running',
         );
         if (running.length !== 1) {
           log.error(
             running.length === 0
-              ? `no hub-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
-              : `${String(running.length)} hub-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
+              ? `no tmux-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
+              : `${String(running.length)} tmux-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
           );
           process.exit(2);
         }
@@ -408,8 +440,8 @@ const sessionsCommand = new Command('sessions')
   .option('--agent <agent>', 'which agent to list sessions for', 'claude')
   .option('-j, --json', 'print the listing as JSON')
   .action(async (opts: WorkspaceOpt & { agent: string; json?: boolean }) => {
+    const ws = await resolveOn(opts.workspace);
     await withHubClient({ preferLocal: true }, async (client) => {
-      const ws = await mustResolve(client, opts.workspace);
       const found = await client.listManagerSessions(ws.id, opts.agent);
       if (opts.json) {
         process.stdout.write(JSON.stringify(found, null, 2) + '\n');
@@ -449,7 +481,7 @@ const noteCommand = new Command('note')
         log.error('pass --replan or --plan, not both');
         process.exit(4);
       }
-      await withHubClient({ preferLocal: true }, async (client) => {
+      await withHubClient(workspaceHub(), async (client) => {
         let managerId: string;
         if (id) managerId = (await mustManager(client, id)).id;
         else {
@@ -482,6 +514,44 @@ const noteCommand = new Command('note')
     },
   );
 
+const messageCommand = new Command('message')
+  .alias('say')
+  .description("Type a message into a manager's session and submit it (resuming a stopped one)")
+  .argument('<id>', 'manager id (or a unique prefix)')
+  .argument('<text>', 'what to type')
+  .option('--pr <number>', 'the pull request the message is about')
+  .option('--repo <owner/name>', 'with --pr: which repo, when the number is ambiguous')
+  .action(async (id: string, text: string, opts: { pr?: string; repo?: string }) => {
+    const prNumber = opts.pr === undefined ? undefined : Number(opts.pr);
+    if (prNumber !== undefined && (!Number.isInteger(prNumber) || prNumber < 1)) {
+      log.error('--pr must be a pull request number');
+      process.exit(4);
+    }
+    const body = {
+      text,
+      ...(prNumber !== undefined ? { prNumber } : {}),
+      ...(opts.repo ? { repo: opts.repo } : {}),
+    };
+    const send = async (client: HubApiClient): Promise<void> => {
+      const target = await mustManager(client, id);
+      const res = await client.sendManagerMessage(target.id, body);
+      log.success(
+        res.delivered === 'resumed'
+          ? `resumed ${res.manager.id} with the message`
+          : `typed into ${res.manager.id}`,
+      );
+    };
+    // The record hub first: it is where the message is logged. It can only TYPE
+    // when it is also the machine the session runs on, so a refusal naming this
+    // machine is retried against the hub here, which can.
+    try {
+      await withHubClient(workspaceHub(), send);
+    } catch (err) {
+      if (!retryOnLocalHub(err)) throw err;
+      await withHubClient({ preferLocal: true }, send);
+    }
+  });
+
 const forgetCommand = new Command('forget')
   .alias('rm')
   .description('Forget a stopped manager (its boxes and tasks are untouched)')
@@ -489,7 +559,7 @@ const forgetCommand = new Command('forget')
   .option('-y, --yes', 'skip the confirmation')
   .option('--force', 'forget it even if it reads as running (its process is left alone)')
   .action(async (id: string, opts: { yes?: boolean; force?: boolean }) => {
-    await withHubClient({ preferLocal: true }, async (client) => {
+    await withHubClient(workspaceHub(), async (client) => {
       const target = await mustManager(client, id);
       if (!opts.yes) {
         const answer = await confirm({
@@ -519,4 +589,5 @@ export const managerCommand = new Command('manager')
   .addCommand(attachCommand)
   .addCommand(sessionsCommand)
   .addCommand(noteCommand)
+  .addCommand(messageCommand)
   .addCommand(forgetCommand);

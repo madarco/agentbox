@@ -4,7 +4,7 @@
 // can attach to. 409 while the session still runs anywhere; 503 without tmux.
 import { backendOrNull } from '../../../lib/backend';
 import { timelineMeta } from '../../../lib/actor';
-import { fail, failFromAction, ok } from '../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../lib/envelope';
 import { TMUX_MISSING } from '@/lib/backend/errors';
 
 export const runtime = 'nodejs';
@@ -20,7 +20,7 @@ export async function POST(
   const res = await backend.resumeManager(id, await timelineMeta(req, backend));
   if (!res.ok) {
     if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
-    return failFromAction(res.error);
+    return failFromManager(res);
   }
   return ok(res.manager);
 }

@@ -5,7 +5,7 @@
 // the hub's attach session: the answer carries `notice` saying the session lives on.
 import { backendOrNull } from '../../../lib/backend';
 import { timelineMeta } from '../../../lib/actor';
-import { fail, failFromAction, ok } from '../../../lib/envelope';
+import { fail, failFromManager, ok } from '../../../lib/envelope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +18,6 @@ export async function POST(
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
   const res = await backend.stopManager(id, await timelineMeta(req, backend));
-  if (!res.ok) return failFromAction(res.error);
+  if (!res.ok) return failFromManager(res);
   return ok(res.notice ? { ...res.manager, notice: res.notice } : res.manager);
 }

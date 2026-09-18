@@ -535,17 +535,20 @@ export interface HubApiManager {
   workspaceId: string;
   workspaceName: string;
   agent: string;
-  /** `external`: a session in someone's terminal. `hub`: one the hub runs in tmux. */
-  kind: 'external' | 'hub';
+  /** `external`: a session in someone's terminal. `tmux`: one a hub runs in tmux. */
+  kind: 'external' | 'tmux';
   status: 'running' | 'stopped';
   /** Whether `POST /managers/{id}/resume` would be accepted now. */
   resumable?: boolean;
   /** Why `resumable` is false; absent when it is true. */
-  resumeBlockedBy?: 'running' | 'other-host' | 'unsupported-agent' | 'no-session';
+  resumeBlockedBy?: 'running' | 'unsupported-agent' | 'no-session';
   cwd: string;
   sessionId?: string;
   title?: string;
-  host?: string;
+  /** The machine the session runs on: only there can it be attached, resumed or typed into. */
+  host: string;
+  /** Whether the hub that answered is that machine. */
+  hostIsHub: boolean;
   pid?: number;
   pidStartedAt?: string;
   tmuxSession?: string;
@@ -595,6 +598,13 @@ export interface HubApiTimelineEvent {
   taskIds?: string[];
   text?: string;
   noteKind?: 'note' | 'replan' | 'plan';
+}
+
+export interface HubApiManagerMessage {
+  /** How it was delivered: the manager's tmux session, its terminal's pane, or a resume. */
+  delivered: 'session' | 'pane' | 'resumed';
+  manager: HubApiManager;
+  event: HubApiTimelineEvent | null;
 }
 
 export interface HubApiManagerFilter {
@@ -1440,6 +1450,18 @@ export class HubApiClient {
 
   stopManager(id: string): Promise<HubApiManager> {
     return this.request<HubApiManager>('POST', `/managers/${encodeURIComponent(id)}/stop`);
+  }
+
+  /** Type a message into the manager's session and submit it (resuming a stopped one with it). */
+  sendManagerMessage(
+    id: string,
+    body: { text: string; prNumber?: number; repo?: string },
+  ): Promise<HubApiManagerMessage> {
+    return this.request<HubApiManagerMessage>(
+      'POST',
+      `/managers/${encodeURIComponent(id)}/message`,
+      body,
+    );
   }
 
   async removeManager(id: string, opts: { force?: boolean } = {}): Promise<void> {
