@@ -294,6 +294,24 @@ export function createManagerBackend(
     return managerStamp(rec, 'managerId' in ref ? undefined : ref);
   }
 
+  /**
+   * The `manager.started` / `manager.resumed` row for a registration this hub
+   * just made — written only when the record lives HERE.
+   *
+   * A remote store's `registerManager` is a POST to the control box, whose own
+   * `registerManager` (below) already writes the row where the workspace is.
+   * Forwarding a second one through the timeline sink would log every start and
+   * resume twice.
+   */
+  async function recordRegistration(
+    rec: ManagerRecord,
+    type: 'manager.started' | 'manager.resumed',
+    meta: TimelineMeta | undefined,
+  ): Promise<void> {
+    if (store.kind !== 'file') return;
+    await recordManagerEvent(rec, type, meta);
+  }
+
   /** A lifecycle event about `rec`, by whoever the meta names in its workspace. Best-effort. */
   async function recordManagerEvent(
     rec: ManagerRecord,
@@ -584,6 +602,15 @@ export function createManagerBackend(
 
   return {
     async detectManager(input: DetectManagerInput): Promise<DetectManagerResult> {
+      // Detecting mints or moves a record, which only the hub that HOLDS it can
+      // do: a remote store refuses the write, and an unhandled rejection here
+      // would answer a plain client (the tray, a script, `--url`) with a 500
+      // instead of telling it where to go.
+      if (store.kind !== 'file') {
+        return err(
+          `this hub keeps its workspaces on the hub that owns its boxes; register the session there (\`agentbox hub target\` names it)`,
+        );
+      }
       const host = input.host ?? hostname();
       const cwd = await canonicalWorkspaceRoot(input.cwd);
       const home = await tmuxHome(input, cwd);
@@ -704,7 +731,7 @@ export function createManagerBackend(
           } catch (e) {
             return err(messageOf(e));
           }
-          await recordManagerEvent(existing, 'manager.resumed', meta);
+          await recordRegistration(existing, 'manager.resumed', meta);
           await beat(existing);
           deps.notify();
           return answer(existing.id);
@@ -733,19 +760,31 @@ export function createManagerBackend(
         createdAt: at,
         lastSeenAt: at,
       };
+      let registration: ManagerRegistration;
       try {
-        const registration = await startManagerSession({
+        registration = await startManagerSession({
           wsId: ws.id,
           manager,
           argv: buildManagerArgv(input.agent, input.sessionId),
           hostname,
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
         });
-        await store.registerManager(ws.id, registration);
       } catch (e) {
         return err(`could not start the manager: ${messageOf(e)}`);
       }
-      await recordManagerEvent(manager, 'manager.started', meta);
+      try {
+        await store.registerManager(ws.id, registration);
+      } catch (e) {
+        // The agent is already running, and with no record nothing points at it:
+        // every retry would mint a new id and leave another session in the
+        // folder. Kill it so the error the user reads is the whole truth.
+        await stopManagerSession(
+          { ...manager, tmuxSession: registration.tmuxSession },
+          probe,
+        ).catch(() => null);
+        return err(`could not start the manager: ${messageOf(e)}`);
+      }
+      await recordRegistration(manager, 'manager.started', meta);
       await beat(manager);
       deps.notify();
       return answer(manager.id);
@@ -809,7 +848,7 @@ export function createManagerBackend(
       } catch (e) {
         return err(messageOf(e));
       }
-      await recordManagerEvent(rec, 'manager.resumed', meta);
+      await recordRegistration(rec, 'manager.resumed', meta);
       await beat(rec);
       deps.notify();
       return answer(id);
@@ -891,7 +930,16 @@ export function createManagerBackend(
       if (!opts.force && running) {
         return err(`manager ${id} is running; stop it before forgetting it (or force it)`);
       }
-      await store.removeManagerRecord(rec.workspaceId, id);
+      // A control box takes only a registration, a heartbeat and a box attach
+      // from another host, so a remote store REFUSES this — answering `ok` would
+      // report a record forgotten that is still there.
+      if (!(await store.removeManagerRecord(rec.workspaceId, id))) {
+        return err(
+          store.kind === 'remote'
+            ? `manager ${id}'s record lives on the hub that owns its workspace, not on ${hostname()}; forget it there (\`agentbox manager forget ${id}\`, which targets that hub)`
+            : `manager ${id} was not forgotten; it may have been removed already`,
+        );
+      }
       deps.notify();
       return { ok: true };
     },

@@ -1,19 +1,21 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { createManagerBackend, HEARTBEAT_STALE_MS } from '../lib/backend/managers';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
 import type { BackendDeps } from '../lib/backend/deps';
 import {
+  configureTimelineSink,
   MANAGER_SEEN_WINDOW_MS,
   resolveWorkspaceDir,
   type ManagerRecord,
   type ManagerRecordStore,
   type ManagerView,
   type QueueJob,
+  type TimelineEventInput,
 } from '@agentbox/relay';
 
 const S1 = '5edc0ee0-ce9a-4e30-962d-bc630388d8bc';
@@ -72,6 +74,29 @@ async function makeFolder(): Promise<string> {
 beforeEach(async () => {
   await rm(join(assertTempHome(), '.agentbox'), { recursive: true, force: true });
 });
+
+afterEach(() => {
+  configureTimelineSink(null);
+});
+
+/** Counts what a hub forwards, so a row written twice is visible. */
+function stubSink(): {
+  sink: Parameters<typeof configureTimelineSink>[0];
+  rows: TimelineEventInput[];
+} {
+  const rows: TimelineEventInput[] = [];
+  return {
+    rows,
+    sink: {
+      kind: 'remote',
+      record: async (_wsId: string, input: TimelineEventInput) => {
+        rows.push(input);
+        return null;
+      },
+      workspaceFor: async () => null,
+    },
+  };
+}
 
 describe('detectManager', () => {
   it('creates a workspace at the cwd when none contains it, then refreshes the same record', async () => {
@@ -708,6 +733,101 @@ describe('with the records on a control box', () => {
     });
     // Every listing is the control box's, not a local render.
     expect((await managers.listManagers()).map((m) => m.id)).toEqual([started.manager.id]);
+  });
+
+  /** A PC hub whose records live on the control box, with its folder ready. */
+  async function remote(over: Partial<ManagerRecordStore> = {}) {
+    const h = harness();
+    const store = Object.assign(remoteStore('laptop'), over);
+    const root = await makeFolder();
+    (store as unknown as { setRoot(r: string): void }).setRoot(root);
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      store,
+    });
+    return { h, store, managers, root };
+  }
+
+  it('leaves the started/resumed row to the hub that wrote the record', async () => {
+    // The register route on the control box records `manager.started` where the
+    // workspace is; forwarding a second one through the sink logged every start
+    // and every resume twice.
+    const { sink, rows } = stubSink();
+    configureTimelineSink(sink);
+    const { store, managers } = await remote();
+    const started = await managers.startManager('ws-remote', { agent: 'claude', sessionId: S1 });
+    if (!started.ok) throw new Error(started.error);
+    expect(rows.map((r) => r.type)).toEqual([]);
+    store.calls.length = 0;
+    // Both resume branches: the one inside `startManager` (the same session id
+    // again) and `resumeManager` itself.
+    const restarted = await managers.startManager('ws-remote', {
+      agent: 'claude',
+      sessionId: S1,
+      restart: true,
+    });
+    expect(restarted).toMatchObject({ ok: true });
+    expect((await managers.stopManager(started.manager.id)).ok).toBe(true);
+    expect((await managers.resumeManager(started.manager.id)).ok).toBe(true);
+    // Only the stop — which no other hub could know — was forwarded.
+    expect(rows.map((r) => r.type)).toEqual(['manager.stopped']);
+    // …and the two registrations did travel, which is what writes the rows there.
+    expect(store.calls.filter((c) => c.startsWith('register'))).toHaveLength(2);
+  });
+
+  it('writes the started and resumed rows itself when the records are on this disk', async () => {
+    const { sink, rows } = stubSink();
+    configureTimelineSink(sink);
+    const h = harness();
+    const { workspaces, managers } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    const started = await managers.startManager(added.workspace.id, {
+      agent: 'claude',
+      sessionId: S1,
+    });
+    if (!started.ok) throw new Error(started.error);
+    expect(rows.map((r) => r.type)).toEqual(['manager.started']);
+    expect((await managers.stopManager(started.manager.id)).ok).toBe(true);
+    expect((await managers.resumeManager(started.manager.id)).ok).toBe(true);
+    expect(rows.map((r) => r.type)).toEqual([
+      'manager.started',
+      'manager.stopped',
+      'manager.resumed',
+    ]);
+  });
+
+  it('kills the session it just opened when the registration is refused', async () => {
+    // Otherwise the agent keeps running with nothing pointing at it, and every
+    // retry mints a new id and a second session in the same folder.
+    const { h, managers } = await remote({
+      registerManager: () => Promise.reject(new Error('control box down')),
+    });
+    const res = await managers.startManager('ws-remote', { agent: 'claude' });
+    expect(res).toMatchObject({ ok: false });
+    expect(h.tmux.size).toBe(0);
+    expect(h.spawned.filter((a) => a[0] === 'kill-session')).toHaveLength(1);
+  });
+
+  it('refuses to forget a record it does not hold, instead of claiming it did', async () => {
+    const { store, managers } = await remote();
+    const started = await managers.startManager('ws-remote', { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    const res = await managers.removeManager(started.manager.id, { force: true });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/lives on the hub that owns its workspace/);
+    // Still there: the refusal is the truth.
+    expect(await store.findManager(started.manager.id)).not.toBeNull();
+  });
+
+  it('answers a detect with a refusal rather than a 500', async () => {
+    const { managers, root } = await remote();
+    const res = await managers.detectManager({ agent: 'claude', sessionId: S2, cwd: root });
+    expect(res).toMatchObject({ ok: false });
+    expect(res.ok === false && res.error).toMatch(/register the session there/);
   });
 
   it('sends a box this hub built to the hub that holds the record', async () => {
