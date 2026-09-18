@@ -356,9 +356,13 @@ export interface AddWorkspaceInput {
 
 /**
  * The workspace an add refers to: the id it named, else the record already
- * mapping this (host, root), else one sharing a repo with it. Repo last, so two
- * folders on one machine holding the same repos stay two workspaces unless the
- * client says otherwise.
+ * mapping this (host, root), else one that shares a repo AND has no folder on
+ * this host yet.
+ *
+ * That last clause is what keeps the repo match a MERGE rather than a hijack: a
+ * record already mapping this host to some other folder is a different working
+ * copy of the same repos, and adopting it would silently move the workspace the
+ * user already has to the folder they just registered.
  */
 function matchWorkspace(
   records: WorkspaceRecord[],
@@ -372,11 +376,13 @@ function matchWorkspace(
     projects.map((p) => normalizeRepoUrl(p.repoUrl)).filter((r): r is string => Boolean(r)),
   );
   if (repos.size === 0) return undefined;
-  return records.find((r) =>
-    r.projects.some((p) => {
-      const repo = normalizeRepoUrl(p.repoUrl);
-      return repo !== undefined && repos.has(repo);
-    }),
+  return records.find(
+    (r) =>
+      r.hosts[input.host] === undefined &&
+      r.projects.some((p) => {
+        const repo = normalizeRepoUrl(p.repoUrl);
+        return repo !== undefined && repos.has(repo);
+      }),
   );
 }
 
@@ -539,11 +545,18 @@ export interface BoxWorkspaceKey {
 }
 
 /**
- * The workspace a box belongs to. The repo is tried first: a cloud box's
- * `projectRoot` is a literal `/workspace` or a control box's throwaway clone,
- * neither of which is under anyone's workspace root, while its origin is the
- * same string everywhere. The folder match is the fallback for a project with
- * no remote (and for a host checkout registered before this hub knew its repo).
+ * The workspace a box belongs to, most specific key first.
+ *
+ * The FOLDER wins when the box has one under a workspace root: it names the
+ * actual working copy, and the longest root wins, so a box in a repo registered
+ * both on its own and inside a parent workspace lands in the narrower one. A
+ * repo is a weaker identity — two workspaces can legitimately list it — so it
+ * would otherwise hand the box to whichever record happens to sort first.
+ *
+ * The repo is the fallback that makes the join work from a machine with no
+ * checkout: a cloud box's `projectRoot` is a literal `/workspace` and a control
+ * box's is a throwaway clone, neither under anyone's root, while the origin is
+ * the same string everywhere.
  *
  * A key with no `host` names a path on `localHost`: a bare absolute path only
  * ever means something on the machine reading it.
@@ -554,13 +567,15 @@ export function workspaceForBox<
     hosts: Record<string, { root: string }>;
   },
 >(records: readonly T[], key: BoxWorkspaceKey, localHost: string = osHostname()): T | null {
+  if (key.projectRoot) {
+    const here = findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
+    if (here) return here;
+  }
   const repo = normalizeRepoUrl(key.originUrl);
   if (repo) {
-    const hit = records.find((r) => r.projects.some((p) => normalizeRepoUrl(p.repoUrl) === repo));
-    if (hit) return hit;
-  }
-  if (key.projectRoot) {
-    return findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
+    return (
+      records.find((r) => r.projects.some((p) => normalizeRepoUrl(p.repoUrl) === repo)) ?? null
+    );
   }
   return null;
 }

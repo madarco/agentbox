@@ -991,7 +991,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Workspaces'],
           summary: "Register a workspace from the caller's scan",
           description:
-            "The CLIENT scans its own folder (depth 1: a `.git` or an `agentbox.yaml`) and posts what it found; the hub stats nothing, so a hub that holds no checkout of these repos registers the same workspace. Idempotent, matched in order by `id`, then by (`host`, `root`), then by any shared repo — in the last case the caller's folder mapping is merged into the existing record. Project folders on the HUB's own machine are registered in `GET /projects` too.",
+            "The CLIENT scans its own folder (depth 1: a `.git` or an `agentbox.yaml`) and posts what it found; the hub stats nothing, so a hub that holds no checkout of these repos registers the same workspace. Idempotent, matched in order by `id`, then by (`host`, `root`), then by any shared repo in a record with no folder on `host` yet — that last case merges another machine's checkout in, while a second working copy on the same machine stays its own workspace. Project folders on the HUB's own machine are registered in `GET /projects` too.",
           requestBody: {
             required: true,
             content: {

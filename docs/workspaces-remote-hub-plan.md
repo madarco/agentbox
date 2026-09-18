@@ -60,7 +60,11 @@ machine is its own control box and never forwards, which is what makes it the ch
 Goal: new record shape and id; scan moves to the CLI; hub stops stat'ing paths; every box→workspace
 join goes by repo URL / (host, folder). Local-only mode behaves exactly as today.
 
-As landed, three details differ from the sketch below: `workspaceForBox(records, key, localHost?)`
+As landed, the box join is **folder first, repo second** — the reverse of the bullet below. A repo
+is a weak identity (two workspaces can legitimately list one; a smoke run hit exactly that and sent
+`box.destroyed` to whichever record sorted first), while a folder under a workspace root names the
+actual working copy and the longest root wins. The repo remains the only key that works from a
+machine with no checkout, which is all Phases 2–4 need of it. Three further details differ: `workspaceForBox(records, key, localHost?)`
 takes the reading hub's own hostname as a third argument (a key with no `host` names a path on it,
 so a fact built without one still joins by folder); the API view keeps `projects` and `hosts` as
 well as the derived `projectIds`/`root?`; and `projectIds` is the union of the repo-keyed project
@@ -75,7 +79,7 @@ argument rather than being replaced.
   mapping. Project id = `hashProjectPath(normalised repoUrl)` when a remote exists, else
   `hashProjectPath(host + ':' + folder)`.
 - `workspace-store.ts`: new pure `workspaceForBox(records, { originUrl?, host?, projectRoot? })`
-  (origin match first, then host+folder). Replaces `workspaceForPath` /
+  (host+folder match first, then origin). Replaces `workspaceForPath` /
   `findWorkspaceContaining(projectRoot)` in `timeline-hooks.ts`, `apps/hub/lib/backend/timeline.ts`,
   `github-prs.ts`. `TimelineBoxFact` gains `originUrl?`/`host?`; `box-facts.ts` fills them (reuse
   `hostOriginOf`; Store-only boxes use `reg.originUrl`). Repo URLs are normalised once

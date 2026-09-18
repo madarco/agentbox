@@ -185,6 +185,17 @@ describe('addWorkspace', () => {
     expect(await listWorkspaces()).toHaveLength(1);
   });
 
+  it('never hijacks a workspace that already has a folder on this machine', async () => {
+    const one = await makeTree();
+    const two = await makeTree();
+    // Two working copies of the same repos, side by side on one machine.
+    const first = await add(one, scanOf(one, ['a']));
+    const second = await add(two, scanOf(two, ['a']));
+    expect(second.id).not.toBe(first.id);
+    expect((await readWorkspace(first.id))?.hosts[HERE]?.root).toBe(one);
+    expect(await listWorkspaces()).toHaveLength(2);
+  });
+
   it('targets the record an id names, whatever its folder', async () => {
     const root = await makeTree();
     const first = await add(root, scanOf(root, ['a']));
@@ -348,15 +359,36 @@ describe('workspaceForBox', () => {
     );
   });
 
-  it('matches by repo whatever the spelling, and wins over the folder', () => {
+  it('matches by repo whatever the spelling, as the fallback', () => {
     expect(workspaceForBox(records, { originUrl: 'https://github.com/acme/app' })?.id).toBe('w1');
+    expect(workspaceForBox(records, { originUrl: 'git@github.com:acme/other.git' })?.id).toBe('w2');
+  });
+
+  it('prefers the folder: a repo two workspaces list would pick one by luck', () => {
+    // The same repo registered on its own AND inside a parent workspace.
+    const parent = {
+      id: 'parent',
+      projects: [{ repoUrl: 'git@github.com:acme/app.git' }],
+      hosts: { pc: { root: '/home/dev', projectRoots: {}, seenAt: '' } },
+    };
+    const own = {
+      id: 'own',
+      projects: [{ repoUrl: 'git@github.com:acme/app.git' }],
+      hosts: { pc: { root: '/home/dev/work/app', projectRoots: {}, seenAt: '' } },
+    };
+    const both = [parent, own];
     expect(
-      workspaceForBox(records, {
-        originUrl: 'https://github.com/acme/other.git',
+      workspaceForBox(both, {
+        originUrl: 'git@github.com:acme/app.git',
         host: 'pc',
         projectRoot: '/home/dev/work/app',
       })?.id,
-    ).toBe('w2');
+    ).toBe('own');
+    // With no folder of its own, the repo still finds a workspace.
+    expect(
+      workspaceForBox(both, { originUrl: 'git@github.com:acme/app.git', projectRoot: '/workspace' })
+        ?.id,
+    ).toBe('parent');
   });
 
   it("matches a cloud box whose folder is the box's own /workspace", () => {
