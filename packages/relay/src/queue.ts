@@ -213,6 +213,13 @@ export interface QueueJobPrepare {
  */
 export interface QueueJobCreateOpts {
   workspace: string;
+  /**
+   * `origin` of the project the job was submitted from. The workspace join needs
+   * it: a hub-routed create clones into a throwaway folder, so `workspace` names
+   * a path no workspace maps, while the repo identifies the same project from
+   * any machine.
+   */
+  repoUrl?: string;
   name?: string;
   hostSnapshot?: boolean;
   snapshot?: string;

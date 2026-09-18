@@ -3,5 +3,7 @@ export * from './workspace-store.js';
 export * from './task-store.js';
 export * from './manager.js';
 export * from './timeline-store.js';
+export * from './timeline-sink.js';
+export * from './control-box.js';
 export * from './timeline-pr.js';
 export * from './push-stat.js';

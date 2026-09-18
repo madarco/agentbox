@@ -241,7 +241,20 @@ export async function readWorkspaceForBox(
   key: BoxWorkspaceKey,
   localHost: string = hostname(),
 ): Promise<WorkspaceRecord | null> {
-  const records = await listWorkspaces();
+  return workspaceForBoxIn(await listWorkspaces(), key, localHost);
+}
+
+/**
+ * `readWorkspaceForBox` over an already-fetched listing, so a reader whose
+ * records come from somewhere else (a control box's `GET /workspaces`) makes the
+ * identical join, canonicalisation included.
+ */
+export async function workspaceForBoxIn<
+  T extends {
+    projects: readonly { repoUrl?: string }[];
+    hosts: Record<string, { root: string }>;
+  },
+>(records: readonly T[], key: BoxWorkspaceKey, localHost: string = hostname()): Promise<T | null> {
   if (records.length === 0) return null;
   const projectRoot =
     key.projectRoot && (key.host ?? localHost) === hostname()

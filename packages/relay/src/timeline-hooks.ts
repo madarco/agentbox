@@ -12,7 +12,7 @@ import { readTasks } from './workspaces/task-store.js';
 import { GH_PR_JSON_FIELDS, parsePrUrl, prTimelineEvents } from './workspaces/timeline-pr.js';
 import type { GhPrJson } from './workspaces/timeline-pr.js';
 import type { BoxWorkspaceKey } from './workspaces/workspace-store.js';
-import { readWorkspaceForBox, recordTimelineEvent } from './workspaces/timeline-store.js';
+import { timelineSink } from './workspaces/timeline-sink.js';
 
 export interface BoxTimelineContext {
   boxId: string;
@@ -62,14 +62,14 @@ export async function recordBoxGitPush(
 ): Promise<void> {
   if (result.exitCode !== 0 || origin.hostInitiated || origin.hostOnly) return;
   try {
-    const ws = await readWorkspaceForBox(boxWorkspaceKey(ctx));
+    const ws = await timelineSink().workspaceFor(boxWorkspaceKey(ctx));
     if (!ws) return;
     const [taskIds, managerId, diff] = await Promise.all([
       boxTaskIds(ws.id, ctx.boxId),
       managerIdForTarget({ boxId: ctx.boxId }, { workspaceId: ws.id }),
       stat ? pushLineStat(stat) : undefined,
     ]);
-    await recordTimelineEvent(ws.id, {
+    await timelineSink().record(ws.id, {
       type: 'git.push',
       actor: 'box',
       boxId: ctx.boxId,
@@ -156,7 +156,7 @@ export async function recordBoxGhResult(
   const verb = ghVerbArgv(args);
   if (verb[0] !== 'pr' || (verb[1] !== 'create' && verb[1] !== 'merge')) return;
   try {
-    const ws = await readWorkspaceForBox(boxWorkspaceKey(ctx));
+    const ws = await timelineSink().workspaceFor(boxWorkspaceKey(ctx));
     if (!ws) return;
     const target =
       verb[1] === 'create'
@@ -186,7 +186,7 @@ export async function recordBoxGhResult(
     });
     for (const ev of events) {
       if (ev.type === 'pr.ready') continue;
-      await recordTimelineEvent(ws.id, ev);
+      await timelineSink().record(ws.id, ev);
     }
   } catch {
     /* best-effort */
@@ -209,9 +209,13 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
   if (job.kind === 'prepare') return;
   if (job.status !== 'done' && job.status !== 'failed') return;
   try {
-    const ws = await readWorkspaceForBox({
+    const ws = await timelineSink().workspaceFor({
       host: hostname(),
       projectRoot: job.createOpts.workspace,
+      // A hub-routed create clones into a throwaway folder, so its job's
+      // `workspace` names nothing a workspace maps; the repo is the only key
+      // that joins it.
+      ...(job.createOpts.repoUrl ? { originUrl: job.createOpts.repoUrl } : {}),
     });
     if (!ws) return;
     const box = job.boxId
@@ -232,7 +236,7 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
     const branch = box?.gitWorktrees?.[0]?.branch ?? box?.cloud?.workspaceBranch;
     const agent = jobAgent(job);
     const ready = job.status === 'done';
-    await recordTimelineEvent(ws.id, {
+    await timelineSink().record(ws.id, {
       type: ready ? 'box.ready' : 'box.failed',
       actor: 'hub',
       key: `job:${job.id}:${ready ? 'ready' : 'failed'}`,
