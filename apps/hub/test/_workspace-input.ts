@@ -7,13 +7,20 @@ import { scanWorkspaceProjects, type AddWorkspaceInput } from '@agentbox/relay';
 
 export async function workspaceAdd(
   root: string,
-  over: Partial<AddWorkspaceInput> = {},
+  over: Partial<AddWorkspaceInput> & { repoUrl?: string } = {},
 ): Promise<AddWorkspaceInput> {
+  const { repoUrl, ...rest } = over;
   const paths = await scanWorkspaceProjects(root);
   return {
     host: hostname(),
     root,
-    projects: paths.map((path) => ({ path, name: basename(path) })),
-    ...over,
+    // `repoUrl` here is the scan's answer for every project it found — what the
+    // GitHub sync reads, since it never looks at a folder.
+    projects: paths.map((path) => ({
+      path,
+      name: basename(path),
+      ...(repoUrl ? { repoUrl } : {}),
+    })),
+    ...rest,
   };
 }

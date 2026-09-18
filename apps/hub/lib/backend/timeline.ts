@@ -2,6 +2,7 @@
 // written by every mutation point), aggregated for reading, plus the rows that
 // are only ever true NOW — a box working a task, a PR waiting to be merged —
 // which are built at read time and never stored.
+import { stat } from 'node:fs/promises';
 import { hostname as osHostname } from 'node:os';
 import {
   findManager,
@@ -24,6 +25,7 @@ import {
   type TimelineEvent,
   type TimelineEventInput,
   type TimelinePr,
+  type PushLineStat,
   type PushStatInput,
   type TimelineStamp,
   type WorkTask,
@@ -511,7 +513,12 @@ export function createTimelineBackend(
         box: (id) => {
           const fact = factById.get(id);
           if (!fact) return undefined;
-          return sync.webUrlForRoot(fact.projectRoot) ?? sync.webUrlForProject(fact.projectId);
+          // The box's own repo first: on a hub with no checkout that is the
+          // only key its project id could ever be resolved by.
+          return (
+            (fact.originUrl ? sync.webUrlForRepoUrl(fact.originUrl) : undefined) ??
+            sync.webUrlForProject(fact.projectId)
+          );
         },
       };
       items = items.map((i) => withBranchUrl(i, lookup));
@@ -574,6 +581,9 @@ export async function stampInWorkspace(
   return rec?.workspaceId === wsId ? stamp : HUMAN;
 }
 
+/** Where one push's +/- lines are read from; see `pushStatBefore`. */
+type PushStatSource = { kind: 'host'; input: PushStatInput } | { kind: 'box'; boxId: string };
+
 /** How a push route addresses the host ref it moves. */
 interface PushTarget {
   remote?: string;
@@ -613,17 +623,41 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     return deps.boxFact(id);
   }
 
-  /** Where a push's +/- lines are read, with the ref's tip before the push moves it. */
+  /**
+   * Where a push's +/- lines come from. The host repo when this hub holds it —
+   * the ref's tip has to be read before the push moves it — else the box itself,
+   * which is the only reader a control box has: its record of a box points at
+   * the create job's temp clone, deleted long before the push.
+   */
   async function pushStatBefore(
     fact: TimelineBoxFact | undefined,
     push: PushTarget,
-  ): Promise<PushStatInput | undefined> {
+  ): Promise<PushStatSource | undefined> {
     const boxBranch = fact?.branches[0];
     if (!fact || !boxBranch) return undefined;
-    const branch = push.hostOnly && push.as ? push.as : boxBranch;
-    const ref = pushedRef(branch, push);
-    const before = await readRefTip(fact.projectRoot, ref);
-    return { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) };
+    if (await hostRepoHere(fact)) {
+      const branch = push.hostOnly && push.as ? push.as : boxBranch;
+      const ref = pushedRef(branch, push);
+      const before = await readRefTip(fact.projectRoot, ref);
+      return {
+        kind: 'host',
+        input: { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) },
+      };
+    }
+    return deps.boxPushStat ? { kind: 'box', boxId: fact.id } : undefined;
+  }
+
+  /** A folder on THIS machine, still there. A fact with no host names one here (Phase 1's rule). */
+  async function hostRepoHere(fact: TimelineBoxFact): Promise<boolean> {
+    if (fact.host && fact.host !== localHost()) return false;
+    if (!fact.projectRoot) return false;
+    return (await stat(fact.projectRoot).catch(() => null)) !== null;
+  }
+
+  function pushDiff(src: PushStatSource): Promise<PushLineStat | undefined> {
+    return src.kind === 'host'
+      ? pushLineStat(src.input)
+      : (deps.boxPushStat?.(src.boxId) ?? Promise.resolve(undefined));
   }
 
   /** Did the destroy leave the box gone? A record this hub still has says no. */
@@ -649,7 +683,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     const before = early ? await factOf(id).catch(() => undefined) : undefined;
     // Kept apart from `before`: a record can be updated in place by the op.
     const previous = before?.branches[0];
-    const stat = push ? await pushStatBefore(before, push).catch(() => undefined) : undefined;
+    const pushStat = push ? await pushStatBefore(before, push).catch(() => undefined) : undefined;
     const res = await op();
     // A destroy that answered `not found`, or one whose record is gone afterwards,
     // means the box IS gone, and its tasks and managers must let go of it either
@@ -672,7 +706,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const [stamp, base, diff] = await Promise.all([
         stampInWorkspace(meta, ws.id, seams.stampFor),
         boxEventBase(fact, ws.id),
-        stat ? pushLineStat(stat) : undefined,
+        pushStat ? pushDiff(pushStat).catch(() => undefined) : undefined,
       ]);
       await timelineSink().record(ws.id, {
         type,

@@ -367,7 +367,9 @@ describe('timeline writes and reads', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(root, { host: 'laptop', repoUrl: 'git@github.com:o/r.git' }),
+    );
     if (!added.ok) throw new Error(added.error);
     h.boxes.push({
       id: 'box1',
@@ -1288,7 +1290,9 @@ describe('branch links', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(root, { host: 'laptop', repoUrl: 'https://ghe.acme.dev/acme/api.git' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     h.boxes.push({

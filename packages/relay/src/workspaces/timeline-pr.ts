@@ -154,6 +154,24 @@ export function prTimelineEvents(
 }
 
 /**
+ * What `gh repo view` takes for a repo URL, with no folder to read it from:
+ * `owner/name` on github.com, `HOST/owner/name` anywhere else (which is what
+ * `gh` wants for an Enterprise host, and what a non-GitHub host fails on).
+ *
+ * Undefined when the URL names no repo of that shape — a local path, a deeper
+ * path than `owner/name`. Lowercased by the normalisation, which is safe: git
+ * hosts treat owner/repo case-insensitively and `gh` answers with the canonical
+ * spelling.
+ */
+export function ghRepoArg(repoUrl: string | undefined | null): string | undefined {
+  const key = normalizeRepoUrl(repoUrl);
+  if (!key || key.startsWith('/')) return undefined;
+  const [host, owner, name, ...rest] = key.split('/');
+  if (!host || !owner || !name || rest.length > 0) return undefined;
+  return host === 'github.com' ? `${owner}/${name}` : key;
+}
+
+/**
  * One key for every spelling of a single repo, so a box's `origin` and a
  * workspace project's `repoUrl` join without caring how each was written:
  * `git@github.com:owner/repo.git`, `https://github.com/owner/repo`,

@@ -1,26 +1,32 @@
 // GitHub pull requests into the workspace timeline. The in-box `gh` shim records
 // the PRs a box opens or merges; this sync covers everything else — the manager
 // merging from the host, a merge on github.com, auto-merge landing later — by
-// polling `gh pr list` for the repos behind the workspace's projects. The dedupe
+// polling `gh pr list` for the repos the workspace's projects name. The dedupe
 // keys are shared with the shim (`prTimelineEvents`), so both paths land once.
-import { stat } from 'node:fs/promises';
+//
+// Every `gh` call here is repo-addressed and runs with NO cwd: the repo comes
+// from the workspace record's `repoUrl`, not from a checkout. A control box has
+// no folder for any of it — its record of a project is a repo and nothing else —
+// and reading one from disk is what used to make the sync answer `unavailable`
+// there. One code path serves both hubs.
 import { hostname as osHostname } from 'node:os';
-import { join } from 'node:path';
 import { hashProjectPath } from '@agentbox/config';
 import { execa } from 'execa';
 import {
   appendTimelineEvent,
   GH_PR_JSON_FIELDS,
+  ghRepoArg,
   isPrReady,
   listWorkspaces,
+  normalizeRepoUrl,
   prTimelineEvents,
   readTasks,
   readTimeline,
   TIMELINE_RETENTION_MS,
   workspaceForBox,
-  workspaceProjectRootsOn,
   type GhPrJson,
   type TimelineEvent,
+  type WorkspaceProject,
   type WorkspaceRecord,
 } from '@agentbox/relay';
 import type { BackendDeps, GhExec } from './deps';
@@ -47,11 +53,14 @@ export interface GithubPrSync {
    */
   synced(wsId: string): boolean;
   /**
-   * The web URL of the GitHub repo behind a project folder, from the cache a
-   * sync fills. Never runs `gh`: undefined until a sync has looked the folder up.
+   * The web URL of the GitHub repo behind a repo URL, from the cache a sync
+   * fills. Never runs `gh`: undefined until a sync has looked that repo up.
    */
-  webUrlForRoot(root: string): string | undefined;
-  /** The same, by project id (`hashProjectPath` of the folder). */
+  webUrlForRepoUrl(repoUrl: string): string | undefined;
+  /**
+   * The same by project id — the workspace's own id for a repo, and, where this
+   * hub has a folder for it, that folder's hash too (what a box fact carries).
+   */
   webUrlForProject(projectId: string): string | undefined;
   /** The web URL of a repo (`owner/name`) a sync resolved, on the host it lives on. */
   webUrlForRepo(nameWithOwner: string): string | undefined;
@@ -99,9 +108,9 @@ export function createGithubPrSync(
   const now = opts.now ?? Date.now;
   const interval = opts.intervalMs ?? GITHUB_SYNC_INTERVAL_MS;
   const states = new Map<string, WorkspaceSyncState>();
-  /** Keyed by project folder; `null` = not a GitHub repo, cached so it is not asked again. */
-  const repoByRoot = new Map<string, RepoRef | null>();
-  const rootByProjectId = new Map<string, string>();
+  /** Keyed by normalised repo URL; `null` = not a GitHub repo, cached so it is not asked again. */
+  const repoByUrl = new Map<string, RepoRef | null>();
+  const refByProjectId = new Map<string, RepoRef>();
   let ghUser: { login: string | null; at: number } | null = null;
   const prStates = new Map<string, PrLiveState>();
   let statesVersion = 0;
@@ -114,15 +123,18 @@ export function createGithubPrSync(
     return login;
   }
 
-  async function repoOf(root: string): Promise<RepoRef | null> {
-    if (repoByRoot.has(root)) return repoByRoot.get(root) ?? null;
-    if (!(await stat(join(root, '.git')).catch(() => null))) {
-      repoByRoot.set(root, null);
+  async function repoOf(project: WorkspaceProject): Promise<RepoRef | null> {
+    const key = normalizeRepoUrl(project.repoUrl);
+    // No remote: the project exists only where its folder is, and there is
+    // nothing on GitHub to poll for it.
+    if (!key) return null;
+    if (repoByUrl.has(key)) return repoByUrl.get(key) ?? null;
+    const arg = ghRepoArg(project.repoUrl);
+    if (!arg) {
+      repoByUrl.set(key, null);
       return null;
     }
-    const r = await gh(['repo', 'view', '--json', 'nameWithOwner,url'], { cwd: root }).catch(
-      () => null,
-    );
+    const r = await gh(['repo', 'view', arg, '--json', 'nameWithOwner,url']).catch(() => null);
     let ref: RepoRef | null = null;
     if (r && r.exitCode === 0) {
       try {
@@ -140,24 +152,27 @@ export function createGithubPrSync(
       }
     }
     // A failed lookup is cached only when gh answered: a timeout says nothing
-    // about whether the folder is a GitHub repo.
-    if (r) {
-      repoByRoot.set(root, ref);
-      rootByProjectId.set(hashProjectPath(root), root);
-    }
+    // about whether the repo is on GitHub.
+    if (r) repoByUrl.set(key, ref);
     return ref;
   }
 
   async function sync(ws: WorkspaceRecord): Promise<GithubSyncStatus> {
     const user = await currentUser();
     if (user === null) return 'unavailable';
-    // This machine's checkouts of the workspace's projects: `gh` reads the repo
-    // from a folder, so a workspace with no folder here has nothing to sync yet.
-    const roots = workspaceProjectRootsOn(ws, host());
+    // The repos the workspace names, wherever they are checked out — including
+    // nowhere. A project with no remote contributes none.
+    const folders = ws.hosts[host()]?.projectRoots ?? {};
     const repos = new Map<string, RepoRef>();
-    for (const root of roots) {
-      const ref = await repoOf(root);
-      if (ref) repos.set(ref.nameWithOwner, ref);
+    for (const project of ws.projects) {
+      const ref = await repoOf(project);
+      if (!ref) continue;
+      repos.set(ref.nameWithOwner, ref);
+      refByProjectId.set(project.id, ref);
+      // A box's fact keys its project by the folder's hash, so a hub that HAS
+      // the folder indexes the repo under that id too, for the branch links.
+      const root = folders[project.id];
+      if (root) refByProjectId.set(hashProjectPath(root), ref);
     }
     if (repos.size === 0) return 'unavailable';
 
@@ -287,15 +302,15 @@ export function createGithubPrSync(
     synced(wsId) {
       return states.get(wsId)?.confirmed ?? false;
     },
-    webUrlForRoot(root) {
-      return repoByRoot.get(root)?.webUrl;
+    webUrlForRepoUrl(repoUrl) {
+      const key = normalizeRepoUrl(repoUrl);
+      return key === undefined ? undefined : (repoByUrl.get(key)?.webUrl ?? undefined);
     },
     webUrlForProject(projectId) {
-      const root = rootByProjectId.get(projectId);
-      return root === undefined ? undefined : repoByRoot.get(root)?.webUrl;
+      return refByProjectId.get(projectId)?.webUrl;
     },
     webUrlForRepo(nameWithOwner) {
-      for (const ref of repoByRoot.values()) {
+      for (const ref of repoByUrl.values()) {
         if (ref?.nameWithOwner === nameWithOwner) return ref.webUrl;
       }
       return undefined;
