@@ -13,7 +13,7 @@ function fakeFetch(replies: (call: Call) => { status: number; body?: unknown } |
   calls: Call[];
 } {
   const calls: Call[] = [];
-  const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const impl = (async (input: string | URL, init?: RequestInit) => {
     const call: Call = {
       url: String(input),
       method: init?.method ?? 'GET',
