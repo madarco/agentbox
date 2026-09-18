@@ -393,6 +393,17 @@ per `hub-testing.md` §3 and §C/§D:
   timeline read, with nothing running on the laptop.
 - Teardown per §E; check the Hetzner console for leftovers.
 
+**Real control box, §F F1–F17 (2026-09-18).** Run from the laptop against a Hetzner box built from
+source at `wip/remote-hub-p2-4`, test repo `agentbox-hubtest`. F1–F13, F15 and F16 pass; F14 and F17
+pass on their asserted substance (the two clauses that do not hold are backlog items 14 and 13).
+Three things the exposed-hub loop cannot reach, all fixed on the branch: the forwarded-event route
+refusing `actor: human` from a **stale container image** whose source checkout was already current;
+a local hub, spawned by a create, inheriting the deployed box's `hetzner` profile and API key out of
+`control-plane.env` and then rejecting this machine's own token; and a stale local workspace record
+shadowing the control box's on the create-row join, so `box.created` went to a workspace id the
+control box has never heard of. A `cx23` control box needs swap to build from source (see
+`hub-testing.md`).
+
 ## Riskiest assumptions
 
 1. Origin-URL identity: forks, ssh vs https spellings and mirrors must normalise to one key; verify

@@ -356,10 +356,10 @@ reporting `mode: remote`; read the control box's side over `ssh agentbox-hub cat
 | F11 | `agentbox manager message <id> "hello"` on the PC | the text is typed into the tmux pane here (`pnpm drive` to watch it), and the `manager.message` row lands on the VPS |
 | F12 | `agentbox manager stop <id>` then `manager forget <id> -y` | the session is killed here, the record on the VPS reads `stopped` and then disappears |
 | F13 | `agentbox manager start` on the VPS itself (`agentbox --url https://… manager start`) | refused `409 wrong_host` — a control box never runs a manager |
-| F14 | stop the PC's relay, then in an e2b box `agentbox-ctl git push` (leased) | the `git.push` row lands on the control box with `+N −M`, measured inside the box — nothing ran on the PC. The row is keyed on the pushed commit, so a repeated report adds no second row |
+| F14 | stop the PC's relay, then in an e2b box `agentbox-ctl git push` | the `git.push` row lands on the control box with `+N −M`, measured inside the box — nothing ran on the PC. A repeated push adds a second row unless the box LEASES (`AGENTBOX_GIT_LEASE=1`, i.e. an `app`-mode hub): only that path reports a row keyed on the pushed commit. A default `gh`-mode control box does not lease — backlog item 14 |
 | F15 | `agentbox git push <box>` for a box the control box built (no checkout on the PC) | same row with `+N −M`: the host half is skipped because the hub holds no folder for that repo |
 | F16 | open the control box's timeline for a workspace whose projects are repos only | `github` reads `ok` (not `unavailable`) and an existing PR is labelled; `ssh agentbox-hub` shows no `gh` process with a cwd in a job clone |
-| F17 | `agentbox config set hub.mode local` + a docker create from a manager session | the manager's row on the control box lists the create's job id (`boxJobIds`), promoted to the box id once the worker writes it back |
+| F17 | `agentbox config set hub.mode local` + a docker create from a manager session | the manager's row on the control box lists the create's job id (`boxJobIds`), and the `box.created` row lands there stamped with that manager and its turn. The job id is NOT yet promoted to the box id — the control box has no record of a PC-local job (backlog item 13) |
 
 The cheap loop for all of these is `agentbox hub expose` (§1) with a second `~/.agentbox` playing
 the PC; the gate for merging is the same matrix against a real deployed hub (§3).
@@ -381,6 +381,23 @@ Run on `0.28.0-nightly.202607260716` (npm `nightly`), from a virgin `~/.agentbox
 - **Not run:** B2–B4, C4 (browser sign-in), D4 (web-UI create), D7 `agentbox destroy`.
 - **Found:** a hub create fails fast when neither side has a base bake (D3) — bake first;
   `agentbox url` can't open a browser on Linux (known gap).
+
+### §F pass — 2026-09-18
+
+Run from a Mac (the PC) against a real Hetzner control box built from source at
+`wip/remote-hub-p2-4`, with the test repo `agentbox-hubtest` (non-LFS).
+
+- **Passed:** F1–F13, F15, F16 · F14 and F17 on their asserted substance (see the rows).
+- **Not run:** F9's "stop the PC's hub → stopped 30 min after its last detect" (a 30-minute wait).
+- **Found and fixed on the branch:** the forwarded-event route refused `actor: human` — a **stale
+  image**, not stale source: the VPS checkout was already at the fix while the running container
+  predated it, so re-run `hub update` and check `docker image inspect hub-app --format '{{.Created}}'`
+  before believing a symptom. A local hub spawned by a create inherited the DEPLOYED box's
+  `hetzner` profile and API key from `control-plane.env` and then rejected this machine's own token.
+  A stale local workspace record shadowed the control box's on the create-row join, so `box.created`
+  was posted under an id the control box has never heard of.
+- **Found, filed:** backlog items 13 (a manager's `boxJobIds` never promote to `boxIds` across the
+  host split) and 14 (a relay-executed push row carries no dedupe key).
 
 ---
 
