@@ -42,7 +42,7 @@ import {
   type CreateTarget,
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
 import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
@@ -805,26 +805,35 @@ export const createCommand = new Command('create')
     // The store (tasks, workspaces, managers) is on the configured hub; the box
     // itself is built by the hub that owns it. With no control box the two are
     // one hub and this is the same round trip it always was.
-    const store = await withHubClient(workspaceHub(), async (client) => {
-      // Validate the task ids BEFORE anything is provisioned: a typo should cost
-      // nothing, not leave a box nobody wanted.
-      const taskWorkspace =
-        taskIds.length > 0 ? await preflightOrExit(client, projectRoot, taskIds) : null;
-      // Inside a claude/codex session the box groups under that session.
-      const manager = await registerCurrentSession(client);
-      return { taskWorkspace, managerId: manager?.managerId };
-    });
-    // A workspace hub that could not answer only fails the create when tasks were
-    // asked for: a box with no tasks does not need the store to exist.
-    if (!store && taskIds.length > 0) {
-      s.stop('failed');
-      cmdLog.close();
-      process.exit(process.exitCode || 1);
+    //
+    // Two calls, because they are worth different things. The task preflight is
+    // LOUD: validating the ids BEFORE anything is provisioned means a typo costs
+    // nothing, and a store that cannot answer must fail the create. The session
+    // registration is BOOKKEEPING — a docker create never needed a hub for it —
+    // so it is quiet: an unreachable control box must not print an error or
+    // leave `agentbox create` exiting 1 after "box ready".
+    let taskWorkspace: string | null = null;
+    if (taskIds.length > 0) {
+      taskWorkspace =
+        (await withHubClient(workspaceHub(), (client) =>
+          preflightOrExit(client, projectRoot, taskIds),
+        )) ?? null;
+      if (!taskWorkspace) {
+        s.stop('failed');
+        cmdLog.close();
+        process.exit(process.exitCode || 1);
+      }
     }
-    const taskWorkspace = store?.taskWorkspace ?? null;
+    // Inside a claude/codex session the box groups under that session.
+    const registered = await withHubClientQuiet(workspaceHub(), (client) =>
+      registerCurrentSession(client),
+    );
+    if (!registered.ok)
+      cmdLog.write(`could not register this session as a manager: ${registered.error}`);
+    const sessionManagerId = registered.ok ? registered.value?.managerId : undefined;
     const outcome = await withHubClient({ preferLocal: true }, async (client) => {
       const { jobId } = await client.createBox({
-        ...(store?.managerId ? { managerId: store.managerId } : {}),
+        ...(sessionManagerId ? { managerId: sessionManagerId } : {}),
         projectId: hashProjectPath(projectRoot),
         provider: opts.provider ?? providerName,
         agent: 'none',
