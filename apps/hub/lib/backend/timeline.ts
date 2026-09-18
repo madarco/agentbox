@@ -743,7 +743,12 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       ? await deps.projectRoot?.(projectId).catch(() => undefined)
       : undefined;
     inBackground(async () => {
-      const records = await listWorkspaces();
+      const sink = timelineSink();
+      // The sink IS the store, so a remote one is the only listing worth joining
+      // against: a workspace id this machine minted before it was pointed at a
+      // control box names nothing there, and the row would be posted to a 404.
+      // Records left over from that era are common — the same project is in both.
+      const records = sink.kind === 'remote' ? [] : await listWorkspaces();
       // The project (a folder on this hub) is the more specific key, as it is for
       // a box; the repo is what a create with no folder here joins by.
       const ws =
@@ -751,10 +756,10 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
           ? records.find((w) => workspaceProjectIds(w, hostOf(deps)).includes(projectId))
           : null) ??
         (repoUrl ? workspaceForBox(records, { originUrl: repoUrl }) : null) ??
-        // Nothing here matched: with the store on a control box there are no
-        // local records at all, so the sink's listing is the one that has them —
-        // joined by the project's folder on THIS host, or by its repo.
-        (await timelineSink().workspaceFor(
+        // Nothing here matched (or the store is elsewhere): the sink's listing is
+        // the one that has them — joined by the project's folder on THIS host, or
+        // by its repo.
+        (await sink.workspaceFor(
           {
             ...(repoUrl ? { originUrl: repoUrl } : {}),
             ...(projectRoot ? { host: hostOf(deps), projectRoot } : {}),

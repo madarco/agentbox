@@ -219,6 +219,34 @@ describe('a hub whose store is elsewhere', () => {
     await backgroundSettled();
     expect(keys[0]).toMatchObject({ host: 'laptop', projectRoot: '/home/me/work/storefront' });
   });
+
+  /**
+   * A machine that registered workspaces BEFORE it was pointed at a control box
+   * keeps those records on disk, and the same project is in both. Joining
+   * against them yields a workspace id the control box never heard of, so the
+   * row is posted to a 404 and silently dropped.
+   */
+  it('ignores a stale local record that lists the same project', async () => {
+    const ws = await workspace();
+    const projectId = (await createWorkspaceBackend(deps()).listWorkspaces())[0]?.projects[0]?.id;
+    expect(projectId).toBeDefined();
+    const d = deps();
+    d.projectRoot = async () => join(ws.root, 'storefront');
+    const managers = createManagerBackend(d, {
+      workspaceView: async () => null,
+      sleep: async () => {},
+    });
+    const { sink, rows } = stubSink();
+    configureTimelineSink(sink);
+    const hub = withBoxTimeline(fakeHub(), { deps: d, stampFor: managers.timelineStamp });
+    await hub.create({ projectId, agent: 'claude', name: 'smoke' } as Parameters<
+      HubBackend['create']
+    >[0]);
+    await backgroundSettled();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.wsId).toBe('remote-ws');
+    expect(rows[0]?.wsId).not.toBe(ws.id);
+  });
 });
 
 describe("a manager's turn, reported by the machine that can read it", () => {
