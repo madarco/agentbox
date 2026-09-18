@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import {
   normalizeRepoUrl,
   readWorkspace,
   removeWorkspace,
+  repoProjectKey,
   renameWorkspace,
   scanWorkspaceProjects,
   toWorkspaceView,
@@ -20,6 +21,7 @@ import {
   workspaceFile,
   workspaceForBox,
   workspaceProjectId,
+  workspaceProjectIds,
   type WorkspaceProjectInput,
   type WorkspaceRecord,
 } from '../src/workspaces/index.js';
@@ -211,6 +213,22 @@ describe('addWorkspace', () => {
     await add(two, scanOf(two, ['a'], false));
     expect(await listWorkspaces()).toHaveLength(2);
   });
+
+  it('refuses an id that names nothing instead of minting a new record', async () => {
+    const root = await makeTree();
+    await expect(add(root, scanOf(root, ['a']), { id: 'deadbeefdeadbeef' })).rejects.toThrow(
+      /unknown workspace deadbeefdeadbeef/,
+    );
+    expect(await listWorkspaces()).toEqual([]);
+  });
+
+  it('mints ONE workspace when two adds for the same new folder interleave', async () => {
+    const root = await makeTree();
+    const projects = scanOf(root, ['a']);
+    const [first, second] = await Promise.all([add(root, projects), add(root, projects)]);
+    expect(second.id).toBe(first.id);
+    expect(await listWorkspaces()).toHaveLength(1);
+  });
 });
 
 describe('workspace registry', () => {
@@ -284,9 +302,15 @@ describe('the v1 upgrade', () => {
     expect(up.hosts['pc']?.projectRoots[up.projects[0]!.id]).toBe('/home/dev/work/app');
   });
 
-  it('drops a project the registry no longer knows (a path hash cannot be inverted)', () => {
+  it('keeps a project the registry no longer knows, with no folder or repo', () => {
+    // A path hash cannot be inverted, but the upgrade is PERSISTED: dropping the
+    // project here would shrink the record for good.
     const up = upgradeWorkspaceRecord(v1, 'pc', [registry[0]!]);
-    expect(up.projects).toHaveLength(1);
+    expect(up.projects).toHaveLength(2);
+    const orphan = up.projects[1]!;
+    expect(orphan.id).toBe(v1.projectIds[1]);
+    expect(orphan.repoUrl).toBeUndefined();
+    expect(up.hosts['pc']?.projectRoots[orphan.id]).toBeUndefined();
   });
 
   it('reads a version-less record off disk as v2', async () => {
@@ -298,6 +322,39 @@ describe('the v1 upgrade', () => {
     expect(read?.version).toBe(2);
     expect(read?.hosts[HERE]?.root).toBe(root);
     expect((await listWorkspaces()).map((w) => w.id)).toEqual([v1.id]);
+  });
+
+  it('writes the upgrade back on the first read, so it is derived once', async () => {
+    const root = await canonicalWorkspaceRoot(join(homedir(), 'legacy'));
+    const dir = workspaceDir(v1.id, root);
+    await mkdir(dir, { recursive: true });
+    await writeFile(workspaceFile(dir), JSON.stringify({ ...v1, root }));
+    await readWorkspace(v1.id);
+    const stored = JSON.parse(await readFile(workspaceFile(dir), 'utf8')) as {
+      version?: number;
+      taskCounter?: number;
+      projects?: unknown[];
+    };
+    expect(stored.version).toBe(2);
+    expect(stored.taskCounter).toBe(7);
+    // Both projects survive the write, registry or no registry.
+    expect(stored.projects).toHaveLength(2);
+  });
+});
+
+describe('repoProjectKey', () => {
+  it('is the id a workspace gives that repo, whatever the spelling', async () => {
+    const root = await makeTree();
+    const ws = await add(root, scanOf(root, ['a']));
+    const key = repoProjectKey('https://github.com/acme/a.git');
+    expect(key).toBe(ws.projects[0]!.id);
+    // The id a box registration keys its project card by is the SAME hash, so it
+    // is contained in the workspace's project ids and every join through it hits.
+    expect(workspaceProjectIds(ws, 'vps')).toContain(key);
+  });
+
+  it('is undefined for a url with no repo in it', () => {
+    expect(repoProjectKey('')).toBeUndefined();
   });
 });
 

@@ -5,11 +5,11 @@
 import { stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import {
-  findWorkspaceContaining,
   listWorkspaces,
   readTimeline,
   resolveWorkspaceDir,
   timelineFile,
+  workspaceForBox,
   type TimelineEvent,
   type WorkspaceRecord,
 } from '@agentbox/relay';
@@ -200,12 +200,21 @@ export function createBoxPrLookup(opts: BoxPrLookupOptions = {}): BoxPrLookup {
         const listed = new Set(records.map((r) => r.id));
         for (const id of cache.keys()) if (!listed.has(id)) cache.delete(id);
         if (indexes.size === 0) return NONE;
+        const here = hostname();
         return (box) => {
+          // Folder first, then the box's origin — the same join the timeline
+          // writes its rows with, so a box with no checkout here (a cloud box,
+          // or one built from a control box's throwaway clone) finds its PRs.
           const wsId =
             wsByProject.get(box.projectId) ??
-            (box.projectRoot
-              ? findWorkspaceContaining(records, box.projectRoot, hostname())?.id
-              : undefined);
+            workspaceForBox(
+              records,
+              {
+                ...(box.projectRoot ? { projectRoot: box.projectRoot } : {}),
+                ...(box.originUrl ? { originUrl: box.originUrl } : {}),
+              },
+              here,
+            )?.id;
           return prForBox(box, indexes, wsId);
         };
       } catch {

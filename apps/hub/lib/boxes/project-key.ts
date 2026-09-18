@@ -10,6 +10,7 @@
 // projection of that one box, so destroying the box makes the "project"
 // disappear. The repo is the durable identity; use it.
 import { hashProjectPath } from '@agentbox/config';
+import { repoProjectKey } from '@agentbox/relay';
 import { deriveRepoLabel, isHubWorkerClone } from '@agentbox/sandbox-core';
 import path from 'node:path';
 
@@ -46,9 +47,12 @@ export function registrationProjectKey(reg: ProjectKeyRegistration): { id: strin
   if (hostFolder && hostFolder.startsWith('/') && !isHubWorkerClone(hostFolder)) {
     return { id: hashProjectPath(hostFolder), repo: path.basename(hostFolder) };
   }
-  // Identity from the unambiguous slug/origin; the label from the readable one.
+  // The ORIGIN first, through the one repo-key helper a workspace record uses:
+  // the two must agree, or a registered box's project id is absent from its own
+  // workspace's `projectIds` and every join through it misses. The slug keys a
+  // registration that carries no origin; the label comes from the readable one.
   // Keying on the basename alone would collide two owners' `app` repos.
-  const key = reg.projectSlug ?? reg.originUrl ?? reg.name;
+  const byRepo = reg.originUrl ? repoProjectKey(reg.originUrl) : undefined;
   const repo = reg.originUrl ? deriveRepoLabel(reg.originUrl) : (reg.projectSlug ?? reg.name);
-  return { id: hashProjectPath(key), repo };
+  return { id: byRepo ?? hashProjectPath(reg.projectSlug ?? reg.name), repo };
 }

@@ -28,6 +28,13 @@ import {
  */
 export const WORKSPACE_LOCK = { staleMs: 2_000, acquireTimeoutMs: 5_000 };
 
+/**
+ * The lock an add takes over the whole registry. Not a workspace file: the point
+ * is to serialize the MATCH, which reads every record and may mint a new id.
+ * `listWorkspaces` ignores it — it only reads id-shaped entries.
+ */
+const ADD_LOCK = join(WORKSPACES_DIR, '_add');
+
 /** Directory names never scanned for projects. */
 const SCAN_SKIP = new Set(['node_modules', 'dist', 'build', 'target', 'vendor']);
 
@@ -141,13 +148,27 @@ export async function scanWorkspaceProjects(root: string): Promise<string[]> {
 }
 
 /**
+ * The id of a repo, wherever it is checked out. ONE definition, because two
+ * writers must agree on it: a workspace record names its projects by it, and a
+ * box registration with no host folder keys its project card by it. Two spellings
+ * of the same hash meant a registered box's project id was never in its own
+ * workspace's `projectIds`, so every join through that id missed.
+ */
+export function repoProjectKey(originUrl: string): string | undefined {
+  const repo = normalizeRepoUrl(originUrl);
+  return repo === undefined ? undefined : hashProjectPath(repo);
+}
+
+/**
  * The id of one project. A repo is the same project on every machine, so its id
  * is its normalised remote; a project with no remote exists only where its
  * folder is, so its id carries the host.
  */
 export function workspaceProjectId(host: string, path: string, repoUrl?: string): string {
-  const repo = normalizeRepoUrl(repoUrl);
-  return hashProjectPath(repo ?? `${host}:${stripTrailingSlash(path)}`);
+  return (
+    (repoUrl === undefined ? undefined : repoProjectKey(repoUrl)) ??
+    hashProjectPath(`${host}:${stripTrailingSlash(path)}`)
+  );
 }
 
 /** This machine's folder for a workspace, when it has one. */
@@ -199,9 +220,12 @@ function isV1(raw: unknown): raw is WorkspaceRecordV1 {
  * Upgrade a folder-keyed record in memory. The workspace id is KEPT — its tasks,
  * managers and timeline are stored under it — and the folders come back from the
  * project registry, which recorded each project's path and origin when the
- * workspace registered it. A project the registry no longer knows is dropped:
- * its folder is unrecoverable from a path hash, and the next `workspace add`
- * re-discovers it.
+ * workspace registered it.
+ *
+ * A project the registry no longer knows KEEPS its id and loses its folder and
+ * repo: the folder is unrecoverable from a path hash, but dropping the project
+ * would shrink the record — and the upgrade is persisted, so the loss would be
+ * permanent. The next `workspace add` re-discovers the folder and replaces it.
  */
 export function upgradeWorkspaceRecord(
   raw: WorkspaceRecordV1,
@@ -213,7 +237,11 @@ export function upgradeWorkspaceRecord(
   const projectRoots: Record<string, string> = {};
   for (const oldId of raw.projectIds) {
     const entry = known.get(oldId);
-    if (!entry) continue;
+    if (!entry) {
+      // All that survives is the id; the hash is the only name it has left.
+      if (!out.some((p) => p.id === oldId)) out.push({ id: oldId, name: oldId.slice(0, 8) });
+      continue;
+    }
     const id = workspaceProjectId(host, entry.originalPath, entry.originUrl);
     if (!out.some((p) => p.id === id)) {
       out.push({
@@ -240,16 +268,53 @@ export function upgradeWorkspaceRecord(
  * Parse one stored record, upgrading a version-less one. `registry` is resolved
  * once per read of many records — the upgrade is the only reader of it, and the
  * common case has nothing to upgrade.
+ *
+ * An upgraded record is written back before it is returned: the project registry
+ * is the only source of the folders, and re-deriving them on every read (five
+ * times per dashboard poll) both costs a registry read and lets the record shrink
+ * the day the registry forgets a project.
  */
 async function parseRecord(
   raw: string,
   host: string,
   registry: () => Promise<ProjectEntry[]>,
+  migrate: boolean,
 ): Promise<WorkspaceRecord | null> {
   const parsed = JSON.parse(raw) as unknown;
-  if (isV1(parsed)) return upgradeWorkspaceRecord(parsed, host, await registry());
+  if (isV1(parsed)) {
+    const upgraded = upgradeWorkspaceRecord(parsed, host, await registry());
+    // Only an UNLOCKED read migrates: the file lock is not reentrant, so a read
+    // from inside `updateWorkspace`/`addWorkspace` would wait out its own lock.
+    // Those callers write the upgraded record themselves anyway.
+    if (migrate) await persistUpgrade(upgraded);
+    return upgraded;
+  }
   const rec = parsed as WorkspaceRecord;
   return rec.version === 2 && typeof rec.id === 'string' ? rec : null;
+}
+
+/**
+ * Write an upgraded record back, once. Locked and re-checked: a concurrent
+ * reader upgrading the same file must not overwrite a v2 record someone has
+ * meanwhile written (a `taskCounter` bump, a new host mapping). Best-effort — a
+ * read never fails over its own migration.
+ */
+async function persistUpgrade(rec: WorkspaceRecord): Promise<void> {
+  try {
+    const dir = await resolveWorkspaceDir(rec.id);
+    if (!dir) return;
+    await withFileLock(
+      workspaceFile(dir),
+      async () => {
+        const raw = await readFile(workspaceFile(dir), 'utf8').catch(() => null);
+        if (raw === null || !isV1(JSON.parse(raw) as unknown)) return;
+        await writeWorkspace(rec);
+      },
+      WORKSPACE_LOCK,
+    );
+  } catch {
+    // migration is opportunistic: the in-memory upgrade still serves this read
+  }
 }
 
 /** `listProjectsConfigured`, resolved at most once per read. */
@@ -259,11 +324,16 @@ function registryOnce(): () => Promise<ProjectEntry[]> {
 }
 
 export async function readWorkspace(id: string): Promise<WorkspaceRecord | null> {
+  return readWorkspaceRecord(id, true);
+}
+
+/** `readWorkspace`, with the migration write-back only when it is safe to take the lock. */
+async function readWorkspaceRecord(id: string, migrate: boolean): Promise<WorkspaceRecord | null> {
   const dir = await resolveWorkspaceDir(id);
   if (!dir) return null;
   try {
     const raw = await readFile(workspaceFile(dir), 'utf8');
-    return await parseRecord(raw, osHostname(), registryOnce());
+    return await parseRecord(raw, osHostname(), registryOnce(), migrate);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     return null; // malformed: treat as absent, like loadQueue's skip
@@ -286,7 +356,7 @@ export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
     if (!/^[0-9a-f]{16}(?:-.+)?$/.test(name)) continue;
     try {
       const raw = await readFile(workspaceFile(join(WORKSPACES_DIR, name)), 'utf8');
-      const rec = await parseRecord(raw, host, registry);
+      const rec = await parseRecord(raw, host, registry, true);
       if (rec) out.push(rec);
     } catch {
       // skip malformed / partially-created
@@ -316,7 +386,7 @@ export async function updateWorkspace(
   return withFileLock(
     workspaceFile(dir),
     async () => {
-      const current = await readWorkspace(id);
+      const current = await readWorkspaceRecord(id, false);
       if (!current) return null;
       const next = { ...(await fn(current)), updatedAt: new Date().toISOString() };
       await writeWorkspace(next);
@@ -421,7 +491,29 @@ export async function addWorkspace(
   const projectRoots: Record<string, string> = {};
   for (const s of scanned) projectRoots[s.project.id] = s.path;
 
+  // Matching and minting an id are ONE step, under a registry-wide lock: two
+  // concurrent adds for the same new (host, root) — `registerHostManager` firing
+  // from two terminals, or once per box in a multi-box create — would otherwise
+  // both miss the match and mint two workspaces for one folder.
+  return withFileLock(
+    ADD_LOCK,
+    async () => addLocked(input, deps, { root, projects, projectRoots }),
+    WORKSPACE_LOCK,
+  );
+}
+
+/** The match-and-write half of `addWorkspace`, already under {@link ADD_LOCK}. */
+async function addLocked(
+  input: AddWorkspaceInput,
+  deps: AddWorkspaceDeps,
+  scan: { root: string; projects: WorkspaceProject[]; projectRoots: Record<string, string> },
+): Promise<WorkspaceRecord> {
+  const { root, projects, projectRoots } = scan;
   const existing = matchWorkspace(await listWorkspaces(), input, projects);
+  // An id that names nothing is a stale reference, not a request for a new
+  // workspace: minting one here would answer `POST /workspaces {id}` with a
+  // record under a DIFFERENT id, and leave the caller's tasks behind.
+  if (input.id && !existing) throw new Error(`unknown workspace ${input.id}`);
   const id = existing?.id ?? (deps.newId ?? newWorkspaceId)();
   const dir = (await resolveWorkspaceDir(id)) ?? workspaceDir(id, root);
   // Locked, and the existing record is read INSIDE the lock: a rescan that read
@@ -432,7 +524,7 @@ export async function addWorkspace(
     workspaceFile(dir),
     async () => {
       const now = new Date().toISOString();
-      const current = existing ? ((await readWorkspace(id)) ?? existing) : undefined;
+      const current = existing ? ((await readWorkspaceRecord(id, false)) ?? existing) : undefined;
       const host: WorkspaceHost = { root, projectRoots, seenAt: now };
       const hosts = { ...(current?.hosts ?? {}), [input.host]: host };
       // A project this scan did not find is dropped, unless another machine

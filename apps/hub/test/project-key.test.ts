@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { workspaceProjectId, workspaceProjectIds } from '@agentbox/relay';
 import {
   HUB_WORKER_CLONE_PREFIX,
   deriveRepoLabel,
@@ -69,6 +70,37 @@ describe('registrationProjectKey', () => {
       worktrees: [{ hostMainRepo: CLONE }],
     });
     expect(mine.id).not.toBe(theirs.id);
+  });
+
+  // The join that was broken: the workspace hashed the NORMALISED origin and the
+  // registration hashed the slug, so a Store-only box's project id was never in
+  // its own workspace's ids and `wsByProject` / `box-prs` missed it.
+  it('gives a registration the project id its workspace lists for that repo', () => {
+    const repoUrl = 'git@github.com:madarco/agentbox-test-repo.git';
+    const project = {
+      id: workspaceProjectId('pc', '/Users/marco/Projects/agentbox-test-repo', repoUrl),
+      name: 'agentbox-test-repo',
+      repoUrl,
+    };
+    const ws = {
+      projects: [project],
+      hosts: {
+        pc: {
+          root: '/Users/marco/Projects',
+          projectRoots: { [project.id]: '/Users/marco/Projects/agentbox-test-repo' },
+          seenAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    };
+    const key = registrationProjectKey({
+      name: 'wispy-fox',
+      // The https spelling, from a control box that never cloned it.
+      originUrl: 'https://github.com/madarco/agentbox-test-repo',
+      projectSlug: 'madarco__agentbox-test-repo',
+      worktrees: [{ hostMainRepo: CLONE }],
+    });
+    expect(workspaceProjectIds(ws, 'vps')).toContain(key.id);
+    expect(workspaceProjectIds(ws, 'pc')).toContain(key.id);
   });
 
   it('falls back to the box name when there is no repo identity at all', () => {
