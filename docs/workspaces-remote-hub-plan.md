@@ -1,8 +1,8 @@
 # Workspaces, tasks, manager and timeline on a remote control box — plan
 
-Status: **Phase 1 in progress** (2026-09-18). One phase per session: branch off origin, implement,
-gates + smoke, `/code-review medium`, merge into `feat/workspaces-remote-hub`. Phases 2–4 also gate
-on a **real Hetzner control box** (see Verification).
+Status: **Phase 1 done** (2026-09-18), Phase 2 next. One phase per session: branch off origin,
+implement, gates + smoke, `/code-review medium`, merge into `feat/workspaces-remote-hub`. Phases 2–4
+also gate on a **real Hetzner control box** (see Verification).
 
 Related: [`workspaces-tasks-manager-plan.md`](./workspaces-tasks-manager-plan.md) (the feature as
 shipped in 0.32.0), [`workspaces-remote-hub-backlog.md`](./workspaces-remote-hub-backlog.md) (the
@@ -55,10 +55,18 @@ One predicate, defined once: **workspaces live on the configured hub** = `remote
 on the CLI, `resolveRemoteHub()` on the hub (minus its `cloud.viaHub` clause). A `hub expose`-d
 machine is its own control box and never forwards, which is what makes it the cheap test bed.
 
-## Phase 1 — Repo-based workspace record (local parity first) + backlog doc
+## Phase 1 — Repo-based workspace record (local parity first) + backlog doc — DONE
 
 Goal: new record shape and id; scan moves to the CLI; hub stops stat'ing paths; every box→workspace
 join goes by repo URL / (host, folder). Local-only mode behaves exactly as today.
+
+As landed, three details differ from the sketch below: `workspaceForBox(records, key, localHost?)`
+takes the reading hub's own hostname as a third argument (a key with no `host` names a path on it,
+so a fact built without one still joins by folder); the API view keeps `projects` and `hosts` as
+well as the derived `projectIds`/`root?`; and `projectIds` is the union of the repo-keyed project
+ids AND `hashProjectPath(folder)` for every folder the reading hub has, because a box record and
+the project registry key by folder. `findWorkspaceContaining(records, path, host)` took a host
+argument rather than being replaced.
 
 - `packages/relay/src/workspaces/types.ts`: `WorkspaceRecord { version: 2; id (16 hex random, same
   generator as manager ids); name; projects: { id, name, repoUrl? }[]; hosts: Record<hostname,

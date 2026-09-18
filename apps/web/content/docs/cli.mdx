@@ -421,10 +421,15 @@ See [Configuration](/docs/configuration), [agentbox.yaml](/docs/agentbox-yaml), 
 
 ## Workspaces & tasks
 
-A **workspace** is a folder on your machine that groups one or more projects — the unit you plan
-across when a feature spans several repos. It owns a **task** list and its **managers**: the coding
-agent sessions that read the list, group tasks into boxes so their diffs do not collide, and drive
-them.
+A **workspace** groups one or more projects — the unit you plan across when a feature spans several
+repos. It owns a **task** list and its **managers**: the coding agent sessions that read the list,
+group tasks into boxes so their diffs do not collide, and drive them.
+
+A workspace is identified by its projects' **repos**, not by a path, and it records the folder each
+machine keeps them in. So the same workspace can be registered from your laptop and from another
+machine (or held by a [control box](/docs/deployed-hub) that has no checkout at all), and a box
+still joins the right one. The scan runs on **your** machine: `workspace add` walks the folder here
+and posts what it found.
 
 You do not have to set any of this up. Run `agentbox create`, an agent command or `agentbox tasks add`
 from inside a Claude Code or Codex session and that session is registered as a manager; if no
@@ -441,7 +446,7 @@ agentbox workspace add ~/code
 agentbox workspace add                # the current directory
 agentbox workspace list
 agentbox workspace show
-agentbox workspace rescan             # pick up a repo cloned in after registration
+agentbox workspace rescan             # re-scan here, to pick up a repo cloned in since
 agentbox workspace rename storefront
 agentbox workspace rm -y              # unregisters only; the folder and its boxes stay
 agentbox workspace rm -y --force      # even while one of its managers reads as running
