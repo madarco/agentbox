@@ -65,10 +65,10 @@ a cookie (30 days) and strips it from the address, so from then on a plain
 - **Project detail** — the project's boxes, its seed/custody status, and **Bot
   backups**: every bot this project holds a backup of, with **Restore…** opening
   that same Create box form already pointed at the backup. Only backups that
-  captured an identity are offered; a workspace-only one would start a *fresh*
+  captured an identity are offered; a workspace-only one would start a _fresh_
   bot, which is what clone already does.
-- **Approvals** — the host-action requests a box is blocked on (a `git push` to a
-  protected branch, `cp`, `download`, gh writes, host-tool calls). **Approve** unblocks
+- **Approvals** — the host-action requests a box is blocked on (a destructive
+  `git push`, `cp`, `download`, gh writes, host-tool calls). **Approve** unblocks
   the box; **Deny** returns an error to it. This is the same gate the relay prompts
   for in an attached terminal — surfaced in the browser so you can answer from
   anywhere on your machine.

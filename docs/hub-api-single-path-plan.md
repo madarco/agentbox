@@ -756,8 +756,9 @@ above (128); a docker box's artificially-absent workspace takes the docker `git 
 
 ### Notes for later steps
 
-- **Sanctioning moved server-side.** The host-sanctioned-branch record (so a later in-box agent
-  push isn't prompted) now lives in the hub backend (`sanctionBranch` in `hub-backend.ts`),
+- **Sanctioning moved server-side.** The host-sanctioned-branch record (which since 2026-09-19 only
+  picks the branch the relay pushes — it no longer decides approval) now lives in the hub backend
+  (`sanctionBranch` in `hub-backend.ts`),
   driven by `gitCheckout`/`gitNewBranch`. The CLI no longer touches `registerBoxWithRelay` /
   `mutateState` for git — steps converting other mutating ops should keep that pattern (mutate
   host/relay state in the hub backend, not the CLI).

@@ -32,10 +32,9 @@ import { pathToFileURL } from 'node:url';
 import {
   isResolvedBranch,
   isScratchBranch,
-  isSanctionedPushBranch,
   landRefspec,
   parseDownloadKind,
-  pushArgvTargetsAllowed,
+  pushDestructiveReason,
   realpathSafe,
   remoteTrackingRef,
   resolveHostPath,
@@ -1412,37 +1411,25 @@ async function runGitRpc(
   // prompt the Docker provider already uses. The wrapper's SSE subscriber on
   // /admin/prompts/stream surfaces it as a footer y/N; `askPrompt` returns
   // auto-`y` when AGENTBOX_PROMPT=off (matches Docker behavior).
-  // The gate is bypassed for pushes to a *sanctioned* branch: the box's own
-  // `agentbox/<name>` scratch branch (always its job), or the branch the host
-  // last put the box on (`sanctionedBranch`). A scratch push bypasses
-  // unconditionally; the sanctioned-but-non-scratch bypass is part of the safe
-  // subset, so it honors `box.autoApproveSafeHostActions` and leaves an audit
-  // trail. An agent that self-switches HEAD to another branch still prompts.
   //
-  // The branch is only half the push: the box's argv tail is appended to
-  // `push <remote> <branch>` at step 4 below, and git accepts several
-  // refspecs — so a bypass additionally requires every ref that tail would
-  // write to be a sanctioned target too (`pushArgvTargetsAllowed`), or a box
-  // on a scratch branch could append `HEAD:refs/heads/anything` and publish
-  // it with no approval at all.
-  const isScratch = isScratchBranch(branch);
-  const safeApproveOn = deps.autoApproveSafeHostActions !== false;
-  const isSanctionedNonScratch =
-    !isScratch && safeApproveOn && isSanctionedPushBranch(branch, lookup.sanctionedBranch);
-  const argvTargetsAllowed = pushArgvTargetsAllowed(sanitizeGitArgs(params.args), {
-    branch,
-    ...(lookup.sanctionedBranch ? { sanctionedBranch: lookup.sanctionedBranch } : {}),
-  });
-  const bypassPushGate = (isScratch || isSanctionedNonScratch) && argvTargetsAllowed;
-  if (action.method === 'git.push' && isSanctionedNonScratch && bypassPushGate) {
+  // Same verdict as the docker path in `server.ts`, from the same helper:
+  // adding commits is ordinary, revertable agent work and runs silently to ANY
+  // branch, so the branch no longer decides and
+  // `box.autoApproveSafeHostActions` does not apply. Only the irreversible
+  // asks. The push this relay assembles is `push <remote> <branch>` plus the
+  // box's argv tail (step 4 below), and git reads that tail as further
+  // refspecs — `pushDestructiveReason` judges branch and tail together.
+  const destructiveWhy = pushDestructiveReason(sanitizeGitArgs(params.args), branch);
+  const bypassPushGate = destructiveWhy === null;
+  if (action.method === 'git.push' && bypassPushGate) {
     deps.prompts?.noteAutoApprove(
       deps.boxId,
       {
         kind: 'confirm',
-        message: `git push to sanctioned branch ${branch} on ${deps.boxName ?? deps.boxId}`,
+        message: `git push to ${branch} on ${deps.boxName ?? deps.boxId}`,
         context: { command: 'git push', cwd: containerPath, argv: params.args },
       },
-      'safe: sanctioned-branch push',
+      'safe: ordinary push',
     );
   }
   // Host-initiated pushes (driven by `agentbox git push <box>`) skip the
@@ -1516,7 +1503,7 @@ async function runGitRpc(
           deps.boxId,
           {
             kind: 'confirm',
-            message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
+            message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}? It ${destructiveWhy ?? 'needs confirmation'}.`,
             detail:
               `${resolveRemote(params.remote)} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
             defaultAnswer: 'n',
@@ -1531,7 +1518,7 @@ async function runGitRpc(
     } else {
       const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
         kind: 'confirm',
-        message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}?`,
+        message: `Allow git push from cloud box ${deps.boxName ?? deps.boxId}? It ${destructiveWhy ?? 'needs confirmation'}.`,
         detail: `${resolveRemote(params.remote)} ${branch} ${(params.args ?? []).join(' ')}`.trim(),
         defaultAnswer: 'n',
         context: { command: 'git push', cwd: containerPath, argv: params.args },

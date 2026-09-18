@@ -314,8 +314,8 @@ Useful flags: `download` takes `--dry-run`, `--no-respect-gitignore` (force excl
 
 <Callout title="TIP">
   `agentbox git push` runs through the host relay — your git/SSH credentials stay on your machine.
-  The box requests the push; the host performs it (and prompts for approval per the relay's
-  host-action gate).
+  The box requests the push; the host performs it — silently for an ordinary push, and only asking
+  for approval when the push is destructive (see [sync & git](/docs/sync-and-git#git-permissions)).
 </Callout>
 
 See [Sync & git](/docs/sync-and-git) and [Environment](/docs/environment).

@@ -322,7 +322,7 @@ export const gitCommand = new Command('git')
   .addCommand(
     new Command('push')
       .description(
-        "Run `git push` on the host main repo against this box's branch (user is prompted on the host wrapper to confirm)",
+        "Run `git push` on the host main repo against this box's branch (silent for an ordinary push; a destructive one asks the user on the host)",
       )
       .option('--remote <name>', 'remote name (default: origin)')
       .option('--cwd <path>', 'container path identifying which registered worktree to use')

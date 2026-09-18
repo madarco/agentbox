@@ -8,15 +8,15 @@ import { PendingPrompts, PromptSubscribers } from '../src/prompts.js';
 import type { HostAction } from '../src/types.js';
 
 /**
- * The cloud twin of the docker push gate in `server.test.ts`: the box's argv
- * tail is appended to the relay's own `push <remote> <branch>`, so a bypass is
- * only safe while every ref that tail would write is already sanctioned.
+ * The cloud twin of the docker push gate in `server.test.ts`, on the same
+ * verdict: adding commits to any branch is ordinary work and runs silently,
+ * and only the irreversible asks.
  *
  * With no SSE subscriber attached, a push that must be approved auto-denies
  * ("no attached wrapper to confirm") — which is the decisive signal that it
  * reached the gate rather than bypassing it.
  */
-describe('cloud git.push argv-tail targets', () => {
+describe('cloud git.push destructive argv', () => {
   const BRANCH = 'agentbox/box-one';
   const execLog: string[] = [];
 
@@ -85,26 +85,38 @@ describe('cloud git.push argv-tail targets', () => {
     return executeCloudAction(action, deps()) as Promise<{ exitCode: number; stderr: string }>;
   }
 
-  it('a scratch-branch push with a routine tail still bypasses the gate', async () => {
-    const r = await push(['--force']);
-    expect(r.stderr).not.toMatch(/no attached wrapper/);
-    expect(r.stderr).toMatch(/bundle create failed/);
+  it('an ordinary push bypasses the gate, on any branch', async () => {
+    for (const args of [undefined, ['some-new-branch'], ['HEAD:refs/heads/other'], ['--tags']]) {
+      const r = await push(args);
+      expect(r.stderr).not.toMatch(/no attached wrapper/);
+      expect(r.stderr).toMatch(/bundle create failed/);
+    }
   });
 
-  it("a tail naming the box's own branch still bypasses the gate", async () => {
-    const r = await push([`HEAD:refs/heads/${BRANCH}`]);
-    expect(r.stderr).toMatch(/bundle create failed/);
+  it("a force-push to the box's own scratch branch bypasses the gate", async () => {
+    for (const args of [['--force'], ['+HEAD:refs/heads/agentbox/other'], ['--force-with-lease']]) {
+      const r = await push(args);
+      expect(r.stderr).toMatch(/bundle create failed/);
+    }
   });
 
-  it('a tail that adds an unsanctioned refspec must ask, even on a scratch branch', async () => {
-    const r = await push(['other-branch']);
+  it('a deletion must ask', async () => {
+    const r = await push(['--delete', 'some-branch']);
     expect(r.exitCode).toBe(10);
     expect(r.stderr).toMatch(/no attached wrapper to confirm/);
   });
 
-  it('the same holds for a fully-qualified injected refspec', async () => {
-    const r = await push(['HEAD:refs/heads/other']);
+  it('a force-push to a branch the box did not create must ask', async () => {
+    const r = await push(['--force', 'main']);
     expect(r.exitCode).toBe(10);
     expect(r.stderr).toMatch(/no attached wrapper to confirm/);
+  });
+
+  it('the wholesale ref syncs, a redirected repo and an unknown flag must ask', async () => {
+    for (const args of [['--mirror'], ['--prune'], ['--repo', 'https://e/x.git'], ['--nope']]) {
+      const r = await push(args);
+      expect(r.exitCode).toBe(10);
+      expect(r.stderr).toMatch(/no attached wrapper to confirm/);
+    }
   });
 });

@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isAllowedPushTarget,
   isResolvedBranch,
-  isSanctionedPushBranch,
   isScratchBranch,
   landRefspec,
   remoteTrackingRef,
   resolveLandDest,
-  pushArgvTargetsAllowed,
+  pushDestructiveReason,
   pushRefspecTarget,
   resolveRemote,
   sanitizeGitArgs,
@@ -94,27 +92,6 @@ describe('git-refs pure decisions', () => {
     });
   });
 
-  describe('isSanctionedPushBranch', () => {
-    it('always allows a scratch branch, regardless of sanctioned value', () => {
-      expect(isSanctionedPushBranch('agentbox/box1', undefined)).toBe(true);
-      expect(isSanctionedPushBranch('agentbox/box1', 'main')).toBe(true);
-    });
-    it('allows a non-scratch branch only when it equals the sanctioned branch', () => {
-      expect(isSanctionedPushBranch('main', 'main')).toBe(true);
-      expect(isSanctionedPushBranch('feature/x', 'feature/x')).toBe(true);
-    });
-    it('rejects an agent-switched branch that is not the sanctioned one', () => {
-      expect(isSanctionedPushBranch('main', 'agentbox/box1')).toBe(false);
-      expect(isSanctionedPushBranch('rogue', 'main')).toBe(false);
-    });
-    it('rejects when sanctioned is unset or branch is empty/HEAD', () => {
-      expect(isSanctionedPushBranch('main', undefined)).toBe(false);
-      expect(isSanctionedPushBranch('', 'main')).toBe(false);
-      expect(isSanctionedPushBranch('HEAD', 'HEAD')).toBe(false);
-      expect(isSanctionedPushBranch(undefined, undefined)).toBe(false);
-    });
-  });
-
   describe('sanitizeGitArgs', () => {
     it('coerces a non-array to []', () => {
       expect(sanitizeGitArgs(undefined)).toEqual([]);
@@ -133,12 +110,105 @@ describe('git-refs pure decisions', () => {
 });
 
 /**
- * The relay appends the box's argv tail to its own `push <remote> <branch>`,
- * and git accepts several refspecs — so the approval bypass has to hold for
- * every ref the assembled command would write, not just the relay's own.
+ * The push approval model, inverted from what it was: adding commits to ANY
+ * branch is ordinary agent work and runs silently, and only the irreversible
+ * needs the user. Same shape as the `gh` policy — a blacklist, not an
+ * allowlist.
  */
-describe('push argv target vetting', () => {
-  const policy = { branch: 'agentbox/box-one', sanctionedBranch: 'feature/x' };
+describe('pushDestructiveReason', () => {
+  const SCRATCH = 'agentbox/box-one';
+
+  describe('ordinary pushes (silent)', () => {
+    it('allows a bare push on the scratch branch', () => {
+      expect(pushDestructiveReason([], SCRATCH)).toBeNull();
+    });
+    it('allows a push to an arbitrary branch the agent names', () => {
+      expect(pushDestructiveReason([], 'main')).toBeNull();
+      expect(pushDestructiveReason(['some-new-branch'], 'main')).toBeNull();
+      expect(pushDestructiveReason(['HEAD:refs/heads/other'], SCRATCH)).toBeNull();
+    });
+    it('allows the routine reporting/upstream flags', () => {
+      expect(pushDestructiveReason(['-u', '--quiet', '--dry-run'], 'main')).toBeNull();
+      expect(pushDestructiveReason(['--no-verify', '--atomic'], 'main')).toBeNull();
+    });
+    it('allows the safe force spellings, which refuse to clobber unseen work', () => {
+      expect(pushDestructiveReason(['--force-with-lease'], 'main')).toBeNull();
+      expect(pushDestructiveReason(['--force-with-lease=main:abc123'], 'main')).toBeNull();
+      expect(pushDestructiveReason(['--force-if-includes'], 'main')).toBeNull();
+    });
+    it("allows a force-push to the box's own scratch branch", () => {
+      expect(pushDestructiveReason(['--force'], SCRATCH)).toBeNull();
+      expect(pushDestructiveReason(['-f'], SCRATCH)).toBeNull();
+      expect(pushDestructiveReason(['--force', 'agentbox/other'], SCRATCH)).toBeNull();
+      expect(pushDestructiveReason(['+HEAD:refs/heads/agentbox/other'], SCRATCH)).toBeNull();
+    });
+    it('allows a plain new tag push', () => {
+      expect(pushDestructiveReason(['--tags'], SCRATCH)).toBeNull();
+      expect(pushDestructiveReason(['--follow-tags'], 'main')).toBeNull();
+      expect(pushDestructiveReason(['HEAD:refs/tags/v1'], 'main')).toBeNull();
+    });
+    it('allows pushing every matching branch, as long as nothing is rewritten', () => {
+      expect(pushDestructiveReason(['--all'], 'main')).toBeNull();
+    });
+  });
+
+  describe('destructive pushes (confirmed)', () => {
+    it('flags a deletion in every spelling', () => {
+      expect(pushDestructiveReason(['--delete', 'some-branch'], SCRATCH)).toMatch(/deletes/);
+      expect(pushDestructiveReason(['-d', 'some-branch'], SCRATCH)).toMatch(/deletes/);
+      expect(pushDestructiveReason([':some-branch'], SCRATCH)).toMatch(/deletes/);
+      expect(pushDestructiveReason(['+:some-branch'], SCRATCH)).toMatch(/deletes/);
+      expect(pushDestructiveReason([':refs/tags/v1'], SCRATCH)).toMatch(/deletes/);
+    });
+    it('flags a force-push to a branch that is not the box scratch space', () => {
+      expect(pushDestructiveReason(['--force'], 'main')).toMatch(/force-pushes main/);
+      expect(pushDestructiveReason(['-f'], 'feature/x')).toMatch(/force-pushes feature\/x/);
+      expect(pushDestructiveReason(['--force', 'main'], SCRATCH)).toMatch(/force-pushes main/);
+      expect(pushDestructiveReason(['+HEAD:refs/heads/main'], SCRATCH)).toMatch(
+        /force-pushes main/,
+      );
+    });
+    it('flags a force-push when the pushed branch is unknown (fail closed)', () => {
+      expect(pushDestructiveReason(['--force'], undefined)).toMatch(/force-pushes/);
+    });
+    it('flags a forced tag overwrite', () => {
+      expect(pushDestructiveReason(['+HEAD:refs/tags/v1'], SCRATCH)).toMatch(/force-pushes/);
+      expect(pushDestructiveReason(['--force', '--tags'], SCRATCH)).toMatch(/--tags/);
+      expect(pushDestructiveReason(['--force', '--all'], SCRATCH)).toMatch(/--all/);
+    });
+    it('flags the wholesale ref syncs', () => {
+      expect(pushDestructiveReason(['--mirror'], SCRATCH)).toMatch(/mirrors/);
+      expect(pushDestructiveReason(['--prune'], SCRATCH)).toMatch(/deletes remote refs/);
+    });
+    it('flags an argv that escapes the intended target', () => {
+      expect(pushDestructiveReason(['--repo', 'https://evil.example/x.git'], SCRATCH)).toMatch(
+        /redirects/,
+      );
+      expect(pushDestructiveReason(['--repo=https://evil.example/x.git'], SCRATCH)).toMatch(
+        /redirects/,
+      );
+      expect(pushDestructiveReason(['--receive-pack=/tmp/x'], SCRATCH)).toMatch(/remote side/);
+      expect(pushDestructiveReason(['--exec', '/tmp/x'], SCRATCH)).toMatch(/remote side/);
+    });
+    it('flags any flag it does not recognise (fail closed)', () => {
+      expect(pushDestructiveReason(['--brand-new-git-flag'], SCRATCH)).toMatch(
+        /does not recognise/,
+      );
+      expect(pushDestructiveReason(['-fq'], SCRATCH)).toMatch(/does not recognise/);
+      expect(pushDestructiveReason(['-o', 'ci.skip'], SCRATCH)).toMatch(/does not recognise/);
+    });
+    it('reads a token after -- as a refspec, not as a flag', () => {
+      expect(pushDestructiveReason(['--', 'some-branch'], SCRATCH)).toBeNull();
+      expect(pushDestructiveReason(['--', ':some-branch'], SCRATCH)).toMatch(/deletes/);
+      // After `--` this is a refspec named `--force`, not the force flag.
+      expect(pushDestructiveReason(['--', '--force'], SCRATCH)).toBeNull();
+    });
+    it('treats a second remote positional as a non-scratch target under force', () => {
+      expect(pushDestructiveReason(['--force', 'upstream', 'agentbox/other'], SCRATCH)).toMatch(
+        /force-pushes upstream/,
+      );
+    });
+  });
 
   describe('pushRefspecTarget', () => {
     it('reads a bare branch as its own destination', () => {
@@ -163,77 +233,6 @@ describe('push argv target vetting', () => {
       expect(pushRefspecTarget('^main')).toBeNull();
       expect(pushRefspecTarget('a:b:c')).toBeNull();
       expect(pushRefspecTarget('')).toBeNull();
-    });
-  });
-
-  describe('isAllowedPushTarget', () => {
-    it('allows any scratch branch, the create-time branch and the sanctioned branch', () => {
-      expect(isAllowedPushTarget('agentbox/other', policy)).toBe(true);
-      expect(isAllowedPushTarget('agentbox/box-one', policy)).toBe(true);
-      expect(isAllowedPushTarget('feature/x', policy)).toBe(true);
-    });
-    it('refuses anything else', () => {
-      expect(isAllowedPushTarget('main', policy)).toBe(false);
-      expect(isAllowedPushTarget('main', {})).toBe(false);
-    });
-  });
-
-  describe('pushArgvTargetsAllowed', () => {
-    it("allows an empty tail (the product's normal push)", () => {
-      expect(pushArgvTargetsAllowed([], policy)).toBe(true);
-    });
-    it('allows the target-neutral flags the product itself sends', () => {
-      expect(pushArgvTargetsAllowed(['--force'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['--force-with-lease'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['-u', '--quiet', '--dry-run'], policy)).toBe(true);
-    });
-    it('allows the =value form of a target-neutral flag', () => {
-      expect(pushArgvTargetsAllowed(['--force-with-lease=main:abc123'], policy)).toBe(true);
-    });
-    it('allows a refspec that names an already-sanctioned target', () => {
-      expect(pushArgvTargetsAllowed(['agentbox/other'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['HEAD:refs/heads/agentbox/x'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['agentbox/box-one'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['feature/x'], policy)).toBe(true);
-    });
-    it('refuses a refspec that adds an unsanctioned target', () => {
-      expect(pushArgvTargetsAllowed(['other-branch'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['HEAD:refs/heads/other'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['--force', 'main'], policy)).toBe(false);
-    });
-    it('refuses the flags that publish refs it cannot enumerate', () => {
-      for (const flag of ['--all', '--mirror', '--tags', '--follow-tags', '--prune']) {
-        expect(pushArgvTargetsAllowed([flag], policy)).toBe(false);
-      }
-    });
-    it('refuses a deletion', () => {
-      expect(pushArgvTargetsAllowed(['--delete', 'agentbox/other'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['-d', 'agentbox/other'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed([':agentbox/other'], policy)).toBe(false);
-    });
-    it('refuses a redirected repository, value and all', () => {
-      // `--repo <url>` must not be allowed, and its value must not be read as
-      // a separate token that might have passed on its own.
-      expect(pushArgvTargetsAllowed(['--repo', 'https://evil.example/x.git'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['--repo=https://evil.example/x.git'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['--receive-pack=/tmp/x'], policy)).toBe(false);
-    });
-    it('refuses any flag it does not recognise (fail closed)', () => {
-      expect(pushArgvTargetsAllowed(['--brand-new-git-flag'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['-fq'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['-o', 'ci.skip'], policy)).toBe(false);
-    });
-    it('treats a token after -- as a refspec, not as a flag', () => {
-      expect(pushArgvTargetsAllowed(['--', 'agentbox/other'], policy)).toBe(true);
-      expect(pushArgvTargetsAllowed(['--', 'main'], policy)).toBe(false);
-      expect(pushArgvTargetsAllowed(['--', '--force'], policy)).toBe(false);
-    });
-    it('refuses a second remote positional', () => {
-      expect(pushArgvTargetsAllowed(['upstream', 'agentbox/other'], policy)).toBe(false);
-    });
-    it('with no branches known, a scratch target still passes and nothing else does', () => {
-      expect(pushArgvTargetsAllowed(['agentbox/other'], {})).toBe(true);
-      expect(pushArgvTargetsAllowed(['main'], {})).toBe(false);
     });
   });
 });

@@ -39,9 +39,10 @@ describe('poll-mode prompts', () => {
     prevPrompt = process.env.AGENTBOX_PROMPT;
     delete process.env.AGENTBOX_PROMPT; // prompts active
     handle = await startRelayServer({ port: 0, host: '127.0.0.1', promptMode: 'poll' });
-    // A docker-kind box with no worktree: git.push needs approval (non-agentbox
-    // branch), and the approved action resolves deterministically to exit 64
-    // ("no worktree") — enough to prove the execute-on-approval ran.
+    // A docker-kind box with no worktree. An ordinary push runs silently now,
+    // so these tests drive a DELETION — one of the few pushes that still asks.
+    // The approved action then resolves deterministically to exit 64 ("no
+    // worktree"), enough to prove the execute-on-approval ran.
     const r = await call(handle, 'POST', '/admin/register-box', {
       body: { boxId: 'b1', token: 't1', name: 'box-one' },
     });
@@ -57,7 +58,7 @@ describe('poll-mode prompts', () => {
   it('git.push parks with 202 + promptId, lists pending, then runs on approval', async () => {
     const rpc = await call(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'git.push', params: { path: '/workspace' } },
+      body: { method: 'git.push', params: { path: '/workspace', args: ['--delete', 'gone'] } },
     });
     expect(rpc.status).toBe(202);
     const promptId = (rpc.body as { status: string; promptId: string }).promptId;
@@ -66,8 +67,9 @@ describe('poll-mode prompts', () => {
 
     // Pending shows up in the admin mailbox listing with its context.
     const listed = await call(handle, 'GET', '/admin/prompts?boxId=b1');
-    const prompts = (listed.body as { prompts: Array<{ id: string; context?: { command?: string } }> })
-      .prompts;
+    const prompts = (
+      listed.body as { prompts: Array<{ id: string; context?: { command?: string } }> }
+    ).prompts;
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.id).toBe(promptId);
     expect(prompts[0]!.context?.command).toBe('git push');
@@ -96,7 +98,7 @@ describe('poll-mode prompts', () => {
   it('denial returns exit 10 on the next poll', async () => {
     const rpc = await call(handle, 'POST', '/rpc', {
       token: 't1',
-      body: { method: 'git.push', params: { path: '/workspace' } },
+      body: { method: 'git.push', params: { path: '/workspace', args: ['--delete', 'gone'] } },
     });
     expect(rpc.status).toBe(202);
     const promptId = (rpc.body as { promptId: string }).promptId;
@@ -110,14 +112,16 @@ describe('poll-mode prompts', () => {
     expect(body.result.stderr).toMatch(/denied by user/);
   });
 
-  it('agentbox/* branch pushes bypass approval (no parking)', async () => {
+  it('an ordinary push bypasses approval (no parking)', async () => {
     // Register a worktree on an agentbox/* branch → push is auto-allowed.
     await call(handle, 'POST', '/admin/register-box', {
       body: {
         boxId: 'b2',
         token: 't2',
         name: 'box-two',
-        worktrees: [{ containerPath: '/workspace', hostMainRepo: '/tmp/none', branch: 'agentbox/box-two' }],
+        worktrees: [
+          { containerPath: '/workspace', hostMainRepo: '/tmp/none', branch: 'agentbox/box-two' },
+        ],
       },
     });
     const rpc = await call(handle, 'POST', '/rpc', {

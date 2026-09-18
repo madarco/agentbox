@@ -22,22 +22,6 @@ export function isScratchBranch(branch: string | undefined): boolean {
 }
 
 /**
- * True when a push to `branch` is a *sanctioned* push that may bypass the
- * relay's confirm prompt: it's the box's own `agentbox/<name>` scratch branch
- * (always its job), or it exactly matches the branch the host last put the box
- * on (`sanctionedBranch`). An in-box agent that self-switches HEAD to some
- * other branch (e.g. `main`) fails both arms, so its push still prompts.
- * Undefined-safe; empty/`HEAD` never matches the sanctioned arm.
- */
-export function isSanctionedPushBranch(
-  branch: string | undefined,
-  sanctionedBranch: string | undefined,
-): boolean {
-  if (isScratchBranch(branch)) return true;
-  return isResolvedBranch(branch ?? '') && !!sanctionedBranch && branch === sanctionedBranch;
-}
-
-/**
  * Resolve the push remote, defaulting to 'origin'.
  *
  * MUST be `??`, not `||`: only an *undefined* remote falls back to 'origin'.
@@ -137,41 +121,67 @@ export interface GitRpcParams {
   hostInitiated?: string;
 }
 
-/** What a box is allowed to push to, from the host's own records. */
-export interface PushTargetPolicy {
-  /** The box's create-time branch (`agentbox/<name>`), when the site knows it. */
-  branch?: string;
-  /** The branch the host last put the box on (`agentbox git checkout`). */
-  sanctionedBranch?: string;
-}
+/**
+ * `git push` policy: a blacklist, not an allowlist — the same model, in the
+ * same words, as the `gh` policy in `packages/relay/src/gh.ts`. Read the two
+ * together: one approval model, two surfaces.
+ *
+ * A push that merely ADDS commits to a branch — the box's own `agentbox/*`
+ * scratch branch, the branch the host put it on, or any other branch the agent
+ * names — is ordinary, revertable agent work. It runs silently, to any branch,
+ * and does not consult `box.autoApproveSafeHostActions`. Same reasoning that
+ * keeps `gh pr merge` off the destructive list: ordinary agent work that can be
+ * undone does not deserve a prompt.
+ *
+ * Only the irreversible is confirmed with the user: {@link pushDestructiveReason}
+ * returns a non-null reason for a deletion, a history rewrite of a branch that
+ * is not the box's own scratch space, a wholesale ref sync, a tag overwrite, or
+ * an argv that escapes the intended remote entirely.
+ *
+ * The one push-shaped RPC still gated on every call is `git.lease-token`: it
+ * hands the box a repo-scoped credential and the box pushes by itself, so the
+ * relay never sees an argv for this policy to judge.
+ */
 
 /**
- * True when `dst` (a bare branch name) is a target the host already sanctions:
- * any `agentbox/*` scratch branch, the box's create-time branch, or the branch
- * the host last checked out for it. Same decision as the gate's own bypass —
- * expressed by reusing `isSanctionedPushBranch` against each known branch.
+ * Flags that are destructive whatever the rest of the argv says, each with the
+ * reason shown in the confirm prompt.
+ *
+ * `--repo` / `--receive-pack` / `--exec` are not destructive in themselves;
+ * they are the two ways a push argv leaves its intended target entirely —
+ * aiming the host's credentials at another repository, or running a command on
+ * the remote side. A gate that cannot tell where a push lands cannot call it
+ * ordinary, so they confirm too.
  */
-export function isAllowedPushTarget(dst: string, policy: PushTargetPolicy): boolean {
-  return (
-    isSanctionedPushBranch(dst, policy.sanctionedBranch) ||
-    isSanctionedPushBranch(dst, policy.branch)
-  );
-}
+const DESTRUCTIVE_PUSH_FLAGS = new Map<string, string>([
+  ['--delete', 'deletes a remote ref'],
+  ['-d', 'deletes a remote ref'],
+  ['--mirror', 'mirrors local refs, deleting every remote ref that is absent locally'],
+  ['--prune', 'deletes remote refs that have no local counterpart'],
+  ['--repo', 'redirects the push to another repository, using the host credentials'],
+  ['--receive-pack', 'runs a command on the remote side'],
+  ['--exec', 'runs a command on the remote side'],
+]);
+
+/** History-rewriting force. Judged against the refs the push would write. */
+const FORCE_PUSH_FLAGS = new Set(['-f', '--force']);
+
+/** Flags that widen the push to a whole ref set the argv does not enumerate. */
+const REF_SET_PUSH_FLAGS = new Set(['--all', '--tags']);
 
 /**
- * Push flags that cannot add or redirect a ref target. Allowlist: anything not
- * listed — `--all`, `--mirror`, `--tags`, `--follow-tags`, `--delete`/`-d`,
- * `--prune`, `--repo <url>`, `--exec`/`--receive-pack`, `--recurse-submodules`,
- * and every flag git may grow next — refuses, because an unrecognised
- * value-consuming flag would also desync the positional parse below.
+ * Flags that only ever add commits, or change reporting.
+ *
+ * `--force-with-lease` / `--force-if-includes` are the SAFE force spellings and
+ * stay silent on purpose: they refuse to clobber work the pusher has not seen,
+ * so the worst they can drop is history the box itself already had.
+ *
+ * Anything not listed here — including every flag git may grow next — needs
+ * confirmation. Failing closed is not pedantry: an unrecognised
+ * value-consuming flag would also desync the positional parse below and hide a
+ * refspec from it.
  */
-const TARGET_NEUTRAL_PUSH_FLAGS = new Set([
-  '-f',
-  '--force',
-  '--force-with-lease',
-  '--no-force-with-lease',
-  '--force-if-includes',
-  '--no-force-if-includes',
+const ORDINARY_PUSH_FLAGS = new Set([
   '-u',
   '--set-upstream',
   '-n',
@@ -189,6 +199,13 @@ const TARGET_NEUTRAL_PUSH_FLAGS = new Set([
   '--no-verify',
   '--thin',
   '--no-thin',
+  '--follow-tags',
+  '--signed',
+  '--no-signed',
+  '--force-with-lease',
+  '--no-force-with-lease',
+  '--force-if-includes',
+  '--no-force-if-includes',
   '-4',
   '--ipv4',
   '-6',
@@ -196,13 +213,13 @@ const TARGET_NEUTRAL_PUSH_FLAGS = new Set([
 ]);
 
 /**
- * Target-neutral flags whose value rides in the same token (`--flag=value`).
+ * Ordinary flags whose value rides in the same token (`--flag=value`).
  * `--force-with-lease=<ref>[:<expect>]` names a ref as an *expectation*, never
- * as a destination, so it adds no target.
+ * as a destination.
  */
-const TARGET_NEUTRAL_VALUE_FLAGS = new Set(['--force-with-lease']);
+const ORDINARY_VALUE_FLAGS = new Set(['--force-with-lease', '--signed']);
 
-/** A branch name we are willing to compare against the policy, spelled plainly. */
+/** A branch name we are willing to reason about, spelled plainly. */
 const PLAIN_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 function isPlainBranchName(s: string): boolean {
@@ -213,7 +230,8 @@ function isPlainBranchName(s: string): boolean {
  * The branch a push refspec would write on the remote, or null when the token
  * is not a plain branch destination we can reason about (a deletion `:branch`,
  * a non-`refs/heads/` namespace such as `refs/tags/…`, a glob, a negative
- * `^ref`, a remote name mistaken for a refspec …). Null always fails closed.
+ * `^ref`, a remote name mistaken for a refspec …). Null is "cannot resolve",
+ * which every caller reads as "not the box's own scratch branch".
  */
 export function pushRefspecTarget(token: string): string | null {
   let spec = token.startsWith('+') ? token.slice(1) : token;
@@ -231,19 +249,47 @@ export function pushRefspecTarget(token: string): string | null {
 }
 
 /**
- * True when the box-supplied argv tail appended after the relay's own
- * `push <remote> <branch>` writes nothing beyond what the host sanctions.
+ * Per-refspec verdict. Two irreversible shapes hide in a refspec: an empty
+ * source (`:branch`, `+:branch`) deletes the remote ref, and a `+` prefix is
+ * `--force` for that one ref.
  *
- * The relay picks the branch it pushes, but git accepts MULTIPLE refspecs, so
- * a tail of `other-branch` or `HEAD:refs/heads/other` silently adds a second
- * destination. The gate's bypass therefore has to hold for every ref the
- * assembled command would write, not just for the one the relay chose.
- *
- * Allowlist, fail-closed: every token must be either a target-neutral flag or
- * a refspec whose destination is an allowed target. An empty tail is allowed.
+ * A plain `refs/tags/v1` write is ordinary — it can only create a NEW tag,
+ * since git refuses to move an existing one without force. `+refs/tags/v1` and
+ * `:refs/tags/v1` are the overwrite and the delete, and both land on the rules
+ * below because `pushRefspecTarget` resolves `refs/heads/` destinations only.
  */
-export function pushArgvTargetsAllowed(args: string[], policy: PushTargetPolicy): boolean {
+function refspecDestructiveReason(token: string): string | null {
+  const forced = token.startsWith('+');
+  const spec = forced ? token.slice(1) : token;
+  if (spec.startsWith(':')) return `deletes the remote ref ${spec.slice(1) || '(unnamed)'}`;
+  if (!forced) return null;
+  const target = pushRefspecTarget(token);
+  return isScratchBranch(target ?? undefined)
+    ? null
+    : `force-pushes ${target ?? token}, rewriting history the box did not create`;
+}
+
+/**
+ * Why this push needs the user's confirmation, or null when it is ordinary
+ * work that runs silently.
+ *
+ * `pushedBranch` is the branch the relay itself puts on the command line
+ * (docker: the worktree's sanctioned branch; cloud: the box's HEAD); the box's
+ * argv tail is appended after it, and git accepts several refspecs, so a force
+ * flag is judged against that branch AND every ref the tail names. An
+ * unregistered `pushedBranch` counts as non-scratch: fail closed.
+ */
+export function pushDestructiveReason(
+  args: readonly string[],
+  pushedBranch?: string,
+): string | null {
+  const targets: { label: string; scratch: boolean }[] = [
+    { label: pushedBranch ?? '(unregistered branch)', scratch: isScratchBranch(pushedBranch) },
+  ];
   let positionalsOnly = false;
+  let force = false;
+  let refSetFlag: string | null = null;
+
   for (const arg of args) {
     if (!positionalsOnly && arg === '--') {
       positionalsOnly = true;
@@ -251,18 +297,38 @@ export function pushArgvTargetsAllowed(args: string[], policy: PushTargetPolicy)
     }
     if (!positionalsOnly && arg.length > 1 && arg.startsWith('-')) {
       const eq = arg.indexOf('=');
-      const known =
-        eq < 0
-          ? TARGET_NEUTRAL_PUSH_FLAGS.has(arg)
-          : TARGET_NEUTRAL_VALUE_FLAGS.has(arg.slice(0, eq));
-      if (!known) return false;
+      const name = eq < 0 ? arg : arg.slice(0, eq);
+      const destructive = DESTRUCTIVE_PUSH_FLAGS.get(name);
+      if (destructive) return destructive;
+      if (FORCE_PUSH_FLAGS.has(name)) {
+        force = true;
+        continue;
+      }
+      if (REF_SET_PUSH_FLAGS.has(name)) {
+        refSetFlag = name;
+        continue;
+      }
+      const known = eq < 0 ? ORDINARY_PUSH_FLAGS.has(arg) : ORDINARY_VALUE_FLAGS.has(name);
+      if (!known) return `uses ${arg}, a push flag this gate does not recognise`;
       continue;
     }
-    // Positional: the relay already supplied the remote, so git reads every
-    // one of these as a refspec (a second remote name lands here too, and
-    // fails the branch check — which is the fail-closed answer we want).
+    // Positional: the relay already supplied the remote, so git reads every one
+    // of these as a refspec (a second remote name lands here too, and resolves
+    // to a non-scratch target — the fail-closed answer we want under force).
+    const reason = refspecDestructiveReason(arg);
+    if (reason) return reason;
     const target = pushRefspecTarget(arg);
-    if (target === null || !isAllowedPushTarget(target, policy)) return false;
+    targets.push({ label: target ?? arg, scratch: isScratchBranch(target ?? undefined) });
   }
-  return true;
+
+  if (force) {
+    // `--force --tags` / `--force --all` rewrite refs the argv never names, so
+    // no per-target check can clear them.
+    if (refSetFlag) return `force-pushes every ref selected by ${refSetFlag}`;
+    const rewritten = targets.filter((t) => !t.scratch).map((t) => t.label);
+    if (rewritten.length > 0) {
+      return `force-pushes ${rewritten.join(', ')}, rewriting history the box did not create`;
+    }
+  }
+  return null;
 }

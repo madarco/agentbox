@@ -295,7 +295,7 @@ Long commands tee to `~/.agentbox/logs/<cmd>.log`; don't block on them.
 | A2 | `agentbox create -y -n smoke` | pulls `agentbox/box:dev` from GHCR (no local build), ends `box smoke ready` |
 | A3 | `agentbox ls` / `agentbox shell smoke -- git status` | box `running`, on branch `agentbox/smoke` |
 | A4 | `agentbox url smoke` then `curl -sI <url>` | the `web` service answers (200/301) |
-| A5 | `agentbox shell smoke -- 'touch f && git add -A && git commit -qm t && agentbox-ctl git push'` | approval prompt on the host relay → approve → branch on GitHub |
+| A5 | `agentbox shell smoke -- 'touch f && git add -A && git commit -qm t && agentbox-ctl git push'` | pushes with no prompt (an ordinary push is silent); branch on GitHub. Add `--delete <branch>` to exercise the approval path instead |
 | A6 | `agentbox destroy smoke -y` | container + volumes gone |
 
 #### B. Baseline — a cloud provider (e2b)
@@ -327,7 +327,7 @@ Set the admin env vars inline — otherwise the deploy prompts and the run can't
 | D3 | `agentbox create --provider e2b` (no `--local`) | routed to the control box (`cloud.viaHub` default): job enqueued, worker provisions it, `agentbox hub jobs list` shows it done. **Needs a base template the control box can see** — with neither side baked it fails fast with `no E2B base template found` (do B1 first, or bake from the hub's Settings page) |
 | D4 | Web UI → **Add project** (clone the test repo on the VPS) → **Create box** | box appears in the dashboard with live status, nothing ran on the VM |
 | D5 | `agentbox ls -g` | the web-created box shows as `on hub`; `agentbox attach <box>` adopts it |
-| D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token; approval (non-`agentbox/*` branch) shows in the web UI and `agentbox hub approvals list` |
+| D6 | **stop the VM's relay** (`agentbox relay stop`), then in the box: `agentbox-ctl git push` | push succeeds via the control box's `gh` token, with no prompt. For the approval half, run a destructive push (`agentbox-ctl git push --delete <branch>`) and see it in the web UI and `agentbox hub approvals list` |
 | D7 | `agentbox hub boxes list`, then `agentbox stop <box>` / `agentbox destroy <box>` | drive + destroy from the CLI over `/api/v1` (top-level lifecycle commands route through the hub in both modes; the `hub boxes` group is list-only). Names resolve (adopting the box first if unseen); `hub boxes list` shows the ids |
 
 D6 is the whole reason the control box exists: with the laptop (here: the VM's relay) down, the

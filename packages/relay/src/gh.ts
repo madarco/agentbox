@@ -42,6 +42,11 @@ import type { GitRpcResult } from './types.js';
  *      strict mode (`box.autoApproveSafeHostActions: false`).
  *
  * Patterns match the space-joined argv, case-insensitively.
+ *
+ * `git push` is the same model on the other surface: see
+ * `pushDestructiveReason` in `@agentbox/core`'s `sync/git-refs.ts`, whose
+ * header mirrors this one. There, "ordinary work" is adding commits to any
+ * branch and the destructive list is the irreversible push argv.
  */
 export const GH_BLOCKED: readonly { pattern: RegExp; why: string }[] = [
   {

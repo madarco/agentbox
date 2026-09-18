@@ -291,12 +291,12 @@ As landed, five details differ:
   `attachManagerBox(managerId, target)`. That makes three writes a control box takes from another
   host; the third is the narrowest of them (one id appended to a list, nothing moved or removed).
 
-- Backlog item 19 is FIXED too, after the §G regression pass found it: the push gate now vets the
-  box's argv tail before bypassing approval (`82cceadd`). `pushArgvTargetsAllowed` in
-  `@agentbox/core`'s `git-refs.ts` resolves every ref the assembled `git push <remote> <branch>
-  <tail…>` would write and requires each to be a target the host already sanctions; both gate sites
-  (`server.ts` docker, `host-actions.ts` cloud) AND the bypass they share read it. Pre-existing from
-  `7bfec775`, not a Phase 1-4 regression — the phases only moved `decideHostInitiatedPush` nearby.
+- Backlog item 19 was found by the §G regression pass and first fixed by `82cceadd` (vet the box's
+  argv tail before bypassing approval). It is now closed by a **model change** instead: `git push`
+  is blocklist-shaped like `gh`, so a push to any branch runs silently and only the irreversible
+  asks (`pushDestructiveReason` in `@agentbox/core`'s `git-refs.ts`, read by both gate sites —
+  `server.ts` docker, `host-actions.ts` cloud). Pre-existing from `7bfec775`, not a Phase 1-4
+  regression — the phases only moved `decideHostInitiatedPush` nearby.
 
 One behaviour change worth knowing: a workspace project with no `repoUrl` no longer syncs PRs. A v2
 record gets it from the CLI scan and a v1 upgrade from the project registry, so the only losers are

@@ -141,20 +141,24 @@ every box. The agent asks the host to push, open a pull request, or open a URL,
 and the host runs it with your identity (SSH agent, `~/.gitconfig`, `gh` auth)
 and returns the output.
 
-Anything that writes to your remotes — a `git push` or a pull request the agent
-initiates — **pauses for your explicit approval on the host**. A prompt appears
-in your attached session; it defaults to _no_, so nothing reaches your remotes
-unless you say yes.
+Everything written to your remotes is written by the host, as you — and only
+what is **destructive or irreversible** pauses for your explicit approval.
+Publishing commits is ordinary, revertable work and goes straight through;
+deleting a remote branch, force-pushing a branch the box did not create, or
+copying a file out of the project folder raises a prompt in your attached
+session that defaults to _no_.
 
 ```console
 $ git push   # the box's git shim routes this through the relay (or: agentbox-ctl git push)
-# pauses for your approval on the host, then runs `git push` as you;
-# no credentials ever enter the box
+# runs `git push` as you on the host — no credentials ever enter the box.
+# A destructive push (a deletion, a force-push outside the box's own branch)
+# pauses for your approval first.
 ```
 
 <Callout title="WHY">
-  The safety model: the agent runs unsupervised inside an isolated box, and every push to a remote
-  runs on your machine, as you, only when you allow it. No secrets enter the box.
+  The safety model: the agent runs unsupervised inside an isolated box, every push to a remote runs
+  on your machine as you, and nothing you cannot undo happens without your yes. No secrets enter the
+  box.
 </Callout>
 
 Push, pull, PRs, and approvals: [Sync &amp; git](/docs/sync-and-git).

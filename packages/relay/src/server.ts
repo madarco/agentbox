@@ -27,11 +27,10 @@ import { BoxNotices } from './notices.js';
 import { buildAgentDescriptors, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
 import { registrationAgents } from './registration-to-record.js';
 import {
-  isSanctionedPushBranch,
   isScratchBranch,
   landRefspec,
   parseDownloadKind,
-  pushArgvTargetsAllowed,
+  pushDestructiveReason,
   resolveLandDest,
   resolveRemote,
   sanitizeGitArgs,
@@ -1019,9 +1018,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           return;
         }
         // Only `push` mutates the user's remote; fetch is read-only and noisy.
-        // Per-box `agentbox/<name>` branches are the box's own scratch branch
-        // — pushes to them are the whole point of agentbox, so they bypass
-        // the y/N gate. Any other branch still prompts.
+        // Publishing commits is the whole point of agentbox, so an ordinary
+        // push runs silently to ANY branch; only the irreversible asks (see
+        // `pushDestructiveReason`).
         let pushHostInitiated = false;
         if (body.method === 'git.push') {
           const hostOnlyParams = body.params as GitRpcParams | undefined;
@@ -1035,45 +1034,29 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
           // The docker relay chooses the branch it pushes — the worktree's
-          // host-selected `sanctionedBranch`, falling back to the create-time
-          // `branch`. Key the gate on THAT branch, not the immutable
-          // create-time `branch` (which is always `agentbox/*`): after a host
-          // `agentbox git checkout main`, the push target is `main`, so it must
-          // NOT be treated as a scratch bypass. A scratch target bypasses
-          // unconditionally; a non-scratch sanctioned target bypasses only as
-          // part of the safe subset (honors `box.autoApproveSafeHostActions`)
-          // and leaves an audit trail.
-          //
-          // The relay's own branch is not the whole push, though: the box's
-          // argv tail is appended to `push <remote> <branch>`, and git accepts
-          // several refspecs — so a bypass also requires every ref that tail
-          // would write to be a sanctioned target (`pushArgvTargetsAllowed`).
-          // Without that check a box on a scratch branch could append
-          // `HEAD:refs/heads/anything` and publish it with no approval at all.
+          // host-selected `sanctionedBranch` (updated by `agentbox git
+          // checkout`), falling back to the create-time `branch` — and then
+          // appends the box's argv tail, which git may read as further
+          // refspecs. `pushDestructiveReason` judges the assembled push: adding
+          // commits to any branch is ordinary work and runs silently, while a
+          // deletion, a rewrite of history the box did not create, or an argv
+          // that escapes the target asks. The branch itself no longer decides,
+          // so `box.autoApproveSafeHostActions` does not apply here.
           const dockerPushBranch = worktree?.sanctionedBranch ?? worktree?.branch;
-          const isScratch = isScratchBranch(dockerPushBranch);
-          const safeApproveOn = reg.autoApproveSafeHostActions !== false;
-          // `isSanctionedPushBranch(dockerPushBranch, dockerPushBranch)` is true
-          // only for a resolved branch — so a box with no registered worktree
-          // (undefined branch) never bypasses and still prompts.
-          const isSanctionedNonScratch =
-            !isScratch &&
-            safeApproveOn &&
-            isSanctionedPushBranch(dockerPushBranch, dockerPushBranch);
-          const argvTargetsAllowed = pushArgvTargetsAllowed(sanitizeGitArgs(params?.args), {
-            ...(worktree?.branch ? { branch: worktree.branch } : {}),
-            ...(worktree?.sanctionedBranch ? { sanctionedBranch: worktree.sanctionedBranch } : {}),
-          });
-          const bypassPushGate = (isScratch || isSanctionedNonScratch) && argvTargetsAllowed;
-          if (isSanctionedNonScratch && bypassPushGate) {
+          const destructiveWhy = pushDestructiveReason(
+            sanitizeGitArgs(params?.args),
+            dockerPushBranch,
+          );
+          const bypassPushGate = destructiveWhy === null;
+          if (bypassPushGate) {
             prompts.noteAutoApprove(
               reg.boxId,
               {
                 kind: 'confirm',
-                message: `git push to sanctioned branch ${dockerPushBranch ?? ''} from box ${reg.name}`,
+                message: `git push to ${dockerPushBranch ?? '(unregistered branch)'} from box ${reg.name}`,
                 context: { command: 'git push', cwd: params?.path, argv: params?.args },
               },
-              'safe: sanctioned-branch push',
+              'safe: ordinary push',
             );
           }
           // Host-initiated pushes (driven by `agentbox git push <box>`) skip
@@ -1116,8 +1099,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           if (!bypassPushGate && !decision.hostInitiated) {
             const gate = await gateApproval(gateDeps, reg.boxId, 'git.push', body.params, {
               kind: 'confirm',
-              message: `Allow git push from box ${reg.name}?`,
-              detail: `${resolveRemote(params?.remote)} ${(params?.args ?? []).join(' ')}`.trim(),
+              message: `Allow git push from box ${reg.name}? It ${destructiveWhy ?? 'needs confirmation'}.`,
+              detail:
+                `${resolveRemote(params?.remote)} ${dockerPushBranch ?? ''} ${(params?.args ?? []).join(' ')}`.trim(),
               defaultAnswer: 'n',
               context: {
                 command: 'git push',
@@ -1175,9 +1159,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (body.method === 'git.lease-token') {
         // The hosted-plane equivalent of git.push: instead of the relay pushing,
         // it leases a repo-scoped GitHub-App token and the box pushes directly.
-        // Because that token can push ANY branch (the relay doesn't pick the
-        // branch here, unlike git.push), the sanctioned-branch auto-approve does
-        // NOT apply — only the box's own scratch branch bypasses; others prompt.
+        // This is the one push-shaped RPC that still gates on the branch rather
+        // than on what the push does — because there IS no argv to judge here.
+        // The leased token bypasses `pushDestructiveReason` entirely: with it
+        // the box can delete or force-push any ref, and the relay never sees
+        // the command. Handing it out is therefore the decision, so anything
+        // but the box's own scratch branch asks.
         const params = body.params as GitRpcParams | undefined;
         const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
         const isAgentboxBranch = isScratchBranch(worktree?.branch);

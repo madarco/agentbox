@@ -764,7 +764,7 @@ EOF`
 
 - [ ] **RELAY-008** `agentbox-ctl git push` (in-box) routes through host relay.
   - **Providers:** [all]
-  - **Run:** from inside a box: `agentbox-ctl git push origin HEAD`; on host, ensure prompt arrives (visible in dashboard or via `/admin/prompts/stream`); approve.
+  - **Run:** from inside a box: `agentbox-ctl git push origin HEAD` — it runs with no prompt (an ordinary push is silent under the blocklist model). For the gate itself, re-run with `--delete <branch>` and ensure the prompt arrives (visible in dashboard or via `/admin/prompts/stream`); approve.
   - **Signal:** host-side git push runs (verify via `~/.agentbox/logs/relay.log`); in-box exit code matches host git's; remote branch updated.
   - **Note:** Gate at host boundary (memory note `feedback-gate-at-host-boundary-not-agent`).
 
