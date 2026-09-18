@@ -569,11 +569,12 @@ export interface BoxTimelineSeams {
   /** A manager's stamp (turn + prompt), only when it is a manager of `wsId`. */
   stampFor: StampFor;
   /**
-   * Return every task pointing at this box to the backlog. A destroy is the only
-   * evidence a box is gone — reconciliation no longer infers it from a hub's own
-   * inventory — so the one place that knows says so.
+   * Forget a box that is gone: its tasks return to the backlog and its managers
+   * drop it. A destroy (or a prune) is the only evidence — reconciliation no
+   * longer infers it from a hub's own inventory — so the one place that knows
+   * says so.
    */
-  unassignBox?(boxId: string): Promise<void>;
+  boxGone?(boxId: string): Promise<void>;
 }
 
 /**
@@ -607,6 +608,13 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     return { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) };
   }
 
+  /** Did the destroy leave the box gone? A record this hub still has says no. */
+  async function boxIsGone(id: string, ok: boolean): Promise<boolean> {
+    if (ok) return true;
+    if (!deps.boxFact) return false;
+    return (await deps.boxFact(id).catch(() => undefined)) === undefined;
+  }
+
   async function recordAround<R extends { ok: boolean }>(
     id: string,
     type: TimelineEvent['type'],
@@ -625,10 +633,16 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     const previous = before?.branches[0];
     const stat = push ? await pushStatBefore(before, push).catch(() => undefined) : undefined;
     const res = await op();
+    // A destroy that answered `not found`, or one whose record is gone afterwards,
+    // means the box IS gone, and its tasks and managers must let go of it either
+    // way. Only a teardown that failed with the box still here keeps them.
+    // Isolated: a failed release must not cost the box its `box.destroyed` row.
+    if (type === 'box.destroyed' && seams.boxGone && (await boxIsGone(id, res.ok))) {
+      const release = seams.boxGone;
+      inBackground(() => release(id));
+    }
     if (!res.ok) return res;
     inBackground(async () => {
-      // Isolated: a failed unassign must not cost the box its `box.destroyed` row.
-      if (type === 'box.destroyed') await seams.unassignBox?.(id).catch(() => {});
       // A switch is the branch the hub sanctioned after the op: a checkout that
       // left HEAD detached sanctions nothing, and is not one.
       const after = branchSwitch ? await factOf(id) : undefined;

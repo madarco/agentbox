@@ -7,6 +7,7 @@ import {
   addTask,
   addWorkspace,
   assignTasks,
+  detachBoxFromManagers,
   filterTasks,
   findManager,
   listWorkspaces,
@@ -391,16 +392,18 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
     },
 
     /**
-     * A destroyed box's tasks go back to the backlog. Reconciliation cannot do
-     * this from a box listing any more — a box absent from THIS hub's inventory
-     * may simply live on another machine — so the destroy says it explicitly.
+     * The box is gone: its tasks go back to the backlog and no manager still
+     * claims it. Reconciliation cannot do this from a box listing any more — a
+     * box absent from THIS hub's inventory may simply live on another machine —
+     * so destroy and prune, the two events that KNOW, say it explicitly.
      */
-    async unassignBox(boxId: string): Promise<void> {
+    async boxGone(boxId: string): Promise<void> {
       for (const ws of await listWorkspaces()) {
         const ids = (await readTasks(ws.id).catch(() => []))
           .filter((t) => t.boxId === boxId)
           .map((t) => t.id);
         if (ids.length) await dropAssignment(ws.id, ids);
+        await detachBoxFromManagers(ws.id, boxId).catch(() => {});
       }
     },
 

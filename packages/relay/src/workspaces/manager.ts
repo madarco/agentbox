@@ -773,13 +773,31 @@ export async function attachBoxToManager(
   });
 }
 
+/**
+ * Forget a box that is gone. The EVENT says so — a destroy, or a prune that
+ * dropped the record — because absence from a hub's own inventory does not: a
+ * box created on another machine reporting to the same store is simply not
+ * listed there, and pruning on that would empty every such manager.
+ */
+export async function detachBoxFromManagers(wsId: string, boxId: string): Promise<void> {
+  await updateManagers(wsId, (managers) => {
+    const out = managers.map((m) =>
+      m.boxIds.includes(boxId) ? { ...m, boxIds: m.boxIds.filter((b) => b !== boxId) } : m,
+    );
+    return { managers: out, result: undefined };
+  });
+}
+
 const FAILED_JOB_STATUSES = new Set(['failed', 'cancelled']);
 
 /**
  * Heal box pointers against reality, with the same rules as `reconcileTasks`: a
- * job that recorded its box is promoted to that box, an explicitly failed job is
- * dropped (a swept manifest is not evidence of failure), and a box that is gone
- * is dropped unless a create still in flight has recorded it.
+ * job that recorded its box is promoted to that box, and an explicitly failed
+ * job is dropped (a swept manifest is not evidence of failure).
+ *
+ * A box id is NOT healed from an inventory listing, for the same reason a task's
+ * is not: only an explicit destroy or prune (`detachBoxFromManagers`) is evidence
+ * the box is gone.
  */
 export function reconcileManagers(
   managers: ManagerRecord[],
@@ -799,20 +817,10 @@ export function reconcileManagers(
       if (job && FAILED_JOB_STATUSES.has(job.status)) continue;
       boxJobIds.push(jobId);
     }
-    const kept = boxIds.filter(
-      (boxId) =>
-        ctx.liveBoxIds.has(boxId) ||
-        ctx.jobs.some(
-          (j) => j.boxId === boxId && !FAILED_JOB_STATUSES.has(j.status) && j.status !== 'done',
-        ),
-    );
-    const same =
-      kept.length === m.boxIds.length &&
-      kept.every((b, i) => b === m.boxIds[i]) &&
-      boxJobIds.length === m.boxJobIds.length;
+    const same = boxIds.length === m.boxIds.length && boxJobIds.length === m.boxJobIds.length;
     if (same) return m;
     changed = true;
-    return { ...m, boxIds: kept, boxJobIds };
+    return { ...m, boxIds, boxJobIds };
   });
   return { managers: out, changed };
 }

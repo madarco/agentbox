@@ -1295,8 +1295,11 @@ export interface WorkspaceBackend {
     meta?: TimelineMeta,
   ): Promise<TasksResult>;
   unassignTasks(wsId: string, ids: string[], meta?: TimelineMeta): Promise<TasksResult>;
-  /** Every task on this box goes back to the backlog (the box was destroyed). */
-  unassignBox(boxId: string): Promise<void>;
+  /**
+   * The box is gone (destroyed, or pruned): every task on it goes back to the
+   * backlog and every manager drops it.
+   */
+  boxGone(boxId: string): Promise<void>;
   /** `ids` must be an exact permutation of the workspace's tasks. */
   reorderTasks(wsId: string, ids: string[], meta?: TimelineMeta): Promise<TasksResult>;
 

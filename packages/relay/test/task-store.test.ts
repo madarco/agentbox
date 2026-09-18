@@ -198,11 +198,8 @@ describe('reorderTasks', () => {
 });
 
 describe('reconcileTasks', () => {
-  const live = (...ids: string[]) => new Set(ids);
-
   it('promotes a job id to the box id the job recorded', () => {
     const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
-      liveBoxIds: live('b1'),
       jobs: [{ id: 'j1', status: 'running', boxId: 'b1' }],
     });
     expect(r.changed).toBe(true);
@@ -213,7 +210,6 @@ describe('reconcileTasks', () => {
   it('clears a job id whose job failed or was cancelled', () => {
     for (const status of ['failed', 'cancelled']) {
       const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
-        liveBoxIds: live(),
         jobs: [{ id: 'j1', status }],
       });
       expect(r.changed).toBe(true);
@@ -226,7 +222,6 @@ describe('reconcileTasks', () => {
     // evidence the create failed — unassigning here would drop the tasks of a
     // box that came up fine.
     const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
-      liveBoxIds: live('b1'),
       jobs: [],
     });
     expect(r.changed).toBe(false);
@@ -235,7 +230,6 @@ describe('reconcileTasks', () => {
 
   it('keeps a job id while the create is still queued', () => {
     const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
-      liveBoxIds: live(),
       jobs: [{ id: 'j1', status: 'queued' }],
     });
     expect(r.changed).toBe(false);
@@ -245,7 +239,6 @@ describe('reconcileTasks', () => {
   it('drops a job id only when that create explicitly failed', () => {
     for (const status of ['failed', 'cancelled']) {
       const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
-        liveBoxIds: live(),
         jobs: [{ id: 'j1', status }],
       });
       expect(r.changed, status).toBe(true);
@@ -257,7 +250,6 @@ describe('reconcileTasks', () => {
     // A docker box on the PC, with the store on a control box, is simply not in
     // THIS hub's inventory. Unassigning on that would empty every such list.
     const r = reconcileTasks([task({ id: 'T-1', boxId: 'b1', status: 'in_progress' })], {
-      liveBoxIds: live('other'),
       jobs: [],
     });
     expect(r.changed).toBe(false);
@@ -267,7 +259,6 @@ describe('reconcileTasks', () => {
 
   it('keeps a box id the running create has recorded but not yet registered', () => {
     const r = reconcileTasks([task({ id: 'T-1', boxId: 'b1' })], {
-      liveBoxIds: live(),
       jobs: [{ id: 'j1', status: 'running', boxId: 'b1' }],
     });
     expect(r.changed).toBe(false);
@@ -276,7 +267,6 @@ describe('reconcileTasks', () => {
 
   it('reports no change when everything already matches', () => {
     const r = reconcileTasks([task({ id: 'T-1', boxId: 'b1' })], {
-      liveBoxIds: live('b1'),
       jobs: [],
     });
     expect(r.changed).toBe(false);
@@ -321,7 +311,6 @@ describe('readReconciledTasks', () => {
     const ws = await makeWorkspace();
     await addTask(ws, { title: 'a', boxJobId: 'j1' });
     const healed = await readReconciledTasks(ws, {
-      liveBoxIds: new Set(['b1']),
       jobs: [{ id: 'j1', status: 'done', boxId: 'b1' }],
     });
     expect(healed[0]).toMatchObject({ boxId: 'b1' });
@@ -333,7 +322,7 @@ describe('readReconciledTasks', () => {
     const ws = await makeWorkspace();
     await addTask(ws, { title: 'a', boxId: 'b1' });
     const before = (await readTasks(ws))[0]!.updatedAt;
-    await readReconciledTasks(ws, { liveBoxIds: new Set(['b1']), jobs: [] });
+    await readReconciledTasks(ws, { jobs: [] });
     // This runs on every dashboard poll; a write per poll would be a write storm.
     expect((await readTasks(ws))[0]!.updatedAt).toBe(before);
   });

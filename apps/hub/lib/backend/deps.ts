@@ -56,9 +56,9 @@ export interface BackendDeps {
   notify(): void;
   /**
    * Ids of boxes that exist right now: this machine's local records UNION the
-   * Store's registrations. The union matters on a control box, where a PC's
-   * cloud box is registered but has no local record — keying off local state
-   * alone would unassign its tasks on every read.
+   * Store's registrations. Read to VALIDATE an assignment (`--tasks` on a box
+   * that is not there), never to invalidate one — a box on another machine
+   * reporting to the same store is absent from this listing and still alive.
    */
   liveBoxIds(): Promise<Set<string>>;
   /** The local create queue, for resolving a task's pending create job. */
@@ -90,14 +90,14 @@ export interface BackendDeps {
 }
 
 /**
- * The box/job facts reconciliation needs. Both are whole-fleet listings (a
- * docker inspect per box, plus every queue manifest), so a call that reconciles
- * several workspaces resolves them ONCE and hands the same snapshot down.
+ * The job facts reconciliation needs — every queue manifest, so a call that
+ * reconciles several workspaces reads them ONCE and hands the same snapshot
+ * down. No box inventory: a pointer is dropped by an explicit destroy or prune
+ * (`boxGone`), never by absence from this hub's listing.
  */
 export async function reconcileContext(deps: BackendDeps): Promise<ReconcileContext> {
-  const [liveBoxIds, jobs] = await Promise.all([deps.liveBoxIds(), deps.jobs()]);
+  const jobs = await deps.jobs();
   return {
-    liveBoxIds,
     jobs: jobs.map((j) => ({
       id: j.id,
       status: j.status,

@@ -9,6 +9,7 @@ import {
   attachBoxToManager,
   buildManagerArgv,
   buildManagerShellScript,
+  detachBoxFromManagers,
   isManagerResumable,
   managerResumeBlock,
   isPidAlive,
@@ -423,10 +424,9 @@ describe('upsertDetectedManager', () => {
 });
 
 describe('reconcileManagers', () => {
-  it('promotes a job to its box, drops a failed job, and drops a box that is gone', () => {
-    const rec = record({ boxIds: ['gone', 'live'], boxJobIds: ['j-done', 'j-failed', 'j-queued'] });
+  it('promotes a job to its box and drops a failed job', () => {
+    const rec = record({ boxIds: ['live'], boxJobIds: ['j-done', 'j-failed', 'j-queued'] });
     const { managers, changed } = reconcileManagers([rec], {
-      liveBoxIds: new Set(['live', 'b-new']),
       jobs: [
         { id: 'j-done', status: 'done', boxId: 'b-new' },
         { id: 'j-failed', status: 'failed' },
@@ -437,13 +437,34 @@ describe('reconcileManagers', () => {
     expect(managers[0]).toMatchObject({ boxIds: ['live', 'b-new'], boxJobIds: ['j-queued'] });
   });
 
+  // The same rule the task reconciler follows: a box absent from THIS hub's
+  // inventory may live on another machine reporting to the same store, so only
+  // an explicit destroy or prune (`detachBoxFromManagers`) drops it.
+  it('keeps a box this hub has no record of', () => {
+    const rec = record({ boxIds: ['elsewhere'] });
+    expect(reconcileManagers([rec], { jobs: [] }).changed).toBe(false);
+  });
+
   it('keeps a box a running create has recorded but not registered', () => {
     const rec = record({ boxIds: ['b1'] });
-    const ctx = {
-      liveBoxIds: new Set<string>(),
-      jobs: [{ id: 'j', status: 'running', boxId: 'b1' }],
-    };
+    const ctx = { jobs: [{ id: 'j', status: 'running', boxId: 'b1' }] };
     expect(reconcileManagers([rec], ctx).changed).toBe(false);
+  });
+
+  it('forgets a box on the event that says it is gone', async () => {
+    const { id, root } = await makeWorkspace();
+    const { manager } = await upsertDetectedManager(id, {
+      agent: 'claude',
+      sessionId: 's-detach',
+      cwd: root,
+    });
+    await attachBoxToManager(id, manager.id, { boxId: 'b1' });
+    await attachBoxToManager(id, manager.id, { boxId: 'b2' });
+    await detachBoxFromManagers(id, 'b1');
+    expect((await readManagers(id))[0]?.boxIds).toEqual(['b2']);
+    // Idempotent: a prune after a destroy must not throw.
+    await detachBoxFromManagers(id, 'b1');
+    expect((await readManagers(id))[0]?.boxIds).toEqual(['b2']);
   });
 
   it("inherits a box's manager only inside that manager's workspace", async () => {
@@ -471,7 +492,6 @@ describe('reconcileManagers', () => {
     await attachBoxToManager(id, manager.id, { boxJobId: 'j1' });
     expect(await managerIdForTarget({ boxJobId: 'j1' })).toBe(manager.id);
     const healed = await readReconciledManagers(id, {
-      liveBoxIds: new Set(['b1']),
       jobs: [{ id: 'j1', status: 'done', boxId: 'b1' }],
     });
     expect(healed[0]).toMatchObject({ boxIds: ['b1'], boxJobIds: [] });

@@ -3278,6 +3278,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           if (!dryRun && view.kind === 'general') {
             for (const id of view.result.removedRecords) {
               await reapStoreState(handle, id).catch(() => false);
+              // A pruned record is a box that is gone: nothing else will say so,
+              // and reconciliation no longer infers it from the inventory.
+              await workspaces.boxGone(id).catch(() => {});
             }
           }
           return view;
@@ -3318,6 +3321,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           for (const reg of regs) {
             if (reg.sandboxId && wanted.has(reg.sandboxId)) {
               if (await reapStoreState(handle, reg.boxId)) reaped++;
+              await workspaces.boxGone(reg.boxId).catch(() => {});
             }
           }
         }
@@ -3925,6 +3929,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   return withBoxTimeline(hub, {
     deps: backendDeps,
     stampFor: (ref, wsId) => managers.timelineStamp(ref, wsId),
-    unassignBox: (boxId) => workspaces.unassignBox(boxId),
+    boxGone: (boxId) => workspaces.boxGone(boxId),
   });
 }

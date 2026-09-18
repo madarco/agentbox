@@ -307,17 +307,15 @@ export async function reorderTasks(wsId: string, ids: string[]): Promise<WorkTas
 }
 
 /**
- * The live-box facts reconciliation needs, so it stays pure and testable.
+ * The facts reconciliation needs, so it stays pure and testable.
  *
- * `liveBoxIds` is read by the MANAGER reconciler only. A task's box assignment
- * is not healed from it: a hub holds the inventory of the boxes IT knows, and a
- * box created on another machine (a docker box on the PC, with the store on a
- * control box) is simply absent — unassigning on that would empty the task list
- * of every box the hub does not run. A destroy says the box is gone.
+ * Create jobs only: NO box inventory. A hub holds the inventory of the boxes IT
+ * knows, and a box created on another machine (a docker box on the PC, with the
+ * store on a control box) is simply absent — dropping a pointer on that would
+ * empty the task list and the manager of every box the hub does not run. A
+ * destroy or a prune says the box is gone, through `boxGone`.
  */
 export interface ReconcileContext {
-  /** Ids of boxes that exist right now (local records + store registrations). */
-  liveBoxIds: Set<string>;
   jobs: { id: string; status: string; boxId?: string }[];
 }
 

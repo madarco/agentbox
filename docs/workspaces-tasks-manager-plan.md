@@ -34,7 +34,9 @@ the manager's own instructions come after.
   exists before anyone knows which project it touches; forcing a project up front would mean it
   could not.
 - **Assignment is reconciled on read, never trusted.** A task assigned at create time carries a job
-  id until the worker records the box; a task whose box was destroyed returns to the backlog. Status
+  id until the worker records the box. A BOX pointer is event-driven, not reconciled: the destroy and
+  prune paths call `boxGone(boxId)`, which returns the box's tasks to the backlog and drops it from
+  every manager — a box absent from this hub's inventory may simply live on another machine. Status
   is never touched by reconciliation — half-finished work stays half-finished.
 - **The backend is split by domain.** `apps/hub/lib/hub-backend.ts` had reached 3800 lines because
   every feature appended its methods there. This work introduced `apps/hub/lib/backend/`, where a
@@ -236,8 +238,8 @@ reported this host's name — and a live pid whose start time differs from the r
 counts as stopped — else running while `lastSeenAt` is under 30 minutes old.
 
 **Boxes and tasks.** A manager keeps `boxIds` and `boxJobIds`, reconciled on read with the same rules
-as a task's assignment (job → box, a failed job dropped, a gone box dropped unless a create in flight
-recorded it). `POST /boxes` takes `managerId` and attaches the job; the agent commands, whose docker and
+as a task's assignment (job → box, a failed job dropped) and losing a box only on the `boxGone` event
+a destroy or a prune fires. `POST /boxes` takes `managerId` and attaches the job; the agent commands, whose docker and
 cloud paths create inline, attach through the detect call itself (`boxId` / `boxJobId` on the body).
 `GET /boxes` stamps `Box.managerId`. `WorkTask.managerId` is set by `agentbox tasks add` inside a
 session and inherited from the box on assignment; `?managerId=` filters both task listings.

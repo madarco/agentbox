@@ -6,6 +6,7 @@ import { assertTempHome } from '../../../scripts/test-home.js';
 import { workspaceAdd } from './_workspace-input';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
 import type { BackendDeps } from '../lib/backend/deps';
+import { attachBoxToManager, readManagers, upsertDetectedManager } from '@agentbox/relay';
 import type { QueueJob } from '@agentbox/relay';
 
 // The slice's whole point: it is drivable with three seams and no relay handle.
@@ -210,7 +211,7 @@ describe('reconciliation through the backend', () => {
     expect(healed?.[0]?.boxJobId).toBeUndefined();
   });
 
-  it('keeps a task on a box this hub has no record of, and drops it on a destroy', async () => {
+  it('keeps a task on a box this hub has no record of, and drops it when the box is gone', async () => {
     const deps = makeDeps({ boxIds: ['box1'] });
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
@@ -222,12 +223,21 @@ describe('reconciliation through the backend', () => {
     // that is not evidence it is gone, so the assignment stands.
     const other = createWorkspaceBackend(makeDeps({ boxIds: [] }));
     expect((await other.listTasks(wsId))?.[0]?.boxId).toBe('box1');
-    // The destroy says so explicitly.
-    await backend.unassignBox('box1');
+    // A manager holding the box keeps it for the same reason.
+    const { manager } = await upsertDetectedManager(wsId, {
+      agent: 'claude',
+      sessionId: '11111111-2222-3333-4444-555555555555',
+      cwd: root,
+    });
+    await attachBoxToManager(wsId, manager.id, { boxId: 'box1' });
+    // The destroy (or a prune) says so explicitly.
+    await backend.boxGone('box1');
     const healed = await backend.listTasks(wsId);
     expect(healed?.[0]?.boxId).toBeUndefined();
     // Back in the backlog, exactly as a manual unassign leaves it.
     expect(healed?.[0]?.status).toBe('todo');
+    // ... and the manager no longer claims it.
+    expect((await readManagers(wsId))[0]?.boxIds).toEqual([]);
   });
 });
 

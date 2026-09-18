@@ -868,8 +868,8 @@ describe('narrowed to one manager session', () => {
 
   it("keeps a destroyed box's history, which the manager record no longer lists", async () => {
     const { h, wsId, a } = await twoSessions();
-    // Attached, then gone: it is not among the live boxes, so `readReconciledManagers` prunes it
-    // out of `boxIds` (and writes that back). Only the log still ties this box to the session.
+    // Attached, then destroyed: `boxGone` drops it out of `boxIds`, so only the log
+    // still ties this box to the session.
     await attachBoxToManager(wsId, a, { boxId: 'gone1' });
     await recordTimelineEvent(wsId, {
       type: 'box.created',
@@ -1028,6 +1028,71 @@ describe('push rows', () => {
       [3, 0],
       [8, 0],
     ]);
+  });
+});
+
+describe('a destroy releases the box', () => {
+  const okResult = async () => ({ ok: true as const });
+  const hubWith = (destroy: () => Promise<{ ok: boolean; error?: string }>): HubBackend =>
+    ({
+      create: okResult,
+      start: okResult,
+      stop: okResult,
+      destroy,
+      gitPush: okResult,
+      gitPushHost: okResult,
+      gitCheckout: okResult,
+      gitNewBranch: okResult,
+    }) as unknown as HubBackend;
+
+  it('releases a box that is gone, including one the destroy never found', async () => {
+    const h = harness();
+    const { managers } = backends(h);
+    const root = await folder();
+    const d = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S1,
+      cwd: root,
+      host: 'laptop',
+    });
+    if (!d.ok) throw new Error(d.error);
+    h.boxes.push({
+      id: 'box1',
+      name: 'box-one',
+      branches: ['agentbox/box-one'],
+      state: 'running',
+      projectRoot: root,
+      projectId: 'p1',
+    });
+    const gone: string[] = [];
+    const seams = {
+      deps: h.deps,
+      stampFor: managers.timelineStamp,
+      boxGone: async (id: string) => void gone.push(id),
+    };
+
+    // The teardown failed and the record is still here: the box may well be alive.
+    const failing = withBoxTimeline(
+      hubWith(async () => ({ ok: false, error: 'provider unreachable' })),
+      seams,
+    );
+    await failing.destroy('box1', undefined);
+    await backgroundSettled();
+    expect(gone).toEqual([]);
+
+    // `not found`: nothing to tear down because it is already gone.
+    const missing = withBoxTimeline(
+      hubWith(async () => ({ ok: false, error: 'box box9 not found' })),
+      seams,
+    );
+    await missing.destroy('box9', undefined);
+    await backgroundSettled();
+    expect(gone).toEqual(['box9']);
+
+    const okHub = withBoxTimeline(hubWith(okResult), seams);
+    await okHub.destroy('box1', undefined);
+    await backgroundSettled();
+    expect(gone).toEqual(['box9', 'box1']);
   });
 });
 
