@@ -1,41 +1,126 @@
-import { describe, expect, it } from 'vitest';
-import { prMergeRepo, prMergeTarget, prViewArgs } from '../src/timeline-hooks.js';
-import { GH_PR_JSON_FIELDS } from '../src/workspaces/timeline-pr.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { recordBoxGitPush, recordCreateJobTimeline } from '../src/timeline-hooks.js';
+import {
+  configureTimelineSink,
+  type TimelineSink,
+  type TimelineWorkspaceRef,
+} from '../src/workspaces/timeline-sink.js';
+import type { TimelineEventInput } from '../src/workspaces/timeline-store.js';
+import type { QueueJob } from '../src/queue.js';
 
-describe('gh pr merge parsing', () => {
-  it('skips the value of -R/--repo when finding the PR', () => {
-    expect(prMergeTarget(['-R', 'o/r', '409', '--squash'])).toBe('409');
-    expect(prMergeTarget(['--repo', 'o/r', '--squash'])).toBeUndefined();
-    expect(prMergeTarget(['--squash', '-b', 'body', 'feature/x'])).toBe('feature/x');
+interface Recorded {
+  wsId: string;
+  input: TimelineEventInput;
+}
+
+function stubSink(
+  opts: { workspace?: TimelineWorkspaceRef | null; record?: () => Promise<never> } = {},
+): { sink: TimelineSink; recorded: Recorded[]; keys: string[] } {
+  const recorded: Recorded[] = [];
+  const workspace = opts.workspace === undefined ? { id: 'ws1' } : opts.workspace;
+  const sink: TimelineSink = {
+    kind: 'remote',
+    record: async (wsId, input) => {
+      if (opts.record) return opts.record();
+      recorded.push({ wsId, input });
+      return null;
+    },
+    workspaceFor: async () => workspace,
+  };
+  return { sink, recorded, keys: [] };
+}
+
+const PUSH_CTX = {
+  boxId: 'box1',
+  boxName: 'smoke',
+  hostPath: '/home/me/work/storefront',
+  branch: 'agentbox/smoke',
+  originUrl: 'git@github.com:acme/storefront.git',
+};
+
+function job(over: Partial<QueueJob> = {}): QueueJob {
+  return {
+    id: 'j1',
+    status: 'done',
+    kind: 'create',
+    agent: 'claude-code',
+    boxId: 'box9',
+    createOpts: {
+      workspace: '/tmp/hub-worker-clone',
+      repoUrl: 'git@github.com:acme/storefront.git',
+    },
+    maxConcurrent: 1,
+    createdAt: new Date().toISOString(),
+    logPath: '/tmp/j1.log',
+    ...over,
+  } as QueueJob;
+}
+
+afterEach(() => {
+  configureTimelineSink(null);
+});
+
+describe('the relay timeline hooks', () => {
+  it('write a box push through the configured sink', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    await recordBoxGitPush(PUSH_CTX, { hostInitiated: false, hostOnly: false }, { exitCode: 0 });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      wsId: 'ws1',
+      input: { type: 'git.push', actor: 'box', boxId: 'box1', branch: 'agentbox/smoke' },
+    });
   });
 
-  it('finds the repo in every spelling, and not in another flag value', () => {
-    expect(prMergeRepo(['-R', 'o/r', '409'])).toBe('o/r');
-    expect(prMergeRepo(['409', '--repo', 'github.example.com/o/r'])).toBe('github.example.com/o/r');
-    expect(prMergeRepo(['--repo=o/r', '409'])).toBe('o/r');
-    expect(prMergeRepo(['-Ro/r'])).toBe('o/r');
-    expect(prMergeRepo(['-b', '--repo', '409'])).toBeUndefined();
-    expect(prMergeRepo(['409'])).toBeUndefined();
+  it('leave the RPC result untouched when the sink cannot record', async () => {
+    const { sink } = stubSink({ record: () => Promise.reject(new Error('control box down')) });
+    configureTimelineSink(sink);
+    await expect(
+      recordBoxGitPush(PUSH_CTX, { hostInitiated: false, hostOnly: false }, { exitCode: 0 }),
+    ).resolves.toBeUndefined();
   });
 
-  it('scopes the follow-up gh pr view to that repo', () => {
-    expect(prViewArgs([], '409', 'o/r')).toEqual([
-      'pr',
-      'view',
-      '409',
-      '--repo',
-      'o/r',
-      '--json',
-      GH_PR_JSON_FIELDS,
-    ]);
-    expect(prViewArgs(['--hostname', 'h'], '409', undefined)).toEqual([
-      '--hostname',
-      'h',
-      'pr',
-      'view',
-      '409',
-      '--json',
-      GH_PR_JSON_FIELDS,
-    ]);
+  it('record nothing when no workspace lists the box', async () => {
+    const { sink, recorded } = stubSink({ workspace: null });
+    configureTimelineSink(sink);
+    await recordBoxGitPush(PUSH_CTX, { hostInitiated: false, hostOnly: false }, { exitCode: 0 });
+    expect(recorded).toEqual([]);
+  });
+
+  it('key a finished create job so a retried report lands once', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    await recordCreateJobTimeline(job());
+    await recordCreateJobTimeline(job());
+    expect(recorded.map((r) => r.input.key)).toEqual(['job:j1:ready', 'job:j1:ready']);
+    expect(recorded[0]?.input).toMatchObject({ type: 'box.ready', actor: 'hub', boxId: 'box9' });
+  });
+
+  it('join a create job by its repo: a worker clone is no workspace folder', async () => {
+    const keys: { originUrl?: string; projectRoot?: string }[] = [];
+    configureTimelineSink({
+      kind: 'remote',
+      record: async () => null,
+      workspaceFor: async (key) => {
+        keys.push(key);
+        return { id: 'ws1' };
+      },
+    });
+    await recordCreateJobTimeline(job());
+    expect(keys[0]).toMatchObject({
+      originUrl: 'git@github.com:acme/storefront.git',
+      projectRoot: '/tmp/hub-worker-clone',
+    });
+  });
+
+  it('say a failed job failed, with its reason', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    await recordCreateJobTimeline(job({ status: 'failed', reason: 'provider refused' }));
+    expect(recorded[0]?.input).toMatchObject({
+      type: 'box.failed',
+      key: 'job:j1:failed',
+      text: 'provider refused',
+    });
   });
 });

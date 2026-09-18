@@ -44,6 +44,51 @@ const target = (fetchImpl: typeof fetch) => ({
   session: null,
 });
 
+describe('the session headers', () => {
+  const health = { 'GET /api/v1/health': { status: 200, body: { apiVersion: 'v1' } } };
+
+  it('sends the turn next to the session it belongs to', async () => {
+    const { fetchImpl, calls } = stub(health);
+    await new HubApiClient({
+      url: 'https://hub.example',
+      apiKey: 'KEY',
+      fetchImpl,
+      session: 'claude:abc',
+      sessionTurn: '7;refactor%20the%20gate',
+    }).health();
+    expect(calls[0]?.headers).toMatchObject({
+      'X-AgentBox-Session': 'claude:abc',
+      'X-AgentBox-Session-Turn': '7;refactor%20the%20gate',
+    });
+  });
+
+  it('sends no turn outside a session: a turn on its own names nobody', async () => {
+    const { fetchImpl, calls } = stub(health);
+    await new HubApiClient({
+      url: 'https://hub.example',
+      apiKey: 'KEY',
+      fetchImpl,
+      session: null,
+      sessionTurn: '7',
+    }).health();
+    expect(calls[0]?.headers).not.toHaveProperty('X-AgentBox-Session-Turn');
+    expect(calls[0]?.headers).not.toHaveProperty('X-AgentBox-Session');
+  });
+
+  it('sends no turn when the transcript has none', async () => {
+    const { fetchImpl, calls } = stub(health);
+    await new HubApiClient({
+      url: 'https://hub.example',
+      apiKey: 'KEY',
+      fetchImpl,
+      session: 'codex:xyz',
+      sessionTurn: null,
+    }).health();
+    expect(calls[0]?.headers).toMatchObject({ 'X-AgentBox-Session': 'codex:xyz' });
+    expect(calls[0]?.headers).not.toHaveProperty('X-AgentBox-Session-Turn');
+  });
+});
+
 describe('HubApiClient', () => {
   it('lists boxes and unwraps the envelope', async () => {
     const { fetchImpl, calls } = stub({

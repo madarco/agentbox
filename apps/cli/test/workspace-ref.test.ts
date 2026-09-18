@@ -1,6 +1,10 @@
 import { homedir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
-import { pickWorkspace, resolveWorkspaceAndManager } from '../src/lib/workspace-ref.js';
+import {
+  pickWorkspace,
+  resolveWorkspaceAndManager,
+  workspaceHub,
+} from '../src/lib/workspace-ref.js';
 import type { HostSessionHint } from '../src/lib/host-session.js';
 import type { HubApiManagerDetect, HubApiWorkspace } from '../src/control-plane/hub-api-client.js';
 
@@ -181,5 +185,15 @@ describe('resolveWorkspaceAndManager', () => {
       { env: {}, host: HERE, cwd: '/new/repo', detect: () => hint('/new/repo') },
     );
     expect(res).toEqual({ workspace: created, managerId: 'm1' });
+  });
+});
+
+describe('workspaceHub', () => {
+  it('never prefers the local hub: the store is on the configured one', () => {
+    // `resolveHubTarget` already falls back to this machine's hub when no
+    // control box is configured, so preferring local would only ever mean
+    // "read the empty store here instead of the real one there".
+    expect(workspaceHub()).toEqual({});
+    expect(workspaceHub()).not.toHaveProperty('preferLocal');
   });
 });
