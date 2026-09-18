@@ -126,7 +126,11 @@ As landed, four details differ:
 - `agentbox create`'s local path could not simply drop `preferLocal`: the same `withHubClient` block
   held the tasks preflight, the session registration AND `createBox`, and a docker box cannot be
   built by the control box. The store calls moved into their own `workspaceHub()` block, which only
-  fails the create when `--tasks` was asked for.
+  fails the create when `--tasks` was asked for. Since the review pass (2026-09-18) they are two
+  calls, because they are worth different things: the `--tasks` preflight stays LOUD (a bad id must
+  cost nothing and fail the create), while the session registration is bookkeeping and goes through
+  `withHubClientQuiet` — the same reason `runAgentCreate` always did. Under the loud client an
+  unreachable control box left a plain `agentbox create` printing "box ready" and exiting 1.
 - `fromBranch` is defaulted to `readCurrentBranch(projectRoot)` on the **repo-routed** creates only
   (`_cloud-agent-via-hub.ts` ×2, `create.ts`'s `--via-hub` path). The `projectId` create keeps
   `deps.projectBranch`: the hub resolving it holds that folder, and sending the ref would add the
@@ -190,12 +194,25 @@ As landed, seven details differ:
   docker box under `hub.mode=local` — the manager's `boxIds` does not learn about it (the task→box
   join, which is what the UI reads, is unaffected because it goes through the task store). Noted in
   `workspaces-remote-hub-backlog.md`.
+  **Those two refusals are now SURFACED** (review pass, 2026-09-18): `removeManager` returns the
+  store's `false` as an error naming the hub that holds the record instead of answering `ok` for a
+  record that survives, and `detectManager` refuses up front rather than letting the store's
+  rejection become an unhandled 500 on `POST /managers/detect`. A client pointed at the local hub
+  (the tray, a script, `--url`) gets a usable answer in both cases.
+- Also from that pass: a `manager.started` / `manager.resumed` row is written by exactly ONE hub.
+  The control box's register route already records it where the workspace is, so the PC hub only
+  forwards the row when its own store is the file one — both were logged twice. And a start whose
+  registration is refused now kills the tmux session it just opened: the agent was left running with
+  nothing pointing at it, and every retry minted a new id and a second session in the same folder.
 - The heartbeat carries `tmuxSession` as well as the listed fields, so a background session a PC
   attached to still renders an `attachCommand` on the control box.
 - `manager message` is a NEW CLI command, and it is the one op that goes to the **configured** hub
   first (not `preferLocal`): the message is a timeline row, and the retry rule the plan asks for only
   ever fires if the first attempt can be refused. `runsHere(m)` and `retryOnLocalHub(err)` are
   exported from `apps/cli/src/commands/manager.ts` for the test and for the tray's contract note.
+  The retry itself is `sendManagerMessage(send)` (review pass, 2026-09-18): `withHubClient` REPORTS a
+  `HubApiError` and sets `process.exitCode` rather than rethrowing, so a `try/catch` around it never
+  fired — the refusal has to be caught inside the callback and handed back as a value.
 - A record written before this phase is migrated on read (`kind: 'hub'` → `'tmux'`, a missing `host`
   → the reading machine's), the same shape Phase 1 used for v1 workspaces. That is a data migration,
   not an API alias: `'hub'` is gone from every type, route and client.
@@ -282,14 +299,16 @@ has nothing on GitHub to poll anyway.
 Found while gating: two timeline rows written in the same millisecond came back in either order
 (the id's tie-break suffix was random). The suffix now counts up within a millisecond.
 
-**Found, NOT fixed (pre-dates this plan):** `agentbox git push <box>` on an `agentbox/*` branch logs
-the push TWICE — once `actor: human` from the hub's git route, once `actor: box` from the relay. The
-branch is a scratch branch, so the relay bypasses the push gate and never reads the host-initiated
-token, which is also how it would have known the host drove the push
-(`packages/relay/src/server.ts` ~1084 and the same block in `host-actions.ts` ~1437). The fix is to
-validate the claimed token even on the bypass path (the hard rejection stays behind
-`!bypassPushGate`, so no push that works today starts failing). Left out of Phase 4: it is not
-remote-specific, and it changes a security gate.
+**Found and fixed in the Phase 2-4 review pass (pre-dates this plan):** `agentbox git push <box>` on
+an `agentbox/*` branch logged the push TWICE — once `actor: human` from the hub's git route, once
+`actor: box` from the relay. The branch is a scratch branch, so the relay bypassed the push gate and
+never read the host-initiated token, which is also how it knows the host drove the push. Both push
+paths (`packages/relay/src/server.ts` and the cloud executor in `host-actions.ts`) now share
+`decideHostInitiatedPush`, which validates a claimed token on the bypass path too and keeps the HARD
+REJECTION of an invalid one behind `!bypassPushGate` — so no push that succeeds today can start
+failing. Covered by `packages/relay/test/push-host-initiated.test.ts` (a real repo + origin over
+`/rpc`: a valid token yields no box row, no token and an invalid token each yield exactly one) and
+by the smoke below.
 
 - PR sync (`github-prs.ts`): `repoOf(project)` = `gh repo view <owner/repo>` from
   `WorkspaceProject.repoUrl` (non-GitHub → null, cached); iterate `ws.projects`, no folder scan. One
@@ -343,6 +362,12 @@ a box then `agentbox git push` → `git.push` rows carrying `+7 −0` and `+2 �
 are labelled by a sync that reports `github: ok` and addresses every `gh` call by repo. The box-measured half and the
 `git.pushed` report are covered by the unit suites and by §F, which needs an exposed or deployed
 hub.
+
+**Re-verified after the review pass (2026-09-18):** a commit in a box then `agentbox git push
+f8smoke` on `agentbox/f8smoke` → exactly ONE `git.push` row, `actor: human`, `additions: 7`
+`deletions: 0` (it was two before the token fix). `manager start --agent claude` / `list` / `stop` /
+`forget` unchanged; `agentbox create -y` with no `--tasks` exits 0, both with and without an
+unreachable control box configured (`hub.mode=local`).
 
 **Real Hetzner control box (required for Phases 2–4, and a full pass at the end).** The exposed-hub
 run is the cheap loop; the gate for merging a phase is the same matrix against a real deployed hub,
