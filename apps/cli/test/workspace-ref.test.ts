@@ -94,10 +94,10 @@ describe('resolveWorkspaceAndManager', () => {
   function client(detected?: HubApiWorkspace) {
     return {
       listWorkspaces: vi.fn(async () => all),
-      detectManager: vi.fn(async (_body: HubApiManagerDetect) => ({
-        manager: { id: 'm1' } as never,
-        workspace: detected ?? all[0]!,
-      })),
+      // Typed with its body so a test can read what was sent.
+      detectManager: vi.fn<
+        (body: HubApiManagerDetect) => Promise<{ manager: never; workspace: HubApiWorkspace }>
+      >(async () => ({ manager: { id: 'm1' } as never, workspace: detected ?? all[0]! })),
     };
   }
 

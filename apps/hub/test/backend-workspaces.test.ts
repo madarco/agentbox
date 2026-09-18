@@ -241,6 +241,18 @@ describe('reconciliation through the backend', () => {
   });
 });
 
+describe('an add that names an id', () => {
+  it('is a not-found, never a new record, when the id names nothing', async () => {
+    const backend = createWorkspaceBackend(makeDeps());
+    const root = await makeFolder();
+    const res = await backend.addWorkspace(await workspaceAdd(root, { id: 'deadbeefdeadbeef' }));
+    expect(res.ok).toBe(false);
+    // The wording the route turns into a 404.
+    if (!res.ok) expect(res.error).toBe('unknown workspace deadbeefdeadbeef');
+    expect(await backend.listWorkspaces()).toEqual([]);
+  });
+});
+
 describe('getData hooks', () => {
   it('maps projects to their workspace and rolls tasks up per box and per job', async () => {
     const deps = makeDeps({
