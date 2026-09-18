@@ -12,6 +12,7 @@ import type {
   HostSession,
   ManagerStatus,
   TimelineEvent,
+  TimelineEventInput,
   TimelineEventType,
   TimelineNoteKind,
   TimelinePr,
@@ -986,6 +987,20 @@ export interface RemoteDockerHostView {
 
 // ── workspaces / tasks / manager ──
 
+/**
+ * A host agent session as the CLI names it (`X-AgentBox-Session`), plus the turn
+ * that caller read from its own transcript (`X-AgentBox-Session-Turn`).
+ *
+ * The turn is client-asserted and only usable for a manager whose transcript is
+ * NOT on this hub: where the hub can read it, it does, and ignores this.
+ */
+export interface TimelineSessionRef {
+  agent: string;
+  sessionId: string;
+  turn?: number;
+  prompt?: string;
+}
+
 /** Who made a mutation (for the timeline), and the note explaining it, if any. */
 export interface TimelineMeta {
   stamp?: TimelineStamp;
@@ -993,7 +1008,7 @@ export interface TimelineMeta {
    * The caller's `X-AgentBox-Session`, not yet resolved: set instead of `stamp`
    * when the route does not know the workspace, which the backend resolves it in.
    */
-  session?: { agent: string; sessionId: string };
+  session?: TimelineSessionRef;
   note?: string;
 }
 
@@ -1099,9 +1114,26 @@ export type ManagerMessageResult =
   | { ok: false; error: string; code?: 'manager_unreachable' };
 
 /** The timeline domain slice (`lib/backend/timeline.ts`). */
+/**
+ * The result of appending one forwarded event: the event when it landed, nothing
+ * when its `key` was already in the log (a retried report lands once).
+ */
+export type TimelineRecordResult =
+  | { ok: true; event?: TimelineEvent }
+  | { ok: false; error: string };
+
 export interface TimelineBackend {
   /** `null` = unknown workspace. */
   getTimeline(wsId: string, q?: TimelineQuery): Promise<TimelineResponse | null>;
+  /**
+   * Append one event a hub that does NOT hold the store produced (a PC's docker
+   * box, its queue worker). `null` = unknown workspace. The caller is
+   * authenticated by the same `/api/v1` Bearer as every other route.
+   */
+  recordTimelineEvent(
+    wsId: string,
+    input: TimelineEventInput,
+  ): Promise<TimelineRecordResult | null>;
 }
 
 export type WorkspaceResult = { ok: true; workspace: WorkspaceView } | { ok: false; error: string };
@@ -1235,7 +1267,7 @@ export interface ManagerBackend {
    * manager of that workspace. Never writes.
    */
   timelineStamp(
-    ref: { agent: string; sessionId: string } | { managerId: string },
+    ref: TimelineSessionRef | { managerId: string },
     wsId?: string,
   ): Promise<TimelineStamp | undefined>;
   /** Record a manager note, stamped with the manager's current turn. */

@@ -15,10 +15,10 @@ import {
   readTasks,
   readTimeline,
   readWorkspace,
-  recordTimelineEvent,
+  appendTimelineEvent,
+  timelineSink,
   sortTasksByOrder,
   stampFields,
-  readWorkspaceForBox,
   workspaceForBox,
   workspaceProjectIds,
   type TimelineEvent,
@@ -39,7 +39,9 @@ import type {
   TimelineLiveItem,
   TimelineMeta,
   TimelineQuery,
+  TimelineRecordResult,
   TimelineResponse,
+  TimelineSessionRef,
   TimelineSummary,
 } from '../boxes/backend-types';
 
@@ -446,6 +448,22 @@ export function createTimelineBackend(
   }
 
   return {
+    /**
+     * Append one event another hub forwarded (`POST …/timeline/events`). Writes
+     * the FILE store directly, never the sink: the caller already chose this hub
+     * as the store, so forwarding it again would send it back out.
+     */
+    async recordTimelineEvent(wsId, input): Promise<TimelineRecordResult | null> {
+      if (!(await readWorkspace(wsId))) return null;
+      try {
+        const event = await appendTimelineEvent(wsId, input);
+        if (event) deps.notify();
+        return { ok: true, ...(event ? { event } : {}) };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+
     async getTimeline(wsId: string, q: TimelineQuery = {}): Promise<TimelineResponse | null> {
       const ws = await readWorkspace(wsId);
       if (!ws) return null;
@@ -533,7 +551,7 @@ async function boxEventBase(
 }
 
 export type StampFor = (
-  ref: { agent: string; sessionId: string } | { managerId: string },
+  ref: TimelineSessionRef | { managerId: string },
   wsId: string,
 ) => Promise<TimelineStamp | undefined>;
 
@@ -649,14 +667,14 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       if (branchSwitch && (!after?.branches[0] || after.branches[0] === previous)) return;
       const fact = after ?? before ?? (type === 'box.destroyed' ? undefined : await factOf(id));
       if (!fact) return;
-      const ws = await readWorkspaceForBox(fact, localHost());
+      const ws = await timelineSink().workspaceFor(fact, localHost());
       if (!ws) return;
       const [stamp, base, diff] = await Promise.all([
         stampInWorkspace(meta, ws.id, seams.stampFor),
         boxEventBase(fact, ws.id),
         stat ? pushLineStat(stat) : undefined,
       ]);
-      await recordTimelineEvent(ws.id, {
+      await timelineSink().record(ws.id, {
         type,
         ...stampFields(stamp),
         ...base,
@@ -685,6 +703,11 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     const projectId = input.projectId;
     const repoUrl = input.repoUrl;
     if (!res.ok || (!projectId && !repoUrl)) return res;
+    // The project's folder here, for the join a hub whose store is elsewhere has
+    // to make: a project id is this machine's path hash and means nothing there.
+    const projectRoot = projectId
+      ? await deps.projectRoot?.(projectId).catch(() => undefined)
+      : undefined;
     inBackground(async () => {
       const records = await listWorkspaces();
       // The project (a folder on this hub) is the more specific key, as it is for
@@ -692,7 +715,18 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const ws =
         (projectId
           ? records.find((w) => workspaceProjectIds(w, hostOf(deps)).includes(projectId))
-          : null) ?? (repoUrl ? workspaceForBox(records, { originUrl: repoUrl }) : null);
+          : null) ??
+        (repoUrl ? workspaceForBox(records, { originUrl: repoUrl }) : null) ??
+        // Nothing here matched: with the store on a control box there are no
+        // local records at all, so the sink's listing is the one that has them —
+        // joined by the project's folder on THIS host, or by its repo.
+        (await timelineSink().workspaceFor(
+          {
+            ...(repoUrl ? { originUrl: repoUrl } : {}),
+            ...(projectRoot ? { host: hostOf(deps), projectRoot } : {}),
+          },
+          hostOf(deps),
+        ));
       if (!ws) return;
       // The manager a create names is the one the box belongs to, whoever sent it.
       const named = input.managerId
@@ -704,7 +738,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const base =
         input.fromBranch?.trim() ||
         (projectId ? await deps.projectBranch?.(projectId).catch(() => undefined) : undefined);
-      await recordTimelineEvent(ws.id, {
+      await timelineSink().record(ws.id, {
         type: 'box.created',
         ...stampFields(stamp),
         key: `job:${res.jobId}:created`,

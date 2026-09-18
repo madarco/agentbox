@@ -135,6 +135,11 @@ const timelineEventProperties = {
   },
 };
 
+/** `id` is minted by the store, so a forwarded event never carries one. */
+const timelineEventInputProperties = Object.fromEntries(
+  Object.entries(timelineEventProperties).filter(([k]) => k !== 'id'),
+);
+
 export function buildOpenApi(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
@@ -1982,6 +1987,50 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/workspaces/{id}/timeline/events': {
+        post: {
+          tags: ['Timeline'],
+          summary: 'Record one event from another hub',
+          description:
+            "Append one event to this workspace's log. For a hub that does NOT hold the store: with a control box configured, the workspaces, tasks and timeline live there, so a PC hub's own rows (its docker boxes' lifecycle, its queue worker's `box.ready`, an in-box `git push` its relay saw) are forwarded here. `actor` is limited to `box`, `hub` and `manager` — a human action is made through this hub's own routes, which stamp it from the session header. `key` dedupes: a retried report lands once, and the second call answers 200 instead of 201. `id` is minted here; `at` is honoured, so a late forward keeps the time the thing happened.",
+          parameters: [workspaceIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/TimelineEventInput' } },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Recorded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { event: { $ref: '#/components/schemas/TimelineEvent' } },
+                    required: ['event'],
+                  },
+                },
+              },
+            },
+            '200': {
+              description: 'Already recorded (the event key was in the log)',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { deduped: { type: 'boolean' } },
+                    required: ['deduped'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/workspaces/{id}/managers': {
         get: {
           tags: ['Managers'],
@@ -3730,6 +3779,26 @@ export function buildOpenApi(): Record<string, unknown> {
           description: "One line of a workspace's append-only timeline log.",
           properties: timelineEventProperties,
           required: ['id', 'at', 'type', 'actor'],
+        },
+        TimelineEventInput: {
+          type: 'object',
+          description:
+            'An event another hub forwards into this workspace. Same fields as `TimelineEvent` minus `id` (minted here) and with `actor` limited to the three a forwarder may claim.',
+          properties: {
+            ...timelineEventInputProperties,
+            actor: { type: 'string', enum: ['box', 'hub', 'manager'] },
+            at: {
+              type: 'string',
+              description:
+                'ISO time the event happened. Honoured, so a late forward is ordered by when it happened rather than when it arrived; stamped on arrival when absent.',
+            },
+            key: {
+              type: 'string',
+              description:
+                'Dedupe key: an append carrying a key already in the log is a no-op (200, not 201).',
+            },
+          },
+          required: ['type', 'actor'],
         },
         TimelineBranchUrl: {
           type: 'string',

@@ -16,7 +16,7 @@ import {
   readManagers,
   readReconciledTasks,
   readTasks,
-  recordTimelineEvent,
+  timelineSink,
   readWorkspace,
   removeTask,
   removeWorkspace,
@@ -124,7 +124,7 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
    * never fails the mutation that already happened.
    */
   async function record(wsId: string, input: TimelineEventInput): Promise<void> {
-    await recordTimelineEvent(wsId, input);
+    await timelineSink().record(wsId, input);
   }
 
   /** The note a mutation carried, as its own event right after the mutation's. */

@@ -2121,6 +2121,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       const root = await resolveProjectPath(projectId);
       return root ? readCurrentBranch(root) : undefined;
     },
+    projectRoot: async (projectId) => (await resolveProjectPath(projectId)) ?? undefined,
   };
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);

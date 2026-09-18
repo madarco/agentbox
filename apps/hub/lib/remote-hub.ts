@@ -12,15 +12,8 @@
  * own UI, which the settings page links out to. The hub's public `/api/v1` is
  * the whole contract here — no new endpoint, no custody access.
  */
-import { readFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { loadEffectiveConfig } from '@agentbox/config';
-import { parseEnvFileBody } from '@agentbox/sandbox-core';
+import { resolveControlBox, type ControlBoxTarget } from '@agentbox/relay';
 import type { ProviderOption } from './boxes/types';
-
-/** Where `agentbox hub setup` records the control box's `/api/v1` key. */
-const CONTROL_PLANE_ENV = path.join(os.homedir(), '.agentbox', 'control-plane', 'control-plane.env');
 
 /**
  * Bound on the round-trip. `?freshness=1` makes the remote hub hash its build
@@ -37,39 +30,20 @@ const FETCH_MS = 2500;
  */
 const CACHE_MS = 30_000;
 
-export interface RemoteHubTarget {
-  url: string;
-  apiKey: string;
-}
+export type RemoteHubTarget = ControlBoxTarget;
 
 /**
- * True when this process IS a control box (deployed, or a hub this machine
- * exposed). Both run the resident worker, and only they do. A control box has no
- * control box of its own, so mirroring there would mean querying itself.
+ * The configured control box + its API key, for the PROVIDER MIRROR, or null
+ * when there is none.
+ *
+ * `cloud.viaHub=false` opts out of hub-routed creates, so cloud boxes are built
+ * HERE again and this machine's own bakes are the answer; mirroring then would
+ * describe a machine that does no work for this user. That clause is this
+ * reader's alone — the workspace store is on the control box however the boxes
+ * get built, which is why the timeline sink resolves it without one.
  */
-function isControlBox(): boolean {
-  return process.env.AGENTBOX_HUB_WORKER === 'on';
-}
-
-/** The configured control box + its API key, or null when there is none. */
-export async function resolveRemoteHub(): Promise<RemoteHubTarget | null> {
-  if (isControlBox()) return null;
-  try {
-    const cfg = await loadEffectiveConfig(os.homedir());
-    const url = (cfg.effective.relay.controlPlaneUrl ?? '').replace(/\/+$/, '');
-    if (!url) return null;
-    // `cloud.viaHub=false` opts out of hub-routed creates, so cloud boxes are
-    // built HERE again and this machine's own bakes are the answer. Mirroring
-    // then would describe a machine that does no work for this user.
-    if (!cfg.effective.cloud.viaHub) return null;
-    // The key never reaches this process's env (the hub is spawned before, or
-    // without, `hub setup`), so read the file the CLI writes it to.
-    const env = parseEnvFileBody(await readFile(CONTROL_PLANE_ENV, 'utf8').catch(() => ''));
-    const apiKey = process.env.AGENTBOX_HUB_API_KEY || (env.AGENTBOX_HUB_API_KEY ?? '');
-    return apiKey ? { url, apiKey } : null;
-  } catch {
-    return null;
-  }
+export function resolveRemoteHub(): Promise<RemoteHubTarget | null> {
+  return resolveControlBox({ requireViaHub: true });
 }
 
 let cache: { at: number; providers: ProviderOption[] | null } | null = null;

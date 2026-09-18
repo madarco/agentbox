@@ -7,6 +7,7 @@ import type {
   CreateBoxOpts,
   RestoreProjectInput,
 } from '@/lib/boxes/backend-types';
+import type { TimelineEventInput } from '@agentbox/relay';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
@@ -1045,6 +1046,194 @@ export function parseTimelineQuery(url: URL): Parsed<{
 
 export function isTaskStatus(v: unknown): v is TaskStatusValue {
   return typeof v === 'string' && (TASK_STATUSES as readonly string[]).includes(v);
+}
+
+// ── forwarded timeline events (POST …/timeline/events) ──
+
+// Mirrors `TimelineEventType` in @agentbox/relay; hardcoded like AGENTS and
+// PROVIDERS above so the Next bundle stays free of @agentbox/*.
+const TIMELINE_EVENT_TYPES = [
+  'task.created',
+  'task.status',
+  'task.assigned',
+  'task.unassigned',
+  'task.removed',
+  'manager.joined',
+  'manager.started',
+  'manager.resumed',
+  'manager.stopped',
+  'manager.note',
+  'manager.message',
+  'box.created',
+  'box.ready',
+  'box.failed',
+  'box.started',
+  'box.stopped',
+  'box.destroyed',
+  'box.branch',
+  'git.push',
+  'pr.opened',
+  'pr.ready',
+  'pr.merged',
+  'pr.closed',
+] as const;
+
+/**
+ * Who a FORWARDED event may claim to be. `human` and `github` are excluded on
+ * purpose: a human action is made through this hub's own routes (which stamp it
+ * from the session header), and a `github` row is written by the sync that owns
+ * that hub's `gh` — neither is something another machine reports.
+ */
+const FORWARDED_ACTORS = ['box', 'hub', 'manager'] as const;
+
+const TEXT_MAX = 2000;
+const PROMPT_MAX = 500;
+const KEY_MAX = 200;
+
+function optionalIso(v: unknown, field: string): Parsed<string | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (typeof v !== 'string') return { ok: false, message: `${field} must be an ISO date-time` };
+  const ms = Date.parse(v);
+  if (Number.isNaN(ms)) return { ok: false, message: `${field} must be an ISO date-time` };
+  return { ok: true, value: new Date(ms).toISOString() };
+}
+
+function optionalCapped(v: unknown, field: string, max: number): Parsed<string | undefined> {
+  const parsed = optionalString(v, field);
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: parsed.value === undefined ? undefined : parsed.value.slice(0, max) };
+}
+
+function parseEventPr(v: unknown): Parsed<TimelineEventInput['pr'] | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (!isObject(v)) return { ok: false, message: 'pr must be an object' };
+  const { repo, number, title, url, base, head } = v;
+  if (typeof repo !== 'string' || typeof number !== 'number' || !Number.isInteger(number)) {
+    return { ok: false, message: 'pr needs a repo and an integer number' };
+  }
+  const strings: Record<string, unknown> = { title, url, base, head };
+  for (const [k, val] of Object.entries(strings)) {
+    if (val !== undefined && typeof val !== 'string')
+      return { ok: false, message: `pr.${k} must be a string` };
+  }
+  const numbers = ['additions', 'deletions'] as const;
+  const out: Record<string, unknown> = {
+    repo,
+    number,
+    title: typeof title === 'string' ? title : '',
+    url: typeof url === 'string' ? url : '',
+    base: typeof base === 'string' ? base : '',
+    head: typeof head === 'string' ? head : '',
+  };
+  for (const k of numbers) {
+    const n = optionalNumber(v[k], `pr.${k}`);
+    if (!n.ok) return n;
+    if (n.value !== undefined) out[k] = n.value;
+  }
+  for (const k of ['checks', 'mergeState', 'mergedBy'] as const) {
+    const str = optionalString(v[k], `pr.${k}`);
+    if (!str.ok) return str;
+    if (str.value !== undefined) out[k] = str.value;
+  }
+  const autoMerge = optionalBool(v.autoMerge, 'pr.autoMerge');
+  if (!autoMerge.ok) return autoMerge;
+  if (autoMerge.value !== undefined) out.autoMerge = autoMerge.value;
+  return { ok: true, value: out as unknown as TimelineEventInput['pr'] };
+}
+
+function parseEventTask(v: unknown): Parsed<TimelineEventInput['task'] | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (!isObject(v)) return { ok: false, message: 'task must be an object' };
+  const { id, title, from, to } = v;
+  if (typeof id !== 'string' || !TASK_ID_RE.test(id))
+    return { ok: false, message: 'task.id must be a T-<n> id' };
+  if (typeof title !== 'string') return { ok: false, message: 'task.title must be a string' };
+  for (const [k, val] of [
+    ['from', from],
+    ['to', to],
+  ] as const) {
+    if (val !== undefined && !isTaskStatus(val))
+      return { ok: false, message: `task.${k} must be a task status` };
+  }
+  return {
+    ok: true,
+    value: {
+      id,
+      title,
+      ...(isTaskStatus(from) ? { from } : {}),
+      ...(isTaskStatus(to) ? { to } : {}),
+    },
+  };
+}
+
+/**
+ * One event another hub forwards into this one's log. Whitelisted field by
+ * field: `id` is minted here (a client id would let one caller overwrite
+ * another's row), while `at` is kept because a forward can be late and the log
+ * is ordered by when the thing HAPPENED.
+ */
+export function parseTimelineEvent(body: unknown): Parsed<TimelineEventInput> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { type, actor } = body;
+  if (typeof type !== 'string' || !(TIMELINE_EVENT_TYPES as readonly string[]).includes(type)) {
+    return { ok: false, message: `type must be one of ${TIMELINE_EVENT_TYPES.join(', ')}` };
+  }
+  if (typeof actor !== 'string' || !(FORWARDED_ACTORS as readonly string[]).includes(actor)) {
+    return { ok: false, message: `actor must be one of ${FORWARDED_ACTORS.join(', ')}` };
+  }
+  const out: Record<string, unknown> = { type, actor };
+
+  for (const field of [
+    'managerId',
+    'boxId',
+    'boxName',
+    'agent',
+    'branch',
+    'base',
+    'projectId',
+  ] as const) {
+    const parsed = optionalString(body[field], field);
+    if (!parsed.ok) return parsed;
+    if (parsed.value !== undefined) out[field] = parsed.value;
+  }
+  for (const [field, max] of [
+    ['text', TEXT_MAX],
+    ['prompt', PROMPT_MAX],
+    ['key', KEY_MAX],
+  ] as const) {
+    const parsed = optionalCapped(body[field], field, max);
+    if (!parsed.ok) return parsed;
+    if (parsed.value !== undefined) out[field] = parsed.value;
+  }
+  for (const field of ['turn', 'additions', 'deletions'] as const) {
+    const parsed = optionalNumber(body[field], field);
+    if (!parsed.ok) return parsed;
+    if (parsed.value !== undefined) out[field] = parsed.value;
+  }
+  const at = optionalIso(body.at, 'at');
+  if (!at.ok) return at;
+  if (at.value !== undefined) out.at = at.value;
+  const noteKind = optionalString(body.noteKind, 'noteKind');
+  if (!noteKind.ok) return noteKind;
+  if (noteKind.value !== undefined) {
+    if (!NOTE_KINDS.includes(noteKind.value as NoteKindValue))
+      return { ok: false, message: `noteKind must be one of ${NOTE_KINDS.join(', ')}` };
+    out.noteKind = noteKind.value;
+  }
+  const boxRunning = optionalBool(body.boxRunning, 'boxRunning');
+  if (!boxRunning.ok) return boxRunning;
+  if (boxRunning.value !== undefined) out.boxRunning = boxRunning.value;
+  const taskIds = optionalStringArray(body.taskIds, 'taskIds');
+  if (!taskIds.ok) return taskIds;
+  if (taskIds.value) out.taskIds = taskIds.value;
+  const pr = parseEventPr(body.pr);
+  if (!pr.ok) return pr;
+  if (pr.value) out.pr = pr.value;
+  const task = parseEventTask(body.task);
+  if (!task.ok) return task;
+  if (task.value) out.task = task.value;
+
+  return { ok: true, value: out as TimelineEventInput };
 }
 
 export interface WorkspaceProjectInput {

@@ -32,6 +32,9 @@ import {
   type CreateBoxFn,
   type Store,
 } from '@agentbox/relay/control-plane';
+// The full library entry: the timeline sink is host-side state, not part of the
+// lean control-plane surface the Next app imports.
+import { timelineSink } from '@agentbox/relay';
 import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
@@ -414,9 +417,74 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
   });
 }
 
+/**
+ * `box.ready` / `box.failed` for a create job the worker just finished, in the
+ * workspace the job's repo belongs to. The control box holds no checkout, so the
+ * repo is the join; the job-scoped key keeps a re-reported completion to one row.
+ *
+ * Best-effort: a log miss must never change a job's status.
+ */
+export async function recordCreateJobRowTimeline(
+  store: Store,
+  id: string,
+  status: 'done' | 'failed',
+  result: { boxId?: string; error?: string },
+): Promise<void> {
+  try {
+    const job = await store.getCreateJob?.(id);
+    if (!job) return;
+    const ws = await timelineSink().workspaceFor({ originUrl: job.request.repoUrl });
+    if (!ws) return;
+    const reg = result.boxId ? await store.getBox(result.boxId).catch(() => undefined) : undefined;
+    const ready = status === 'done';
+    const name = reg?.name ?? job.request.name;
+    const branch = reg?.worktrees?.[0]?.branch;
+    await timelineSink().record(ws.id, {
+      type: ready ? 'box.ready' : 'box.failed',
+      actor: 'hub',
+      key: `job:${id}:${ready ? 'ready' : 'failed'}`,
+      ...(result.boxId ? { boxId: result.boxId } : {}),
+      ...(name ? { boxName: name } : {}),
+      ...(job.request.agent && job.request.agent !== 'none' ? { agent: job.request.agent } : {}),
+      ...(branch ? { branch } : {}),
+      ...(job.request.branch ? { base: job.request.branch } : {}),
+      ...(!ready && result.error ? { text: result.error.slice(0, 500) } : {}),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * The store the drain loop writes through: identical, except that completing a
+ * create job also logs it. A proxy rather than a copy — a `Store` is a class
+ * instance whose methods live on its prototype, and spreading one loses them.
+ */
+function storeWithCreateTimeline(store: Store): Store {
+  return new Proxy(store, {
+    get(target, prop, receiver) {
+      if (prop !== 'completeCreateJob') {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      const complete = target.completeCreateJob;
+      if (!complete) return undefined;
+      return async (
+        id: string,
+        status: 'done' | 'failed',
+        result: { boxId?: string; error?: string },
+      ): Promise<void> => {
+        await complete.call(target, id, status, result);
+        await recordCreateJobRowTimeline(target, id, status, result);
+      };
+    },
+  });
+}
+
 /** Start the resident worker loop. Returns a handle to stop it on shutdown. */
 export function startHubWorker(opts: HubWorkerOptions): HubWorkerHandle {
-  const { store, log } = opts;
+  const { log } = opts;
+  const store = storeWithCreateTimeline(opts.store);
   if (!store.claimNextCreateJob || !store.completeCreateJob) {
     log('worker: store has no create-job queue; not starting');
     return { stop: () => Promise.resolve() };

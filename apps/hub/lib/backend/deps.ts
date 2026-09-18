@@ -81,6 +81,12 @@ export interface BackendDeps {
   boxFact?(id: string, opts?: { withState?: boolean }): Promise<TimelineBoxFact | undefined>;
   /** The branch a project's host checkout is on (a create's default base); undefined on any failure. */
   projectBranch?(projectId: string): Promise<string | undefined>;
+  /**
+   * A project's folder on this hub. The workspace join needs it whenever the
+   * store is elsewhere: a project id is a hash of THIS machine's path, and a
+   * control box has never seen it.
+   */
+  projectRoot?(projectId: string): Promise<string | undefined>;
   /** `git diff --shortstat` in a running box; null when the exec fails. */
   boxDiffStat?(box: TimelineBoxFact): Promise<DiffStat | null>;
   /** Box ids with a pending host-action approval. */

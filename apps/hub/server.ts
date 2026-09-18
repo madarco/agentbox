@@ -35,6 +35,7 @@ import {
   registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
+import { configureTimelineSinkFromConfig } from '@agentbox/relay';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
@@ -214,6 +215,16 @@ async function main(): Promise<void> {
   // deferred poll-mode path only.
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
+  // Where this hub's timeline rows go. With a control box configured the store
+  // (workspaces, tasks, log) is THERE, so the rows this hub produces for its own
+  // boxes are forwarded rather than written to a disk that has no workspace on
+  // it. A control box resolves to none — it is the store.
+  const sink = await configureTimelineSinkFromConfig({
+    warn: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
+  if (sink.kind === 'remote') {
+    process.stdout.write('agentbox-hub: timeline events forward to the control box\n');
+  }
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
   // Payload-carrying prompt fan-out for the `/api/v1` prompt-stream route (the
   // attach footer). Reaches the relay handle's in-process subscribers/prompts/

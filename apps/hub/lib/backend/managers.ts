@@ -32,7 +32,7 @@ import {
   readTasks,
   readTimeline,
   readWorkspace,
-  recordTimelineEvent,
+  timelineSink,
   removeManagerRecord,
   resumeManagerSession,
   sendKeysToManager,
@@ -77,6 +77,7 @@ import type {
   ManagerSessionsResult,
   StartManagerInput,
   TimelineMeta,
+  TimelineSessionRef,
 } from '../boxes/backend-types';
 import type { ManagerView, WorkspaceView } from '../boxes/types';
 
@@ -199,12 +200,25 @@ export function createManagerBackend(
 
   const lookupTurn = opts.sessionTurn ?? sessionTurn;
 
-  /** A manager as a timeline actor, with its current turn when its transcript is here. */
-  async function managerStamp(rec: ManagerRecord): Promise<TimelineStamp> {
+  /**
+   * A manager as a timeline actor, with its current turn.
+   *
+   * The transcript is the truth when it is HERE. When it is not — the manager
+   * runs on a PC and this is its control box — the only reader is that PC, so
+   * the turn it reported with the call is used instead. `reported` is
+   * client-asserted, hence never preferred over a transcript this hub can read.
+   */
+  async function managerStamp(
+    rec: ManagerRecord,
+    reported?: { turn?: number; prompt?: string },
+  ): Promise<TimelineStamp> {
+    const local = storeIsLocal(rec);
     const turn =
-      rec.sessionId && storeIsLocal(rec)
+      rec.sessionId && local
         ? await lookupTurn(rec.agent, rec.cwd, rec.sessionId).catch(() => undefined)
-        : undefined;
+        : !local && reported?.turn !== undefined
+          ? { turn: reported.turn, ...(reported.prompt ? { prompt: reported.prompt } : {}) }
+          : undefined;
     return {
       actor: 'manager',
       managerId: rec.id,
@@ -213,7 +227,7 @@ export function createManagerBackend(
   }
 
   async function timelineStamp(
-    ref: { agent: string; sessionId: string } | { managerId: string },
+    ref: TimelineSessionRef | { managerId: string },
     wsId?: string,
   ): Promise<TimelineStamp | undefined> {
     const rec =
@@ -221,7 +235,7 @@ export function createManagerBackend(
         ? await findManager(ref.managerId)
         : await findManagerBySession(ref.agent, ref.sessionId);
     if (!rec || (wsId !== undefined && rec.workspaceId !== wsId)) return undefined;
-    return managerStamp(rec);
+    return managerStamp(rec, 'managerId' in ref ? undefined : ref);
   }
 
   /** A lifecycle event about `rec`, by whoever the meta names in its workspace. Best-effort. */
@@ -230,7 +244,7 @@ export function createManagerBackend(
     type: TimelineEventType,
     meta: TimelineMeta | undefined,
   ): Promise<void> {
-    await recordTimelineEvent(rec.workspaceId, {
+    await timelineSink().record(rec.workspaceId, {
       type,
       ...stampFields(await stampInWorkspace(meta, rec.workspaceId, timelineStamp)),
       managerId: rec.id,
@@ -678,7 +692,7 @@ export function createManagerBackend(
     async addManagerNote(id, input): Promise<ManagerNoteResult> {
       const rec = await findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      const event = await recordTimelineEvent(rec.workspaceId, {
+      const event = await timelineSink().record(rec.workspaceId, {
         type: 'manager.note',
         ...stampFields(await managerStamp(rec)),
         text: input.text,
@@ -729,7 +743,7 @@ export function createManagerBackend(
           : undefined,
         stampInWorkspace(meta, rec.workspaceId, timelineStamp),
       ]);
-      const event = await recordTimelineEvent(rec.workspaceId, {
+      const event = await timelineSink().record(rec.workspaceId, {
         type: 'manager.message',
         ...stampFields(stamp),
         managerId: rec.id,
