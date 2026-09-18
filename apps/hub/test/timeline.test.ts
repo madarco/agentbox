@@ -476,6 +476,92 @@ describe('timeline writes and reads', () => {
     expect(h.gh).not.toHaveBeenCalled();
   });
 
+  it('syncs a workspace that is only repos, with no folder and no cwd anywhere', async () => {
+    const h = harness();
+    const { workspaces } = backends(h);
+    const repoUrl = 'git@github.com:acme/storefront.git';
+    // Registered from ANOTHER machine: this hub holds no folder for it, which
+    // is the shape of every workspace on a control box.
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'otherpc', repoUrl }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    h.boxes.push({
+      id: 'box1',
+      name: 'checkout-copy',
+      branches: ['agentbox/checkout-copy'],
+      state: 'running',
+      projectRoot: '/workspace',
+      projectId: 'p1',
+      originUrl: repoUrl,
+      host: 'laptop',
+    });
+    const calls: { args: string[]; cwd?: string }[] = [];
+    h.gh.mockImplementation(async (args: string[], opts?: { cwd?: string }) => {
+      calls.push({ args, ...(opts?.cwd ? { cwd: opts.cwd } : {}) });
+      if (args[0] === 'api') return { exitCode: 0, stdout: 'me\n', stderr: '' };
+      if (args[0] === 'repo') {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            nameWithOwner: 'acme/storefront',
+            url: 'https://github.com/acme/storefront',
+          }),
+          stderr: '',
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify([
+          {
+            number: 12,
+            title: 'Checkout copy',
+            url: 'https://github.com/acme/storefront/pull/12',
+            headRefName: 'agentbox/checkout-copy',
+            baseRefName: 'main',
+            state: 'OPEN',
+            author: { login: 'someone' },
+          },
+        ]),
+        stderr: '',
+      };
+    });
+    const sync = createGithubPrSync(h.deps);
+    const ws = (await readWorkspace(added.workspace.id))!;
+    expect(await sync.syncNow(ws)).toBe('ok');
+    // The repo is addressed by name, never by folder.
+    expect(calls.every((c) => c.cwd === undefined)).toBe(true);
+    expect(calls.find((c) => c.args[0] === 'repo')?.args).toEqual([
+      'repo',
+      'view',
+      'acme/storefront',
+      '--json',
+      'nameWithOwner,url',
+    ]);
+    const opened = (await readTimeline(ws.id)).find((e) => e.type === 'pr.opened');
+    expect(opened).toMatchObject({ boxId: 'box1', pr: { repo: 'acme/storefront', number: 12 } });
+    expect(sync.webUrlForRepoUrl('https://github.com/acme/storefront')).toBe(
+      'https://github.com/acme/storefront',
+    );
+  });
+
+  it('reports GitHub unavailable when a project names no repo', async () => {
+    const h = harness();
+    const { workspaces } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    h.gh.mockImplementation(async (args: string[]) =>
+      args[0] === 'api'
+        ? { exitCode: 0, stdout: 'me\n', stderr: '' }
+        : { exitCode: 1, stdout: '', stderr: 'no' },
+    );
+    const sync = createGithubPrSync(h.deps);
+    expect(await sync.syncNow((await readWorkspace(added.workspace.id))!)).toBe('unavailable');
+    expect(h.gh.mock.calls.some((c) => (c[0] as string[])[0] === 'repo')).toBe(false);
+  });
+
   it('reports GitHub unavailable when gh is not logged in', async () => {
     const h = harness();
     const { workspaces } = backends(h);
@@ -1030,6 +1116,53 @@ describe('push rows', () => {
       [3, 0],
       [8, 0],
     ]);
+  });
+
+  it('measures the push in the box when this hub holds no checkout of it', async () => {
+    const h = harness();
+    const { workspaces } = backends(h);
+    const repoUrl = 'git@github.com:acme/storefront.git';
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'otherpc', repoUrl }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    // What a control box has: the create job's temp clone, long since deleted.
+    h.boxes.push({
+      id: 'box1',
+      name: 'checkout-copy',
+      branches: ['agentbox/checkout-copy'],
+      state: 'running',
+      projectRoot: '/tmp/agentbox-hub-worker-gone',
+      projectId: 'p1',
+      originUrl: repoUrl,
+      host: 'laptop',
+    });
+    const asked: string[] = [];
+    h.deps.boxPushStat = async (boxId) => {
+      asked.push(boxId);
+      return { additions: 21, deletions: 4 };
+    };
+    const ok = async () => ({ ok: true as const });
+    const hub = withBoxTimeline(
+      {
+        create: ok,
+        start: ok,
+        stop: ok,
+        destroy: ok,
+        gitPush: ok,
+        gitPushHost: ok,
+        gitCheckout: ok,
+        gitNewBranch: ok,
+      } as unknown as HubBackend,
+      { deps: h.deps, stampFor: async () => undefined },
+    );
+    await hub.gitPush('box1', {});
+    await backgroundSettled();
+
+    expect(asked).toEqual(['box1']);
+    const pushes = (await readTimeline(added.workspace.id)).filter((e) => e.type === 'git.push');
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toMatchObject({ boxId: 'box1', additions: 21, deletions: 4 });
   });
 });
 

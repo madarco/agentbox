@@ -43,3 +43,46 @@ describe('the origin behind a box fact', () => {
     expect(calls).toBe(3);
   });
 });
+
+describe('the +/- lines of a push, measured in the box', () => {
+  function execSeams(exec: Provider['exec']) {
+    return createBoxFactSeams({
+      listBoxes: async () => [box as never],
+      readBoxRecord: async (id) => (id === 'box1' ? box : undefined),
+      providerForBox: async () => ({ exec }) as unknown as Provider,
+      hostname: () => 'laptop',
+    });
+  }
+
+  it('runs git in the box workspace and answers the shortstat', async () => {
+    const argvs: string[][] = [];
+    const cwds: (string | undefined)[] = [];
+    const s = execSeams(async (_b, argv, opts) => {
+      argvs.push(argv);
+      cwds.push(opts?.cwd);
+      const joined = argv.join(' ');
+      if (joined === 'git rev-parse --verify --quiet HEAD^{commit}') {
+        return { exitCode: 0, stdout: 'f'.repeat(40), stderr: '' };
+      }
+      if (joined === `git merge-base origin/HEAD ${'f'.repeat(40)}`) {
+        return { exitCode: 0, stdout: 'a'.repeat(40), stderr: '' };
+      }
+      if (joined === `git diff --shortstat ${'a'.repeat(40)}..${'f'.repeat(40)}`) {
+        return {
+          exitCode: 0,
+          stdout: ' 2 files changed, 6 insertions(+), 1 deletion(-)',
+          stderr: '',
+        };
+      }
+      return { exitCode: 1, stdout: '', stderr: '' };
+    });
+    expect(await s.boxPushStat('box1')).toEqual({ additions: 6, deletions: 1 });
+    expect(argvs.every((a) => a[0] === 'git')).toBe(true);
+    expect(new Set(cwds)).toEqual(new Set(['/workspace']));
+  });
+
+  it('answers nothing for a box this hub has no record of', async () => {
+    const s = execSeams(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    expect(await s.boxPushStat('gone')).toBeUndefined();
+  });
+});

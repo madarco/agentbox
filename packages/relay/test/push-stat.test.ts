@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import {
+  boxPushLineStat,
   parseShortstat,
   pushedRef,
   pushLineStat,
   readRefTip,
+  type BoxGitExec,
 } from '../src/workspaces/push-stat.js';
 
 async function git(repo: string, ...args: string[]): Promise<string> {
@@ -133,5 +135,94 @@ describe('pushLineStat', () => {
       await pushLineStat({ repo: empty, ref: 'refs/heads/main', branch: 'main' }),
     ).toBeUndefined();
     expect(await readRefTip(empty, 'refs/heads/main')).toBeUndefined();
+  });
+});
+
+/**
+ * A box's git, as `provider.exec` hands it over: answers what `answers` maps the
+ * joined argv to, exit 1 for anything else (git's own "unknown revision").
+ */
+function fakeBoxGit(answers: Record<string, string>): {
+  exec: BoxGitExec;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  const exec: BoxGitExec = async (args) => {
+    calls.push(args);
+    const hit = answers[args.join(' ')];
+    return hit === undefined ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: `${hit}\n` };
+  };
+  return { exec, calls };
+}
+
+const HEAD_SHA = 'f'.repeat(40);
+const BASE_SHA = 'a'.repeat(40);
+const HEAD_ARGS = 'rev-parse --verify --quiet HEAD^{commit}';
+
+describe('boxPushLineStat', () => {
+  it('measures from the merge base with the default branch, falling through the refs', async () => {
+    const { exec, calls } = fakeBoxGit({
+      [HEAD_ARGS]: HEAD_SHA,
+      [`merge-base origin/main ${HEAD_SHA}`]: BASE_SHA,
+      [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]:
+        ' 2 files changed, 9 insertions(+), 4 deletions(-)',
+    });
+    expect(await boxPushLineStat(exec)).toEqual({ additions: 9, deletions: 4 });
+    // origin/HEAD is tried first and answers nothing, so origin/main is asked next.
+    expect(calls.map((a) => a.join(' '))).toEqual([
+      HEAD_ARGS,
+      `merge-base origin/HEAD ${HEAD_SHA}`,
+      `merge-base origin/main ${HEAD_SHA}`,
+      `diff --shortstat ${BASE_SHA}..${HEAD_SHA}`,
+    ]);
+  });
+
+  it('reaches the local branch names when the box has no remote-tracking refs', async () => {
+    const { exec, calls } = fakeBoxGit({
+      [HEAD_ARGS]: HEAD_SHA,
+      [`merge-base master ${HEAD_SHA}`]: BASE_SHA,
+      [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]: ' 1 file changed, 1 insertion(+)',
+    });
+    expect(await boxPushLineStat(exec)).toEqual({ additions: 1, deletions: 0 });
+    expect(calls.map((a) => a[1])).toContain('main');
+  });
+
+  it('measures from the old tip when the push fast-forwarded it', async () => {
+    const before = 'b'.repeat(40);
+    const { exec, calls } = fakeBoxGit({
+      [HEAD_ARGS]: HEAD_SHA,
+      [`merge-base --is-ancestor ${before} ${HEAD_SHA}`]: '',
+      [`diff --shortstat ${before}..${HEAD_SHA}`]: ' 1 file changed, 3 insertions(+)',
+    });
+    expect(await boxPushLineStat(exec, { before })).toEqual({ additions: 3, deletions: 0 });
+    expect(calls.some((a) => a[1] === 'origin/HEAD')).toBe(false);
+  });
+
+  it('falls back to the default branch when the old tip was rewritten', async () => {
+    const before = 'b'.repeat(40);
+    const { exec } = fakeBoxGit({
+      [HEAD_ARGS]: HEAD_SHA,
+      [`merge-base origin/HEAD ${HEAD_SHA}`]: BASE_SHA,
+      [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]: ' 1 file changed, 7 insertions(+)',
+    });
+    expect(await boxPushLineStat(exec, { before })).toEqual({ additions: 7, deletions: 0 });
+  });
+
+  it('is undefined for a push that moved nothing, an unreadable HEAD or no base', async () => {
+    const moved = fakeBoxGit({ [HEAD_ARGS]: HEAD_SHA });
+    expect(await boxPushLineStat(moved.exec, { before: HEAD_SHA })).toBeUndefined();
+    expect(await boxPushLineStat(fakeBoxGit({}).exec)).toBeUndefined();
+    expect(await boxPushLineStat(moved.exec)).toBeUndefined();
+    const empty = fakeBoxGit({
+      [HEAD_ARGS]: HEAD_SHA,
+      [`merge-base origin/HEAD ${HEAD_SHA}`]: BASE_SHA,
+      [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]: '',
+    });
+    expect(await boxPushLineStat(empty.exec)).toBeUndefined();
+  });
+
+  it('gives up on a box that does not answer within the budget', async () => {
+    const exec: BoxGitExec = () => new Promise(() => {});
+    expect(await boxPushLineStat(exec, { timeoutMs: 20 })).toBeUndefined();
   });
 });

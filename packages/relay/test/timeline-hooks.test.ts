@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { recordBoxGitPush, recordCreateJobTimeline } from '../src/timeline-hooks.js';
+import {
+  recordBoxGitPush,
+  recordBoxPushed,
+  recordCreateJobTimeline,
+} from '../src/timeline-hooks.js';
+import { configureBoxPushStat } from '../src/workspaces/push-stat.js';
 import {
   configureTimelineSink,
   type TimelineSink,
@@ -58,6 +63,7 @@ function job(over: Partial<QueueJob> = {}): QueueJob {
 
 afterEach(() => {
   configureTimelineSink(null);
+  configureBoxPushStat(null);
 });
 
 describe('the relay timeline hooks', () => {
@@ -122,5 +128,65 @@ describe('the relay timeline hooks', () => {
       key: 'job:j1:failed',
       text: 'provider refused',
     });
+  });
+});
+
+describe('a push the box made itself (`git.pushed`)', () => {
+  it('records one row, keyed on the resulting tip so a retry lands once', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    const notice = { branch: 'agentbox/smoke', before: 'a'.repeat(40), after: 'b'.repeat(40) };
+    await recordBoxPushed(PUSH_CTX, notice);
+    await recordBoxPushed(PUSH_CTX, notice);
+    expect(recorded.map((r) => r.input.key)).toEqual([
+      `push:box1:${'b'.repeat(40)}`,
+      `push:box1:${'b'.repeat(40)}`,
+    ]);
+    expect(recorded[0]?.input).toMatchObject({
+      type: 'git.push',
+      actor: 'box',
+      boxId: 'box1',
+      branch: 'agentbox/smoke',
+    });
+  });
+
+  it('measures the push in the box, with no host repo in sight', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    const asked: { boxId: string; before?: string }[] = [];
+    configureBoxPushStat(async (boxId, opts) => {
+      asked.push({ boxId, ...(opts?.before ? { before: opts.before } : {}) });
+      return { additions: 12, deletions: 3 };
+    });
+    await recordBoxPushed(
+      { boxId: 'box1', hostPath: '', originUrl: 'git@github.com:acme/storefront.git' },
+      { branch: 'agentbox/smoke', before: 'a'.repeat(40), after: 'b'.repeat(40) },
+    );
+    expect(asked).toEqual([{ boxId: 'box1', before: 'a'.repeat(40) }]);
+    expect(recorded[0]?.input).toMatchObject({ additions: 12, deletions: 3 });
+  });
+
+  it('records nothing for a report that names no resulting commit', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    await recordBoxPushed(PUSH_CTX, { branch: 'agentbox/smoke' });
+    await recordBoxPushed(PUSH_CTX, { after: 'not a sha' });
+    expect(recorded).toEqual([]);
+  });
+
+  it('keeps the host-sanctioned branch when the report names a bogus one', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    await recordBoxPushed(PUSH_CTX, { branch: 'main; rm -rf /', after: 'c'.repeat(40) });
+    expect(recorded[0]?.input).toMatchObject({ branch: 'agentbox/smoke' });
+  });
+
+  it('survives a box stat that throws', async () => {
+    const { sink, recorded } = stubSink();
+    configureTimelineSink(sink);
+    configureBoxPushStat(() => Promise.reject(new Error('box is paused')));
+    await recordBoxPushed(PUSH_CTX, { after: 'd'.repeat(40) });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.input.additions).toBeUndefined();
   });
 });
