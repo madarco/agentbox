@@ -187,6 +187,45 @@ export function retryOnLocalHub(err: unknown, host: string = hostname()): boolea
   return typeof named === 'string' && named === host;
 }
 
+/**
+ * Run a `manager message` attempt against the hub that HOLDS the record, and
+ * retry against the hub on this machine when it refuses because the session
+ * runs here.
+ *
+ * The retry has to be decided INSIDE the callback: `withHubClient` never
+ * rethrows — it reports the {@link HubApiError} and sets `process.exitCode` —
+ * so a `catch` around it would never see the refusal, and the user would get
+ * the control box's "runs on <host>" instead of the message being typed. A
+ * refusal this machine can serve is therefore swallowed here and handed back as
+ * a value; anything else is rethrown so the mapper still prints it.
+ */
+export async function sendManagerMessage(
+  send: (client: HubApiClient) => Promise<void>,
+  deps: { withHub?: typeof withHubClient; host?: string } = {},
+): Promise<void> {
+  const withHub = deps.withHub ?? withHubClient;
+  const attempt = (
+    opts: Parameters<typeof withHubClient>[0],
+  ): Promise<'sent' | 'elsewhere' | undefined> =>
+    withHub(opts, async (client) => {
+      try {
+        await send(client);
+        return 'sent' as const;
+      } catch (err) {
+        if (retryOnLocalHub(err, deps.host)) return 'elsewhere' as const;
+        throw err;
+      }
+    });
+  const exitBefore = process.exitCode;
+  const first = await attempt(workspaceHub());
+  if (first !== 'elsewhere') return;
+  // The record hub refused an op only this machine can do. Nothing was printed
+  // for that refusal, but a failed target resolution may still have set an exit
+  // code; a retry that works clears it.
+  const retried = await attempt({ preferLocal: true });
+  if (retried === 'sent') process.exitCode = exitBefore;
+}
+
 /** Attach to a hub-run manager's tmux session in this terminal (or a new pane). */
 async function attachToSession(m: HubApiManager, openIn?: AttachOpenIn): Promise<boolean> {
   if (!m.tmuxSession || !m.attachCommand) {
@@ -532,7 +571,7 @@ const messageCommand = new Command('message')
       ...(prNumber !== undefined ? { prNumber } : {}),
       ...(opts.repo ? { repo: opts.repo } : {}),
     };
-    const send = async (client: HubApiClient): Promise<void> => {
+    await sendManagerMessage(async (client) => {
       const target = await mustManager(client, id);
       const res = await client.sendManagerMessage(target.id, body);
       log.success(
@@ -540,16 +579,7 @@ const messageCommand = new Command('message')
           ? `resumed ${res.manager.id} with the message`
           : `typed into ${res.manager.id}`,
       );
-    };
-    // The record hub first: it is where the message is logged. It can only TYPE
-    // when it is also the machine the session runs on, so a refusal naming this
-    // machine is retried against the hub here, which can.
-    try {
-      await withHubClient(workspaceHub(), send);
-    } catch (err) {
-      if (!retryOnLocalHub(err)) throw err;
-      await withHubClient({ preferLocal: true }, send);
-    }
+    });
   });
 
 const forgetCommand = new Command('forget')
