@@ -679,14 +679,20 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
 
   hub.create = async (input, meta) => {
     const res = await create(input, meta);
-    if (!res.ok || !input.projectId) return res;
+    // Exactly one of the two is set: a local create names a project, a hub-routed
+    // one names the repo it will clone and holds no folder for it. Guarding on
+    // `projectId` alone made the repo join below unreachable.
     const projectId = input.projectId;
+    const repoUrl = input.repoUrl;
+    if (!res.ok || (!projectId && !repoUrl)) return res;
     inBackground(async () => {
       const records = await listWorkspaces();
-      // The repo first: a hub-routed create names one and may hold no folder for it.
+      // The project (a folder on this hub) is the more specific key, as it is for
+      // a box; the repo is what a create with no folder here joins by.
       const ws =
-        (input.repoUrl ? workspaceForBox(records, { originUrl: input.repoUrl }) : null) ??
-        records.find((w) => workspaceProjectIds(w, hostOf(deps)).includes(projectId));
+        (projectId
+          ? records.find((w) => workspaceProjectIds(w, hostOf(deps)).includes(projectId))
+          : null) ?? (repoUrl ? workspaceForBox(records, { originUrl: repoUrl }) : null);
       if (!ws) return;
       // The manager a create names is the one the box belongs to, whoever sent it.
       const named = input.managerId
@@ -696,7 +702,8 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const name = input.name?.trim();
       const branch = input.opts?.useBranch ?? (name ? `agentbox/${name}` : undefined);
       const base =
-        input.fromBranch?.trim() || (await deps.projectBranch?.(projectId).catch(() => undefined));
+        input.fromBranch?.trim() ||
+        (projectId ? await deps.projectBranch?.(projectId).catch(() => undefined) : undefined);
       await recordTimelineEvent(ws.id, {
         type: 'box.created',
         ...stampFields(stamp),
@@ -705,7 +712,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
         ...(input.agent !== 'none' ? { agent: input.agent } : {}),
         ...(branch ? { branch } : {}),
         ...(base ? { base } : {}),
-        projectId,
+        ...(projectId ? { projectId } : {}),
       });
       deps.notify();
     });

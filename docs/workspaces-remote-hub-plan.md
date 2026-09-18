@@ -126,8 +126,10 @@ the boxes are; docker/queue events from the PC hub are forwarded losslessly.
   30 s-cached `GET /workspaces` for the join. Configured from `resolveRemoteHub()` at hub start and
   from config in the queue worker; a warning in the job log when remote and unreachable.
 - Control-box create hooks: `hub.create` records `box.created` via
-  `workspaceForBox({ originUrl: input.repoUrl })`; `apps/hub/lib/hub-worker.ts` `completeCreateJob`
-  records `box.ready|failed` (`key job:<id>:*`). `base`: the CLI sends `fromBranch` on every
+  `workspaceForBox({ originUrl: input.repoUrl })` (landed in Phase 1's review fixes);
+  `apps/hub/lib/hub-worker.ts` `completeCreateJob` records `box.ready|failed` (`key job:<id>:*`).
+  The queue-side seam still keys only on `{host, projectRoot}`, so `QueueJobCreateOpts` /
+  `CreateJobRow` must carry `repoUrl` for `recordCreateJobTimeline` to make the same join. `base`: the CLI sends `fromBranch` on every
   hub-routed create (default `readCurrentBranch(projectRoot)`); `deps.projectBranch` stays as the
   local fallback.
 - Turn stamping from the PC: `HubApiClient` sends `X-AgentBox-Session-Turn: <turn>[;<prompt>]`

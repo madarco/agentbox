@@ -1031,6 +1031,44 @@ describe('push rows', () => {
   });
 });
 
+describe('a hub-routed create', () => {
+  it('records box.created in the workspace that lists the repo, with no folder here', async () => {
+    const h = harness();
+    const { workspaces, managers } = backends(h);
+    const root = await folder();
+    const repoUrl = 'git@github.com:acme/storefront.git';
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(root, { projects: [{ path: join(root, 'storefront'), repoUrl }] }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    const hub = withBoxTimeline(
+      {
+        // The control-box shape: a repo to clone, and no project id at all.
+        create: async () => ({ ok: true as const, jobId: 'job9' }),
+        start: async () => ({ ok: true as const }),
+        stop: async () => ({ ok: true as const }),
+        destroy: async () => ({ ok: true as const }),
+        gitPush: async () => ({ ok: true as const }),
+        gitPushHost: async () => ({ ok: true as const }),
+        gitCheckout: async () => ({ ok: true as const }),
+        gitNewBranch: async () => ({ ok: true as const }),
+      } as unknown as HubBackend,
+      { deps: h.deps, stampFor: managers.timelineStamp },
+    );
+    await hub.create({ repoUrl, agent: 'claude', name: 'shopfront' } as Parameters<
+      HubBackend['create']
+    >[0]);
+    await backgroundSettled();
+    const created = (await readTimeline(added.workspace.id)).filter(
+      (e) => e.type === 'box.created',
+    );
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ boxName: 'shopfront', key: 'job:job9:created' });
+    // No folder on this hub, so no project id to name.
+    expect(created[0]?.projectId).toBeUndefined();
+  });
+});
+
 describe('a destroy releases the box', () => {
   const okResult = async () => ({ ok: true as const });
   const hubWith = (destroy: () => Promise<{ ok: boolean; error?: string }>): HubBackend =>
