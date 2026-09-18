@@ -1,7 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { existsSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
@@ -24,12 +23,10 @@ import {
   managerSessionName,
   managerStatus,
   newManagerId,
-  readManagerExit,
   readManagers,
   readReconciledManagers,
   reconcileManagers,
   removeManagerRecord,
-  resolveWorkspaceDir,
   resumeManagerSession,
   RESUMABLE_MANAGER_AGENTS,
   managerStatusFormat,
@@ -39,13 +36,27 @@ import {
   tmuxSessionExists,
   toManagerView,
   upsertDetectedManager,
-  usesLegacySession,
+  fileManagerStore,
   type ManagerExec,
   type ManagerRecord,
   type WorkTask,
 } from '../src/workspaces/index.js';
 
 const noRegister = { register: async () => {} };
+
+/**
+ * A start as a hub performs it: open the session, then persist what it produced
+ * through the store. The two are separate now — the hub that RUNS a session need
+ * not be the one that holds its record.
+ */
+async function startAndRecord(
+  input: Parameters<typeof startManagerSession>[0],
+): Promise<ManagerRecord> {
+  const registration = await startManagerSession({ hostname: () => 'laptop', ...input });
+  const rec = await fileManagerStore().registerManager(input.wsId, registration);
+  if (!rec) throw new Error('the manager was not written');
+  return rec;
+}
 
 interface Call {
   file: string;
@@ -160,6 +171,7 @@ function record(over: Partial<ManagerRecord> = {}): ManagerRecord {
     agent: 'claude',
     kind: 'external',
     cwd: '/work',
+    host: 'laptop',
     boxIds: [],
     boxJobIds: [],
     createdAt: at,
@@ -172,8 +184,8 @@ describe('startManagerSession', () => {
   it('spawns a detached tmux session named after the manager id, under a login shell', async () => {
     const { id, root } = await makeWorkspace();
     const { calls, exec } = fakeExec();
-    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' });
-    const rec = await startManagerSession({
+    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' });
+    const rec = await startAndRecord({
       wsId: id,
       manager,
       argv: ['claude'],
@@ -211,15 +223,15 @@ describe('startManagerSession', () => {
       'window-size',
       'latest',
     ]);
-    expect(rec).toMatchObject({ kind: 'hub', tmuxSession: `agentbox-manager-${manager.id}` });
+    expect(rec).toMatchObject({ kind: 'tmux', tmuxSession: `agentbox-manager-${manager.id}` });
     expect(await readManagers(id)).toEqual([rec]);
   });
 
   it('scopes mouse and the footer to the session, never the server', async () => {
     const { id, root } = await makeWorkspace();
     const { calls, exec } = fakeExec();
-    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' });
-    await startManagerSession({ wsId: id, manager, argv: ['claude'], exec });
+    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' });
+    await startAndRecord({ wsId: id, manager, argv: ['claude'], exec });
     const target = `=agentbox-manager-${manager.id}:`;
     const sets = calls.slice(2).map((c) => c.args);
     expect(sets.map((a) => a.slice(0, 4))).toEqual(
@@ -246,10 +258,10 @@ describe('startManagerSession', () => {
     const { id, root } = await makeWorkspace();
     const { calls, exec } = fakeExec(['set-option']);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' });
-    const rec = await startManagerSession({ wsId: id, manager, argv: ['claude'], exec });
+    const manager = record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' });
+    const rec = await startAndRecord({ wsId: id, manager, argv: ['claude'], exec });
     expect(calls.filter((c) => c.args[0] === 'set-option')).toHaveLength(6);
-    expect(rec.kind).toBe('hub');
+    expect(rec.kind).toBe('tmux');
     warn.mockRestore();
   });
 });
@@ -284,9 +296,9 @@ describe('managerStatusFormat', () => {
     const { id, root } = await makeWorkspace();
     const { exec } = fakeExec();
     for (const agent of ['claude', 'codex']) {
-      await startManagerSession({
+      await startAndRecord({
         wsId: id,
-        manager: record({ id: newManagerId(), workspaceId: id, cwd: root, agent, kind: 'hub' }),
+        manager: record({ id: newManagerId(), workspaceId: id, cwd: root, agent, kind: 'tmux' }),
         argv: [agent],
         exec,
       });
@@ -298,10 +310,15 @@ describe('managerStatusFormat', () => {
 describe('managerStatus', () => {
   const host = (): string => 'laptop';
 
-  it('reads a hub manager from its tmux session', async () => {
-    const rec = record({ kind: 'hub', tmuxSession: 'agentbox-manager-x' });
-    expect(await managerStatus(rec, { exec: fakeExec().exec })).toBe('running');
-    expect(await managerStatus(rec, { exec: fakeExec(['has-session']).exec })).toBe('stopped');
+  it('reads a tmux manager from its session, on the machine that runs it', async () => {
+    const rec = record({ kind: 'tmux', tmuxSession: 'agentbox-manager-x' });
+    expect(await managerStatus(rec, { hostname: host, exec: fakeExec().exec })).toBe('running');
+    expect(await managerStatus(rec, { hostname: host, exec: fakeExec(['has-session']).exec })).toBe(
+      'stopped',
+    );
+    // Another machine's tmux server is not this one's: fall back to last-seen.
+    const elsewhere = { hostname: () => 'vps', exec: fakeExec(['has-session']).exec };
+    expect(await managerStatus(rec, elsewhere)).toBe('running');
   });
 
   it('probes an external pid only on the machine it came from', async () => {
@@ -379,9 +396,9 @@ describe('upsertDetectedManager', () => {
 
   it('joins a hub-run manager to the session id its agent reports', async () => {
     const { id, root } = await makeWorkspace();
-    const hub = await startManagerSession({
+    const hub = await startAndRecord({
       wsId: id,
-      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' }),
+      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' }),
       argv: ['claude'],
       exec: fakeExec().exec,
     });
@@ -389,24 +406,25 @@ describe('upsertDetectedManager', () => {
       agent: 'claude',
       sessionId: S1,
       cwd: root,
+      host: 'laptop',
       pid: 77,
       managerId: hub.id,
     });
     expect(res.created).toBe(false);
     // Its own session: still hub-run, so liveness stays on tmux and no pid is kept.
-    expect(res.manager).toMatchObject({ id: hub.id, kind: 'hub', sessionId: S1 });
+    expect(res.manager).toMatchObject({ id: hub.id, kind: 'tmux', sessionId: S1 });
     expect(res.manager.pid).toBeUndefined();
   });
 
   it('flips a hub manager to external when its session is run from a terminal', async () => {
     const { id, root } = await makeWorkspace();
-    const hub = await startManagerSession({
+    const hub = await startAndRecord({
       wsId: id,
       manager: record({
         id: newManagerId(),
         workspaceId: id,
         cwd: root,
-        kind: 'hub',
+        kind: 'tmux',
         sessionId: S1,
       }),
       argv: ['claude', '--resume', S1],
@@ -416,6 +434,7 @@ describe('upsertDetectedManager', () => {
       agent: 'claude',
       sessionId: S1,
       cwd: root,
+      host: 'laptop',
       pid: 5,
     });
     expect(res.manager).toMatchObject({ id: hub.id, kind: 'external', pid: 5 });
@@ -457,6 +476,7 @@ describe('reconcileManagers', () => {
       agent: 'claude',
       sessionId: 's-detach',
       cwd: root,
+      host: 'laptop',
     });
     await attachBoxToManager(id, manager.id, { boxId: 'b1' });
     await attachBoxToManager(id, manager.id, { boxId: 'b2' });
@@ -474,6 +494,7 @@ describe('reconcileManagers', () => {
       agent: 'claude',
       sessionId: 's',
       cwd: a.root,
+      host: 'laptop',
     });
     await attachBoxToManager(a.id, manager.id, { boxId: 'box-1' });
     expect(await managerIdForTarget({ boxId: 'box-1' })).toBe(manager.id);
@@ -487,6 +508,7 @@ describe('reconcileManagers', () => {
       agent: 'claude',
       sessionId: 's1',
       cwd: root,
+      host: 'laptop',
     });
     await attachBoxToManager(id, manager.id, { boxJobId: 'j1' });
     await attachBoxToManager(id, manager.id, { boxJobId: 'j1' });
@@ -497,77 +519,6 @@ describe('reconcileManagers', () => {
     expect(healed[0]).toMatchObject({ boxIds: ['b1'], boxJobIds: [] });
     expect((await readManagers(id))[0]?.boxIds).toEqual(['b1']);
     expect(await managerIdForTarget({ boxId: 'b1' })).toBe(manager.id);
-  });
-});
-
-describe('the single-manager layout', () => {
-  it('is read once into managers.json as a hub record, then deleted', async () => {
-    const { id, root } = await makeWorkspace();
-    const dir = (await resolveWorkspaceDir(id))!;
-    await writeFile(
-      join(dir, 'manager.json'),
-      JSON.stringify({
-        agent: 'codex',
-        argv: ['codex'],
-        cwd: root,
-        tmuxSession: `agentbox-manager-${id}`,
-        startedAt: '2026-01-01T00:00:00.000Z',
-      }),
-    );
-    await writeFile(join(dir, 'manager.exit'), '3');
-    const [migrated, ...rest] = await readManagers(id);
-    expect(rest).toEqual([]);
-    // The old session name is kept, so a session still running under it reads running.
-    expect(migrated).toMatchObject({
-      kind: 'hub',
-      agent: 'codex',
-      cwd: root,
-      tmuxSession: `agentbox-manager-${id}`,
-      lastExit: 3,
-      workspaceId: id,
-    });
-    expect(existsSync(join(dir, 'manager.json'))).toBe(false);
-    expect(existsSync(join(dir, 'manager.exit'))).toBe(false);
-    expect(await readManagers(id)).toEqual([migrated]);
-  });
-
-  it("reads a session's exit code from the old path after migrating, and drops it on stop", async () => {
-    const { id, root } = await makeWorkspace();
-    const dir = (await resolveWorkspaceDir(id))!;
-    await writeFile(
-      join(dir, 'manager.json'),
-      JSON.stringify({ agent: 'claude', cwd: root, tmuxSession: `agentbox-manager-${id}` }),
-    );
-    const [migrated] = await readManagers(id);
-    expect(usesLegacySession(migrated!)).toBe(true);
-    // Migrated while the session ran; it exits later and writes where it always did.
-    await writeFile(join(dir, 'manager.exit'), '4');
-    expect(await readManagerExit(id, migrated!.id)).toBeUndefined();
-    expect(await readManagerExit(id, migrated!.id, { legacy: true })).toBe(4);
-    const stopped = await stopManagerSession(id, migrated!.id, { exec: fakeExec().exec });
-    expect(stopped?.lastExit).toBe(4);
-    expect(existsSync(join(dir, 'manager.exit'))).toBe(false);
-  });
-
-  it('keeps an old exit file the migration did not read', async () => {
-    const { id, root } = await makeWorkspace();
-    const dir = (await resolveWorkspaceDir(id))!;
-    await writeFile(
-      join(dir, 'manager.json'),
-      JSON.stringify({
-        agent: 'claude',
-        cwd: root,
-        tmuxSession: `agentbox-manager-${id}`,
-        lastExit: 1,
-      }),
-    );
-    await writeFile(join(dir, 'manager.exit'), '3');
-    const [migrated] = await readManagers(id);
-    expect(migrated!.lastExit).toBe(1);
-    expect(existsSync(join(dir, 'manager.exit'))).toBe(true);
-    expect(usesLegacySession({ ...migrated!, tmuxSession: managerSessionName(migrated!.id) })).toBe(
-      false,
-    );
   });
 });
 
@@ -584,20 +535,20 @@ describe('resumeManagerSession', () => {
     const { calls, exec } = fakeExec();
     const probe = { exec, hostname: () => 'laptop' };
     await expect(
-      resumeManagerSession(id, manager.id, { ...probe, isPidAlive: () => true }),
+      resumeManagerSession(manager, { ...probe, isPidAlive: () => true }),
     ).rejects.toBeInstanceOf(ManagerConflictError);
     expect(calls).toEqual([]);
-    const resumed = await resumeManagerSession(id, manager.id, {
-      ...probe,
-      isPidAlive: () => false,
-    });
+    const registration = await resumeManagerSession(manager, { ...probe, isPidAlive: () => false });
     expect(calls[0]!.args[9]).toContain(`'claude' '--resume' 'sess-1'`);
-    expect(resumed).toMatchObject({
+    expect(registration).toMatchObject({
       id: manager.id,
-      kind: 'hub',
+      kind: 'tmux',
+      host: 'laptop',
       argv: ['claude', '--resume', 'sess-1'],
     });
-    expect(resumed.pid).toBeUndefined();
+    const resumed = await fileManagerStore().registerManager(id, registration);
+    expect(resumed).toMatchObject({ id: manager.id, kind: 'tmux' });
+    expect(resumed?.pid).toBeUndefined();
   });
 
   it('refuses a session that ran on another machine, whose transcript is not here', async () => {
@@ -610,27 +561,27 @@ describe('resumeManagerSession', () => {
       host: 'laptop',
     });
     const { calls, exec } = fakeExec();
-    const err = await resumeManagerSession(id, manager.id, {
+    const err = await resumeManagerSession(manager, {
       exec,
       hostname: () => 'vps',
       isPidAlive: () => false,
       now: () => Date.now() + MANAGER_SEEN_WINDOW_MS * 2,
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManagerConflictError);
-    expect((err as Error).message).toMatch(/ran on laptop; its transcript is not on this machine/);
+    expect((err as Error).message).toMatch(/runs on laptop; its transcript is not on this machine/);
     expect(calls).toEqual([]);
   });
 
   it('refuses a manager with no session id rather than starting a fresh agent', async () => {
     const { id, root } = await makeWorkspace();
-    const hub = await startManagerSession({
+    const hub = await startAndRecord({
       wsId: id,
-      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' }),
+      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' }),
       argv: ['claude'],
       exec: fakeExec().exec,
     });
     await expect(
-      resumeManagerSession(id, hub.id, { exec: fakeExec(['has-session']).exec }),
+      resumeManagerSession(hub, { exec: fakeExec(['has-session']).exec, hostname: () => 'laptop' }),
     ).rejects.toThrow(/no session id/);
   });
 });
@@ -639,16 +590,17 @@ describe('stopManagerSession', () => {
   it('kills the session, stamps stoppedAt and keeps the record for a resume', async () => {
     const { id, root } = await makeWorkspace();
     const { calls, exec } = fakeExec();
-    const hub = await startManagerSession({
+    const hub = await startAndRecord({
       wsId: id,
-      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'hub' }),
+      manager: record({ id: newManagerId(), workspaceId: id, cwd: root, kind: 'tmux' }),
       argv: ['claude'],
       exec,
     });
-    const rec = await stopManagerSession(id, hub.id, { exec });
+    const patch = await stopManagerSession(hub, { exec, hostname: () => 'laptop' });
     expect(calls.at(-1)?.args).toEqual(['kill-session', '-t', `=agentbox-manager-${hub.id}`]);
-    expect(rec?.stoppedAt).toBeTruthy();
-    expect(rec?.agent).toBe('claude');
+    expect(patch?.stoppedAt).toBeTruthy();
+    const stopped = await fileManagerStore().patchManager(id, hub.id, patch!);
+    expect(stopped?.agent).toBe('claude');
   });
 
   it('never signals an external process, and is null for an unknown manager', async () => {
@@ -657,13 +609,20 @@ describe('stopManagerSession', () => {
       agent: 'claude',
       sessionId: 's',
       cwd: root,
+      host: 'laptop',
     });
     const { calls, exec } = fakeExec();
-    await expect(stopManagerSession(id, manager.id, { exec })).rejects.toBeInstanceOf(
-      ManagerConflictError,
-    );
+    const probe = { exec, hostname: () => 'laptop', isPidAlive: () => true };
+    await expect(stopManagerSession(manager, probe)).rejects.toBeInstanceOf(ManagerConflictError);
     expect(calls).toEqual([]);
-    expect(await stopManagerSession(id, 'ffffffffffffffff', { exec })).toBeNull();
+    // A session that has already ended is nothing to persist.
+    expect(
+      await stopManagerSession(manager, {
+        ...probe,
+        isPidAlive: () => false,
+        now: () => Date.now() + MANAGER_SEEN_WINDOW_MS * 2,
+      }),
+    ).toBeNull();
   });
 
   it('removes a record and its exit file', async () => {
@@ -672,6 +631,7 @@ describe('stopManagerSession', () => {
       agent: 'claude',
       sessionId: 's',
       cwd: root,
+      host: 'laptop',
     });
     expect(await removeManagerRecord(id, manager.id)).toBe(true);
     expect(await readManagers(id)).toEqual([]);
@@ -681,7 +641,7 @@ describe('stopManagerSession', () => {
 
 describe('toManagerView', () => {
   it('drops argv, counts its tasks, and only offers attach for a running hub manager', () => {
-    const rec = record({ kind: 'hub', tmuxSession: 't', argv: ['claude'], lastExit: 1 });
+    const rec = record({ kind: 'tmux', tmuxSession: 't', argv: ['claude'], lastExit: 1 });
     const tasks = [
       { id: 'T-1', managerId: rec.id, status: 'done' },
       { id: 'T-2', managerId: rec.id, status: 'todo' },
@@ -697,43 +657,38 @@ describe('toManagerView', () => {
     expect(stopped.lastExit).toBe(1);
   });
 
-  it('is resumable only when a resume would be accepted', () => {
+  it('is resumable when a resume would be accepted, wherever the reader is', () => {
     const ext = record({ sessionId: 's', host: 'laptop', pid: 1 });
-    expect(isManagerResumable(ext, 'stopped', 'laptop')).toBe(true);
-    expect(isManagerResumable(ext, 'running', 'laptop')).toBe(false);
-    expect(isManagerResumable(ext, 'stopped', 'vps')).toBe(false);
-    expect(isManagerResumable({ ...ext, agent: 'opencode' }, 'stopped', 'laptop')).toBe(false);
-    expect(isManagerResumable(record({ kind: 'hub' }), 'stopped', 'laptop')).toBe(false);
-    // A hub-run manager's transcript is on the hub by construction.
-    const hub = record({ kind: 'hub', sessionId: 's', host: 'elsewhere' });
-    expect(isManagerResumable(hub, 'stopped', 'laptop')).toBe(true);
+    expect(isManagerResumable(ext, 'stopped')).toBe(true);
+    expect(isManagerResumable(ext, 'running')).toBe(false);
+    expect(isManagerResumable({ ...ext, agent: 'opencode' }, 'stopped')).toBe(false);
+    expect(isManagerResumable(record({ kind: 'tmux' }), 'stopped')).toBe(false);
+    // WHERE it may be resumed is `host`, which a client compares itself.
     const view = toManagerView(ext, {
       status: 'stopped',
       workspaceName: 'w',
       tasks: [],
       hostname: 'vps',
     });
-    expect(view.resumable).toBe(false);
-    expect(view.resumeBlockedBy).toBe('other-host');
+    expect(view.resumable).toBe(true);
+    expect(view.hostIsHub).toBe(false);
+    expect(view).not.toHaveProperty('resumeBlockedBy');
     const ok = toManagerView(ext, {
       status: 'stopped',
       workspaceName: 'w',
       tasks: [],
       hostname: 'laptop',
     });
+    expect(ok.hostIsHub).toBe(true);
     expect(ok.resumable).toBe(true);
-    expect(ok).not.toHaveProperty('resumeBlockedBy');
   });
 
   it('names why a manager cannot be resumed, in the order a resume checks', () => {
     const ext = record({ sessionId: 's', host: 'laptop', pid: 1 });
-    expect(managerResumeBlock(ext, 'running', 'vps')).toBe('other-host');
-    expect(managerResumeBlock(ext, 'running', 'laptop')).toBe('running');
-    expect(managerResumeBlock(record({ kind: 'hub' }), 'stopped', 'laptop')).toBe('no-session');
-    expect(managerResumeBlock({ ...ext, agent: 'pi' }, 'stopped', 'laptop')).toBe(
-      'unsupported-agent',
-    );
-    expect(managerResumeBlock(ext, 'stopped', 'laptop')).toBeUndefined();
+    expect(managerResumeBlock(ext, 'running')).toBe('running');
+    expect(managerResumeBlock(record({ kind: 'tmux' }), 'stopped')).toBe('no-session');
+    expect(managerResumeBlock({ ...ext, agent: 'pi' }, 'stopped')).toBe('unsupported-agent');
+    expect(managerResumeBlock(ext, 'stopped')).toBeUndefined();
   });
 });
 

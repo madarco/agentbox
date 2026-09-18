@@ -228,6 +228,7 @@ describe('reconciliation through the backend', () => {
       agent: 'claude',
       sessionId: '11111111-2222-3333-4444-555555555555',
       cwd: root,
+      host: 'laptop',
     });
     await attachBoxToManager(wsId, manager.id, { boxId: 'box1' });
     // The destroy (or a prune) says so explicitly.

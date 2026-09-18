@@ -195,11 +195,17 @@ describe('manager messages', () => {
       agent: 'claude',
       sessionId: ID,
       cwd: root,
+      host: 'laptop',
       tmuxPane: '%3',
     });
     expect(first).toMatchObject({ created: true, sessionChanged: false });
     expect(first.manager.tmuxPane).toBe('%3');
-    const again = await upsertDetectedManager(ws.id, { agent: 'claude', sessionId: ID, cwd: root });
+    const again = await upsertDetectedManager(ws.id, {
+      agent: 'claude',
+      sessionId: ID,
+      cwd: root,
+      host: 'laptop',
+    });
     expect(again).toMatchObject({ created: false, sessionChanged: false });
     expect(again.manager.tmuxPane).toBeUndefined();
   });

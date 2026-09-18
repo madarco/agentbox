@@ -1880,6 +1880,63 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/managers/{id}/heartbeat': {
+        post: {
+          tags: ['Managers'],
+          summary: 'Report what the machine a manager runs on sees',
+          description:
+            "A hub that only HOLDS the record cannot probe a pid, a tmux server or a transcript on another machine, so the machine that runs the manager reports instead — every 30 s, and right after a start, resume, stop or attach. The reported values drive that manager's row (status, title, turn, background session) until three intervals pass with no heartbeat, after which the record falls back to its last-seen window. 409 `wrong_host` for a record whose `host` is this hub's own: there the process is readable, and a report nothing can check must not override it.",
+          parameters: [managerIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', enum: ['running', 'stopped'] },
+                    sessionId: { type: 'string' },
+                    title: { type: 'string' },
+                    turn: {
+                      type: 'number',
+                      description: "1-based count of the session's user turns.",
+                    },
+                    prompt: { type: 'string', description: "That turn's prompt, as one line." },
+                    lastExit: { type: 'number' },
+                    background: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string' },
+                        status: { type: 'string' },
+                        state: { type: 'string' },
+                        name: { type: 'string' },
+                      },
+                      required: ['id'],
+                    },
+                    terminalSession: { type: 'string', pattern: '^agentbox-manager-[0-9a-f]{16}$' },
+                    tmuxSession: {
+                      type: 'string',
+                      pattern: '^agentbox-manager-[0-9a-f]{16}$',
+                      description: 'The tmux session showing it right now, when one does.',
+                    },
+                  },
+                  required: ['status'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Manager',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Manager' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+          },
+        },
+      },
       '/managers/{id}/message': {
         post: {
           tags: ['Managers', 'Timeline'],
@@ -2101,6 +2158,63 @@ export function buildOpenApi(): Record<string, unknown> {
             '404': errorResponse,
             '409': errorResponse,
             '503': errorResponse,
+          },
+        },
+      },
+      '/workspaces/{id}/managers/register': {
+        post: {
+          tags: ['Managers'],
+          summary: 'Record a manager session another machine opened',
+          description:
+            "A manager runs where its folder is: a hub with a control box configured starts the tmux session on ITS machine and registers the record here, where the workspace, its tasks and its timeline live. Sending an `id` moves that manager onto the new session (a resume, logged as `manager.resumed`); without one a manager is minted (`manager.started`). This and POST /managers/{id}/heartbeat are the only manager writes accepted from another host — start, resume, attach, stop and message all need the session's own machine and answer 409 `wrong_host` elsewhere. `argv` is recorded, never executed here.",
+          parameters: [workspaceIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    id: {
+                      type: 'string',
+                      pattern: '^[0-9a-f]{16}$',
+                      description: 'An existing manager to move onto this session.',
+                    },
+                    agent: {
+                      type: 'string',
+                      description: 'An agent this hub knows (GET /agents).',
+                    },
+                    kind: { type: 'string', enum: ['tmux'] },
+                    host: {
+                      type: 'string',
+                      description: 'os.hostname() of the machine the session runs on.',
+                    },
+                    cwd: { type: 'string', description: 'Absolute folder on that machine.' },
+                    tmuxSession: {
+                      type: 'string',
+                      pattern: '^agentbox-manager-[0-9a-f]{16}$',
+                    },
+                    sessionId: { type: 'string' },
+                    argv: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'What was run, for the record. Never executed by this hub.',
+                    },
+                  },
+                  required: ['agent', 'kind', 'host', 'cwd', 'tmuxSession'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Manager',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Manager' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -3966,21 +4080,21 @@ export function buildOpenApi(): Record<string, unknown> {
             agent: { type: 'string' },
             kind: {
               type: 'string',
-              enum: ['external', 'hub'],
+              enum: ['external', 'tmux'],
               description:
-                '`external`: a session in your own terminal the hub only observes. `hub`: one the hub runs in tmux, which can be attached to and stopped.',
+                "`external`: a session in someone's own terminal, only observed. `tmux`: one a hub started in a tmux session on `host`, which can be attached to and stopped there.",
             },
             status: { type: 'string', enum: ['running', 'stopped'] },
             resumable: {
               type: 'boolean',
               description:
-                'Whether POST /managers/{id}/resume would be accepted now: false while it runs, without a session id, for an agent whose sessions cannot be resumed, and for an external session that ran on another machine (its transcript is not on this hub). A GUI disables Resume on false.',
+                'Whether a resume would be accepted at all: false while it runs, without a session id, and for an agent whose sessions cannot be resumed. Says nothing about WHERE — that is `hostIsHub`. A GUI disables Resume on false, or when `hostIsHub` is false and it cannot reach a hub on `host`.',
             },
             resumeBlockedBy: {
               type: 'string',
-              enum: ['running', 'other-host', 'unsupported-agent', 'no-session'],
+              enum: ['running', 'unsupported-agent', 'no-session'],
               description:
-                'Why `resumable` is false, in the order a resume checks: `other-host` (an external session reported from another machine), `running`, `no-session` (no session id yet), `unsupported-agent`. Absent when `resumable` is true.',
+                'Why `resumable` is false, in the order a resume checks: `running`, `no-session` (no session id yet), `unsupported-agent`. Absent when `resumable` is true.',
             },
             cwd: {
               type: 'string',
@@ -3988,7 +4102,16 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             sessionId: { type: 'string' },
             title: { type: 'string', description: "The session's first user turn, when readable." },
-            host: { type: 'string' },
+            host: {
+              type: 'string',
+              description:
+                'os.hostname() of the machine the session runs on. Every process op (start, resume, attach, stop, sessions, message) only works on a hub running there; anywhere else it answers 409 `wrong_host` with `details.host` naming this machine, and the client retries against the hub on it.',
+            },
+            hostIsHub: {
+              type: 'boolean',
+              description:
+                'Whether the hub that answered IS that machine. False means its state came from the last heartbeat, and a process op must go elsewhere.',
+            },
             pid: { type: 'number' },
             pidStartedAt: {
               type: 'string',
@@ -4050,6 +4173,8 @@ export function buildOpenApi(): Record<string, unknown> {
             'workspaceName',
             'agent',
             'kind',
+            'host',
+            'hostIsHub',
             'status',
             'resumable',
             'cwd',

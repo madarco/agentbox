@@ -161,6 +161,7 @@ describe('assignTasks', () => {
       agent: 'claude',
       sessionId: 's1',
       cwd: root,
+      host: 'laptop',
     });
     await attachBoxToManager(ws, manager.id, { boxJobId: 'job1' });
     await addTask(ws, { title: 'a' });

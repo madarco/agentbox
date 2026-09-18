@@ -55,6 +55,7 @@ function record(over: Partial<ManagerRecord> = {}): ManagerRecord {
     agent: 'claude',
     kind: 'external',
     cwd: '/work',
+    host: 'laptop',
     sessionId: S1,
     boxIds: [],
     boxJobIds: [],
@@ -224,7 +225,7 @@ describe('backgroundFor', () => {
 
   it('holds back a hub-run manager whose own tmux session is up', () => {
     const legacy = 'agentbox-manager-1020d6ffc6aa4e07';
-    const hub = record({ kind: 'hub', tmuxSession: legacy });
+    const hub = record({ kind: 'tmux', tmuxSession: legacy });
     expect(
       backgroundFor(hub, snapshot({ managerTmux: [{ session: legacy, path: '/work' }] })),
     ).toBeUndefined();
@@ -269,7 +270,7 @@ describe('toManagerView with a background session', () => {
     });
     expect(down.attachCommand).toBeUndefined();
     expect(down).not.toHaveProperty('tmuxSession');
-    const hub = toManagerView(record({ kind: 'hub', tmuxSession: 'gone' }), {
+    const hub = toManagerView(record({ kind: 'tmux', tmuxSession: 'gone' }), {
       ...base,
       background,
       attachSession: null,
@@ -329,24 +330,25 @@ describe('attachBackgroundSession / detachBackgroundSession', () => {
     expect(start.env).not.toHaveProperty('CLAUDE_PID');
     expect(start.env).not.toHaveProperty('TMUX');
     expect(calls.some((c) => c.args.includes('mouse'))).toBe(true);
-    expect(attached).toMatchObject({
-      kind: 'external',
-      pid: 1456,
-      sessionId: S1,
-      tmuxSession: session,
-    });
+    expect(attached).toEqual({ tmuxSession: session });
 
     // Reused while it runs.
-    await attachBackgroundSession({ wsId: id, manager: attached, backgroundId: '885c3dca', exec });
+    await attachBackgroundSession({
+      wsId: id,
+      manager: { ...manager, tmuxSession: session },
+      backgroundId: '885c3dca',
+      exec,
+    });
     expect(calls.filter((c) => c.args[0] === 'new-session')).toHaveLength(1);
     await expect(
       attachBackgroundSession({ wsId: id, manager, backgroundId: '--help', exec }),
     ).rejects.toThrow(/not a background session id/);
 
-    const detached = await detachBackgroundSession(id, manager.id, exec);
+    const detached = await detachBackgroundSession({ ...manager, tmuxSession: session }, exec);
     expect(calls.at(-1)?.args).toEqual(['kill-session', '-t', `=${session}`]);
-    expect(detached).toMatchObject({ kind: 'external', pid: 1456, sessionId: S1 });
-    expect(detached).not.toHaveProperty('tmuxSession');
+    expect(detached).toEqual({ tmuxSession: null });
+    // Its own tmux session is the manager's home, so there is nothing to unset.
+    expect(await detachBackgroundSession({ ...manager, kind: 'tmux' }, exec)).toBeNull();
   });
 });
 
@@ -372,7 +374,7 @@ describe('upsertDetectedManager from an AgentBox tmux session', () => {
     });
     expect(adopted.manager).toMatchObject({
       id: first.manager.id,
-      kind: 'hub',
+      kind: 'tmux',
       tmuxSession: legacy,
       sessionId: S1,
     });
@@ -381,10 +383,11 @@ describe('upsertDetectedManager from an AgentBox tmux session', () => {
       agent: 'claude',
       sessionId: 'another-session',
       cwd: root,
+      host: 'laptop',
       tmuxSession: 'agentbox-manager-aaaaaaaaaaaaaaaa',
     });
     expect(fresh.manager).toMatchObject({
-      kind: 'hub',
+      kind: 'tmux',
       tmuxSession: 'agentbox-manager-aaaaaaaaaaaaaaaa',
     });
     expect(await readManagers(id)).toHaveLength(2);

@@ -299,7 +299,7 @@ describe('liveness and lifecycle', () => {
       root,
     ]);
     expect(start[9]).toContain(`'claude' '--resume' '${S1}'`);
-    expect(resumed.manager).toMatchObject({ kind: 'hub', status: 'running' });
+    expect(resumed.manager).toMatchObject({ kind: 'tmux', status: 'running', hostIsHub: true });
     expect(resumed.manager.attachCommand).toBe(`tmux attach -t =agentbox-manager-${manager.id}`);
 
     const stopped = await managers.stopManager(manager.id);
@@ -309,7 +309,7 @@ describe('liveness and lifecycle', () => {
     expect(await managers.getManager(manager.id)).toBeNull();
   });
 
-  it('refuses to resume a session reported from another host, and says why', async () => {
+  it('refuses every process op on a manager that runs on another machine', async () => {
     const h = harness();
     const { managers } = backends(h);
     const root = await makeFolder();
@@ -321,11 +321,26 @@ describe('liveness and lifecycle', () => {
       host: 'desktop',
     });
     if (!res.ok) throw new Error(res.error);
-    expect(res.manager).toMatchObject({ resumable: false, resumeBlockedBy: 'other-host' });
-    const resumed = await managers.resumeManager(res.manager.id);
-    expect(resumed).toMatchObject({
+    // The view says WHERE, not "not resumable": a client compares `host` to its
+    // own hostname and retries against the hub there.
+    expect(res.manager).toMatchObject({ host: 'desktop', hostIsHub: false });
+    for (const op of [
+      await managers.resumeManager(res.manager.id),
+      await managers.attachManager(res.manager.id),
+      await managers.stopManager(res.manager.id),
+    ]) {
+      expect(op).toMatchObject({
+        ok: false,
+        code: 'wrong_host',
+        details: { host: 'desktop' },
+        error: expect.stringMatching(/runs on desktop, not on laptop/),
+      });
+    }
+    const typed = await managers.sendManagerMessage(res.manager.id, { text: 'hi' });
+    expect(typed).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/ran on desktop; its transcript is not on this machine/),
+      code: 'manager_unreachable',
+      details: { host: 'desktop' },
     });
     expect(h.spawned.filter((a) => a[0] === 'new-session')).toEqual([]);
   });
@@ -400,7 +415,7 @@ describe('startManager', () => {
   });
 });
 
-describe('the single-manager layout', () => {
+describe("a tmux session in the manager's own folder", () => {
   async function legacyWorkspace(h: Harness) {
     const { workspaces, managers } = backends(h);
     const root = await makeFolder();
@@ -410,28 +425,6 @@ describe('the single-manager layout', () => {
     const dir = (await resolveWorkspaceDir(wsId))!;
     return { workspaces, managers, root, wsId, dir };
   }
-
-  it("joins a legacy session's first detect to its migrated record, and reads its exit code", async () => {
-    const h = harness();
-    const { managers, root, wsId, dir } = await legacyWorkspace(h);
-    const session = `agentbox-manager-${wsId}`;
-    await writeFile(
-      join(dir, 'manager.json'),
-      JSON.stringify({ agent: 'claude', cwd: root, tmuxSession: session }),
-    );
-    h.tmux.add(session);
-    // AGENTBOX_MANAGER=1 in that session: the CLI sends no managerId.
-    const res = await managers.detectManager({ agent: 'claude', sessionId: S1, cwd: root });
-    if (!res.ok) throw new Error(res.error);
-    expect(res.manager).toMatchObject({ kind: 'hub', sessionId: S1, status: 'running' });
-    expect(await managers.listManagers()).toHaveLength(1);
-    h.tmux.delete(session);
-    await writeFile(join(dir, 'manager.exit'), '2');
-    expect(await managers.getManager(res.manager.id)).toMatchObject({
-      status: 'stopped',
-      lastExit: 2,
-    });
-  });
 
   it('never folds a terminal session into a current hub-run manager in its folder', async () => {
     const h = harness();

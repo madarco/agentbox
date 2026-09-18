@@ -258,7 +258,7 @@ describe('detect hints a leaked environment can carry', () => {
       managerId: hubId,
     });
     if (!own.ok) throw new Error(own.error);
-    expect(own.manager).toMatchObject({ id: hubId, kind: 'hub', sessionId: S1 });
+    expect(own.manager).toMatchObject({ id: hubId, kind: 'tmux', sessionId: S1 });
 
     // Once it has a session, only a running hub-run manager is joined by hint.
     await managers.stopManager(hubId);
@@ -275,61 +275,58 @@ describe('detect hints a leaked environment can carry', () => {
 });
 
 describe('detect from an AgentBox tmux session', () => {
-  it('adopts an unowned session that exists here and started in the folder, and nothing else', async () => {
+  it('moves a record home to the session its own manager owns, and adopts nothing else', async () => {
     const h = harness();
-    const { managers } = backends(h);
+    const { managers, workspaces } = backends(h);
     const root = await makeFolder();
-    const legacy = 'agentbox-manager-1020d6ffc6aa4e07';
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
+    if (!added.ok) throw new Error(added.error);
+    const started = await managers.startManager(added.workspace.id, { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    const session = `agentbox-manager-${started.manager.id}`;
 
-    const missing = await managers.detectManager({
+    // A session no manager owns is never adopted: the record stays the process
+    // the detect reported.
+    const orphan = 'agentbox-manager-1020d6ffc6aa4e07';
+    h.tmux.set(orphan, root);
+    const unowned = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S2,
+      cwd: root,
+      host: 'laptop',
+      pid: 92033,
+      tmuxSession: orphan,
+    });
+    if (!unowned.ok) throw new Error(unowned.error);
+    expect(unowned.manager).toMatchObject({ kind: 'external', pid: 92033 });
+
+    // Its owner's session, started in this folder: the record runs from there now.
+    h.tmux.set(session, root);
+    const home = await managers.detectManager({
       agent: 'claude',
       sessionId: S1,
       cwd: root,
       host: 'laptop',
       pid: 92033,
-      tmuxSession: legacy,
+      tmuxSession: session,
     });
-    if (!missing.ok) throw new Error(missing.error);
-    expect(missing.manager.kind).toBe('external');
-
-    h.tmux.set(legacy, '/somewhere/else');
-    const elsewhere = await managers.detectManager({
-      agent: 'claude',
-      sessionId: S1,
-      cwd: root,
-      host: 'laptop',
-      pid: 92033,
-      tmuxSession: legacy,
-    });
-    if (!elsewhere.ok) throw new Error(elsewhere.error);
-    expect(elsewhere.manager.kind).toBe('external');
-
-    h.tmux.set(legacy, root);
-    const adopted = await managers.detectManager({
-      agent: 'claude',
-      sessionId: S1,
-      cwd: root,
-      host: 'laptop',
-      pid: 92033,
-      tmuxSession: legacy,
-    });
-    if (!adopted.ok) throw new Error(adopted.error);
-    expect(adopted.manager).toMatchObject({
-      id: missing.manager.id,
-      kind: 'hub',
-      tmuxSession: legacy,
+    if (!home.ok) throw new Error(home.error);
+    expect(home.manager).toMatchObject({
+      id: started.manager.id,
+      kind: 'tmux',
+      tmuxSession: session,
       status: 'running',
-      attachCommand: `tmux attach -t =${legacy}`,
+      attachCommand: `tmux attach -t =${session}`,
     });
-    expect(adopted.manager).not.toHaveProperty('pid');
+    expect(home.manager).not.toHaveProperty('pid');
 
     // Another host's name for a session is never looked up here.
     const remote = await managers.detectManager({
       agent: 'claude',
-      sessionId: S2,
+      sessionId: '22222222-3333-4444-5555-666666666666',
       cwd: root,
       host: 'vps',
-      tmuxSession: legacy,
+      tmuxSession: session,
     });
     if (!remote.ok) throw new Error(remote.error);
     expect(remote.manager.kind).toBe('external');
