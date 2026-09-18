@@ -1079,12 +1079,14 @@ const TIMELINE_EVENT_TYPES = [
 ] as const;
 
 /**
- * Who a FORWARDED event may claim to be. `human` and `github` are excluded on
- * purpose: a human action is made through this hub's own routes (which stamp it
- * from the session header), and a `github` row is written by the sync that owns
- * that hub's `gh` — neither is something another machine reports.
+ * Who a FORWARDED event may claim to be. `human` is here because a person acts
+ * on the machine that holds the folder, not on the control box: `agentbox
+ * manager message`, a note, or a `hub.mode=local` docker create all run against
+ * the PC's own hub, and forwarding is the only way their row reaches the log.
+ * `github` stays out — that row is written by the sync that owns the hub's `gh`,
+ * which is never something another machine reports.
  */
-const FORWARDED_ACTORS = ['box', 'hub', 'manager'] as const;
+const FORWARDED_ACTORS = ['box', 'hub', 'manager', 'human'] as const;
 
 const TEXT_MAX = 2000;
 const PROMPT_MAX = 500;

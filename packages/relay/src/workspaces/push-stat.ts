@@ -24,6 +24,16 @@ export interface PushStatInput {
 /** One budget for every git call a stat makes: a push row is not worth a slow hub. */
 export const PUSH_STAT_TIMEOUT_MS = 2000;
 
+/**
+ * The same budget for the BOX half, which needs its own number: the host half
+ * runs `git` on this disk (milliseconds a call), while every call here is a
+ * round trip to a sandbox that may be on another continent from the hub — three
+ * to seven of them, measured at ~0.5 s each against a live E2B box. It costs
+ * nobody's latency: the row is recorded in the background, after the push has
+ * already answered.
+ */
+export const BOX_PUSH_STAT_TIMEOUT_MS = 10_000;
+
 /** Candidates for the default branch a first push is measured against, in order. */
 const DEFAULT_BRANCH_REFS = [
   'refs/remotes/origin/main',
@@ -151,7 +161,7 @@ export async function boxPushLineStat(
   exec: BoxGitExec,
   opts: { before?: string; timeoutMs?: number } = {},
 ): Promise<PushLineStat | undefined> {
-  const deadline = Date.now() + (opts.timeoutMs ?? PUSH_STAT_TIMEOUT_MS);
+  const deadline = Date.now() + (opts.timeoutMs ?? BOX_PUSH_STAT_TIMEOUT_MS);
   const run = async (args: string[]): Promise<{ exitCode: number; stdout: string } | undefined> => {
     const left = deadline - Date.now();
     if (left <= 0) return undefined;

@@ -737,15 +737,18 @@ export function createManagerBackend(
           return answer(existing.id);
         }
       }
-      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
       // A manager is a process in the folder, so it can only start where the
       // folder is. A workspace registered from another machine has none here.
+      // Asked BEFORE tmux: a control box holds every workspace and has no
+      // folder for any of them, so "start it where the folder is" is the whole
+      // answer — a missing tmux there is about a job it must never take.
       const root = workspaceRootOn(ws, hostname());
       if (!root) {
         const elsewhereHost = Object.keys(ws.hosts)[0];
         const message = `workspace ${ws.name} has no folder on ${hostname()}; start its manager on the machine that has one`;
         return elsewhereHost ? wrongHost(message, elsewhereHost) : err(message);
       }
+      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
       const at = new Date().toISOString();
       const manager: ManagerRecord = {
         id: newManagerId(),

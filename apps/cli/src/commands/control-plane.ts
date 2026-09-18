@@ -142,7 +142,35 @@ const DEFAULT_DEPLOY_REF = defaultDeployRef();
 async function applyControlPlaneUrl(url: string): Promise<string> {
   const trimmed = url.replace(/\/$/, '');
   await setConfigValue('global', 'relay.controlPlaneUrl', trimmed, process.cwd());
+  await reloadLocalHubForStore();
   return trimmed;
+}
+
+/**
+ * Restart a RUNNING local hub after the control box was configured or cleared.
+ *
+ * Where the workspaces, tasks, managers and timeline live is resolved once, at
+ * hub start (`configureTimelineSinkFromConfig` / `configureManagerStoreFromConfig`),
+ * so a hub that booted before this write keeps writing its own disk: `manager
+ * start` then answers "unknown workspace" for a record that is on the control
+ * box, and every row it forwards is dropped. A hub that is not running needs
+ * nothing — it reads the new value when it boots.
+ */
+async function reloadLocalHubForStore(): Promise<void> {
+  const { getHubStatus, ensureHub, stopHub } = await import('@agentbox/sandbox-core');
+  if (!(await getHubStatus()).running) return;
+  const { rehydrateFromState } = await import('./relay.js');
+  try {
+    await stopHub();
+    await ensureHub();
+    await rehydrateFromState();
+    log.info('restarted the local hub so it reads the new store location');
+  } catch (err) {
+    log.warn(
+      `could not restart the local hub (${err instanceof Error ? err.message : String(err)}) — ` +
+        'run `agentbox hub restart` so it picks up the control box',
+    );
+  }
 }
 
 /** Poll a deployed plane's /healthz until it answers (or the deadline elapses). */
@@ -805,6 +833,7 @@ const unsetUrlSub = new Command('unset-url')
       // scope propagate to handleLifecycleError rather than being masked.
       const g = await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd());
       const p = await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd());
+      if (g.existed || p.existed) await reloadLocalHubForStore();
       if (!g.existed && !p.existed) {
         log.info('No control plane was configured (relay.controlPlaneUrl not set).');
       } else {
@@ -2420,6 +2449,7 @@ const destroySub = new Command('destroy')
       });
       await unsetConfigValue('global', 'relay.controlPlaneUrl', process.cwd());
       await unsetConfigValue('project', 'relay.controlPlaneUrl', process.cwd());
+      await reloadLocalHubForStore();
 
       log.success('Control box destroyed. Cloud boxes now build on this machine again.');
       if (opts.keepCredentials) {

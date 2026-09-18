@@ -10,6 +10,7 @@ import {
   detachBoxFromManagers,
   filterTasks,
   findManager,
+  isControlBoxProcess,
   listWorkspaces,
   managerStatus,
   patchTask,
@@ -165,14 +166,25 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
     return tasks;
   }
 
-  /** A box id must exist; a job id must be a create job that has not failed. */
+  /**
+   * A box id must exist; a job id must be a create job that has not failed.
+   *
+   * On a CONTROL BOX an id this hub has never seen is not proof of a typo: a
+   * `hub.mode=local` docker box is built by the PC's own hub and only its
+   * assignment travels here, so refusing what we cannot see would make the one
+   * topology the store exists for impossible. Same call the reconcile makes —
+   * an unknown box is not "gone" — so the two agree. A plain local hub owns
+   * every box it is asked about and keeps the check.
+   */
   async function validateTarget(target: AssignTarget): Promise<string | null> {
+    const elsewhere = isControlBoxProcess();
     if ('boxId' in target) {
       const live = await deps.liveBoxIds();
-      return live.has(target.boxId) ? null : `unknown box ${target.boxId}`;
+      if (live.has(target.boxId) || elsewhere) return null;
+      return `unknown box ${target.boxId}`;
     }
     const job = (await deps.jobs()).find((j) => j.id === target.boxJobId);
-    if (!job) return `unknown job ${target.boxJobId}`;
+    if (!job) return elsewhere ? null : `unknown job ${target.boxJobId}`;
     if (job.kind === 'prepare') return `job ${target.boxJobId} is an image bake, not a box create`;
     return null;
   }

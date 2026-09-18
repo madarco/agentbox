@@ -127,11 +127,13 @@ describe('recording a forwarded event', () => {
 describe('the forwarded-event body', () => {
   const base = { type: 'box.ready', actor: 'hub' };
 
-  it('accepts only the three actors a forwarder may claim', () => {
-    for (const actor of ['box', 'hub', 'manager']) {
+  it('accepts every actor a forwarder may claim, and no other', () => {
+    // `human` is one of them: a person acts on the machine that holds the
+    // folder, and forwarding is the only way that row reaches the control box.
+    for (const actor of ['box', 'hub', 'manager', 'human']) {
       expect(parseTimelineEvent({ ...base, actor }).ok).toBe(true);
     }
-    for (const actor of ['human', 'github', 'nobody']) {
+    for (const actor of ['github', 'nobody']) {
       const parsed = parseTimelineEvent({ ...base, actor });
       expect(parsed.ok).toBe(false);
       expect(parsed.ok ? '' : parsed.message).toContain('actor must be one of');

@@ -166,6 +166,24 @@ describe('tasks', () => {
     });
   });
 
+  it('takes an assignment for a box only another hub can see, on a control box', async () => {
+    const { backend, wsId } = await seeded();
+    await backend.addTask(wsId, { title: 'a' });
+    vi.stubEnv('AGENTBOX_HUB_WORKER', 'on');
+    try {
+      // The `hub.mode=local` shape: the PC builds the box, only the assignment
+      // travels here, so an id this hub has never seen is not a typo.
+      expect(await backend.assignTasks(wsId, ['T-1'], { boxId: 'elsewhere' })).toMatchObject({
+        ok: true,
+      });
+      expect(await backend.assignTasks(wsId, ['T-1'], { boxJobId: 'elsewhere' })).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('reorders and refuses a partial order', async () => {
     const { backend, wsId } = await seeded();
     for (const t of ['a', 'b', 'c']) await backend.addTask(wsId, { title: t });
