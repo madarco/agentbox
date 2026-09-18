@@ -6,6 +6,7 @@ import { hashProjectPath } from '@agentbox/config';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { BOX_WORKSPACE } from '@agentbox/sandbox-core';
 import type { ListedBox } from '@agentbox/sandbox-docker';
+import { boxPushLineStat, type PushLineStat } from '@agentbox/relay';
 import type { DiffStat, TimelineBoxFact } from './deps';
 import { parseShortstat } from './timeline';
 
@@ -72,6 +73,7 @@ export function createBoxFactSeams(src: BoxFactSources): {
   boxFacts(): Promise<TimelineBoxFact[]>;
   boxFact(id: string, opts?: { withState?: boolean }): Promise<TimelineBoxFact | undefined>;
   boxDiffStat(box: TimelineBoxFact): Promise<DiffStat | null>;
+  boxPushStat(boxId: string, opts?: { before?: string }): Promise<PushLineStat | undefined>;
 } {
   // The record a fact was built from, so a diff of a box that was just listed
   // does not list the whole fleet again to find it.
@@ -135,6 +137,18 @@ export function createBoxFactSeams(src: BoxFactSources): {
       const provider = await src.providerForBox(box);
       const r = await provider.exec(box, ['git', 'diff', '--shortstat'], { cwd: BOX_WORKSPACE });
       return r.exitCode === 0 ? parseShortstat(r.stdout) : null;
+    },
+    // The +/- lines of a push this hub has no checkout to measure: a control box
+    // holds no working copy of the repo, and a box created by its worker points
+    // at a temp clone the job deleted.
+    async boxPushStat(boxId, opts) {
+      const box = await src.readBoxRecord(boxId);
+      if (!box) return undefined;
+      const provider = await src.providerForBox(box);
+      return boxPushLineStat(
+        (args) => provider.exec(box, ['git', ...args], { cwd: BOX_WORKSPACE }),
+        opts ?? {},
+      );
     },
   };
 }

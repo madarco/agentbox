@@ -1,4 +1,4 @@
-import type { ManagerExec } from '@agentbox/relay';
+import type { ManagerExec, PushLineStat } from '@agentbox/relay';
 // The seams a domain backend slice is built from.
 //
 // `lib/hub-backend.ts` had grown past 3800 lines because every feature appended
@@ -89,6 +89,11 @@ export interface BackendDeps {
   projectRoot?(projectId: string): Promise<string | undefined>;
   /** `git diff --shortstat` in a running box; null when the exec fails. */
   boxDiffStat?(box: TimelineBoxFact): Promise<DiffStat | null>;
+  /**
+   * A push's +/- lines measured INSIDE the box, for a hub with no checkout of
+   * the repo to read them from. Undefined on any failure — a row with no diff.
+   */
+  boxPushStat?(boxId: string, opts?: { before?: string }): Promise<PushLineStat | undefined>;
   /** Box ids with a pending host-action approval. */
   pendingApprovalBoxIds?(): string[];
   /** How the GitHub sync runs `gh`; tests fake it, production spawns the host's gh. */

@@ -1,6 +1,7 @@
-// The +/- lines a push carried, read from the HOST repo the push went through.
-// Never a box exec: a cloud box may be paused, and the host already has both
-// tips once the push succeeded.
+// The +/- lines a push carried, read from the HOST repo the push went through —
+// or, when this hub has no checkout of it, from inside the box. A control box's
+// record of a box points at the create job's deleted temp clone, so the host
+// half answers nothing there and the row would arrive with no diff.
 import { execa } from 'execa';
 
 export interface PushLineStat {
@@ -124,4 +125,93 @@ export async function pushLineStat(input: PushStatInput): Promise<PushLineStat |
   if (out === undefined) return undefined;
   const { additions, deletions } = parseShortstat(out);
   return additions + deletions > 0 ? { additions, deletions } : undefined;
+}
+
+// ── the box half ──
+
+/** One `git` run inside a box's workspace, however this process reaches boxes. */
+export type BoxGitExec = (args: string[]) => Promise<{ exitCode: number; stdout: string }>;
+
+/**
+ * Candidates for the base a box-side stat is measured from, in order. `origin/HEAD`
+ * first (the clone recorded the remote's default branch), then the usual names —
+ * the box is a clone, so both the remote-tracking refs and the local branches may
+ * be there.
+ */
+const BOX_BASE_REFS = ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master'];
+
+/**
+ * The same measurement as {@link pushLineStat}, run inside the box instead of on
+ * a host repo: `before..HEAD` when the old tip is known and still an ancestor,
+ * else from the merge base with the default branch. Bounded by one budget across
+ * every exec, and undefined on anything unexpected — a row with no diff is the
+ * worst this may cost.
+ */
+export async function boxPushLineStat(
+  exec: BoxGitExec,
+  opts: { before?: string; timeoutMs?: number } = {},
+): Promise<PushLineStat | undefined> {
+  const deadline = Date.now() + (opts.timeoutMs ?? PUSH_STAT_TIMEOUT_MS);
+  const run = async (args: string[]): Promise<{ exitCode: number; stdout: string } | undefined> => {
+    const left = deadline - Date.now();
+    if (left <= 0) return undefined;
+    try {
+      return await Promise.race([
+        exec(args),
+        new Promise<undefined>((resolve) => {
+          const t = setTimeout(() => resolve(undefined), left);
+          t.unref?.();
+        }),
+      ]);
+    } catch {
+      return undefined;
+    }
+  };
+  const out = async (args: string[]): Promise<string | undefined> => {
+    const r = await run(args);
+    return r && r.exitCode === 0 ? r.stdout.trim() || undefined : undefined;
+  };
+  const head = await out(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  if (!head) return undefined;
+  // A push that moved nothing has no diff to report, exactly as on the host.
+  if (opts.before === head) return undefined;
+  let base: string | undefined;
+  if (opts.before) {
+    const ancestor = await run(['merge-base', '--is-ancestor', opts.before, head]);
+    if (ancestor?.exitCode === 0) base = opts.before;
+  }
+  if (!base) {
+    for (const ref of BOX_BASE_REFS) {
+      base = await out(['merge-base', ref, head]);
+      if (base) break;
+    }
+  }
+  if (!base || base === head) return undefined;
+  const shortstat = await out(['diff', '--shortstat', `${base}..${head}`]);
+  if (shortstat === undefined) return undefined;
+  const { additions, deletions } = parseShortstat(shortstat);
+  return additions + deletions > 0 ? { additions, deletions } : undefined;
+}
+
+/**
+ * How this process measures a push inside a box. The relay has no provider
+ * modules — it never creates or drives a box — so the hub, which does, installs
+ * the runner at start. Left unset (a standalone relay) a push it cannot read on
+ * disk simply gets no diff.
+ */
+export type BoxPushStat = (
+  boxId: string,
+  opts?: { before?: string },
+) => Promise<PushLineStat | undefined>;
+
+let currentBoxPushStat: BoxPushStat | null = null;
+
+/** Install the runner (`null` clears it). */
+export function configureBoxPushStat(fn: BoxPushStat | null): void {
+  currentBoxPushStat = fn;
+}
+
+/** The installed runner, or null when this process cannot reach into a box. */
+export function boxPushStat(): BoxPushStat | null {
+  return currentBoxPushStat;
 }

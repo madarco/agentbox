@@ -49,6 +49,7 @@ import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
 import type { BackendDeps } from './backend/deps';
 import {
+  configureBoxPushStat,
   deleteJob,
   enqueuePrepareJob,
   enqueueQueueJob,
@@ -2123,6 +2124,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     projectRoot: async (projectId) => (await resolveProjectPath(projectId)) ?? undefined,
   };
+  // The relay records a push a box made with its own credentials (a leased or
+  // `direct` push), and has no provider modules to measure it with — it never
+  // creates or drives a box. It runs in THIS process, so hand it the reader.
+  configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
