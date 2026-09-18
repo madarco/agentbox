@@ -105,8 +105,11 @@ the manager's own instructions come after.
 - **A remote hub probes no pid and scrapes no title.** A pid is only probed when the detect reported
   the hub's own hostname, and a title is read from the agent's store on the hub's disk; a PC session
   registered with a control box falls back to the `lastSeenAt` window and shows its short session id.
-- **A remote hub's manager runs on the remote machine.** That is correct but currently unhelpful:
-  the workspace CLI commands all pass `preferLocal`, so they target this laptop's hub.
+- **A remote hub's manager runs on the remote machine, and the CLI targets the laptop hub.** The
+  workspace CLI commands all pass `preferLocal`, so with a control box configured the CLI and the
+  tray read different stores. Superseded by
+  [`workspaces-remote-hub-plan.md`](./workspaces-remote-hub-plan.md): the store moves to the hub
+  that owns the boxes and the manager stays on the PC.
 - **The remaining hub-backend domains are still in the monolith.** Boxes, projects, fleet ops and the
   open-in launchers should each move to `lib/backend/<domain>.ts`; the four `// ── … ──` banners in
   `hub-backend.ts` mark the seams.

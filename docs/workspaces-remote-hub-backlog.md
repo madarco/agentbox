@@ -1,0 +1,25 @@
+# Remote control box — backlog
+
+Host-local assumptions in the 0.31.x features that break or degrade when the hub is a remote control
+box (`relay.controlPlaneUrl` configured). Found by the 2026-09-15 audit that produced
+[`workspaces-remote-hub-plan.md`](./workspaces-remote-hub-plan.md); that plan covers only the 0.32
+workspace layer and deliberately leaves these alone. Each item is documented, not fixed. Size:
+S < half a day, M ≈ a day.
+
+| # | Feature | Remote-hub behaviour | Where | Size |
+|---|---|---|---|---|
+| 1 | `--model-auth` on a hub-routed create | The flag is never sent: `_cloud-agent-via-hub.ts` and `create.ts` `runCreateViaHubApi` have no `borrowCredentials` parameter although the wire field exists (`validate.ts`, `openapi.ts`). Set from the web UI, the hub resolves the source against ITS `~/.claude`/`~/.codex`/`process.env` (`create-gates.ts` → `borrowed-credentials.ts` → `resolveHostCredentialFile`), fails non-fatally, and the box boots with no model auth. | `apps/cli/src/commands/_cloud-agent-via-hub.ts`, `apps/cli/src/commands/create.ts`, `apps/hub/lib/prompts/create-gates.ts`, `packages/sandbox-core/src/borrowed-credentials.ts` | M |
+| 2 | `agentbox <service-agent>` create (openclaw) | Calls `provider.create` inline and never consults `resolveCreateRouting` / `remoteHubConfigured` / `dockerProviderRefusal`; the request omits `controlPlaneUrl`, `gitPushMode`, `hubGitAuth`, so a cloud bot never registers with the control box (no approvals, no relay push, no fan-out, no `ctl open` mirroring). `cloud.viaHub` and `hub.mode=thin` are ignored. | `apps/cli/src/agents/command/service-action.ts` (create path) | M |
+| 3 | `agentbox git push/pull/checkout/branch` on a docker box | `withHubClient({})` with no `boxOwningHubIsLocal`, so with a control box configured the op goes to the remote hub, which never owned the box (`not_found`). The docstring claims it works identically in both modes. Not live-verified. | `apps/cli/src/commands/git.ts` vs `apps/cli/src/control-plane/with-hub.ts` (`boxOwningHubIsLocal`) | S |
+| 4 | `download --backup` / `--restore` | PC-side, and diverges from the hub's own `POST /boxes/{id}/backup` store (two machines' disks, `GET /projects/{id}/bots` lists only the hub's). A hub-created cloud box with no local checkout resolves `projectRoot` to the literal `/workspace`, so the backup dir becomes `/workspace/.agentbox/bots/…` at the Mac's filesystem root. | `apps/cli/src/commands/download.ts`, `packages/sandbox-core/src/sync/concerns/bot-backup.ts`, `apps/cli/src/control-plane/hub-adopt.ts` (`matchLocalProject`), `packages/relay/src/registration-to-record.ts` | S |
+| 5 | `agentbox clone` per-box secrets | Correct routing, but `~/.agentbox/openclaw/<name>.env` is resolved with the HUB's `homedir()`, and the refusal names a path on a machine the user is not on. | `apps/hub/lib/hub-backend.ts` (`clonePerBoxCarryRefusal`), `packages/sandbox-core/src/per-box-carry.ts` | S |
+| 6 | `POST /api/v1/projects` (mkdir + git init) | Creates the folder on the hub; the web UI copy says "Pick a folder on this machine". | `apps/hub/lib/boxes/create-project.ts`, `apps/hub/app/(dashboard)/boxes/components/add-project-modal.tsx` | S |
+| 7 | `POST /boxes/{id}/open` on a `hub expose`-d Mac | `canOpenInHostApps()` gates on `hubProfile() === 'localhost'`; an exposed Mac reports the hetzner profile while being the user's machine, so open-in is refused for no reason. Should use the `onThisMachine` distinction. | `apps/hub/lib/hub-backend.ts` (`canOpenInHostApps`) | S |
+| 8 | `doctor --json` | Returns before `renderControlBoxProviders()`, so the tray's provider/bake rows describe the laptop while cloud boxes build from the control box's bakes. | `apps/cli/src/commands/doctor.ts` | S |
+| 9 | create-preflight latent false positive | The remote guard is `existsSync(workspace)`, not "is this the user's machine": a control box with a folder at the same absolute path runs the real `carry`/`model-auth` gates against the VPS's files and presents them as the user's. | `apps/hub/lib/hub-backend.ts` (`createPreflight`) | S |
+| 10 | Credential fan-out fleet | Per-machine: a box only in the OTHER machine's `state.json` is never a target; custody mirroring (`recordInCustody`) is the remote-aware half. Best-effort by design. | `packages/relay/src/credentials-fanout.ts`, `apps/cli/src/commands/credentials.ts` | — |
+| 11 | Persistent bring-back | Works (the owning hub's relay loop), but by omission: neither adopt path copies `persistent` onto the local record, so `agentbox ls` on the PC cannot show it. | `apps/cli/src/control-plane/hub-adopt.ts` (`hubBoxToRegistration`) | S |
+
+Works remote as designed, no action: create-preflight's explicit `unavailable` (item 9 aside),
+`agentbox url` / `agentbox-ctl open` / `GET /boxes/{id}/web`, the box size picker, `agentbox clone`
+routing, `manager attach`'s refusal.
