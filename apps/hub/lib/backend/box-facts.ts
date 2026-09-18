@@ -82,8 +82,13 @@ export function createBoxFactSeams(src: BoxFactSources): {
   };
   const host = src.hostname ?? osHostname;
   // Resolving an origin spawns git (or reads the Store), and `boxFacts()` runs on
-  // the timeline poll path for the whole fleet: memoized per box for the life of
-  // the hub, since a box's repo does not change under it.
+  // the timeline poll path for the whole fleet: memoized per box, since a box's
+  // repo does not change under it.
+  //
+  // Only a RESOLVED origin is kept. A miss — the checkout is not there yet, git
+  // failed, the registration has not been written — is transient, and caching it
+  // for the hub's lifetime left the box unable to join its workspace by repo
+  // until someone restarted the hub.
   const origins = new Map<string, Promise<string | undefined>>();
   const originOf = (rec: BoxRecord): Promise<string | undefined> => {
     if (!src.originUrlOf) return Promise.resolve(undefined);
@@ -91,6 +96,10 @@ export function createBoxFactSeams(src: BoxFactSources): {
     if (!hit) {
       hit = src.originUrlOf(rec).catch(() => undefined);
       origins.set(rec.id, hit);
+      // Kept only while it is in flight, so one listing still resolves it once.
+      void hit.then((url) => {
+        if (!url) origins.delete(rec.id);
+      });
     }
     return hit;
   };
