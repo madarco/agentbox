@@ -4,10 +4,17 @@ import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
-import { createManagerBackend } from '../lib/backend/managers';
+import { createManagerBackend, HEARTBEAT_STALE_MS } from '../lib/backend/managers';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
 import type { BackendDeps } from '../lib/backend/deps';
-import { resolveWorkspaceDir, type QueueJob } from '@agentbox/relay';
+import {
+  MANAGER_SEEN_WINDOW_MS,
+  resolveWorkspaceDir,
+  type ManagerRecord,
+  type ManagerRecordStore,
+  type ManagerView,
+  type QueueJob,
+} from '@agentbox/relay';
 
 const S1 = '5edc0ee0-ce9a-4e30-962d-bc630388d8bc';
 const S2 = '01a09ad5-8f51-7ec0-b8f4-2daa8be67500';
@@ -508,5 +515,189 @@ describe('box pointers', () => {
       await workspaces.listTasks(res.workspace.id, { managerId: res.manager.id }),
     ).toHaveLength(1);
     expect((await managers.getManager(res.manager.id))?.taskCounts).toEqual({ open: 1, done: 0 });
+  });
+});
+
+describe('a record whose manager runs on another machine', () => {
+  // The record's own `lastSeenAt` comes from the real clock at detect time, and
+  // the window fallback measures against it, so the test clock starts from now.
+  const BEAT_AT = Date.now();
+
+  /** A record on this disk for a session running on `desktop`, plus a clock. */
+  async function remoteManager(clock: { now: number }) {
+    const h = harness();
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      now: () => clock.now,
+    });
+    const res = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S1,
+      cwd: await makeFolder(),
+      host: 'desktop',
+    });
+    if (!res.ok) throw new Error(res.error);
+    return { h, managers, id: res.manager.id };
+  }
+
+  it('shows what the last heartbeat reported, and never probes a process it cannot see', async () => {
+    const clock = { now: BEAT_AT };
+    const { h, managers, id } = await remoteManager(clock);
+    const beat = await managers.reportManager(id, {
+      status: 'running',
+      sessionId: S1,
+      title: 'plan the migration',
+      turn: 4,
+      background: { id: '885c3dca', status: 'busy' },
+    });
+    if (!beat.ok) throw new Error(beat.error);
+    expect(beat.manager).toMatchObject({
+      status: 'running',
+      title: 'plan the migration',
+      host: 'desktop',
+      hostIsHub: false,
+      background: { id: '885c3dca' },
+    });
+    // No tmux, `ps` or `claude agents` call: that process is not on this machine.
+    expect(h.spawned).toEqual([]);
+  });
+
+  it('falls back to the last-seen window after three missed heartbeats', async () => {
+    const clock = { now: BEAT_AT };
+    const { managers, id } = await remoteManager(clock);
+    const reported = await managers.reportManager(id, { status: 'running' });
+    if (!reported.ok) throw new Error(reported.error);
+    expect(reported.manager.status).toBe('running');
+
+    // Stale, but the record was seen recently enough to still read as running.
+    clock.now = BEAT_AT + HEARTBEAT_STALE_MS + 1;
+    expect((await managers.getManager(id))?.status).toBe('running');
+    // Past the last-seen window too: nothing says it is alive any more.
+    clock.now = BEAT_AT + MANAGER_SEEN_WINDOW_MS * 2;
+    expect((await managers.getManager(id))?.status).toBe('stopped');
+  });
+
+  it('refuses a heartbeat for a manager this hub runs itself', async () => {
+    const h = harness();
+    const { managers } = backends(h);
+    const res = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S2,
+      cwd: await makeFolder(),
+      host: 'laptop',
+    });
+    if (!res.ok) throw new Error(res.error);
+    expect(await managers.reportManager(res.manager.id, { status: 'stopped' })).toMatchObject({
+      ok: false,
+      code: 'wrong_host',
+      details: { host: 'laptop' },
+      error: expect.stringMatching(/probed here, not reported/),
+    });
+    // The report is not believed: the probe still decides.
+    expect((await managers.getManager(res.manager.id))?.status).toBe('running');
+  });
+});
+
+describe('with the records on a control box', () => {
+  /** An in-memory stand-in for the control box's `/api/v1`, recording what travels. */
+  function remoteStore(hostname: string): ManagerRecordStore & { calls: string[] } {
+    const records = new Map<string, ManagerRecord>();
+    const calls: string[] = [];
+    const ws = {
+      id: 'ws-remote',
+      name: 'remote',
+      hosts: {} as Record<string, { root: string }>,
+    };
+    const view = (rec: ManagerRecord): ManagerView => ({
+      ...rec,
+      status: 'running',
+      hostIsHub: rec.host === hostname,
+      resumable: false,
+      workspaceName: ws.name,
+      taskCounts: { open: 0, done: 0 },
+    });
+    return {
+      kind: 'remote',
+      calls,
+      setRoot(root: string) {
+        ws.hosts[hostname] = { root };
+      },
+      listManagers: async () => [...records.values()],
+      readManagers: async () => [...records.values()],
+      readWorkspace: async (id) => (id === ws.id ? ws : null),
+      findManager: async (id) => records.get(id) ?? null,
+      findManagerBySession: async (agent, sessionId) =>
+        [...records.values()].find((m) => m.agent === agent && m.sessionId === sessionId) ?? null,
+      async registerManager(wsId, input) {
+        calls.push(`register ${input.host} ${input.tmuxSession}`);
+        const at = new Date().toISOString();
+        const id = input.id ?? 'aaaaaaaaaaaaaaaa';
+        const rec: ManagerRecord = {
+          id,
+          workspaceId: wsId,
+          agent: input.agent,
+          kind: 'tmux',
+          cwd: input.cwd,
+          host: input.host,
+          tmuxSession: input.tmuxSession,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          boxIds: [],
+          boxJobIds: [],
+          createdAt: at,
+          lastSeenAt: at,
+        };
+        records.set(id, rec);
+        return rec;
+      },
+      async reportManager(id, beat) {
+        calls.push(`heartbeat ${id} ${beat.status}`);
+      },
+      // The control box takes no other write from another host.
+      patchManager: async () => null,
+      upsertDetectedManager: () => Promise.reject(new Error('not here')),
+      removeManagerRecord: async () => false,
+      managerViews: async () => [...records.values()].map(view),
+      managerView: async (id) => {
+        const rec = records.get(id);
+        return rec ? view(rec) : null;
+      },
+    } as ManagerRecordStore & { calls: string[]; setRoot(root: string): void };
+  }
+
+  it('starts the session here, registers it there, and answers with the control box view', async () => {
+    const h = harness();
+    const store = remoteStore('laptop');
+    const root = await makeFolder();
+    (store as unknown as { setRoot(r: string): void }).setRoot(root);
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      store,
+    });
+    const started = await managers.startManager('ws-remote', { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    // The tmux session is opened on THIS machine…
+    expect(h.spawned.find((a) => a[0] === 'new-session')?.slice(0, 6)).toEqual([
+      'new-session',
+      '-d',
+      '-s',
+      `agentbox-manager-${started.manager.id}`,
+      '-c',
+      root,
+    ]);
+    // …and only the registration and the heartbeat travel.
+    expect(store.calls).toEqual([
+      `register laptop agentbox-manager-${started.manager.id}`,
+      `heartbeat ${started.manager.id} running`,
+    ]);
+    expect(started.manager).toMatchObject({
+      kind: 'tmux',
+      host: 'laptop',
+      hostIsHub: true,
+      workspaceName: 'remote',
+    });
+    // Every listing is the control box's, not a local render.
+    expect((await managers.listManagers()).map((m) => m.id)).toEqual([started.manager.id]);
   });
 });

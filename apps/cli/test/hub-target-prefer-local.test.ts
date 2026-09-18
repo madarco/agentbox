@@ -32,7 +32,7 @@ vi.mock('../src/control-plane/env-file.js', async (orig) => ({
   },
 }));
 
-import { resolveHubTarget } from '../src/commands/hub.js';
+import { hubCommand, resolveHubTarget } from '../src/commands/hub.js';
 
 describe('resolveHubTarget preferLocal', () => {
   beforeEach(() => {
@@ -115,5 +115,46 @@ describe('onThisMachine (what `agentbox hub` branches on)', () => {
 
   it('is true for the plain local hub', async () => {
     expect((await resolveHubTarget()).onThisMachine).toBe(true);
+  });
+});
+
+describe('`agentbox hub target --local`', () => {
+  beforeEach(() => {
+    state.controlPlaneUrl = '';
+    state.loopback = null;
+    delete process.env.AGENTBOX_HUB_API_KEY;
+  });
+
+  /** Run the subcommand and capture what it printed. */
+  async function target(argv: string[]): Promise<string> {
+    let out = '';
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      out += String(chunk);
+      return true;
+    });
+    try {
+      await hubCommand.parseAsync(['node', 'agentbox', 'target', ...argv]);
+    } finally {
+      write.mockRestore();
+    }
+    return out;
+  }
+
+  // One test, in this order: commander keeps an option's value on the command
+  // instance, so a second parse without `--local` would still see the first.
+  it('answers the control box by default and this machine with --local', async () => {
+    state.controlPlaneUrl = 'https://cp.example';
+    expect(JSON.parse(await target(['--json']))).toMatchObject({
+      mode: 'remote',
+      url: 'https://cp.example',
+      onThisMachine: false,
+    });
+    // The tray reads this to retry a `wrong_host` refusal naming its own host.
+    expect(JSON.parse(await target(['--json', '--local']))).toEqual({
+      mode: 'local',
+      url: 'http://127.0.0.1:8787',
+      token: 'LOCAL_TOKEN',
+      onThisMachine: true,
+    });
   });
 });
