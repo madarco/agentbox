@@ -31,6 +31,7 @@ import {
   isScratchBranch,
   landRefspec,
   parseDownloadKind,
+  pushArgvTargetsAllowed,
   resolveLandDest,
   resolveRemote,
   sanitizeGitArgs,
@@ -1033,15 +1034,22 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           }
           const params = body.params as GitRpcParams | undefined;
           const worktree = resolveWorktree(reg, params?.path ?? '/workspace');
-          // The docker relay always pushes the worktree's host-selected branch
-          // (`sanctionedBranch`, falling back to the create-time `branch`) — the
-          // in-box agent can't influence which branch is pushed. Key the gate on
-          // THAT branch, not the immutable create-time `branch` (which is always
-          // `agentbox/*`): after a host `agentbox git checkout main`, the push
-          // target is `main`, so it must NOT be treated as a scratch bypass.
-          // A scratch target bypasses unconditionally; a non-scratch sanctioned
-          // target bypasses only as part of the safe subset (honors
-          // `box.autoApproveSafeHostActions`) and leaves an audit trail.
+          // The docker relay chooses the branch it pushes — the worktree's
+          // host-selected `sanctionedBranch`, falling back to the create-time
+          // `branch`. Key the gate on THAT branch, not the immutable
+          // create-time `branch` (which is always `agentbox/*`): after a host
+          // `agentbox git checkout main`, the push target is `main`, so it must
+          // NOT be treated as a scratch bypass. A scratch target bypasses
+          // unconditionally; a non-scratch sanctioned target bypasses only as
+          // part of the safe subset (honors `box.autoApproveSafeHostActions`)
+          // and leaves an audit trail.
+          //
+          // The relay's own branch is not the whole push, though: the box's
+          // argv tail is appended to `push <remote> <branch>`, and git accepts
+          // several refspecs — so a bypass also requires every ref that tail
+          // would write to be a sanctioned target (`pushArgvTargetsAllowed`).
+          // Without that check a box on a scratch branch could append
+          // `HEAD:refs/heads/anything` and publish it with no approval at all.
           const dockerPushBranch = worktree?.sanctionedBranch ?? worktree?.branch;
           const isScratch = isScratchBranch(dockerPushBranch);
           const safeApproveOn = reg.autoApproveSafeHostActions !== false;
@@ -1052,8 +1060,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             !isScratch &&
             safeApproveOn &&
             isSanctionedPushBranch(dockerPushBranch, dockerPushBranch);
-          const bypassPushGate = isScratch || isSanctionedNonScratch;
-          if (isSanctionedNonScratch) {
+          const argvTargetsAllowed = pushArgvTargetsAllowed(sanitizeGitArgs(params?.args), {
+            ...(worktree?.branch ? { branch: worktree.branch } : {}),
+            ...(worktree?.sanctionedBranch ? { sanctionedBranch: worktree.sanctionedBranch } : {}),
+          });
+          const bypassPushGate = (isScratch || isSanctionedNonScratch) && argvTargetsAllowed;
+          if (isSanctionedNonScratch && bypassPushGate) {
             prompts.noteAutoApprove(
               reg.boxId,
               {
@@ -2211,8 +2223,9 @@ async function handleGitRpc(
   const remote = resolveRemote(params?.remote);
   // Operate on the host-sanctioned branch (updated by `agentbox git checkout`),
   // falling back to the create-time `branch` for records without the field.
-  // The agent can't influence this — the relay picks the branch — so pushing
-  // it is always host-controlled.
+  // The relay picks THIS branch, but the appended tail can name further
+  // refspecs — which is why the gate above vets the tail's targets before
+  // letting a push bypass approval.
   const pushBranch = worktree.sanctionedBranch ?? worktree.branch;
   const argv = ['git', '-C', worktree.hostMainRepo, op, remote, pushBranch];
   argv.push(...sanitizeGitArgs(params?.args));

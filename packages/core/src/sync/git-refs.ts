@@ -136,3 +136,133 @@ export interface GitRpcParams {
    */
   hostInitiated?: string;
 }
+
+/** What a box is allowed to push to, from the host's own records. */
+export interface PushTargetPolicy {
+  /** The box's create-time branch (`agentbox/<name>`), when the site knows it. */
+  branch?: string;
+  /** The branch the host last put the box on (`agentbox git checkout`). */
+  sanctionedBranch?: string;
+}
+
+/**
+ * True when `dst` (a bare branch name) is a target the host already sanctions:
+ * any `agentbox/*` scratch branch, the box's create-time branch, or the branch
+ * the host last checked out for it. Same decision as the gate's own bypass —
+ * expressed by reusing `isSanctionedPushBranch` against each known branch.
+ */
+export function isAllowedPushTarget(dst: string, policy: PushTargetPolicy): boolean {
+  return (
+    isSanctionedPushBranch(dst, policy.sanctionedBranch) ||
+    isSanctionedPushBranch(dst, policy.branch)
+  );
+}
+
+/**
+ * Push flags that cannot add or redirect a ref target. Allowlist: anything not
+ * listed — `--all`, `--mirror`, `--tags`, `--follow-tags`, `--delete`/`-d`,
+ * `--prune`, `--repo <url>`, `--exec`/`--receive-pack`, `--recurse-submodules`,
+ * and every flag git may grow next — refuses, because an unrecognised
+ * value-consuming flag would also desync the positional parse below.
+ */
+const TARGET_NEUTRAL_PUSH_FLAGS = new Set([
+  '-f',
+  '--force',
+  '--force-with-lease',
+  '--no-force-with-lease',
+  '--force-if-includes',
+  '--no-force-if-includes',
+  '-u',
+  '--set-upstream',
+  '-n',
+  '--dry-run',
+  '--porcelain',
+  '-q',
+  '--quiet',
+  '-v',
+  '--verbose',
+  '--progress',
+  '--no-progress',
+  '--atomic',
+  '--no-atomic',
+  '--verify',
+  '--no-verify',
+  '--thin',
+  '--no-thin',
+  '-4',
+  '--ipv4',
+  '-6',
+  '--ipv6',
+]);
+
+/**
+ * Target-neutral flags whose value rides in the same token (`--flag=value`).
+ * `--force-with-lease=<ref>[:<expect>]` names a ref as an *expectation*, never
+ * as a destination, so it adds no target.
+ */
+const TARGET_NEUTRAL_VALUE_FLAGS = new Set(['--force-with-lease']);
+
+/** A branch name we are willing to compare against the policy, spelled plainly. */
+const PLAIN_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+function isPlainBranchName(s: string): boolean {
+  return PLAIN_BRANCH.test(s) && !s.includes('..') && !s.endsWith('/') && !s.endsWith('.lock');
+}
+
+/**
+ * The branch a push refspec would write on the remote, or null when the token
+ * is not a plain branch destination we can reason about (a deletion `:branch`,
+ * a non-`refs/heads/` namespace such as `refs/tags/…`, a glob, a negative
+ * `^ref`, a remote name mistaken for a refspec …). Null always fails closed.
+ */
+export function pushRefspecTarget(token: string): string | null {
+  let spec = token.startsWith('+') ? token.slice(1) : token;
+  const colon = spec.indexOf(':');
+  if (colon >= 0) {
+    // An empty source (`:branch`) is a DELETE of the remote branch.
+    if (colon === 0) return null;
+    spec = spec.slice(colon + 1);
+  }
+  if (spec.startsWith('refs/')) {
+    if (!spec.startsWith('refs/heads/')) return null;
+    spec = spec.slice('refs/heads/'.length);
+  }
+  return isPlainBranchName(spec) ? spec : null;
+}
+
+/**
+ * True when the box-supplied argv tail appended after the relay's own
+ * `push <remote> <branch>` writes nothing beyond what the host sanctions.
+ *
+ * The relay picks the branch it pushes, but git accepts MULTIPLE refspecs, so
+ * a tail of `other-branch` or `HEAD:refs/heads/other` silently adds a second
+ * destination. The gate's bypass therefore has to hold for every ref the
+ * assembled command would write, not just for the one the relay chose.
+ *
+ * Allowlist, fail-closed: every token must be either a target-neutral flag or
+ * a refspec whose destination is an allowed target. An empty tail is allowed.
+ */
+export function pushArgvTargetsAllowed(args: string[], policy: PushTargetPolicy): boolean {
+  let positionalsOnly = false;
+  for (const arg of args) {
+    if (!positionalsOnly && arg === '--') {
+      positionalsOnly = true;
+      continue;
+    }
+    if (!positionalsOnly && arg.length > 1 && arg.startsWith('-')) {
+      const eq = arg.indexOf('=');
+      const known =
+        eq < 0
+          ? TARGET_NEUTRAL_PUSH_FLAGS.has(arg)
+          : TARGET_NEUTRAL_VALUE_FLAGS.has(arg.slice(0, eq));
+      if (!known) return false;
+      continue;
+    }
+    // Positional: the relay already supplied the remote, so git reads every
+    // one of these as a refspec (a second remote name lands here too, and
+    // fails the branch check — which is the fail-closed answer we want).
+    const target = pushRefspecTarget(arg);
+    if (target === null || !isAllowedPushTarget(target, policy)) return false;
+  }
+  return true;
+}

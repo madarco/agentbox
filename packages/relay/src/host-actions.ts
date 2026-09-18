@@ -35,6 +35,7 @@ import {
   isSanctionedPushBranch,
   landRefspec,
   parseDownloadKind,
+  pushArgvTargetsAllowed,
   realpathSafe,
   remoteTrackingRef,
   resolveHostPath,
@@ -1417,12 +1418,23 @@ async function runGitRpc(
   // unconditionally; the sanctioned-but-non-scratch bypass is part of the safe
   // subset, so it honors `box.autoApproveSafeHostActions` and leaves an audit
   // trail. An agent that self-switches HEAD to another branch still prompts.
+  //
+  // The branch is only half the push: the box's argv tail is appended to
+  // `push <remote> <branch>` at step 4 below, and git accepts several
+  // refspecs — so a bypass additionally requires every ref that tail would
+  // write to be a sanctioned target too (`pushArgvTargetsAllowed`), or a box
+  // on a scratch branch could append `HEAD:refs/heads/anything` and publish
+  // it with no approval at all.
   const isScratch = isScratchBranch(branch);
   const safeApproveOn = deps.autoApproveSafeHostActions !== false;
   const isSanctionedNonScratch =
     !isScratch && safeApproveOn && isSanctionedPushBranch(branch, lookup.sanctionedBranch);
-  const bypassPushGate = isScratch || isSanctionedNonScratch;
-  if (action.method === 'git.push' && isSanctionedNonScratch) {
+  const argvTargetsAllowed = pushArgvTargetsAllowed(sanitizeGitArgs(params.args), {
+    branch,
+    ...(lookup.sanctionedBranch ? { sanctionedBranch: lookup.sanctionedBranch } : {}),
+  });
+  const bypassPushGate = (isScratch || isSanctionedNonScratch) && argvTargetsAllowed;
+  if (action.method === 'git.push' && isSanctionedNonScratch && bypassPushGate) {
     deps.prompts?.noteAutoApprove(
       deps.boxId,
       {
@@ -1588,9 +1600,11 @@ async function runGitRpc(
         };
       }
       // 4. Real push. Args are user-controlled (`agentbox-ctl git push --
-      // <args>`); pass them through to git on the host. `repo.remote` is the
-      // caller's remote name against a real checkout, or the registered origin
-      // URL when we're pushing out of a scratch repo (which has no remotes).
+      // <args>`); pass them through to git on the host — they got past the
+      // gate above, which either vetted every ref they would write or made the
+      // push ask. `repo.remote` is the caller's remote name against a real
+      // checkout, or the registered origin URL when we're pushing out of a
+      // scratch repo (which has no remotes).
       const remote = repo.remote;
       const argv = ['-C', repo.dir, 'push', remote, branch];
       argv.push(...sanitizeGitArgs(params.args));

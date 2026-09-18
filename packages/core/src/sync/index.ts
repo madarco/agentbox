@@ -89,7 +89,7 @@ export type { SyncContext } from './context.js';
 export type { ProviderSync, CarryApplyResult } from './provider-sync.js';
 export { dryRunProviderSync, SYNC_DRYRUN_ENV } from './provider-sync.js';
 export { resolveSyncTopology } from './topology.js';
-export type { GitRpcParams } from './git-refs.js';
+export type { GitRpcParams, PushTargetPolicy } from './git-refs.js';
 export type { DownloadKind } from './files.js';
 export { parseDownloadKind, resolveHostPath } from './files.js';
 export { realpathSafe, isInside, isContainedInWorkspace, looksLikeSecret } from './containment.js';
@@ -104,4 +104,7 @@ export {
   remoteTrackingRef,
   isResolvedBranch,
   sanitizeGitArgs,
+  isAllowedPushTarget,
+  pushRefspecTarget,
+  pushArgvTargetsAllowed,
 } from './git-refs.js';

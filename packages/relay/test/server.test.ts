@@ -445,6 +445,91 @@ describe('relay prompt flow', () => {
     expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
   });
 
+  /**
+   * The argv-tail escape: the relay picks the branch it pushes, but the box's
+   * tail is appended to it and git accepts several refspecs. A scratch-branch
+   * box could once append its own target and publish it with no prompt.
+   */
+  describe('git.push argv-tail targets', () => {
+    async function registerScratch(): Promise<void> {
+      const reg = await fetchJson(handle, 'POST', '/admin/register-box', {
+        body: {
+          boxId: 'b1',
+          token: 't1',
+          name: 'box-one',
+          worktrees: [
+            {
+              containerPath: '/workspace',
+              hostMainRepo: '/tmp',
+              branch: 'agentbox/box-one',
+              sanctionedBranch: 'agentbox/box-one',
+            },
+          ],
+        },
+      });
+      expect(reg.status).toBe(204);
+    }
+
+    /** Drive a push that must NOT prompt: it runs straight through to git. */
+    async function pushExpectingNoPrompt(args?: string[]): Promise<void> {
+      const rpc = await fetchJson(handle, 'POST', '/rpc', {
+        token: 't1',
+        body: { method: 'git.push', params: { path: '/workspace', ...(args ? { args } : {}) } },
+      });
+      // /tmp is not a git repo, so git itself fails — the point is that the
+      // push reached git at all instead of parking on an approval.
+      expect(rpc.status).toBe(500);
+      expect(handle.prompts.forBox('b1')).toHaveLength(0);
+    }
+
+    /** Drive a push that MUST prompt, deny it, and assert the denial. */
+    async function pushExpectingPrompt(args: string[]): Promise<void> {
+      const rpcPromise = fetchJson(handle, 'POST', '/rpc', {
+        token: 't1',
+        body: { method: 'git.push', params: { path: '/workspace', args } },
+      });
+      let pendingId: string | null = null;
+      for (let i = 0; i < 500 && pendingId === null; i++) {
+        const list = handle.prompts.forBox('b1');
+        if (list.length > 0) pendingId = list[0]!.id;
+        else await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(pendingId).not.toBeNull();
+      await fetchJson(handle, 'POST', '/admin/prompts/answer', {
+        body: { id: pendingId, answer: 'n' },
+      });
+      const rpc = await rpcPromise;
+      expect((rpc.body as { exitCode: number }).exitCode).toBe(10);
+    }
+
+    it('a scratch-branch push with a routine tail still bypasses the gate', async () => {
+      await registerScratch();
+      await pushExpectingNoPrompt();
+      await pushExpectingNoPrompt(['--force']);
+    });
+
+    it("a tail naming the box's own branch still bypasses the gate", async () => {
+      await registerScratch();
+      await pushExpectingNoPrompt(['agentbox/box-one']);
+      await pushExpectingNoPrompt(['HEAD:refs/heads/agentbox/other']);
+    });
+
+    it('a tail that adds an unsanctioned refspec must ask, even on a scratch branch', async () => {
+      await registerScratch();
+      await pushExpectingPrompt(['other-branch']);
+    });
+
+    it('the same holds for a fully-qualified injected refspec', async () => {
+      await registerScratch();
+      await pushExpectingPrompt(['HEAD:refs/heads/other']);
+    });
+
+    it('a tail of flags that publish unenumerable refs must ask', async () => {
+      await registerScratch();
+      await pushExpectingPrompt(['--tags']);
+    });
+  });
+
   it('GET /admin/prompts lists pending host-action approvals with their context', async () => {
     await register(handle, 'b1', 't1', 'box-one');
 
