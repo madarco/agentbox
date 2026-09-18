@@ -282,6 +282,15 @@ has nothing on GitHub to poll anyway.
 Found while gating: two timeline rows written in the same millisecond came back in either order
 (the id's tie-break suffix was random). The suffix now counts up within a millisecond.
 
+**Found, NOT fixed (pre-dates this plan):** `agentbox git push <box>` on an `agentbox/*` branch logs
+the push TWICE — once `actor: human` from the hub's git route, once `actor: box` from the relay. The
+branch is a scratch branch, so the relay bypasses the push gate and never reads the host-initiated
+token, which is also how it would have known the host drove the push
+(`packages/relay/src/server.ts` ~1084 and the same block in `host-actions.ts` ~1437). The fix is to
+validate the claimed token even on the bypass path (the hard rejection stays behind
+`!bypassPushGate`, so no push that works today starts failing). Left out of Phase 4: it is not
+remote-specific, and it changes a security gate.
+
 - PR sync (`github-prs.ts`): `repoOf(project)` = `gh repo view <owner/repo>` from
   `WorkspaceProject.repoUrl` (non-GitHub → null, cached); iterate `ws.projects`, no folder scan. One
   code path for local and remote.
@@ -329,9 +338,9 @@ box; a second `~/.agentbox` (or a box) plays the PC. Rebuild + restart the hub w
 - Phase 4 (`hub-testing.md` §F, F14–F17): e2b box `agentbox-ctl git push` shows `+N −M` on the
   exposed hub's timeline; PR sync marks `pr.ready` with no checkout on the hub.
 
-**Verified locally (2026-09-18, docker, no control box):** in `../agentbox-test-repo` a commit in a
-box then `agentbox git push` → a `git.push` row carrying `+N −M`; the same repo's open PR is
-labelled by a sync whose every `gh` call is repo-addressed. The box-measured half and the
+**Verified locally (2026-09-18, docker, no control box):** in `../agentbox-test-repo` two commits in
+a box then `agentbox git push` → `git.push` rows carrying `+7 −0` and `+2 −0`; the same repo's PRs
+are labelled by a sync that reports `github: ok` and addresses every `gh` call by repo. The box-measured half and the
 `git.pushed` report are covered by the unit suites and by §F, which needs an exposed or deployed
 hub.
 
