@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { BACKGROUND_STOP_NOTICE, createManagerBackend } from '../lib/backend/managers';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
@@ -230,7 +231,7 @@ describe('detect hints a leaked environment can carry', () => {
     const { managers, workspaces } = backends(h);
     const w1 = await makeFolder();
     const w2 = await makeFolder();
-    const ws1 = await workspaces.addWorkspace({ path: w1 });
+    const ws1 = await workspaces.addWorkspace(await workspaceAdd(w1, { host: 'laptop' }));
     if (!ws1.ok) throw new Error(ws1.error);
     const started = await managers.startManager(ws1.workspace.id, { agent: 'claude' });
     if (!started.ok) throw new Error(started.error);

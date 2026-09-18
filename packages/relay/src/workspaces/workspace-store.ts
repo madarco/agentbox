@@ -544,20 +544,23 @@ export interface BoxWorkspaceKey {
  * neither of which is under anyone's workspace root, while its origin is the
  * same string everywhere. The folder match is the fallback for a project with
  * no remote (and for a host checkout registered before this hub knew its repo).
+ *
+ * A key with no `host` names a path on `localHost`: a bare absolute path only
+ * ever means something on the machine reading it.
  */
 export function workspaceForBox<
   T extends {
     projects: readonly { repoUrl?: string }[];
     hosts: Record<string, { root: string }>;
   },
->(records: readonly T[], key: BoxWorkspaceKey): T | null {
+>(records: readonly T[], key: BoxWorkspaceKey, localHost: string = osHostname()): T | null {
   const repo = normalizeRepoUrl(key.originUrl);
   if (repo) {
     const hit = records.find((r) => r.projects.some((p) => normalizeRepoUrl(p.repoUrl) === repo));
     if (hit) return hit;
   }
-  if (key.host && key.projectRoot) {
-    return findWorkspaceContaining(records, key.projectRoot, key.host);
+  if (key.projectRoot) {
+    return findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
   }
   return null;
 }

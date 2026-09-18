@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { hostname, tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
@@ -80,7 +80,11 @@ function snapshot(over: Partial<BackgroundSessionSnapshot> = {}): BackgroundSess
 async function makeWorkspace(): Promise<{ id: string; root: string }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-mgrbg-')));
   await mkdir(join(root, '.git'), { recursive: true });
-  return { id: (await addWorkspace(root, {}, noRegister)).id, root };
+  const rec = await addWorkspace(
+    { host: hostname(), root, projects: [{ path: root, name: basename(root) }] },
+    noRegister,
+  );
+  return { id: rec.id, root };
 }
 
 beforeEach(async () => {

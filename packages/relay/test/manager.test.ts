@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { hostname, tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
@@ -66,7 +66,11 @@ function fakeExec(fail: string[] = []): { calls: Call[]; exec: ManagerExec } {
 async function makeWorkspace(): Promise<{ id: string; root: string }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-mgr-')));
   await mkdir(join(root, '.git'), { recursive: true });
-  return { id: (await addWorkspace(root, {}, noRegister)).id, root };
+  const rec = await addWorkspace(
+    { host: hostname(), root, projects: [{ path: root, name: basename(root) }] },
+    noRegister,
+  );
+  return { id: rec.id, root };
 }
 
 beforeEach(async () => {

@@ -1,5 +1,5 @@
 import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
@@ -187,7 +187,10 @@ describe('manager messages', () => {
 
   it('stores the pane a detected session reported, and reports a new session id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'agentbox-pane-'));
-    const ws = await addWorkspace(root, {}, { register: async () => {} });
+    const ws = await addWorkspace(
+      { host: hostname(), root, projects: [] },
+      { register: async () => {} },
+    );
     const first = await upsertDetectedManager(ws.id, {
       agent: 'claude',
       sessionId: ID,

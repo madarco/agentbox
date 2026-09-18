@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { backgroundSettled } from '../lib/backend/background';
 import { createManagerBackend } from '../lib/backend/managers';
@@ -31,6 +32,7 @@ import {
   recordTimelineEvent,
   resolveWorkspaceDir,
   timelineFile,
+  workspaceProjectIds,
   type TimelineEvent,
 } from '@agentbox/relay';
 
@@ -365,7 +367,7 @@ describe('timeline writes and reads', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     h.boxes.push({
       id: 'box1',
@@ -454,7 +456,9 @@ describe('timeline writes and reads', () => {
   it('starts no GitHub sync on a sync=0 read, and reports the last status', async () => {
     const h = harness();
     const { workspaces } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await folder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const sync = createGithubPrSync(h.deps);
     const timeline = createTimelineBackend(h.deps, { sync });
@@ -473,7 +477,9 @@ describe('timeline writes and reads', () => {
   it('reports GitHub unavailable when gh is not logged in', async () => {
     const h = harness();
     const { workspaces } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await folder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const sync = createGithubPrSync(h.deps);
     expect(await sync.syncNow((await readWorkspace(added.workspace.id))!)).toBe('unavailable');
@@ -484,7 +490,9 @@ describe('sendManagerMessage', () => {
   it('types into a running hub-run manager and logs the message with its PR', async () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await folder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const started = await managers.startManager(added.workspace.id, { agent: 'claude' });
     if (!started.ok) throw new Error(started.error);
@@ -565,7 +573,7 @@ describe('diffs on the live rows', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     for (const id of ['box1', 'box2']) {
@@ -642,7 +650,14 @@ describe('stamps from routes that do not name a workspace', () => {
     const root1 = await folder();
     const root2 = await folder();
     const detect = async (sessionId: string, cwd: string) => {
-      const d = await managers.detectManager({ agent: 'claude', sessionId, cwd, host: 'laptop' });
+      const d = await managers.detectManager({
+        agent: 'claude',
+        sessionId,
+        cwd,
+        host: 'laptop',
+        // The CLI's own scan of the folder: what a workspace created here is built from.
+        projects: [{ path: cwd }],
+      });
       if (!d.ok) throw new Error(d.error);
       return d;
     };
@@ -677,7 +692,7 @@ describe('stamps from routes that do not name a workspace', () => {
     const hub = withBoxTimeline(fakeHub(), { deps: h.deps, stampFor: managers.timelineStamp });
     await hub.start('box1', { session: { agent: 'claude', sessionId: S2 } });
     await hub.stop('box1', { session: { agent: 'claude', sessionId: S1 } });
-    const projectId = (await readWorkspace(ws1))!.projectIds[0]!;
+    const projectId = workspaceProjectIds((await readWorkspace(ws1))!, 'laptop')[0]!;
     await hub.create(
       { projectId, managerId: c.manager.id, agent: 'claude', name: 'made' } as Parameters<
         HubBackend['create']
@@ -1067,7 +1082,9 @@ describe('a message about a PR in a workspace over several repos', () => {
   it('ties the message to the repo it names, and to none when the number alone is ambiguous', async () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await folder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     const { recordTimelineEvent } = await import('@agentbox/relay');
@@ -1168,7 +1185,7 @@ describe('branch links', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     h.boxes.push({
@@ -1267,7 +1284,9 @@ describe('branch graph', () => {
   it("records a create's base: its fromBranch, else the project's current branch", async () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await folder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await folder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const projectId = added.workspace.projectIds[0]!;
     const asked: string[] = [];
@@ -1299,7 +1318,7 @@ describe('branch graph', () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const box: TimelineBoxFact = {
       id: 'box1',
@@ -1359,7 +1378,7 @@ describe('branch graph', () => {
     const h = harness();
     const { workspaces } = backends(h);
     const root = await folder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     h.boxes.push({

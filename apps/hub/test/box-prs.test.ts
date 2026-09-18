@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { workspaceAdd } from './_workspace-input';
 import { appendTimelineEvent, readTimeline, type TimelineEvent } from '@agentbox/relay';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { createBoxPrLookup, indexTimelinePrs, prForBox } from '../lib/backend/box-prs';
@@ -135,7 +136,7 @@ describe('createBoxPrLookup', () => {
   async function workspace(): Promise<{ id: string; root: string }> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-boxpr-')));
     await mkdir(join(root, '.git'), { recursive: true });
-    const added = await createWorkspaceBackend(deps).addWorkspace({ path: root });
+    const added = await createWorkspaceBackend(deps).addWorkspace(await workspaceAdd(root));
     if (!added.ok) throw new Error(added.error);
     return { id: added.workspace.id, root };
   }

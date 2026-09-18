@@ -237,16 +237,15 @@ export async function hasTimelineKey(wsId: string, key: string): Promise<boolean
  * realpath'd roots) and only when it is on this machine — another host's path
  * means nothing to `realpath` here.
  */
-export async function readWorkspaceForBox(key: BoxWorkspaceKey): Promise<WorkspaceRecord | null> {
+export async function readWorkspaceForBox(
+  key: BoxWorkspaceKey,
+  localHost: string = hostname(),
+): Promise<WorkspaceRecord | null> {
   const records = await listWorkspaces();
   if (records.length === 0) return null;
-  const local = hostname();
   const projectRoot =
-    key.projectRoot && key.host === local
+    key.projectRoot && (key.host ?? localHost) === hostname()
       ? await canonicalWorkspaceRoot(key.projectRoot)
       : key.projectRoot;
-  return workspaceForBox(records, {
-    ...key,
-    ...(projectRoot ? { projectRoot } : {}),
-  });
+  return workspaceForBox(records, { ...key, ...(projectRoot ? { projectRoot } : {}) }, localHost);
 }

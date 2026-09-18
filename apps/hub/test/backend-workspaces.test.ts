@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
+import { workspaceAdd } from './_workspace-input';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
 import type { BackendDeps } from '../lib/backend/deps';
 import type { QueueJob } from '@agentbox/relay';
@@ -33,30 +34,74 @@ beforeEach(async () => {
 });
 
 describe('addWorkspace', () => {
-  it('registers a folder, discovers its projects and notifies', async () => {
+  it('records the scan the client sent and notifies', async () => {
     const deps = makeDeps();
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
-    const res = await backend.addWorkspace({ path: root });
+    const res = await backend.addWorkspace(await workspaceAdd(root));
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.workspace.projectIds).toHaveLength(2);
+    expect(res.workspace.projects).toHaveLength(2);
+    expect(res.workspace.root).toBe(root);
+    expect(res.workspace.hosts[hostname()]?.root).toBe(root);
+    // A local folder answers to its path hash too, so the project registry joins.
+    expect(res.workspace.projectIds.length).toBeGreaterThanOrEqual(2);
     expect(res.workspace.taskCounts).toEqual({ open: 0, done: 0 });
     expect(res.workspace.managers).toEqual({ running: 0, total: 0 });
     expect(deps.notify).toHaveBeenCalledTimes(1);
     expect(await backend.listWorkspaces()).toHaveLength(1);
   });
 
-  it('refuses a relative path and a path that is not a directory', async () => {
+  it("registers a folder it cannot see: the hub never stats the caller's paths", async () => {
     const backend = createWorkspaceBackend(makeDeps());
-    expect(await backend.addWorkspace({ path: 'relative' })).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('absolute'),
+    const res = await backend.addWorkspace({
+      host: 'laptop',
+      root: '/home/dev/work',
+      projects: [{ path: '/home/dev/work/app', repoUrl: 'git@github.com:acme/app.git' }],
     });
-    expect(await backend.addWorkspace({ path: '/definitely/not/here' })).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('not a directory'),
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // No folder HERE, so no root in the view — and no path-hash project id.
+    expect(res.workspace.root).toBeUndefined();
+    expect(res.workspace.hosts['laptop']?.root).toBe('/home/dev/work');
+    expect(res.workspace.projectIds).toHaveLength(1);
+  });
+
+  it('refuses a relative root or project path', async () => {
+    const backend = createWorkspaceBackend(makeDeps());
+    expect(
+      await backend.addWorkspace({ host: 'pc', root: 'relative', projects: [] }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('absolute') });
+    expect(
+      await backend.addWorkspace({ host: 'pc', root: '/ok', projects: [{ path: 'nope' }] }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('absolute') });
+  });
+
+  it('is idempotent on (host, root), and merges a second machine by repo', async () => {
+    const backend = createWorkspaceBackend(makeDeps());
+    const root = await makeFolder();
+    const scan = await workspaceAdd(root);
+    const withRepos = {
+      ...scan,
+      projects: scan.projects.map((p, i) => ({
+        ...p,
+        repoUrl: `git@github.com:acme/${i === 0 ? 'api' : 'app'}.git`,
+      })),
+    };
+    const first = await backend.addWorkspace(withRepos);
+    const again = await backend.addWorkspace(withRepos);
+    expect(first.ok && again.ok && again.workspace.id).toBe(first.ok ? first.workspace.id : null);
+    expect(await backend.listWorkspaces()).toHaveLength(1);
+
+    // Another machine's checkout of one of the same repos, spelled over https.
+    const merged = await backend.addWorkspace({
+      host: 'laptop',
+      root: '/home/dev/work',
+      projects: [{ path: '/home/dev/work/app', repoUrl: 'https://github.com/acme/app' }],
     });
+    expect(merged.ok && merged.workspace.id).toBe(first.ok ? first.workspace.id : null);
+    expect(merged.ok && merged.workspace.hosts['laptop']?.root).toBe('/home/dev/work');
+    expect(await backend.listWorkspaces()).toHaveLength(1);
   });
 
   it('answers not-found shaped errors for an unknown workspace', async () => {
@@ -64,7 +109,7 @@ describe('addWorkspace', () => {
     expect(await backend.getWorkspace('deadbeef')).toBeNull();
     expect(await backend.listTasks('deadbeef')).toBeNull();
     // The route maps this string to a 404 via failFromAction.
-    expect(await backend.rescanWorkspace('deadbeef')).toMatchObject({
+    expect(await backend.renameWorkspace('deadbeef', 'x')).toMatchObject({
       ok: false,
       error: 'unknown workspace deadbeef',
     });
@@ -76,7 +121,7 @@ describe('tasks', () => {
     const deps = makeDeps({ boxIds: ['box1'] });
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
-    const res = await backend.addWorkspace({ path: root });
+    const res = await backend.addWorkspace(await workspaceAdd(root));
     if (!res.ok) throw new Error(res.error);
     deps.notify.mockClear();
     return { backend, deps, wsId: res.workspace.id };
@@ -147,7 +192,7 @@ describe('reconciliation through the backend', () => {
     const deps = makeDeps({ jobs: [{ id: 'j1', kind: 'create', status: 'queued' }] });
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
-    const added = await backend.addWorkspace({ path: root });
+    const added = await backend.addWorkspace(await workspaceAdd(root));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     await backend.addTask(wsId, { title: 'a', boxJobId: 'j1' });
@@ -165,19 +210,24 @@ describe('reconciliation through the backend', () => {
     expect(healed?.[0]?.boxJobId).toBeUndefined();
   });
 
-  it('returns a task to the backlog when its box is destroyed', async () => {
+  it('keeps a task on a box this hub has no record of, and drops it on a destroy', async () => {
     const deps = makeDeps({ boxIds: ['box1'] });
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
-    const added = await backend.addWorkspace({ path: root });
+    const added = await backend.addWorkspace(await workspaceAdd(root));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     await backend.addTask(wsId, { title: 'a', boxId: 'box1' });
-    const gone = createWorkspaceBackend(makeDeps({ boxIds: [] }));
-    const healed = await gone.listTasks(wsId);
+    // A box created on another machine is simply not in this hub's inventory:
+    // that is not evidence it is gone, so the assignment stands.
+    const other = createWorkspaceBackend(makeDeps({ boxIds: [] }));
+    expect((await other.listTasks(wsId))?.[0]?.boxId).toBe('box1');
+    // The destroy says so explicitly.
+    await backend.unassignBox('box1');
+    const healed = await backend.listTasks(wsId);
     expect(healed?.[0]?.boxId).toBeUndefined();
-    // Reconciliation heals assignment, never progress.
-    expect(healed?.[0]?.status).toBe('in_progress');
+    // Back in the backlog, exactly as a manual unassign leaves it.
+    expect(healed?.[0]?.status).toBe('todo');
   });
 });
 
@@ -189,7 +239,7 @@ describe('getData hooks', () => {
     });
     const backend = createWorkspaceBackend(deps);
     const root = await makeFolder();
-    const added = await backend.addWorkspace({ path: root });
+    const added = await backend.addWorkspace(await workspaceAdd(root));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     const projectId = added.workspace.projectIds[0]!;

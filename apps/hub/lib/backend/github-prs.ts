@@ -95,6 +95,7 @@ export function createGithubPrSync(
   opts: { now?: () => number; intervalMs?: number; hostname?: () => string } = {},
 ): GithubPrSync {
   const gh = deps.ghExec ?? defaultGhExec;
+  const host = opts.hostname ?? deps.hostname ?? osHostname;
   const now = opts.now ?? Date.now;
   const interval = opts.intervalMs ?? GITHUB_SYNC_INTERVAL_MS;
   const states = new Map<string, WorkspaceSyncState>();
@@ -152,7 +153,7 @@ export function createGithubPrSync(
     if (user === null) return 'unavailable';
     // This machine's checkouts of the workspace's projects: `gh` reads the repo
     // from a folder, so a workspace with no folder here has nothing to sync yet.
-    const roots = workspaceProjectRootsOn(ws, (opts.hostname ?? osHostname)());
+    const roots = workspaceProjectRootsOn(ws, host());
     const repos = new Map<string, RepoRef>();
     for (const root of roots) {
       const ref = await repoOf(root);
@@ -166,7 +167,7 @@ export function createGithubPrSync(
       readTasks(ws.id).catch(() => []),
       listWorkspaces(),
     ]);
-    const boxes = facts.filter((b) => workspaceForBox(workspaces, b)?.id === ws.id);
+    const boxes = facts.filter((b) => workspaceForBox(workspaces, b, host())?.id === ws.id);
     const known = new Set<string>();
     for (const b of boxes) for (const br of b.branches) known.add(br);
     for (const ev of events) if (ev.branch) known.add(ev.branch);

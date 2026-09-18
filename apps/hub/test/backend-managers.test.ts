@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { createManagerBackend } from '../lib/backend/managers';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
@@ -97,7 +98,7 @@ describe('detectManager', () => {
     const { workspaces, managers } = backends(h);
     const root = await makeFolder();
     await mkdir(join(root, 'sub'));
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const res = await managers.detectManager({
       agent: 'codex',
@@ -128,17 +129,38 @@ describe('detectManager refusals', () => {
     expect(await workspaces.listWorkspaces()).toEqual([]);
   });
 
-  it('refuses a folder this hub does not have, and registers nothing', async () => {
+  it('registers a folder this hub cannot see: it is on the caller machine', async () => {
+    const { workspaces, managers } = backends(harness());
+    const cwd = '/home/dev/work';
+    const res = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S1,
+      cwd,
+      host: 'pc',
+      home: '/home/dev',
+      projects: [{ path: '/home/dev/work/app', repoUrl: 'git@github.com:acme/app.git' }],
+    });
+    expect(res).toMatchObject({ ok: true, created: true });
+    const [ws] = await workspaces.listWorkspaces();
+    expect(ws?.hosts['pc']?.root).toBe(cwd);
+    expect(ws?.projects).toHaveLength(1);
+    // The folder is not this hub's, so it claims none of it.
+    expect(ws?.root).toBeUndefined();
+  });
+
+  it("applies the folder rules to the CALLER's home, not this hub's", async () => {
     const { workspaces, managers } = backends(harness());
     const res = await managers.detectManager({
       agent: 'claude',
       sessionId: S1,
-      cwd: join(await makeFolder(), 'not-here'),
+      cwd: '/home/dev',
+      host: 'pc',
+      home: '/home/dev',
     });
     expect(res).toMatchObject({
       ok: false,
       invalid: true,
-      error: expect.stringContaining('folder does not exist on this hub'),
+      error: expect.stringContaining('is your home folder'),
     });
     expect(await workspaces.listWorkspaces()).toEqual([]);
     expect(await managers.listManagers()).toEqual([]);
@@ -327,7 +349,9 @@ describe('startManager', () => {
   it('starts several hub managers in one workspace, and resumes a held session instead of duplicating it', async () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await makeFolder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     const a = await managers.startManager(wsId, { agent: 'claude' });
@@ -340,7 +364,7 @@ describe('startManager', () => {
     await managers.detectManager({
       agent: 'claude',
       sessionId: S1,
-      cwd: added.workspace.root,
+      cwd: added.workspace.root!,
       managerId: a.manager.id,
     });
     expect(await managers.startManager(wsId, { agent: 'claude', sessionId: S1 })).toMatchObject({
@@ -360,7 +384,9 @@ describe('startManager', () => {
   it('rejects a session resume for an agent whose format we cannot resume', async () => {
     const h = harness();
     const { workspaces, managers } = backends(h);
-    const added = await workspaces.addWorkspace({ path: await makeFolder() });
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
     if (!added.ok) throw new Error(added.error);
     const res = await managers.startManager(added.workspace.id, {
       agent: 'opencode',
@@ -378,7 +404,7 @@ describe('the single-manager layout', () => {
   async function legacyWorkspace(h: Harness) {
     const { workspaces, managers } = backends(h);
     const root = await makeFolder();
-    const added = await workspaces.addWorkspace({ path: root });
+    const added = await workspaces.addWorkspace(await workspaceAdd(root, { host: 'laptop' }));
     if (!added.ok) throw new Error(added.error);
     const wsId = added.workspace.id;
     const dir = (await resolveWorkspaceDir(wsId))!;

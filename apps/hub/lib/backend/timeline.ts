@@ -2,6 +2,7 @@
 // written by every mutation point), aggregated for reading, plus the rows that
 // are only ever true NOW — a box working a task, a PR waiting to be merged —
 // which are built at read time and never stored.
+import { hostname as osHostname } from 'node:os';
 import {
   findManager,
   parseShortstat,
@@ -374,10 +375,16 @@ function orNullAfter<T>(p: Promise<T | null>, ms: number): Promise<T | null> {
   });
 }
 
+/** This hub's own hostname: a workspace's folders are keyed by it. */
+function hostOf(deps: BackendDeps): string {
+  return (deps.hostname ?? osHostname)();
+}
+
 export function createTimelineBackend(
   deps: BackendDeps,
   opts: TimelineBackendOptions = {},
 ): TimelineBackend {
+  const localHost = (): string => hostOf(deps);
   const sync = opts.sync ?? createGithubPrSync(deps);
   const now = opts.now ?? Date.now;
   const diffTimeout = opts.diffTimeoutMs ?? DIFF_TIMEOUT_MS;
@@ -450,7 +457,7 @@ export function createTimelineBackend(
         reconcileContext(deps),
       ]);
       const tasks = await readReconciledTasks(wsId, ctx);
-      const boxes = facts.filter((b) => workspaceForBox(workspaces, b)?.id === wsId);
+      const boxes = facts.filter((b) => workspaceForBox(workspaces, b, localHost())?.id === wsId);
       // Copies: an aggregated item can be the parsed event itself, and lanes are never stored.
       const all = aggregateTimeline(events).map((i) => ({ ...i }));
       const live = [
@@ -578,6 +585,7 @@ export interface BoxTimelineSeams {
  */
 export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBackend {
   const { deps } = seams;
+  const localHost = (): string => hostOf(deps);
 
   /** The box's persisted record; nothing when no workspace exists to log it in. */
   async function factOf(id: string): Promise<TimelineBoxFact | undefined> {
@@ -627,7 +635,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       if (branchSwitch && (!after?.branches[0] || after.branches[0] === previous)) return;
       const fact = after ?? before ?? (type === 'box.destroyed' ? undefined : await factOf(id));
       if (!fact) return;
-      const ws = await readWorkspaceForBox(fact);
+      const ws = await readWorkspaceForBox(fact, localHost());
       if (!ws) return;
       const [stamp, base, diff] = await Promise.all([
         stampInWorkspace(meta, ws.id, seams.stampFor),
@@ -664,7 +672,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       // The repo first: a hub-routed create names one and may hold no folder for it.
       const ws =
         (input.repoUrl ? workspaceForBox(records, { originUrl: input.repoUrl }) : null) ??
-        records.find((w) => workspaceProjectIds(w).includes(projectId));
+        records.find((w) => workspaceProjectIds(w, hostOf(deps)).includes(projectId));
       if (!ws) return;
       // The manager a create names is the one the box belongs to, whoever sent it.
       const named = input.managerId

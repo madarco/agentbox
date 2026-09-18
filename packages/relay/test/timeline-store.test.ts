@@ -1,5 +1,5 @@
 import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
@@ -17,16 +17,24 @@ import {
   TIMELINE_KEEP_LINES,
   TIMELINE_MAX_LINES,
   TIMELINE_RETENTION_MS,
-  workspaceForPath,
+  readWorkspaceForBox,
 } from '../src/workspaces/timeline-store.js';
 import type { WorkspaceRecord } from '../src/workspaces/types.js';
 
 const noRegister = { register: async (): Promise<void> => {} };
 
-async function makeWorkspace(): Promise<WorkspaceRecord> {
+async function makeWorkspace(): Promise<WorkspaceRecord & { root: string }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-timeline-')));
-  return addWorkspace(root, {}, noRegister);
+  const rec = await addWorkspace(
+    { host: hostname(), root, projects: [{ path: root, name: 'app', repoUrl: REPO }] },
+    noRegister,
+  );
+  return { ...rec, root };
 }
+
+/** The same repo, spelled two ways: both must key one workspace. */
+const REPO = 'git@github.com:acme/app.git';
+const REPO_HTTPS = 'https://github.com/acme/app';
 
 async function logFile(ws: WorkspaceRecord): Promise<string> {
   return timelineFile((await resolveWorkspaceDir(ws.id))!);
@@ -156,10 +164,19 @@ describe('timeline store', () => {
     ).toBeNull();
   });
 
-  it('finds the workspace a box project path belongs to', async () => {
+  it('finds the workspace a box belongs to, by folder and by repo', async () => {
     const ws = await makeWorkspace();
-    expect((await workspaceForPath(join(ws.root, 'app', 'src')))?.id).toBe(ws.id);
-    expect(await workspaceForPath(`${ws.root}-sibling`)).toBeNull();
+    const here = hostname();
+    expect(
+      (await readWorkspaceForBox({ host: here, projectRoot: join(ws.root, 'app', 'src') }))?.id,
+    ).toBe(ws.id);
+    expect(await readWorkspaceForBox({ host: here, projectRoot: `${ws.root}-sibling` })).toBeNull();
+    // A cloud box: its folder is a literal /workspace, its origin is the key.
+    expect(
+      (await readWorkspaceForBox({ originUrl: REPO_HTTPS, host: 'box', projectRoot: '/workspace' }))
+        ?.id,
+    ).toBe(ws.id);
+    expect(await readWorkspaceForBox({ originUrl: 'https://github.com/acme/other' })).toBeNull();
   });
 
   it('mints ids that sort in time order', () => {

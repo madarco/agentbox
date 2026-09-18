@@ -346,13 +346,18 @@ describe('HubApiClient workspaces', () => {
     expect(calls[0]?.url).toBe('https://hub.example/api/v1/workspaces');
   });
 
-  it('registers a folder by absolute path', async () => {
+  it("posts the caller's own scan, host included", async () => {
     const { fetchImpl, calls } = stub({
       'POST /api/v1/workspaces': { status: 200, body: { id: 'w1' } },
     });
-    await new HubApiClient(target(fetchImpl)).addWorkspace({ path: '/Users/me/code' });
+    const body = {
+      host: 'laptop',
+      root: '/Users/me/code',
+      projects: [{ path: '/Users/me/code/app', name: 'app', repoUrl: 'git@github.com:me/app.git' }],
+    };
+    await new HubApiClient(target(fetchImpl)).addWorkspace(body);
     expect(calls[0]?.method).toBe('POST');
-    expect(calls[0]?.body).toEqual({ path: '/Users/me/code' });
+    expect(calls[0]?.body).toEqual(body);
   });
 
   it('encodes the workspace id into every sub-path', async () => {

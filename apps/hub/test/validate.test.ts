@@ -376,15 +376,39 @@ describe('parseCloneBox', () => {
 });
 
 describe('parseWorkspaceAdd', () => {
-  it('requires an absolute path and caps the name', () => {
-    expect(parseWorkspaceAdd({ path: '/Users/me/code' })).toMatchObject({
+  it('takes the scan the caller ran: host, absolute root, and its projects', () => {
+    expect(
+      parseWorkspaceAdd({
+        host: 'laptop',
+        root: '/Users/me/code',
+        projects: [{ path: '/Users/me/code/app', repoUrl: 'git@github.com:acme/app.git' }],
+      }),
+    ).toMatchObject({
       ok: true,
-      value: { path: '/Users/me/code' },
+      value: {
+        host: 'laptop',
+        root: '/Users/me/code',
+        projects: [{ path: '/Users/me/code/app', repoUrl: 'git@github.com:acme/app.git' }],
+      },
     });
-    expect(parseWorkspaceAdd({ path: 'code' })).toMatchObject({ ok: false });
+    // The folder is the CALLER's, so a path this hub does not have is fine.
+    expect(parseWorkspaceAdd({ host: 'laptop', root: '/not/here', projects: [] })).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('refuses a missing host, a relative path and a bad name or id', () => {
+    const base = { host: 'laptop', root: '/a', projects: [] };
+    expect(parseWorkspaceAdd({ root: '/a', projects: [] })).toMatchObject({ ok: false });
+    expect(parseWorkspaceAdd({ ...base, root: 'code' })).toMatchObject({ ok: false });
     expect(parseWorkspaceAdd({})).toMatchObject({ ok: false });
-    expect(parseWorkspaceAdd({ path: '/a', name: 'x'.repeat(61) })).toMatchObject({ ok: false });
-    expect(parseWorkspaceAdd({ path: '/a', name: '   ' })).toMatchObject({ ok: false });
+    expect(parseWorkspaceAdd({ ...base, projects: [{ path: 'rel' }] })).toMatchObject({
+      ok: false,
+    });
+    expect(parseWorkspaceAdd({ ...base, name: 'x'.repeat(61) })).toMatchObject({ ok: false });
+    expect(parseWorkspaceAdd({ ...base, name: '   ' })).toMatchObject({ ok: false });
+    expect(parseWorkspaceAdd({ ...base, id: 'not-an-id' })).toMatchObject({ ok: false });
+    expect(parseWorkspaceAdd({ ...base, id: '0123456789abcdef' })).toMatchObject({ ok: true });
   });
 });
 

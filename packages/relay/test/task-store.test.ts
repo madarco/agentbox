@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertTempHome } from '../../../scripts/test-home.js';
@@ -20,6 +20,7 @@ import {
   taskSummaryForBox,
   unassignTasks,
   upsertDetectedManager,
+  workspaceRootOn,
   type WorkTask,
 } from '../src/workspaces/index.js';
 
@@ -28,7 +29,12 @@ const noRegister = { register: async () => {} };
 async function makeWorkspace(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-tasks-')));
   await mkdir(join(root, '.git'), { recursive: true });
-  return (await addWorkspace(root, {}, noRegister)).id;
+  return (
+    await addWorkspace(
+      { host: hostname(), root, projects: [{ path: root, name: 'tasks' }] },
+      noRegister,
+    )
+  ).id;
 }
 
 beforeEach(async () => {
@@ -150,7 +156,7 @@ describe('assignTasks', () => {
 
   it('inherits the manager that made the box, without overriding one already set', async () => {
     const ws = await makeWorkspace();
-    const root = (await readWorkspace(ws))!.root;
+    const root = workspaceRootOn((await readWorkspace(ws))!, hostname())!;
     const { manager } = await upsertDetectedManager(ws, {
       agent: 'claude',
       sessionId: 's1',
@@ -236,14 +242,26 @@ describe('reconcileTasks', () => {
     expect(r.tasks[0]?.boxJobId).toBe('j1');
   });
 
-  it('unassigns a task whose box is gone', () => {
+  it('drops a job id only when that create explicitly failed', () => {
+    for (const status of ['failed', 'cancelled']) {
+      const r = reconcileTasks([task({ id: 'T-1', boxJobId: 'j1' })], {
+        liveBoxIds: live(),
+        jobs: [{ id: 'j1', status }],
+      });
+      expect(r.changed, status).toBe(true);
+      expect(r.tasks[0]?.boxJobId).toBeUndefined();
+    }
+  });
+
+  it('keeps a box id this hub has no record of: absence is not a destroy', () => {
+    // A docker box on the PC, with the store on a control box, is simply not in
+    // THIS hub's inventory. Unassigning on that would empty every such list.
     const r = reconcileTasks([task({ id: 'T-1', boxId: 'b1', status: 'in_progress' })], {
       liveBoxIds: live('other'),
       jobs: [],
     });
-    expect(r.changed).toBe(true);
-    expect(r.tasks[0]?.boxId).toBeUndefined();
-    // Status is the human's call, not reconciliation's.
+    expect(r.changed).toBe(false);
+    expect(r.tasks[0]?.boxId).toBe('b1');
     expect(r.tasks[0]?.status).toBe('in_progress');
   });
 
@@ -324,12 +342,15 @@ describe('readReconciledTasks', () => {
 describe('the task-id counter survives a rescan', () => {
   it('re-registering a workspace keeps the counter, so ids are never reused', async () => {
     const ws = await makeWorkspace();
-    const root = (await readWorkspace(ws))!.root;
+    const root = workspaceRootOn((await readWorkspace(ws))!, hostname())!;
     await addTask(ws, { title: 'first' });
     await addTask(ws, { title: 'second' });
     // `POST /workspaces` on a known root rescans it, rewriting the whole record.
     // Dropping the counter here would hand `T-2` out twice.
-    await addWorkspace(root, {}, noRegister);
+    await addWorkspace(
+      { host: hostname(), root, projects: [{ path: root, name: 'tasks' }] },
+      noRegister,
+    );
     expect((await addTask(ws, { title: 'third' })).id).toBe('T-3');
     expect(new Set((await readTasks(ws)).map((t) => t.id)).size).toBe(3);
   });
