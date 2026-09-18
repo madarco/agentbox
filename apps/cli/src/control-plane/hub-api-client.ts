@@ -452,6 +452,23 @@ export interface HubApiWorkspace {
   updatedAt: string;
 }
 
+/**
+ * Fill in the collections a workspace payload must have. A hub one release older
+ * serves the folder-keyed record (no `hosts`, no `projects`) and still reports
+ * `apiVersion: 'v1'`, so the compat gate passes it and every `ws.hosts[...]` /
+ * `ws.projects.length` in the CLI would throw. Normalised at the ONE seam that
+ * parses the payload, so a pre-v2 hub degrades to "no workspace contains this
+ * folder" instead of a TypeError.
+ */
+function normalizeWorkspace(ws: HubApiWorkspace): HubApiWorkspace {
+  return {
+    ...ws,
+    projects: ws.projects ?? [],
+    hosts: ws.hosts ?? {},
+    projectIds: ws.projectIds ?? [],
+  };
+}
+
 /** `POST /workspaces`: the scan the client ran on its own machine. */
 export interface HubApiWorkspaceAdd {
   host: string;
@@ -1225,11 +1242,14 @@ export class HubApiClient {
 
   /** Workspaces the hub has registered. Empty on a hosted hub (host state only). */
   async listWorkspaces(): Promise<HubApiWorkspace[]> {
-    return (await this.request<{ workspaces: HubApiWorkspace[] }>('GET', '/workspaces')).workspaces;
+    const res = await this.request<{ workspaces: HubApiWorkspace[] }>('GET', '/workspaces');
+    return (res.workspaces ?? []).map(normalizeWorkspace);
   }
 
-  getWorkspace(id: string): Promise<HubApiWorkspace> {
-    return this.request<HubApiWorkspace>('GET', `/workspaces/${encodeURIComponent(id)}`);
+  async getWorkspace(id: string): Promise<HubApiWorkspace> {
+    return normalizeWorkspace(
+      await this.request<HubApiWorkspace>('GET', `/workspaces/${encodeURIComponent(id)}`),
+    );
   }
 
   /**
@@ -1237,8 +1257,8 @@ export class HubApiClient {
    * stores the folders under the host that has them and never stats them, so a
    * remote hub registers the CALLER's folders, not its own.
    */
-  addWorkspace(body: HubApiWorkspaceAdd): Promise<HubApiWorkspace> {
-    return this.request<HubApiWorkspace>('POST', '/workspaces', body);
+  async addWorkspace(body: HubApiWorkspaceAdd): Promise<HubApiWorkspace> {
+    return normalizeWorkspace(await this.request<HubApiWorkspace>('POST', '/workspaces', body));
   }
 
   async removeWorkspace(id: string, opts: { force?: boolean } = {}): Promise<void> {
@@ -1246,10 +1266,12 @@ export class HubApiClient {
     await this.request<{ ok: true }>('DELETE', `/workspaces/${encodeURIComponent(id)}${q}`);
   }
 
-  renameWorkspace(id: string, name: string): Promise<HubApiWorkspace> {
-    return this.request<HubApiWorkspace>('POST', `/workspaces/${encodeURIComponent(id)}/rename`, {
-      name,
-    });
+  async renameWorkspace(id: string, name: string): Promise<HubApiWorkspace> {
+    return normalizeWorkspace(
+      await this.request<HubApiWorkspace>('POST', `/workspaces/${encodeURIComponent(id)}/rename`, {
+        name,
+      }),
+    );
   }
 
   async listTasks(wsId: string, filter: HubApiTaskFilter = {}): Promise<HubApiTask[]> {
@@ -1341,10 +1363,15 @@ export class HubApiClient {
   }
 
   /** Register (or refresh) the host agent session this CLI runs inside. */
-  detectManager(
+  async detectManager(
     body: HubApiManagerDetect,
   ): Promise<{ manager: HubApiManager; workspace: HubApiWorkspace }> {
-    return this.request('POST', '/managers/detect', body);
+    const res = await this.request<{ manager: HubApiManager; workspace: HubApiWorkspace }>(
+      'POST',
+      '/managers/detect',
+      body,
+    );
+    return { ...res, workspace: normalizeWorkspace(res.workspace) };
   }
 
   async listManagers(filter: HubApiManagerFilter = {}): Promise<HubApiManager[]> {

@@ -342,8 +342,33 @@ describe('HubApiClient workspaces', () => {
       'GET /api/v1/workspaces': { status: 200, body: { workspaces: [{ id: 'w1', name: 'code' }] } },
     });
     const out = await new HubApiClient(target(fetchImpl)).listWorkspaces();
-    expect(out).toEqual([{ id: 'w1', name: 'code' }]);
+    // A hub one release older serves the folder-keyed record and still reports
+    // `apiVersion: v1`, so the collections are filled in HERE rather than left to
+    // throw in whichever caller indexes them first.
+    expect(out).toEqual([{ id: 'w1', name: 'code', projects: [], hosts: {}, projectIds: [] }]);
     expect(calls[0]?.url).toBe('https://hub.example/api/v1/workspaces');
+  });
+
+  it('fills the collections in on every workspace it returns', async () => {
+    const { fetchImpl } = stub({
+      'GET /api/v1/workspaces/w1': { status: 200, body: { id: 'w1', name: 'old' } },
+      'POST /api/v1/managers/detect': {
+        status: 200,
+        body: { manager: { id: 'm1' }, workspace: { id: 'w1', name: 'old' } },
+      },
+    });
+    const client = new HubApiClient(target(fetchImpl));
+    const one = await client.getWorkspace('w1');
+    expect(one.hosts).toEqual({});
+    expect(one.projects).toEqual([]);
+    const detected = await client.detectManager({
+      agent: 'claude',
+      sessionId: 's',
+      cwd: '/x',
+      host: 'laptop',
+    });
+    expect(detected.workspace.hosts).toEqual({});
+    expect(detected.manager.id).toBe('m1');
   });
 
   it("posts the caller's own scan, host included", async () => {
