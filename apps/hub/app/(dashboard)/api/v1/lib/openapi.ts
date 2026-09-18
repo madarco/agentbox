@@ -1937,6 +1937,42 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/managers/{id}/attach-box': {
+        post: {
+          tags: ['Managers'],
+          summary: 'Record a box a manager produced',
+          description:
+            "The hub that BUILT a box says which manager it belongs to. Usually that is this hub and nothing travels; with a control box configured and `hub.mode=local` the box is built on the user's own machine while the record lives here, and the id is a fact only the builder has. Send `boxJobId` while the create is still a queued job (it is promoted to the box id when the worker writes it back) or `boxId` for a box that exists. Appends one id to the manager's list and can neither move nor remove anything, which is why — unlike every other patch — it is accepted from another host.",
+          parameters: [managerIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    boxId: { type: 'string' },
+                    boxJobId: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Attached',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/managers/{id}/message': {
         post: {
           tags: ['Managers', 'Timeline'],

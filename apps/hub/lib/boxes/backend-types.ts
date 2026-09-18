@@ -10,6 +10,7 @@ import type {
   AddWorkspaceInput,
   BoxTaskSummary,
   HostSession,
+  ManagerBoxTarget,
   ManagerHeartbeat,
   ManagerRegistration,
   ManagerStatus,
@@ -1333,8 +1334,12 @@ export interface ManagerBackend {
    */
   reportManagers(): Promise<number>;
   listManagerSessions(wsId: string, agent?: string): Promise<ManagerSessionsAnswer | null>;
-  /** Record that a manager's create produced this job. Best-effort from `create()`. */
-  attachJob(managerId: string, jobId: string): Promise<ActionResult>;
+  /**
+   * Record that a manager's create produced this box, or the job building one.
+   * Best-effort from `create()`, and from the `attach-box` route the hub that
+   * built the box posts when the record lives on another hub.
+   */
+  attachManagerBox(managerId: string, target: ManagerBoxTarget): Promise<ActionResult>;
   /** boxId | create-job id -> managerId, for `Box.managerId` in getData(). */
   managerByBox(): Promise<Map<string, string>>;
 }

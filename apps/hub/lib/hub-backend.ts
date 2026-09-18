@@ -3926,7 +3926,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     const res = await createBox(input, meta);
     if (res.ok && input.managerId) {
       const attached = await managers
-        .attachJob(input.managerId, res.jobId)
+        .attachManagerBox(input.managerId, { boxJobId: res.jobId })
         .catch((e: unknown) => ({ ok: false as const, error: String(e) }));
       if (!attached.ok) console.warn(`[hub] create ${res.jobId}: ${attached.error}`);
     }

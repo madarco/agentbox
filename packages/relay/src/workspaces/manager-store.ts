@@ -9,13 +9,16 @@
  * machines, and this seam is the join: the PC hub drives the process locally and
  * persists through the control box's `/api/v1`.
  *
- * Only two writes travel: a REGISTRATION (a start or resume produced a session)
- * and a HEARTBEAT (what this machine's probes see right now). Everything else a
- * control box refuses from another host, because it cannot be checked there.
+ * Only three writes travel: a REGISTRATION (a start or resume produced a
+ * session), a HEARTBEAT (what this machine's probes see right now) and a BOX
+ * ATTACH (this machine built a box for that manager — a fact only it has, and
+ * an append to a list of ids). Everything else a control box refuses from
+ * another host, because it cannot be checked there.
  */
 import { resolveControlBox, type ControlBoxTarget } from './control-box.js';
 import {
   applyManagerPatch,
+  attachBoxToManager,
   findManager,
   findManagerBySession,
   patchManager,
@@ -47,6 +50,9 @@ export interface ManagerWorkspace {
   hosts: Record<string, { root: string }>;
 }
 
+/** What a manager's create produced: the box, or the job still building it. */
+export type ManagerBoxTarget = { boxId: string } | { boxJobId: string };
+
 export interface DetectedManager {
   manager: ManagerRecord;
   created: boolean;
@@ -67,6 +73,13 @@ export interface ManagerRecordStore {
   registerManager(wsId: string, input: ManagerRegistration): Promise<ManagerRecord | null>;
   /** Report what this machine's probes see for a record it hosts. */
   reportManager(id: string, beat: ManagerHeartbeat): Promise<void>;
+  /**
+   * Record that a box (or the job building one) belongs to a manager. Travels,
+   * unlike the other patches: the hub that BUILT the box is the only one that
+   * knows, and with `hub.mode=local` under a control box that is not the hub
+   * holding the record.
+   */
+  attachBox(wsId: string, id: string, target: ManagerBoxTarget): Promise<void>;
   patchManager(wsId: string, id: string, patch: ManagerRecordPatch): Promise<ManagerRecord | null>;
   upsertDetectedManager(wsId: string, input: DetectManagerInput): Promise<DetectedManager>;
   removeManagerRecord(wsId: string, id: string): Promise<boolean>;
@@ -105,6 +118,9 @@ export function fileManagerStore(): ManagerRecordStore {
     // A record on this disk is probed, never reported: the reading hub IS the
     // machine, so a heartbeat would only restate what it can see.
     reportManager: async () => {},
+    async attachBox(wsId, id, target) {
+      await attachBoxToManager(wsId, id, target);
+    },
     patchManager: (wsId, id, patch) =>
       patchManager(wsId, id, (rec) => applyManagerPatch(rec, patch)),
     upsertDetectedManager: (wsId, input) => upsertDetectedManager(wsId, input),
@@ -234,8 +250,19 @@ export function remoteManagerStore(
         warnOnce(err);
       }
     },
-    // A record held elsewhere is only ever written by a registration or a
-    // heartbeat; a control box refuses anything else from another host.
+    async attachBox(_wsId, id, target) {
+      try {
+        const res = await call('POST', `/managers/${encodeURIComponent(id)}/attach-box`, target);
+        if (!res.ok) throw new Error(`attach-box failed: ${String(res.status)}`);
+      } catch (err) {
+        // Bookkeeping: the task to box join the UI reads goes through the task
+        // store, so a miss costs the manager's own box list and nothing else.
+        warnOnce(err);
+      }
+    },
+    // A record held elsewhere is only ever written by a registration, a
+    // heartbeat or a box attach; a control box refuses anything else from
+    // another host.
     patchManager: async () => null,
     upsertDetectedManager() {
       return Promise.reject(

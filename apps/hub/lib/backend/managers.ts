@@ -14,7 +14,6 @@ import { homedir, hostname as osHostname } from 'node:os';
 import {
   addWorkspace,
   attachBackgroundSession,
-  attachBoxToManager,
   backgroundFor,
   buildManagerArgv,
   canonicalWorkspaceRoot,
@@ -56,6 +55,7 @@ import {
   type BackgroundSessionSnapshot,
   type ManagerHeartbeat,
   type ManagerProbe,
+  type ManagerBoxTarget,
   type ManagerRecord,
   type ManagerRecordStore,
   type ManagerWorkspace,
@@ -623,9 +623,9 @@ export function createManagerBackend(
         ...(input.tmuxPane ? { tmuxPane: input.tmuxPane } : {}),
         ...(home ? { tmuxSession: home.session } : {}),
       });
-      if (input.boxId) await attachBoxToManager(ws.id, manager.id, { boxId: input.boxId });
+      if (input.boxId) await store.attachBox(ws.id, manager.id, { boxId: input.boxId });
       else if (input.boxJobId) {
-        await attachBoxToManager(ws.id, manager.id, { boxJobId: input.boxJobId });
+        await store.attachBox(ws.id, manager.id, { boxJobId: input.boxJobId });
       }
       // A detect runs on nearly every CLI call; only a new record or a new
       // session in an existing one (`/clear`, a started agent's first call) is news.
@@ -993,10 +993,12 @@ export function createManagerBackend(
       return { ok: true, delivered, manager: view, event };
     },
 
-    async attachJob(managerId: string, jobId: string): Promise<ActionResult> {
+    async attachManagerBox(managerId: string, target: ManagerBoxTarget): Promise<ActionResult> {
       const rec = await store.findManager(managerId);
       if (!rec) return err(`unknown manager ${managerId}`);
-      await attachBoxToManager(rec.workspaceId, managerId, { boxJobId: jobId });
+      // Through the store, not the file: the hub that BUILT the box may not be
+      // the one holding the record (`hub.mode=local` under a control box).
+      await store.attachBox(rec.workspaceId, managerId, target);
       deps.notify();
       return { ok: true };
     },

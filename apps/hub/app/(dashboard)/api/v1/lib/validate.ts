@@ -7,7 +7,7 @@ import type {
   CreateBoxOpts,
   RestoreProjectInput,
 } from '@/lib/boxes/backend-types';
-import type { TimelineEventInput } from '@agentbox/relay';
+import type { ManagerBoxTarget, TimelineEventInput } from '@agentbox/relay';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string; details?: unknown };
 
@@ -1830,6 +1830,25 @@ const BACKGROUND_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
  * client-asserted by construction — the reporting hub is the only reader of that
  * process — so each field is bounded and none of it is ever executed.
  */
+/** `POST /managers/:id/attach-box`: exactly one of the two ids. */
+export function parseManagerAttachBox(body: unknown): Parsed<ManagerBoxTarget> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const parsedBox = optionalString(body['boxId'], 'boxId');
+  if (!parsedBox.ok) return parsedBox;
+  const parsedJob = optionalString(body['boxJobId'], 'boxJobId');
+  if (!parsedJob.ok) return parsedJob;
+  if (!parsedBox.value && !parsedJob.value) {
+    return { ok: false, message: 'boxId or boxJobId is required' };
+  }
+  if (parsedBox.value && parsedJob.value) {
+    return { ok: false, message: 'send either boxId or boxJobId, not both' };
+  }
+  return {
+    ok: true,
+    value: parsedBox.value ? { boxId: parsedBox.value } : { boxJobId: parsedJob.value! },
+  };
+}
+
 export function parseManagerHeartbeat(body: unknown): Parsed<ManagerHeartbeatInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const {

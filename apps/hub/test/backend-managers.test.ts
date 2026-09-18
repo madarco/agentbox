@@ -358,7 +358,7 @@ describe('liveness and lifecycle', () => {
       await managers.resumeManager('ffffffffffffffff'),
       await managers.stopManager('ffffffffffffffff'),
       await managers.removeManager('ffffffffffffffff'),
-      await managers.attachJob('ffffffffffffffff', 'j1'),
+      await managers.attachManagerBox('ffffffffffffffff', { boxJobId: 'j1' }),
     ]) {
       expect(res).toMatchObject({ ok: false, error: 'unknown manager ffffffffffffffff' });
     }
@@ -501,7 +501,9 @@ describe('box pointers', () => {
     const root = await makeFolder();
     const res = await managers.detectManager({ agent: 'claude', sessionId: S1, cwd: root });
     if (!res.ok) throw new Error(res.error);
-    expect(await managers.attachJob(res.manager.id, 'job-1')).toEqual({ ok: true });
+    expect(await managers.attachManagerBox(res.manager.id, { boxJobId: 'job-1' })).toEqual({
+      ok: true,
+    });
     const byBox = await managers.managerByBox();
     expect(byBox.get('box-9')).toBe(res.manager.id);
     expect((await managers.getManager(res.manager.id))?.boxIds).toEqual(['box-9']);
@@ -653,6 +655,13 @@ describe('with the records on a control box', () => {
       async reportManager(id, beat) {
         calls.push(`heartbeat ${id} ${beat.status}`);
       },
+      async attachBox(_wsId, id, target) {
+        calls.push(`attach-box ${id} ${JSON.stringify(target)}`);
+        const rec = records.get(id);
+        if (!rec) return;
+        if ('boxId' in target) records.set(id, { ...rec, boxIds: [...rec.boxIds, target.boxId] });
+        else records.set(id, { ...rec, boxJobIds: [...rec.boxJobIds, target.boxJobId] });
+      },
       // The control box takes no other write from another host.
       patchManager: async () => null,
       upsertDetectedManager: () => Promise.reject(new Error('not here')),
@@ -699,5 +708,24 @@ describe('with the records on a control box', () => {
     });
     // Every listing is the control box's, not a local render.
     expect((await managers.listManagers()).map((m) => m.id)).toEqual([started.manager.id]);
+  });
+
+  it('sends a box this hub built to the hub that holds the record', async () => {
+    const h = harness();
+    const store = remoteStore('laptop');
+    (store as unknown as { setRoot(r: string): void }).setRoot(await makeFolder());
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      store,
+    });
+    const started = await managers.startManager('ws-remote', { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    store.calls.length = 0;
+    expect(await managers.attachManagerBox(started.manager.id, { boxJobId: 'job-7' })).toEqual({
+      ok: true,
+    });
+    expect(store.calls).toEqual([`attach-box ${started.manager.id} {"boxJobId":"job-7"}`]);
+    expect((await managers.getManager(started.manager.id))?.boxJobIds).toEqual(['job-7']);
   });
 });
