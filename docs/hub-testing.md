@@ -348,7 +348,10 @@ reporting `mode: remote`; read the control box's side over `ssh agentbox-hub cat
 | F11 | `agentbox manager message <id> "hello"` on the PC | the text is typed into the tmux pane here (`pnpm drive` to watch it), and the `manager.message` row lands on the VPS |
 | F12 | `agentbox manager stop <id>` then `manager forget <id> -y` | the session is killed here, the record on the VPS reads `stopped` and then disappears |
 | F13 | `agentbox manager start` on the VPS itself (`agentbox --url https://… manager start`) | refused `409 wrong_host` — a control box never runs a manager |
-| F14 | a push's `+N −M` on the timeline with the PC's relay stopped | after Phase 4 |
+| F14 | stop the PC's relay, then in an e2b box `agentbox-ctl git push` (leased) | the `git.push` row lands on the control box with `+N −M`, measured inside the box — nothing ran on the PC. The row is keyed on the pushed commit, so a repeated report adds no second row |
+| F15 | `agentbox git push <box>` for a box the control box built (no checkout on the PC) | same row with `+N −M`: the host half is skipped because the hub holds no folder for that repo |
+| F16 | open the control box's timeline for a workspace whose projects are repos only | `github` reads `ok` (not `unavailable`) and an existing PR is labelled; `ssh agentbox-hub` shows no `gh` process with a cwd in a job clone |
+| F17 | `agentbox config set hub.mode local` + a docker create from a manager session | the manager's row on the control box lists the create's job id (`boxJobIds`), promoted to the box id once the worker writes it back |
 
 The cheap loop for all of these is `agentbox hub expose` (§1) with a second `~/.agentbox` playing
 the PC; the gate for merging is the same matrix against a real deployed hub (§3).

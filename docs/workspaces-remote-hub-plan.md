@@ -1,8 +1,9 @@
 # Workspaces, tasks, manager and timeline on a remote control box — plan
 
-Status: **Phases 1-3 done** (2026-09-18), Phase 4 next. One phase per session: branch off origin,
-implement, gates + smoke, `/code-review medium`, merge into `feat/workspaces-remote-hub`. Phases 2–4
-also gate on a **real Hetzner control box** (see Verification).
+Status: **Phases 1-4 done** (2026-09-18); the remote test pass (`hub-testing.md` §F) is what
+remains. One phase per session: branch off origin, implement, gates + smoke, `/code-review medium`,
+merge into `feat/workspaces-remote-hub`. Phases 2–4 also gate on a **real Hetzner control box** (see
+Verification).
 
 Related: [`workspaces-tasks-manager-plan.md`](./workspaces-tasks-manager-plan.md) (the feature as
 shipped in 0.32.0), [`workspaces-remote-hub-backlog.md`](./workspaces-remote-hub-backlog.md) (the
@@ -238,7 +239,48 @@ records; `manager stop` → `stopped`; `manager forget` drops it. The store sele
 `file` with no control box, so no heartbeat loop starts — the remote half is covered by the unit
 suites and by `hub-testing.md` §F (F8–F13), which needs an exposed or deployed hub.
 
-## Phase 4 — Push +/- and PR sync without a checkout
+## Phase 4 — Push +/- and PR sync without a checkout — DONE
+
+As landed, five details differ:
+
+- The box-side stat seam keys on a BOX ID, not a fact: `boxPushStat(boxId, { before? })`
+  (`BackendDeps`, implemented in `box-facts.ts` off `provider.exec` + `BOX_WORKSPACE`). The relay
+  needs the same reader for the `git.pushed` report and has no provider modules at all — it never
+  creates or drives a box — so `packages/relay/src/workspaces/push-stat.ts` also holds a
+  process-level `configureBoxPushStat(fn | null)` / `boxPushStat()`, installed by `createHubBackend`.
+  A standalone relay leaves it unset and a push it cannot read on disk simply gets no diff.
+  The measurement itself is `boxPushLineStat(exec, { before?, timeoutMs? })` — the same rule as
+  `pushLineStat` (old tip when it is still an ancestor, else the merge base), over
+  `origin/HEAD → origin/main|master → main|master`, under one 2 s budget across every exec.
+- `pushStatBefore` now answers a `PushStatSource` union (`host` with today's `PushStatInput`, or
+  `box`), resolved after the op rather than before it: only the host half has to read a ref before
+  the push moves it. The host half runs when the fact names no host or this one AND the folder is
+  still there — a fact built here always carries this hostname, so the folder check is what
+  actually decides.
+- `git.pushed` is handled in BOTH `server.ts` (a box reaching a host relay directly) and
+  `executeCloudAction` (a box-mode relay parks it on the HostActionQueue), because a cloud box takes
+  either path. `recordBoxPushed` validates `after`/`before` as shas and the branch as a ref name,
+  falling back to the host-sanctioned branch, and keys the row `push:<boxId>:<after>`. It records
+  and nothing else: no git runs, and `hostRepoUnavailableReason` is untouched.
+  `agentbox-ctl git push` sends it after BOTH direct-mode and leased pushes, silently (a new
+  `quiet` option on the ctl RPC poster) and capped at 5 s, so a box with no relay just logs nothing.
+- **`deps.projectBranch` stays.** Phase 2's `fromBranch` default covers the repo-routed creates
+  only; a local `projectId` create sends `fromBranch` just when the user asked for a base
+  (`resolveBranchSelection` returns `{}` otherwise), so the hub's own folder is still the only
+  source of `base` on those rows — and it is the same folder the box is built from. Commented in
+  place.
+- Backlog item 12 is FIXED, not deferred: `ManagerRecordStore` grew `attachBox(wsId, id, target)`
+  behind a new `POST /managers/{id}/attach-box`, and `attachJob` became
+  `attachManagerBox(managerId, target)`. That makes three writes a control box takes from another
+  host; the third is the narrowest of them (one id appended to a list, nothing moved or removed).
+
+One behaviour change worth knowing: a workspace project with no `repoUrl` no longer syncs PRs. A v2
+record gets it from the CLI scan and a v1 upgrade from the project registry, so the only losers are
+a project whose registry entry never recorded an origin and a project with no remote at all — which
+has nothing on GitHub to poll anyway.
+
+Found while gating: two timeline rows written in the same millisecond came back in either order
+(the id's tie-break suffix was random). The suffix now counts up within a millisecond.
 
 - PR sync (`github-prs.ts`): `repoOf(project)` = `gh repo view <owner/repo>` from
   `WorkspaceProject.repoUrl` (non-GitHub → null, cached); iterate `ws.projects`, no folder scan. One
@@ -284,8 +326,14 @@ box; a second `~/.agentbox` (or a box) plays the PC. Rebuild + restart the hub w
   the pane); `manager list` on the exposed hub shows `host`, `status: running` after the first
   heartbeat; `POST …/message` via curl against the exposed hub → 409 + `details.host`; the CLI retry
   types the text; `tasks add` inside the manager's shell stamps `turn` on the control box.
-- Phase 4: e2b box `agentbox-ctl git push` shows `+N −M` on the exposed hub's timeline; PR sync marks
-  `pr.ready` with no checkout on the hub.
+- Phase 4 (`hub-testing.md` §F, F14–F17): e2b box `agentbox-ctl git push` shows `+N −M` on the
+  exposed hub's timeline; PR sync marks `pr.ready` with no checkout on the hub.
+
+**Verified locally (2026-09-18, docker, no control box):** in `../agentbox-test-repo` a commit in a
+box then `agentbox git push` → a `git.push` row carrying `+N −M`; the same repo's open PR is
+labelled by a sync whose every `gh` call is repo-addressed. The box-measured half and the
+`git.pushed` report are covered by the unit suites and by §F, which needs an exposed or deployed
+hub.
 
 **Real Hetzner control box (required for Phases 2–4, and a full pass at the end).** The exposed-hub
 run is the cheap loop; the gate for merging a phase is the same matrix against a real deployed hub,

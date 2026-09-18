@@ -769,6 +769,10 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const stamp = named ?? (await stampInWorkspace(meta, ws.id, seams.stampFor));
       const name = input.name?.trim();
       const branch = input.opts?.useBranch ?? (name ? `agentbox/${name}` : undefined);
+      // A repo-routed create always sends `fromBranch`. A local one names a
+      // project and sends it only when the user asked for a base, so the folder
+      // this hub holds stays the answer for the rest — which is the same folder
+      // the box is about to be built from.
       const base =
         input.fromBranch?.trim() ||
         (projectId ? await deps.projectBranch?.(projectId).catch(() => undefined) : undefined);

@@ -207,7 +207,9 @@ the record, its notes and its timeline are on the box. `host` is the machine it 
 attach, stop, sessions, message — only works there; anywhere else it answers `409` with code
 `wrong_host` and `details.host`, and the client retries against the hub on that machine (its own
 local hub, when `details.host` is its own hostname — `agentbox hub target --json --local` points at
-it). The PC hub keeps that record current by reporting to `POST /managers/{id}/heartbeat`.
+it). The PC hub keeps that record current by reporting to `POST /managers/{id}/heartbeat`, and tells
+it about a box it built for that manager with `POST /managers/{id}/attach-box`. Registering,
+reporting and attaching a box are the only manager writes a hub accepts from another host.
 
 `status` is derived, never stored: on the machine that runs it, the tmux session for a `tmux`
 manager, and for an `external` one its pid, else "seen in the last 30 minutes". A claude session that
@@ -245,6 +247,7 @@ it can read the agent's store.
 | `POST /managers/{id}/attach`              | For a manager with `background` (a detached Claude Code background session): start, or reuse, the tmux session `agentbox-manager-<id>` running `claude attach <background.id>` in its folder, and answer the manager with `attachCommand`. Its kind and session are unchanged, and it stays `running` after that tmux session ends. `409` without a running background session, or when an AgentBox tmux session in its folder or a `claude attach` client may already show it; `503` without tmux.                                                                                                                                                                                                                                                                                                               |
 | `POST /managers/{id}/resume`              | Reopen the session in this hub's tmux (`claude --resume <id>` / `codex resume <id>`, in the manager's `cwd`). `409` while the session still runs anywhere, for a manager with no session id, and for an agent whose sessions cannot be resumed; `409` `wrong_host` when `host` is not this machine (its transcript is not here); `503` without tmux.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `POST /managers/{id}/heartbeat`           | `{ status, sessionId?, title?, turn?, prompt?, lastExit?, background?, terminalSession?, tmuxSession? }` — what the machine running the manager sees right now, sent every 30 s and after each start, resume, stop or attach. Drives that manager's row here until three intervals pass with no heartbeat. `409` `wrong_host` for a record whose `host` is this hub's own: there the process is readable, and a report nothing can check must not override it.                                                                                                                                                                                                                                                                                                                                                    |     |
+| `POST /managers/{id}/attach-box`          | `{ boxId }` or `{ boxJobId }` — the hub that BUILT a box says which manager it belongs to. Usually that hub is this one and nothing travels; with a control box configured and `hub.mode=local` the box is built on the user's own machine while the record lives here. Appends one id to the manager's list and can neither move nor remove anything, which is why — unlike every other patch — it is accepted from another host.                                                                                                                                                                                                                                                                                                                                                                                |
 | `POST /managers/{id}/notes`               | `{ text, kind? }` (`note` \| `replan` \| `plan`) — record why the manager did something on the workspace [timeline](#timeline), stamped with its current turn and that turn's prompt when its transcript is on the hub's disk. `201` with the event.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `POST /managers/{id}/message`             | `{ text, prNumber?, repo? }` — type a message into the manager's session and submit it: a running hub-run manager's tmux session, a running external manager's tmux pane (recorded at detect, on the hub's machine only), or a stopped manager resumed in the hub's tmux with the text as its prompt. Answers `{ delivered: session \| pane \| resumed, manager, event }`. A running external manager outside tmux is `409` with code `manager_unreachable`: offer the text to paste instead. So is a manager on another machine, with `details.host` naming it — retry there. `prNumber` ties the message to a PR, so its merge shows `approvedByYou`; add `repo` (`owner/name`) when the workspace spans several repos, since a bare number is matched only when one repo in the log has it.                    |
 | `GET /workspaces/{id}/managers`           | The workspace's managers: `{ managers }`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -272,8 +275,9 @@ project's checkout was on (absent on a detached HEAD). `box.branch` is written w
 `git/checkout` or `git/branch` moves the box onto another branch, with `branch` the branch it is now on
 and `base` the one it left; a checkout with `args` (paths) or one that leaves HEAD detached writes
 none. `box.ready` carries `base` only when the create named a `fromBranch`. A
-`git.push` carries `additions`/`deletions` when the hub could read them from the host repo: from the
-old tip to the new one, or from the merge base with the default branch for a first push.
+`git.push` carries `additions`/`deletions` from the old tip to the new one, or from the merge base
+with the default branch for a first push. They are read from the host repo when the hub holds that
+folder, and measured inside the box when it does not — a control box has no checkout of anything.
 `taskIds` is captured when the event is written, and `pr` is `{ repo, number, title, url, base, head,
 additions?, deletions?, checks?, mergeState?, autoMerge?, mergedBy? }`.
 
@@ -314,11 +318,13 @@ host; where the hub can read the transcript it does, and ignores the header. `no
 the change.
 
 **Pull requests** come from two places that share one dedupe key: the in-box `gh` shim after an
-exit-0 `gh pr create` or `gh pr merge`, and a GitHub sync — `gh pr list` on the GitHub repos behind the
-workspace's projects — that a read starts in the background when the last one is over a minute old. It
-keeps PRs on a branch the workspace worked on, or opened by the `gh` user. `github` is `ok`, `syncing`
-or `unavailable` (no `gh`, not logged in, or no GitHub repo); rows a sync adds fire the usual
-`/api/events` change.
+exit-0 `gh pr create` or `gh pr merge`, and a GitHub sync — `gh pr list` on the GitHub repos the
+workspace's projects name — that a read starts in the background when the last one is over a minute
+old. Every `gh` call it makes addresses the repo by name and runs in no folder, so a hub with no
+checkout syncs exactly like one that has them; a project with no `repoUrl` has nothing to poll. It
+keeps PRs on a branch the workspace worked on, or opened by the `gh` user. `github` is `ok`,
+`syncing` or `unavailable` (no `gh`, not logged in, or no GitHub repo); rows a sync adds fire the
+usual `/api/events` change.
 
 ### Providers
 
