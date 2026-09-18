@@ -27,9 +27,14 @@ the manager's own instructions come after.
   the `tasks:` block in `agentbox.yaml`: Linear tickets will later map 1→n onto local tasks, and
   "ticket" would then be the wrong word for both. The TS type is `WorkTask` so it never clashes with
   `@agentbox/ctl`'s `TaskSpec`; the docs call the yaml ones **setup tasks**.
-- **The hub owns the manager process**, started in a detached tmux session on the hub's machine.
-  Clients attach to that session rather than the hub proxying a terminal to each of them, which is
-  what lets the CLI, the tray and a plain terminal all reach the same running agent.
+- **A manager runs in a detached tmux session on the machine holding the folder**, and clients attach
+  to that session rather than a hub proxying a terminal to each of them — which is what lets the CLI,
+  the tray and a plain terminal all reach the same running agent. Originally "the hub owns the
+  manager process", which held only while the hub and the folder were the same machine. Phase 3 of
+  [`workspaces-remote-hub-plan.md`](./workspaces-remote-hub-plan.md) split the two: the PROCESS runs
+  on the user's PC (`kind: 'tmux'`, `host`), its RECORD lives on the hub that owns the workspace, and
+  a process op sent to any other hub is refused with `wrong_host`. Read that plan, not this bullet,
+  before touching the manager lifecycle.
 - **Tasks are workspace-owned** with an optional `projectId` and an optional `boxId`. A backlog item
   exists before anyone knows which project it touches; forcing a project up front would mean it
   could not.

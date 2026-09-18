@@ -497,28 +497,39 @@ backlog with their progress intact.
 agentbox manager list                       # running first; -w to filter, --running, -j
 agentbox manager status                     # this session's manager, else the workspace's
 agentbox manager status 3f9a                # one manager, by id or unique prefix
-agentbox manager resume 3f9a --attach       # reopen an ended session in the hub's tmux
-agentbox manager stop 3f9a                  # hub-run managers only
+agentbox manager resume 3f9a --attach       # reopen an ended session in tmux here
+agentbox manager stop 3f9a                  # tmux-run managers only
 agentbox manager forget 3f9a -y             # drop a stopped manager's record
 agentbox manager forget 3f9a -y --force     # drop it even if it reads as running
-agentbox manager start --agent claude       # a new hub-run manager; offers to resume a session
+agentbox manager start --agent claude       # a new tmux-run manager; offers to resume a session
 agentbox manager start --agent codex --new  # --new skips the resume picker
-agentbox manager attach                     # the running hub-run manager, or a Claude background session (opened through the hub); or --attach-in split|window|tab
+agentbox manager attach                     # the running tmux-run manager, or a Claude background session; or --attach-in split|window|tab
 agentbox manager sessions --agent codex     # resumable sessions in this folder
+agentbox manager message 3f9a "rebase T-12 onto main"  # type it into the session and submit
 agentbox manager note "holding T-12 until #405 merges" --replan  # on the timeline, at this turn
 agentbox manager note "split checkout into two boxes" 3f9a       # a manager by id, from anywhere
 ```
 
 A manager is either **external** — the Claude Code or Codex session in your own terminal, detected
-when it runs `agentbox` — or **hub-run**, started by the hub in a tmux session it owns, so the CLI, the
+when it runs `agentbox` — or **tmux-run**, started in a tmux session AgentBox owns, so the CLI, the
 tray and a plain `tmux attach` all reach the same running agent (the session is sized to the most
 recently active client, so two attached at once do not clamp each other). That session, and only
 that session, has the mouse on (the wheel scrolls its history) and an AgentBox footer naming the
 manager, its session and the workspace, with the detach key. An external manager is
-yours: the hub reports whether it is still running but never stops it. Once it has ended,
-`manager resume` reopens that same conversation in the hub's tmux (`claude --resume <id>` /
-`codex resume <id>`, in the folder it ran in), where any client can attach to it. Hub-run managers
-need `tmux` on the machine running the hub; `agentbox doctor` tells you if it is missing.
+yours: AgentBox reports whether it is still running but never stops it. Once it has ended,
+`manager resume` reopens that same conversation in tmux (`claude --resume <id>` /
+`codex resume <id>`, in the folder it ran in), where any client can attach to it. Managers
+need `tmux` on the machine running them; `agentbox doctor` tells you if it is missing.
+
+**The manager runs on your machine; the record lives on the hub.** A manager is a process in a
+folder, so `start`, `resume`, `stop`, `attach`, `sessions` and `message` go to the hub on **this**
+machine — the one with the folder, the tmux server and the transcripts. Everything else (`list`,
+`status`, `note`, `forget`) goes to the configured hub, which with a control box is the box: that is
+where the workspace, its tasks and its timeline live, and a manager list there shows every machine's.
+Each row carries `host` (`manager status` prints it) and the hub keeps it current by reporting what
+it sees every 30 seconds; a manager whose machine stops reporting reads as stopped half an hour
+later, and `manager forget --force` is the way out. `agentbox hub target --local` prints the hub on
+this machine, which is where a client retries an op the configured hub refused as `wrong_host`.
 
 `manager sessions` lists the sessions in the workspace folder a manager could pick up, read from the
 agent's own store; `--session <id>` on `start` resumes one. Only `claude` and `codex` are resumable —
@@ -530,8 +541,9 @@ tray's Manager window, and `GET /api/v1/workspaces/{id}/timeline` — stamped wi
 next to the boxes that session started, their pushes and the pull requests that merged. The timeline
 cannot see the reasoning, so say it: `--note` on `tasks add | update | assign | reorder` and
 `manager note` (with `--replan` or `--plan`) record why next to the change. Outside a session,
-`manager note` needs a manager id. A message the tray's **Approve** sends reaches a hub-run manager in
-its tmux session, and an external one only when its terminal runs inside tmux.
+`manager note` needs a manager id. `manager message` (and the tray's **Approve**) reaches a tmux-run
+manager in its session, an external one only when its terminal runs inside tmux, and a stopped one by
+resuming it with the text as its prompt.
 
 Detection has limits. OpenCode and Pi export no session id, so their sessions are never registered.
 Codex's default `workspace-write` sandbox blocks loopback, so the CLI cannot reach the hub from inside
@@ -600,7 +612,8 @@ agentbox hub                 # open the hub — the control box when one is conf
 agentbox hub start --local   # start the hub on THIS machine even with a control box configured
 agentbox hub status          # warns `stale:` when the hub predates a rebuild of its own bundle
 agentbox hub target          # which hub the CLI/tray talk to (local, or a remote control box)
-agentbox hub target --json   # {mode, url, token} — the seam the macOS tray reads
+agentbox hub target --json   # {mode, url, token, onThisMachine} — the seam the macOS tray reads
+agentbox hub target --local  # the hub on THIS machine, where a manager process is driven
 agentbox hub stop
 agentbox hub adopt <box>     # make a control-box-created box usable here (record + SSH keys)
 agentbox hub pull <box>      # download only its SSH keys

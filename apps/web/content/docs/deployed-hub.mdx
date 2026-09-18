@@ -275,6 +275,8 @@ Your **own** remote machines can join the same model: `agentbox remote-docker sh
 
 The store behind `agentbox workspace`, `agentbox tasks` and the timeline belongs to the hub that owns the boxes, so with a control box configured it is **there** — every workspace, task and manager-registration call from your laptop goes to it, and the tray reads the same one. Your folders stay yours: the scan runs on your machine and the record maps each host to its own path, so `agentbox tasks list` in a checkout resolves the same workspace a second machine's checkout of the same repos does.
 
+**Managers stay on your machine.** A manager is a coding agent running in a folder, so the control box never starts one: `agentbox manager start | resume | stop | attach | sessions | message` go to the hub on the machine with the folder, which opens the tmux session there and registers it on the box. `manager list` and `manager status` come from the box and show every machine's managers, each with the `host` it runs on; the machine running one reports its status, title and turn every 30 seconds so the box's row stays live. An op sent to the wrong hub answers `409 wrong_host` naming the right one, and the CLI and the tray retry against `agentbox hub target --local`.
+
 Events your laptop produces for its own boxes — a docker box starting, a background `-i` job reaching `box.ready`, a push an in-box agent made through your relay — are forwarded to the control box as they happen, so one timeline tells the whole story. The forward is best-effort and keyed: a control box that was briefly unreachable costs you a row, never a failed command, and a retried report lands once.
 
 ## Inspect custody and build state
@@ -596,7 +598,8 @@ see (or script) the resolved target yourself:
 
 ```bash
 agentbox hub target            # e.g. "hub: remote — https://<ip>.sslip.io"
-agentbox hub target --json     # {mode, url, token} — the seam the tray reads
+agentbox hub target --json     # {mode, url, token, onThisMachine} — the seam the tray reads
+agentbox hub target --local    # the hub on THIS machine, for the ops that need this filesystem
 ```
 
 ## Credentials and secrets

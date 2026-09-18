@@ -1,6 +1,6 @@
 # Workspaces, tasks, manager and timeline on a remote control box — plan
 
-Status: **Phases 1-2 done** (2026-09-18), Phase 3 next. One phase per session: branch off origin,
+Status: **Phases 1-3 done** (2026-09-18), Phase 4 next. One phase per session: branch off origin,
 implement, gates + smoke, `/code-review medium`, merge into `feat/workspaces-remote-hub`. Phases 2–4
 also gate on a **real Hetzner control box** (see Verification).
 
@@ -162,7 +162,42 @@ As landed, four details differ:
 - Tests: `timeline-hooks.test.ts` (sink swap, dedupe on retry), `backend-timeline.test.ts` (remote
   sink route, actor limits), `apps/cli/test/with-hub` (`workspaceHub()` never prefers local).
 
-## Phase 3 — Manager on the PC, record on the hub
+## Phase 3 — Manager on the PC, record on the hub — DONE
+
+As landed, seven details differ:
+
+- The store seam (`packages/relay/src/workspaces/manager-store.ts`) is
+  `{ kind, listManagers, readManagers, readWorkspace, findManager, findManagerBySession,
+  registerManager, reportManager, patchManager, upsertDetectedManager, removeManagerRecord,
+  managerViews, managerView }`, installed per process by `configureManagerStore` and chosen by
+  `configureManagerStoreFromConfig()` — the same one rule as the timeline sink, off the same
+  `resolveControlBox()`.
+- It grew three methods the bullet below does not name, each forced by something the PC hub cannot
+  read locally: **`readWorkspace`** (a start needs the workspace's folder ON THIS MACHINE, and the
+  workspace record is on the control box — it answers the narrow `ManagerWorkspace`, since the API
+  view has no `taskCounter`), and **`managerViews`/`managerView`**, because rendering a view needs
+  the workspace name, the tasks and every other host's heartbeats. A remote store answers those from
+  the control box's own routes; the file store answers `null`/`undefined`, meaning "render it here".
+- `startManagerSession` returns a `ManagerRegistration` (the register-route body) rather than a bare
+  patch: a start can MINT a record, which a patch cannot express. `resumeManagerSession` returns the
+  same and now takes the record, not `(wsId, id)`. `stopManagerSession` / `attachBackgroundSession` /
+  `detachBackgroundSession` return a `ManagerRecordPatch` — `{ field: value | null }`, serialisable
+  because the store it is applied to may be another machine's.
+- The remote store's `patchManager` is a deliberate no-op and `removeManagerRecord`/
+  `upsertDetectedManager` refuse: the control box takes only `register`, `detect` and `heartbeat`
+  from another host. The one thing this loses is `attachBoxToManager` on a PC hub that builds a
+  docker box under `hub.mode=local` — the manager's `boxIds` does not learn about it (the task→box
+  join, which is what the UI reads, is unaffected because it goes through the task store). Noted in
+  `workspaces-remote-hub-backlog.md`.
+- The heartbeat carries `tmuxSession` as well as the listed fields, so a background session a PC
+  attached to still renders an `attachCommand` on the control box.
+- `manager message` is a NEW CLI command, and it is the one op that goes to the **configured** hub
+  first (not `preferLocal`): the message is a timeline row, and the retry rule the plan asks for only
+  ever fires if the first attempt can be refused. `runsHere(m)` and `retryOnLocalHub(err)` are
+  exported from `apps/cli/src/commands/manager.ts` for the test and for the tray's contract note.
+- A record written before this phase is migrated on read (`kind: 'hub'` → `'tmux'`, a missing `host`
+  → the reading machine's), the same shape Phase 1 used for v1 workspaces. That is a data migration,
+  not an API alias: `'hub'` is gone from every type, route and client.
 
 Goal: process ops run only on the hub whose hostname equals the record's `host`; everything else
 lives on the configured hub.
@@ -195,6 +230,13 @@ lives on the configured hub.
 - Tests: `backend-managers.test.ts` (`wrong_host` matrix, remote store stub, view uses heartbeat when
   host differs), `manager.test.ts` (start/resume return patches), CLI message-retry rule and
   `hubIsLocal` by host.
+
+**Verified locally (2026-09-18, no control box):** the standalone hub rebuilt and restarted with
+`AGENTBOX_HUB_BIN`, then in `../agentbox-test-repo`: `manager start --agent claude` →
+`manager list` shows it `running`, `kind: tmux`, `host` = this Mac, `hostIsHub: true`; `manager note`
+records; `manager stop` → `stopped`; `manager forget` drops it. The store selection resolves to
+`file` with no control box, so no heartbeat loop starts — the remote half is covered by the unit
+suites and by `hub-testing.md` §F (F8–F13), which needs an exposed or deployed hub.
 
 ## Phase 4 — Push +/- and PR sync without a checkout
 

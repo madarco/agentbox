@@ -341,9 +341,14 @@ reporting `mode: remote`; read the control box's side over `ssh agentbox-hub cat
 | F4 | `agentbox config set hub.mode local` + `agentbox create -y -n p2smoke --tasks T-2` | the box is built on the PC, the task is assigned on the control box, and its `box.created`/`box.ready`/`box.destroyed` rows are forwarded there |
 | F5 | in the box: `gh pr create …` (or `agentbox-ctl git push`) | `git.push` / `pr.opened` land on the control box's timeline, not on the PC |
 | F6 | stop the control box (`agentbox hub stop`, or block it), then `agentbox create -y -n p2offline` with no `--tasks` | the create still succeeds; the queue-worker log carries one `could not reach the control box` line and no timeline row. With `--tasks` it refuses up front instead |
-| F7 | `agentbox tasks add` from **inside** a manager's own claude session | the row on the control box carries `turn` + `prompt` (the PC reads its own transcript and sends `X-AgentBox-Session-Turn`) — after Phase 3, whose manager records live there |
-| F8 | `agentbox manager start` / `manager list` | after Phase 3 |
-| F9 | a push's `+N −M` on the timeline with the PC's relay stopped | after Phase 4 |
+| F7 | `agentbox tasks add` from **inside** a manager's own claude session | the row on the control box carries `turn` + `prompt` (the PC reads its own transcript and sends `X-AgentBox-Session-Turn`) |
+| F8 | `agentbox manager start --agent claude` on the PC | the tmux session is **here** (`tmux ls` shows `agentbox-manager-<id>`), the record is on the VPS (`ssh agentbox-hub cat /opt/agentbox/hub-data/workspaces/*/managers.json`) with `kind: "tmux"` and `host` = this machine, and a `manager.started` row on its timeline |
+| F9 | `agentbox manager list` (goes to the control box) | the manager reads `running`, `hostIsHub: false` from the VPS's point of view, and `host` naming the PC. Kill the tmux session and it reads `stopped` within one heartbeat (30 s); stop the PC's hub and it reads `stopped` 30 min after its last detect |
+| F10 | `curl -sX POST -H "Authorization: Bearer $AGENTBOX_HUB_API_KEY" -H 'content-type: application/json' -d '{"text":"hello"}' https://<ip>.sslip.io/api/v1/managers/<id>/message` | `409` with `{"code":"manager_unreachable","details":{"host":"<the PC>"}}` — the control box holds the record, not the session |
+| F11 | `agentbox manager message <id> "hello"` on the PC | the text is typed into the tmux pane here (`pnpm drive` to watch it), and the `manager.message` row lands on the VPS |
+| F12 | `agentbox manager stop <id>` then `manager forget <id> -y` | the session is killed here, the record on the VPS reads `stopped` and then disappears |
+| F13 | `agentbox manager start` on the VPS itself (`agentbox --url https://… manager start`) | refused `409 wrong_host` — a control box never runs a manager |
+| F14 | a push's `+N −M` on the timeline with the PC's relay stopped | after Phase 4 |
 
 The cheap loop for all of these is `agentbox hub expose` (§1) with a second `~/.agentbox` playing
 the PC; the gate for merging is the same matrix against a real deployed hub (§3).
