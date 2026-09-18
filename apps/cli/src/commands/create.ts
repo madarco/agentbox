@@ -877,8 +877,8 @@ export const createCommand = new Command('create')
       // once the worker records it. Assigned on the STORE's hub, which need not
       // be the one building the box.
       if (taskWorkspace) {
-        await withHubClient(workspaceHub(), (store2) =>
-          assignTasksBestEffort(store2, taskWorkspace, taskIds, { boxJobId: jobId }),
+        await withHubClient(workspaceHub(), (storeClient) =>
+          assignTasksBestEffort(storeClient, taskWorkspace, taskIds, { boxJobId: jobId }),
         );
       }
       return await streamJobToCompletion(client, jobId, {
