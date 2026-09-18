@@ -271,6 +271,12 @@ A control box **turns local docker boxes off** on your machine (one built on you
 
 Your **own** remote machines can join the same model: `agentbox remote-docker share <alias>` gives the control box a connection and a key for that engine (see [Remote Docker](/docs/remote-docker)), after which those creates are built there too. **Cloud** providers are built on the control box by default once one is configured (see below).
 
+### Workspaces, tasks and the timeline live on the control box
+
+The store behind `agentbox workspace`, `agentbox tasks` and the timeline belongs to the hub that owns the boxes, so with a control box configured it is **there** — every workspace, task and manager-registration call from your laptop goes to it, and the tray reads the same one. Your folders stay yours: the scan runs on your machine and the record maps each host to its own path, so `agentbox tasks list` in a checkout resolves the same workspace a second machine's checkout of the same repos does.
+
+Events your laptop produces for its own boxes — a docker box starting, a background `-i` job reaching `box.ready`, a push an in-box agent made through your relay — are forwarded to the control box as they happen, so one timeline tells the whole story. The forward is best-effort and keyed: a control box that was briefly unreachable costs you a row, never a failed command, and a retried report lands once.
+
 ## Inspect custody and build state
 
 Two read-only pages in the dashboard answer "what does this control box hold?" and "is it up to date?":

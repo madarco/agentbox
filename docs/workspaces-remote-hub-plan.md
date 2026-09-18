@@ -1,6 +1,6 @@
 # Workspaces, tasks, manager and timeline on a remote control box — plan
 
-Status: **Phase 1 done** (2026-09-18), Phase 2 next. One phase per session: branch off origin,
+Status: **Phases 1-2 done** (2026-09-18), Phase 3 next. One phase per session: branch off origin,
 implement, gates + smoke, `/code-review medium`, merge into `feat/workspaces-remote-hub`. Phases 2–4
 also gate on a **real Hetzner control box** (see Verification).
 
@@ -108,10 +108,32 @@ argument rather than being replaced.
   normalisation), `apps/hub/test/backend-workspaces.test.ts` (add with projects, idempotent merge),
   `apps/cli/test/workspace-ref.test.ts`, reconcile unit test.
 
-## Phase 2 — CLI routes to the configured hub; the local hub forwards its events
+## Phase 2 — CLI routes to the configured hub; the local hub forwards its events — DONE
 
 Goal: with a control box configured the CLI and the tray read one store; cloud-box rows land where
 the boxes are; docker/queue events from the PC hub are forwarded losslessly.
+
+As landed, four details differ:
+
+- The sink is `{ kind, record(wsId, input), workspaceFor(key, localHost?) }`
+  (`packages/relay/src/workspaces/timeline-sink.ts`), installed per process by
+  `configureTimelineSink(sink | null)` and chosen by `configureTimelineSinkFromConfig({ warn })` —
+  ONE selection rule, called by the hub at start and by the queue worker. The control-box resolver
+  moved to `packages/relay/src/workspaces/control-box.ts` (`resolveControlBox({ requireViaHub })`);
+  `resolveRemoteHub()` in `apps/hub/lib/remote-hub.ts` is now that call with the `cloud.viaHub`
+  clause, and is the only caller that keeps it.
+- `agentbox create`'s local path could not simply drop `preferLocal`: the same `withHubClient` block
+  held the tasks preflight, the session registration AND `createBox`, and a docker box cannot be
+  built by the control box. The store calls moved into their own `workspaceHub()` block, which only
+  fails the create when `--tasks` was asked for.
+- `fromBranch` is defaulted to `readCurrentBranch(projectRoot)` on the **repo-routed** creates only
+  (`_cloud-agent-via-hub.ts` ×2, `create.ts`'s `--via-hub` path). The `projectId` create keeps
+  `deps.projectBranch`: the hub resolving it holds that folder, and sending the ref would add the
+  create route's `git fetch origin <ref>` (15 s bounded) to every local create for a value the hub
+  already has.
+- `withBoxTimeline`'s create hook needed one new seam, `deps.projectRoot(projectId)`: a project id is
+  a hash of the local path and means nothing on the control box, so a local-record miss now falls
+  back to the sink joined by `{host, projectRoot}` / `{originUrl}`.
 
 - CLI routing: drop `preferLocal: true` in `workspace.ts` (all), `tasks.ts`, `create.ts`,
   `create-action.ts`. One helper `workspaceHub()` in `workspace-ref.ts` returns the options so the
@@ -211,7 +233,7 @@ box; a second `~/.agentbox` (or a box) plays the PC. Rebuild + restart the hub w
 
 - Phase 1: the "Verification" checklist in `workspaces-tasks-manager-plan.md` passes unchanged on a
   plain local hub; a docker box push still lands a `git.push` row.
-- Phase 2: `workspace add` from the "PC" shows on the exposed hub; `tasks add`; a docker create with
+- Phase 2 (the matrix is `hub-testing.md` §F): `workspace add` from the "PC" shows on the exposed hub; `tasks add`; a docker create with
   `hub.mode=local --tasks T-1` assigns on the control box and forwards `box.created/ready`; the
   task stays assigned after the PC hub stops. With `--tunnel cloudflare`,
   `agentbox claude --provider e2b --tasks T-2` then `gh pr create` from the box lands `pr.opened`

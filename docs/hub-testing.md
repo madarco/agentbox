@@ -325,6 +325,29 @@ Set the admin env vars inline — otherwise the deploy prompts and the run can't
 D6 is the whole reason the control box exists: with the laptop (here: the VM's relay) down, the
 box still pushes.
 
+#### F. Workspaces on the control box
+
+The store (workspaces, tasks, managers, timeline) lives on the hub that owns the boxes, so with a
+control box configured every workspace call goes there and this machine's own rows are forwarded to
+it. Run the rows below from the PC side (the laptop, or the test VM) with `agentbox hub target`
+reporting `mode: remote`; read the control box's side over `ssh agentbox-hub cat
+/opt/agentbox/hub-data/workspaces/*/…` or the web UI's timeline.
+
+| # | Run | Expect |
+|---|---|---|
+| F1 | `agentbox workspace add .` in the test repo, then `agentbox workspace list` | the workspace is on the VPS (`ssh agentbox-hub cat /opt/agentbox/hub-data/workspaces/*/workspace.json`), with **this machine's** folder under `hosts.<hostname>.root`; nothing new under the PC's own `~/.agentbox/workspaces` |
+| F2 | `agentbox tasks add "…"` ×2, `agentbox tasks list` | both tasks listed, from the control box (`tasks.json` on the VPS) |
+| F3 | `agentbox claude --provider e2b --tasks T-1` (hub-routed create) | the task shows the box in `agentbox tasks list`; the timeline has `box.created` **and** `box.ready`, both on one lane, with `base` = the branch you were on |
+| F4 | `agentbox config set hub.mode local` + `agentbox create -y -n p2smoke --tasks T-2` | the box is built on the PC, the task is assigned on the control box, and its `box.created`/`box.ready`/`box.destroyed` rows are forwarded there |
+| F5 | in the box: `gh pr create …` (or `agentbox-ctl git push`) | `git.push` / `pr.opened` land on the control box's timeline, not on the PC |
+| F6 | stop the control box (`agentbox hub stop`, or block it), then `agentbox create -y -n p2offline` with no `--tasks` | the create still succeeds; the queue-worker log carries one `could not reach the control box` line and no timeline row. With `--tasks` it refuses up front instead |
+| F7 | `agentbox tasks add` from **inside** a manager's own claude session | the row on the control box carries `turn` + `prompt` (the PC reads its own transcript and sends `X-AgentBox-Session-Turn`) — after Phase 3, whose manager records live there |
+| F8 | `agentbox manager start` / `manager list` | after Phase 3 |
+| F9 | a push's `+N −M` on the timeline with the PC's relay stopped | after Phase 4 |
+
+The cheap loop for all of these is `agentbox hub expose` (§1) with a second `~/.agentbox` playing
+the PC; the gate for merging is the same matrix against a real deployed hub (§3).
+
 #### E. Teardown
 
 ```sh
