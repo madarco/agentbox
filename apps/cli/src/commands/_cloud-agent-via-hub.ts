@@ -100,6 +100,16 @@ export interface CloudAgentViaHubArgs {
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
   /**
+   * Model-auth sources the caller's gate already resolved (`--model-auth`).
+   *
+   * The SELECTION travels, never the secret. `syncAgentCredentialsIfChanged`
+   * below has already put this machine's logins in the control box's custody,
+   * and the worker materializes them into the host-backup path `provider.create`
+   * reads — so naming the source here is all it takes for the box to get the
+   * USER's login rather than whatever the control box itself holds.
+   */
+  borrowCredentials?: string[];
+  /**
    * Approved `carry:` entries, from the gate the caller already ran. Pushed to
    * custody with the rest of the seed so the hub worker can apply them.
    *
@@ -121,6 +131,23 @@ export interface CloudAgentViaHubArgs {
  */
 function withoutTimestamp(line: string): string {
   return line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '');
+}
+
+/**
+ * The `opts` bag both hub-create shapes send. Absent fields mean "the control
+ * box's own config decides", so an empty bag is omitted entirely rather than
+ * sent as `{}` — `persistent: false` there would override the user's
+ * `box.persistent`, and `borrowCredentials: []` says nothing an absent field
+ * does not already say.
+ */
+function hubCreateOpts(args: { persistent?: boolean; borrowCredentials?: readonly string[] }): {
+  opts?: { persistent?: boolean; borrowCredentials?: string[] };
+} {
+  const opts = {
+    ...(args.persistent !== undefined ? { persistent: args.persistent } : {}),
+    ...(args.borrowCredentials?.length ? { borrowCredentials: [...args.borrowCredentials] } : {}),
+  };
+  return Object.keys(opts).length > 0 ? { opts } : {};
 }
 
 /**
@@ -155,6 +182,7 @@ export async function createCloudBoxViaHubAndAdopt(
     name,
     fromBranch,
     persistent,
+    borrowCredentials,
     urlFlag,
     carry,
     onStatus,
@@ -196,7 +224,7 @@ export async function createCloudBoxViaHubAndAdopt(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...(persistent !== undefined ? { opts: { persistent } } : {}),
+    ...hubCreateOpts({ persistent, borrowCredentials }),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
     startAgent: false,
@@ -276,6 +304,7 @@ export async function enqueueAgentJobViaHub(
     name,
     fromBranch,
     persistent,
+    borrowCredentials,
     prompt,
     agentArgs,
     urlFlag,
@@ -314,7 +343,7 @@ export async function enqueueAgentJobViaHub(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...(persistent !== undefined ? { opts: { persistent } } : {}),
+    ...hubCreateOpts({ persistent, borrowCredentials }),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,

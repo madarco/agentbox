@@ -82,6 +82,14 @@ export interface CreateJobRequestOpts {
   build?: boolean;
   /** `--no-credential-sync` → false. */
   credentialSync?: boolean;
+  /**
+   * Other agents' host logins to seed as model auth (`--model-auth`). The
+   * SELECTION travels, never the secret: the bytes reach the control box
+   * separately, through `hub credentials push` -> custody -> the worker's
+   * `seedHostBackupsFromCustody`, so the worker resolves the USER's login
+   * rather than whatever the VPS happens to hold.
+   */
+  borrowCredentials?: string[];
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

@@ -17,6 +17,7 @@ import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { runToolsGate } from '../lib/tools-gate.js';
+import { boxModelAuthHelp, resolveBoxModelAuth } from '../lib/model-auth-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { openCommandLog } from '@agentbox/cli-kit';
@@ -125,6 +126,8 @@ interface CreateOptions {
   /** --dangerously-with-credentials: copy a git credential into the box (git.pushMode=direct); cloud only.
    *  The token-vs-SSH choice is made ONLY at the interactive prompt (TTY required). */
   dangerouslyWithCredentials?: boolean;
+  /** --model-auth <source...>: host model-provider logins to seed into the box. */
+  modelAuth?: string[];
   /** --via-hub: force enqueue the create on the control box instead of building locally. */
   viaHub?: boolean;
   /** --local: force a local build even when a control box would take a cloud create by default. */
@@ -216,6 +219,8 @@ async function runCreateViaHubApi(
    */
   remoteHost: string | undefined,
   projectRoot: string,
+  /** `--model-auth`, already validated on this machine (see resolveBoxModelAuth). */
+  borrowCredentials: string[],
   cmdLog: ReturnType<typeof openCommandLog>,
 ): Promise<void> {
   // A stale login on the control box means the box comes up signed out — refresh
@@ -259,6 +264,10 @@ async function runCreateViaHubApi(
     ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
     ...(opts.build === true ? { build: true } : {}),
     ...(opts.credentialSync === false ? { credentialSync: false } : {}),
+    // Only the SELECTION crosses the wire — the logins themselves reached the
+    // control box through `syncAgentCredentialsIfChanged` above, so the worker
+    // seeds the box from the user's own copy.
+    ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
   };
   // The base the box forks from, which the control box cannot read for itself:
   // it holds no checkout, so an absent `fromBranch` there means "the repo's
@@ -425,6 +434,7 @@ export const createCommand = new Command('create')
     'force building the box on this machine even when a control box is configured (the opposite of --via-hub; cloud.viaHub=false makes this the default). Docker boxes are always local.',
   )
   .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
+  .option('--model-auth <source...>', boxModelAuthHelp())
   .option(
     '--restore <bot>',
     "recreate a bot from its backup under <project>/.agentbox/bots/<bot>/. The box runs on a copy of the backed-up workspace; the agent's state dir is NOT restored here (see `agentbox <agent> --restore` for that)",
@@ -565,6 +575,20 @@ export const createCommand = new Command('create')
       /* best-effort UI memory */
     }
 
+    // Which host model-provider login this box is seeded with. `agentbox create`
+    // builds an AGENTLESS box, so this is explicit-only: no row declares sources
+    // for it, so there is nothing to default from and nobody to ask. The seed is
+    // still meaningful — it lands at the lender's own path and is recorded on the
+    // box, so an agent added later imports it at its first start seam.
+    let borrowCredentials: string[] = [];
+    try {
+      borrowCredentials = resolveBoxModelAuth(opts.modelAuth);
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      cmdLog.close();
+      process.exit(1);
+    }
+
     // Pick WHICH HUB the create goes to (both modes go through POST /api/v1/boxes;
     // only the target + request shape differ). Remote (a control box clones the
     // repo VPS-side) → push seed + repoUrl. Local/co-located (build from the local
@@ -586,7 +610,15 @@ export const createCommand = new Command('create')
       process.exit(1);
     }
     if (target.where === 'remote') {
-      await runCreateViaHubApi(target, opts, providerName, remoteHost, projectRoot, cmdLog);
+      await runCreateViaHubApi(
+        target,
+        opts,
+        providerName,
+        remoteHost,
+        projectRoot,
+        borrowCredentials,
+        cmdLog,
+      );
       return;
     }
     if (target.fellBackReason) {
@@ -876,6 +908,7 @@ export const createCommand = new Command('create')
           imageRegistry: cfg.effective.box.imageRegistry,
           gitPushMode: cfg.effective.git.pushMode,
           remoteHost,
+          ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
           // The resolved list, for a worker on THIS machine to read the approved
           // host files with. NOTE: the hub re-resolves `agentbox.yaml`'s block
           // server-side and its answer wins over this echo, so entries that only

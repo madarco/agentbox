@@ -67,10 +67,43 @@ skipped by every box built from an existing image or snapshot.
 | 5a | `--model-auth <source...>` on every declaring agent; `enum-list` config | **done** |
 | 3 | ~~env sources~~ | **dropped** — copying an API key by hand is not a real burden, and it is not worth rewiring ~10 forwarding sites for |
 | 4 | multi-select through the front-ends | **schema + CLI renderer done and drive-verified, but UNREACHED** — the model-auth prompt is a one-pick list; web/tray renderers not started |
-| 5b | `--model-auth` on `agentbox create` (box-wide) | **not started** |
+| 5b | `--model-auth` on `agentbox create` (box-wide) | **done** — see below |
 
 Phases 1, 2 and 5a are live-verified: `agentbox pi --model-auth codex` seeds the
 login, imports it as `openai-codex`, and the box answers a real turn.
+
+## Phase 5b — `agentbox create`
+
+`agentbox create` builds an AGENTLESS box, so the question "which source?" has no
+row to answer it. The shape that falls out of the model rather than fighting it:
+
+- **A source names the LENDER, never the consumer.** That is already true
+  everywhere (`modelAuthSourceId` is the lending agent's id), so an agentless box
+  can be given one with no new concept: `borrowedCredentialCarry` only ever
+  needed the lender list, and it lands the login at the LENDER's own
+  `credential.boxAbsPath`, 0600.
+- **The legal ids are the union of the `agent` sources the registry declares**,
+  not "every agent with a credential file". A box may only be seeded with a login
+  some agent is known to be able to consume — which is also what keeps claude's
+  OAuth blob out (measured fact 4). Today that set is exactly `codex`.
+- **Explicit or nothing.** There is no agent, so there is no `<agent>.modelAuth`
+  to default from and no `promptOnCreate` row to ask. No new config key either:
+  a box-wide one would be a second way to say what the agent keys already say,
+  on a command that makes one box.
+- **An `env:` id is REFUSED, not ignored** — phase 3 was dropped, so nothing
+  would consume it, and accepting it would promise a seed that never happens.
+  An id no agent declares is refused the same way, naming what is accepted.
+- **When the box later gets an agent, it just works**, and this is the part that
+  makes the flag worth having: `provider.create` records
+  `box.borrowedCredentials`, and every agent start seam (`start-attach.ts`,
+  `agent-sessions.ts`, the queue worker, `startDetachedCloudAgent`) already
+  re-runs the hash-gated ingest whenever that list is non-empty. So
+  `agentbox create --model-auth codex` then `agentbox pi <box>` imports the login
+  at pi's first start with no second decision — and an agent that declares no
+  ingest simply finds the file at its canonical path.
+
+The refusals are the interesting half: the failure this feature exists to end is
+a silently dropped source, so `create` says no rather than seeding nothing.
 
 ## Phase 3 — dropped
 

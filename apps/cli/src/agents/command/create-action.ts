@@ -398,6 +398,35 @@ export async function runAgentCreate(
   const applySkip = (args: string[]): string[] =>
     a.runtime.skipPermissions ? a.runtime.skipPermissions.apply(args, cfg) : args;
 
+  /**
+   * Model-auth gate: which of the host's model-provider logins this box gets.
+   *
+   * Memoised rather than hoisted. The `-i` branch below returns before the
+   * foreground gates ever run, which is how `--model-auth` was silently dropped
+   * from every background run; calling this from both branches fixes that
+   * without reordering the questions the foreground path asks (sign-in, carry,
+   * then this). Decided at the host boundary, before anything is created — a
+   * refused value must not cost a box, and a prompt must not appear under a
+   * spinner.
+   */
+  let modelAuthPromise: Promise<string[]> | undefined;
+  const modelAuth = (): Promise<string[]> =>
+    (modelAuthPromise ??= (async () => {
+      try {
+        const ids = await resolveModelAuth({
+          spec: a.spec,
+          ...(opts.modelAuth !== undefined ? { flags: opts.modelAuth } : {}),
+          settings: agentSettings(cfg, a.spec.id),
+          sources: cfgLoaded.sources,
+          yes: !!opts.yes,
+        });
+        for (const id of ids) cmdLog.write(`model auth: granting ${id}`);
+        return ids;
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), 1);
+      }
+    })());
+
   if (opts.initialPrompt && opts.initialPrompt.length > 0) {
     // Captured as a const so the narrowing survives into the status-line
     // callback below (TS drops property narrowing inside a closure).
@@ -410,6 +439,9 @@ export async function runAgentCreate(
         1,
       );
     }
+    // Before the routing round trip, so the question is answered at a bare
+    // terminal on either branch — and so a refused source costs no box.
+    const borrowCredentials = await modelAuth();
     // Route the background run to the control box when configured — the worker
     // creates the box AND starts the agent with the prompt (laptop off). Local
     // creds aren't needed for the hub path (custody seeds them).
@@ -436,6 +468,7 @@ export async function runAgentCreate(
             name: opts.name,
             fromBranch: opts.fromBranch,
             persistent,
+            ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
             urlFlag: opts.url,
             prompt: seedPrompt,
             agentArgs: applySkip(agentArgs),
@@ -502,6 +535,7 @@ export async function runAgentCreate(
       createOpts: {
         ...pickQueueCreateOpts(a, opts),
         persistent,
+        ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
         carry: carryForQueue,
         ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
       },
@@ -601,22 +635,7 @@ export async function runAgentCreate(
     fail(err instanceof Error ? err.message : String(err), 1);
   }
 
-  // Model-auth gate: which of the host's model-provider logins this box gets.
-  // Decided here, at the host boundary, before anything is created — a refused
-  // value must not cost a box, and a prompt must not appear under a spinner.
-  let modelAuthSources: string[] = [];
-  try {
-    modelAuthSources = await resolveModelAuth({
-      spec: a.spec,
-      ...(opts.modelAuth !== undefined ? { flags: opts.modelAuth } : {}),
-      settings: agentSettings(cfg, a.spec.id),
-      sources: cfgLoaded.sources,
-      yes: !!opts.yes,
-    });
-    for (const id of modelAuthSources) cmdLog.write(`model auth: granting ${id}`);
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err), 1);
-  }
+  const modelAuthSources = await modelAuth();
 
   // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
   // only REQUEST host CLIs; the grant is the host's decision. Never blocks.
@@ -695,6 +714,7 @@ export async function runAgentCreate(
             name: opts.name,
             fromBranch,
             persistent,
+            ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
             urlFlag: opts.url,
             onStatus,
             onLog: (line) => cmdLog.write(line),

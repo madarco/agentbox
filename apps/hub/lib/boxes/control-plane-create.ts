@@ -34,6 +34,12 @@ export interface ControlPlaneCreateInput {
     bundleDepth?: number;
     build?: boolean;
     credentialSync?: boolean;
+    /**
+     * `--model-auth`: which host logins the box is seeded with. Resolved on the
+     * machine that HOLDS them (the CLI) and only named here, so this carries a
+     * selection and never a secret.
+     */
+    borrowCredentials?: string[];
   };
 }
 
@@ -91,6 +97,12 @@ export function controlPlaneCreateRequest(
         ...(o.bundleDepth !== undefined ? { bundleDepth: o.bundleDepth } : {}),
         ...(o.build ? { build: o.build } : {}),
         ...(o.credentialSync !== undefined ? { credentialSync: o.credentialSync } : {}),
+        // Empty means "borrow nothing", which is what an absent field already
+        // says — and the worker's fallback is the same, so sending `[]` would
+        // only add a field with no meaning.
+        ...(o.borrowCredentials && o.borrowCredentials.length > 0
+          ? { borrowCredentials: o.borrowCredentials }
+          : {}),
       }
     : {};
   return {

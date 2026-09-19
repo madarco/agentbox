@@ -124,6 +124,7 @@ accept your **Codex (ChatGPT subscription)** login:
 agentbox pi --model-auth codex        # this box
 agentbox opencode --model-auth codex
 agentbox config set pi.modelAuth codex   # every box; `none` to stop being asked
+agentbox create --model-auth codex       # an agentless box, seeded for later
 ```
 
 The host copies your Codex login into the box at Codex's own path, and the agent
@@ -131,12 +132,24 @@ imports it into its own store before its session starts. Coding agents never
 prompt for this — they have their own sign-in, so it happens only when you ask
 for it with the flag or the config key.
 
+`agentbox create` takes the same flag even though it launches no agent: the
+login still lands at its own path in the box and is recorded on the box, so the
+first agent you start in it later — `agentbox pi <box>`, `agentbox openclaw <box>` —
+imports it with no second decision from you. There is no agent to read a
+per-agent `modelAuth` key or to ask on your behalf, so on `create` the flag is
+the only way in, and it only accepts logins an agent is known to be able to
+borrow (today: `codex`).
+
+The choice travels with a create that runs on a [control box](/docs/deployed-hub)
+too — only the name of the login goes over the wire; the login itself is already
+in the control box's custody from `agentbox hub credentials push`, and the box is
+seeded from your copy, never from whatever that machine happens to hold.
+
 <Callout type="warn">
-A box **cannot refresh a borrowed login by itself** — the provider rejects a
-refresh from a different tool. The box works until the copied token expires,
-and is renewed by `agentbox credentials propagate --agent codex`, which pushes
-your host's refreshed login and re-runs the import. Boxes on their own login
-(`agentbox codex`) are unaffected.
+  A box **cannot refresh a borrowed login by itself** — the provider rejects a refresh from a
+  different tool. The box works until the copied token expires, and is renewed by `agentbox
+  credentials propagate --agent codex`, which pushes your host's refreshed login and re-runs the
+  import. Boxes on their own login (`agentbox codex`) are unaffected.
 </Callout>
 
 Your Claude login is deliberately **not** shareable this way: a refresh inside a

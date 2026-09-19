@@ -355,6 +355,13 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.credentialSync !== undefined
           ? { credentialSync: createOpts.credentialSync }
           : {}),
+        // Model-auth sources the CLI already resolved. Only the ids travelled;
+        // the login itself was materialized above by seedHostBackupsFromCustody,
+        // and `resolveHostCredentialFile` prefers that backup over this VPS's
+        // own home — so the box gets the USER's login, not the control box's.
+        ...(createOpts?.borrowCredentials?.length
+          ? { borrowCredentials: createOpts.borrowCredentials }
+          : {}),
         ...(extraInboundCidrs || remoteHost
           ? {
               providerOptions: {

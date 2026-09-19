@@ -145,6 +145,29 @@ describe('controlPlaneCreateRequest', () => {
     expect('opts' in m.request).toBe(false);
   });
 
+  // The THIRD field this mapping has silently swallowed (`agentArgs` and
+  // `persistent` were the first two). Pinned here because the failure is
+  // invisible: the box builds and boots, it simply has no model auth.
+  it('carries borrowCredentials — the selection, never the secret', () => {
+    const m = controlPlaneCreateRequest(
+      { provider: 'e2b', agent: 'pi', opts: { borrowCredentials: ['codex'] } },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toEqual({ borrowCredentials: ['codex'] });
+  });
+
+  it('drops an empty borrowCredentials rather than sending a meaningless field', () => {
+    const m = controlPlaneCreateRequest(
+      { provider: 'e2b', agent: 'none', opts: { borrowCredentials: [] } },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect('opts' in m.request).toBe(false);
+  });
+
   it('startAgent:false builds a COLD box (the foreground create-then-adopt path)', () => {
     const m = controlPlaneCreateRequest(
       { provider: 'e2b', agent: 'claude', startAgent: false },
