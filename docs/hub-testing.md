@@ -361,6 +361,13 @@ reporting `mode: remote`; read the control box's side over `ssh agentbox-hub cat
 | F16 | open the control box's timeline for a workspace whose projects are repos only | `github` reads `ok` (not `unavailable`) and an existing PR is labelled; `ssh agentbox-hub` shows no `gh` process with a cwd in a job clone |
 | F17 | `agentbox config set hub.mode local` + a docker create from a manager session | the manager's row on the control box lists the create's job id (`boxJobIds`), and the `box.created` row lands there stamped with that manager and its turn. The job id is NOT yet promoted to the box id — the control box has no record of a PC-local job (backlog item 13) |
 
+Rows **F4** and **F17** use `hub.mode=local` purely as a **test device** — it is the only way to get a
+PC-built docker box while a control box is configured, which is what those two rows are measuring
+(task assignment and manager grouping across two machines). It is not a supported shape for users:
+with a control box configured, boxes are built by the control box and local docker on that machine is
+not supported, so a real create warns and the resulting box is invisible to `agentbox list` and to
+every `agentbox git` command (backlog items 15 and 3). Unset `hub.mode` again after the row.
+
 The cheap loop for all of these is `agentbox hub expose` (§1) with a second `~/.agentbox` playing
 the PC; the gate for merging is the same matrix against a real deployed hub (§3).
 

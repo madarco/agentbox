@@ -52,6 +52,7 @@ import { isRuntimeProvider, loadProviderModule } from '../provider/loaders.js';
 import {
   dockerProvidersHidden,
   dockerHiddenMessage,
+  localDockerUnsupportedWarning,
   isDockerProvider,
 } from '../control-plane/remote-hub.js';
 import { isFirstRun, markSetupComplete } from '../lib/first-run.js';
@@ -612,6 +613,12 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   if (hideDocker && isDockerProvider(providerName) && cfg) {
     log.error(dockerHiddenMessage(cfg.effective, 'setup'));
     return false;
+  }
+  // Allowed but unsupported: `hub.mode=local` keeps docker on here even though a
+  // control box owns the fleet, so say what that costs before the wizard pins it.
+  if (cfg) {
+    const warning = await localDockerUnsupportedWarning(cfg.effective, providerName);
+    if (warning) log.warn(warning);
   }
 
   // 3) Login (skip docker).

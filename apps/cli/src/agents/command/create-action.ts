@@ -53,7 +53,11 @@ import {
 } from '../../commands/_cloud-agent-via-hub.js';
 import { ensureProjectRepoOnControlPlane } from '../../control-plane/ensure-repo-installed.js';
 import { resolveCreateRouting, type CreateRouting } from '../../control-plane/route-create.js';
-import { dockerProviderRefusal, remoteHubConfigured } from '../../control-plane/remote-hub.js';
+import {
+  dockerProviderRefusal,
+  localDockerUnsupportedWarning,
+  remoteHubConfigured,
+} from '../../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../../lib/carry-gate.js';
 import { runModelAuthIngest } from '@agentbox/sandbox-core';
 import { resolveModelAuth } from '../../lib/model-auth-gate.js';
@@ -318,6 +322,10 @@ export async function runAgentCreate(
   // with the laptop off, so it's refused under a control box unless hub.mode=local.
   const dockerRefusal = await dockerProviderRefusal(cfg, providerName, remoteHost, 'create');
   if (dockerRefusal) fail(dockerRefusal, 1);
+  // Allowed but unsupported: `hub.mode=local` under a control box builds a box
+  // this machine's hub owns while every fleet read goes to the control box.
+  const localDockerWarning = await localDockerUnsupportedWarning(cfg, providerName);
+  if (localDockerWarning) log.warn(localDockerWarning);
 
   // Always-on box. `undefined` means "no opinion" and leaves the call to the
   // config layers — passing `false` there would turn a silent default into an

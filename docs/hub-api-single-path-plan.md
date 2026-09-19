@@ -1298,8 +1298,12 @@ docker boxes vanish from `ls`, and `agentbox hub start` works on a machine with 
 `control-plane/remote-hub.ts` (beside `remoteHubConfigured`) — drives every gating site:
 `local` never hides (the escape hatch), `thin` always hides, `auto` hides iff a control box is
 configured. `isDockerProvider(name)` covers **docker + remote-docker** (matching
-`boxOwningHubIsLocal`), and `dockerHiddenMessage('create'|'prepare')` is the single re-enable
-message naming `hub.mode=local`. Gated: `create` (and the `claude`/`codex`/`opencode` launchers —
+`boxOwningHubIsLocal`), and `dockerHiddenMessage('create'|'prepare')` is the single message.
+(**Superseded 2026-09-19**: under a control box that message no longer names `hub.mode=local` at
+all — local docker alongside a control box is not supported, so it points at a cloud provider or at
+sharing an engine with the control box, and `hub.mode=local` now warns. `thin` with no control box
+keeps the re-enable hint. See [`workspaces-remote-hub-backlog.md`](./workspaces-remote-hub-backlog.md)
+items 15 and 3.) Gated: `create` (and the `claude`/`codex`/`opencode` launchers —
 they build boxes too, same false-coverage reason Step 13 widened its gate), `prepare` (`runPrepare`),
 `doctor` (the unscoped enumeration in `runAllChecks`; a scoped `doctor -p docker` still runs so you
 can diagnose), and the `install` provider picker (filtered + `initialValue` moved off docker). The
@@ -1319,7 +1323,7 @@ no longer imports docker for the refresh. **The `0.0.0.0` bind (invariant 1) is 
 `hub-lifecycle.ts`; the custody peer gate (invariant 2) was not touched.**
 
 **Verified end-to-end** (built CLI): with `relay.controlPlaneUrl` set, `create --provider docker`
-and `prepare --provider docker` refuse naming `hub.mode=local`, and `doctor` drops the docker/
+and `prepare --provider docker` refuse (naming `hub.mode=local` at the time; superseded above), and `doctor` drops the docker/
 remote-docker rows; setting `hub.mode=local` reinstates all three (create proceeds past the gate into
 the normal carry flow, doctor shows docker again). With `relay.controlPlaneUrl` **unset** (the
 regression half), `doctor` shows docker, and `create --provider docker` routes through the local hub
@@ -1333,8 +1337,9 @@ confirmed in the hub log). `hub restart`/`hub status` work off the sandbox-core 
   right call for the next reader).** Filtering docker boxes out entirely is "hidden-but-alive": a user
   who configures a control box while docker boxes are running would lose the only handle to them (they
   keep consuming resources), the same silent-skip failure class rejected in Step 5's destroy bug. So
-  `list.ts` renders docker boxes with a dimmed `docker (inactive)` provider cell + a footer note naming
-  `hub.mode=local`, and `destroy <name>` still resolves them (it resolves locally from `state.json`,
+  `list.ts` renders docker boxes with a dimmed `docker (inactive)` provider cell + a footer note (which
+  under a control box says how to destroy them rather than naming `hub.mode=local`, per the 2026-09-19
+  supersession above), and `destroy <name>` still resolves them (it resolves locally from `state.json`,
   never from the listing). In practice the marking only bites in the **co-located / `hub expose`** case
   where the hub's `/api/v1/boxes` runs `docker ps` on this machine; a genuinely remote VPS hub never
   lists local docker boxes at all (different hub), so there is nothing to mark there.

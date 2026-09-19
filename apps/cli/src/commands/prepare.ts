@@ -43,7 +43,10 @@ import { parseProviderSpec } from '../provider/spec.js';
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
 import { controlBoxKnowsHost } from '../control-plane/remote-docker-share.js';
 import { bakeViaHub } from '../control-plane/hub-prepare.js';
-import { dockerProviderRefusal } from '../control-plane/remote-hub.js';
+import {
+  dockerProviderRefusal,
+  localDockerUnsupportedWarning,
+} from '../control-plane/remote-hub.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import {
   localExposedLoopbackUrl,
@@ -857,6 +860,10 @@ export async function runPrepare(
   if (cfg) {
     const refusal = await dockerProviderRefusal(cfg.effective, providerName, remoteHost, 'prepare');
     if (refusal) throw new UserFacingError(refusal);
+    // Allowed but unsupported: `hub.mode=local` under a control box bakes an image
+    // only this machine's hub can build boxes from.
+    const warning = await localDockerUnsupportedWarning(cfg.effective, providerName);
+    if (warning) log.warn(warning);
   }
   // Per-agent settings: `--agent-setting` wins over the config keys, merged so
   // one flag doesn't drop an agent's other configured settings. The remaining

@@ -49,11 +49,20 @@ export function dockerHiddenReason(effective: EffectiveConfig): string {
   return remoteHubConfigured(effective) ? 'a control box is configured' : 'hub.mode is set to thin';
 }
 
+/** The rule, stated once: docker here and a control box are not a supported pair. */
+export const LOCAL_DOCKER_UNSUPPORTED = 'Local docker alongside a control box is not supported.';
+
 /**
- * The one-line message every site prints when it hides docker, naming the config
- * key that brings it back. `context` tunes the verb, the reason reflects WHY docker
- * is off (control box vs thin mode), and the re-enable hint is shared so it can't
- * drift across sites.
+ * The one-line message every site prints when it hides docker. `context` tunes
+ * the verb, and the FIX depends on why docker is off:
+ *
+ *   - a control box is configured → local docker is simply not supported next to
+ *     one (the box would be owned by this machine's hub: invisible to a `list`
+ *     against the control box, and every `agentbox git` op against it fails), so
+ *     the way out is a box the control box can build — a cloud provider, or a
+ *     docker engine shared with it — never `hub.mode=local`;
+ *   - `hub.mode=thin` with no control box → nothing else owns the fleet, so
+ *     `hub.mode=local` IS the honest fix and the message still names it.
  */
 export function dockerHiddenMessage(
   effective: EffectiveConfig,
@@ -67,13 +76,29 @@ export function dockerHiddenMessage(
       : context === 'prepare'
         ? `docker images are not baked on this machine because ${reason}.`
         : `docker is unavailable on this machine because ${reason}.`;
-  // For a remote-docker engine the better answer is almost never "turn the gate
-  // off" — it is "let the control box drive that engine", which makes the box
-  // laptop-independent instead of merely allowed.
-  const fix = remoteHost
-    ? `Share the engine with the control box (\`agentbox remote-docker share ${remoteHost}\`) so it runs there, or set \`hub.mode=local\` to build from this machine anyway.`
-    : 'Set `hub.mode=local` (`agentbox config set hub.mode local`) to use docker here anyway.';
+  // For a remote-docker engine the better answer is "let the control box drive
+  // that engine", which makes the box laptop-independent instead of merely allowed.
+  const share = remoteHost
+    ? `Share the engine with the control box (\`agentbox remote-docker share ${remoteHost}\`) so it runs there`
+    : 'Share a docker engine with the control box (`agentbox remote-docker share <host>`) so it runs there';
+  const fix = remoteHubConfigured(effective)
+    ? `${share}, or use a cloud provider the control box can build (\`hetzner|e2b|vercel|daytona\`). ${LOCAL_DOCKER_UNSUPPORTED}`
+    : remoteHost
+      ? `${share}, or set \`hub.mode=local\` (\`agentbox config set hub.mode local\`) to build from this machine anyway.`
+      : 'Set `hub.mode=local` (`agentbox config set hub.mode local`) to use docker here anyway.';
   return `${lead} ${fix}`;
+}
+
+/**
+ * The `ls` footer's half of {@link dockerHiddenMessage}: what to do about docker
+ * boxes shown inactive. Under a control box it must NOT recommend `hub.mode=local`
+ * — that combination is unsupported (see {@link localDockerUnsupportedWarning}) —
+ * so it only says how to get rid of them; forced thin mode keeps the real hint.
+ */
+export function dockerHiddenListHint(effective: EffectiveConfig): string {
+  return remoteHubConfigured(effective)
+    ? `they run on this machine only, so \`agentbox destroy <name>\` is all that reaches them here. ${LOCAL_DOCKER_UNSUPPORTED}`
+    : 'set `hub.mode=local` (`agentbox config set hub.mode local`) to manage docker here.';
 }
 
 /**
@@ -119,4 +144,31 @@ export async function dockerProviderRefusal(
     if (await hubCanRunEngine(providerName, remoteHost, effective)) return null;
   }
   return dockerHiddenMessage(effective, context, remoteHost);
+}
+
+/**
+ * The warning for the one combination that is allowed but unsupported:
+ * `hub.mode=local` WITH a control box configured. Nothing refuses it — a user who
+ * set it explicitly may have a reason — but the resulting docker box is owned by
+ * this machine's hub while every fleet read goes to the control box, so it is
+ * missing from `agentbox list` and every mutating `agentbox git` op against it
+ * answers `box <id> not found` (backlog items 15 and 3). Null when the control box
+ * IS this machine (`agentbox hub expose`), where local docker is the normal shape.
+ *
+ * Each command calls this at its single docker-gate site, so it prints once per run.
+ */
+export async function localDockerUnsupportedWarning(
+  effective: EffectiveConfig,
+  providerName: string,
+): Promise<string | null> {
+  if (!isDockerProvider(providerName)) return null;
+  if (effective.hub.mode !== 'local' || !remoteHubConfigured(effective)) return null;
+  if (await controlBoxIsThisMachine()) return null;
+  return (
+    `hub.mode=local with a control box configured: ${LOCAL_DOCKER_UNSUPPORTED} ` +
+    "A docker box built here is owned by this machine's hub, so it will not appear in " +
+    '`agentbox list` against the control box and `agentbox git` commands against it will fail. ' +
+    'Let the control box build it (`--provider hetzner|e2b|vercel|daytona`), or share a docker ' +
+    'engine with it (`agentbox remote-docker share <host>`).'
+  );
 }

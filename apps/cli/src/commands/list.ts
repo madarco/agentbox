@@ -14,6 +14,7 @@ import { cacheAge, fetchBoxListing, type BoxListing } from '../control-plane/hub
 import {
   dockerProvidersHidden,
   dockerHiddenReason,
+  dockerHiddenListHint,
   isDockerProvider,
 } from '../control-plane/remote-hub.js';
 import { normalizeOriginUrl } from '../control-plane/hub-adopt.js';
@@ -418,7 +419,8 @@ function effectiveState(b: HubApiBox): string {
  * The PROVIDER cell. A `muted` box (a docker box hidden under a control box — see
  * `dockerProvidersHidden`) is kept in the listing but tagged `(inactive)` and
  * dimmed on a colour terminal, so a user can still read its name off `ls` and
- * `agentbox destroy <name>` it without first flipping `hub.mode=local`. Not
+ * `agentbox destroy <name>` it (the only thing that reaches it here — local
+ * docker alongside a control box is not supported). Not
  * silently dropped: a hidden-but-running container is a resource leak with no
  * visible handle — the same silent-skip failure class rejected earlier in this
  * series.
@@ -589,7 +591,7 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
   // Docker off under a remote hub (Step 12): mark (don't drop) docker boxes as
   // inactive when docker is gated here, plus a footer note naming the key + reason.
   const muted = await mutedDockerBoxes(boxes);
-  const note = staleNote(listing) + dockerHiddenNote(muted.ids.size, muted.reason);
+  const note = staleNote(listing) + dockerHiddenNote(muted.ids.size, muted.reason, muted.hint);
   if (boxes.length === 0) {
     if (scoped) {
       return `no boxes in this project (${projectRoot}) — run \`agentbox create\`, or \`agentbox list --global\` to see all${note}`;
@@ -611,18 +613,23 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
  */
 async function mutedDockerBoxes(
   boxes: HubApiBox[],
-): Promise<{ ids: Set<string>; reason: string | null }> {
+): Promise<{ ids: Set<string>; reason: string | null; hint: string }> {
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
-  if (!cfg || !dockerProvidersHidden(cfg.effective)) return { ids: new Set(), reason: null };
+  if (!cfg || !dockerProvidersHidden(cfg.effective))
+    return { ids: new Set(), reason: null, hint: '' };
   const ids = new Set(boxes.filter((b) => isDockerProvider(b.provider)).map((b) => b.id));
-  return { ids, reason: dockerHiddenReason(cfg.effective) };
+  return {
+    ids,
+    reason: dockerHiddenReason(cfg.effective),
+    hint: dockerHiddenListHint(cfg.effective),
+  };
 }
 
-/** Footer note when docker boxes are shown inactive, naming the reason + re-enable key. */
-function dockerHiddenNote(count: number, reason: string | null): string {
+/** Footer note when docker boxes are shown inactive, naming the reason + what to do. */
+function dockerHiddenNote(count: number, reason: string | null, hint: string): string {
   if (count === 0 || reason === null) return '';
   const n = count === 1 ? '1 docker box is' : `${count} docker boxes are`;
-  return `\n${n} shown as inactive because ${reason}; set \`hub.mode=local\` (\`agentbox config set hub.mode local\`) to manage docker here.`;
+  return `\n${n} shown as inactive because ${reason}; ${hint}`;
 }
 
 export const listCommand = withWatchOptions(

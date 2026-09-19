@@ -45,7 +45,9 @@ control box exists so boxes keep working with the PC off, so the store cannot li
   `workspaces.ts`, `github-prs.ts`.
 - The hub web UI has no workspace pages, so no proxy backend is needed on the local hub.
 - Docker is hidden under a control box unless `hub.mode=local`
-  (`apps/cli/src/control-plane/remote-hub.ts`), so docker-box forwarding is an edge path.
+  (`apps/cli/src/control-plane/remote-hub.ts`), so docker-box forwarding is an edge path — and since
+  2026-09-19 an unsupported one: local docker alongside a control box is not supported and `hub.mode=local`
+  warns (see [`workspaces-remote-hub-backlog.md`](./workspaces-remote-hub-backlog.md) items 15 and 3).
 - Remote-aware seams to reuse: `resolveHubTarget(url,{preferLocal})` → `onThisMachine`
   (`apps/cli/src/commands/hub.ts`), `remoteHubConfigured` (`remote-hub.ts`), hub-side
   `resolveRemoteHub()` (`apps/hub/lib/remote-hub.ts`), `storeIsLocal(rec)` guards in

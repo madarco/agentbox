@@ -45,7 +45,11 @@ import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
-import { dockerProviderRefusal, remoteHubConfigured } from '../control-plane/remote-hub.js';
+import {
+  dockerProviderRefusal,
+  localDockerUnsupportedWarning,
+  remoteHubConfigured,
+} from '../control-plane/remote-hub.js';
 import { attachRelayOptions } from '../control-plane/box-plane.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { assignTasksBestEffort, parseTaskIdsOrExit, preflightOrExit } from '../lib/tasks-assign.js';
@@ -504,6 +508,10 @@ export const createCommand = new Command('create')
       cmdLog.close();
       process.exit(1);
     }
+    // Allowed but unsupported: `hub.mode=local` under a control box builds a box
+    // this machine's hub owns while every fleet read goes to the control box.
+    const localDockerWarning = await localDockerUnsupportedWarning(cfg.effective, providerName);
+    if (localDockerWarning) log.warn(localDockerWarning);
 
     // Always-on box on a provider whose platform session cap the host can only
     // extend, never remove. Runs BEFORE routing so a control-box create cannot
