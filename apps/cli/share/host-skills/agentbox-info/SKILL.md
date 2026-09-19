@@ -230,7 +230,7 @@ Wrap step 2 in a loop to babysit a box across many turns. Use the narrow `wait-f
 Implications for you, the host-side agent:
 
 - Inside the box you can `git commit … && git push` exactly as normal. No setup needed.
-- Pushes are gated host-side: the relay can require a confirm prompt for destructive operations (the user sees it in the dashboard footer, ~25 s TTL). If a push appears to hang, it's waiting on this approval — see "Answering host-action approvals" below.
+- Pushes follow the same blocklist model as `gh` below: publishing commits to **any** branch is ordinary, revertable work and runs silently. Only a push that cannot be undone asks the user first — a deletion (`--delete`, `:branch`), a force-push to a branch other than the box's own `agentbox/*` one, `--mirror`/`--prune`, a tag overwrite, `--repo`/`--receive-pack`, or any flag the gate does not recognise. `--force-with-lease` is the safe force spelling and stays silent. If a push appears to hang, it's waiting on that approval (the user sees it in the dashboard footer, ~25 s TTL) — see "Answering approvals" below.
 - The relay process is started lazily by the first `agentbox create` / `agentbox claude` and persists across runs (PID at `~/.agentbox/relay.pid`, log at `~/.agentbox/relay.log`). You normally don't need to manage it.
 - For HTTPS origins (`https://github.com/...`), pushing usually needs a credential — recommend the user run `gh auth login` and `gh auth setup-git` once on the host. After that, host `git push` uses gh's OAuth token automatically. SSH origins (`git@github.com:...`) keep using the host's SSH agent as before.
 
@@ -238,7 +238,7 @@ Implications for you, the host-side agent:
 
 When you are **orchestrating boxes unattended** (no human watching the dashboard footer), a box blocks on two kinds of approval and `agent approvals` / `agent approve` cover **both**:
 
-- **Relay host-action approvals** — `git push` / `cp` / `gh pr` write / checkpoint. You answer them yourself; you're a host process that already holds the user's git/file credentials, so approving grants nothing you don't already have.
+- **Relay host-action approvals** — a destructive `git push` / `cp` / `gh pr` write / checkpoint. You answer them yourself; you're a host process that already holds the user's git/file credentials, so approving grants nothing you don't already have.
 - **In-TUI agent prompts** — Claude plan-mode approval, `AskUserQuestion`, a tool-permission dialog. Previously you had to craft `drive keypress` sends by hand; now `approve` enacts the right keystrokes for you.
 
 ```bash
