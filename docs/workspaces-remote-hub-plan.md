@@ -333,15 +333,32 @@ by the smoke below.
 - Tests: `github-prs` with a fake `ghExec` asserting no `cwd`; box-exec push stat; relay `git.pushed`
   handler + hook.
 
-## Tray must change (that repo is out of scope for code here)
+## Tray — LANDED (`../agentbox-tray`, 2026-09-19)
 
-- Read `workspace.hosts[<own hostname>]?.root`, not `root`; hide folder UI when absent.
-- Attach `tmux attach` only when `manager.host` is its own hostname; otherwise "runs on <host>" and
-  disable attach/resume; drop reliance on `resumeBlockedBy == 'other-host'`.
-- On `409 wrong_host` / `manager_unreachable` with `details.host` = own hostname, retry the op
-  against `agentbox hub target --json --local`.
-- Decode `kind: 'tmux'`, `hostIsHub`, `Workspace.projects[]`; new `POST /workspaces` body (shell
-  `agentbox workspace add`, or scan client-side).
+All four bullets, plus what auditing the manager path turned up. `Workspace.root` was
+non-optional in Swift, so `GET /workspaces` failed to decode **entirely** against a control box and
+the Manager window showed nothing, silently — the tray was broken, not degraded.
+
+- `Workspace.localRoot` / `locationLabel` off `hosts[<own hostname>]`; a workspace with no folder
+  here says "on <host>" rather than showing another machine's path.
+- `ManagerInfo.runsHere` (`host` vs this Mac) gates attach, resume, stop, restart and the desktop
+  deep link. **`hostIsHub` is deliberately not that gate** — a local hub proxying to a control box
+  returns the box's views verbatim, so it reads false for a session on this very Mac.
+- `HubClient.managerRequest` routes start/resume/stop/attach/sessions/message and retries once
+  against `hub target --json --local` when the 409 names this machine. That is also why
+  `wrong_host` about a WORKSPACE now carries `details.hosts`: `host` alone was
+  `Object.keys(ws.hosts)[0]`, so on a workspace mapped from two PCs the other one skipped the retry.
+- `kind: 'tmux'` (the old `hub` decoded as `.unknown`, which killed attach on a LOCAL hub too),
+  `hostIsHub`, `Workspace.projects[]`; add/rescan shell `agentbox workspace add --json` /
+  `workspace rescan` rather than reimplementing the scan in Swift.
+- `Tests/AgentBoxTests/HubPayloadTests.swift`: real captured payloads through the app's own Codable
+  types. Nothing there decoded a hub payload before, which is why this broke unnoticed.
+
+Four hub bugs found by that audit were fixed here (`fix(manager): a control box stops lying about
+the managers on your machine`): the workspace row's manager count ignored the heartbeat and
+contradicted `GET /managers` for 30 minutes; `lastSeenAt` was never advanced by a heartbeat; a hub
+whose store is remote repeated that store's status for managers on its OWN machine, which deadlocked
+`manager attach` against `resume`; and the two refusals above. Backlog item 22 records what is left.
 
 ## Verification
 
