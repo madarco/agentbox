@@ -59,7 +59,30 @@ Success responses return the resource or collection directly. Errors are always:
 ```
 
 with an HTTP status that matches the `code` (`400 invalid_request`,
-`401 unauthorized`, `404 not_found`, `409 conflict`, `503 backend_unavailable`).
+`401 unauthorized`, `404 not_found`, `409 conflict`, `503 backend_unavailable`,
+`500 internal`).
+
+Two more codes also answer `409`, and both carry a `details` object naming the
+machine the call has to run on: **`wrong_host`** (a manager op sent to a hub that
+is not the machine running the session) and **`manager_unreachable`** (a message
+the answering hub cannot type). Branch on `error.code`, not on the status:
+
+```json
+{
+  "error": {
+    "code": "wrong_host",
+    "message": "manager 4f2a…c1 runs on marcos-mbp, not on control-box; resume it there",
+    "details": { "host": "marcos-mbp" }
+  }
+}
+```
+
+When `details.host` is your own hostname, retry the identical call against the
+hub on your machine (`agentbox hub target --json --local`). A refusal about a
+**workspace** rather than one manager — `managers/start`, `managers/sessions` —
+also carries `details.hosts`, every machine with a checkout of it, because a
+workspace mapped from several machines has no single right answer; retry when
+your hostname is in that list.
 
 ## Endpoints
 

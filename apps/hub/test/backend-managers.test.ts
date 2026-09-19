@@ -565,7 +565,7 @@ describe('a record whose manager runs on another machine', () => {
       host: 'desktop',
     });
     if (!res.ok) throw new Error(res.error);
-    return { h, managers, id: res.manager.id };
+    return { h, managers, workspaces, wsId: res.workspace.id, id: res.manager.id };
   }
 
   it('shows what the last heartbeat reported, and never probes a process it cannot see', async () => {
@@ -605,6 +605,43 @@ describe('a record whose manager runs on another machine', () => {
     expect((await managers.getManager(id))?.status).toBe('stopped');
   });
 
+  it('agrees with the workspace row about how many managers run', async () => {
+    // `GET /workspaces` derives its own count. It used to do that without
+    // looking at the heartbeat at all, so a control box reported a manager
+    // running for another 30 minutes after `GET /managers` said it had stopped
+    // — and refused `workspace rm` for just as long.
+    const clock = { now: BEAT_AT };
+    const { managers, workspaces, wsId, id } = await remoteManager(clock);
+    const stopped = await managers.reportManager(id, { status: 'stopped' });
+    if (!stopped.ok) throw new Error(stopped.error);
+    expect(stopped.manager.status).toBe('stopped');
+    expect((await workspaces.getWorkspace(wsId))?.managers).toEqual({ running: 0, total: 1 });
+  });
+
+  it('advances the last-seen window on every running heartbeat', async () => {
+    // Without this the fallback clock is frozen at detect time, so a manager
+    // alive for hours reads `stopped` the moment one report goes missing.
+    const clock = { now: BEAT_AT };
+    const { managers, id } = await remoteManager(clock);
+    clock.now = BEAT_AT + MANAGER_SEEN_WINDOW_MS - 1000;
+    const beat = await managers.reportManager(id, { status: 'running' });
+    if (!beat.ok) throw new Error(beat.error);
+    // Well past the ORIGINAL last-seen window, and stale enough that only the
+    // window is left to answer with.
+    clock.now = BEAT_AT + MANAGER_SEEN_WINDOW_MS + HEARTBEAT_STALE_MS + 1;
+    expect((await managers.getManager(id))?.status).toBe('running');
+  });
+
+  it('does not stamp the window from a stopped heartbeat', async () => {
+    const clock = { now: BEAT_AT };
+    const { managers, id } = await remoteManager(clock);
+    clock.now = BEAT_AT + 1000;
+    const beat = await managers.reportManager(id, { status: 'stopped' });
+    if (!beat.ok) throw new Error(beat.error);
+    clock.now = BEAT_AT + MANAGER_SEEN_WINDOW_MS + HEARTBEAT_STALE_MS + 1;
+    expect((await managers.getManager(id))?.status).toBe('stopped');
+  });
+
   it('refuses a heartbeat for a manager this hub runs itself', async () => {
     const h = harness();
     const { managers } = backends(h);
@@ -628,7 +665,11 @@ describe('a record whose manager runs on another machine', () => {
 
 describe('with the records on a control box', () => {
   /** An in-memory stand-in for the control box's `/api/v1`, recording what travels. */
-  function remoteStore(hostname: string): ManagerRecordStore & { calls: string[] } {
+  function remoteStore(hostname: string): ManagerRecordStore & {
+    calls: string[];
+    setRoot(root: string, on?: string): void;
+    reportStatus(next: 'running' | 'stopped'): void;
+  } {
     const records = new Map<string, ManagerRecord>();
     const calls: string[] = [];
     const ws = {
@@ -636,9 +677,10 @@ describe('with the records on a control box', () => {
       name: 'remote',
       hosts: {} as Record<string, { root: string }>,
     };
+    let reportedStatus: 'running' | 'stopped' = 'running';
     const view = (rec: ManagerRecord): ManagerView => ({
       ...rec,
-      status: 'running',
+      status: reportedStatus,
       hostIsHub: rec.host === hostname,
       resumable: false,
       workspaceName: ws.name,
@@ -647,8 +689,8 @@ describe('with the records on a control box', () => {
     return {
       kind: 'remote',
       calls,
-      setRoot(root: string) {
-        ws.hosts[hostname] = { root };
+      setRoot(root: string, on: string = hostname) {
+        ws.hosts[on] = { root };
       },
       listManagers: async () => [...records.values()],
       readManagers: async () => [...records.values()],
@@ -696,14 +738,21 @@ describe('with the records on a control box', () => {
         const rec = records.get(id);
         return rec ? view(rec) : null;
       },
-    } as ManagerRecordStore & { calls: string[]; setRoot(root: string): void };
+      reportStatus(next: 'running' | 'stopped') {
+        reportedStatus = next;
+      },
+    } as ManagerRecordStore & {
+      calls: string[];
+      setRoot(root: string, on?: string): void;
+      reportStatus(next: 'running' | 'stopped'): void;
+    };
   }
 
   it('starts the session here, registers it there, and answers with the control box view', async () => {
     const h = harness();
     const store = remoteStore('laptop');
     const root = await makeFolder();
-    (store as unknown as { setRoot(r: string): void }).setRoot(root);
+    store.setRoot(root);
     const workspaces = createWorkspaceBackend(h.deps);
     const managers = createManagerBackend(h.deps, {
       workspaceView: (id) => workspaces.getWorkspace(id),
@@ -740,7 +789,7 @@ describe('with the records on a control box', () => {
     const h = harness();
     const store = Object.assign(remoteStore('laptop'), over);
     const root = await makeFolder();
-    (store as unknown as { setRoot(r: string): void }).setRoot(root);
+    store.setRoot(root);
     const workspaces = createWorkspaceBackend(h.deps);
     const managers = createManagerBackend(h.deps, {
       workspaceView: (id) => workspaces.getWorkspace(id),
@@ -830,10 +879,68 @@ describe('with the records on a control box', () => {
     expect(res.ok === false && res.error).toMatch(/register the session there/);
   });
 
+  it('probes its own managers rather than believing the record hub about them', async () => {
+    // The holding hub renders every status from the last heartbeat — and from
+    // none at all while this hub was not running to send one. The tmux server is
+    // right here, so for a session on this machine the report is a worse copy of
+    // something we can read. Believing it made `manager attach` send the user to
+    // `resume`, which then refused with "already running; attach to it instead".
+    const { store, managers } = await remote();
+    const started = await managers.startManager('ws-remote', { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    store.reportStatus('stopped');
+    const view = await managers.getManager(started.manager.id);
+    expect(view?.status).toBe('running');
+    // Not a local re-render: what only the holding hub knows is kept.
+    expect(view?.workspaceName).toBe('remote');
+    expect((await managers.listWorkspaceManagers('ws-remote'))?.[0]?.status).toBe('running');
+  });
+
+  it('leaves a manager on another machine exactly as the record hub rendered it', async () => {
+    const { store, managers } = await remote();
+    const registered = await managers.registerManager('ws-remote', {
+      id: 'bbbbbbbbbbbbbbbb',
+      agent: 'claude',
+      kind: 'tmux',
+      host: 'desktop',
+      cwd: '/home/marco/agentbox',
+      tmuxSession: 'agentbox-manager-bbbbbbbbbbbbbbbb',
+    });
+    if (!registered.ok) throw new Error(registered.error);
+    store.reportStatus('stopped');
+    // No tmux probe for it, and the holding hub's answer stands.
+    expect((await managers.getManager('bbbbbbbbbbbbbbbb'))?.status).toBe('stopped');
+  });
+
+  it('names every machine that has the folder when a workspace has none here', async () => {
+    // `host` alone was the first key of `hosts`, so on a workspace mapped from
+    // two PCs the one that lost the coin toss saw a host that was not its own
+    // and skipped the retry against its own hub.
+    const h = harness();
+    const store = remoteStore('laptop');
+    store.setRoot('/home/marco/agentbox', 'desktop');
+    store.setRoot('/home/marco/agentbox', 'tower');
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      store,
+    });
+    expect(await managers.startManager('ws-remote', { agent: 'claude' })).toMatchObject({
+      ok: false,
+      code: 'wrong_host',
+      details: { host: 'desktop', hosts: ['desktop', 'tower'] },
+    });
+    expect(await managers.listManagerSessions('ws-remote')).toMatchObject({
+      ok: false,
+      code: 'wrong_host',
+      details: { hosts: ['desktop', 'tower'] },
+    });
+  });
+
   it('sends a box this hub built to the hub that holds the record', async () => {
     const h = harness();
     const store = remoteStore('laptop');
-    (store as unknown as { setRoot(r: string): void }).setRoot(await makeFolder());
+    store.setRoot(await makeFolder());
     const workspaces = createWorkspaceBackend(h.deps);
     const managers = createManagerBackend(h.deps, {
       workspaceView: (id) => workspaces.getWorkspace(id),

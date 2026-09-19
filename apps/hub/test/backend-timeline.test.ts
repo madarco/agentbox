@@ -21,6 +21,7 @@ import {
 } from '@agentbox/relay';
 
 const SESSION = '5edc0ee0-ce9a-4e30-962d-bc630388d8bc';
+const OTHER_SESSION = '01a09ad5-8f51-7ec0-b8f4-2daa8be67500';
 
 function deps(boxes: TimelineBoxFact[] = []): BackendDeps {
   return {
@@ -290,6 +291,62 @@ describe("a manager's turn, reported by the machine that can read it", () => {
         wsId,
       ),
     ).toMatchObject({ turn: 41, prompt: 'from the transcript' });
+  });
+
+  it("stamps a note from the manager that sent it, and drops another session's turn", async () => {
+    const { sink, rows } = stubSink();
+    // A note's own write IS the mutation, so unlike every other row it fails
+    // when the sink answers nothing.
+    configureTimelineSink({
+      ...sink,
+      record: async (wsId, input) => {
+        rows.push({ wsId, input });
+        return { id: 'ev1', at: new Date().toISOString(), ...input };
+      },
+    });
+    const root = await folder();
+    const d = deps();
+    const workspaces = createWorkspaceBackend(d);
+    const managers = createManagerBackend(d, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      sleep: async () => {},
+    });
+    const detected = await managers.detectManager({
+      agent: 'claude',
+      sessionId: SESSION,
+      cwd: root,
+      host: 'other-pc',
+      projects: [{ path: root }],
+    });
+    if (!detected.ok) throw new Error(detected.error);
+    const id = detected.manager.id;
+
+    // The manager's own `agentbox manager note`, from the machine that reads its
+    // transcript. Without this the note carried the turn from the last
+    // heartbeat, and none at all when that machine's hub was not running.
+    const own = await managers.addManagerNote(
+      id,
+      { text: 'switched to the box branch' },
+      { session: { agent: 'claude', sessionId: SESSION, turn: 9, prompt: 'why the switch' } },
+    );
+    if (!own.ok) throw new Error(own.error);
+    expect(rows.at(-1)?.input).toMatchObject({
+      type: 'manager.note',
+      actor: 'manager',
+      managerId: id,
+      turn: 9,
+      prompt: 'why the switch',
+    });
+
+    // Somebody else's session: the note is still the manager's, the turn is not.
+    const other = await managers.addManagerNote(
+      id,
+      { text: 'noted from elsewhere' },
+      { session: { agent: 'claude', sessionId: OTHER_SESSION, turn: 99 } },
+    );
+    if (!other.ok) throw new Error(other.error);
+    expect(rows.at(-1)?.input).toMatchObject({ actor: 'manager', managerId: id });
+    expect(rows.at(-1)?.input.turn).toBeUndefined();
   });
 });
 

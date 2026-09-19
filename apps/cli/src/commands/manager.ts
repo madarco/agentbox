@@ -183,8 +183,12 @@ export function runsHere(m: Pick<HubApiManager, 'host'>, host: string = hostname
 export function retryOnLocalHub(err: unknown, host: string = hostname()): boolean {
   if (!(err instanceof HubApiError)) return false;
   if (err.code !== 'wrong_host' && err.code !== 'manager_unreachable') return false;
-  const named = (err.details as { host?: unknown } | undefined)?.host;
-  return typeof named === 'string' && named === host;
+  const details = err.details as { host?: unknown; hosts?: unknown } | undefined;
+  // A refusal about a WORKSPACE names every machine that has a checkout of it:
+  // `host` is only the first of them, so a two-PC workspace would otherwise
+  // refuse the retry on whichever PC lost the coin toss.
+  if (Array.isArray(details?.hosts)) return details.hosts.includes(host);
+  return typeof details?.host === 'string' && details.host === host;
 }
 
 /**

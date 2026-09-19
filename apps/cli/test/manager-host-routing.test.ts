@@ -30,6 +30,15 @@ describe('retryOnLocalHub', () => {
     expect(retryOnLocalHub(refusal('wrong_host', { host: 42 }), 'laptop')).toBe(false);
   });
 
+  it('retries a workspace refusal that lists this machine among the hosts', () => {
+    // A workspace mapped from two PCs has no single right `host`, so the
+    // refusal lists them all and each caller looks for its own.
+    const hosts = { host: 'desktop', hosts: ['desktop', 'laptop'] };
+    expect(retryOnLocalHub(refusal('wrong_host', hosts), 'laptop')).toBe(true);
+    expect(retryOnLocalHub(refusal('wrong_host', hosts), 'desktop')).toBe(true);
+    expect(retryOnLocalHub(refusal('wrong_host', hosts), 'tower')).toBe(false);
+  });
+
   it('does not retry a refusal about anything else', () => {
     expect(retryOnLocalHub(refusal('conflict', { host: 'laptop' }), 'laptop')).toBe(false);
     expect(retryOnLocalHub(refusal('not_found', { host: 'laptop' }), 'laptop')).toBe(false);

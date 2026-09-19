@@ -1313,10 +1313,15 @@ export interface ManagerBackend {
     ref: TimelineSessionRef | { managerId: string },
     wsId?: string,
   ): Promise<TimelineStamp | undefined>;
-  /** Record a manager note, stamped with the manager's current turn. */
+  /**
+   * Record a manager note, stamped with the manager's current turn — read from
+   * the transcript here, or asserted by `meta` when the caller is that manager
+   * on the machine that can read it.
+   */
   addManagerNote(
     id: string,
     input: { text: string; kind?: TimelineNoteKind },
+    meta?: TimelineMeta,
   ): Promise<ManagerNoteResult>;
   /** Type a message into the manager's session (resuming a stopped one with it). */
   sendManagerMessage(

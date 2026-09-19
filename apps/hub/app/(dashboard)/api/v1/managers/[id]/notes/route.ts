@@ -4,6 +4,7 @@
 // hub's disk.
 import { backendOrNull } from '../../../lib/backend';
 import { fail, failFromAction, ok } from '../../../lib/envelope';
+import { timelineMeta } from '../../../lib/actor';
 import { parseManagerNote, readJson } from '../../../lib/validate';
 
 export const runtime = 'nodejs';
@@ -20,7 +21,7 @@ export async function POST(
   if (!body.ok) return fail('invalid_request', body.message);
   const parsed = parseManagerNote(body.value);
   if (!parsed.ok) return fail('invalid_request', parsed.message);
-  const res = await backend.addManagerNote(id, parsed.value);
+  const res = await backend.addManagerNote(id, parsed.value, await timelineMeta(req, backend));
   if (!res.ok) return failFromAction(res.error);
   return ok(res.event, 201);
 }

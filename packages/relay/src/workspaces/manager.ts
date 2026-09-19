@@ -451,6 +451,31 @@ export async function removeManagerRecord(wsId: string, id: string): Promise<boo
  */
 export const MANAGER_SEEN_WINDOW_MS = 30 * 60 * 1000;
 
+/** How often the hub that runs a manager reports it to the hub that holds the record. */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * After this long with no heartbeat the report is stale and the record falls
+ * back to its `lastSeenAt` window — three intervals, so one slow round trip (or
+ * a hub restart) does not flip a live manager to `stopped`.
+ */
+export const HEARTBEAT_STALE_MS = 3 * HEARTBEAT_INTERVAL_MS;
+
+/**
+ * The last heartbeat, while it is fresh enough to believe. The only liveness a
+ * hub has for a manager on another machine: nothing here can be probed, since a
+ * pid, a tmux server and a transcript all belong over there.
+ */
+export function freshHeartbeat(
+  rec: ManagerRecord,
+  now: number = Date.now(),
+): ManagerHeartbeat | undefined {
+  if (!rec.reported || !rec.reportedAt) return undefined;
+  const at = Date.parse(rec.reportedAt);
+  if (Number.isNaN(at) || now - at >= HEARTBEAT_STALE_MS) return undefined;
+  return rec.reported;
+}
+
 /** `kill(pid, 0)`: ESRCH = gone; EPERM = alive but not ours to signal. */
 export function isPidAlive(pid: number): boolean {
   try {
@@ -511,6 +536,10 @@ export async function managerStatus(
     return 'running';
   }
   const now = (probe.now ?? Date.now)();
+  // Not this machine's process: the hub that runs it reports what it sees, and a
+  // fresh report beats guessing from when the record was last touched.
+  const beat = freshHeartbeat(rec, now);
+  if (beat) return beat.status;
   const seen = Date.parse(rec.lastSeenAt);
   return !Number.isNaN(seen) && now - seen < MANAGER_SEEN_WINDOW_MS ? 'running' : 'stopped';
 }

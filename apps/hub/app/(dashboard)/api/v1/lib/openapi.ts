@@ -970,7 +970,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Workspaces'],
           summary: 'List registered workspaces',
           description:
-            'A workspace is a folder on the hub host grouping one or more projects; it owns a task list and its manager sessions. One is created automatically when a manager session is detected in a folder no workspace contains. Empty on a hosted hub, which holds no host folders.',
+            'A workspace groups one or more projects — repos, identified by their origin URL — and owns a task list and its manager sessions. It is machine-independent: `hosts` maps each machine that has a checkout to its folder there, and `root` is this hub\u2019s own, absent on a hub that has none (a control box). One is created automatically when a manager session is detected in a folder no workspace contains.',
           responses: {
             '200': {
               description: 'Workspaces',
@@ -1037,7 +1037,7 @@ export function buildOpenApi(): Record<string, unknown> {
                         'Refresh this workspace (what `agentbox workspace rescan` sends) instead of matching by folder or repo.',
                     },
                   },
-                  required: ['host', 'root', 'projects'],
+                  required: ['host', 'root'],
                 },
               },
             },
@@ -1693,7 +1693,7 @@ export function buildOpenApi(): Record<string, unknown> {
                       type: 'string',
                       pattern: '^agentbox-manager-[0-9a-f]{16}$',
                       description:
-                        "The AgentBox manager tmux session that pane belongs to. When it exists on the hub's machine and started in `cwd`, the manager is recorded as `hub`-run from it (a session from before managers were detected is adopted). A session hosted by Claude's background daemon never sends it: the daemon drops TMUX.",
+                        "The AgentBox manager tmux session that pane belongs to. When it exists on the hub's machine and started in `cwd`, the manager is recorded with `kind: tmux` from it (a session from before managers were detected is adopted). A session hosted by Claude's background daemon never sends it: the daemon drops TMUX.",
                     },
                     boxId: { type: 'string' },
                     boxJobId: { type: 'string' },
@@ -2286,6 +2286,9 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '401': errorResponse,
             '404': errorResponse,
+            // The sessions are files in the folder's own store: a workspace with
+            // no checkout here is `wrong_host`, naming the machines that have one.
+            '409': errorResponse,
           },
         },
       },
@@ -3665,7 +3668,31 @@ export function buildOpenApi(): Record<string, unknown> {
           properties: {
             error: {
               type: 'object',
-              properties: { code: { type: 'string' }, message: { type: 'string' }, details: {} },
+              properties: {
+                code: {
+                  type: 'string',
+                  enum: [
+                    'invalid_request',
+                    'unauthorized',
+                    'not_found',
+                    'conflict',
+                    'manager_unreachable',
+                    'wrong_host',
+                    'backend_unavailable',
+                    'internal',
+                  ],
+                },
+                message: { type: 'string' },
+                details: {
+                  type: 'object',
+                  description:
+                    'Machine-readable context for the codes that carry it. `wrong_host` and `manager_unreachable` carry `host`: the machine the op has to run on. A refusal about a WORKSPACE (start, sessions) also carries `hosts` — every machine with a checkout of it — because a workspace mapped from several machines has no single right answer, and `host` is only the first of them. Retry against the hub on your own machine when it is `host` or is in `hosts`.',
+                  properties: {
+                    host: { type: 'string' },
+                    hosts: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              },
               required: ['code', 'message'],
             },
           },
@@ -3893,7 +3920,18 @@ export function buildOpenApi(): Record<string, unknown> {
             createdAt: { type: 'string' },
             updatedAt: { type: 'string' },
           },
-          required: ['id', 'name', 'projects', 'hosts', 'projectIds', 'createdAt', 'updatedAt'],
+          // Every route that serves a workspace serves the derived counts with it.
+          required: [
+            'id',
+            'name',
+            'projects',
+            'hosts',
+            'projectIds',
+            'taskCounts',
+            'managers',
+            'createdAt',
+            'updatedAt',
+          ],
         },
         WorkTaskExternalRef: {
           type: 'object',
