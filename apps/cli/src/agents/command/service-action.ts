@@ -58,7 +58,17 @@ import {
   type RestoreRequest,
 } from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
+import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
+import {
+  createCloudBoxViaHubAndAdopt,
+  withHubJobLine,
+} from '../../commands/_cloud-agent-via-hub.js';
+import { resolveCreateRouting } from '../../control-plane/route-create.js';
+import {
+  dockerProviderRefusal,
+  localDockerUnsupportedWarning,
+} from '../../control-plane/remote-hub.js';
 import { withOwningHub } from '../../control-plane/with-hub.js';
 import type { HubApiServiceView } from '../../control-plane/hub-api-client.js';
 
@@ -393,6 +403,19 @@ export async function runServiceAgent(
       if (boxRef !== undefined) {
         throw new Error(`no box matched "${boxRef}" — omit the ref to create one`);
       }
+      // Resolved once, up front: the docker gate, the persistent refusal and the
+      // hub routing below all key on the provider NAME, before any provider
+      // module is loaded.
+      const { providerName, remoteHost } = resolveProviderChoice(cfg, { provider: opts.provider });
+      // Docker off under a control box — a box built here dies with the laptop,
+      // which for a DAEMON is the whole point of having one. This path used to
+      // skip the gate entirely, so `agentbox openclaw` built a local docker box
+      // while `agentbox claude` refused on the same machine.
+      const dockerRefusal = await dockerProviderRefusal(cfg, providerName, remoteHost, 'create');
+      if (dockerRefusal) throw new Error(dockerRefusal);
+      const localDockerWarning = await localDockerUnsupportedWarning(cfg, providerName);
+      if (localDockerWarning) log.warn(localDockerWarning);
+
       // The carry gate is the supported way a real secret reaches the box: a
       // `carry:` entry lands it 0600 and the agent's config overlay references
       // it by name, so nothing secret is ever written into agentbox.yaml.
@@ -429,48 +452,115 @@ export async function runServiceAgent(
 
       const persistent = resolveCreatePersistent({ spec, flag: opts.persistent });
       if (persistent ?? cfg.box.persistent) {
-        // Refused off the provider NAME, before the provider module is loaded —
-        // the same order `create` uses. A capped provider must say no, not fail
-        // later or hand back the expendable box the user did not ask for.
-        const { providerName } = resolveProviderChoice(cfg, { provider: opts.provider });
+        // Refused off the provider NAME, before the provider module is loaded and
+        // before routing — the same order `create` uses. A capped provider (e2b,
+        // vercel: a platform session cap the host can only extend) must say no
+        // HERE, in one line, rather than as a hub job that fails after
+        // provisioning.
         const refusal = persistentRefusal(providerName);
         if (refusal) throw new Error(refusal);
       }
 
-      const provider = await providerForCreate({ flag: opts.provider, config: cfg });
-      const s = makeProgressReporter(opts.verbose === true);
-      s.start('creating box');
-      try {
-        const created = await provider.create({
-          workspacePath: opts.workspace,
-          name: opts.name,
+      // Route the create to the control box when one is configured, exactly as
+      // the TUI path does. A service agent has no session and no prompt, so the
+      // shape is the COLD create-then-adopt one (`startAgent: false`): the worker
+      // builds the box and registers the agent, and the daemon is ctl's job from
+      // the box's own `agents.list` — this command only waits for it below.
+      //
+      // Not for `--restore`: its workspace is a staged bundle on THIS machine,
+      // and a hub create seeds the box from a clone of `origin`.
+      let adopted: BoxRecord | null = null;
+      if (!restored) {
+        const route = await resolveCreateRouting({
+          providerName,
+          ...(remoteHost ? { remoteHost } : {}),
+          effective: cfg,
           projectRoot: project.root,
-          agent: spec.id,
-          // This box is FOR this agent: only its credentials and config are
-          // wired in.
-          agents: [spec.id],
-          ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
-          image: resolveBoxImage(cfg, provider.name),
-          checkpointRef: opts.snapshot,
-          withPlaywright: cfg.box.withPlaywright,
-          withEnv: cfg.box.withEnv,
-          carry,
-          vnc: { enabled: cfg.box.vnc },
-          ...(persistent !== undefined ? { persistent } : {}),
-          limits: resolveLimits(cfg.box, {}),
-          // No `agentConfig` isolate here: `create` derives it from
-          // `caps.surface` (a service agent's config volume is always per-box),
-          // so every caller gets it — this one, the hub's queue worker, the tray.
-          onLog: (line) => {
-            s.message(line);
-            cmdLog.write(line);
-          },
         });
-        box = created.record;
-        s.stop(`box ready: ${box.name}`);
-      } catch (err) {
-        s.stop('create failed');
-        throw err;
+        if (route.where === 'hub') {
+          adopted = await withHubJobLine(
+            (onStatus) =>
+              createCloudBoxViaHubAndAdopt({
+                providerName,
+                ...(remoteHost ? { remoteHost } : {}),
+                projectRoot: project.root,
+                agent: spec.id,
+                carry,
+                name: opts.name,
+                ...(persistent !== undefined ? { persistent } : {}),
+                ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+                onStatus,
+                onLog: (line) => cmdLog.write(line),
+              }),
+            (r) => (r ? 'box ready on the control box' : 'control box unavailable'),
+            { verbose: opts.verbose === true },
+          );
+        } else if (route.fellBackReason) {
+          log.warn(
+            `control box configured but ${route.fellBackReason}; building ${providerName} box locally.`,
+          );
+        }
+      }
+
+      if (adopted) {
+        box = adopted;
+      } else {
+        const provider = await providerForCreate({ flag: opts.provider, config: cfg });
+        // VM sizing AND the per-provider session lifetime — for a daemon the
+        // latter is the difference between a bot and an outage. Docker has
+        // neither, and its `providerOptions` is a different bag entirely
+        // (`DockerCreateOptions`), so it is left alone.
+        const sizing =
+          provider.name === 'docker'
+            ? {}
+            : cloudSizingProviderOptions(provider.name, cfg, {
+                ...(remoteHost ? { remoteHost } : {}),
+              });
+        const s = makeProgressReporter(opts.verbose === true);
+        s.start('creating box');
+        try {
+          const created = await provider.create({
+            workspacePath: opts.workspace,
+            name: opts.name,
+            projectRoot: project.root,
+            agent: spec.id,
+            // This box is FOR this agent: only its credentials and config are
+            // wired in.
+            agents: [spec.id],
+            ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+            image: resolveBoxImage(cfg, provider.name),
+            checkpointRef: opts.snapshot,
+            // `browser.default` of 'playwright'/'both' implies installing it even
+            // when `box.withPlaywright` was never set — the same derivation the
+            // TUI create path uses. Reading the bare key made the two commands
+            // disagree about what the same config asked for.
+            withPlaywright: cfg.box.withPlaywright || cfg.browser.default !== 'agent-browser',
+            withEnv: cfg.box.withEnv,
+            carry,
+            vnc: { enabled: cfg.box.vnc },
+            ...(persistent !== undefined ? { persistent } : {}),
+            limits: resolveLimits(cfg.box, {}),
+            // Control-plane topology + git push routing. Without these a cloud
+            // bot never registers on the plane: no approvals, no `/rpc`
+            // forwarding, no relay/lease git push, no `ctl open` mirroring.
+            controlPlaneUrl: cfg.relay.controlPlaneUrl,
+            gitPushMode: cfg.git.pushMode,
+            hubGitAuth: cfg.hub.gitAuth,
+            ...(Object.keys(sizing).length > 0 ? { providerOptions: sizing } : {}),
+            // No `agentConfig` isolate here: `create` derives it from
+            // `caps.surface` (a service agent's config volume is always per-box),
+            // so every caller gets it — this one, the hub's queue worker, the tray.
+            onLog: (line) => {
+              s.message(line);
+              cmdLog.write(line);
+            },
+          });
+          box = created.record;
+          s.stop(`box ready: ${box.name}`);
+        } catch (err) {
+          s.stop('create failed');
+          throw err;
+        }
       }
       await recordLastAgent(box.id, spec.id).catch(() => {});
     }

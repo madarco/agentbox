@@ -63,6 +63,16 @@ inside the box (in there the gateway is `http://localhost:18789`). Re-read it wi
 
 The create form takes the box flags you already know — `-w`, `-n`, `-p/--provider`, `--image`, `--snapshot`, `-y`, `--carry-yes`, `--verbose` — plus `--timeout <seconds>` for how long to wait for the gateway to report ready (default 180), and `--model-auth <source...>` to seed model-provider logins (see [Model provider](#model-provider)).
 
+With a [control box](/docs/deployed-hub) configured, a cloud `agentbox openclaw` is built **there** by default, like every other cloud create: the control box provisions the box and registers the agent, the box's own supervisor starts the gateway, and this command waits for it and prints the URL. That is what makes a bot laptop-independent — it registers on the control plane, so approvals, `/rpc` forwarding and relay git push all work with your machine off. Local docker is refused there, for the same reason it is on every other create.
+
+<Callout type="warn" title="Channel tokens do not travel to a control box yet">
+  `~/.agentbox/openclaw/<box>.env` is resolved on the machine that builds the box, and the file is
+  keyed by the box NAME — which the control box mints during the create. A bot built on a control box
+  therefore comes up **without its channel tokens**: it starts, the gateway answers, and it is mute on
+  Telegram or Discord. Until that is fixed, put the tokens in with `agentbox cp` (or the overlay) after
+  the box is up, or build that bot locally with `--local`.
+</Callout>
+
 <Callout title="ALWAYS-ON BY DEFAULT">
   OpenClaw's box is a [persistent box](/docs/checkpoints-and-pausing#persistent-boxes): never
   auto-paused, never idle-lapsed, skipped by `agentbox prune`, and started again after a host
