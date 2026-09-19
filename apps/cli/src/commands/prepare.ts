@@ -49,6 +49,11 @@ import {
 } from '../control-plane/remote-hub.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import {
+  buildControlBoxInventory,
+  renderControlBoxInventory,
+  type ControlBoxInventory,
+} from '../control-plane/control-box-inventory.js';
+import {
   localExposedLoopbackUrl,
   resolveCustodyTarget,
   resolveHubApiClient,
@@ -468,41 +473,41 @@ function renderDaytona(status: DaytonaStatusResult, pinnedImage?: string): strin
 const CONTROL_BOX_STATUS_MS = 5000;
 
 /**
- * The control box's own provider inventory, or nothing when none is configured
- * (or it can't be reached — a status command must never hang or fail on it).
+ * The control box's own provider inventory, or nothing when none is configured.
  *
- * Only shown for a GENUINELY remote control box: a co-located hub (a local hub,
+ * Only reported for a GENUINELY remote control box: a co-located hub (a local hub,
  * or `hub expose` on this machine) bakes on this same machine, so the local
- * provider rows already describe it and a second "control box" section would just
- * mislabel it. Exported so `agentbox doctor` shows the same section.
+ * provider rows already describe it and a second "control box" block would just
+ * mislabel it. The one read both the text reports and `doctor --json` consume —
+ * `buildControlBoxInventory` holds the decision, this supplies its IO.
  */
-export async function renderControlBoxProviders(): Promise<string[]> {
-  if (await hubIsCoLocated().catch(() => true)) return [];
-  const target = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
-  if (!target) return [];
-  // Probe with a socket we own before spending the budget: a fetch to an
-  // unreachable host can't be cancelled, and this is a status command.
-  if (!(await hostReachable(target.url, CONTROL_BOX_STATUS_MS))) {
-    return ['', 'control box: unreachable — could not read its baked providers'];
-  }
-  const client = new HubApiClient({
-    ...target,
-    fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+export async function fetchControlBoxInventory(): Promise<ControlBoxInventory | null> {
+  // The resolved target is reused by `listProviders` (it carries the API key the
+  // url alone does not), so it is captured here rather than resolved twice.
+  let resolved: Awaited<ReturnType<typeof resolveHubApiTarget>> | null = null;
+  return buildControlBoxInventory({
+    coLocated: () => hubIsCoLocated().catch(() => true),
+    target: async () => {
+      resolved = await resolveHubApiTarget(undefined, { quiet: true }).catch(() => null);
+      return resolved ? { url: resolved.url } : null;
+    },
+    // Probe with a socket we own before spending the budget: a fetch to an
+    // unreachable host can't be cancelled, and this is a status command.
+    reachable: (url) => hostReachable(url, CONTROL_BOX_STATUS_MS),
+    listProviders: async () => {
+      if (!resolved) return null;
+      const client = new HubApiClient({
+        ...resolved,
+        fetchImpl: deadlineFetch(AbortSignal.timeout(CONTROL_BOX_STATUS_MS)),
+      });
+      return client.listProviders({ freshness: true }).catch(() => null);
+    },
   });
-  const providers = await client.listProviders({ freshness: true }).catch(() => null);
-  if (!providers) return ['', 'control box: unreachable — could not read its baked providers'];
-  const cloud = providers.filter((p) => p.id !== 'docker' && p.id !== 'remote-docker');
-  if (cloud.length === 0) return [];
-  const out = ['', 'control box (where cloud boxes are built):'];
-  for (const p of cloud) {
-    const state = !p.hasCredentials
-      ? 'no credentials'
-      : !p.configured
-        ? 'not baked'
-        : (p.baseStatus ?? 'baked');
-    out.push(`  ${pad(p.id, 16)} ${state}`);
-  }
-  return out;
+}
+
+/** The text block `prepare --status` and `doctor` append. Exported for doctor. */
+export async function renderControlBoxProviders(): Promise<string[]> {
+  return renderControlBoxInventory(await fetchControlBoxInventory());
 }
 
 async function showStatus(opts: { onlyProvider?: string }): Promise<void> {

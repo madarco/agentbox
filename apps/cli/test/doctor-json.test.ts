@@ -1,11 +1,14 @@
 /**
  * `agentbox doctor --json` envelope — the menu-bar app's setup wizard reads it,
  * so the shape is a contract: groups verbatim, status rolled up, and the
- * portless facts as a top-level block that does not depend on the docker group.
+ * portless facts as a top-level block that does not depend on the docker group,
+ * plus the control box's own inventory as a second top-level block so a consumer
+ * can tell the two machines apart.
  */
 
 import { describe, expect, it } from 'vitest';
 import { buildDoctorReport, type CheckGroup } from '../src/lib/doctor-checks.js';
+import type { ControlBoxInventory } from '../src/control-plane/control-box-inventory.js';
 
 const groups: CheckGroup[] = [
   {
@@ -108,5 +111,62 @@ describe('buildDoctorReport', () => {
       serviceInstalled: false,
       serviceFailing: false,
     });
+  });
+});
+
+describe('buildDoctorReport — the control box block', () => {
+  const inventory: ControlBoxInventory = {
+    url: 'https://cp.example',
+    reachable: true,
+    providers: [{ id: 'e2b', hasCredentials: true, configured: true, state: 'fresh' }],
+  };
+
+  it('is absent when no control box is configured', async () => {
+    const report = await buildDoctorReport(groups, probes({}));
+    expect('controlBox' in report).toBe(false);
+  });
+
+  it('is absent when the control box IS this machine (hub expose / a local hub)', async () => {
+    // Co-located is the probe's own `null`: the local provider groups already
+    // describe that machine, so a second block would only mislabel it.
+    const report = await buildDoctorReport(groups, {
+      ...probes({}),
+      controlBox: () => Promise.resolve(null),
+    });
+    expect('controlBox' in report).toBe(false);
+  });
+
+  it('carries the control box providers when one is configured', async () => {
+    const report = await buildDoctorReport(groups, {
+      ...probes({}),
+      controlBox: () => Promise.resolve(inventory),
+    });
+    expect(report.controlBox).toEqual(inventory);
+    // The laptop's own rows are untouched — that is the point of a second block.
+    expect(report.groups).toEqual(groups);
+  });
+
+  it('keeps an unreachable control box out of the status and the exit code', async () => {
+    const unreachable: ControlBoxInventory = {
+      url: 'https://cp.example',
+      reachable: false,
+      error: 'could not read its baked providers',
+      providers: [],
+    };
+    const report = await buildDoctorReport(groups, {
+      ...probes({}),
+      controlBox: () => Promise.resolve(unreachable),
+    });
+    expect(report.controlBox?.reachable).toBe(false);
+    expect(report.status).toBe('warn'); // the groups' own worst row, not 'fail'
+  });
+
+  it('degrades a THROWING control-box probe to an absent block, never a failure', async () => {
+    const report = await buildDoctorReport(groups, {
+      ...probes({}),
+      controlBox: () => Promise.reject(new Error('network down')),
+    });
+    expect('controlBox' in report).toBe(false);
+    expect(report.status).toBe('warn');
   });
 });

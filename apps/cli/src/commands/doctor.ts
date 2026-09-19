@@ -21,7 +21,7 @@ import {
   type ProviderName,
 } from '../lib/doctor-checks.js';
 import { isKnownProvider } from '../provider/registry.js';
-import { renderControlBoxProviders } from './prepare.js';
+import { fetchControlBoxInventory, renderControlBoxProviders } from './prepare.js';
 
 interface DoctorOptions {
   provider?: string;
@@ -38,7 +38,7 @@ export const doctorCommand = new Command('doctor')
   )
   .option(
     '--json',
-    'print the report as JSON ({ version, platform, status, groups, portless }) — what the menu-bar app reads',
+    "print the report as JSON ({ version, platform, status, groups, portless, controlBox }) — what the menu-bar app reads; `controlBox` carries the control box's own providers + bakes, and is absent when none is configured (or it is this machine)",
   )
   .action(async (opts: DoctorOptions) => {
     let groups: CheckGroup[];
@@ -65,9 +65,14 @@ export const doctorCommand = new Command('doctor')
     }
 
     if (opts.json === true) {
-      // JSON only on stdout: no control-box inventory (a network call) and no
-      // trailing prose. The exit code keeps the fail rule below.
-      const report = await buildDoctorReport(groups);
+      // JSON only on stdout: no trailing prose. The control-box inventory IS
+      // included (it is the only thing saying which machine builds cloud boxes,
+      // and the tray reads this report) but can never fail the command — an
+      // unreachable box lands as `controlBox.reachable: false`. The exit code
+      // keeps the fail rule below, which reads `groups` only.
+      const report = await buildDoctorReport(groups, {
+        controlBox: () => fetchControlBoxInventory(),
+      });
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
       if (report.status === 'fail') process.exit(1);
       return;

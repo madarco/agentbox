@@ -25,6 +25,7 @@ import {
   type CheckStatus,
 } from '@agentbox/sandbox-core';
 import { detectEngine, detectPortless, portlessServiceStatus } from '@agentbox/sandbox-docker';
+import type { ControlBoxInventory } from '../control-plane/control-box-inventory.js';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { dockerProvidersHidden, isDockerProvider } from '../control-plane/remote-hub.js';
@@ -502,6 +503,23 @@ export interface DoctorReport {
   status: CheckStatus;
   groups: CheckGroup[];
   portless: PortlessReport;
+  /**
+   * The CONTROL BOX's providers + bakes, when one is configured and is not this
+   * machine — the groups above only ever describe this machine, and with a control
+   * box it is the control box's bakes a cloud create boots from. Absent means "no
+   * control box"; a configured one that cannot be reached is present with
+   * `reachable: false` and never changes `status` (a status command stays scriptable).
+   */
+  controlBox?: ControlBoxInventory;
+}
+
+/** Injectable IO behind {@link buildDoctorReport}; every probe has a default. */
+export interface DoctorProbes {
+  engine: () => Promise<string>;
+  portless: () => Promise<{ installed: boolean; version?: string; proxyRunning: boolean }>;
+  service: () => Promise<{ installed: boolean; failing?: boolean }>;
+  /** The control box's inventory. Defaults to null — only `--json` reads it. */
+  controlBox: () => Promise<ControlBoxInventory | null>;
 }
 
 /**
@@ -512,21 +530,20 @@ export interface DoctorReport {
  */
 export async function buildDoctorReport(
   groups: CheckGroup[],
-  probes: {
-    engine: () => Promise<string>;
-    portless: () => Promise<{ installed: boolean; version?: string; proxyRunning: boolean }>;
-    service: () => Promise<{ installed: boolean; failing?: boolean }>;
-  } = {
-    engine: () => detectEngine(),
-    portless: () => detectPortless(),
-    service: () => portlessServiceStatus(),
-  },
+  probes: Partial<DoctorProbes> = {},
 ): Promise<DoctorReport> {
   const noPortless = { installed: false, proxyRunning: false, version: undefined };
-  const [engine, state, service] = await Promise.all([
-    probes.engine().catch(() => 'other'),
-    probes.portless().catch(() => noPortless),
-    probes.service().catch(() => ({ installed: false, failing: false })),
+  const [engine, state, service, controlBox] = await Promise.all([
+    (probes.engine ?? (() => detectEngine()))().catch(() => 'other'),
+    (probes.portless ?? (() => detectPortless()))().catch(() => noPortless),
+    (probes.service ?? (() => portlessServiceStatus()))().catch(() => ({
+      installed: false,
+      failing: false,
+    })),
+    // A network read of ANOTHER machine: it may not fail the report, so a throw
+    // degrades to "no control box block" and the default probe reads nothing at
+    // all — only `doctor --json` asks for it.
+    (probes.controlBox ?? (async () => null))().catch(() => null),
   ]);
   return {
     version: AGENTBOX_VERSION,
@@ -541,6 +558,7 @@ export async function buildDoctorReport(
       serviceInstalled: service.installed,
       serviceFailing: service.installed && service.failing === true,
     },
+    ...(controlBox ? { controlBox } : {}),
   };
 }
 
