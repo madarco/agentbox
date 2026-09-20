@@ -95,3 +95,25 @@ describe('resolveHubDeploySource', () => {
     );
   });
 });
+
+describe('--package takes the spec, not the whole name', () => {
+  it('accepts the full package@spec spelling the flag wording invites', () => {
+    // `@madarco/agentbox@@madarco/agentbox@nightly` installed something that was
+    // not the CLI, and the deploy failed minutes later on a MODULE_NOT_FOUND
+    // that named nothing about the cause.
+    expect(resolveHubDeploySource('0.32.1', { packageSpec: '@madarco/agentbox@nightly' })).toEqual({
+      kind: 'package',
+      spec: 'nightly',
+    });
+    expect(
+      resolveHubDeploySource('0.32.1', { packageSpec: '@madarco/agentbox@0.33.0-nightly.1' }),
+    ).toEqual({ kind: 'package', spec: '0.33.0-nightly.1' });
+  });
+
+  it('leaves a plain spec alone', () => {
+    expect(resolveHubDeploySource('0.32.1', { packageSpec: ' nightly ' })).toEqual({
+      kind: 'package',
+      spec: 'nightly',
+    });
+  });
+});

@@ -63,7 +63,7 @@ export function resolveHubDeploySource(
   opts: HubDeploySourceOptions = {},
 ): HubDeploySource {
   const repoUrl = opts.repoUrl ?? DEFAULT_DEPLOY_REPO_URL;
-  if (opts.packageSpec) return { kind: 'package', spec: opts.packageSpec };
+  if (opts.packageSpec) return { kind: 'package', spec: normalizePackageSpec(opts.packageSpec) };
   if (opts.ref !== undefined || opts.repoUrl !== undefined) {
     return { kind: 'source', repoUrl, repoRef: opts.ref ?? deployRefForVersion(version) };
   }
@@ -73,6 +73,21 @@ export function resolveHubDeploySource(
     return { kind: 'source', repoUrl, repoRef: deployRefForVersion(version) };
   }
   return { kind: 'package', spec: version };
+}
+
+/**
+ * `--package` is the spec AFTER the package name — the VPS installs
+ * `@madarco/agentbox@<spec>`. Writing the whole thing (`--package
+ * @madarco/agentbox@nightly`, which the flag's own wording invites) produced
+ * `@madarco/agentbox@@madarco/agentbox@nightly`: npm installed something that
+ * was not the CLI, and the deploy died several minutes later on a
+ * `Cannot find module /opt/agentbox-cli/dist/index.js` that named nothing about
+ * the real cause. Take either spelling.
+ */
+export function normalizePackageSpec(spec: string): string {
+  const trimmed = spec.trim();
+  const prefix = '@madarco/agentbox@';
+  return trimmed.startsWith(prefix) ? trimmed.slice(prefix.length) : trimmed;
 }
 
 /** One line naming what a deploy is about to install, for the progress log. */

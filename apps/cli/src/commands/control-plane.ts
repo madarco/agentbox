@@ -386,7 +386,7 @@ const setupSub = new Command('setup')
   )
   .option(
     '--package <spec>',
-    `npm spec of @madarco/agentbox to install on the control box (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+    `version or dist-tag of @madarco/agentbox to install on the control box, e.g. ${AGENTBOX_VERSION} (the default, this CLI's own version) or nightly`,
   )
   .option(
     '--bind <addr>',
@@ -1888,7 +1888,7 @@ const deployHetznerSub = new Command('hetzner')
   )
   .option(
     '--package <spec>',
-    `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+    `version or dist-tag of @madarco/agentbox to install, e.g. ${AGENTBOX_VERSION} (the default, this CLI's own version) or nightly`,
   )
   .option(
     '--domain <host>',
@@ -1995,7 +1995,7 @@ const deployDigitalOceanSub = new Command('digitalocean')
   )
   .option(
     '--package <spec>',
-    `npm spec of @madarco/agentbox to install (default ${AGENTBOX_VERSION}, this CLI's own version)`,
+    `version or dist-tag of @madarco/agentbox to install, e.g. ${AGENTBOX_VERSION} (the default, this CLI's own version) or nightly`,
   )
   .option(
     '--domain <host>',
