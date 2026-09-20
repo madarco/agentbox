@@ -9,6 +9,67 @@ Entries are generated from the commit history with `/release-notes` and then
 hand-reviewed — they describe what changed for someone using the `agentbox`
 CLI, not the raw commits.
 
+## [Unreleased]
+
+### Added
+
+- **A hub-run manager runs on an AgentBox pty host, not in tmux.** One process
+  per session holds the agent's terminal and hands its bytes to whatever
+  attaches, with no multiplexer in between — so scrollback, mouse, selection and
+  copy/paste belong to your own terminal, and a modified Enter (Shift+Enter for a
+  newline in Claude Code) reaches the agent as typed. `agentbox manager attach`
+  forwards every byte except `Ctrl-] d`, which detaches without stopping the
+  session; `--raw` turns even that off for a terminal that embeds the session.
+  Several clients can attach at once, and the session takes the size of whichever
+  attached or resized last. The host outlives the hub, so restarting or updating
+  the hub never ends a session. Where the optional terminal prebuild is missing,
+  a start falls back to a tmux session (`manager.carrier` chooses deliberately).
+- **A client can own the session it opened.** `manager attach --lease-id <id>`
+  leases a session: it is stopped once that client stays away past
+  `manager.leaseGraceSeconds` (60s), so quitting the app that opened it closes
+  its terminals while a relaunch inside the window takes them back. A session
+  nothing leased is never reaped. `agentbox manager pin <id>` exempts one,
+  `manager.lifetime: persistent` exempts all. New config: `manager.carrier`,
+  `manager.lifetime`, `manager.leaseGraceSeconds`, `manager.scrollbackBytes`,
+  `manager.windowSize`, `manager.submitDelayMs`, `manager.detachKey`.
+- **Workspaces work with a control box.** A workspace is now repo-based with
+  per-host folder mappings, so the same workspace is one record across machines;
+  its records, tasks and timeline live on the hub that owns the boxes while the
+  manager keeps running on your own machine. `workspace`, `tasks` and `manager`
+  route to the configured hub, and a manager op meant for another machine answers
+  `wrong_host` so the client retries where the session actually is.
+- **Push and PR facts without a checkout.** A push's `+/-` line counts are
+  measured inside the box when the host has no repo, a push the box made with its
+  own credentials is recorded, and pull requests sync by repo rather than by
+  folder.
+- **`--model-auth` survives a hub-routed create**, and an openclaw (service
+  agent) create takes the same route every other create does.
+
+### Changed
+
+- **`git push` approval is decided by what the push does, not which branch it
+  names.** A push that only fast-forwards its own box branch still goes through;
+  anything else raises the prompt, including a tail of arguments that used to
+  slip past it.
+- **A local docker box alongside a control box is refused** rather than quietly
+  building somewhere the control box cannot see. `agentbox doctor --json` now
+  carries the control box's provider inventory.
+
+### Fixed
+
+- **A control box refused every manager start** with `agent must be one of` and
+  an empty list: it asked whether the agent was installed on itself, rather than
+  on the machine that would run the session.
+- **A manager's record and its process stopped disagreeing.** A hub no longer
+  reports managers it does not run, a message retried against the local hub
+  actually runs there, a manager keeps its box list when the record lives
+  elsewhere, and a create no longer fails when the record store's hub is
+  unreachable.
+- **Timeline rows keep their order** when two land in the same millisecond, a
+  stale local workspace no longer shadows the control box's, a local hub no
+  longer inherits the control box's identity, and a destroyed box keeps its
+  history in its own session's timeline.
+
 ## [0.32.1] - 2026-09-17
 
 ### Fixed
