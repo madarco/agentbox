@@ -58,8 +58,15 @@ CLI, not the raw commits.
 ### Fixed
 
 - **A control box refused every manager start** with `agent must be one of` and
-  an empty list: it asked whether the agent was installed on itself, rather than
-  on the machine that would run the session.
+  an empty list, and then **dropped the way into the session it did record**: it
+  asked whether the agent was installed on itself rather than on the machine
+  that would run the session, and it threw away the attach the running machine
+  reported. Both left the menu-bar app with a manager it could neither start nor
+  open.
+- **`hub deploy --package` takes the spec, not the whole name.** Passing
+  `@madarco/agentbox@nightly` (which the flag's own wording invited) installed
+  something that was not the CLI and failed the deploy minutes later; both
+  spellings work now.
 - **A manager's record and its process stopped disagreeing.** A hub no longer
   reports managers it does not run, a message retried against the local hub
   actually runs there, a manager keeps its box list when the record lives
