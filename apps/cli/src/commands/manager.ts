@@ -233,6 +233,9 @@ export async function sendManagerMessage(
   if (retried === 'sent') process.exitCode = exitBefore;
 }
 
+/** Refreshed at a third of this, so one missed refresh is not a lost lease. */
+const LEASE_TTL_MS = 30_000;
+
 /**
  * The pty carrier's attach: a raw proxy, so the modified Enter, the wheel and
  * the selection are this terminal's own rather than a multiplexer's.
@@ -240,7 +243,7 @@ export async function sendManagerMessage(
 async function attachToPtySession(
   m: HubApiManager,
   openIn: AttachOpenIn | undefined,
-  opts: { raw?: boolean; detachKey?: string },
+  opts: { raw?: boolean; detachKey?: string; leaseId?: string },
 ): Promise<boolean> {
   if (openIn && openIn !== 'same') {
     const host = detectHostTerminal();
@@ -270,8 +273,12 @@ async function attachToPtySession(
     opts.detachKey ?? (await loadEffectiveConfig(m.cwd)).effective.manager.detachKey;
   const result = await attachPtySession({
     managerId: m.id,
-    clientId: `cli:${String(process.pid)}`,
-    kind: 'cli',
+    // A lease makes the session THIS client's: it is reaped once the client
+    // stays away past the grace window. An ordinary CLI attach holds none —
+    // closing a terminal you opened by hand must not end the agent's work.
+    clientId: opts.leaseId ?? `cli:${String(process.pid)}`,
+    kind: opts.leaseId ? 'tray' : 'cli',
+    ...(opts.leaseId ? { lease: { ttlMs: LEASE_TTL_MS } } : {}),
     ...(opts.raw ? { raw: true } : {}),
     ...(configured ? { detachKey: configured } : {}),
   });
@@ -287,7 +294,7 @@ async function attachToPtySession(
 async function attachToSession(
   m: HubApiManager,
   openIn?: AttachOpenIn,
-  opts: { raw?: boolean; detachKey?: string } = {},
+  opts: { raw?: boolean; detachKey?: string; leaseId?: string } = {},
 ): Promise<boolean> {
   // A pty-hosted manager first: its socket and token are readable only here, on
   // the machine that runs it, which is also the only machine that could attach.
@@ -501,10 +508,19 @@ const attachCommand = new Command('attach')
   .option('--attach-in <mode>', 'open in a new split | window | tab instead of this terminal')
   .option('--raw', 'no lead-in line and no detach chord (for an embedding terminal)')
   .option('--detach-key <key>', 'detach chord leader, e.g. C-] (default), or none')
+  .option(
+    '--lease-id <id>',
+    'hold the session for this client: it is reaped once this client stays away past the grace window',
+  )
   .action(
     async (
       id: string | undefined,
-      opts: WorkspaceOpt & { attachIn?: string; raw?: boolean; detachKey?: string },
+      opts: WorkspaceOpt & {
+        attachIn?: string;
+        raw?: boolean;
+        detachKey?: string;
+        leaseId?: string;
+      },
     ) => {
       const mode = mustAttachIn(opts.attachIn);
       await withHubClient({ preferLocal: true }, async (client) => {

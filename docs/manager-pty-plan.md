@@ -124,7 +124,7 @@ never reaped — exactly today's behavior. `pinned` overrides in both directions
 | 2 | CLI attach client (`agentbox manager attach`, `--raw`, detach chord) | done |
 | 3 | Hub/relay integration (`kind: 'pty'`, start/stop/resume/message, status) | done |
 | 4 | Lease/grace wiring, `pinned`, config keys, hub janitor, tmux fallback | done |
-| 5 | Tray (`ptyAttach` argv, delete the Ctrl+J rewrite, `isAttachable`) | todo |
+| 5 | Tray (`ptyAttach` argv, delete the Ctrl+J rewrite, `isAttachable`) | done |
 | 6 | Cleanup, docs, groundwork for a web terminal | todo |
 
 ### Phase 1 (done)
@@ -235,3 +235,21 @@ unpinning reaped it within one reaper tick, which is the live `configure` push w
 One bug: the pin route answered `{manager: …}` where every other manager route answers the manager
 itself, so the CLI read an undefined payload — the session was pinned correctly, only the reply was
 wrong.
+
+### Phase 5 (done, in `../agentbox-tray`)
+
+- The pane runs the argv the hub sends (`ptyAttach.command` + `--lease-id`), so nothing has to be on
+  the app's PATH; `ManagerTerminalView` — the Ctrl/Shift+Enter → Ctrl+J rewrite — is deleted, which
+  was the whole point.
+- The warm pool keys on a neutral `terminalKey` (manager id for pty, tmux session name otherwise),
+  because a pty session has no session name.
+- `TrayClient.leaseId` is a UUID persisted in `UserDefaults`, so quitting reaps the app's sessions
+  after the grace window while a relaunch inside it takes them back.
+- `agentbox manager attach --lease-id <id>` is the CLI half: an ordinary attach holds no lease
+  (closing a terminal you opened by hand must not end the agent's work).
+
+Verified: `swift build` clean, `make test` 105 green (including a captured pty payload decoded by
+the app's own types, the argv it builds, and the shell quoting an install path with a space needs).
+The embedded terminal against a live pty manager is **not** verified yet: a manager start registers
+through the record store, and this Mac's is the control box, which still runs the pre-`pty` build —
+`ManagerRegistration` there refuses `kind: 'pty'`. Update the control box and the PC together.
