@@ -499,13 +499,15 @@ backlog with their progress intact.
 agentbox manager list                       # running first; -w to filter, --running, -j
 agentbox manager status                     # this session's manager, else the workspace's
 agentbox manager status 3f9a                # one manager, by id or unique prefix
-agentbox manager resume 3f9a --attach       # reopen an ended session in tmux here
-agentbox manager stop 3f9a                  # tmux-run managers only
+agentbox manager resume 3f9a --attach       # reopen an ended session here
+agentbox manager stop 3f9a                  # hub-run managers only
 agentbox manager forget 3f9a -y             # drop a stopped manager's record
 agentbox manager forget 3f9a -y --force     # drop it even if it reads as running
-agentbox manager start --agent claude       # a new tmux-run manager; offers to resume a session
+agentbox manager start --agent claude       # a new hub-run manager; offers to resume a session
 agentbox manager start --agent codex --new  # --new skips the resume picker
-agentbox manager attach                     # the running tmux-run manager, or a Claude background session; or --attach-in split|window|tab
+agentbox manager attach                     # the running hub-run manager, or a Claude background session; or --attach-in split|window|tab
+agentbox manager attach 3f9a --raw          # no lead-in line and no detach chord, for a terminal that embeds the session
+agentbox manager pin 3f9a                   # keep it running with nothing attached (--off to undo)
 agentbox manager sessions --agent codex     # resumable sessions in this folder
 agentbox manager message 3f9a "rebase T-12 onto main"  # type it into the session and submit
 agentbox manager note "holding T-12 until #405 merges" --replan  # on the timeline, at this turn
@@ -513,15 +515,31 @@ agentbox manager note "split checkout into two boxes" 3f9a       # a manager by 
 ```
 
 A manager is either **external** — the Claude Code or Codex session in your own terminal, detected
-when it runs `agentbox` — or **tmux-run**, started in a tmux session AgentBox owns, so the CLI, the
-tray and a plain `tmux attach` all reach the same running agent (the session is sized to the most
-recently active client, so two attached at once do not clamp each other). That session, and only
-that session, has the mouse on (the wheel scrolls its history) and an AgentBox footer naming the
-manager, its session and the workspace, with the detach key. An external manager is
-yours: AgentBox reports whether it is still running but never stops it. Once it has ended,
-`manager resume` reopens that same conversation in tmux (`claude --resume <id>` /
-`codex resume <id>`, in the folder it ran in), where any client can attach to it. Managers
-need `tmux` on the machine running them; `agentbox doctor` tells you if it is missing.
+when it runs `agentbox` — or **hub-run**, started by AgentBox on a terminal it owns, so the CLI, the
+tray and a second `attach` all reach the same running agent (the session takes the size of whichever
+client attached or resized last, so two attached at once do not clamp each other, and typing never
+resizes anything).
+
+A hub-run manager runs on an AgentBox **pty host**: one small process per session, holding the
+agent's terminal and handing its bytes to whatever attaches. There is no multiplexer in between, so
+scrollback, mouse, selection and copy/paste are your own terminal's, and a modified Enter
+(Shift+Enter for a newline in Claude Code) reaches the agent as typed. `agentbox manager attach`
+forwards every byte except one chord — `Ctrl-] d` detaches without stopping the session (change it
+with `manager.detachKey`, or `none` to forward that too). The host outlives the hub, so restarting
+or updating the hub never ends a session.
+
+Where the optional terminal prebuild is missing, a start falls back to a tmux session instead
+(`manager.carrier` chooses deliberately) — the same agent, with tmux's own keys and scrollback.
+
+An external manager is yours: AgentBox reports whether it is still running but never stops it. Once
+it has ended, `manager resume` reopens that same conversation (`claude --resume <id>` /
+`codex resume <id>`, in the folder it ran in), where any client can attach to it.
+
+**What ends a session.** A session nothing has ever attached a lease to keeps running until you stop
+it. A client that holds one — the macOS tray does — makes the session its own: quit the app and its
+terminals are reaped a grace window later (`manager.leaseGraceSeconds`, 60s by default), while an
+app restart or update inside that window keeps them. `agentbox manager pin <id>` exempts a session
+from that entirely; `manager.lifetime: persistent` exempts every session.
 
 **The manager runs on your machine; the record lives on the hub.** A manager is a process in a
 folder, so `start`, `resume`, `stop`, `attach`, `sessions` and `message` go to the hub on **this**

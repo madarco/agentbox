@@ -242,6 +242,21 @@ describe.skipIf(!backend)('pty host lifetime', () => {
     rmSync(dir, { recursive: true, force: true });
   }, 30_000);
 
+  it('never reaps a persistent session, lease or not', async () => {
+    const dir = shortTmp();
+    const host = await startPtyHost({
+      ...spec(dir, 'eeeeffff00001111'),
+      lifetime: 'persistent',
+    });
+    const tray = attach(host.socketPath);
+    await hello(tray, 'tray:3', 80, 24, true);
+    tray.close();
+    const code = await Promise.race([host.done, delay(6_500).then(() => 'still-running' as const)]);
+    expect(code).toBe('still-running');
+    await host.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }, 30_000);
+
   it('keeps a pinned session even with no lease holder', async () => {
     const dir = shortTmp();
     const host = await startPtyHost({ ...spec(dir, 'ddddeeeeffff0000'), pinned: true });

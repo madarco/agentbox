@@ -37,6 +37,7 @@ import {
 import { createHubBackend } from './lib/hub-backend';
 import { HEARTBEAT_INTERVAL_MS } from './lib/backend/managers';
 import { startManagerHeartbeats } from './lib/manager-heartbeat';
+import { startPtyJanitor } from './lib/pty-janitor';
 import { configureManagerStoreFromConfig, configureTimelineSinkFromConfig } from '@agentbox/relay';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
@@ -238,6 +239,9 @@ async function main(): Promise<void> {
       warn,
     });
   }
+  // A pty host outlives the hub, so a crashed one's socket and meta are only
+  // ever cleaned up by someone looking — this is that someone.
+  startPtyJanitor({ warn });
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
   // Payload-carrying prompt fan-out for the `/api/v1` prompt-stream route (the
   // attach footer). Reaches the relay handle's in-process subscribers/prompts/

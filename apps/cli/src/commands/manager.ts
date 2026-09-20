@@ -27,6 +27,7 @@ import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/worksp
 import { detectHostSession, registerHostManager } from '../lib/host-session.js';
 import { renderTable } from '../lib/text-table.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { readPtyMeta } from '@agentbox/sandbox-core';
 import { attachPtySession } from '../manager/pty-attach.js';
 import type {
@@ -263,12 +264,16 @@ async function attachToPtySession(
     log.success(spawned.note || `attached in a new ${host} ${openIn}`);
     return true;
   }
+  // The chord is config, not a constant: a terminal that already owns `C-]`
+  // needs another one (or `none`), and that is a per-machine preference.
+  const configured =
+    opts.detachKey ?? (await loadEffectiveConfig(m.cwd)).effective.manager.detachKey;
   const result = await attachPtySession({
     managerId: m.id,
     clientId: `cli:${String(process.pid)}`,
     kind: 'cli',
     ...(opts.raw ? { raw: true } : {}),
-    ...(opts.detachKey ? { detachKey: opts.detachKey } : {}),
+    ...(configured ? { detachKey: configured } : {}),
   });
   if (result.outcome === 'unavailable') {
     log.error(`could not attach to manager ${m.id}: ${result.reason}`);
@@ -545,6 +550,23 @@ const attachCommand = new Command('attach')
     },
   );
 
+const pinCommand = new Command('pin')
+  .description('Keep a hub-run manager running with nothing attached to it')
+  .argument('<id>', 'manager id')
+  .option('--off', 'let it be reaped again when its last client leaves')
+  .action(async (id: string, opts: { off?: boolean }) => {
+    await withHubClient(workspaceHub(), async (client) => {
+      const target = await mustManager(client, id);
+      const manager = await client.pinManager(target.id, !opts.off);
+      printManager(manager);
+      log.info(
+        opts.off
+          ? 'unpinned: it follows the lease rules again'
+          : 'pinned: only an explicit stop ends it now',
+      );
+    });
+  });
+
 const sessionsCommand = new Command('sessions')
   .description('List agent sessions in the workspace folder that a manager could resume')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
@@ -689,6 +711,7 @@ export const managerCommand = new Command('manager')
   .addCommand(resumeCommand)
   .addCommand(stopCommand)
   .addCommand(attachCommand)
+  .addCommand(pinCommand)
   .addCommand(sessionsCommand)
   .addCommand(noteCommand)
   .addCommand(messageCommand)

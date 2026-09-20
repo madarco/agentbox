@@ -1459,6 +1459,13 @@ export class HubApiClient {
     return this.request<HubApiManager>('POST', `/managers/${encodeURIComponent(id)}/stop`);
   }
 
+  /** Keep a hub-run session alive with no client attached, or stop doing so. */
+  pinManager(id: string, pinned: boolean): Promise<HubApiManager> {
+    return this.request<HubApiManager>('POST', `/managers/${encodeURIComponent(id)}/pin`, {
+      pinned,
+    });
+  }
+
   /** Type a message into the manager's session and submit it (resuming a stopped one with it). */
   sendManagerMessage(
     id: string,

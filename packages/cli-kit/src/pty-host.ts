@@ -37,6 +37,12 @@ export interface PtyHostSpec {
   cols: number;
   rows: number;
   pinned: boolean;
+  /**
+   * `persistent` never reaps: only an explicit stop ends the session. `leased`
+   * (the default) reaps once every lease holder has stayed away past the grace
+   * window — a session nothing ever leased is never reaped either way.
+   */
+  lifetime?: 'leased' | 'persistent';
   leaseGraceMs: number;
   scrollbackBytes: number;
   windowSize: PtyWindowSize;
@@ -413,8 +419,12 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
         });
         return;
       case 'release':
+        // An explicit release is "I am done with this session", not "I went
+        // away": no grace window, unless the session is meant to outlive it.
         leases.delete(client.id ?? 'anonymous');
-        if (leases.size === 0 && everLeased && !pinned) void stopLadder();
+        if (leases.size === 0 && everLeased && !pinned && spec.lifetime !== 'persistent') {
+          void stopLadder();
+        }
         return;
       case 'stop':
         void stopLadder();
@@ -517,7 +527,7 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
         leases.set(client.id, { lastSeenAt: now });
       }
     }
-    if (!everLeased || pinned || stopping) return;
+    if (spec.lifetime === 'persistent' || !everLeased || pinned || stopping) return;
     for (const lease of leases.values()) {
       if (now - lease.lastSeenAt <= leaseGraceMs) return;
     }

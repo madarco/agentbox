@@ -1286,6 +1286,8 @@ export interface ManagerFilter {
 export interface ManagerBackend {
   /** Register (or refresh) the session a CLI call came from, creating its workspace if none contains it. */
   detectManager(input: DetectManagerInput): Promise<DetectManagerResult>;
+  /** Keep a hub-run session alive with no client attached, or stop doing so. */
+  pinManager(id: string, pinned: boolean): Promise<ManagerResult>;
   listManagers(filter?: ManagerFilter): Promise<ManagerView[]>;
   getManager(id: string): Promise<ManagerView | null>;
   /** `null` = unknown workspace. */

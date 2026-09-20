@@ -292,6 +292,37 @@ change to AgentBox — run `agentbox config list` to see what an agent declares.
 
 `attach.herdrStatus` makes a box look like a _normal_ agent inside [Herdr](https://herdr.dev). While you're attached inside a Herdr pane, AgentBox reports the box agent's live activity to that pane (working / blocked / idle), so Herdr applies its native agent treatment — **including its own needs-input handling**. The one thing Herdr can't see is AgentBox's own host-relay **approval prompts** (git push, PR, checkpoint, …), so those get an explicit Herdr notification. No effect outside Herdr; set to `false` to disable. See [Herdr integration](/docs/integrations-herdr).
 
+## manager
+
+How a hub-run [manager](/docs/cli) session is carried and what ends it.
+
+| Key                         | Type                               | Default  | Meaning                                                                  |
+| --------------------------- | ---------------------------------- | -------- | ------------------------------------------------------------------------ |
+| `manager.carrier`           | enum `auto`/`pty`/`tmux`           | `auto`   | which terminal carrier a `manager start` runs the session on             |
+| `manager.lifetime`          | enum `leased`/`persistent`         | `leased` | whether a session is reaped when the client that leased it goes away     |
+| `manager.leaseGraceSeconds` | int                                | `60`     | how long a leased session keeps running after its last holder disappears |
+| `manager.scrollbackBytes`   | int                                | `524288` | recent output kept so a client attaching later gets a painted screen     |
+| `manager.windowSize`        | enum `latest`/`smallest`/`largest` | `latest` | whose terminal size the session takes when several clients are attached  |
+| `manager.submitDelayMs`     | int                                | `400`    | the pause between typing a message into a session and pressing Enter     |
+| `manager.detachKey`         | string                             | `C-]`    | the chord that leaves `manager attach` without stopping the session      |
+
+`manager.carrier: auto` runs the session on an AgentBox **pty host** — one process per session,
+holding the agent's terminal with nothing in between — so scrollback, mouse, selection and a
+modified Enter belong to the terminal you attach with. Where the optional terminal prebuild is
+missing it falls back to a tmux session; `pty` refuses instead of falling back, and `tmux` keeps the
+old carrier (whose keys and clipboard are limited by tmux options that can only be set for a whole
+server, which is why the pty host exists).
+
+`manager.lifetime` decides what a client leaving means. Under `leased`, a session a client holds a
+lease on — the macOS tray does — is stopped once that client has stayed away for
+`manager.leaseGraceSeconds`: quitting the app ends the terminals it opened, while an app restart or
+update inside the window keeps them. A session nothing ever leased (one you started from a terminal)
+is never reaped, and `agentbox manager pin <id>` exempts a single session. `persistent` exempts all
+of them: only an explicit stop ends a session.
+
+`manager.detachKey` takes a `C-<key>` spelling, or `none` to forward every byte and leave closing
+the terminal as the only way out. Everything except the chord reaches the agent untouched.
+
 ## code / shell
 
 | Key                  | Type                          | Default  | Meaning                                                                           |

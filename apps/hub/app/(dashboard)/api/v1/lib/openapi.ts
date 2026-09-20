@@ -1811,6 +1811,37 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/managers/{id}/pin': {
+        post: {
+          tags: ['Managers'],
+          summary: 'Keep a hub-run manager alive with nothing attached',
+          description:
+            "Without a pin, a session a client holds a lease on is stopped once that client stays away past the grace window (`manager.leaseGraceSeconds`) — so quitting the app that opened it ends its terminals, while a relaunch inside the window keeps them. A pin overrides that: only an explicit stop ends the session. Written to the record and pushed to the live host, so it takes effect at once. 409 for an external manager: the hub never keeps someone else's terminal process alive.",
+          parameters: [managerIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { pinned: { type: 'boolean' } },
+                  required: ['pinned'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Manager',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Manager' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+          },
+        },
+      },
       '/managers/{id}/resume': {
         post: {
           tags: ['Managers'],

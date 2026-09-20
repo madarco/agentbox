@@ -31,203 +31,521 @@
           ],
           "description": "Sandbox backend new boxes are created on. Overridden per-run by --provider. Also accepts a `docker:<host>` spec naming a registered remote-docker engine."
         },
-        "hostSnapshot": { "type": "boolean" },
-        "defaultCheckpoint": { "type": "string", "minLength": 1 },
-        "defaultCheckpointDocker": { "type": "string", "minLength": 1 },
-        "defaultCheckpointDaytona": { "type": "string", "minLength": 1 },
-        "defaultCheckpointHetzner": { "type": "string", "minLength": 1 },
-        "defaultCheckpointVercel": { "type": "string", "minLength": 1 },
-        "defaultCheckpointE2b": { "type": "string", "minLength": 1 },
-        "defaultCheckpointDigitalocean": { "type": "string", "minLength": 1 },
-        "defaultCheckpointRemoteDocker": { "type": "string", "minLength": 1 },
-        "size": { "type": "string", "minLength": 1 },
-        "sizeDocker": { "type": "string", "minLength": 1 },
-        "sizeDaytona": { "type": "string", "minLength": 1 },
-        "sizeHetzner": { "type": "string", "minLength": 1 },
-        "sizeVercel": { "type": "string", "minLength": 1 },
-        "sizeE2b": { "type": "string", "minLength": 1 },
-        "sizeDigitalocean": { "type": "string", "minLength": 1 },
-        "sizeRemoteDocker": { "type": "string", "minLength": 1 },
-        "withPlaywright": { "type": "boolean" },
-        "withEnv": { "type": "boolean" },
-        "resyncOnStart": { "type": "boolean" },
-        "vnc": { "type": "boolean" },
-        "autoApproveHostActions": { "type": "boolean" },
-        "persistent": { "type": "boolean" },
-        "autoApproveSafeHostActions": { "type": "boolean" },
-        "isolateClaudeConfig": { "type": "boolean" },
-        "isolateCodexConfig": { "type": "boolean" },
-        "isolateOpencodeConfig": { "type": "boolean" },
-        "isolatePiConfig": { "type": "boolean" },
-        "isolateExampleConfig": { "type": "boolean" },
-        "image": { "type": "string", "minLength": 1 },
-        "imageDocker": { "type": "string", "minLength": 1 },
-        "imageDaytona": { "type": "string", "minLength": 1 },
-        "imageHetzner": { "type": "string", "minLength": 1 },
-        "imageVercel": { "type": "string", "minLength": 1 },
-        "imageE2b": { "type": "string", "minLength": 1 },
-        "imageDigitalocean": { "type": "string", "minLength": 1 },
-        "imageRemoteDocker": { "type": "string", "minLength": 1 },
-        "imageRegistry": { "type": "string" },
-        "e2bTimeoutMs": { "type": "integer", "minimum": 1 },
-        "credentialSync": { "type": "boolean" },
-        "dockerCacheShared": { "type": "boolean" },
-        "memory": { "type": "integer", "minimum": 0 },
-        "cpus": { "type": "integer", "minimum": 0 },
-        "pidsLimit": { "type": "integer", "minimum": 0 },
-        "disk": { "type": "string" },
-        "bundleDepth": { "type": "integer", "minimum": 0 },
-        "daytonaClass": { "type": "string", "enum": ["linux-vm", "container"] },
-        "daytonaRegion": { "type": "string", "minLength": 1 },
-        "daytonaTimeoutMs": { "type": "integer", "minimum": 0 },
-        "daytonaVmBaseImage": { "type": "string", "minLength": 1 },
-        "hetznerLocation": { "type": "string", "minLength": 1 },
-        "digitaloceanRegion": { "type": "string", "minLength": 1 },
-        "digitaloceanProject": { "type": "string", "minLength": 1 },
-        "remoteDockerHost": { "type": "string", "minLength": 1 },
-        "inbound": { "type": "string", "minLength": 1 },
-        "vercelTimeoutMs": { "type": "integer", "minimum": 1 },
-        "vercelNetworkPolicy": { "type": "string" },
-        "cpMaxBytes": { "type": "integer", "minimum": 1 }
+        "hostSnapshot": {
+          "type": "boolean"
+        },
+        "defaultCheckpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointDaytona": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointHetzner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointVercel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointE2b": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointDigitalocean": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultCheckpointRemoteDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeDaytona": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeHetzner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeVercel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeE2b": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeDigitalocean": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeRemoteDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "withPlaywright": {
+          "type": "boolean"
+        },
+        "withEnv": {
+          "type": "boolean"
+        },
+        "resyncOnStart": {
+          "type": "boolean"
+        },
+        "vnc": {
+          "type": "boolean"
+        },
+        "autoApproveHostActions": {
+          "type": "boolean"
+        },
+        "persistent": {
+          "type": "boolean"
+        },
+        "autoApproveSafeHostActions": {
+          "type": "boolean"
+        },
+        "isolateClaudeConfig": {
+          "type": "boolean"
+        },
+        "isolateCodexConfig": {
+          "type": "boolean"
+        },
+        "isolateOpencodeConfig": {
+          "type": "boolean"
+        },
+        "isolatePiConfig": {
+          "type": "boolean"
+        },
+        "isolateExampleConfig": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageDaytona": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageHetzner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageVercel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageE2b": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageDigitalocean": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageRemoteDocker": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageRegistry": {
+          "type": "string"
+        },
+        "e2bTimeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "credentialSync": {
+          "type": "boolean"
+        },
+        "dockerCacheShared": {
+          "type": "boolean"
+        },
+        "memory": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pidsLimit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "disk": {
+          "type": "string"
+        },
+        "bundleDepth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "daytonaClass": {
+          "type": "string",
+          "enum": [
+            "linux-vm",
+            "container"
+          ]
+        },
+        "daytonaRegion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "daytonaTimeoutMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "daytonaVmBaseImage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hetznerLocation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digitaloceanRegion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digitaloceanProject": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remoteDockerHost": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inbound": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vercelTimeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "vercelNetworkPolicy": {
+          "type": "string"
+        },
+        "cpMaxBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "checkpoint": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxLayers": { "type": "integer" }
+        "maxLayers": {
+          "type": "integer"
+        }
       }
     },
     "claude": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 },
-        "dangerouslySkipPermissions": { "type": "boolean" },
-        "install": { "enum": ["native", "npm"] },
-        "tui": { "enum": ["default", "fullscreen", "auto"] }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dangerouslySkipPermissions": {
+          "type": "boolean"
+        },
+        "install": {
+          "enum": [
+            "native",
+            "npm"
+          ]
+        },
+        "tui": {
+          "enum": [
+            "default",
+            "fullscreen",
+            "auto"
+          ]
+        }
       }
     },
     "codex": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 },
-        "dangerouslySkipPermissions": { "type": "boolean" }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dangerouslySkipPermissions": {
+          "type": "boolean"
+        }
       }
     },
     "opencode": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 },
-        "modelAuth": { "type": "string", "pattern": "^(none|codex(,codex)*)$" }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelAuth": {
+          "type": "string",
+          "pattern": "^(none|codex(,codex)*)$"
+        }
       }
     },
     "pi": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 },
-        "modelAuth": { "type": "string", "pattern": "^(none|codex(,codex)*)$" }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelAuth": {
+          "type": "string",
+          "pattern": "^(none|codex(,codex)*)$"
+        }
       }
     },
     "openclaw": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 },
-        "modelAuth": { "type": "string", "pattern": "^(none|codex(,codex)*)$" }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelAuth": {
+          "type": "string",
+          "pattern": "^(none|codex(,codex)*)$"
+        }
       }
     },
     "example": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sessionName": { "type": "string", "minLength": 1 }
+        "sessionName": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "attach": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "openIn": { "enum": ["split", "window", "tab", "same"] },
-        "cmuxStatus": { "type": "boolean" },
-        "herdrStatus": { "type": "boolean" }
+        "openIn": {
+          "enum": [
+            "split",
+            "window",
+            "tab",
+            "same"
+          ]
+        },
+        "cmuxStatus": {
+          "type": "boolean"
+        },
+        "herdrStatus": {
+          "type": "boolean"
+        }
+      }
+    },
+    "manager": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "carrier": {
+          "enum": [
+            "auto",
+            "pty",
+            "tmux"
+          ]
+        },
+        "lifetime": {
+          "enum": [
+            "leased",
+            "persistent"
+          ]
+        },
+        "leaseGraceSeconds": {
+          "type": "integer"
+        },
+        "scrollbackBytes": {
+          "type": "integer"
+        },
+        "windowSize": {
+          "enum": [
+            "latest",
+            "smallest",
+            "largest"
+          ]
+        },
+        "submitDelayMs": {
+          "type": "integer"
+        },
+        "detachKey": {
+          "type": "string"
+        }
       }
     },
     "code": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "ide": { "enum": ["vscode", "cursor", "auto"] },
-        "wait": { "type": "boolean" },
-        "timeoutMs": { "type": "integer" },
-        "autoTerminals": { "type": "boolean" }
+        "ide": {
+          "enum": [
+            "vscode",
+            "cursor",
+            "auto"
+          ]
+        },
+        "wait": {
+          "type": "boolean"
+        },
+        "timeoutMs": {
+          "type": "integer"
+        },
+        "autoTerminals": {
+          "type": "boolean"
+        }
       }
     },
     "shell": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "user": { "type": "string", "minLength": 1 },
-        "login": { "type": "boolean" },
-        "tmux": { "type": "boolean" }
+        "user": {
+          "type": "string",
+          "minLength": 1
+        },
+        "login": {
+          "type": "boolean"
+        },
+        "tmux": {
+          "type": "boolean"
+        }
       }
     },
     "engine": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "kind": { "enum": ["orbstack", "docker-desktop", "other", "auto"] }
+        "kind": {
+          "enum": [
+            "orbstack",
+            "docker-desktop",
+            "other",
+            "auto"
+          ]
+        }
       }
     },
     "browser": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "default": { "enum": ["agent-browser", "playwright", "both"] }
+        "default": {
+          "enum": [
+            "agent-browser",
+            "playwright",
+            "both"
+          ]
+        }
       }
     },
     "relay": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "port": { "type": "integer" },
-        "controlPlaneUrl": { "type": "string" },
-        "custodyMaxBodyBytes": { "type": "integer" },
-        "custodyMaxBlobBytes": { "type": "integer" },
-        "hostReachTimeoutMs": { "type": "integer" }
+        "port": {
+          "type": "integer"
+        },
+        "controlPlaneUrl": {
+          "type": "string"
+        },
+        "custodyMaxBodyBytes": {
+          "type": "integer"
+        },
+        "custodyMaxBlobBytes": {
+          "type": "integer"
+        },
+        "hostReachTimeoutMs": {
+          "type": "integer"
+        }
       }
     },
     "ssh": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "autoConfig": { "type": "boolean" }
+        "autoConfig": {
+          "type": "boolean"
+        }
       }
     },
     "git": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "pushMode": { "enum": ["auto", "relay", "lease", "direct"] }
+        "pushMode": {
+          "enum": [
+            "auto",
+            "relay",
+            "lease",
+            "direct"
+          ]
+        }
       }
     },
     "hub": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "gitAuth": { "enum": ["gh", "app"] },
-        "mode": { "enum": ["auto", "thin", "local"] }
+        "gitAuth": {
+          "enum": [
+            "gh",
+            "app"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "auto",
+            "thin",
+            "local"
+          ]
+        }
       }
     },
     "cloud": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "useCurrentBranch": { "type": "boolean" },
-        "viaHub": { "type": "boolean" }
+        "useCurrentBranch": {
+          "type": "boolean"
+        },
+        "viaHub": {
+          "type": "boolean"
+        }
       }
     },
     "tools": {
@@ -238,14 +556,18 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": {
+              "type": "boolean"
+            }
           }
         },
         "request": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": {
+              "type": "boolean"
+            }
           }
         }
       }
@@ -254,52 +576,94 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "containerPort": { "type": "integer" }
+        "containerPort": {
+          "type": "integer"
+        }
       }
     },
     "portless": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "stateDir": { "type": "string", "minLength": 1 }
+        "enabled": {
+          "type": "boolean"
+        },
+        "stateDir": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "autopause": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "maxRunningBoxes": { "type": "integer" },
-        "idleMinutes": { "type": "integer" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxRunningBoxes": {
+          "type": "integer"
+        },
+        "idleMinutes": {
+          "type": "integer"
+        }
       }
     },
     "queue": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "maxConcurrent": { "type": "integer" },
-        "maxWorking": { "type": "integer" },
-        "idleGraceSeconds": { "type": "integer" },
-        "openIn": { "enum": ["none", "split", "window", "tab"] }
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxConcurrent": {
+          "type": "integer"
+        },
+        "maxWorking": {
+          "type": "integer"
+        },
+        "idleGraceSeconds": {
+          "type": "integer"
+        },
+        "openIn": {
+          "enum": [
+            "none",
+            "split",
+            "window",
+            "tab"
+          ]
+        }
       }
     },
     "maintenance": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "pruneProjectConfigs": { "type": "boolean" },
-        "pruneProjectConfigsEvery": { "type": "integer" }
+        "pruneProjectConfigs": {
+          "type": "boolean"
+        },
+        "pruneProjectConfigsEvery": {
+          "type": "integer"
+        }
       }
     },
     "update": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "check": { "type": "boolean" },
-        "channel": { "enum": ["auto", "stable", "nightly"] },
-        "registry": { "type": "string" }
+        "check": {
+          "type": "boolean"
+        },
+        "channel": {
+          "enum": [
+            "auto",
+            "stable",
+            "nightly"
+          ]
+        },
+        "registry": {
+          "type": "string"
+        }
       }
     }
   }

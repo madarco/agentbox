@@ -42,6 +42,7 @@ import {
   timelineSink,
   resumeManagerSession,
   ptyAttachFor,
+  ptyConfigure,
   ptyInject,
   sendKeysToManager,
   sessionTitle,
@@ -64,7 +65,9 @@ import {
   type ManagerRecord,
   type ManagerRecordStore,
   type ManagerWorkspace,
+  type ManagerCarrier,
   type ManagerPtyAttach,
+  type PtyCarrierSettings,
   type ManagerRegistration,
   type ReconcileContext,
   type TimelineEvent,
@@ -73,6 +76,7 @@ import {
   type TimelineStamp,
   type WorkTask,
 } from '@agentbox/relay';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { PTY_PROTOCOL_VERSION } from '@agentbox/core';
 import { readPtyMeta } from '@agentbox/sandbox-core';
 import { reconcileContext, type BackendDeps } from './deps';
@@ -429,6 +433,30 @@ export function createManagerBackend(
       ...(ptyAttach ? { ptyAttach } : {}),
       ...(lastExit === undefined ? {} : { lastExit }),
     });
+  }
+
+  /**
+   * The `manager.*` config as the carrier wants it. Resolved on the hub at
+   * start time and handed to the host in its spawn spec: a detached host does
+   * no config layering of its own, and a live change reaches it as a `configure`
+   * message instead.
+   */
+  async function managerSettings(cwd: string): Promise<{
+    carrier: ManagerCarrier;
+    pty: Partial<PtyCarrierSettings> & { lifetime: 'leased' | 'persistent' };
+  }> {
+    const { effective } = await loadEffectiveConfig(cwd);
+    const m = effective.manager;
+    return {
+      carrier: m.carrier,
+      pty: {
+        lifetime: m.lifetime,
+        leaseGraceMs: Math.max(1, m.leaseGraceSeconds) * 1000,
+        scrollbackBytes: m.scrollbackBytes,
+        submitDelayMs: m.submitDelayMs,
+        windowSize: m.windowSize,
+      },
+    };
   }
 
   /** The argv a client runs to open this manager's terminal, when it has one. */
@@ -857,6 +885,9 @@ export function createManagerBackend(
         createdAt: at,
         lastSeenAt: at,
       };
+      // Read where the session will RUN, so a project's own `manager.*` keys
+      // apply to its manager — the hub's cwd is nobody's project.
+      const settings = await managerSettings(root);
       let registration: ManagerRegistration;
       try {
         registration = await startManagerSession({
@@ -866,7 +897,8 @@ export function createManagerBackend(
           hostname,
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
           ...(deps.spawnPtyHost ? { spawnPtyHost: deps.spawnPtyHost } : {}),
-          ...(deps.managerCarrier ? { carrier: deps.managerCarrier } : {}),
+          carrier: deps.managerCarrier ?? settings.carrier,
+          ptySettings: settings.pty,
         });
       } catch (e) {
         return err(`could not start the manager: ${messageOf(e)}`);
@@ -991,6 +1023,26 @@ export function createManagerBackend(
       // The snapshot predates the session just started; the answer must show it.
       await lookupBackground({ fresh: true });
       await beat(rec);
+      deps.notify();
+      return answer(id);
+    },
+
+    /**
+     * Pin a session so nothing reaps it when its last client leaves, or unpin
+     * it. Written to the record AND pushed to the live host: the record is what
+     * a restart reads, the host is what actually enforces it right now.
+     */
+    async pinManager(id: string, pinned: boolean): Promise<ManagerResult> {
+      const rec = await store.findManager(id);
+      if (!rec) return err(`unknown manager ${id}`);
+      if (rec.kind === 'external') {
+        return err(`manager ${id} runs in your terminal; the hub does not keep it alive`);
+      }
+      await store.patchManager(rec.workspaceId, id, { pinned });
+      if (storeIsLocal(rec) && rec.kind === 'pty') {
+        const meta = await readPtyMeta(id);
+        if (meta) await ptyConfigure(meta, { pinned });
+      }
       deps.notify();
       return answer(id);
     },

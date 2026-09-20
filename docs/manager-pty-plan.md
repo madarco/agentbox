@@ -123,7 +123,7 @@ never reaped — exactly today's behavior. `pinned` overrides in both directions
 | 1 | Protocol, replay ring and the host, standalone | done |
 | 2 | CLI attach client (`agentbox manager attach`, `--raw`, detach chord) | done |
 | 3 | Hub/relay integration (`kind: 'pty'`, start/stop/resume/message, status) | done |
-| 4 | Lease/grace wiring, `pinned`, config keys, hub janitor, tmux fallback | todo |
+| 4 | Lease/grace wiring, `pinned`, config keys, hub janitor, tmux fallback | done |
 | 5 | Tray (`ptyAttach` argv, delete the Ctrl+J rewrite, `isAttachable`) | todo |
 | 6 | Cleanup, docs, groundwork for a web terminal | todo |
 
@@ -209,3 +209,29 @@ Three bugs the live run found, all fixed with tests:
    so stop reads it there, with a pid SIGTERM as the last resort.
 3. The hub's 0x0 control client won the size arbitration and `pty.resize(0, 0)` **killed the host**,
    taking the agent with it. Only clients that are a terminal size the session now.
+
+### Phase 4 (done)
+
+- Seven `manager.*` config keys (`packages/config`): `carrier`, `lifetime`, `leaseGraceSeconds`,
+  `scrollbackBytes`, `windowSize`, `submitDelayMs`, `detachKey`. The hub resolves them **at the
+  folder the session will run in**, not its own cwd, and hands the numbers to the host in its spawn
+  spec — a detached host does no config layering, and a live change reaches it as `configure`.
+- `manager.lifetime: persistent` exempts every session from reaping; `agentbox manager pin <id>`
+  exempts one. A pin is written to the record (what a restart reads) *and* pushed to the live host
+  (what enforces it now), through `POST /api/v1/managers/{id}/pin`.
+- `apps/hub/lib/pty-janitor.ts` — a host outlives the hub, so a crashed one's socket and meta are
+  only ever cleaned up by someone looking. Conservative: it removes a session's files only when the
+  socket refuses a connection AND the recorded pid is gone, because either alone can be a live host.
+- The CLI's detach chord comes from `manager.detachKey`, so a terminal that already owns `C-]` can
+  move it (or set `none`).
+
+Live, against real claude managers on an isolated hub with `leaseGraceSeconds: 8`: the config
+reached the host (`leaseGraceMs 8000`); a lease holder leaving left the session up at +4s and reaped
+at +12s; **the same client id returning inside the window kept the session past its original
+deadline** — the tray-update case, measured; a pinned session survived 12s past the grace, and
+unpinning reaped it within one reaper tick, which is the live `configure` push working both ways.
+`manager.carrier: tmux` started the same agent on the old carrier.
+
+One bug: the pin route answered `{manager: …}` where every other manager route answers the manager
+itself, so the CLI read an undefined payload — the session was pinned correctly, only the reply was
+wrong.

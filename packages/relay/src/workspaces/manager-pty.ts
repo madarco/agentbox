@@ -32,6 +32,7 @@ export interface PtyCarrierSettings {
   scrollbackBytes: number;
   submitDelayMs: number;
   windowSize: 'latest' | 'smallest' | 'largest';
+  lifetime: 'leased' | 'persistent';
 }
 
 export const PTY_CARRIER_DEFAULTS: PtyCarrierSettings = {
@@ -39,6 +40,7 @@ export const PTY_CARRIER_DEFAULTS: PtyCarrierSettings = {
   scrollbackBytes: 512 * 1024,
   submitDelayMs: 400,
   windowSize: 'latest',
+  lifetime: 'leased',
 };
 
 export interface StartManagerPtyInput {
@@ -180,6 +182,7 @@ export async function startManagerPtySession(
     cols: 120,
     rows: 34,
     pinned: rec.pinned === true,
+    lifetime: settings.lifetime,
     leaseGraceMs: settings.leaseGraceMs,
     scrollbackBytes: settings.scrollbackBytes,
     windowSize: settings.windowSize,

@@ -109,6 +109,23 @@ export type AttachOpenIn = 'split' | 'window' | 'tab' | 'same';
  *  submit time, so there is no `same` (inline) mode here. */
 export type QueueOpenIn = 'none' | 'split' | 'window' | 'tab';
 
+/**
+ * Which carrier a hub-run manager session runs on. `auto` prefers the AgentBox
+ * pty host — the client terminal then owns scrollback, mouse, selection and the
+ * modified Enter — and falls back to tmux where the optional node-pty prebuild
+ * is missing.
+ */
+export type ManagerCarrierMode = 'auto' | 'pty' | 'tmux';
+/**
+ * `leased`: a session a client holds a lease on is stopped once that client
+ * stays gone past the grace window (quitting the tray ends its terminals; an
+ * update that relaunches inside the window keeps them). `persistent`: only an
+ * explicit stop ends a session.
+ */
+export type ManagerLifetime = 'leased' | 'persistent';
+/** Whose size a session takes when several clients are attached. */
+export type ManagerWindowSize = 'latest' | 'smallest' | 'largest';
+
 export interface UserConfig {
   /**
    * Config-file shape version. Stamped to `1` on first write so future
@@ -212,6 +229,15 @@ export interface UserConfig {
     openIn?: AttachOpenIn;
     cmuxStatus?: boolean;
     herdrStatus?: boolean;
+  };
+  manager?: {
+    carrier?: ManagerCarrierMode;
+    lifetime?: ManagerLifetime;
+    leaseGraceSeconds?: number;
+    scrollbackBytes?: number;
+    windowSize?: ManagerWindowSize;
+    submitDelayMs?: number;
+    detachKey?: string;
   };
   code?: {
     ide?: IdeFlavor;
@@ -427,6 +453,15 @@ export interface EffectiveConfig {
     cmuxStatus: boolean;
     herdrStatus: boolean;
   };
+  manager: {
+    carrier: ManagerCarrierMode;
+    lifetime: ManagerLifetime;
+    leaseGraceSeconds: number;
+    scrollbackBytes: number;
+    windowSize: ManagerWindowSize;
+    submitDelayMs: number;
+    detachKey: string;
+  };
   code: {
     ide: IdeFlavor;
     wait: boolean;
@@ -616,6 +651,15 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     openIn: 'split',
     cmuxStatus: true,
     herdrStatus: true,
+  },
+  manager: {
+    carrier: 'auto',
+    lifetime: 'leased',
+    leaseGraceSeconds: 60,
+    scrollbackBytes: 512 * 1024,
+    windowSize: 'latest',
+    submitDelayMs: 400,
+    detachKey: 'C-]',
   },
   code: {
     ide: 'auto',
@@ -1127,6 +1171,51 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "When attached inside Herdr, report the box agent's live activity to its Herdr pane (pane.report_agent: working / blocked / idle) so it looks like a normal agent pane and Herdr handles needs-input natively, and fire a Herdr notification for AgentBox's own host-relay approval prompts (git push / PR / checkpoint …) which Herdr can't otherwise see. Herdr only; no-op in other terminals.",
+  },
+  {
+    key: 'manager.carrier',
+    type: 'enum',
+    enumValues: ['auto', 'pty', 'tmux'] as const,
+    description:
+      'Which carrier `agentbox manager start` runs a session on. `auto` (default) uses the AgentBox pty host, so the terminal you attach with owns scrollback, mouse, selection and the modified Enter, and falls back to tmux when this install has no node-pty prebuild. `pty` refuses rather than falling back; `tmux` keeps the old carrier, whose keys and clipboard are limited by options that can only be set server-wide.',
+  },
+  {
+    key: 'manager.lifetime',
+    type: 'enum',
+    enumValues: ['leased', 'persistent'] as const,
+    description:
+      'What ends a pty-hosted manager. `leased` (default): a session a client holds a lease on is stopped once that client stays away past `manager.leaseGraceSeconds` — quitting the tray ends the terminals it opened, while an update that relaunches inside the window keeps them. A session nothing ever leased (one you started from a terminal) is never reaped either way. `persistent`: only an explicit stop ends a session. A pinned manager overrides both.',
+  },
+  {
+    key: 'manager.leaseGraceSeconds',
+    type: 'int',
+    description:
+      'How long a leased manager keeps running after its last lease holder disappears. Long enough that a client restart or update is not a session loss; short enough that quitting really does clean up. Default 60.',
+  },
+  {
+    key: 'manager.scrollbackBytes',
+    type: 'int',
+    description:
+      'How much recent output a pty host keeps so a client attaching later gets a painted screen instead of a blank one. Trimmed to the last full repaint before it is replayed. Default 524288.',
+  },
+  {
+    key: 'manager.windowSize',
+    type: 'enum',
+    enumValues: ['latest', 'smallest', 'largest'] as const,
+    description:
+      'Whose terminal size a manager session takes when several clients are attached: `latest` (default) the one that attached or resized most recently — typing never resizes anything — or `smallest`/`largest` to clamp to the least or most room available.',
+  },
+  {
+    key: 'manager.submitDelayMs',
+    type: 'int',
+    description:
+      'The pause between typing a message into a manager and pressing Enter. An agent TUI reads a burst ending in Enter as one paste and keeps the Enter as a newline; the pause makes it a keypress that submits. Default 400.',
+  },
+  {
+    key: 'manager.detachKey',
+    type: 'string',
+    description:
+      'The chord that leaves `agentbox manager attach` without stopping the session: a `C-<key>` spelling (default `C-]`, then `d`), or `none` to forward every byte and leave closing the terminal as the only way out. Everything except this chord reaches the agent untouched.',
   },
   {
     key: 'code.ide',
