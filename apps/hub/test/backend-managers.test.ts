@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import { createManagerBackend, HEARTBEAT_STALE_MS } from '../lib/backend/managers';
+import { MANAGER_CARRIER_MISSING } from '../lib/backend/errors';
+import { createServer, type Server } from 'node:net';
+import { ptyDir, writePtyMeta } from '@agentbox/sandbox-core';
 import { createWorkspaceBackend } from '../lib/backend/workspaces';
 import type { BackendDeps } from '../lib/backend/deps';
 import {
@@ -389,6 +392,107 @@ describe('liveness and lifecycle', () => {
     }
     expect(await managers.listWorkspaceManagers('deadbeef')).toBeNull();
     expect(await managers.listManagerSessions('deadbeef')).toBeNull();
+  });
+});
+
+describe('the carrier a start picks', () => {
+  const sockets: Server[] = [];
+  const socketPaths: string[] = [];
+
+  /** A harness whose host has NO tmux, and an install that does have a pty host. */
+  async function ptyOnly(): Promise<{
+    h: Harness;
+    entryDir: string;
+    spawnedSpecs: Record<string, unknown>[];
+  }> {
+    const h = harness();
+    const spawnedSpecs: Record<string, unknown>[] = [];
+    const entryDir = await mkdtemp(join(tmpdir(), 'agentbox-ptyentry-'));
+    await writeFile(join(entryDir, 'index.js'), '');
+    await writeFile(join(entryDir, 'pty-host.js'), '');
+    process.env['AGENTBOX_CLI_ENTRY'] = join(entryDir, 'index.js');
+    const inner = h.deps.managerExec!;
+    h.deps.managerExec = async (file: string, args: string[]) => {
+      // Not installed: every tmux call fails, `tmux -V` included.
+      if (file === 'tmux') throw new Error('spawn tmux ENOENT');
+      return inner(file, args);
+    };
+    h.deps.spawnPtyHost = async (spec) => {
+      spawnedSpecs.push(spec.spec);
+      const s = spec.spec as Record<string, string>;
+      // A real listening socket, because the start waits for one: a meta file
+      // alone is a half-started host and would (correctly) time out. Short
+      // path on purpose — the suite's temp $HOME is already past the ~104-byte
+      // limit a unix socket has, which is what the host itself reports.
+      const socketPath = `/tmp/abt-${s['managerId']!}.sock`;
+      socketPaths.push(socketPath);
+      const socket = createServer(() => {});
+      await new Promise<void>((resolve) => socket.listen(socketPath, () => resolve()));
+      sockets.push(socket);
+      await writePtyMeta(
+        {
+          v: 1,
+          managerId: s['managerId']!,
+          workspaceId: s['workspaceId']!,
+          agent: s['agent']!,
+          cwd: s['cwd']!,
+          socket: socketPath,
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          token: s['token']!,
+          runId: s['runId']!,
+          cols: 120,
+          rows: 34,
+          pinned: false,
+          leaseGraceMs: 60_000,
+        },
+        undefined,
+      );
+      return { pid: process.pid };
+    };
+    return { h, entryDir, spawnedSpecs };
+  }
+
+  afterEach(async () => {
+    delete process.env['AGENTBOX_CLI_ENTRY'];
+    for (const socket of sockets.splice(0)) socket.close();
+    for (const path of socketPaths.splice(0)) await rm(path, { force: true });
+    await rm(ptyDir(), { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('starts on the pty host where there is no tmux at all', async () => {
+    const { h, spawnedSpecs } = await ptyOnly();
+    const { workspaces, managers } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    const started = await managers.startManager(added.workspace.id, { agent: 'claude' });
+    if (!started.ok) throw new Error(started.error);
+    // This is the install the carrier exists for; refusing it with "tmux is not
+    // installed" was the bug.
+    expect(started.manager.kind).toBe('pty');
+    expect(spawnedSpecs).toHaveLength(1);
+    expect(h.spawned).toEqual([]);
+  });
+
+  it('refuses with a carrier error, not a tmux one, when neither can run', async () => {
+    const h = harness();
+    const inner = h.deps.managerExec!;
+    h.deps.managerExec = async (file: string, args: string[]) => {
+      if (file === 'tmux') throw new Error('spawn tmux ENOENT');
+      return inner(file, args);
+    };
+    const { workspaces, managers } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    expect(await managers.startManager(added.workspace.id, { agent: 'claude' })).toMatchObject({
+      ok: false,
+      error: MANAGER_CARRIER_MISSING,
+    });
   });
 });
 

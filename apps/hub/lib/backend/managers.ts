@@ -43,6 +43,7 @@ import {
   resumeManagerSession,
   ptyAttachFor,
   ptyConfigure,
+  resolvePtyHostEntry,
   ptyInject,
   sendKeysToManager,
   sessionTitle,
@@ -68,6 +69,7 @@ import {
   type ManagerCarrier,
   type ManagerPtyAttach,
   type PtyCarrierSettings,
+  type SpawnPtyHost,
   type ManagerRegistration,
   type ReconcileContext,
   type TimelineEvent,
@@ -81,7 +83,7 @@ import { PTY_PROTOCOL_VERSION } from '@agentbox/core';
 import { readPtyMeta } from '@agentbox/sandbox-core';
 import { reconcileContext, type BackendDeps } from './deps';
 import { stampInWorkspace } from './timeline';
-import { TMUX_MISSING } from './errors';
+import { MANAGER_CARRIER_MISSING, PTY_CARRIER_MISSING, TMUX_MISSING } from './errors';
 import type {
   ActionResult,
   DetectManagerInput,
@@ -404,13 +406,18 @@ export function createManagerBackend(
     },
   ): Promise<ManagerView> {
     const { snap, claimed } = ctx;
-    const status = await managerStatus(rec, probe);
     const local = snap !== undefined && rec.agent === 'claude';
+    // Probed up front only for a pty manager, whose own liveness decides whether
+    // its Claude session counts as detached. For every other record the daemon
+    // can still answer `running` on its own, and probing first would spend a
+    // `tmux has-session` per manager on every list.
+    const probed = rec.kind === 'pty' ? await managerStatus(rec, probe) : undefined;
     const background = local
-      ? backgroundFor(rec, snap, { ptyRunning: rec.kind === 'pty' && status === 'running' })
+      ? backgroundFor(rec, snap, { ptyRunning: probed === 'running' })
       : undefined;
     const inDaemon = local ? liveBackgroundSession(rec, snap) : undefined;
-    const effective = background || inDaemon ? 'running' : status;
+    const effective =
+      background || inDaemon ? 'running' : (probed ?? (await managerStatus(rec, probe)));
     const own = managerSessionName(rec.id);
     const attachSession =
       background && snap?.managerTmux.some((t) => t.session === own) ? own : null;
@@ -457,6 +464,42 @@ export function createManagerBackend(
         windowSize: m.windowSize,
       },
     };
+  }
+
+  /**
+   * The probe a resume takes: the status seams plus the same carrier choice and
+   * `manager.*` tunables a fresh start resolves. A resume IS a start.
+   */
+  async function resumeProbe(rec: ManagerRecord): Promise<
+    ManagerProbe & {
+      carrier?: ManagerCarrier;
+      ptySettings?: Partial<PtyCarrierSettings>;
+      spawnPtyHost?: SpawnPtyHost;
+    }
+  > {
+    const settings = await managerSettings(rec.cwd);
+    return {
+      ...probe,
+      carrier: deps.managerCarrier ?? settings.carrier,
+      ptySettings: settings.pty,
+      ...(deps.spawnPtyHost ? { spawnPtyHost: deps.spawnPtyHost } : {}),
+    };
+  }
+
+  /**
+   * Why this host cannot start a manager session at all, or null when it can.
+   *
+   * Not `tmuxAvailable` any more: the pty carrier is the default, and a machine
+   * with a working pty host and no tmux — the very install the carrier exists to
+   * serve — was being refused with "tmux is not installed" before the carrier
+   * was ever consulted.
+   */
+  async function carrierRefusal(cwd: string): Promise<string | null> {
+    const carrier = deps.managerCarrier ?? (await managerSettings(cwd)).carrier;
+    if (carrier !== 'tmux' && (await resolvePtyHostEntry())) return null;
+    if (carrier === 'pty') return PTY_CARRIER_MISSING;
+    if (await tmuxAvailable(deps.managerExec)) return null;
+    return MANAGER_CARRIER_MISSING;
   }
 
   /** The argv a client runs to open this manager's terminal, when it has one. */
@@ -662,12 +705,13 @@ export function createManagerBackend(
     claimed: ReadonlySet<string>,
   ): Promise<ManagerHeartbeat> {
     const snap = rec.agent === 'claude' ? await lookupBackground() : undefined;
-    const probed = await managerStatus(rec, probe);
+    const ptyProbed = rec.kind === 'pty' ? await managerStatus(rec, probe) : undefined;
     const background = snap
-      ? backgroundFor(rec, snap, { ptyRunning: rec.kind === 'pty' && probed === 'running' })
+      ? backgroundFor(rec, snap, { ptyRunning: ptyProbed === 'running' })
       : undefined;
     const inDaemon = snap ? liveBackgroundSession(rec, snap) : undefined;
-    const status = background || inDaemon ? 'running' : probed;
+    const status =
+      background || inDaemon ? 'running' : (ptyProbed ?? (await managerStatus(rec, probe)));
     const own = managerSessionName(rec.id);
     const showing =
       rec.kind === 'tmux'
@@ -832,13 +876,14 @@ export function createManagerBackend(
         const existing = await store.findManagerBySession(input.agent, input.sessionId);
         if (existing) {
           if (!storeIsLocal(existing)) return elsewhere(existing, 'resume it');
-          if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
+          const gone = await carrierRefusal(existing.cwd);
+          if (gone) return err(gone);
           const inDaemon = await daemonSession(existing, true);
           if (inDaemon) return err(backgroundResumeRefusal(existing, inDaemon));
           try {
             if (
               input.restart &&
-              existing.kind === 'tmux' &&
+              existing.kind !== 'external' &&
               (await managerStatus(existing, probe)) === 'running'
             ) {
               await persistStop(existing);
@@ -869,7 +914,8 @@ export function createManagerBackend(
           ? wrongHost(message, elsewhereHosts[0], elsewhereHosts)
           : err(message);
       }
-      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
+      const carrierGone = await carrierRefusal(root);
+      if (carrierGone) return err(carrierGone);
       const at = new Date().toISOString();
       const manager: ManagerRecord = {
         id: newManagerId(),
@@ -983,9 +1029,13 @@ export function createManagerBackend(
       if (!storeIsLocal(rec)) return elsewhere(rec, 'resume it');
       const inDaemon = await daemonSession(rec, true);
       if (inDaemon) return err(backgroundResumeRefusal(rec, inDaemon));
-      if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
+      const carrierGone = await carrierRefusal(rec.cwd);
+      if (carrierGone) return err(carrierGone);
       try {
-        await store.registerManager(rec.workspaceId, await resumeManagerSession(rec, probe));
+        await store.registerManager(
+          rec.workspaceId,
+          await resumeManagerSession(rec, await resumeProbe(rec)),
+        );
       } catch (e) {
         return err(messageOf(e));
       }
@@ -1204,10 +1254,11 @@ export function createManagerBackend(
           await sendKeysToManager({ pane: rec.tmuxPane }, input.text, deps.managerExec, opts.sleep);
           delivered = 'pane';
         } else {
-          if (!(await tmuxAvailable(deps.managerExec))) return err(TMUX_MISSING);
+          const carrierGone = await carrierRefusal(rec.cwd);
+          if (carrierGone) return err(carrierGone);
           await store.registerManager(
             rec.workspaceId,
-            await resumeManagerSession(rec, probe, { prompt: input.text }),
+            await resumeManagerSession(rec, await resumeProbe(rec), { prompt: input.text }),
           );
           delivered = 'resumed';
         }

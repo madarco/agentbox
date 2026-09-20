@@ -17,9 +17,13 @@ describe('parseDetachKey', () => {
     expect(parseDetachKey('')).toBeNull();
   });
 
-  it('refuses a spec it cannot encode rather than guessing', () => {
-    expect(parseDetachKey('F5')).toBeNull();
-    expect(parseDetachKey('C-é')).toBeNull();
+  it('says "unparseable" rather than "off" for a spec it cannot encode', () => {
+    // Distinct from `none`: a typo that silently disabled the chord would leave
+    // the user attached with no way out but killing the terminal.
+    expect(parseDetachKey('F5')).toBeUndefined();
+    expect(parseDetachKey('C-é')).toBeUndefined();
+    expect(parseDetachKey('C-] d')).toBeUndefined();
+    expect(parseDetachKey('none')).toBeNull();
   });
 });
 

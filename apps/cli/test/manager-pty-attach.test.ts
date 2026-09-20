@@ -151,3 +151,50 @@ describe.skipIf(!backend)('attachPtySession (real pty)', () => {
     rmSync(dir, { recursive: true, force: true });
   }, 30_000);
 });
+
+describe('attachPtySession handshake', () => {
+  it('gives up rather than hanging when the host accepts and never answers', async () => {
+    const dir = shortTmp();
+    const managerId = 'c3c3c3c3c3c3c3c3';
+    // A socket that accepts and says nothing: a wedged host, from the client's
+    // side indistinguishable from a healthy one until the handshake times out.
+    const { createServer } = await import('node:net');
+    const { writePtyMeta, ptySocketPath, ensurePtyDir } = await import('@agentbox/sandbox-core');
+    await ensurePtyDir(dir);
+    const socket = ptySocketPath(managerId, dir);
+    const server = createServer(() => {});
+    await new Promise<void>((resolve) => server.listen(socket, () => resolve()));
+    await writePtyMeta(
+      {
+        v: 1,
+        managerId,
+        workspaceId: 'ws',
+        agent: 'claude',
+        cwd: '/tmp',
+        socket,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        token: 'tok',
+        runId: 'r'.repeat(32),
+        cols: 80,
+        rows: 24,
+        pinned: false,
+        leaseGraceMs: 60_000,
+      },
+      dir,
+    );
+    const tty = fakeTty();
+    const result = await attachPtySession({
+      managerId,
+      baseDir: dir,
+      clientId: 'cli:test',
+      kind: 'cli',
+      stdin: tty.stdin,
+      stdout: tty.stdout,
+      stderr: tty.stderr,
+    });
+    expect(result.outcome).toBe('unavailable');
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }, 20_000);
+});

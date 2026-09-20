@@ -8,7 +8,7 @@ import { backendOrNull } from '../../../lib/backend';
 import { timelineMeta } from '../../../lib/actor';
 import { fail, failFromManager, ok } from '../../../lib/envelope';
 import { parseManagerMessage, readJson } from '../../../lib/validate';
-import { TMUX_MISSING } from '@/lib/backend/errors';
+import { MANAGER_CARRIER_MISSING, PTY_CARRIER_MISSING, TMUX_MISSING } from '@/lib/backend/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +26,13 @@ export async function POST(
   if (!parsed.ok) return fail('invalid_request', parsed.message);
   const res = await backend.sendManagerMessage(id, parsed.value, await timelineMeta(req, backend));
   if (!res.ok) {
-    if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
+    if (
+      res.error === TMUX_MISSING ||
+      res.error === MANAGER_CARRIER_MISSING ||
+      res.error === PTY_CARRIER_MISSING
+    ) {
+      return fail('backend_unavailable', res.error);
+    }
     return failFromManager(res);
   }
   return ok({ delivered: res.delivered, manager: res.manager, event: res.event });

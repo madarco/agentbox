@@ -253,3 +253,38 @@ the app's own types, the argv it builds, and the shell quoting an install path w
 The embedded terminal against a live pty manager is **not** verified yet: a manager start registers
 through the record store, and this Mac's is the control box, which still runs the pre-`pty` build —
 `ManagerRegistration` there refuses `kind: 'pty'`. Update the control box and the PC together.
+
+### Review pass (`/review medium`)
+
+Thirteen findings, all real, all fixed on the branch. The two that mattered most were edits from
+Phase 3 that **silently did not apply** (a reformat had moved the anchors), which is exactly what a
+review is for:
+
+- `manager attach` with no id still filtered `kind === 'tmux'`, so the common case — one running
+  manager in the workspace — answered "no tmux-run manager is running" and exited 2.
+- `--lease-id` was declared and threaded but never put into the options object, so the flag was
+  inert and the tray's sessions would never have been reaped.
+
+Both re-verified live this time: a bare `manager attach` found the pty manager, and an attach with
+`--lease-id` was reaped 8s after the client left (and not before).
+
+The rest:
+
+- Every start/resume/message path was gated on `tmuxAvailable` → 503 "tmux is not installed", which
+  refused exactly the install the pty carrier exists for. One carrier-aware `carrierRefusal` now
+  answers, with `MANAGER_CARRIER_MISSING` / `PTY_CARRIER_MISSING` beside `TMUX_MISSING` (still the
+  refusal for the paths that are tmux by nature).
+- `start --restart` only stopped a running `tmux` manager first, so a restart of a pty one always
+  failed on the resume's own "already running" check.
+- A resume ignored `manager.*` entirely: the probe now carries the carrier and the tunables, because
+  a resume is a start.
+- A pty record resumed by hand in a terminal stayed `kind: 'pty'` with a dead socket (reading as
+  stopped while the agent ran); the demote-to-`external` rule is now "not external", not "tmux".
+- A failure between spawning the agent and serving the socket left the agent orphaned — unreachable
+  and invisible to the janitor. It is killed now.
+- **The reaper could SIGHUP a session someone was typing into**: it consulted leases only, so a tray
+  quit ended a terminal attached by hand. Any attached client with a real size now holds it open.
+- An unparseable `manager.detachKey` was indistinguishable from `none`, silently leaving no way out
+  of an attach; it warns and falls back. `--attach-in` dropped `--raw`/`--detach-key`/`--lease-id`
+  from the pane it spawned. A pty manager on another host was described as "runs in a terminal of
+  its own". The attach had no handshake timeout. `listManagers` paid an extra probe per manager.

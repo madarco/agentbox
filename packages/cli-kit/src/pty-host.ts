@@ -230,6 +230,17 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     env: { ...spec.env, TERM: 'xterm-256color' },
   });
 
+  // From here on the agent is RUNNING. Anything that throws before the socket
+  // is serving would otherwise leave it alive with no meta and no socket — a
+  // process nothing can reach, find or reap.
+  const killOrphan = (): void => {
+    try {
+      pty.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  };
+
   const meta: PtySessionMeta = {
     v: 1,
     managerId: spec.managerId,
@@ -246,7 +257,12 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     pinned,
     leaseGraceMs,
   };
-  await writePtyMeta(meta, spec.baseDir);
+  try {
+    await writePtyMeta(meta, spec.baseDir);
+  } catch (err) {
+    killOrphan();
+    throw err;
+  }
 
   const send = (client: Client, bytes: Uint8Array): void => {
     if (!client.socket.destroyed) client.socket.write(bytes);
@@ -281,6 +297,13 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     await removePtySession(spec.managerId, spec.baseDir).catch(() => {});
     resolveDone(exitCode);
   });
+
+  /**
+   * Clients that are a terminal someone could be watching. The hub's own
+   * control connection is not one (it attaches 0x0, reads nothing and leaves).
+   */
+  const watchers = (except?: Client): number =>
+    [...clients].filter((c) => c !== except && c.authed && c.cols > 0 && c.rows > 0).length;
 
   const applySize = (): void => {
     // Only clients that ARE a terminal size the session. The hub connects with
@@ -513,10 +536,16 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(socketPath, () => resolve());
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, () => resolve());
+    });
+  } catch (err) {
+    killOrphan();
+    await removePtySession(spec.managerId, spec.baseDir).catch(() => {});
+    throw err;
+  }
   await chmod(socketPath, 0o600).catch(() => {});
 
   const reaper = setInterval(() => {
@@ -531,6 +560,11 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     for (const lease of leases.values()) {
       if (now - lease.lastSeenAt <= leaseGraceMs) return;
     }
+    // Someone is still looking at it. A lease says "this session is mine to
+    // reap", never "nobody else may be here": a terminal attached by hand holds
+    // none, and SIGHUPing the agent out from under it would be the worst
+    // possible reading of a client quitting elsewhere.
+    if (watchers() > 0) return;
     void stopLadder();
   }, REAP_TICK_MS);
 

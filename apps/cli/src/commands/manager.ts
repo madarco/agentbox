@@ -253,10 +253,22 @@ async function attachToPtySession(
     }
     // Spawned by explicit path, not as bare `agentbox`: a new pane gets a login
     // shell whose PATH may not have the install this process was started from.
+    // The flags travel with it — a pane that quietly dropped `--lease-id` would
+    // leave a session nothing owns, and one that dropped `--raw` would draw a
+    // lead-in line into an embedding terminal.
     const spawned = await spawnInNewTerminal({
       host,
       mode: openIn,
-      argv: [process.execPath, process.argv[1] ?? 'agentbox', 'manager', 'attach', m.id],
+      argv: [
+        process.execPath,
+        process.argv[1] ?? 'agentbox',
+        'manager',
+        'attach',
+        m.id,
+        ...(opts.raw ? ['--raw'] : []),
+        ...(opts.detachKey ? ['--detach-key', opts.detachKey] : []),
+        ...(opts.leaseId ? ['--lease-id', opts.leaseId] : []),
+      ],
       cwd: m.cwd,
       title: 'manager',
     });
@@ -300,6 +312,15 @@ async function attachToSession(
   // the machine that runs it, which is also the only machine that could attach.
   if (runsHere(m) && (await readPtyMeta(m.id))) {
     return await attachToPtySession(m, openIn, opts);
+  }
+  if (!runsHere(m) && m.attachCommand) {
+    // Said before the tmux-shaped check below: a pty manager elsewhere has an
+    // attach command but no session name, and would otherwise be reported as
+    // "runs in a terminal of its own", which it does not.
+    log.error(
+      `manager ${m.id} runs on ${m.host}, not on this machine. Reach its session there with:\n  ${m.attachCommand}`,
+    );
+    return false;
   }
   if (!m.tmuxSession || !m.attachCommand) {
     log.error(
@@ -529,13 +550,13 @@ const attachCommand = new Command('attach')
         else {
           const ws = await resolveOn(opts.workspace);
           const running = (await client.listWorkspaceManagers(ws.id)).filter(
-            (m) => m.kind === 'tmux' && m.status === 'running',
+            (m) => m.kind !== 'external' && m.status === 'running',
           );
           if (running.length !== 1) {
             log.error(
               running.length === 0
-                ? `no tmux-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
-                : `${String(running.length)} tmux-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
+                ? `no hub-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
+                : `${String(running.length)} hub-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
             );
             process.exit(2);
           }
@@ -560,6 +581,7 @@ const attachCommand = new Command('attach')
         const attachOpts = {
           ...(opts.raw ? { raw: true } : {}),
           ...(opts.detachKey ? { detachKey: opts.detachKey } : {}),
+          ...(opts.leaseId ? { leaseId: opts.leaseId } : {}),
         };
         if (!(await attachToSession(manager, mode, attachOpts))) process.exit(1);
       });

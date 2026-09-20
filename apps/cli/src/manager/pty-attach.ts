@@ -25,6 +25,9 @@ import {
   parseDetachKey,
 } from './detach-chord.js';
 
+/** How long a host has to answer `hello` before the attach gives up. */
+const WELCOME_TIMEOUT_MS = 5_000;
+
 export interface PtyAttachOptions {
   managerId: string;
   baseDir?: string;
@@ -53,7 +56,18 @@ export async function attachPtySession(opts: PtyAttachOptions): Promise<PtyAttac
   const stdin = opts.stdin ?? process.stdin;
   const stdout = opts.stdout ?? process.stdout;
   const stderr = opts.stderr ?? process.stderr;
-  const leader = opts.raw ? null : parseDetachKey(opts.detachKey);
+  let leader: number | null = null;
+  if (!opts.raw) {
+    const parsed = parseDetachKey(opts.detachKey);
+    if (parsed === undefined) {
+      stderr.write(
+        `manager.detachKey ${JSON.stringify(opts.detachKey)} is not a C-<key> spelling or "none"; using ${DEFAULT_DETACH_KEY}\n`,
+      );
+      leader = parseDetachKey(DEFAULT_DETACH_KEY) ?? null;
+    } else {
+      leader = parsed;
+    }
+  }
   const chord = new DetachChord(leader);
 
   const socket = await openSocket(meta.socket);
@@ -66,8 +80,16 @@ export async function attachPtySession(opts: PtyAttachOptions): Promise<PtyAttac
     let lastExit: number | undefined;
     let rawSet = false;
     let leaseTimer: NodeJS.Timeout | undefined;
+    // A host that accepts the connection and then never speaks (a wedged event
+    // loop, a half-written frame) would otherwise hang here with stdin not yet
+    // in raw mode and nothing on screen to explain it.
+    const welcomeTimer = setTimeout(() => {
+      finish({ outcome: 'unavailable', reason: 'pty host did not answer the handshake' });
+    }, WELCOME_TIMEOUT_MS);
+    welcomeTimer.unref();
 
     const cleanup = (): void => {
+      clearTimeout(welcomeTimer);
       if (leaseTimer) clearInterval(leaseTimer);
       stdin.off('data', onStdin);
       stdout.off('resize', onResize);
@@ -124,6 +146,7 @@ export async function attachPtySession(opts: PtyAttachOptions): Promise<PtyAttac
           return;
         }
         if (message.t !== 'welcome') continue;
+        clearTimeout(welcomeTimer);
         if (!opts.raw && leader !== null) {
           stderr.write(
             `attached to manager ${opts.managerId} · ${describeDetachKey(leader, opts.detachKey ?? DEFAULT_DETACH_KEY)} to detach\n`,

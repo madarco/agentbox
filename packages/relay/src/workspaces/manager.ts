@@ -771,11 +771,15 @@ export async function upsertDetectedManager(
         delete next.tmuxPane;
         delete next.stoppedAt;
         delete next.lastExit;
-      } else if (prev.kind === 'tmux' && !fromOwnSession && input.pid !== undefined) {
-        // The session is being run from somewhere other than the hub's tmux — the
-        // user resumed it in a terminal. Observe that process from now on.
+      } else if (prev.kind !== 'external' && !fromOwnSession && input.pid !== undefined) {
+        // The session is being run from somewhere other than the carrier the hub
+        // started — the user resumed it in a terminal. Observe that process from
+        // now on, whichever carrier the record used to name: a `pty` record left
+        // pointing at a dead socket would read as stopped while the agent is
+        // plainly running.
         next.kind = 'external';
         delete next.tmuxSession;
+        delete next.pty;
         delete next.argv;
         delete next.startedAt;
         delete next.stoppedAt;
@@ -1398,7 +1402,13 @@ export async function detachBackgroundSession(
  */
 export async function resumeManagerSession(
   rec: ManagerRecord,
-  probe: ManagerProbe & { env?: NodeJS.ProcessEnv } = {},
+  probe: ManagerProbe & {
+    env?: NodeJS.ProcessEnv;
+    /** Same carrier choice a fresh start makes — a resume is a start. */
+    carrier?: ManagerCarrier;
+    ptySettings?: Partial<PtyCarrierSettings>;
+    spawnPtyHost?: SpawnPtyHost;
+  } = {},
   opts: { prompt?: string } = {},
 ): Promise<ManagerRegistration> {
   const id = rec.id;
@@ -1432,6 +1442,12 @@ export async function resumeManagerSession(
     ...(probe.hostname ? { hostname: probe.hostname } : {}),
     ...(probe.exec ? { exec: probe.exec } : {}),
     ...(probe.env ? { env: probe.env } : {}),
+    // Without these a resume ignored the project's `manager.*` config entirely:
+    // a user who pinned the tmux carrier silently got a pty host, and every
+    // tunable fell back to the built-in defaults.
+    ...(probe.carrier ? { carrier: probe.carrier } : {}),
+    ...(probe.ptySettings ? { ptySettings: probe.ptySettings } : {}),
+    ...(probe.spawnPtyHost ? { spawnPtyHost: probe.spawnPtyHost } : {}),
   });
 }
 

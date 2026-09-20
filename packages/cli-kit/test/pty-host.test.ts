@@ -257,6 +257,23 @@ describe.skipIf(!backend)('pty host lifetime', () => {
     rmSync(dir, { recursive: true, force: true });
   }, 30_000);
 
+  it('does not reap a session someone is still attached to', async () => {
+    const dir = shortTmp();
+    const host = await startPtyHost(spec(dir, 'ffff000011112222'));
+    const tray = attach(host.socketPath);
+    await hello(tray, 'tray:4', 80, 24, true);
+    // A terminal attached by hand holds no lease, and a lease says "mine to
+    // reap", never "nobody else is here".
+    const terminal = attach(host.socketPath);
+    await hello(terminal, 'cli:watching', 80, 24);
+    tray.close();
+    const code = await Promise.race([host.done, delay(6_500).then(() => 'still-running' as const)]);
+    expect(code).toBe('still-running');
+    terminal.close();
+    await host.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }, 30_000);
+
   it('keeps a pinned session even with no lease holder', async () => {
     const dir = shortTmp();
     const host = await startPtyHost({ ...spec(dir, 'ddddeeeeffff0000'), pinned: true });

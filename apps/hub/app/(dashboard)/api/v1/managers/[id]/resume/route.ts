@@ -5,7 +5,7 @@
 import { backendOrNull } from '../../../lib/backend';
 import { timelineMeta } from '../../../lib/actor';
 import { fail, failFromManager, ok } from '../../../lib/envelope';
-import { TMUX_MISSING } from '@/lib/backend/errors';
+import { MANAGER_CARRIER_MISSING, PTY_CARRIER_MISSING, TMUX_MISSING } from '@/lib/backend/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,7 +19,13 @@ export async function POST(
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
   const res = await backend.resumeManager(id, await timelineMeta(req, backend));
   if (!res.ok) {
-    if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
+    if (
+      res.error === TMUX_MISSING ||
+      res.error === MANAGER_CARRIER_MISSING ||
+      res.error === PTY_CARRIER_MISSING
+    ) {
+      return fail('backend_unavailable', res.error);
+    }
     return failFromManager(res);
   }
   return ok(res.manager);

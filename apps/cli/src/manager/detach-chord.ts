@@ -12,16 +12,23 @@
 
 export const DEFAULT_DETACH_KEY = 'C-]';
 
-/** Control byte for a `C-<char>` spec, or null for `none`/unparseable. */
-export function parseDetachKey(spec: string | undefined): number | null {
+/**
+ * Control byte for a `C-<char>` spec, `null` for an explicit `none`, and
+ * `undefined` for a spec that cannot be parsed.
+ *
+ * The three are deliberately distinct: silently treating a typo as `none` would
+ * leave the user attached with no way out but killing the terminal, and no hint
+ * that the key they configured was never understood.
+ */
+export function parseDetachKey(spec: string | undefined): number | null | undefined {
   const value = (spec ?? DEFAULT_DETACH_KEY).trim();
   if (value === '' || value.toLowerCase() === 'none') return null;
   const match = /^(?:C|c|Ctrl|ctrl)-(.)$/u.exec(value);
-  if (!match) return null;
+  if (!match) return undefined;
   const ch = (match[1] as string).toUpperCase();
   const code = ch.charCodeAt(0);
   // @ A-Z [ \ ] ^ _ map to 0x00-0x1f, which is what Ctrl does to them.
-  if (code < 0x40 || code > 0x5f) return null;
+  if (code < 0x40 || code > 0x5f) return undefined;
   return code - 0x40;
 }
 

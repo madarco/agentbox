@@ -7,7 +7,7 @@ import { backendOrNull } from '../../../../lib/backend';
 import { timelineMeta } from '../../../../lib/actor';
 import { fail, failFromManager, ok } from '../../../../lib/envelope';
 import { MANAGER_AGENT_NAMES, parseManagerStart, readJson } from '../../../../lib/validate';
-import { TMUX_MISSING } from '@/lib/backend/errors';
+import { MANAGER_CARRIER_MISSING, PTY_CARRIER_MISSING, TMUX_MISSING } from '@/lib/backend/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,7 +54,13 @@ export async function POST(
   if (!res.ok) {
     // A host without tmux cannot host a manager at all — that is an environment
     // gap on the hub's machine, not a bad request.
-    if (res.error === TMUX_MISSING) return fail('backend_unavailable', res.error);
+    if (
+      res.error === TMUX_MISSING ||
+      res.error === MANAGER_CARRIER_MISSING ||
+      res.error === PTY_CARRIER_MISSING
+    ) {
+      return fail('backend_unavailable', res.error);
+    }
     return failFromManager(res);
   }
   return ok(res.manager);
