@@ -78,7 +78,7 @@ Design and phase states: [`manager-pty-plan.md`](./manager-pty-plan.md).
 | # | Item | Size | Notes |
 |---|------|------|-------|
 | 20 | **Protocol, replay ring, pty-host** | done | `packages/core/src/pty-protocol.ts`, `packages/sandbox-core/src/pty-session.ts`, `packages/cli-kit/src/pty-{ring,host}.ts`, `apps/cli/src/manager/pty-host-entry.ts` (third tsup entry → `dist/pty-host.js`). Real-pty tests cover fan-out, late-client replay, size arbitration, inject, auth refusal, stale-socket adoption, lease reaping, pinned survival. |
-| 21 | **CLI attach client** | todo | `agentbox manager attach` raw proxy, `--raw`, `C-] d` detach chord, `--attach-in` argv. |
+| 21 | **CLI attach client** | done | `apps/cli/src/manager/{detach-chord,pty-attach}.ts` + the pty branch in `attachToSession`. `--raw` (no lead-in, no chord) and `--detach-key`; `--attach-in` spawns the CLI by absolute path. Tests: chord state machine (pure) and a real-pty round trip incl. detach-is-not-stop and exit-code mirroring. Fixed on the way: a post-exit resize threw ENOTTY out of a timer and would have killed the host. |
 | 22 | **Hub/relay integration** | todo | `kind: 'pty'` end to end — `ManagerRegistration` (pins `'tmux'` today), `registeredManager` (hard-codes it twice), `managerStatus`, `backgroundFor`, `lastExit`, `ptyAttach` on the view, `spawnPtyHost` dep seam. |
 | 23 | **Lease, pin, config, janitor, fallback** | todo | `manager.*` config keys, `POST …/{id}/pin`, hub janitor for dead metas, automatic tmux fallback when the node-pty prebuild is missing. |
 | 24 | **Tray** | todo | `ptyAttach` argv in `TerminalHostView`, delete the Ctrl+J rewrite, neutral warm-pool key, `isAttachable`. |

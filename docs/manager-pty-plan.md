@@ -121,7 +121,7 @@ never reaped — exactly today's behavior. `pinned` overrides in both directions
 | # | Phase | State |
 |---|-------|-------|
 | 1 | Protocol, replay ring and the host, standalone | done |
-| 2 | CLI attach client (`agentbox manager attach`, `--raw`, detach chord) | todo |
+| 2 | CLI attach client (`agentbox manager attach`, `--raw`, detach chord) | done |
 | 3 | Hub/relay integration (`kind: 'pty'`, start/stop/resume/message, status) | todo |
 | 4 | Lease/grace wiring, `pinned`, config keys, hub janitor, tmux fallback | todo |
 | 5 | Tray (`ptyAttach` argv, delete the Ctrl+J rewrite, `isAttachable`) | todo |
@@ -148,3 +148,24 @@ missing) covers fan-out, replay to a late client, size arbitration, `inject`, to
 refusal, refusing to steal a live socket, adopting a stale one, lease reaping past the grace window,
 and a pinned session surviving. `pty-ring.test.ts` and `packages/core/test/pty-protocol.test.ts` are
 pure.
+
+### Phase 2 (done)
+
+- `apps/cli/src/manager/detach-chord.ts` — the only key sequence the client interprets. `C-] d`
+  detaches, `C-] C-]` sends one literal leader, `C-] <anything else>` types both, so a mistyped
+  chord swallows nothing. No timeout: a chord that expires is a chord you cannot trust. `none`
+  turns it off for an embedding terminal whose window already is the detach.
+- `apps/cli/src/manager/pty-attach.ts` — the raw proxy: stdin to the session, session to stdout,
+  `resize` on SIGWINCH, SIGINT forwarded as `0x03` (the proxy never dies on it), the exit code
+  mirrored. Nothing is parsed or rewritten.
+- `apps/cli/src/commands/manager.ts` — `attachToSession` tries the pty carrier first when the
+  manager runs on this machine and a local session meta exists (its socket and token are readable
+  only here, which is also the only place an attach could work from). `--raw` and `--detach-key`
+  added; `--attach-in` spawns `[execPath, argv[1], 'manager', 'attach', id]` rather than a bare
+  `agentbox`, because a new pane's login shell may not have this install on PATH.
+
+Found while testing: a deferred repaint nudge that fires after the agent exits makes node-pty throw
+`ioctl(2) failed, ENOTTY` from a timer — an uncaught exception that would have killed the host, and
+with it the session cleanup. Every pty write/resize/kill is now guarded by an `alive` flag and a
+try/catch, and the nudge timer is cleared on exit.
+

@@ -179,6 +179,40 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
   let rows = spec.rows;
   let nudging = false;
   let stopping = false;
+  let alive = true;
+  let nudgeTimer: NodeJS.Timeout | undefined;
+
+  /**
+   * Every pty call is guarded: the agent can exit between a client's request
+   * and the call it triggers (a deferred repaint nudge is the reliable way to
+   * hit this), and node-pty throws ENOTTY out of the event loop for a write or
+   * resize on a dead pty — an uncaught exception that would take the host with
+   * it, killing the session's cleanup along the way.
+   */
+  const ptyWrite = (data: string): void => {
+    if (!alive) return;
+    try {
+      pty.write(data);
+    } catch {
+      /* the agent is gone; the exit path handles the rest */
+    }
+  };
+  const ptyResize = (nextCols: number, nextRows: number): void => {
+    if (!alive) return;
+    try {
+      pty.resize(nextCols, nextRows);
+    } catch {
+      /* same */
+    }
+  };
+  const ptyKill = (signal: string): void => {
+    if (!alive) return;
+    try {
+      pty.kill(signal);
+    } catch {
+      /* same */
+    }
+  };
 
   const pty: IPtyLike = backend.ptySpawn(spec.shell, ['-lc', spec.script], {
     name: 'xterm-256color',
@@ -227,6 +261,8 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
   });
 
   pty.onExit(async ({ exitCode }) => {
+    alive = false;
+    if (nudgeTimer) clearTimeout(nudgeTimer);
     meta.exitCode = exitCode;
     meta.exitedAt = new Date().toISOString();
     const frame = encodeExit(exitCode);
@@ -254,7 +290,7 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
     if (next.cols === cols && next.rows === rows) return;
     cols = next.cols;
     rows = next.rows;
-    pty.resize(cols, rows);
+    ptyResize(cols, rows);
     const size: PtyCtrlFromHost = { t: 'size', cols, rows, by: next.id ?? 'unknown' };
     for (const client of clients) if (client.authed) tell(client, size);
   };
@@ -267,11 +303,12 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
   const nudgeRepaint = (): void => {
     if (nudging) return;
     nudging = true;
-    pty.resize(cols, Math.max(1, rows - 1));
-    setTimeout(() => {
-      pty.resize(cols, rows);
+    ptyResize(cols, Math.max(1, rows - 1));
+    nudgeTimer = setTimeout(() => {
+      ptyResize(cols, rows);
       nudging = false;
-    }, NUDGE_DELAY_MS).unref();
+    }, NUDGE_DELAY_MS);
+    nudgeTimer.unref();
   };
 
   const exitedWithin = async (ms: number): Promise<boolean> =>
@@ -280,11 +317,11 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
   const stopLadder = async (): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    pty.kill('SIGHUP');
+    ptyKill('SIGHUP');
     if (await exitedWithin(STOP_LADDER_MS)) return;
-    pty.kill('SIGTERM');
+    ptyKill('SIGTERM');
     if (await exitedWithin(STOP_LADDER_MS)) return;
-    pty.kill('SIGKILL');
+    ptyKill('SIGKILL');
   };
 
   const onCtrl = async (client: Client, message: PtyCtrlFromClient): Promise<void> => {
@@ -356,10 +393,10 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
         // needed — an agent TUI reads a burst ending in Enter as a paste and
         // keeps the Enter as a newline instead of submitting.
         const flat = message.text.replace(/\s*[\r\n]+\s*/gu, ' ').trim();
-        if (flat.length > 0) pty.write(flat);
+        if (flat.length > 0) ptyWrite(flat);
         if (message.submit !== false) {
           await delay(message.submitDelayMs ?? spec.submitDelayMs);
-          pty.write('\r');
+          ptyWrite('\r');
         }
         return;
       }
@@ -381,8 +418,8 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
       case 'signal':
         // INT goes in as a keystroke: the agent is the foreground job of a
         // shell inside the pty, so a signal to the pty's leader would miss it.
-        if (message.name === 'INT') pty.write('\u0003');
-        else pty.kill(`SIG${message.name}`);
+        if (message.name === 'INT') ptyWrite('\u0003');
+        else ptyKill(`SIG${message.name}`);
         return;
       case 'status':
         tell(client, {
@@ -446,7 +483,7 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
           if (!client.authed) continue;
           client.lastActiveAt = Date.now();
           const text = client.joiner.push(frame.payload);
-          if (text.length > 0) pty.write(text);
+          if (text.length > 0) ptyWrite(text);
           continue;
         }
         if (frame.type === 'ctrl') {

@@ -27,6 +27,8 @@ import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/worksp
 import { detectHostSession, registerHostManager } from '../lib/host-session.js';
 import { renderTable } from '../lib/text-table.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
+import { readPtyMeta } from '@agentbox/sandbox-core';
+import { attachPtySession } from '../manager/pty-attach.js';
 import type {
   HubApiClient,
   HubApiManager,
@@ -230,8 +232,63 @@ export async function sendManagerMessage(
   if (retried === 'sent') process.exitCode = exitBefore;
 }
 
-/** Attach to a hub-run manager's tmux session in this terminal (or a new pane). */
-async function attachToSession(m: HubApiManager, openIn?: AttachOpenIn): Promise<boolean> {
+/**
+ * The pty carrier's attach: a raw proxy, so the modified Enter, the wheel and
+ * the selection are this terminal's own rather than a multiplexer's.
+ */
+async function attachToPtySession(
+  m: HubApiManager,
+  openIn: AttachOpenIn | undefined,
+  opts: { raw?: boolean; detachKey?: string },
+): Promise<boolean> {
+  if (openIn && openIn !== 'same') {
+    const host = detectHostTerminal();
+    if (host === 'unknown') {
+      log.error('--attach-in needs a supported terminal (tmux, cmux, herdr, iTerm2).');
+      return false;
+    }
+    // Spawned by explicit path, not as bare `agentbox`: a new pane gets a login
+    // shell whose PATH may not have the install this process was started from.
+    const spawned = await spawnInNewTerminal({
+      host,
+      mode: openIn,
+      argv: [process.execPath, process.argv[1] ?? 'agentbox', 'manager', 'attach', m.id],
+      cwd: m.cwd,
+      title: 'manager',
+    });
+    if (!spawned.launched) {
+      log.error(spawned.error ?? `could not open a new ${host} ${openIn}`);
+      return false;
+    }
+    log.success(spawned.note || `attached in a new ${host} ${openIn}`);
+    return true;
+  }
+  const result = await attachPtySession({
+    managerId: m.id,
+    clientId: `cli:${String(process.pid)}`,
+    kind: 'cli',
+    ...(opts.raw ? { raw: true } : {}),
+    ...(opts.detachKey ? { detachKey: opts.detachKey } : {}),
+  });
+  if (result.outcome === 'unavailable') {
+    log.error(`could not attach to manager ${m.id}: ${result.reason}`);
+    return false;
+  }
+  if (result.outcome === 'exited' && result.code !== 0) process.exitCode = result.code;
+  return true;
+}
+
+/** Attach to a hub-run manager's session in this terminal (or a new pane). */
+async function attachToSession(
+  m: HubApiManager,
+  openIn?: AttachOpenIn,
+  opts: { raw?: boolean; detachKey?: string } = {},
+): Promise<boolean> {
+  // A pty-hosted manager first: its socket and token are readable only here, on
+  // the machine that runs it, which is also the only machine that could attach.
+  if (runsHere(m) && (await readPtyMeta(m.id))) {
+    return await attachToPtySession(m, openIn, opts);
+  }
   if (!m.tmuxSession || !m.attachCommand) {
     log.error(
       `manager ${m.id} runs in a terminal of its own, not in a session the hub can attach to.`,
@@ -437,45 +494,56 @@ const attachCommand = new Command('attach')
   .argument('[id]', 'manager id (default: the one running hub-run manager in the workspace)')
   .option('-w, --workspace <ref>', 'workspace id or path (default: the one containing the cwd)')
   .option('--attach-in <mode>', 'open in a new split | window | tab instead of this terminal')
-  .action(async (id: string | undefined, opts: WorkspaceOpt & { attachIn?: string }) => {
-    const mode = mustAttachIn(opts.attachIn);
-    await withHubClient({ preferLocal: true }, async (client) => {
-      let manager: HubApiManager;
-      if (id) manager = await mustManager(client, id);
-      else {
-        const ws = await resolveOn(opts.workspace);
-        const running = (await client.listWorkspaceManagers(ws.id)).filter(
-          (m) => m.kind === 'tmux' && m.status === 'running',
-        );
-        if (running.length !== 1) {
-          log.error(
-            running.length === 0
-              ? `no tmux-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
-              : `${String(running.length)} tmux-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
+  .option('--raw', 'no lead-in line and no detach chord (for an embedding terminal)')
+  .option('--detach-key <key>', 'detach chord leader, e.g. C-] (default), or none')
+  .action(
+    async (
+      id: string | undefined,
+      opts: WorkspaceOpt & { attachIn?: string; raw?: boolean; detachKey?: string },
+    ) => {
+      const mode = mustAttachIn(opts.attachIn);
+      await withHubClient({ preferLocal: true }, async (client) => {
+        let manager: HubApiManager;
+        if (id) manager = await mustManager(client, id);
+        else {
+          const ws = await resolveOn(opts.workspace);
+          const running = (await client.listWorkspaceManagers(ws.id)).filter(
+            (m) => m.kind === 'tmux' && m.status === 'running',
+          );
+          if (running.length !== 1) {
+            log.error(
+              running.length === 0
+                ? `no tmux-run manager is running in ${ws.name}. Start one with \`agentbox manager start\`, or resume one with \`agentbox manager resume <id>\`.`
+                : `${String(running.length)} tmux-run managers are running in ${ws.name}; pass an id (\`agentbox manager list\`).`,
+            );
+            process.exit(2);
+          }
+          manager = running[0]!;
+        }
+        if (manager.background && !manager.attachCommand) {
+          // A Claude background session: the hub opens it in a tmux session of its own.
+          manager = await client.attachManager(manager.id);
+        }
+        if (manager.kind === 'external' && manager.status === 'running' && !manager.attachCommand) {
+          log.info(
+            `manager ${manager.id} is running in your terminal${manager.pid !== undefined ? ` (pid ${String(manager.pid)})` : ''}; switch to that window.`,
           );
           process.exit(2);
         }
-        manager = running[0]!;
-      }
-      if (manager.background && !manager.attachCommand) {
-        // A Claude background session: the hub opens it in a tmux session of its own.
-        manager = await client.attachManager(manager.id);
-      }
-      if (manager.kind === 'external' && manager.status === 'running' && !manager.attachCommand) {
-        log.info(
-          `manager ${manager.id} is running in your terminal${manager.pid !== undefined ? ` (pid ${String(manager.pid)})` : ''}; switch to that window.`,
-        );
-        process.exit(2);
-      }
-      if (manager.status !== 'running') {
-        log.error(
-          `manager ${manager.id} is not running. Resume it with \`agentbox manager resume ${manager.id} --attach\`.`,
-        );
-        process.exit(2);
-      }
-      if (!(await attachToSession(manager, mode))) process.exit(1);
-    });
-  });
+        if (manager.status !== 'running') {
+          log.error(
+            `manager ${manager.id} is not running. Resume it with \`agentbox manager resume ${manager.id} --attach\`.`,
+          );
+          process.exit(2);
+        }
+        const attachOpts = {
+          ...(opts.raw ? { raw: true } : {}),
+          ...(opts.detachKey ? { detachKey: opts.detachKey } : {}),
+        };
+        if (!(await attachToSession(manager, mode, attachOpts))) process.exit(1);
+      });
+    },
+  );
 
 const sessionsCommand = new Command('sessions')
   .description('List agent sessions in the workspace folder that a manager could resume')
