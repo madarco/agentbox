@@ -147,14 +147,16 @@ export type ManagerAgent = AgentId;
 
 /**
  * `external` is a session the user runs in their own terminal — the hub only
- * observes it, through detection. `tmux` is one a hub started (or resumed) in a
- * tmux session on its own machine, so it can also be attached to and stopped.
+ * observes it, through detection. `pty` is one a hub started on its own machine
+ * in an AgentBox-owned pty host, and is what a start produces today; `tmux` is
+ * the same thing on the older carrier, still used when the node-pty prebuild is
+ * missing. Both can be attached to and stopped.
  *
  * Named after the session, not after "the hub", because the hub that RUNS it and
  * the hub that STORES it need not be the same machine: a manager runs on the
  * user's PC while its record lives on the control box.
  */
-export type ManagerKind = 'external' | 'tmux';
+export type ManagerKind = 'external' | 'tmux' | 'pty';
 
 /**
  * A manager is a HOST agent session that orchestrates boxes: many per workspace.
@@ -194,8 +196,16 @@ export interface ManagerRecord {
   tmuxPane?: string;
   /** `tmux` only. */
   tmuxSession?: string;
-  /** `tmux` only: what was started, so a restart can reuse it. */
+  /** `tmux` and `pty`: what was started, so a restart can reuse it. */
   argv?: string[];
+  /** `pty` only: the host process serving this session. */
+  pty?: ManagerPtySession;
+  /**
+   * Keep the session running even when no client holds a lease on it. Set by
+   * the user (`manager pin`); the hub also pushes it to a live host, which is
+   * what actually enforces it.
+   */
+  pinned?: boolean;
   /** Boxes this session created. Reconciled on read: dropped when the box is gone. */
   boxIds: string[];
   /** Create jobs that have not produced a box yet; promoted to `boxIds` on read. */
@@ -215,6 +225,21 @@ export interface ManagerRecord {
   reported?: ManagerHeartbeat;
 }
 
+/** The pty host a `kind: 'pty'` manager runs in. */
+export interface ManagerPtySession {
+  /** pid of the pty host, not of the agent inside it. */
+  pid: number;
+  /** Start time of that pid, so a recycled pid cannot claim the session. */
+  pidStartedAt?: string;
+  socket: string;
+  /**
+   * Proves a detected session really is this manager's: the host exports it into
+   * the agent's environment, and detection sends it back. `$AGENTBOX_MANAGER`
+   * alone is not enough — Claude's daemon leaks it into unrelated sessions.
+   */
+  runId: string;
+}
+
 /**
  * What the machine a manager runs on reports about it, so a hub that only holds
  * the record can still show a live status, title and turn. Every field is
@@ -232,6 +257,8 @@ export interface ManagerHeartbeat {
   terminalSession?: string;
   /** The tmux session that shows it right now, when one does. */
   tmuxSession?: string;
+  /** How to attach, when the reporting machine runs it on a pty host. */
+  ptyAttach?: ManagerPtyAttach;
 }
 
 /**
@@ -244,17 +271,20 @@ export type ManagerRecordPatch = {
 };
 
 /**
- * The record a tmux start or resume produced, as the machine that ran it
+ * The record a start or resume produced, as the machine that ran it
  * describes it. `id` names an existing record to move; without one a new manager
  * is minted.
  */
 export interface ManagerRegistration {
   id?: string;
   agent: ManagerAgent;
-  kind: 'tmux';
+  kind: 'tmux' | 'pty';
   host: string;
   cwd: string;
-  tmuxSession: string;
+  /** `tmux` only — required there, absent for a pty session. */
+  tmuxSession?: string;
+  /** `pty` only. */
+  pty?: ManagerPtySession;
   sessionId?: string;
   argv?: string[];
 }
@@ -298,6 +328,12 @@ export interface ManagerView extends Omit<ManagerRecord, 'argv' | 'reported' | '
    */
   attachCommand?: string;
   /**
+   * How to attach to a `pty` manager. The argv is absolute so an embedding app
+   * (the tray) need not have `agentbox` on its login PATH; `socket` and
+   * `protocol` are what a native or web client would speak instead.
+   */
+  ptyAttach?: ManagerPtyAttach;
+  /**
    * Set when this claude manager's session is a live Claude Code background session
    * (`claude --bg`, listed by `claude agents`). `POST /managers/{id}/attach` opens it
    * in a hub tmux session; the session itself runs in Claude's own daemon.
@@ -312,6 +348,13 @@ export interface ManagerView extends Omit<ManagerRecord, 'argv' | 'reported' | '
   workspaceName: string;
   /** Tasks whose `managerId` is this manager. */
   taskCounts: { open: number; done: number };
+}
+
+/** What a client needs to open a pty-hosted manager's terminal. */
+export interface ManagerPtyAttach {
+  command: string[];
+  socket: string;
+  protocol: number;
 }
 
 /** A Claude Code background session, as `claude agents --json` reports it. */

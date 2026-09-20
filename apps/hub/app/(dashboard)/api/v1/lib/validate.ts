@@ -1671,9 +1671,13 @@ export function parseManagerDetect(
     boxJobId,
     tmuxPane,
     tmuxSession,
+    runId,
     projects,
     home,
   } = body;
+  if (runId !== undefined && (typeof runId !== 'string' || !/^[0-9a-f]{32}$/u.test(runId))) {
+    return { ok: false, message: 'runId must be 32 hex characters' };
+  }
   if (tmuxPane !== undefined && (typeof tmuxPane !== 'string' || !/^%\d+$/.test(tmuxPane))) {
     return { ok: false, message: 'tmuxPane must be a tmux pane id like %3' };
   }
@@ -1727,10 +1731,44 @@ export function parseManagerDetect(
       ...(parsedManager.value ? { managerId: parsedManager.value } : {}),
       ...(typeof tmuxPane === 'string' ? { tmuxPane } : {}),
       ...(typeof tmuxSession === 'string' ? { tmuxSession } : {}),
+      ...(typeof runId === 'string' ? { runId } : {}),
       ...(parsedBox.value ? { boxId: parsedBox.value } : {}),
       ...(parsedJob.value ? { boxJobId: parsedJob.value } : {}),
       ...(projects !== undefined ? { projects: parsedProjects.value } : {}),
       ...(parsedHome.value ? { home: parsedHome.value } : {}),
+    },
+  };
+}
+
+/**
+ * The pty host a registration names. Its socket must be a path, not a pattern:
+ * the hub connects to whatever it is handed, so an unvalidated one would be an
+ * open connect primitive for anything that can post a registration.
+ */
+function parseManagerPty(
+  value: unknown,
+): Parsed<{ pid: number; socket: string; runId: string; pidStartedAt?: string } | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isObject(value)) return { ok: false, message: 'pty must be an object' };
+  const { pid, socket, runId, pidStartedAt } = value;
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+    return { ok: false, message: 'pty.pid must be a positive integer' };
+  }
+  if (typeof socket !== 'string' || !socket.startsWith('/') || socket.length > 4096) {
+    return { ok: false, message: 'pty.socket must be an absolute path' };
+  }
+  if (typeof runId !== 'string' || !/^[0-9a-f]{32}$/u.test(runId)) {
+    return { ok: false, message: 'pty.runId must be 32 hex characters' };
+  }
+  const parsedStart = optionalString(pidStartedAt, 'pty.pidStartedAt');
+  if (!parsedStart.ok) return parsedStart;
+  return {
+    ok: true,
+    value: {
+      pid,
+      socket,
+      runId,
+      ...(parsedStart.value ? { pidStartedAt: parsedStart.value } : {}),
     },
   };
 }
@@ -1744,10 +1782,13 @@ const MANAGER_ARG_MAX = 512;
 export interface ManagerRegisterInput {
   id?: string;
   agent: string;
-  kind: 'tmux';
+  kind: 'tmux' | 'pty';
   host: string;
   cwd: string;
-  tmuxSession: string;
+  /** `tmux` only. */
+  tmuxSession?: string;
+  /** `pty` only. */
+  pty?: { pid: number; socket: string; runId: string; pidStartedAt?: string };
   sessionId?: string;
   argv?: string[];
 }
@@ -1767,21 +1808,31 @@ export function parseManagerRegister(
   allowedAgents: readonly string[] = MANAGER_AGENT_NAMES,
 ): Parsed<ManagerRegisterInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { id, agent, kind, host, cwd, tmuxSession, sessionId, argv } = body;
+  const { id, agent, kind, host, cwd, tmuxSession, pty, sessionId, argv } = body;
   const parsedId = optionalManagerId(id, 'id');
   if (!parsedId.ok) return parsedId;
   if (typeof agent !== 'string' || !allowedAgents.includes(agent)) {
     return { ok: false, message: `agent must be one of ${allowedAgents.join(', ')}` };
   }
-  if (kind !== 'tmux') return { ok: false, message: 'kind must be "tmux"' };
+  if (kind !== 'tmux' && kind !== 'pty') {
+    return { ok: false, message: 'kind must be "tmux" or "pty"' };
+  }
   if (typeof host !== 'string' || host.length === 0 || host.length > MANAGER_HOST_MAX) {
     return { ok: false, message: `host is required (max ${String(MANAGER_HOST_MAX)} chars)` };
   }
   if (typeof cwd !== 'string' || !cwd.startsWith('/') || cwd.length > 4096) {
     return { ok: false, message: 'cwd must be an absolute path' };
   }
-  if (typeof tmuxSession !== 'string' || !MANAGER_TMUX_SESSION_RE.test(tmuxSession)) {
+  if (
+    kind === 'tmux' &&
+    (typeof tmuxSession !== 'string' || !MANAGER_TMUX_SESSION_RE.test(tmuxSession))
+  ) {
     return { ok: false, message: 'tmuxSession must be an agentbox-manager-<16 hex> session name' };
+  }
+  const parsedPty = parseManagerPty(pty);
+  if (!parsedPty.ok) return parsedPty;
+  if (kind === 'pty' && !parsedPty.value) {
+    return { ok: false, message: 'pty is required for a pty registration' };
   }
   const parsedSession = optionalString(sessionId, 'sessionId');
   if (!parsedSession.ok) return parsedSession;
@@ -1803,10 +1854,11 @@ export function parseManagerRegister(
     value: {
       ...(parsedId.value ? { id: parsedId.value } : {}),
       agent,
-      kind: 'tmux',
+      kind,
       host,
       cwd,
-      tmuxSession,
+      ...(kind === 'tmux' ? { tmuxSession: tmuxSession as string } : {}),
+      ...(parsedPty.value ? { pty: parsedPty.value } : {}),
       ...(parsedSession.value ? { sessionId: parsedSession.value } : {}),
       ...(parsedArgv.value ? { argv: parsedArgv.value } : {}),
     },

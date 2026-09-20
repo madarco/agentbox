@@ -30,7 +30,7 @@ import {
   resumeManagerSession,
   RESUMABLE_MANAGER_AGENTS,
   managerStatusFormat,
-  startManagerSession,
+  startManagerTmuxSession,
   stopManagerSession,
   tmuxAvailable,
   tmuxSessionExists,
@@ -50,9 +50,11 @@ const noRegister = { register: async () => {} };
  * not be the one that holds its record.
  */
 async function startAndRecord(
-  input: Parameters<typeof startManagerSession>[0],
+  input: Parameters<typeof startManagerTmuxSession>[0],
 ): Promise<ManagerRecord> {
-  const registration = await startManagerSession({ hostname: () => 'laptop', ...input });
+  // The tmux carrier explicitly: `startManagerSession` dispatches, and these
+  // assertions are about what tmux is told.
+  const registration = await startManagerTmuxSession({ hostname: () => 'laptop', ...input });
   const rec = await fileManagerStore().registerManager(input.wsId, registration);
   if (!rec) throw new Error('the manager was not written');
   return rec;
@@ -180,7 +182,7 @@ function record(over: Partial<ManagerRecord> = {}): ManagerRecord {
   };
 }
 
-describe('startManagerSession', () => {
+describe('startManagerTmuxSession', () => {
   it('spawns a detached tmux session named after the manager id, under a login shell', async () => {
     const { id, root } = await makeWorkspace();
     const { calls, exec } = fakeExec();

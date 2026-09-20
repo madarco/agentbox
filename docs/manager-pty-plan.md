@@ -122,7 +122,7 @@ never reaped — exactly today's behavior. `pinned` overrides in both directions
 |---|-------|-------|
 | 1 | Protocol, replay ring and the host, standalone | done |
 | 2 | CLI attach client (`agentbox manager attach`, `--raw`, detach chord) | done |
-| 3 | Hub/relay integration (`kind: 'pty'`, start/stop/resume/message, status) | todo |
+| 3 | Hub/relay integration (`kind: 'pty'`, start/stop/resume/message, status) | done |
 | 4 | Lease/grace wiring, `pinned`, config keys, hub janitor, tmux fallback | todo |
 | 5 | Tray (`ptyAttach` argv, delete the Ctrl+J rewrite, `isAttachable`) | todo |
 | 6 | Cleanup, docs, groundwork for a web terminal | todo |
@@ -169,3 +169,43 @@ Found while testing: a deferred repaint nudge that fires after the agent exits m
 with it the session cleanup. Every pty write/resize/kill is now guarded by an `alive` flag and a
 try/catch, and the nudge timer is cleared on exit.
 
+### Phase 3 (done)
+
+- `packages/relay/src/workspaces/pty-client.ts` — the hub's side: pure `node:net` plus the codec,
+  never node-pty (the hub's bundle ships no `node_modules`). `ptyHostAlive` is the liveness probe
+  `tmux has-session` used to be; `ptyInject` replaces `send-keys`; `ptyStop`, `ptyStatus`,
+  `ptyConfigure` round out the control surface. The hub attaches with `replay: false` and a 0x0
+  size, so it never takes the screen or the size from a real terminal.
+- `packages/relay/src/workspaces/manager-pty.ts` — the carrier: spawn detached, wait for meta AND a
+  listening socket (either alone is a half-started host), register `kind: 'pty'`.
+  `resolvePtyHostEntry` walks `$AGENTBOX_CLI_ENTRY` → this repo's build → a hub-bundle sibling.
+- `manager.ts` — `startManagerSession` is now a dispatcher (`auto` = pty, else tmux; a named carrier
+  never silently falls back), the old body is `startManagerTmuxSession`. `registeredManager` takes
+  the kind from the registration and clears the other carrier's fields; `managerStatus` probes the
+  socket; `stopManagerSession` asks the host; `backgroundFor` no longer offers a running pty manager
+  as a detached background session; `toManagerView` carries `ptyAttach`.
+- Hub: `spawnPtyHost`/`managerCarrier` seams on `BackendDeps` (a test must never spawn an agent),
+  `lastExit` for either hub-run kind, message routed to `ptyInject`, `ptyAttach` on the view and on
+  the heartbeat, `kind: 'pty'` + `pty` + `runId` through the validators and OpenAPI.
+- Detection got *stronger*: the host exports `AGENTBOX_MANAGER_RUN`, the CLI sends it, and
+  `trustedHint` believes a pty manager's `managerId` only when the run id matches — where the tmux
+  carrier could only ask tmux and `$AGENTBOX_MANAGER` alone is leaked by Claude's daemon.
+
+Live end-to-end (an isolated `$HOME`, its own hub on 8799, a real claude manager):
+`manager start` → `kind: pty`; `manager list` shows it running; `manager message` typed **and**
+submitted into the live TUI; `hub restart` left it running and attachable (the host outlives the
+hub by design); `manager stop` ended the agent, reaped socket + meta and dropped the attached
+client. **The point of the whole change, measured:** `ESC[13;2u` (Shift+Enter) reached Claude Code
+unchanged and inserted a newline — two lines in the prompt, nothing submitted, nothing rewriting it
+anywhere. (`ESC[13;5u` submits, which is claude's own binding, not the carrier.)
+
+Three bugs the live run found, all fixed with tests:
+
+1. The spec rode a temp file on fd 3, and an inherited descriptor is already at EOF — the host read
+   an empty spec and every start fell back to tmux. It is a pipe now, so the token never touches
+   disk either.
+2. `stopManagerSession` sent an empty token, so the host refused the stop and the session kept
+   running. The token lives in the meta file (a record travels to a control box; a token must not),
+   so stop reads it there, with a pid SIGTERM as the last resort.
+3. The hub's 0x0 control client won the size arbitration and `pty.resize(0, 0)` **killed the host**,
+   taking the agent with it. Only clients that are a terminal size the session now.

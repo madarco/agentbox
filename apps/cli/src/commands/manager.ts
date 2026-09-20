@@ -122,7 +122,7 @@ function label(m: HubApiManager): string {
 
 function printManager(m: HubApiManager): void {
   log.info(
-    `manager ${m.id}: ${m.status} (${m.agent}, ${m.kind === 'tmux' ? 'tmux-run' : 'external'})`,
+    `manager ${m.id}: ${m.status} (${m.agent}, ${m.kind === 'external' ? 'external' : `${m.kind}-run`})`,
   );
   process.stdout.write(`  workspace ${m.workspaceName}\n`);
   process.stdout.write(`  folder    ${m.cwd}\n`);

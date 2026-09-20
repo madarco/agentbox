@@ -23,7 +23,7 @@ import {
   remoteManagerStore,
   resolveWorkspaceDir,
   resumeManagerSession,
-  startManagerSession,
+  startManagerTmuxSession,
   stopManagerSession,
   type ManagerExec,
   type ManagerRecord,
@@ -73,7 +73,7 @@ describe('the session functions write nothing', () => {
   it('a start describes the registration, and only the store persists it', async () => {
     const { id, root } = await makeWorkspace();
     const manager = record({ workspaceId: id, cwd: root });
-    const registration = await startManagerSession({
+    const registration = await startManagerTmuxSession({
       wsId: id,
       manager,
       argv: ['claude'],

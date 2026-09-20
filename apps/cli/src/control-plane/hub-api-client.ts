@@ -535,8 +535,11 @@ export interface HubApiManager {
   workspaceId: string;
   workspaceName: string;
   agent: string;
-  /** `external`: a session in someone's terminal. `tmux`: one a hub runs in tmux. */
-  kind: 'external' | 'tmux';
+  /**
+   * `external`: a session in someone's terminal. `pty`: one a hub runs on an
+   * AgentBox pty host (what a start produces). `tmux`: the older carrier.
+   */
+  kind: 'external' | 'tmux' | 'pty';
   status: 'running' | 'stopped';
   /** Whether `POST /managers/{id}/resume` would be accepted now. */
   resumable?: boolean;
@@ -558,6 +561,10 @@ export interface HubApiManager {
   background?: { id: string; status?: string; state?: string; name?: string };
   /** An unclaimed AgentBox tmux session in the manager's folder. */
   terminalSession?: string;
+  /** How to open a `pty` manager's terminal: an absolute argv, plus its socket. */
+  ptyAttach?: { command: string[]; socket: string; protocol: number };
+  /** Keep the session alive even when no client holds a lease on it. */
+  pinned?: boolean;
   boxIds: string[];
   boxJobIds: string[];
   taskCounts: { open: number; done: number };

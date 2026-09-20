@@ -277,7 +277,11 @@ export async function startPtyHost(spec: PtyHostSpec): Promise<PtyHostHandle> {
   });
 
   const applySize = (): void => {
-    const connected = [...clients].filter((c) => c.authed);
+    // Only clients that ARE a terminal size the session. The hub connects with
+    // 0x0 precisely so it never steers the size, and a pty resized to 0 is not
+    // a small pty — node-pty throws, which used to take the host (and the
+    // agent) down with it.
+    const connected = [...clients].filter((c) => c.authed && c.cols > 0 && c.rows > 0);
     if (connected.length === 0) return;
     let next = connected[0] as Client;
     for (const client of connected) {

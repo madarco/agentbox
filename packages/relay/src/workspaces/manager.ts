@@ -17,6 +17,8 @@ import { withFileLock } from '@agentbox/config';
 import {
   AGENT_SESSION_ENV_VARS,
   encodeClaudeProjectsKey,
+  readPtyMeta,
+  removePtySession,
   scrubAgentSessionEnv,
 } from '@agentbox/sandbox-core';
 import {
@@ -28,11 +30,14 @@ import {
   WORKSPACE_LOCK,
   workspaceDir,
 } from './workspace-store.js';
+import { ptyHostAlive, ptyStop } from './pty-client.js';
+import type { PtyCarrierSettings, SpawnPtyHost } from './manager-pty.js';
 import type { ReconcileContext } from './task-store.js';
 import type {
   HostSession,
   ManagerAgent,
   ManagerBackground,
+  ManagerPtyAttach,
   ManagerFile,
   ManagerHeartbeat,
   ManagerKind,
@@ -387,7 +392,7 @@ export function registeredManager(
     id: input.id ?? newManagerId(),
     workspaceId: wsId,
     agent: input.agent,
-    kind: 'tmux',
+    kind: input.kind,
     cwd: input.cwd,
     host: input.host,
     boxIds: [],
@@ -398,15 +403,20 @@ export function registeredManager(
   const next: ManagerRecord = {
     ...base,
     agent: input.agent,
-    kind: 'tmux',
+    kind: input.kind,
     cwd: input.cwd,
     host: input.host,
-    tmuxSession: input.tmuxSession,
+    ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+    ...(input.pty ? { pty: input.pty } : {}),
     ...(input.argv ? { argv: input.argv } : {}),
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     startedAt: at,
     lastSeenAt: at,
   };
+  // One carrier at a time: a record re-registered on the other one must not
+  // keep the old carrier's fields, or every probe would read the dead half.
+  if (input.kind === 'pty') delete next.tmuxSession;
+  if (input.kind === 'tmux') delete next.pty;
   delete next.pid;
   delete next.pidStartedAt;
   delete next.tmuxPane;
@@ -508,6 +518,8 @@ export async function processStartTime(pid: number): Promise<string | undefined>
 
 export interface ManagerProbe {
   exec?: ManagerExec;
+  ptyHostAlive?: (socket: string) => Promise<boolean>;
+  ptyStop?: (meta: { socket: string; token: string }) => Promise<boolean>;
   hostname?: () => string;
   isPidAlive?: (pid: number) => boolean;
   processStartTime?: (pid: number) => Promise<string | undefined>;
@@ -520,6 +532,13 @@ export async function managerStatus(
   probe: ManagerProbe = {},
 ): Promise<ManagerStatus> {
   const host = (probe.hostname ?? osHostname)();
+  if (rec.kind === 'pty' && rec.host === host) {
+    // The socket IS the liveness: a host that answers is serving the session,
+    // and the pid guards against a meta file left by a crash.
+    if (!rec.pty) return 'stopped';
+    if (await (probe.ptyHostAlive ?? ptyHostAlive)(rec.pty.socket)) return 'running';
+    return 'stopped';
+  }
   if (rec.kind === 'tmux' && rec.host === host) {
     const session = rec.tmuxSession ?? managerSessionName(rec.id);
     return (await tmuxSessionExists(session, probe.exec ?? defaultExec)) ? 'running' : 'stopped';
@@ -597,6 +616,8 @@ export function toManagerView(
     attachSession?: string | null;
     /** An unclaimed AgentBox tmux session in the manager's folder (see `terminalSessionFor`). */
     terminalSession?: string;
+    /** How to open a pty-hosted manager (see `ptyAttachFor`). */
+    ptyAttach?: ManagerPtyAttach;
   },
 ): ManagerView {
   const block = managerResumeBlock(rec, ctx.status);
@@ -633,6 +654,11 @@ export function toManagerView(
     if (rec.kind === 'tmux' && !ctx.background) {
       view.attachCommand = managerAttachCommand(rec.tmuxSession ?? managerSessionName(rec.id));
     }
+    if (rec.kind === 'pty' && ctx.ptyAttach) {
+      view.ptyAttach = ctx.ptyAttach;
+      // A command a human can paste, next to the argv a client execs.
+      view.attachCommand = `agentbox manager attach ${rec.id}`;
+    }
   } else if (view.lastExit === undefined && ctx.lastExit !== undefined) {
     view.lastExit = ctx.lastExit;
   }
@@ -653,6 +679,12 @@ export interface DetectManagerInput {
   host: string;
   /** `$AGENTBOX_MANAGER` of the caller: set inside a hub-run manager's own session. */
   managerId?: string;
+  /**
+   * `$AGENTBOX_MANAGER_RUN`: the run id a pty host minted for this session. The
+   * hub trusts `managerId` for a pty manager only when this matches, because
+   * Claude's daemon leaks the spawning client's env into unrelated sessions.
+   */
+  runId?: string;
   /** `$TMUX_PANE` when the session's terminal runs inside tmux. */
   tmuxPane?: string;
   /**
@@ -923,11 +955,56 @@ export interface StartManagerSessionInput {
   env?: NodeJS.ProcessEnv;
   /** This machine's hostname, for the registration's `host`. */
   hostname?: () => string;
+  /** `auto` (the default) is the pty host when it can run, else tmux. */
+  carrier?: ManagerCarrier;
+  /** Resolved config for the pty host; ignored by the tmux carrier. */
+  ptySettings?: Partial<PtyCarrierSettings>;
+  /** Injected in tests so a start never spawns a real agent. */
+  spawnPtyHost?: SpawnPtyHost;
+  /** Test seam for `~/.agentbox`. */
+  ptyBaseDir?: string;
+}
+
+export type ManagerCarrier = 'auto' | 'pty' | 'tmux';
+
+/**
+ * Start a manager on this machine, on whichever carrier is available.
+ *
+ * The pty host is preferred: it puts the agent's raw bytes in front of the
+ * client terminal, which is what makes scrollback, mouse, selection and the
+ * modified Enter work. tmux remains the fallback, because the pty host needs an
+ * optional native prebuild that an install can legitimately lack.
+ */
+export async function startManagerSession(
+  input: StartManagerSessionInput,
+): Promise<ManagerRegistration> {
+  if (input.carrier === 'tmux') return await startManagerTmuxSession(input);
+  // Imported lazily: the pty carrier imports this module for the script builder,
+  // and a static edge back would be a cycle.
+  const { startManagerPtySession, PtyCarrierUnavailable } = await import('./manager-pty.js');
+  try {
+    return await startManagerPtySession({
+      wsId: input.wsId,
+      manager: input.manager,
+      argv: input.argv,
+      ...(input.env ? { env: input.env } : {}),
+      ...(input.hostname ? { hostname: input.hostname } : {}),
+      ...(input.ptySettings ? { settings: input.ptySettings } : {}),
+      ...(input.spawnPtyHost ? { spawnHost: input.spawnPtyHost } : {}),
+      ...(input.ptyBaseDir ? { baseDir: input.ptyBaseDir } : {}),
+    });
+  } catch (err) {
+    const explicit = input.carrier === 'pty';
+    if (explicit || !(err instanceof PtyCarrierUnavailable)) throw err;
+    console.warn(`[manager] pty carrier unavailable (${err.message}); starting on tmux instead`);
+    return await startManagerTmuxSession(input);
+  }
 }
 
 /**
  * Start a manager in a detached tmux session on THIS machine and describe the
- * record it produced. Nothing is written here: the caller persists the
+ * record it produced. The older carrier: `startManagerSession` prefers the pty
+ * host and falls back here. Nothing is written here: the caller persists the
  * registration through its `ManagerRecordStore`, which on a PC with a control
  * box configured is the control box's.
  *
@@ -935,7 +1012,7 @@ export interface StartManagerSessionInput {
  * proxying a PTY, which is what lets the CLI, the tray and a plain terminal all
  * reach the same running agent.
  */
-export async function startManagerSession(
+export async function startManagerTmuxSession(
   input: StartManagerSessionInput,
 ): Promise<ManagerRegistration> {
   const exec = input.exec ?? defaultExec;
@@ -1213,11 +1290,15 @@ export function liveBackgroundSession(
 export function backgroundFor(
   rec: ManagerRecord,
   snap: BackgroundSessionSnapshot,
+  opts: { ptyRunning?: boolean } = {},
 ): ManagerBackground | undefined {
   const s = liveBackgroundSession(rec, snap);
   if (!s) return undefined;
   const own = managerSessionName(rec.id);
   const ownLive = snap.managerTmux.some((t) => t.session === own);
+  // A pty-hosted manager is on screen wherever a client attached, so its Claude
+  // session is never "detached" in the sense this function reports.
+  if (rec.kind === 'pty' && opts.ptyRunning) return undefined;
   const hubSession = rec.kind === 'tmux' ? (rec.tmuxSession ?? own) : undefined;
   // A tmux-run manager whose session is up is shown there, unless that session
   // is the attach this function allowed.
@@ -1415,9 +1496,27 @@ export async function stopManagerSession(
     }
     return null;
   }
-  const exec = probe.exec ?? defaultExec;
-  const session = rec.tmuxSession ?? managerSessionName(rec.id);
-  await exec('tmux', ['kill-session', '-t', exactTarget(session)]).catch(() => {});
+  if (rec.kind === 'pty') {
+    // The host owns the kill ladder (SIGHUP, SIGTERM, SIGKILL) and cleans up its
+    // own socket and meta; the hub only asks. The token lives in the meta file,
+    // not on the record — a record travels to a control box, a token must not.
+    const meta = await readPtyMeta(rec.id);
+    if (meta) await (probe.ptyStop ?? ptyStop)({ socket: meta.socket, token: meta.token });
+    else if (rec.pty) {
+      // No meta to authenticate with (a half-cleaned crash): the host process is
+      // still ours to end, and leaving it would strand the agent unreachable.
+      try {
+        process.kill(rec.pty.pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      await removePtySession(rec.id).catch(() => {});
+    }
+  } else {
+    const exec = probe.exec ?? defaultExec;
+    const session = rec.tmuxSession ?? managerSessionName(rec.id);
+    await exec('tmux', ['kill-session', '-t', exactTarget(session)]).catch(() => {});
+  }
   const lastExit = await readManagerExit(rec.workspaceId, rec.id);
   return {
     stoppedAt: new Date().toISOString(),

@@ -42,6 +42,7 @@ export const RECENT_SESSION_MS = 5 * 60 * 1000;
 /** The shape both agent stores use for a session id, and the only one the hub accepts. */
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MANAGER_ID_RE = /^[0-9a-f]{16}$/;
+const MANAGER_RUN_ID_RE = /^[0-9a-f]{32}$/;
 const TMUX_PANE_RE = /^%\d+$/;
 
 /** A transcript's opening rows carry the session's cwd well inside this. */
@@ -94,6 +95,12 @@ export interface HostSessionHint {
   tmuxPane?: string;
   /** The AgentBox manager tmux session (`agentbox-manager-*`) that pane belongs to. */
   tmuxSession?: string;
+  /**
+   * `$AGENTBOX_MANAGER_RUN`: minted by the pty host that started this session.
+   * It is what makes `managerId` believable — the manager id alone is leaked
+   * into unrelated sessions by Claude's own daemon.
+   */
+  runId?: string;
 }
 
 export interface HostSessionDeps {
@@ -220,6 +227,8 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
   const host = (deps.hostname ?? hostname)();
   const hint = env['AGENTBOX_MANAGER']?.trim();
   const managerId = hint && MANAGER_ID_RE.test(hint) ? hint : undefined;
+  const run = env['AGENTBOX_MANAGER_RUN']?.trim();
+  const runId = run && MANAGER_RUN_ID_RE.test(run) ? run : undefined;
   // TMUX_PANE alone can be inherited stale by a process outside tmux; TMUX says it is live.
   const pane = (env['TMUX'] ?? '').length > 0 ? env['TMUX_PANE']?.trim() : undefined;
   const livePane = pane && TMUX_PANE_RE.test(pane) ? pane : undefined;
@@ -233,6 +242,7 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
   const base = {
     host,
     ...(managerId ? { managerId } : {}),
+    ...(runId ? { runId } : {}),
     ...(livePane ? { tmuxPane: livePane } : {}),
     ...(session && MANAGER_TMUX_SESSION_RE.test(session) ? { tmuxSession: session } : {}),
   };

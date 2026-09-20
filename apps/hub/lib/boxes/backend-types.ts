@@ -1255,6 +1255,12 @@ export interface DetectManagerInput {
    * from it.
    */
   tmuxSession?: string;
+  /**
+   * `$AGENTBOX_MANAGER_RUN`: the run id the caller's pty host minted. It is what
+   * makes `managerId` believable for a pty manager — the env var alone is not,
+   * since Claude's daemon leaks it into unrelated sessions.
+   */
+  runId?: string;
   /** A box (or create job) this session just made, attached in the same call. */
   boxId?: string;
   boxJobId?: string;

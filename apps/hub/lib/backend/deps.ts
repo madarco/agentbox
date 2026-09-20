@@ -1,4 +1,4 @@
-import type { ManagerExec, PushLineStat } from '@agentbox/relay';
+import type { ManagerCarrier, ManagerExec, PushLineStat, SpawnPtyHost } from '@agentbox/relay';
 // The seams a domain backend slice is built from.
 //
 // `lib/hub-backend.ts` had grown past 3800 lines because every feature appended
@@ -48,6 +48,17 @@ export interface BackendDeps {
    * execa.
    */
   managerExec?: ManagerExec;
+  /**
+   * How a manager's pty host is spawned. Same reason as `managerExec`: a test
+   * must be able to drive the start path without launching a real agent.
+   * Production leaves it unset and the relay spawns `dist/pty-host.js`.
+   */
+  spawnPtyHost?: SpawnPtyHost;
+  /**
+   * Which carrier a start uses. Unset means `auto`: the pty host when this
+   * install can run it, tmux otherwise.
+   */
+  managerCarrier?: ManagerCarrier;
   /**
    * Fire the hub's live-update fan-out (`/api/events` emits `change`). Called
    * after every mutation so an open UI refetches instead of waiting for its

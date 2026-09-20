@@ -162,6 +162,21 @@ describe.skipIf(!backend)('pty host (real pty)', () => {
     a.close();
   });
 
+  it('never lets a sizeless control client resize the pty', async () => {
+    const a = attach(host.socketPath);
+    await hello(a, 'cli:sized', 90, 28);
+    a.send({ t: 'resize', cols: 90, rows: 28 });
+    await waitFor(() => a.ctrls.some((c) => c.t === 'size' && c.cols === 90));
+    // The hub attaches like this: it wants the session, not its screen.
+    const hub = attach(host.socketPath);
+    await hello(hub, 'hub', 0, 0);
+    await delay(300);
+    a.type('stty size\r');
+    await waitFor(() => a.out().includes('28 90'));
+    a.close();
+    hub.close();
+  });
+
   it('refuses a bad token and an unversioned peer', async () => {
     const bad = attach(host.socketPath);
     bad.send({

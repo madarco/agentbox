@@ -41,6 +41,8 @@ import {
   reconcileManagers,
   timelineSink,
   resumeManagerSession,
+  ptyAttachFor,
+  ptyInject,
   sendKeysToManager,
   sessionTitle,
   sessionTurn,
@@ -62,6 +64,7 @@ import {
   type ManagerRecord,
   type ManagerRecordStore,
   type ManagerWorkspace,
+  type ManagerPtyAttach,
   type ManagerRegistration,
   type ReconcileContext,
   type TimelineEvent,
@@ -70,6 +73,8 @@ import {
   type TimelineStamp,
   type WorkTask,
 } from '@agentbox/relay';
+import { PTY_PROTOCOL_VERSION } from '@agentbox/core';
+import { readPtyMeta } from '@agentbox/sandbox-core';
 import { reconcileContext, type BackendDeps } from './deps';
 import { stampInWorkspace } from './timeline';
 import { TMUX_MISSING } from './errors';
@@ -395,30 +400,41 @@ export function createManagerBackend(
     },
   ): Promise<ManagerView> {
     const { snap, claimed } = ctx;
+    const status = await managerStatus(rec, probe);
     const local = snap !== undefined && rec.agent === 'claude';
-    const background = local ? backgroundFor(rec, snap) : undefined;
+    const background = local
+      ? backgroundFor(rec, snap, { ptyRunning: rec.kind === 'pty' && status === 'running' })
+      : undefined;
     const inDaemon = local ? liveBackgroundSession(rec, snap) : undefined;
-    const status = background || inDaemon ? 'running' : await managerStatus(rec, probe);
+    const effective = background || inDaemon ? 'running' : status;
     const own = managerSessionName(rec.id);
     const attachSession =
       background && snap?.managerTmux.some((t) => t.session === own) ? own : null;
     const terminalSession =
-      local && snap && rec.kind === 'external' && status === 'running'
+      local && snap && rec.kind === 'external' && effective === 'running'
         ? terminalSessionFor(rec, snap, claimed)
         : undefined;
     const lastExit =
-      status === 'stopped' && rec.kind === 'tmux' && rec.lastExit === undefined
+      effective === 'stopped' && rec.kind !== 'external' && rec.lastExit === undefined
         ? await readManagerExit(ctx.workspaceId, rec.id)
         : undefined;
+    const ptyAttach = effective === 'running' ? ptyAttachOf(rec) : undefined;
     return toManagerView(rec, {
-      status,
+      status: effective,
       hostname: hostname(),
       workspaceName: ctx.workspaceName,
       tasks: ctx.tasks,
       ...(background ? { background, attachSession } : {}),
       ...(terminalSession ? { terminalSession } : {}),
+      ...(ptyAttach ? { ptyAttach } : {}),
       ...(lastExit === undefined ? {} : { lastExit }),
     });
+  }
+
+  /** The argv a client runs to open this manager's terminal, when it has one. */
+  function ptyAttachOf(rec: ManagerRecord): ManagerPtyAttach | undefined {
+    if (rec.kind !== 'pty') return undefined;
+    return ptyAttachFor(rec, process.env['AGENTBOX_CLI_ENTRY'], PTY_PROTOCOL_VERSION);
   }
 
   /**
@@ -562,10 +578,15 @@ export function createManagerBackend(
   async function trustedHint(
     managerId: string | undefined,
     cwd: string,
+    runId?: string,
   ): Promise<ManagerRecord | undefined> {
     if (!managerId) return undefined;
     const rec = await store.findManager(managerId);
     if (!rec || rec.cwd !== cwd) return undefined;
+    // A pty session proves itself: the host minted this run id and exported it
+    // into the agent's own environment, so a leaked $AGENTBOX_MANAGER without it
+    // buys nothing.
+    if (rec.kind === 'pty' && rec.pty) return runId === rec.pty.runId ? rec : undefined;
     if (!rec.sessionId) return rec;
     if (rec.kind === 'tmux' && (await managerStatus(rec, probe)) === 'running') return rec;
     return undefined;
@@ -613,9 +634,12 @@ export function createManagerBackend(
     claimed: ReadonlySet<string>,
   ): Promise<ManagerHeartbeat> {
     const snap = rec.agent === 'claude' ? await lookupBackground() : undefined;
-    const background = snap ? backgroundFor(rec, snap) : undefined;
+    const probed = await managerStatus(rec, probe);
+    const background = snap
+      ? backgroundFor(rec, snap, { ptyRunning: rec.kind === 'pty' && probed === 'running' })
+      : undefined;
     const inDaemon = snap ? liveBackgroundSession(rec, snap) : undefined;
-    const status = background || inDaemon ? 'running' : await managerStatus(rec, probe);
+    const status = background || inDaemon ? 'running' : probed;
     const own = managerSessionName(rec.id);
     const showing =
       rec.kind === 'tmux'
@@ -635,7 +659,7 @@ export function createManagerBackend(
         ? terminalSessionFor(rec, snap, claimed)
         : undefined;
     const lastExit =
-      status === 'stopped' && rec.kind === 'tmux'
+      status === 'stopped' && rec.kind !== 'external'
         ? (rec.lastExit ?? (await readManagerExit(rec.workspaceId, rec.id)))
         : undefined;
     return {
@@ -647,6 +671,7 @@ export function createManagerBackend(
       ...(background ? { background } : {}),
       ...(terminalSession ? { terminalSession } : {}),
       ...(showing ? { tmuxSession: showing } : {}),
+      ...(status === 'running' && ptyAttachOf(rec) ? { ptyAttach: ptyAttachOf(rec) } : {}),
     };
   }
 
@@ -681,7 +706,7 @@ export function createManagerBackend(
       const host = input.host ?? hostname();
       const cwd = await canonicalWorkspaceRoot(input.cwd);
       const home = await tmuxHome(input, cwd);
-      const hinted = home?.owner ?? (await trustedHint(input.managerId, cwd));
+      const hinted = home?.owner ?? (await trustedHint(input.managerId, cwd, input.runId));
       // A session already registered stays where it is, even when this call came
       // from a subfolder another workspace contains.
       const known =
@@ -822,6 +847,7 @@ export function createManagerBackend(
         id: newManagerId(),
         workspaceId: ws.id,
         agent: input.agent,
+        // Provisional: the registration the carrier returns says which it is.
         kind: 'tmux',
         cwd: root,
         host: hostname(),
@@ -839,6 +865,8 @@ export function createManagerBackend(
           argv: buildManagerArgv(input.agent, input.sessionId),
           hostname,
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
+          ...(deps.spawnPtyHost ? { spawnPtyHost: deps.spawnPtyHost } : {}),
+          ...(deps.managerCarrier ? { carrier: deps.managerCarrier } : {}),
         });
       } catch (e) {
         return err(`could not start the manager: ${messageOf(e)}`);
@@ -850,7 +878,12 @@ export function createManagerBackend(
         // every retry would mint a new id and leave another session in the
         // folder. Kill it so the error the user reads is the whole truth.
         await stopManagerSession(
-          { ...manager, tmuxSession: registration.tmuxSession },
+          {
+            ...manager,
+            kind: registration.kind,
+            ...(registration.tmuxSession ? { tmuxSession: registration.tmuxSession } : {}),
+            ...(registration.pty ? { pty: registration.pty } : {}),
+          },
           probe,
         ).catch(() => null);
         return err(`could not start the manager: ${messageOf(e)}`);
@@ -1080,7 +1113,27 @@ export function createManagerBackend(
       const status = await managerStatus(rec, probe);
       let delivered: ManagerMessageDelivery;
       try {
-        if (status === 'running' && rec.kind === 'tmux') {
+        if (status === 'running' && rec.kind === 'pty') {
+          // The host does the typing: it owns the pty, so the pause before
+          // Enter lands where it is precise rather than a `tmux send-keys`
+          // round trip away.
+          const meta = rec.pty ? await readPtyMeta(rec.id) : undefined;
+          if (!meta) {
+            return {
+              ok: false,
+              code: 'manager_unreachable',
+              error: `manager ${id} has no live pty host to type into`,
+            };
+          }
+          if (!(await ptyInject(meta, input.text))) {
+            return {
+              ok: false,
+              code: 'manager_unreachable',
+              error: `manager ${id}'s pty host did not accept the message`,
+            };
+          }
+          delivered = 'session';
+        } else if (status === 'running' && rec.kind === 'tmux') {
           await sendKeysToManager(
             { session: rec.tmuxSession ?? managerSessionName(rec.id) },
             input.text,

@@ -1695,6 +1695,12 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         "The AgentBox manager tmux session that pane belongs to. When it exists on the hub's machine and started in `cwd`, the manager is recorded with `kind: tmux` from it (a session from before managers were detected is adopted). A session hosted by Claude's background daemon never sends it: the daemon drops TMUX.",
                     },
+                    runId: {
+                      type: 'string',
+                      pattern: '^[0-9a-f]{32}$',
+                      description:
+                        "`$AGENTBOX_MANAGER_RUN`: the run id the pty host that started this session minted. It is what makes `managerId` believable for a pty manager — Claude's daemon leaks the spawning client's environment into unrelated sessions, so the id alone proves nothing.",
+                    },
                     boxId: { type: 'string' },
                     boxJobId: { type: 'string' },
                     projects: {
@@ -1918,6 +1924,16 @@ export function buildOpenApi(): Record<string, unknown> {
                       type: 'string',
                       pattern: '^agentbox-manager-[0-9a-f]{16}$',
                       description: 'The tmux session showing it right now, when one does.',
+                    },
+                    ptyAttach: {
+                      type: 'object',
+                      description:
+                        'How to attach, when the reporting machine runs it on a pty host.',
+                      properties: {
+                        command: { type: 'array', items: { type: 'string' } },
+                        socket: { type: 'string' },
+                        protocol: { type: 'number' },
+                      },
                     },
                   },
                   required: ['status'],
@@ -2220,7 +2236,12 @@ export function buildOpenApi(): Record<string, unknown> {
                       type: 'string',
                       description: 'An agent this hub knows (GET /agents).',
                     },
-                    kind: { type: 'string', enum: ['tmux'] },
+                    kind: {
+                      type: 'string',
+                      enum: ['tmux', 'pty'],
+                      description:
+                        'Which carrier ran it. `pty` requires `pty`, `tmux` requires `tmuxSession`.',
+                    },
                     host: {
                       type: 'string',
                       description: 'os.hostname() of the machine the session runs on.',
@@ -2230,6 +2251,22 @@ export function buildOpenApi(): Record<string, unknown> {
                       type: 'string',
                       pattern: '^agentbox-manager-[0-9a-f]{16}$',
                     },
+                    pty: {
+                      type: 'object',
+                      description: 'The pty host serving this session, on `host`.',
+                      properties: {
+                        pid: { type: 'number' },
+                        socket: { type: 'string' },
+                        runId: {
+                          type: 'string',
+                          pattern: '^[0-9a-f]{32}$',
+                          description:
+                            "Minted by the host and exported into the agent's environment, so a later detect can prove which manager it is.",
+                        },
+                        pidStartedAt: { type: 'string' },
+                      },
+                      required: ['pid', 'socket', 'runId'],
+                    },
                     sessionId: { type: 'string' },
                     argv: {
                       type: 'array',
@@ -2237,7 +2274,7 @@ export function buildOpenApi(): Record<string, unknown> {
                       description: 'What was run, for the record. Never executed by this hub.',
                     },
                   },
-                  required: ['agent', 'kind', 'host', 'cwd', 'tmuxSession'],
+                  required: ['agent', 'kind', 'host', 'cwd'],
                 },
               },
             },
@@ -4154,9 +4191,9 @@ export function buildOpenApi(): Record<string, unknown> {
             agent: { type: 'string' },
             kind: {
               type: 'string',
-              enum: ['external', 'tmux'],
+              enum: ['external', 'tmux', 'pty'],
               description:
-                "`external`: a session in someone's own terminal, only observed. `tmux`: one a hub started in a tmux session on `host`, which can be attached to and stopped there.",
+                "`external`: a session in someone's own terminal, only observed. `pty`: one a hub started on an AgentBox pty host on `host` — what a start produces, and what `ptyAttach` opens. `tmux`: the same thing on the older tmux carrier, used when this install cannot run a pty host. Both hub-run kinds can be attached to and stopped there.",
             },
             status: { type: 'string', enum: ['running', 'stopped'] },
             resumable: {
@@ -4201,7 +4238,22 @@ export function buildOpenApi(): Record<string, unknown> {
             attachCommand: {
               type: 'string',
               description:
-                "Ready-to-run tmux attach command: a running hub-run manager's session, or the hub's attach session for a Claude background session while it is up.",
+                "Ready-to-run attach command: `agentbox manager attach <id>` for a pty manager, the tmux attach for a tmux one, or the hub's attach session for a Claude background session while it is up.",
+            },
+            ptyAttach: {
+              type: 'object',
+              description:
+                'How to open a running `pty` manager: `command` is an absolute argv a client execs (so an embedding app needs nothing on its login PATH), `socket` its unix socket and `protocol` the frame protocol version. Only present on the machine that runs it.',
+              properties: {
+                command: { type: 'array', items: { type: 'string' } },
+                socket: { type: 'string' },
+                protocol: { type: 'number' },
+              },
+            },
+            pinned: {
+              type: 'boolean',
+              description:
+                'Keep the session running even when no client holds a lease on it. Without a pin, a session a client leased is stopped once that client stays away past the grace window.',
             },
             background: {
               type: 'object',
