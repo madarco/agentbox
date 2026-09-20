@@ -22,17 +22,18 @@ export type TerminalCtor = new (opts: {
  * module — node-pty is in optionalDependencies, may not be installed).
  */
 export interface IPtyLike {
+  readonly pid?: number;
   onData(cb: (d: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(d: string): void;
   resize(cols: number, rows: number): void;
-  kill(): void;
+  kill(signal?: string): void;
 }
 
 export type PtySpawn = (
   file: string,
   args: string[],
-  opts: { name: string; cols: number; rows: number; env: NodeJS.ProcessEnv },
+  opts: { name: string; cols: number; rows: number; env: NodeJS.ProcessEnv; cwd?: string },
 ) => IPtyLike;
 
 export interface PtyBackend {

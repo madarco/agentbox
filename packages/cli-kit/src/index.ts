@@ -114,3 +114,13 @@ export type {
 export { RESUME_SEED } from './agent-contract.js';
 
 export { defineAgentModule, type AgentModule, type TeleportResolver } from './agent-module.js';
+export {
+  PtyBackendUnavailable,
+  PtyHostAlreadyRunning,
+  Utf8Joiner,
+  probeSocket,
+  startPtyHost,
+  type PtyHostHandle,
+  type PtyHostSpec,
+} from './pty-host.js';
+export { PTY_REPLAY_RESET, PtyEscScanner, PtyRing, type PtyRingOptions } from './pty-ring.js';

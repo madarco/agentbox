@@ -100,3 +100,25 @@ export type {
   PromptTextDetail,
 } from './prompt.js';
 export * from './sync/index.js';
+export {
+  PTY_PROTOCOL_VERSION,
+  PTY_FRAME,
+  PTY_MAX_FRAME,
+  PtyFrameDecoder,
+  PtyFrameError,
+  encodeCtrl,
+  encodeData,
+  encodeExit,
+  encodeInput,
+  parsePtyCtrl,
+} from './pty-protocol.js';
+export type {
+  PtyClientHello,
+  PtyClientKind,
+  PtyCtrl,
+  PtyCtrlFromClient,
+  PtyCtrlFromHost,
+  PtyErrorCode,
+  PtyFrame,
+  PtyWindowSize,
+} from './pty-protocol.js';

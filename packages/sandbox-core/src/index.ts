@@ -294,3 +294,17 @@ export {
   type ModelAuthGateArgs,
 } from './prompts/model-auth-gate.js';
 export { AGENT_SESSION_ENV_VARS, scrubAgentSessionEnv } from './agent-session-env.js';
+export {
+  ensurePtyDir,
+  listPtySessions,
+  newPtyRunId,
+  newPtyToken,
+  ptyDir,
+  ptyLogPath,
+  ptyMetaPath,
+  ptySocketPath,
+  readPtyMeta,
+  removePtySession,
+  writePtyMeta,
+} from './pty-session.js';
+export type { PtySessionMeta } from './pty-session.js';

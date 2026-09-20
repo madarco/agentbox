@@ -20,6 +20,12 @@ review, merge), as before.
 
 ## Phase 10b — Manager terminal (hub + tray)
 
+> **Superseded by [`manager-pty-plan.md`](./manager-pty-plan.md).** Items #6–#8 below are the
+> evidence that led to it: every option that would fix them is a tmux *server* option, and the
+> manager shares the user's own tmux server. Hub-run managers are moving onto an AgentBox-owned pty
+> host, where scrollback, mouse, selection and modified Enter are the client terminal's own. Read
+> those rows as tmux-carrier-only; the tray's Ctrl+J rewrite (#7) goes away with it.
+
 The manager runs in a hub-owned tmux session (`startManagerSession`,
 `packages/relay/src/workspaces/manager.ts`); the tray embeds `tmux attach` in Ghostty.
 
@@ -64,3 +70,16 @@ Design in [`workspaces-tasks-manager-plan.md`](./workspaces-tasks-manager-plan.m
 - **"Since you left" resets on a quick Plan ⇄ Timeline flip**: add a minimum-away threshold or tie it to window visibility.
 - **Merged rows repeat the PR number** (title and link): drop it from the title if it reads noisy.
 - **Pre-existing CLI bugs found along the way**: `agentbox create -y` still prompts for carry on the local-hub path; `agentbox destroy a b -y` destroys only the first box; `agentbox tasks rm` without `-y` outside a TTY reports "Can't reach the hub".
+
+## Phase 12 — PTY-hosted managers (hub + tray)
+
+Design and phase states: [`manager-pty-plan.md`](./manager-pty-plan.md).
+
+| # | Item | Size | Notes |
+|---|------|------|-------|
+| 20 | **Protocol, replay ring, pty-host** | done | `packages/core/src/pty-protocol.ts`, `packages/sandbox-core/src/pty-session.ts`, `packages/cli-kit/src/pty-{ring,host}.ts`, `apps/cli/src/manager/pty-host-entry.ts` (third tsup entry → `dist/pty-host.js`). Real-pty tests cover fan-out, late-client replay, size arbitration, inject, auth refusal, stale-socket adoption, lease reaping, pinned survival. |
+| 21 | **CLI attach client** | todo | `agentbox manager attach` raw proxy, `--raw`, `C-] d` detach chord, `--attach-in` argv. |
+| 22 | **Hub/relay integration** | todo | `kind: 'pty'` end to end — `ManagerRegistration` (pins `'tmux'` today), `registeredManager` (hard-codes it twice), `managerStatus`, `backgroundFor`, `lastExit`, `ptyAttach` on the view, `spawnPtyHost` dep seam. |
+| 23 | **Lease, pin, config, janitor, fallback** | todo | `manager.*` config keys, `POST …/{id}/pin`, hub janitor for dead metas, automatic tmux fallback when the node-pty prebuild is missing. |
+| 24 | **Tray** | todo | `ptyAttach` argv in `TerminalHostView`, delete the Ctrl+J rewrite, neutral warm-pool key, `isAttachable`. |
+

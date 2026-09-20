@@ -26,7 +26,13 @@ export default defineConfig({
   // hands the relay bin as AGENTBOX_CLOUD_BACKENDS — instead of mirroring its
   // `src/relay/` directory. Keeping both entries in ONE config also lets them
   // share chunks; a second `defineConfig` entry would duplicate every provider.
-  entry: { index: 'src/index.ts', 'cloud-backends': 'src/relay/cloud-backends.ts' },
+  entry: {
+    index: 'src/index.ts',
+    'cloud-backends': 'src/relay/cloud-backends.ts',
+    // Third entry for the same reason as the second: the hub spawns this file
+    // by path (`dist/pty-host.js`), so its basename is part of the contract.
+    'pty-host': 'src/manager/pty-host-entry.ts',
+  },
   format: ['esm'],
   target: 'node20',
   clean: true,
