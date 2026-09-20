@@ -28,19 +28,20 @@ export async function POST(
   // built-ins when the seam is absent (the plane path has no registry).
   //
   // A `service` agent is excluded: it is a daemon a box hosts, with no session to
-  // attach to, so running one as the manager would produce a tmux session nobody
-  // can use. `agentbox manager start` filters the same way.
+  // attach to, so running one as the manager would produce a session nobody can
+  // use. `agentbox manager start` filters the same way.
   //
-  // `installed === false` is refused too, which is the opposite of the box path:
-  // a box installs its agent on demand, but the manager runs on the hub's own
-  // host, where nothing will. Without this the start answers 200 and the session
-  // dies a second later with exit 127. Absent means unknown, so only an explicit
-  // false is a refusal.
+  // Whether the agent is INSTALLED is deliberately not asked here: this hub need
+  // not be the machine that will run the session. A control box holds every
+  // workspace and has no agent installed for any of them, so asking here refused
+  // every start with "agent must be one of " and an empty list — before the
+  // backend could answer `wrong_host` and send the client to the machine that
+  // does have the folder. The backend asks it there, where it is true.
   const sys = globalThis.__AGENTBOX_HUB_SYSTEM;
   const allowedAgents = sys
     ? sys
         .agents()
-        .filter((a) => a.surface !== 'service' && a.installed !== false)
+        .filter((a) => a.surface !== 'service')
         .map((a) => a.id)
     : MANAGER_AGENT_NAMES;
   const parsed = parseManagerStart(parsedBody.value, allowedAgents);

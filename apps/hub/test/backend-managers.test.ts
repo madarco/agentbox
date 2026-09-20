@@ -1041,6 +1041,54 @@ describe('with the records on a control box', () => {
     });
   });
 
+  it('answers wrong_host for a workspace elsewhere even for an agent it has never seen', async () => {
+    // What the control box does: it holds every workspace, has no folder for any
+    // of them and no agent installed. Asking "is claude installed?" HERE refused
+    // every start with an empty accept-list, instead of sending the client to
+    // the machine that has the folder — which is what a tray start hit.
+    const h = harness();
+    globalThis.__AGENTBOX_HUB_SYSTEM = {
+      agents: () => [{ id: 'claude', label: 'Claude Code', installed: false, surface: 'tui' }],
+    } as unknown as typeof globalThis.__AGENTBOX_HUB_SYSTEM;
+    const store = remoteStore('laptop');
+    store.setRoot('/home/marco/agentbox', 'desktop');
+    const workspaces = createWorkspaceBackend(h.deps);
+    const managers = createManagerBackend(h.deps, {
+      workspaceView: (id) => workspaces.getWorkspace(id),
+      store,
+    });
+    expect(await managers.startManager('ws-remote', { agent: 'claude' })).toMatchObject({
+      ok: false,
+      code: 'wrong_host',
+      details: { host: 'desktop' },
+    });
+    delete globalThis.__AGENTBOX_HUB_SYSTEM;
+  });
+
+  it('refuses an agent that is not set up on the machine that would run it', async () => {
+    const h = harness();
+    globalThis.__AGENTBOX_HUB_SYSTEM = {
+      agents: () => [
+        { id: 'claude', label: 'Claude Code', installed: false, surface: 'tui' },
+        { id: 'codex', label: 'Codex', installed: true, surface: 'tui' },
+      ],
+    } as unknown as typeof globalThis.__AGENTBOX_HUB_SYSTEM;
+    const { workspaces, managers } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'laptop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    // Here the question IS the right one to ask, and the answer names what is.
+    expect(await managers.startManager(added.workspace.id, { agent: 'claude' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('claude is not set up on laptop'),
+    });
+    expect(await managers.startManager(added.workspace.id, { agent: 'codex' })).toMatchObject({
+      ok: true,
+    });
+    delete globalThis.__AGENTBOX_HUB_SYSTEM;
+  });
+
   it('sends a box this hub built to the hub that holds the record', async () => {
     const h = harness();
     const store = remoteStore('laptop');

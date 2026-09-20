@@ -467,6 +467,22 @@ export function createManagerBackend(
   }
 
   /**
+   * Why this machine cannot run `agent`, or null when it can. Absent registry
+   * seam (the plane path) means unknown, and unknown is not a refusal.
+   */
+  function agentNotInstalledHere(agent: string): string | null {
+    const sys = globalThis.__AGENTBOX_HUB_SYSTEM;
+    if (!sys) return null;
+    const known = sys.agents().filter((a) => a.surface !== 'service');
+    const row = known.find((a) => a.id === agent);
+    if (!row || row.installed) return null;
+    const here = known.filter((a) => a.installed).map((a) => a.id);
+    return here.length > 0
+      ? `${agent} is not set up on ${hostname()}, where this manager would run; installed here: ${here.join(', ')}`
+      : `${agent} is not set up on ${hostname()}, where this manager would run`;
+  }
+
+  /**
    * The probe a resume takes: the status seams plus the same carrier choice and
    * `manager.*` tunables a fresh start resolves. A resume IS a start.
    */
@@ -914,6 +930,12 @@ export function createManagerBackend(
           ? wrongHost(message, elsewhereHosts[0], elsewhereHosts)
           : err(message);
       }
+      // Now that this hub IS the machine that will run it, ask whether the agent
+      // is actually here. A box installs its agent on demand; a manager runs on
+      // this host, where nothing will — without this the start answers 200 and
+      // the session dies a second later with exit 127.
+      const notInstalled = agentNotInstalledHere(input.agent);
+      if (notInstalled) return err(notInstalled);
       const carrierGone = await carrierRefusal(root);
       if (carrierGone) return err(carrierGone);
       const at = new Date().toISOString();
