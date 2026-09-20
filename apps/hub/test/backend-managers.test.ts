@@ -803,17 +803,19 @@ describe('with the records on a control box', () => {
       findManagerBySession: async (agent, sessionId) =>
         [...records.values()].find((m) => m.agent === agent && m.sessionId === sessionId) ?? null,
       async registerManager(wsId, input) {
-        calls.push(`register ${input.host} ${input.tmuxSession}`);
+        calls.push(`register ${input.host} ${input.tmuxSession ?? input.pty?.socket ?? ''}`);
         const at = new Date().toISOString();
         const id = input.id ?? 'aaaaaaaaaaaaaaaa';
         const rec: ManagerRecord = {
           id,
           workspaceId: wsId,
           agent: input.agent,
-          kind: 'tmux',
+          // The registration says which carrier ran it, as the real store does.
+          kind: input.kind,
           cwd: input.cwd,
           host: input.host,
-          tmuxSession: input.tmuxSession,
+          ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+          ...(input.pty ? { pty: input.pty } : {}),
           ...(input.sessionId ? { sessionId: input.sessionId } : {}),
           boxIds: [],
           boxJobIds: [],
@@ -1087,6 +1089,37 @@ describe('with the records on a control box', () => {
       ok: true,
     });
     delete globalThis.__AGENTBOX_HUB_SYSTEM;
+  });
+
+  it('carries a reported pty attach through to the view', async () => {
+    // The shape a control box is in: it holds the record, another machine runs
+    // the session. It cannot derive the attach — the argv names that machine's
+    // install and the socket is a file over there — so dropping the report left
+    // every client reading a control box with a session it could not open.
+    const h = harness();
+    const { workspaces, managers } = backends(h);
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(await makeFolder(), { host: 'desktop' }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    const registered = await managers.registerManager(added.workspace.id, {
+      agent: 'claude',
+      kind: 'pty',
+      host: 'desktop',
+      cwd: added.workspace.hosts?.['desktop']?.root ?? '/home/marco/agentbox',
+      pty: { pid: 4242, socket: '/home/marco/.agentbox/pty/x.sock', runId: 'a'.repeat(32) },
+    });
+    if (!registered.ok) throw new Error(registered.error);
+    const id = registered.manager.id;
+    expect(registered.manager.kind).toBe('pty');
+    const attach = {
+      command: ['/usr/bin/node', '/opt/agentbox/index.js', 'manager', 'attach', id, '--raw'],
+      socket: '/home/marco/.agentbox/pty/x.sock',
+      protocol: 1,
+    };
+    const beat = await managers.reportManager(id, { status: 'running', ptyAttach: attach });
+    if (!beat.ok) throw new Error(beat.error);
+    expect((await managers.getManager(id))?.ptyAttach).toEqual(attach);
   });
 
   it('sends a box this hub built to the hub that holds the record', async () => {

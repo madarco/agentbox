@@ -606,6 +606,12 @@ export function createManagerBackend(
           }
         : {}),
       ...(beat?.terminalSession ? { terminalSession: beat.terminalSession } : {}),
+      // How to open the session, as the machine that RUNS it described it. A hub
+      // that only holds the record cannot derive this — the argv names that
+      // machine's own install and its socket is a file over there — so without
+      // carrying the report through, every client reading a manager from a
+      // control box saw a session it could not attach to.
+      ...(beat?.ptyAttach ? { ptyAttach: beat.ptyAttach } : {}),
       ...(beat?.lastExit === undefined ? {} : { lastExit: beat.lastExit }),
     });
   }

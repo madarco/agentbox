@@ -1915,6 +1915,7 @@ export function parseManagerHeartbeat(body: unknown): Parsed<ManagerHeartbeatInp
     background,
     terminalSession,
     tmuxSession,
+    ptyAttach,
   } = body;
   if (!isManagerStatus(status)) return { ok: false, message: 'status must be running or stopped' };
   const parsedSession = optionalString(sessionId, 'sessionId');
@@ -1940,6 +1941,8 @@ export function parseManagerHeartbeat(body: unknown): Parsed<ManagerHeartbeatInp
   if (parsedPrompt.value !== undefined && parsedPrompt.value.length > MANAGER_PROMPT_MAX) {
     return { ok: false, message: `prompt too long (max ${String(MANAGER_PROMPT_MAX)} chars)` };
   }
+  const parsedPtyAttach = parseManagerPtyAttach(ptyAttach);
+  if (!parsedPtyAttach.ok) return parsedPtyAttach;
   const parsedExit = optionalNumber(lastExit, 'lastExit');
   if (!parsedExit.ok) return parsedExit;
   if (
@@ -1988,8 +1991,46 @@ export function parseManagerHeartbeat(body: unknown): Parsed<ManagerHeartbeatInp
       ...(bg ? { background: bg } : {}),
       ...(typeof terminalSession === 'string' ? { terminalSession } : {}),
       ...(typeof tmuxSession === 'string' ? { tmuxSession } : {}),
+      ...(parsedPtyAttach.value ? { ptyAttach: parsedPtyAttach.value } : {}),
     },
   };
+}
+
+/**
+ * How the reporting machine says to open its pty session. Its `command` is
+ * EXECUTED by whoever attaches, so it is held to the same shape as an argv the
+ * hub would build: plain strings, bounded, no NULs. A hub never runs it — only
+ * a client on that machine does — but a hub that forwards it must not be the
+ * place a hostile heartbeat smuggles one in.
+ */
+function parseManagerPtyAttach(
+  value: unknown,
+): Parsed<{ command: string[]; socket: string; protocol: number } | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isObject(value)) return { ok: false, message: 'ptyAttach must be an object' };
+  const { command, socket, protocol } = value;
+  const parsedCommand = optionalStringArray(command, 'ptyAttach.command');
+  if (!parsedCommand.ok) return parsedCommand;
+  const argv = parsedCommand.value;
+  if (!argv || argv.length === 0 || argv.length > MANAGER_ARGV_MAX) {
+    return {
+      ok: false,
+      message: `ptyAttach.command must have 1-${String(MANAGER_ARGV_MAX)} entries`,
+    };
+  }
+  if (argv.some((a) => a.length > MANAGER_ARG_MAX || a.includes('\0'))) {
+    return {
+      ok: false,
+      message: 'ptyAttach.command entries must be plain strings under 512 chars',
+    };
+  }
+  if (typeof socket !== 'string' || !socket.startsWith('/') || socket.length > 4096) {
+    return { ok: false, message: 'ptyAttach.socket must be an absolute path' };
+  }
+  if (typeof protocol !== 'number' || !Number.isInteger(protocol) || protocol < 1) {
+    return { ok: false, message: 'ptyAttach.protocol must be a positive integer' };
+  }
+  return { ok: true, value: { command: argv, socket, protocol } };
 }
 
 /** `?force=1` (or `true`) on a DELETE that is otherwise refused while something runs. */
