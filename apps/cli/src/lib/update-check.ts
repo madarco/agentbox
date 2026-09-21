@@ -74,6 +74,17 @@ export async function updateCheckEnabled(): Promise<boolean> {
   }
 }
 
+/**
+ * The version a dist-tag points at right now — `nightly`, `latest`, or any
+ * other tag. Exported because a MOVING tag cannot be handed to a control box
+ * verbatim: the VPS builds its image with the spec as a build-arg, so a tag that
+ * has since moved hits the cached layer and reinstalls nothing. Resolving it
+ * here means the box is told a version, which changes when the tag does.
+ */
+export async function fetchDistTagVersion(distTag: string): Promise<string | undefined> {
+  return await fetchDistTag(distTag);
+}
+
 async function fetchDistTag(distTag: string): Promise<string | undefined> {
   try {
     const res = await fetch(registryUrl(distTag), { signal: AbortSignal.timeout(3000) });

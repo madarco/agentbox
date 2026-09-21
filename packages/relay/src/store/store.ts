@@ -90,6 +90,17 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
+  /**
+   * VM size and location for a cloud box (`--size`/`--location`, or the
+   * project's `box.size<Provider>` / `box.<provider>Location`).
+   *
+   * Resolved by the machine that SUBMITS, because only it has the project's
+   * config: a control box holds no checkout and no
+   * `~/.agentbox/projects/<hash>/config.yaml`, so a size left out of the request
+   * is not "the project's", it is the provider's default.
+   */
+  size?: string;
+  location?: string;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

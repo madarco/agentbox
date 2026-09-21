@@ -100,6 +100,17 @@ export interface CloudAgentViaHubArgs {
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
   /**
+   * Box shape this machine resolved: `--size`/`--location` or the project's own
+   * `box.size<Provider>` / `box.<provider>Location`.
+   *
+   * It MUST travel. The control box has no checkout and no per-project config
+   * for this repo — `~/.agentbox/projects/<hash>/config.yaml` lives here — so a
+   * size left out is not "use the project's", it is "use the provider's
+   * default". A project pinned to `cx33` silently got `cx23`.
+   */
+  size?: string;
+  location?: string;
+  /**
    * Model-auth sources the caller's gate already resolved (`--model-auth`).
    *
    * The SELECTION travels, never the secret. `syncAgentCredentialsIfChanged`
@@ -140,12 +151,26 @@ function withoutTimestamp(line: string): string {
  * `box.persistent`, and `borrowCredentials: []` says nothing an absent field
  * does not already say.
  */
-function hubCreateOpts(args: { persistent?: boolean; borrowCredentials?: readonly string[] }): {
-  opts?: { persistent?: boolean; borrowCredentials?: string[] };
+function hubCreateOpts(args: {
+  persistent?: boolean;
+  borrowCredentials?: readonly string[];
+  size?: string;
+  location?: string;
+}): {
+  opts?: {
+    persistent?: boolean;
+    borrowCredentials?: string[];
+    size?: string;
+    location?: string;
+  };
 } {
+  const size = args.size?.trim();
+  const location = args.location?.trim();
   const opts = {
     ...(args.persistent !== undefined ? { persistent: args.persistent } : {}),
     ...(args.borrowCredentials?.length ? { borrowCredentials: [...args.borrowCredentials] } : {}),
+    ...(size ? { size } : {}),
+    ...(location ? { location } : {}),
   };
   return Object.keys(opts).length > 0 ? { opts } : {};
 }
@@ -185,6 +210,8 @@ export async function createCloudBoxViaHubAndAdopt(
     borrowCredentials,
     urlFlag,
     carry,
+    size,
+    location,
     onStatus,
     onLog,
   } = args;
@@ -224,7 +251,12 @@ export async function createCloudBoxViaHubAndAdopt(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubCreateOpts({ persistent, borrowCredentials }),
+    ...hubCreateOpts({
+      persistent,
+      ...(borrowCredentials ? { borrowCredentials } : {}),
+      ...(size ? { size } : {}),
+      ...(location ? { location } : {}),
+    }),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
     startAgent: false,
@@ -309,6 +341,8 @@ export async function enqueueAgentJobViaHub(
     agentArgs,
     urlFlag,
     carry,
+    size,
+    location,
     onStatus,
     onLog,
   } = args;
@@ -343,7 +377,12 @@ export async function enqueueAgentJobViaHub(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubCreateOpts({ persistent, borrowCredentials }),
+    ...hubCreateOpts({
+      persistent,
+      ...(borrowCredentials ? { borrowCredentials } : {}),
+      ...(size ? { size } : {}),
+      ...(location ? { location } : {}),
+    }),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,

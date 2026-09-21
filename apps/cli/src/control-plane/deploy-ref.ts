@@ -84,6 +84,15 @@ export function resolveHubDeploySource(
  * `Cannot find module /opt/agentbox-cli/dist/index.js` that named nothing about
  * the real cause. Take either spelling.
  */
+/**
+ * Is this spec a dist-tag (`nightly`, `latest`, `beta`) rather than a version or
+ * a range? A tag is a moving target and has to be resolved before it reaches a
+ * control box; a version is already pinned.
+ */
+export function isDistTagSpec(spec: string): boolean {
+  return /^[a-z][a-z0-9-]*$/iu.test(spec.trim());
+}
+
 export function normalizePackageSpec(spec: string): string {
   const trimmed = spec.trim();
   const prefix = '@madarco/agentbox@';

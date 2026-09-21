@@ -69,7 +69,7 @@ import {
   runDigitalOceanDestroy,
   runDigitalOceanUpdate,
 } from '../control-plane/deploy-digitalocean.js';
-import { fetchNpmBest } from '../lib/update-check.js';
+import { fetchDistTagVersion, fetchNpmBest } from '../lib/update-check.js';
 import {
   runExpose,
   runLocalUpdate,
@@ -80,6 +80,8 @@ import type { TunnelKind } from '../control-plane/tunnel.js';
 import {
   defaultDeployRef,
   describeHubDeploySource,
+  isDistTagSpec,
+  normalizePackageSpec,
   resolveHubDeploySource,
 } from '../control-plane/deploy-ref.js';
 import { AGENTBOX_VERSION } from '../version.js';
@@ -567,7 +569,7 @@ const setupSub = new Command('setup')
               ref: opts.ref,
               // `--repo` is an owner/name slug for Vercel; the VPS clones a URL.
               ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
-              ...(opts.package ? { packageSpec: opts.package } : {}),
+              ...(opts.package ? { packageSpec: await pinnedPackageSpec(opts.package) } : {}),
             });
             onLog(`hub source: ${describeHubDeploySource(source)}`);
             // hetzner + digitalocean share the same docker-compose VPS deploy,
@@ -1916,7 +1918,7 @@ const deployHetznerSub = new Command('hetzner')
       const source = resolveHubDeploySource(AGENTBOX_VERSION, {
         ...(opts.ref ? { ref: opts.ref } : {}),
         ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
-        ...(opts.package ? { packageSpec: opts.package } : {}),
+        ...(opts.package ? { packageSpec: await pinnedPackageSpec(opts.package) } : {}),
       });
       if (source.kind === 'package' && source.spec !== AGENTBOX_VERSION) {
         log.warn(
@@ -2020,7 +2022,7 @@ const deployDigitalOceanSub = new Command('digitalocean')
       const source = resolveHubDeploySource(AGENTBOX_VERSION, {
         ...(opts.ref ? { ref: opts.ref } : {}),
         ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
-        ...(opts.package ? { packageSpec: opts.package } : {}),
+        ...(opts.package ? { packageSpec: await pinnedPackageSpec(opts.package) } : {}),
       });
       if (source.kind === 'package' && source.spec !== AGENTBOX_VERSION) {
         log.warn(
@@ -2095,6 +2097,27 @@ interface UpdateOpts {
  * the newest build on a channel can live under either dist-tag, so install the
  * resolved VERSION rather than the tag.
  */
+/**
+ * A `--package` spec the control box can be told safely.
+ *
+ * A dist-tag is resolved to the version it points at TODAY. The VPS builds its
+ * image with the spec as a build-arg, so `--package nightly` on a box already
+ * built from `nightly` reuses the cached layer and reinstalls nothing — the
+ * update reports success and changes not one byte. A version busts the cache by
+ * being different, which is the whole point.
+ */
+async function pinnedPackageSpec(spec: string): Promise<string> {
+  const normalized = normalizePackageSpec(spec);
+  if (!isDistTagSpec(normalized)) return normalized;
+  const version = await fetchDistTagVersion(normalized);
+  if (!version) {
+    throw new Error(
+      `could not reach the npm registry to resolve @madarco/agentbox@${normalized}; pass an exact version instead`,
+    );
+  }
+  return version;
+}
+
 async function specForChannel(channel: string): Promise<string> {
   if (channel !== 'nightly' && channel !== 'stable') {
     throw new Error(`unknown --channel "${channel}" (expected: nightly | stable)`);
@@ -2241,7 +2264,7 @@ const updateSub = new Command('update')
         : resolveHubDeploySource(AGENTBOX_VERSION, {
             ...(opts.ref ? { ref: opts.ref } : {}),
             ...(opts.repo ? { repoUrl: repoSlugToUrl(opts.repo) } : {}),
-            ...(opts.package ? { packageSpec: opts.package } : {}),
+            ...(opts.package ? { packageSpec: await pinnedPackageSpec(opts.package) } : {}),
           });
 
       // What it runs NOW comes from the live hub when it can answer — the record

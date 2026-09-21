@@ -1,6 +1,6 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import { describe, expect, it } from 'vitest';
-import { cloudSizingProviderOptions } from '../src/lib/cloud-sizing.js';
+import { cloudSizingProviderOptions, hubBoxShape } from '../src/lib/cloud-sizing.js';
 
 // Only the `box` slice is read; cast a minimal shape through unknown.
 function makeCfg(box: Record<string, unknown> = {}): EffectiveConfig {
@@ -65,7 +65,9 @@ describe('cloudSizingProviderOptions', () => {
   });
 
   it('emits inbound for hetzner/digitalocean when open or a CIDR list', () => {
-    expect(cloudSizingProviderOptions('hetzner', makeCfg({ inbound: 'open' })).inbound).toBe('open');
+    expect(cloudSizingProviderOptions('hetzner', makeCfg({ inbound: 'open' })).inbound).toBe(
+      'open',
+    );
     expect(
       cloudSizingProviderOptions('digitalocean', makeCfg({ inbound: '203.0.113.5/32' })).inbound,
     ).toBe('203.0.113.5/32');
@@ -159,9 +161,9 @@ describe('daytona class / region coupling', () => {
   });
 
   it('threads an explicitly pinned region', () => {
-    expect(
-      cloudSizingProviderOptions('daytona', makeCfg({ daytonaRegion: 'eu' })),
-    ).toMatchObject({ location: 'eu' });
+    expect(cloudSizingProviderOptions('daytona', makeCfg({ daytonaRegion: 'eu' }))).toMatchObject({
+      location: 'eu',
+    });
   });
 
   it('passes daytonaTimeoutMs=0 through, so "disable auto-stop" is not silently dropped', () => {
@@ -192,5 +194,33 @@ describe('digitalocean project', () => {
     for (const p of ['hetzner', 'daytona', 'vercel', 'e2b', 'docker']) {
       expect(cloudSizingProviderOptions(p, cfg).project).toBeUndefined();
     }
+  });
+});
+
+describe('hubBoxShape', () => {
+  it("sends the project's own size to a control box", () => {
+    // The control box has no checkout and no ~/.agentbox/projects/<hash>, so a
+    // size resolved THERE is always the provider default: a project pinned to
+    // cx33 silently got cx23 until this travelled.
+    expect(hubBoxShape('hetzner', makeCfg({ sizeHetzner: 'cx33' }))).toEqual({
+      size: 'cx33',
+      location: 'nbg1',
+    });
+  });
+
+  it('prefers the flag over the project config', () => {
+    expect(
+      hubBoxShape('hetzner', makeCfg({ sizeHetzner: 'cx33' }), { size: 'cx43' }),
+    ).toMatchObject({ size: 'cx43' });
+  });
+
+  it('sends nothing when the project pinned nothing', () => {
+    // Absent means "the control box decides", which is the provider default —
+    // correct only when the project really has no preference.
+    expect(hubBoxShape('vercel', makeCfg())).toEqual({});
+  });
+
+  it('falls back to the generic box.size', () => {
+    expect(hubBoxShape('hetzner', makeCfg({ size: 'cx43' }))).toMatchObject({ size: 'cx43' });
   });
 });

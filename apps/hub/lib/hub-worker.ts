@@ -362,11 +362,16 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.borrowCredentials?.length
           ? { borrowCredentials: createOpts.borrowCredentials }
           : {}),
-        ...(extraInboundCidrs || remoteHost
+        // Size and location come from the machine that HAS the project config;
+        // this box has neither the checkout nor `~/.agentbox/projects/<hash>`,
+        // so resolving them here would only ever yield the provider default.
+        ...(extraInboundCidrs || remoteHost || createOpts?.size || createOpts?.location
           ? {
               providerOptions: {
                 ...(extraInboundCidrs ? { extraInboundCidrs } : {}),
                 ...(remoteHost ? { remoteHost } : {}),
+                ...(createOpts?.size ? { size: createOpts.size } : {}),
+                ...(createOpts?.location ? { location: createOpts.location } : {}),
               },
             }
           : {}),

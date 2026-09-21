@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isDistTagSpec,
   DEFAULT_DEPLOY_REPO_URL,
   deployRefForVersion,
   describeHubDeploySource,
@@ -115,5 +116,19 @@ describe('--package takes the spec, not the whole name', () => {
       kind: 'package',
       spec: 'nightly',
     });
+  });
+});
+
+describe('isDistTagSpec', () => {
+  it('tells a moving tag from a pinned version', () => {
+    // A tag has to be resolved before it reaches a control box: the VPS builds
+    // its image with the spec as a build-arg, so a tag that has moved since the
+    // last build hits the cached layer and reinstalls nothing.
+    expect(isDistTagSpec('nightly')).toBe(true);
+    expect(isDistTagSpec('latest')).toBe(true);
+    expect(isDistTagSpec(' beta ')).toBe(true);
+    expect(isDistTagSpec('0.33.0')).toBe(false);
+    expect(isDistTagSpec('0.33.0-nightly.202609201432')).toBe(false);
+    expect(isDistTagSpec('^0.33.0')).toBe(false);
   });
 });

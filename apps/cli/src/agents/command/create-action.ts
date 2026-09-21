@@ -31,7 +31,7 @@ import { reattachRef } from '../../box-ref.js';
 import { warnCheckpointAgentMismatch } from '../../checkpoint-lookup.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
-import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import { cloudSizingProviderOptions, hubBoxShape } from '../../lib/cloud-sizing.js';
 import {
   assignTasksBestEffort,
   parseTaskIdsOrExit,
@@ -469,6 +469,12 @@ export async function runAgentCreate(
             fromBranch: opts.fromBranch,
             persistent,
             ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+            // Same reason as the cold path: the control box has no per-project
+            // config, so a size resolved only there is the provider's default.
+            ...hubBoxShape(providerName, cfg, {
+              ...(typeof opts.size === 'string' ? { size: opts.size } : {}),
+              ...(typeof opts.location === 'string' ? { location: opts.location } : {}),
+            }),
             urlFlag: opts.url,
             prompt: seedPrompt,
             agentArgs: applySkip(agentArgs),
@@ -715,6 +721,12 @@ export async function runAgentCreate(
             fromBranch,
             persistent,
             ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+            // The size/location this machine resolved. The control box cannot:
+            // the per-project config that pins them lives here.
+            ...hubBoxShape(providerName, cfg, {
+              ...(typeof opts.size === 'string' ? { size: opts.size } : {}),
+              ...(typeof opts.location === 'string' ? { location: opts.location } : {}),
+            }),
             urlFlag: opts.url,
             onStatus,
             onLog: (line) => cmdLog.write(line),

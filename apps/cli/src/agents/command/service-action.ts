@@ -58,7 +58,7 @@ import {
   type RestoreRequest,
 } from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
-import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import { cloudSizingProviderOptions, hubBoxShape } from '../../lib/cloud-sizing.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
 import {
   createCloudBoxViaHubAndAdopt,
@@ -489,6 +489,9 @@ export async function runServiceAgent(
                 name: opts.name,
                 ...(persistent !== undefined ? { persistent } : {}),
                 ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+                // A service agent's command has no --size/--location flags, so
+                // this is purely the project's own config.
+                ...hubBoxShape(providerName, cfg),
                 onStatus,
                 onLog: (line) => cmdLog.write(line),
               }),
