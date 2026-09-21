@@ -68,6 +68,16 @@ This provisions a small VPS, installs the hub over Docker + Caddy, and serves it
 
 When it finishes, open `https://<ip>.sslip.io`, sign in with those credentials, and you'll see the dashboard.
 
+<Callout type="warn" title="The admin login is required">
+  The email + password prompt is not optional: skipping it leaves the hub with no signing secret,
+  and a hub that can't authenticate anyone **refuses every request with 503** rather than serving
+  itself open. `hub setup`, `hub deploy` and `hub expose` all stop if you cancel it. To script a
+  deploy, pre-seed `AGENTBOX_HUB_ADMIN_EMAIL`, `AGENTBOX_HUB_ADMIN_PASSWORD` and
+  `BETTER_AUTH_SECRET` in `~/.agentbox/control-plane/control-plane.env` and the prompt is skipped.
+  There is **no signup page** — that seeded admin is the only account, and changing the env vars
+  later does not rotate its password.
+</Callout>
+
 The deploy also mints a headless **API key** (`AGENTBOX_HUB_API_KEY`) and records it alongside the other deploy secrets in `~/.agentbox/control-plane/control-plane.env` (mode `0600`). It's the `Authorization: Bearer` credential for the hub's public [REST API](/docs/api) on the control box — so scripts and the menu-bar app can call `/api/v1` on the deployed hub without a browser login. It gates only `/api/v1`, never the web UI (that still needs your admin password).
 
 ### Which build the control box runs

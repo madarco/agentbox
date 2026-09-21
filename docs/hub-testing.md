@@ -439,6 +439,9 @@ Run from a Mac (the PC) against a real Hetzner control box built from source at
   hub reads that env **file** (it is spawned without those vars), and remember to
   `config unset relay.controlPlaneUrl --global` afterwards.
 - **`hub setup` needs a TTY** for the "copy this token?" confirm.
+- **A cancelled login prompt now aborts the deploy**, it no longer warns and continues. A hub
+  with no `BETTER_AUTH_SECRET` enters `locked` mode and answers 503 to everything (including
+  the Bearer API key), so pre-seed the env file above for any scripted run.
 - **A nightly CLI pairs with a nightly deploy.** The default (npm, pinned to your CLI's version)
   gets this right; only `--ref`/`--package` can put the two sides out of step.
 - **Cloud accounts are shared** between your laptop, boxes and any test VM. Identify a control box

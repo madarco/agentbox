@@ -103,6 +103,15 @@ Auth env (see [`.env.example`](./.env.example)): `AGENTBOX_HUB_PROFILE`,
 `AGENTBOX_HUB_AUTH`, `BETTER_AUTH_SECRET` (>= 32 chars), `AGENTBOX_HUB_ADMIN_EMAIL`,
 `AGENTBOX_HUB_ADMIN_PASSWORD`, optional `BETTER_AUTH_URL` (pins the trusted origin;
 otherwise the request origin is trusted — fine for a single-origin self-hosted hub).
+
+`BETTER_AUTH_SECRET` is **required** on a deployed profile. Without it the hub can
+neither sign a session nor seed its admin, so it enters `locked` mode: every request
+is refused with 503 rather than served unauthenticated. `AGENTBOX_HUB_AUTH=off` is the
+explicit way to run a hub with no gate at all.
+
+There is no signup endpoint — `/api/auth/sign-up/email` refuses every caller, since
+`/api/auth` necessarily sits outside the gate. The env seed is the only way an account
+is created, and it never rotates an existing admin's password.
 The embedded server needs Node >= 22.5 for `node:sqlite` (stable on Node 24; pass
 `--experimental-sqlite` on 22.5–23).
 
