@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +31,26 @@ const SESSION_ENV = /^(CLAUDECODE|CLAUDE_|CODEX_|OPENCODE_|AGENTBOX_)/;
 
 let ghToken: string | undefined;
 
+/**
+ * Claude Code keys its macOS login to the home it runs under, so a host `claude` under
+ * the e2e HOME (the hub-run manager, S7) reads as logged out. Hand it the access token
+ * from AgentBox's own login backup instead; it outlives any single run.
+ */
+function claudeToken(): Record<string, string> {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(REAL_HOME, '.agentbox', 'claude-credentials.json'), 'utf8'),
+    ) as {
+      claudeAiOauth?: { accessToken?: string; expiresAt?: number };
+    };
+    const o = raw.claudeAiOauth;
+    if (!o?.accessToken || (o.expiresAt && o.expiresAt < Date.now() + 30 * 60_000)) return {};
+    return { CLAUDE_CODE_OAUTH_TOKEN: o.accessToken };
+  } catch {
+    return {};
+  }
+}
+
 function readGhToken(): string {
   if (ghToken) return ghToken;
   // Resolved with the real HOME: gh keeps its login in ~/.config/gh + the Keychain.
@@ -58,6 +78,7 @@ export function e2eEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     AGENTBOX_VERCEL_CLI_DIR: join(REAL_HOME, 'Library', 'Application Support', 'com.vercel.cli'),
     PATH: `${join(E2E_PREFIX, 'bin')}:${process.env['PATH'] ?? ''}`,
     NO_COLOR: '1',
+    ...claudeToken(),
     ...extra,
   };
 }

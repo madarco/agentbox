@@ -131,7 +131,7 @@ export async function waitForBoxCommit(
           allowFail: true,
         },
       ).catch(() => undefined);
-      if (st && st.sessionRunning === false) {
+      if (st && (st.sessionRunning === false || st.state === 'error')) {
         throw new FatalPollError(
           `the agent session in ${box} exited before committing (state ${String(st.state)})`,
         );

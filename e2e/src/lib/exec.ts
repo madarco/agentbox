@@ -40,16 +40,37 @@ export async function run(cmd: string, args: string[], opts: RunOptions = {}): P
   const shown = [cmd, ...args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))].join(' ');
   const started = Date.now();
   if (opts.log) appendFileSync(opts.log, `\n$ ${shown}${opts.cwd ? `   (cwd ${opts.cwd})` : ''}\n`);
-  const child = await execa(cmd, args, {
+  const timeout = opts.timeoutMs ?? 10 * 60_000;
+  const sub = execa(cmd, args, {
     cwd: opts.cwd,
     env: e2eEnv(opts.env),
     extendEnv: false,
-    timeout: opts.timeoutMs ?? 10 * 60_000,
+    timeout,
     reject: false,
     input: opts.input,
     stdin: opts.input === undefined ? 'ignore' : 'pipe',
     all: false,
   });
+  // execa's own timeout kills the child but still waits for its pipes to close; a
+  // grandchild that inherited them (a backgrounded in-box process) would hang the step.
+  let hard: NodeJS.Timeout | undefined;
+  const child = await Promise.race([
+    sub,
+    new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>(
+      (resolve) => {
+        hard = setTimeout(() => {
+          sub.kill('SIGKILL');
+          resolve({
+            stdout: '',
+            stderr: 'killed: pipes still open after the timeout',
+            exitCode: 124,
+            timedOut: true,
+          });
+        }, timeout + 30_000);
+      },
+    ),
+  ]);
+  clearTimeout(hard);
   const result: RunResult = {
     stdout: stripAnsi(String(child.stdout ?? '')),
     stderr: stripAnsi(String(child.stderr ?? '')),

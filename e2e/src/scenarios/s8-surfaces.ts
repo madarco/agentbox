@@ -44,6 +44,7 @@ export const s8: ScenarioDef = {
     },
     {
       name: 'the dashboard lists the box and quits cleanly',
+      group: 'dashboard',
       covers: ['DASH-001', 'DASH-002', 'DASH-003'],
       skipOn: () => (driveAvailable() ? undefined : 'needs the PTY harness (monorepo checkout)'),
       fn: async (ctx) => {
@@ -81,6 +82,7 @@ export const s8: ScenarioDef = {
     },
     {
       name: 'the hub web UI lists the box',
+      group: 'web',
       skipOn: () =>
         browserAvailable() ? undefined : 'needs Google Chrome for a headless screenshot',
       fn: async (ctx) => {
@@ -96,6 +98,7 @@ export const s8: ScenarioDef = {
     },
     {
       name: 'the menu-bar app shows the box',
+      group: 'tray',
       skipOn: (_t, opts) =>
         !opts.tray
           ? 'tray steps disabled (--no-tray)'

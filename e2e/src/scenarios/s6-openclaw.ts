@@ -134,6 +134,9 @@ export const s6: ScenarioDef = {
             ctx.target.providerArg,
             '--restore',
             ctx.box(),
+            // Without -n the restored bot is named `restored-<id>`, not after the bot.
+            '-n',
+            ctx.box(),
             '-y',
             '--into',
             into,

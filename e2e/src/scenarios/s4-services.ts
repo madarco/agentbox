@@ -51,13 +51,26 @@ export const s4: ScenarioDef = {
       },
     },
     {
-      name: '`wait` returns once postgres and web are ready',
-      covers: ['WAIT-001', 'CTL-006'],
+      name: '`wait --units` returns once postgres and web are ready',
+      covers: ['WAIT-002', 'CTL-006'],
       fn: async (ctx) => {
-        await ab(['wait', ctx.box(), '--timeout', String(10 * 60_000), '-j'], {
+        await ab(
+          ['wait', ctx.box(), '--units', 'postgres', 'web', '--timeout', String(10 * 60_000), '-j'],
+          { cwd: v(ctx).app, log: ctx.log, timeoutMs: 11 * 60_000 },
+        );
+      },
+    },
+    {
+      // Its own group: what a user types. A box whose unit list is wrong never gets
+      // here, and that must not stop the rest of the flow from being checked.
+      name: 'a plain `wait` returns once every unit is ready',
+      covers: ['WAIT-001'],
+      group: 'wait-all',
+      fn: async (ctx) => {
+        await ab(['wait', ctx.box(), '--timeout', String(3 * 60_000), '-j'], {
           cwd: v(ctx).app,
           log: ctx.log,
-          timeoutMs: 11 * 60_000,
+          timeoutMs: 4 * 60_000,
         });
       },
     },
@@ -193,7 +206,7 @@ export const s4: ScenarioDef = {
     {
       name: '`wait` on a unit that never exists times out non-zero',
       covers: ['WAIT-003'],
-      needs: ['`wait` returns once postgres and web are ready'],
+      needs: ['`wait --units` returns once postgres and web are ready'],
       fn: async (ctx) => {
         const r = await ab(['wait', ctx.box(), '--units', 'no-such-unit', '--timeout', '5000'], {
           cwd: v(ctx).app,
