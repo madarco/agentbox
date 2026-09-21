@@ -228,6 +228,11 @@ describe('the portable key list is the mapping', () => {
     borrowCredentials: ['codex'],
     size: 'cx33',
     location: 'nbg1',
+    inbound: 'locked',
+    useBranch: 'feat/login',
+    sessionName: 'work',
+    imageRegistry: 'ghcr.io/acme',
+    providerOptions: { timeoutMs: 2_700_000 },
   };
 
   it('carries every portable key, and the list names them all', () => {
@@ -282,5 +287,25 @@ describe('the portable key list is the mapping', () => {
     if (m.ok) return;
     expect(m.error).toContain('git.pushMode=direct is refused');
     expect(m.error).toContain('leases');
+  });
+});
+
+describe('providerOptions on the wire', () => {
+  it('carries the per-provider knobs the submitter resolved', () => {
+    // Enumerating these key by key is what kept going stale: a hub-created
+    // Vercel box ignored box.vercelTimeoutMs for exactly that reason.
+    const m = controlPlaneCreateRequest(
+      {
+        provider: 'vercel',
+        opts: { providerOptions: { timeoutMs: 2_700_000, networkPolicy: 'strict' } },
+      },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts?.providerOptions).toEqual({
+      timeoutMs: 2_700_000,
+      networkPolicy: 'strict',
+    });
   });
 });

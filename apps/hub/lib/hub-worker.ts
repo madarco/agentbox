@@ -148,6 +148,12 @@ export interface HubWorkerOptions {
   log: (line: string) => void;
   /** Public hub URL a created box registers against (control-plane topology). */
   publicUrl?: string;
+  /**
+   * How THIS hub authenticates git for the boxes it builds (`hub.gitAuth`).
+   * Its own config, never the client's — the client's hub is a different
+   * machine with a different App.
+   */
+  gitAuth?: 'gh' | 'app';
   /** Admin PC egress CIDR added to a hetzner box's firewall (dual-IP reach). */
   adminCidr?: string;
   /** Poll cadence. Default 5s. */
@@ -336,13 +342,16 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,
-        // Box-shaping flags the CLI resolved (`--snapshot`/`--image`/`--build`/
-        // env/vnc/bundle-depth/credential-sync). Applied so a control-box create
-        // honors them instead of silently building with defaults. VM sizing
-        // (`--size`/`--location`/`--inbound`) is not here — it needs the CLI's
-        // provider-specific sizing helper, so it falls back to this control box's
-        // own config, the same way `prepare` uses the control box's config pins.
+        // Box-shaping flags the CLI resolved. Applied so a control-box create
+        // honors them instead of silently building with defaults — the machine
+        // that asked is the only one with the project's config, so anything
+        // missing here is the provider's default, not the project's choice.
         ...(createOpts?.snapshot ? { checkpointRef: createOpts.snapshot } : {}),
+        ...(createOpts?.useBranch ? { useBranch: createOpts.useBranch } : {}),
+        ...(createOpts?.imageRegistry ? { imageRegistry: createOpts.imageRegistry } : {}),
+        // This control box's own setting, never the client's: it names the
+        // GitHub App that leases tokens HERE.
+        hubGitAuth: opts.gitAuth,
         ...(createOpts?.image ? { image: createOpts.image } : {}),
         ...(createOpts?.withPlaywright !== undefined
           ? { withPlaywright: createOpts.withPlaywright }
@@ -362,19 +371,25 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.borrowCredentials?.length
           ? { borrowCredentials: createOpts.borrowCredentials }
           : {}),
-        // Size and location come from the machine that HAS the project config;
-        // this box has neither the checkout nor `~/.agentbox/projects/<hash>`,
-        // so resolving them here would only ever yield the provider default.
-        ...(extraInboundCidrs || remoteHost || createOpts?.size || createOpts?.location
-          ? {
-              providerOptions: {
-                ...(extraInboundCidrs ? { extraInboundCidrs } : {}),
-                ...(remoteHost ? { remoteHost } : {}),
-                ...(createOpts?.size ? { size: createOpts.size } : {}),
-                ...(createOpts?.location ? { location: createOpts.location } : {}),
-              },
-            }
-          : {}),
+        // Everything provider-shaped comes from the machine that HAS the project
+        // config; this box has neither the checkout nor
+        // `~/.agentbox/projects/<hash>`, so resolving any of it here would only
+        // ever yield the provider's default. The hub's own two keys go on top:
+        // `extraInboundCidrs` opens a firewall and is never taken from a client.
+        ...(() => {
+          const fromClient = {
+            ...(createOpts?.providerOptions ?? {}),
+            ...(createOpts?.size ? { size: createOpts.size } : {}),
+            ...(createOpts?.location ? { location: createOpts.location } : {}),
+            ...(createOpts?.inbound ? { inbound: createOpts.inbound } : {}),
+          };
+          const providerOptions = {
+            ...fromClient,
+            ...(extraInboundCidrs ? { extraInboundCidrs } : {}),
+            ...(remoteHost ? { remoteHost } : {}),
+          };
+          return Object.keys(providerOptions).length > 0 ? { providerOptions } : {};
+        })(),
         onLog,
       });
       await mirrorBoxSshToCustody(custody, providerName, created.record.cloud?.sandboxId, log);
@@ -404,7 +419,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
             provider: mod.provider,
             box: created.record,
             binary: boxAgent,
-            sessionName: boxAgent,
+            // The submitter's own `<agent>.sessionName`, when they set one: a
+            // box whose session is named something else is a box their attach
+            // cannot find.
+            sessionName: createOpts?.sessionName?.trim() || boxAgent,
             extraArgs,
           });
           log(`${boxAgent} session is running in ${created.record.name}`);

@@ -48,8 +48,14 @@ describe('--model-auth reaches every hub-routed create', () => {
 
   it('both hub-create shapes send an opts bag built from the selection', () => {
     const s = src('commands', '_cloud-agent-via-hub.ts');
-    // Foreground (cold create + adopt) and background `-i`.
-    expect(s.match(/hubCreateOpts\(\{ persistent, borrowCredentials \}\)/g)).toHaveLength(2);
+    // Foreground (cold create + adopt) and background `-i`. Asserted on the
+    // CALL, not on the exact argument spelling: the bag has grown (size,
+    // location) and will grow again, and pinning the literal only ever
+    // reported the growth as a failure.
+    expect(s.match(/\.\.\.hubCreateOpts\(\{/g)).toHaveLength(2);
+    expect(s.match(/borrowCredentials \? \{ borrowCredentials \}/g)?.length ?? 0).toBeGreaterThan(
+      0,
+    );
     expect(s).toContain('borrowCredentials?: string[];');
   });
 

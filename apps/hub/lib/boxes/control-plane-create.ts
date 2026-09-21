@@ -53,6 +53,11 @@ export interface ControlPlaneCreateInput {
      */
     size?: string;
     location?: string;
+    inbound?: string;
+    useBranch?: string;
+    sessionName?: string;
+    imageRegistry?: string;
+    providerOptions?: Record<string, string | number | boolean>;
     /**
      * `--model-auth`: which host logins the box is seeded with. Resolved on the
      * machine that HOLDS them (the CLI) and only named here, so this carries a
@@ -116,10 +121,6 @@ const HOST_LOCAL_OPT_KEYS = new Set([
   'promptAnswers',
   'gitPushMode',
   'remoteHost',
-  'useBranch',
-  'imageRegistry',
-  'sessionName',
-  'inbound',
   'resync',
   'dangerouslySkipPermissions',
 ]);

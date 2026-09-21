@@ -188,6 +188,12 @@ export interface CreateBoxOpts {
   bundleDepth?: number;
   /** VM size for cloud providers (hetzner type / daytona cpu-mem-disk / vercel vCPU). */
   size?: string;
+  /**
+   * The provider-shaped knobs the submitting machine resolved, allowlisted on
+   * the way in. Carried as one blob because enumerating them key by key is what
+   * kept going stale.
+   */
+  providerOptions?: Record<string, string | number | boolean>;
   /** Datacenter / region (hetzner / digitalocean). */
   location?: string;
   /** VPS firewall access policy (locked | open | CIDR list). */

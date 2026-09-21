@@ -93,6 +93,11 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'borrowCredentials',
   'size',
   'location',
+  'inbound',
+  'useBranch',
+  'sessionName',
+  'imageRegistry',
+  'providerOptions',
 ] as const;
 
 export type PortableCreateOptKey = (typeof PORTABLE_CREATE_OPT_KEYS)[number];
@@ -132,6 +137,29 @@ export interface CreateJobRequestOpts {
    */
   size?: string;
   location?: string;
+  /** Per-box firewall policy for a VPS provider (`--inbound`). */
+  inbound?: string;
+  /**
+   * Reuse an existing branch instead of forking `agentbox/<name>`. The worker
+   * must also CLONE it, or the box is seeded from a tree that has no such ref.
+   */
+  useBranch?: string;
+  /** The agent's tmux/pty session name, so the submitter's attach can find it. */
+  sessionName?: string;
+  /** Registry the base image is pulled from (a `docker:<alias>` control box). */
+  imageRegistry?: string;
+  /**
+   * The provider-shaped knobs the submitting machine resolved: size, location,
+   * inbound, and the per-provider ones (`timeoutMs`, `networkPolicy`,
+   * `sandboxClass`, DigitalOcean's `project`).
+   *
+   * Carried as one blob rather than enumerated key by key, because the
+   * enumeration is what keeps going stale — a hub-created Vercel box ignored
+   * `box.vercelTimeoutMs` for exactly that reason. The hub merges its own
+   * (`extraInboundCidrs`, `remoteHost`) on top; those are never taken from a
+   * client, since one of them opens a firewall.
+   */
+  providerOptions?: Record<string, string | number | boolean>;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

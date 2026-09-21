@@ -639,3 +639,39 @@ describe('parseTimelineQuery', () => {
     expect(q('')).toEqual({ ok: true, value: {} });
   });
 });
+
+describe('parseCreateBox providerOptions', () => {
+  const body = (providerOptions: unknown) => ({
+    projectId: 'abc123',
+    agent: 'none' as const,
+    opts: { providerOptions },
+  });
+
+  it('accepts the knobs a submitting machine resolves', () => {
+    const r = parseCreateBox(body({ size: 'cx33', timeoutMs: 120_000, portless: true }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.opts?.providerOptions).toEqual({
+      size: 'cx33',
+      timeoutMs: 120_000,
+      portless: true,
+    });
+  });
+
+  it('refuses the two keys the hub owns', () => {
+    // extraInboundCidrs opens a firewall; remoteHost names an engine this hub
+    // owns. Neither is a client's to set, so this is a refusal, not a filter.
+    const cidr = parseCreateBox(body({ extraInboundCidrs: '0.0.0.0/0' }));
+    expect(cidr.ok).toBe(false);
+    if (cidr.ok) return;
+    expect(cidr.message).toContain('set by the hub');
+    expect(parseCreateBox(body({ remoteHost: 'buildbox' })).ok).toBe(false);
+  });
+
+  it('refuses a key it does not know rather than passing it to a provider', () => {
+    const r = parseCreateBox(body({ somethingElse: 'x' }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toContain('not a known provider option');
+  });
+});

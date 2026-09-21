@@ -200,8 +200,13 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
     try {
       log(`leasing a push token for ${request.repoUrl}`);
       const authedUrl = await deps.leaseRemoteUrl(request.repoUrl);
-      log(`cloning ${request.repoUrl}${request.branch ? `@${request.branch}` : ''} into ${dir}`);
-      await deps.cloneRepo(authedUrl, request.repoUrl, dir, request.branch);
+      // `useBranch` reuses an existing branch instead of forking a new one, so
+      // the clone must actually HAVE that ref: the box is seeded from this tree,
+      // and a clone of the default branch alone would fail the checkout rather
+      // than quietly fork.
+      const cloneRef = request.opts?.useBranch ?? request.branch;
+      log(`cloning ${request.repoUrl}${cloneRef ? `@${cloneRef}` : ''} into ${dir}`);
+      await deps.cloneRepo(authedUrl, request.repoUrl, dir, cloneRef);
       let carry: CarryEntryLike[] | undefined;
       if (deps.fetchSeedMaterial) {
         try {

@@ -52,6 +52,53 @@ function isObject(v: unknown): v is Record<string, unknown> {
  * which has no registry, keeps today's behaviour); the boxes route passes the
  * live registry ids, which is what lets a plugin agent be created at all.
  */
+/**
+ * Provider-shaped knobs the submitting machine resolved (size, location,
+ * inbound, and the per-provider ones). Allowlisted rather than passed through:
+ * `extraInboundCidrs` and `remoteHost` are the HUB's to set — one of them opens
+ * a firewall and the other names an engine this hub owns — so a client that
+ * sends either is refused rather than quietly obeyed.
+ */
+const PROVIDER_OPTION_KEYS = new Set([
+  'size',
+  'location',
+  'inbound',
+  'timeoutMs',
+  'networkPolicy',
+  'sandboxClass',
+  'project',
+  'portless',
+]);
+const HUB_OWNED_PROVIDER_OPTION_KEYS = new Set(['extraInboundCidrs', 'remoteHost']);
+
+function parseProviderOptions(
+  value: unknown,
+): Parsed<Record<string, string | number | boolean> | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isObject(value)) return { ok: false, message: 'opts.providerOptions must be an object' };
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (v === undefined) continue;
+    if (HUB_OWNED_PROVIDER_OPTION_KEYS.has(key)) {
+      return {
+        ok: false,
+        message: `opts.providerOptions.${key} is set by the hub, not the client`,
+      };
+    }
+    if (!PROVIDER_OPTION_KEYS.has(key)) {
+      return { ok: false, message: `opts.providerOptions.${key} is not a known provider option` };
+    }
+    if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
+      return {
+        ok: false,
+        message: `opts.providerOptions.${key} must be a string, number or boolean`,
+      };
+    }
+    out[key] = v;
+  }
+  return { ok: true, value: Object.keys(out).length > 0 ? out : undefined };
+}
+
 export function parseCreateBox(
   body: unknown,
   allowedAgents: readonly string[] = AGENTS,
@@ -194,6 +241,9 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     if (!r.ok) return r;
     if (r.value !== undefined) (out as Record<string, unknown>)[f] = r.value;
   }
+  const po = parseProviderOptions(v['providerOptions']);
+  if (!po.ok) return po;
+  if (po.value) out.providerOptions = po.value;
   const bd = optionalNumber(v.bundleDepth, 'opts.bundleDepth');
   if (!bd.ok) return bd;
   if (bd.value !== undefined) out.bundleDepth = bd.value;

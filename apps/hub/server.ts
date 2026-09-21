@@ -167,6 +167,12 @@ async function main(): Promise<void> {
   const hostReachTimeoutFromConfig = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.relay.hostReachTimeoutMs)
     .catch(() => undefined);
+  // THIS hub's own setting, never a client's: it names the GitHub App (or the
+  // stored token) that leases push credentials here, so a box it builds must be
+  // told how the hub it registers against authenticates.
+  const hubGitAuthMode = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.hub.gitAuth)
+    .catch(() => undefined);
 
   const daemon = await startRelayDaemon({
     port,
@@ -362,6 +368,7 @@ async function main(): Promise<void> {
       log: (line) => process.stdout.write(`agentbox-hub-worker: ${line}\n`),
       publicUrl: process.env.AGENTBOX_HUB_PUBLIC_URL,
       adminCidr: process.env.AGENTBOX_HUB_ADMIN_CIDR,
+      ...(hubGitAuthMode ? { gitAuth: hubGitAuthMode } : {}),
       mockCreate: process.env.AGENTBOX_HUB_WORKER_MOCK === '1',
     });
   }
