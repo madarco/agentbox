@@ -29,7 +29,7 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 
 ## Harness gaps
 
-- **remote-docker needs the VM in the user's real `~/.ssh/config`.** OpenSSH reads its config from the passwd home, not `$HOME`, so the alias the harness writes under the e2e home is invisible. Either add a `Host e2e-linux` block to the real config or load the VM key into ssh-agent and register `dev@<ip>`.
+- **remote-docker needs the VM in the user's real `~/.ssh/config`** (OpenSSH reads the passwd home, not `$HOME`). Done on Marco's Mac: a `Host e2e-linux` block pointing at the test VM with its key. The VM also has `git-lfs` now, so `docker@linux` gets past the LFS test repo.
 - **Cloud `stop` reports `paused`** (E2B implements stop as its pause); the suite accepts either.
 
 - **Environment, not product:** the first docker run failed opencode because this Mac's own opencode login had expired (`Token refresh failed: 401` in the box; the host `auth.json` was last refreshed in May). Re-login with `opencode auth login`. The harness now stops as soon as the agent reports `error` instead of waiting out the timeout.
@@ -39,6 +39,11 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 - **Tray on-screen steps need an idle Mac.** The AX reads and presses work with the menu closed; opening the menu and screenshots wait for a minute of user idle time and an unlocked screen. A Tart VM (or Daytona's use.computer Macs) would remove the constraint; needs a one-hour proof of concept each.
 - **No judge on the Linux worker** (no `claude` on the VM); its steps are all scripted.
 - **S2's tray check** (the box row with its PR label) is only in S8's generic row check; a PR label assertion needs a box with a merged PR while the tray runs.
+
+## Next scenarios
+
+- **S9 — remote hub via `hub expose`.** On the Linux test VM run `agentbox hub expose`, point the Mac's e2e CLI at it (`relay.controlPlaneUrl` + API key), replay a slim S2 through it (cloud box via `cloud.viaHub`, agent turn, push, merged PR; a docker box on the VM with the local relay off), and point the e2e tray at the same URL. Every run.
+- **S10 — control box deployed to Hetzner.** `hub setup --deploy hetzner` non-interactively (pre-seeded `control-plane.env`), then: HTTPS on the sslip.io host, `hub status` version = local CLI, auth gates, the `docker:hub` flip (`box.provider` = `remote-docker`, host `hub`), a box built on the VPS, a push with the relay off, `hub update` in place, `hub destroy` leaving no `agentbox.role=control-plane` server or firewall. Release runs only (`--targets all` or `--with-deploy`). Open point: the released tarball isn't on npm yet — check whether `hub deploy --package` takes a tarball/URL, else `--ref <sha>` with swap or a bigger server type.
 
 ## Checklist IDs not yet in a scenario
 
