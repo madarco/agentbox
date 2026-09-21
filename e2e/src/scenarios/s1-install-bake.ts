@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { PtySession, driveAvailable } from '../lib/drive.js';
-import { AGENTBOX_BIN, E2E_HOME, E2E_HUB_PORT, E2E_ROOT } from '../lib/env.js';
+import { AGENTBOX_BIN, E2E_HOME, E2E_HUB_PORT, E2E_ROOT, killStaleHub } from '../lib/env.js';
 import { ab, poll, run } from '../lib/exec.js';
 import { hubFetch, hubTarget } from '../lib/hub.js';
 import { judge } from '../lib/judge.js';
@@ -48,6 +48,7 @@ async function port8787Owner(): Promise<string> {
 
 async function wizard(ctx: Ctx): Promise<void> {
   const before = await port8787Owner();
+  killStaleHub(WIZARD_HUB_PORT, WIZARD_HOME);
   rmSync(WIZARD_HOME, { recursive: true, force: true });
   mkdirSync(join(WIZARD_HOME, '.agentbox'), { recursive: true });
   writeFileSync(
@@ -157,22 +158,28 @@ export const s1: ScenarioDef = {
     {
       name: 'the packed CLI installs and prints its help',
       covers: ['BOOT-001', 'BOOT-002'],
+      group: 'cli',
       skipOn: primaryOnly,
       fn: async (ctx) => {
         const v = (await ab(['--version'], { log: ctx.log })).stdout.trim();
         if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error(`--version printed "${v}"`);
-        const help = await ab([], { log: ctx.log, allowFail: true });
-        const text = help.stdout + help.stderr;
-        const missing = ['claude', 'create', 'prepare', 'hub'].filter((c) => !text.includes(c));
-        if (help.exitCode !== 0 || missing.length)
+        const bare = await ab([], { log: ctx.log, allowFail: true });
+        if (!(bare.stdout + bare.stderr).includes('claude'))
+          throw new Error('bare `agentbox` printed no help');
+        const full = await ab(['help'], { log: ctx.log, allowFail: true });
+        const missing = ['claude', 'create', 'prepare', 'hub', 'checkpoint'].filter(
+          (c) => !full.stdout.includes(c),
+        );
+        if (full.exitCode !== 0 || missing.length)
           throw new Error(
-            `\`agentbox\` exited ${String(help.exitCode)}; help lacks ${missing.join(', ')}`,
+            `\`agentbox help\` exited ${String(full.exitCode)}; lacks ${missing.join(', ')}`,
           );
-        ctx.note(`CLI ${v}`);
+        ctx.note(`CLI ${v}; bare \`agentbox\` exits ${String(bare.exitCode)}`);
       },
     },
     {
       name: 'the install wizard sets up Docker from scratch',
+      group: 'wizard',
       skipOn: (t) =>
         t.id !== 'docker@mac'
           ? 'the wizard runs once, on docker@mac'
@@ -184,6 +191,7 @@ export const s1: ScenarioDef = {
     {
       name: 'the hub answers /healthz and gates /api/v1',
       covers: ['RELAY-004'],
+      group: 'hub',
       skipOn: primaryOnly,
       fn: async (ctx) => {
         const t = await hubTarget();
@@ -200,6 +208,7 @@ export const s1: ScenarioDef = {
     },
     {
       name: 'provider credentials are configured',
+      group: 'bake',
       skipOn: (t) => (t.kind === 'docker' ? 'docker needs no login' : undefined),
       fn: async (ctx) => {
         if (ctx.target.kind === 'remote-docker') {
@@ -224,6 +233,7 @@ export const s1: ScenarioDef = {
     },
     {
       name: 'bake the base image',
+      group: 'bake',
       covers: ['PREP-001', 'PREP-004', 'PREP-005'],
       fn: async (ctx) => {
         const reuse = ctx.opts.reuseBake && existsSync(preparedFile(ctx.target));
@@ -247,6 +257,7 @@ export const s1: ScenarioDef = {
     },
     {
       name: 'prepare again is a fast no-op',
+      group: 'bake',
       covers: ['PREP-002'],
       fn: async (ctx) => {
         const r = await ab(['prepare', '--provider', ctx.target.providerArg, '-y'], {

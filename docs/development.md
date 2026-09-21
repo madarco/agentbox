@@ -201,6 +201,15 @@ truth for those flags.
 Only `@madarco/agentbox` (`apps/cli`) is published. Releases are driven from the
 commit history — there is no Changesets step.
 
+0. **Run the release e2e suite.** `pnpm e2e --targets all` packs the CLI, installs
+   it into a separate `HOME` (hub on 8797, so your own hub and boxes are untouched)
+   and runs the 8 scenarios on every provider and on the Linux test VM, with real
+   bakes and real PRs merged into throwaway branches of `madarco/agentbox-test-repo`.
+   Allow 30–60 minutes and a few dollars of cloud time; the tray steps only open the
+   menu on screen when you've been away from the Mac for a minute. The report is
+   `e2e/runs/<sha>-<run>/report.html`, and `/release-notes` refuses to tag without a
+   green run of the released commit. See [`test-plan.md`](./test-plan.md) and
+   [`release-e2e-plan.md`](./release-e2e-plan.md).
 1. **Generate the notes.** Run the `/release-notes [patch|minor|major]` slash
    command in Claude Code from the repo root. It reads the commits since the last
    `vX.Y.Z` tag, curates them into a short user-facing entry (grouped Breaking /

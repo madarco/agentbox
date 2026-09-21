@@ -1,6 +1,6 @@
 # Release E2E plan
 
-> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). Replaces the per-command checklist in [`test-plan.md`](./test-plan.md) once Phase 7 lands.
+> Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). Implemented in [`e2e/`](../e2e) (`pnpm e2e`); [`test-plan.md`](./test-plan.md) is the short how-to plus the old checklist's coverage map; open items in [`release-e2e-backlog.md`](./release-e2e-backlog.md).
 
 Before every release we run a small number of **real-life scenarios** against the **installed CLI**, on every provider and on a Linux host. Each scenario is a flow a user actually goes through: a fresh install, then an agent turn that ends in a merged PR. One scenario asserts many things. A human can read the report and say "yes, that's what a user sees".
 
@@ -190,15 +190,15 @@ Each run writes `e2e/runs/<sha>-<runid>/`:
 - `e2e/lib/`: the e2e `HOME` bootstrap and guard, the tarball install, an `/api/v1` client, `gh` helpers, provider-SDK sweep and leak checks, the tray AX driver, the Playwright helpers, the judge.
 - `pnpm e2e --targets docker@mac,e2b --scenarios s2,s3 [--reuse-bake] [--keep] [--no-tray]`.
 
-## Phases
+## Status
 
-1. **Harness.** The e2e `HOME` bootstrap, the real-`HOME` guard, the tarball install, the runner (`step`/`edge`/teardown), prefix cleanup and the `summary.json` report. Done when an empty scenario runs, reports and cleans up on `docker@mac`.
-2. **S2 on docker@mac.** The walking skeleton: dirty repo → claude turn → push → PR → merge → timeline. Done when a green run leaves a merged PR and nothing else behind.
-3. **S1 and S3, plus the cloud targets.** Real bakes in parallel, the lifecycle scenario, per-provider leak checks. Fold in `scripts/vercel-live-e2e.sh`.
-4. **S4, S5, S6.**
-5. **Tray.** Accessibility identifiers in the tray, the launch argument that forces the hub target, a Swift AX + CGEvent driver, the payload fixtures in `HubPayloadTests`, then the tray steps of S1, S2, S7 and S8.
-6. **Linux and remote-docker.** Run the runner on the Hetzner test VM as `docker@linux`, and point `remote-docker` at it from the Mac.
-7. **Judge and gate.** The AI judge for S8 and the tray steps, `report.html`, and the `/release-notes` gate: no tag unless a green `summary.json` exists for `HEAD`. Then retire `test-plan.md`, keeping only the coverage map.
+All seven phases are built (2026-09-21):
+
+- **Harness** (`e2e/src/lib/`): isolated home + guard, tarball pack/install, runner with step groups and edges, hub/GitHub/provider-sweep helpers, the PTY driver wrapper, the AI judge (`claude -p`, one yes/no verdict per piece of evidence), `summary.json` + `report.html`.
+- **Scenarios** (`e2e/src/scenarios/s1…s8`). Differences from the design above, found while building: S3 creates its own box instead of chaining off S2, so every scenario runs in parallel; S6 runs on docker, hetzner and remote-docker (the providers the service-agent surface supports); S7 and S8 exercise host-side layers and run once, on docker@mac.
+- **Linux + remote-docker**: `docker@linux` ships the harness and the tarball to the Hetzner test VM and runs it there as a `--worker`; `remote-docker` drives the same VM's engine from the Mac as `docker:e2e-linux`.
+- **Tray**: the tray's `feat/e2e-testability` branch builds a second bundle (`make e2e-app` → `AgentBoxE2E.app`, own bundle id and process name), adds accessibility identifiers (`agentbox.box.<name>`, …), honours `$HOME` for the setup marker, and decodes golden hub payloads in `HubFixtureTests`. The driver is `e2e/tray-driver` (AX + CGEvent, scoped by PID). The menu's AX tree is readable while closed, so lookups never touch the screen; it is opened for a screenshot only when the user has been idle for a minute.
+- **Gate**: `/release-notes` step 0 refuses a stable tag without a green run of the released commit.
 
 ## Open questions
 

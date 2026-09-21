@@ -9,7 +9,7 @@ const tui = (mode: string): Record<string, string> => ({ ...(claude?.tuiEnv?.[mo
  * (v2.1.250) — `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 forces that any time`
  * and `/tui fullscreen or CLAUDE_CODE_NO_FLICKER=1 to override`. If a Claude
  * Code update renames them this test still passes and the box silently gets the
- * wrong renderer, so the real check is the live one in docs/test-plan.md.
+ * wrong renderer, so the real check is the live one in the `pnpm e2e` S2 scenario (docs/test-plan.md).
  *
  * Was `claudeTuiEnv` in `@agentbox/core`. The env is registry data now, so the
  * test reads the row — which is also what the launch sites do.

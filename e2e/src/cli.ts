@@ -3,7 +3,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { destroyBoxes } from './lib/box.js';
-import { AGENTBOX_BIN, E2E_HUB_PORT, REPO_ROOT, RUNS_DIR, assertIsolatedHome } from './lib/env.js';
+import {
+  AGENTBOX_BIN,
+  E2E_HOME,
+  E2E_HUB_PORT,
+  REPO_ROOT,
+  RUNS_DIR,
+  assertIsolatedHome,
+  killStaleHub,
+} from './lib/env.js';
 import { ab, poll } from './lib/exec.js';
 import { cleanupGithub, setTestRepo } from './lib/github.js';
 import { bootstrapHome } from './lib/home.js';
@@ -80,14 +88,17 @@ async function runTarget(
   if (s1) {
     const r = await runScenario(s1, t, opts);
     results.push(r);
-    if (r.status === 'fail') {
+    const bakeFailed = r.steps.some(
+      (st) => st.name === 'bake the base image' && st.status === 'fail',
+    );
+    if (bakeFailed) {
       for (const d of defs.filter((x) => x.id !== 's1')) {
         results.push({
           id: d.id,
           title: d.title,
           target: t.id,
           status: 'skip',
-          skipReason: 'S1 (install + bake) failed on this target',
+          skipReason: 'the S1 bake failed on this target',
           startedAt: new Date().toISOString(),
           durationMs: 0,
           steps: [],
@@ -167,6 +178,7 @@ async function main(): Promise<number> {
 
   // A hub left over from an earlier run holds the old home's files open.
   await ab(['hub', 'stop'], { log: setupLog, allowFail: true, timeoutMs: 60_000 });
+  killStaleHub(E2E_HUB_PORT, E2E_HOME);
   bootstrapHome({ reuseBake: values['reuse-bake'] });
   if (targets.some((t) => t.id === 'remote-docker')) prepareLinuxSsh();
   await startHub(setupLog);

@@ -185,6 +185,17 @@ when it passes through the tool-output channel (and piping the command to
 `tail`/anything makes npm treat the session as non-interactive and bail with
 `EOTP`). So the publish must run in the user's own terminal.
 
+0. **E2E gate.** A stable release ships only code the release e2e run passed
+   ([`docs/release-e2e-plan.md`](../../docs/release-e2e-plan.md)). Look for a green
+   run of the commit being released (HEAD, before the changelog commit):
+   ```
+   node -e 'const fs=require("fs"),sha=require("child_process").execSync("git rev-parse HEAD").toString().trim();const dir="e2e/runs";const runs=fs.existsSync(dir)?fs.readdirSync(dir).filter(d=>d.startsWith(sha.slice(0,10))):[];const ok=runs.map(d=>{try{return JSON.parse(fs.readFileSync(`${dir}/${d}/summary.json`))}catch{return null}}).filter(s=>s&&s.ok);console.log(ok.length?`green: ${ok.map(s=>s.runId+" ["+s.targets.join(",")+"]").join("; ")}`:`no green e2e run for ${sha.slice(0,10)}`)'
+   ```
+   Proceed only if a green run exists **and** its targets include `docker@mac`,
+   `docker@linux` and every cloud provider the release touches. Otherwise stop and
+   tell the user what is missing; they run `pnpm e2e --targets all` (or explicitly
+   waive the gate). Nightlies (§9) skip this.
+
 1. **Bump `package.json` (no commit, no tag yet).** Section 5 just edited the
    changelog, so the tree is dirty and a plain `npm version` would abort with
    `EGITDIRTYWORKINGDIR`. Bump the version field only, from the package dir:

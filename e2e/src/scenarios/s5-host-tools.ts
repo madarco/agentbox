@@ -90,7 +90,7 @@ export const s5: ScenarioDef = {
         await boxSh(
           ctx,
           ctx.box(),
-          `nohup agentbox-ctl tool request ${TOOL} --reason "e2e" > /tmp/e2e-req.out 2>&1; echo "exit=$?" >> /tmp/e2e-req.out &`,
+          `nohup sh -c 'agentbox-ctl tool request ${TOOL} --reason e2e; echo "exit=$?"' > /tmp/e2e-req.out 2>&1 < /dev/null &`,
         );
         const a = await answerApproval(ctx, (x) => JSON.stringify(x).includes(TOOL));
         ctx.note(`approved ${a.id}: ${a.message ?? ''}`);

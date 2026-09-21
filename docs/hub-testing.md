@@ -2,7 +2,7 @@
 
 > Part of the AgentBox docs. Start at [CLAUDE.md](../CLAUDE.md). The user-facing guide is
 > [`deployed-hub.mdx`](../apps/web/content/docs/deployed-hub.mdx); provider-wide regression
-> checklists are in [`test-plan.md`](./test-plan.md).
+> checks are the `pnpm e2e` scenarios in [`test-plan.md`](./test-plan.md).
 
 Every way to exercise the hub — from a 30-second local flip to a real VPS driven from a virgin
 machine. **Start at the top and only go down when the cheaper environment can't prove the thing

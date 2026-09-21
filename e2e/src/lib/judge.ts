@@ -34,18 +34,15 @@ export async function judge(ctx: Ctx, evidencePath: string, expectation: string)
   for (const [k, v] of Object.entries(process.env)) if (!SESSION_ENV.test(k)) env[k] = v;
   env['HOME'] = REAL_HOME;
 
-  const r = await execa(
-    'claude',
-    ['-p', '--output-format', 'json', '--allowedTools', 'Read', prompt],
-    {
-      cwd: dirname(evidencePath),
-      env,
-      extendEnv: false,
-      timeout: 5 * 60_000,
-      reject: false,
-      stdin: 'ignore',
-    },
-  );
+  const r = await execa('claude', ['-p', '--output-format', 'json', '--allowedTools', 'Read'], {
+    cwd: dirname(evidencePath),
+    env,
+    extendEnv: false,
+    timeout: 5 * 60_000,
+    reject: false,
+    // On stdin: `--allowedTools` is variadic and would swallow a positional prompt.
+    input: prompt,
+  });
   appendFileSync(ctx.log, `\n[judge] ${expectation}\n${String(r.stdout)}\n${String(r.stderr)}\n`);
   let verdict: { pass: boolean; reason: string } | undefined;
   try {

@@ -62,6 +62,32 @@ export function e2eEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   };
 }
 
+/**
+ * Kill listeners on `port` whose HOME is `home`: a hub a previous run left behind
+ * after its home was wiped. Anything else on the port is left alone.
+ */
+export function killStaleHub(port: number, home: string): void {
+  let pids: string[] = [];
+  try {
+    pids = execFileSync('lsof', ['-nP', `-iTCP:${String(port)}`, '-sTCP:LISTEN', '-t'], {
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter(Boolean);
+  } catch {
+    return;
+  }
+  for (const pid of pids) {
+    try {
+      const env = execFileSync('ps', ['eww', '-o', 'command=', '-p', pid], { encoding: 'utf8' });
+      if (env.includes(`HOME=${home} `) || env.includes(`HOME=${home}\n`))
+        process.kill(Number(pid));
+    } catch {
+      // gone already
+    }
+  }
+}
+
 function canonical(p: string): string {
   try {
     return realpathSync(p);
