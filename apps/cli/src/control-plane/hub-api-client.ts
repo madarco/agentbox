@@ -13,6 +13,7 @@
 import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
 import type { AgentId, AgentMode, AgentStatusMap } from '@agentbox/core';
+import type { CreateJobRequestOpts } from '@agentbox/relay';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -145,6 +146,32 @@ export interface HubApiJob {
   };
 }
 
+/**
+ * What `POST /api/v1/boxes` accepts, mirroring the hub's own `CreateBoxOpts`:
+ * everything portable (`CreateJobRequestOpts`) plus the knobs only a hub with a
+ * local checkout can honour. A control box drops that second group — and says
+ * so, rather than building something quietly different.
+ */
+export interface HubApiCreateBoxOpts extends CreateJobRequestOpts {
+  memory?: string;
+  cpus?: string;
+  pidsLimit?: string;
+  disk?: string;
+  hostSnapshot?: boolean;
+  sharedDockerCache?: boolean;
+  portless?: boolean;
+  resync?: boolean;
+  envFiles?: string[];
+  carry?: unknown[];
+  carryYes?: boolean;
+  carrySkip?: boolean;
+  carryAsk?: boolean;
+  gitPushMode?: string;
+  remoteHost?: string;
+  dangerouslySkipPermissions?: boolean;
+  promptAnswers?: Record<string, unknown>;
+}
+
 /** Body for `POST /api/v1/boxes` — mirrors the hub's `CreateBoxInput`. */
 export interface HubApiCreateBoxInput {
   /** Exactly one of projectId / repoUrl. */
@@ -160,8 +187,13 @@ export interface HubApiCreateBoxInput {
   foreground?: boolean;
   fromBranch?: string;
   setupWizard?: boolean;
-  /** Box-shaping knobs (image, snapshot, limits, size/location, carry, ...). */
-  opts?: Record<string, unknown>;
+  /**
+   * Box-shaping knobs. Deliberately not `Record<string, unknown>` any more: an
+   * untyped bag is how two senders drifted apart and how `size` reached every
+   * layer but the one that mattered — a typo here is now a build failure
+   * instead of a field that silently does nothing.
+   */
+  opts?: HubApiCreateBoxOpts;
   /** The manager session this create came from (`detectManager`). */
   managerId?: string;
 }

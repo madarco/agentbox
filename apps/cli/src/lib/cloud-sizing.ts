@@ -55,25 +55,6 @@ export interface CloudSizingFlags {
  * / `opencode`) and the queued-job worker so a box gets the same size and
  * lifetime regardless of how it was made.
  */
-/**
- * The size and location to SEND to a control box building this box.
- *
- * Same precedence as a local create (flag > `box.size<Provider>` > `box.size`),
- * resolved here because only this machine has the project's config: the control
- * box holds no checkout and no `~/.agentbox/projects/<hash>/config.yaml`, so
- * anything not sent is not "the project's value", it is the provider's default.
- */
-export function hubBoxShape(
-  providerName: string,
-  cfg: EffectiveConfig,
-  flags: { size?: string; location?: string } = {},
-): { size?: string; location?: string } {
-  const opts = cloudSizingProviderOptions(providerName, cfg, flags);
-  const size = typeof opts.size === 'string' ? opts.size : undefined;
-  const location = typeof opts.location === 'string' ? opts.location : undefined;
-  return { ...(size ? { size } : {}), ...(location ? { location } : {}) };
-}
-
 export function cloudSizingProviderOptions(
   providerName: string,
   cfg: EffectiveConfig,

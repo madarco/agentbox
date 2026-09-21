@@ -58,7 +58,8 @@ import {
   type RestoreRequest,
 } from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
-import { cloudSizingProviderOptions, hubBoxShape } from '../../lib/cloud-sizing.js';
+import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
 import {
   createCloudBoxViaHubAndAdopt,
@@ -478,6 +479,17 @@ export async function runServiceAgent(
           projectRoot: project.root,
         });
         if (route.where === 'hub') {
+          const serviceHubOpts = buildHubCreateOpts({
+            providerName,
+            ...(remoteHost ? { remoteHost } : {}),
+            cfg,
+            flags: {},
+            resolved: {
+              ...(persistent !== undefined ? { persistent } : {}),
+              ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+            },
+          });
+          for (const w of serviceHubOpts.warnings) log.warn(w);
           adopted = await withHubJobLine(
             (onStatus) =>
               createCloudBoxViaHubAndAdopt({
@@ -489,9 +501,10 @@ export async function runServiceAgent(
                 name: opts.name,
                 ...(persistent !== undefined ? { persistent } : {}),
                 ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
-                // A service agent's command has no --size/--location flags, so
-                // this is purely the project's own config.
-                ...hubBoxShape(providerName, cfg),
+                // A service agent's command has no box-shaping flags, so this
+                // is purely the project's own config — which is exactly what a
+                // control box cannot read for itself.
+                opts: serviceHubOpts.opts,
                 onStatus,
                 onLog: (line) => cmdLog.write(line),
               }),

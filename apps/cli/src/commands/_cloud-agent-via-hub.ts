@@ -16,6 +16,7 @@
  *     submit on. No adopt/attach here; it's fire-and-forget.
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
+import type { CreateJobRequestOpts } from '@agentbox/relay';
 import { readGitOriginUrl, type CarrySeedSource } from '@agentbox/sandbox-cloud';
 import {
   resolveCustodyTarget,
@@ -100,16 +101,14 @@ export interface CloudAgentViaHubArgs {
   /** `--url` control-box override (else `relay.controlPlaneUrl`). */
   urlFlag?: string;
   /**
-   * Box shape this machine resolved: `--size`/`--location` or the project's own
-   * `box.size<Provider>` / `box.<provider>Location`.
+   * Everything box-shaping this machine resolved, from `buildHubCreateOpts`.
    *
    * It MUST travel. The control box has no checkout and no per-project config
-   * for this repo — `~/.agentbox/projects/<hash>/config.yaml` lives here — so a
-   * size left out is not "use the project's", it is "use the provider's
-   * default". A project pinned to `cx33` silently got `cx23`.
+   * for this repo — `~/.agentbox/projects/<hash>/config.yaml` lives here — so an
+   * option left out is not "use the project's", it is "use the provider's
+   * default". A project pinned to `cx33` silently got the default size.
    */
-  size?: string;
-  location?: string;
+  opts?: CreateJobRequestOpts;
   /**
    * Model-auth sources the caller's gate already resolved (`--model-auth`).
    *
@@ -151,28 +150,22 @@ function withoutTimestamp(line: string): string {
  * `box.persistent`, and `borrowCredentials: []` says nothing an absent field
  * does not already say.
  */
-function hubCreateOpts(args: {
-  persistent?: boolean;
-  borrowCredentials?: readonly string[];
-  size?: string;
-  location?: string;
-}): {
-  opts?: {
-    persistent?: boolean;
-    borrowCredentials?: string[];
-    size?: string;
-    location?: string;
+/**
+ * The request's `opts`, or nothing at all when there is nothing to say —
+ * an absent bag leaves every decision to the control box's own config, which is
+ * the right answer for what the caller never asked about.
+ */
+function hubOpts(
+  opts: CreateJobRequestOpts | undefined,
+  persistent: boolean | undefined,
+  borrowCredentials: readonly string[] | undefined,
+): { opts?: CreateJobRequestOpts } {
+  const merged: CreateJobRequestOpts = {
+    ...(opts ?? {}),
+    ...(persistent !== undefined ? { persistent } : {}),
+    ...(borrowCredentials?.length ? { borrowCredentials: [...borrowCredentials] } : {}),
   };
-} {
-  const size = args.size?.trim();
-  const location = args.location?.trim();
-  const opts = {
-    ...(args.persistent !== undefined ? { persistent: args.persistent } : {}),
-    ...(args.borrowCredentials?.length ? { borrowCredentials: [...args.borrowCredentials] } : {}),
-    ...(size ? { size } : {}),
-    ...(location ? { location } : {}),
-  };
-  return Object.keys(opts).length > 0 ? { opts } : {};
+  return Object.keys(merged).length > 0 ? { opts: merged } : {};
 }
 
 /**
@@ -210,8 +203,7 @@ export async function createCloudBoxViaHubAndAdopt(
     borrowCredentials,
     urlFlag,
     carry,
-    size,
-    location,
+    opts: boxOpts,
     onStatus,
     onLog,
   } = args;
@@ -251,12 +243,7 @@ export async function createCloudBoxViaHubAndAdopt(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubCreateOpts({
-      persistent,
-      ...(borrowCredentials ? { borrowCredentials } : {}),
-      ...(size ? { size } : {}),
-      ...(location ? { location } : {}),
-    }),
+    ...hubOpts(boxOpts, persistent, borrowCredentials),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
     startAgent: false,
@@ -341,8 +328,7 @@ export async function enqueueAgentJobViaHub(
     agentArgs,
     urlFlag,
     carry,
-    size,
-    location,
+    opts: boxOpts,
     onStatus,
     onLog,
   } = args;
@@ -377,12 +363,7 @@ export async function enqueueAgentJobViaHub(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubCreateOpts({
-      persistent,
-      ...(borrowCredentials ? { borrowCredentials } : {}),
-      ...(size ? { size } : {}),
-      ...(location ? { location } : {}),
-    }),
+    ...hubOpts(boxOpts, persistent, borrowCredentials),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,

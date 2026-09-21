@@ -4,6 +4,7 @@ import {
   findProjectRoot,
   hashProjectPath,
   loadEffectiveConfig,
+  type EffectiveConfig,
   pruneOrphanProjectConfigs,
   recordProjectLastUsed,
   registerProject,
@@ -20,6 +21,7 @@ import { runToolsGate } from '../lib/tools-gate.js';
 import { boxModelAuthHelp, resolveBoxModelAuth } from '../lib/model-auth-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
+import { buildHubCreateOpts } from '../lib/hub-create-opts.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { makeProgressReporter } from '@agentbox/cli-kit';
 import { maybePromptPortless, setupPortlessHost } from '../portless-prompt.js';
@@ -222,6 +224,7 @@ async function runCreateViaHubApi(
   /** `--model-auth`, already validated on this machine (see resolveBoxModelAuth). */
   borrowCredentials: string[],
   cmdLog: ReturnType<typeof openCommandLog>,
+  cfg: EffectiveConfig,
 ): Promise<void> {
   // A stale login on the control box means the box comes up signed out — refresh
   // custody from the host backup first (hash-compared, silent + best-effort).
@@ -248,33 +251,65 @@ async function runCreateViaHubApi(
     onLog: (line) => cmdLog.write(line),
   });
 
-  // Cloud-relevant box-shaping flags the user passed. The control box applies the
-  // direct `provider.create` args (snapshot/image/env/vnc/bundle-depth/build/
-  // credential-sync) and falls back to its own config for the rest (VM sizing) —
-  // consistent with `prepare`. `carry:` does NOT ride here: its payloads are
-  // files, not flags, so they travel with the seed above. Docker-only knobs
-  // (portless/limits) are inapplicable to a control-box clone build.
-  const remoteOpts = {
-    ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
-    ...(opts.image ? { image: opts.image } : {}),
-    ...(opts.withPlaywright === true ? { withPlaywright: true } : {}),
-    ...(opts.withEnv === true ? { withEnv: true } : {}),
-    ...(opts.vnc === false ? { vnc: false } : {}),
-    ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
-    ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
-    ...(opts.build === true ? { build: true } : {}),
-    ...(opts.credentialSync === false ? { credentialSync: false } : {}),
-    // Only the SELECTION crosses the wire — the logins themselves reached the
-    // control box through `syncAgentCredentialsIfChanged` above, so the worker
-    // seeds the box from the user's own copy.
-    ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
-  };
+  // Everything box-shaping the user asked for, resolved HERE because only this
+  // machine has the project's config — plus the list of what could not travel.
+  // `carry:` does NOT ride along: its payloads are files, not flags, so they
+  // went with the seed above.
+  const { opts: remoteOpts, warnings } = buildHubCreateOpts({
+    providerName,
+    ...(remoteHost ? { remoteHost } : {}),
+    cfg,
+    flags: {
+      ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
+      ...(opts.image ? { image: opts.image } : {}),
+      ...(opts.size ? { size: opts.size } : {}),
+      ...(opts.location ? { location: opts.location } : {}),
+      ...(opts.inbound ? { inbound: opts.inbound } : {}),
+      ...(opts.useBranch ? { useBranch: opts.useBranch } : {}),
+      ...(opts.bundleDepth !== undefined ? { bundleDepth: opts.bundleDepth } : {}),
+      ...(opts.withPlaywright !== undefined ? { withPlaywright: opts.withPlaywright } : {}),
+      ...(opts.withEnv !== undefined ? { withEnv: opts.withEnv } : {}),
+      ...(opts.vnc !== undefined ? { vnc: opts.vnc } : {}),
+      ...(opts.build !== undefined ? { build: opts.build } : {}),
+      ...(opts.credentialSync !== undefined ? { credentialSync: opts.credentialSync } : {}),
+      ...(opts.memory ? { memory: opts.memory } : {}),
+      ...(opts.cpus ? { cpus: opts.cpus } : {}),
+      ...(opts.pidsLimit ? { pidsLimit: opts.pidsLimit } : {}),
+      ...(opts.disk ? { disk: opts.disk } : {}),
+      ...(opts.sharedDockerCache !== undefined
+        ? { sharedDockerCache: opts.sharedDockerCache }
+        : {}),
+      ...(opts.hostSnapshot !== undefined ? { hostSnapshot: opts.hostSnapshot } : {}),
+      ...(opts.portless !== undefined ? { portless: opts.portless } : {}),
+    },
+    resolved: {
+      ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
+      ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+    },
+  });
+  for (const w of warnings) log.warn(w);
   // The base the box forks from, which the control box cannot read for itself:
   // it holds no checkout, so an absent `fromBranch` there means "the repo's
   // default branch", not "the branch you are on".
   const baseBranch = opts.fromBranch?.trim() || (await readCurrentBranch(projectRoot));
   const outcome = await withHubClient({ url: opts.url }, async (client) => {
     const manager = await registerCurrentSession(client);
+    // Validated BEFORE anything is provisioned, exactly as the local path does:
+    // a typo in a task id should cost nothing. This used to be skipped entirely —
+    // the remote branch returned before the local path's task handling, so
+    // `--tasks` on a control-box create was accepted and silently did nothing.
+    const taskIds = opts.tasks ? parseTaskIdsOrExit(opts.tasks) : [];
+    let taskWorkspace: string | null = null;
+    if (taskIds.length > 0) {
+      taskWorkspace =
+        (await withHubClient(workspaceHub(), (hubClient) =>
+          preflightOrExit(hubClient, projectRoot, taskIds),
+        )) ?? null;
+      if (!taskWorkspace) {
+        cmdLog.close();
+        process.exit(process.exitCode || 1);
+      }
+    }
     const { jobId } = await client.createBox({
       ...(manager ? { managerId: manager.managerId } : {}),
       repoUrl: target.repoUrl,
@@ -285,6 +320,14 @@ async function runCreateViaHubApi(
       ...(Object.keys(remoteOpts).length > 0 ? { opts: remoteOpts } : {}),
     });
     cmdLog.write(`enqueued on the control box: job ${jobId}`);
+    // The box does not exist yet; the hub promotes this job id to the box id once
+    // the worker records it. Assigned on the STORE's hub, which is the control box
+    // here — it accepts a boxJobId target for exactly this case.
+    if (taskWorkspace) {
+      await withHubClient(workspaceHub(), (storeClient) =>
+        assignTasksBestEffort(storeClient, taskWorkspace, taskIds, { boxJobId: jobId }),
+      );
+    }
     return await streamJobToCompletion(client, jobId, {
       onLine: (line) => {
         cmdLog.write(line);
@@ -305,6 +348,11 @@ async function runCreateViaHubApi(
     cmdLog.close();
     process.exit(1);
   }
+  // Warnings the WORKER emitted (providerWarning) rode back on the job log and
+  // were collected here — and then dropped, because only `prepare` ever printed
+  // them. A decision the provider made on the control box is worth exactly as
+  // much as one made locally.
+  for (const w of cmdLog.warnings()) log.warn(w);
   outro(`box ready: ${outcome.job?.boxId ?? '(id pending)'}`);
   cmdLog.close();
   process.exit(0);
@@ -601,7 +649,12 @@ export const createCommand = new Command('create')
       effective: cfg.effective,
       projectRoot,
       forceHub: opts.viaHub,
-      forceLocal: opts.local,
+      // A restore's workspace is a staged bundle on THIS machine, and a
+      // control-box create seeds the box from a clone of `origin` — it would
+      // throw the restored tree away and build something that merely looks
+      // right. `agentbox <agent> --restore` has pinned this since it shipped;
+      // `create` did not.
+      forceLocal: opts.local || Boolean(restored),
       urlFlag: opts.url,
     });
     if (target.where === 'error') {
@@ -618,6 +671,7 @@ export const createCommand = new Command('create')
         projectRoot,
         borrowCredentials,
         cmdLog,
+        cfg.effective,
       );
       return;
     }

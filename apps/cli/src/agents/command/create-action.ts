@@ -31,7 +31,8 @@ import { reattachRef } from '../../box-ref.js';
 import { warnCheckpointAgentMismatch } from '../../checkpoint-lookup.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
-import { cloudSizingProviderOptions, hubBoxShape } from '../../lib/cloud-sizing.js';
+import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import {
   assignTasksBestEffort,
   parseTaskIdsOrExit,
@@ -447,6 +448,36 @@ export async function runAgentCreate(
     // creds aren't needed for the hub path (custody seeds them).
     const iRouting = await routing();
     if (iRouting.where === 'hub') {
+      const hubOpts = buildHubCreateOpts({
+        providerName,
+        ...(remoteHost ? { remoteHost } : {}),
+        cfg,
+        flags: {
+          ...(typeof opts.image === 'string' ? { image: opts.image } : {}),
+          ...(typeof opts.snapshot === 'string' ? { snapshot: opts.snapshot } : {}),
+          ...(typeof opts.useBranch === 'string' ? { useBranch: opts.useBranch } : {}),
+          ...(opts.withPlaywright !== undefined
+            ? { withPlaywright: opts.withPlaywright === true }
+            : {}),
+          ...(opts.withEnv !== undefined ? { withEnv: opts.withEnv === true } : {}),
+          ...(opts.vnc !== undefined ? { vnc: opts.vnc === true } : {}),
+          ...(typeof opts.memory === 'string' ? { memory: opts.memory } : {}),
+          ...(typeof opts.cpus === 'string' ? { cpus: opts.cpus } : {}),
+          ...(typeof opts.pidsLimit === 'string' ? { pidsLimit: opts.pidsLimit } : {}),
+          ...(typeof opts.disk === 'string' ? { disk: opts.disk } : {}),
+          ...(opts.sharedDockerCache !== undefined
+            ? { sharedDockerCache: opts.sharedDockerCache === true }
+            : {}),
+          ...(opts.hostSnapshot !== undefined ? { hostSnapshot: opts.hostSnapshot === true } : {}),
+          ...(opts.portless !== undefined ? { portless: opts.portless === true } : {}),
+        },
+        resolved: {
+          ...(persistent !== undefined ? { persistent } : {}),
+          ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+        },
+      });
+      for (const w of hubOpts.warnings) log.warn(w);
+
       // Resolve + approve `carry:` BEFORE enqueuing: the hub worker builds the
       // box from a clone plus custody, so anything the user wants copied has to
       // ride the seed. Skipping this is how an approved file silently failed to
@@ -469,12 +500,9 @@ export async function runAgentCreate(
             fromBranch: opts.fromBranch,
             persistent,
             ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
-            // Same reason as the cold path: the control box has no per-project
-            // config, so a size resolved only there is the provider's default.
-            ...hubBoxShape(providerName, cfg, {
-              ...(typeof opts.size === 'string' ? { size: opts.size } : {}),
-              ...(typeof opts.location === 'string' ? { location: opts.location } : {}),
-            }),
+            // Resolved here, because the control box has no per-project config:
+            // anything not sent is the provider's default, not the project's.
+            opts: hubOpts.opts,
             urlFlag: opts.url,
             prompt: seedPrompt,
             agentArgs: applySkip(agentArgs),
@@ -706,6 +734,36 @@ export async function runAgentCreate(
     if (route.where === 'hub' && preflight.hubIncompatible) {
       if (opts.viaHub) log.warn(a.text.hubIncompatibleReason);
     } else if (route.where === 'hub') {
+      const hubOpts = buildHubCreateOpts({
+        providerName,
+        ...(remoteHost ? { remoteHost } : {}),
+        cfg,
+        flags: {
+          ...(typeof opts.image === 'string' ? { image: opts.image } : {}),
+          ...(typeof opts.snapshot === 'string' ? { snapshot: opts.snapshot } : {}),
+          ...(typeof opts.useBranch === 'string' ? { useBranch: opts.useBranch } : {}),
+          ...(opts.withPlaywright !== undefined
+            ? { withPlaywright: opts.withPlaywright === true }
+            : {}),
+          ...(opts.withEnv !== undefined ? { withEnv: opts.withEnv === true } : {}),
+          ...(opts.vnc !== undefined ? { vnc: opts.vnc === true } : {}),
+          ...(typeof opts.memory === 'string' ? { memory: opts.memory } : {}),
+          ...(typeof opts.cpus === 'string' ? { cpus: opts.cpus } : {}),
+          ...(typeof opts.pidsLimit === 'string' ? { pidsLimit: opts.pidsLimit } : {}),
+          ...(typeof opts.disk === 'string' ? { disk: opts.disk } : {}),
+          ...(opts.sharedDockerCache !== undefined
+            ? { sharedDockerCache: opts.sharedDockerCache === true }
+            : {}),
+          ...(opts.hostSnapshot !== undefined ? { hostSnapshot: opts.hostSnapshot === true } : {}),
+          ...(opts.portless !== undefined ? { portless: opts.portless === true } : {}),
+        },
+        resolved: {
+          ...(persistent !== undefined ? { persistent } : {}),
+          ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+          ...(sessionName ? { sessionName } : {}),
+        },
+      });
+      for (const w of hubOpts.warnings) log.warn(w);
       const adopted = await withHubJobLine(
         (onStatus) =>
           createCloudBoxViaHubAndAdopt({
@@ -721,12 +779,7 @@ export async function runAgentCreate(
             fromBranch,
             persistent,
             ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
-            // The size/location this machine resolved. The control box cannot:
-            // the per-project config that pins them lives here.
-            ...hubBoxShape(providerName, cfg, {
-              ...(typeof opts.size === 'string' ? { size: opts.size } : {}),
-              ...(typeof opts.location === 'string' ? { location: opts.location } : {}),
-            }),
+            opts: hubOpts.opts,
             urlFlag: opts.url,
             onStatus,
             onLog: (line) => cmdLog.write(line),
@@ -734,6 +787,9 @@ export async function runAgentCreate(
         (r) => (r ? 'box ready on the remote hub' : 'remote hub unavailable — building locally'),
         { verbose: opts.verbose === true },
       );
+      // Same as the create path: a providerWarning from the control box's worker
+      // reached the log and was never shown.
+      for (const w of cmdLog.warnings()) log.warn(w);
       if (adopted) {
         await recordCreate({ boxId: adopted.id });
         await cloudAgentAttach({

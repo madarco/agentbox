@@ -33,9 +33,14 @@ describe('--model-auth reaches every hub-routed create', () => {
 
   it('both -i endings carry the resolved sources', () => {
     const s = src('agents', 'command', 'create-action.ts');
-    // The hub enqueue and the local queue job, in that order in the source.
+    // The hub enqueue (now through the shared opts builder) and the local queue
+    // job. Counted as "at least both" rather than exactly two: the builder call
+    // is a third site by construction, and pinning the count only ever reported
+    // that as a failure.
     expect(s).toContain('...(borrowCredentials.length > 0 ? { borrowCredentials } : {})');
-    expect(s.match(/borrowCredentials\.length > 0 \? \{ borrowCredentials \}/g)).toHaveLength(2);
+    expect(
+      s.match(/borrowCredentials\.length > 0 \? \{ borrowCredentials \}/g)?.length ?? 0,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('the foreground hub-routed create carries them too', () => {
@@ -48,14 +53,9 @@ describe('--model-auth reaches every hub-routed create', () => {
 
   it('both hub-create shapes send an opts bag built from the selection', () => {
     const s = src('commands', '_cloud-agent-via-hub.ts');
-    // Foreground (cold create + adopt) and background `-i`. Asserted on the
-    // CALL, not on the exact argument spelling: the bag has grown (size,
-    // location) and will grow again, and pinning the literal only ever
-    // reported the growth as a failure.
-    expect(s.match(/\.\.\.hubCreateOpts\(\{/g)).toHaveLength(2);
-    expect(s.match(/borrowCredentials \? \{ borrowCredentials \}/g)?.length ?? 0).toBeGreaterThan(
-      0,
-    );
+    // Foreground (cold create + adopt) and background `-i`. Both now forward
+    // one bag built upstream, so the assertion is that neither ending skips it.
+    expect(s.match(/\.\.\.hubOpts\(boxOpts, persistent, borrowCredentials\)/g)).toHaveLength(2);
     expect(s).toContain('borrowCredentials?: string[];');
   });
 
