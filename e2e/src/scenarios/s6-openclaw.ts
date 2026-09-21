@@ -140,6 +140,8 @@ export const s6: ScenarioDef = {
             '-y',
             '--into',
             into,
+            '--timeout',
+            '600',
           ],
           { cwd: v(ctx).app, log: ctx.log, timeoutMs: 30 * 60_000 },
         );

@@ -77,7 +77,9 @@ export const s3: ScenarioDef = {
       covers: ['START-001'],
       fn: async (ctx) => {
         await ab(['stop', ctx.box()], { cwd: v(ctx).repo, log: ctx.log, timeoutMs: 20 * 60_000 });
-        await waitBoxState(ctx, ctx.box(), ['stopped'], 15 * 60_000);
+        // A cloud provider may implement stop as its pause (E2B does); either keeps the disk.
+        const stopped = await waitBoxState(ctx, ctx.box(), ['stopped', 'paused'], 15 * 60_000);
+        ctx.note(`stopped state: ${String(stopped.state ?? stopped.status)}`);
         await ab(['start', ctx.box()], { cwd: v(ctx).repo, log: ctx.log, timeoutMs: 20 * 60_000 });
         await waitBoxState(ctx, ctx.box(), ['running'], 15 * 60_000);
         await markerIn(ctx, ctx.box());

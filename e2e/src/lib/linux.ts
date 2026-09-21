@@ -80,6 +80,13 @@ export async function runLinuxTarget(o: {
     `${LINUX_VM_ALIAS}:e2e-src/e2e/`,
   ]);
   await scp([join(REPO_ROOT, 'tsconfig.base.json'), `${LINUX_VM_ALIAS}:e2e-src/`]);
+  await rsync([
+    '--delete',
+    '--exclude',
+    'node_modules',
+    `${join(REPO_ROOT, 'examples')}/`,
+    `${LINUX_VM_ALIAS}:e2e-src/examples/`,
+  ]);
   await scp([o.tarball, `${LINUX_VM_ALIAS}:e2e-pack/`]);
   await ssh(
     'cd ~/e2e-src/e2e && npm install --no-fund --no-audit --silent && npm install --no-save --silent tsx',

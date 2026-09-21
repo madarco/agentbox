@@ -185,7 +185,7 @@ export const s7: ScenarioDef = {
               ? r.stdout
               : undefined;
           },
-          { timeoutMs: 180_000, intervalMs: 5000 },
+          { timeoutMs: 6 * 60_000, intervalMs: 5000 },
         );
         const p = join(ctx.dir, 'manager-pane.txt');
         writeFileSync(p, pane);

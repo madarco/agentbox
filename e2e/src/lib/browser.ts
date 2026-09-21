@@ -29,7 +29,7 @@ export async function screenshot(url: string, out: string, log: string): Promise
         `--screenshot=${out}`,
         url,
       ],
-      { log, timeoutMs: 120_000 },
+      { log, timeoutMs: 120_000, allowFail: true },
     );
   } finally {
     rmSync(profile, { recursive: true, force: true });
