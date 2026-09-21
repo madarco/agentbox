@@ -55,6 +55,22 @@ CLI, not the raw commits.
   building somewhere the control box cannot see. `agentbox doctor --json` now
   carries the control box's provider inventory.
 
+### Added
+
+- **A control-box create takes the shape you asked for.** Everything box-shaping
+  is resolved on your machine and sent with the request — the project's
+  `box.size<Provider>` and location, its default checkpoint and image pin,
+  `--snapshot`/`--image`/`-b`/`--with-env`/`--vnc`, the per-provider knobs
+  (`box.vercelTimeoutMs` and friends) and your `<agent>.sessionName`. A control
+  box holds no config for your repo, so anything not sent was the provider's
+  default, not your project's choice. The few options that cannot travel
+  (`--memory`/`--cpus`/`--disk`, `--shared-docker-cache`, `--host-snapshot`,
+  `--portless`, `--build` on a cloud box) now say so, with what to do instead,
+  and only when you actually typed them. `--tasks` is assigned instead of being
+  quietly ignored, a `--restore` create stays on this machine, and warnings the
+  control box's own worker emitted are printed rather than collected and
+  dropped.
+
 ### Fixed
 
 - **A control box refused every manager start** with `agent must be one of` and
