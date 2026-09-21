@@ -47,6 +47,10 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **A hub with no `BETTER_AUTH_SECRET` refuses to serve (503) rather than running
+  unauthenticated**, and `hub setup` / `hub deploy` / `hub expose` now stop when you
+  cancel the admin login prompt instead of deploying without one.
+
 - **`git push` approval is decided by what the push does, not which branch it
   names.** A push that only fast-forwards its own box branch still goes through;
   anything else raises the prompt, including a tail of arguments that used to
@@ -72,6 +76,11 @@ CLI, not the raw commits.
   dropped.
 
 ### Fixed
+
+- **A deployed hub now verifies your session instead of trusting the cookie's
+  name, and its sign-up endpoint is closed.** Anyone who could reach a hub on the
+  hetzner / digitalocean / vercel profile could get past its gate — update any
+  deployed control box.
 
 - **A control box refused every manager start** with `agent must be one of` and
   an empty list, and then **dropped the way into the session it did record**: it
