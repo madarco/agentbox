@@ -328,6 +328,30 @@ overlay, the provider's create output — on the same self-updating line a local
 `-v` to stream the full log instead of the collapsed line; either way the whole transcript is kept
 in `~/.agentbox/logs/<command>.log` on your machine.
 
+### What the control box is told, and what stays home
+
+The box is shaped by **your** machine's config, not the control box's. A control box holds no
+checkout and no `~/.agentbox/projects/<hash>/config.yaml` for your repo, so everything box-shaping —
+`box.size<Provider>` and `box.<provider>Location`, the default checkpoint, the per-provider image
+pin, `--snapshot`, `--image`, `-b`, `--with-env`, `--vnc`, the per-provider knobs like
+`box.vercelTimeoutMs`, and your `<agent>.sessionName` — is resolved here and sent with the request.
+Anything **not** sent is not "use the project's value": it is the provider's default.
+
+A few options cannot cross, and the CLI says so rather than letting them vanish:
+
+| Option                                         | Why it stays home                                                                                                                                  |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--memory`, `--cpus`, `--pids-limit`, `--disk` | docker cgroup ceilings; a cloud box is sized with `--size` (they are still recorded on the box, so `agentbox show` lists a limit nothing enforces) |
+| `--shared-docker-cache`                        | a docker volume on the build machine                                                                                                               |
+| `--host-snapshot`                              | clones _this_ machine's workspace — use `--local` to build here                                                                                    |
+| `--portless`                                   | would register the alias on the control box, not on your machine; reach the box by its public URL                                                  |
+| `--build`                                      | forces a local docker base build; a cloud box boots from a snapshot `agentbox prepare` baked on the control box                                    |
+| the `--with-env` file list                     | resolved here; the control box takes those files from the pushed seed (the bytes still travel)                                                     |
+
+The warning fires only for a flag you actually typed — the same value coming from your config is a
+preference, not a mistake. `--dangerously-with-credentials` is refused outright, on both sides:
+it copies a git credential into a box on a machine you do not own.
+
 You can force either side explicitly:
 
 ```bash
