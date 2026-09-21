@@ -7,7 +7,11 @@
 //
 // Kept pure (no fs, no store) so the mapping is testable; the caller supplies the
 // repo URL it resolved and does the enqueueing.
-import type { CreateJobRequest } from '@agentbox/relay/control-plane';
+import {
+  PORTABLE_CREATE_OPT_KEYS,
+  type CreateJobRequest,
+  type CreateJobRequestOpts,
+} from '@agentbox/relay/control-plane';
 
 export interface ControlPlaneCreateInput {
   provider?: string;
@@ -35,6 +39,21 @@ export interface ControlPlaneCreateInput {
     build?: boolean;
     credentialSync?: boolean;
     /**
+     * Only ever refused here (see below). Declared so the refusal is typed
+     * rather than reaching into an untyped bag.
+     */
+    gitPushMode?: string;
+    /**
+     * VM size and location for a cloud box.
+     *
+     * Resolved by the machine that SUBMITS, because only it has the project's
+     * config: this box holds no checkout and no
+     * `~/.agentbox/projects/<hash>/config.yaml`, so a size left out of the
+     * request is not "the project's", it is the provider's default.
+     */
+    size?: string;
+    location?: string;
+    /**
      * `--model-auth`: which host logins the box is seeded with. Resolved on the
      * machine that HOLDS them (the CLI) and only named here, so this carries a
      * selection and never a secret.
@@ -43,9 +62,67 @@ export interface ControlPlaneCreateInput {
   };
 }
 
+/** Undefined-free pick of the portable keys; `{}` when nothing was asked for. */
+function pickPortableOpts(opts: ControlPlaneCreateInput['opts']): CreateJobRequestOpts {
+  const out: Record<string, unknown> = {};
+  if (!opts) return out;
+  for (const key of PORTABLE_CREATE_OPT_KEYS) {
+    const value = (opts as Record<string, unknown>)[key];
+    if (value === undefined) continue;
+    // An empty borrow list says exactly what an absent field says, and the
+    // worker's fallback is the same — sending it would add a field with no
+    // meaning.
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 export type ControlPlaneCreateMapping =
-  | { ok: true; request: CreateJobRequest }
+  | {
+      ok: true;
+      request: CreateJobRequest;
+      /**
+       * Box-shaping keys the caller sent that this hub does not forward.
+       *
+       * Reported rather than silently swallowed: a newer CLI sending a field an
+       * older hub has never heard of is invisible to any client-side check, and
+       * that is precisely the failure this whole mapping keeps producing.
+       * Host-local keys are not listed — the client already knows they stay
+       * home, and naming them on every create would be noise.
+       */
+      dropped: string[];
+    }
   | { ok: false; error: string };
+
+/**
+ * Keys a client legitimately sends that are NOT meant to travel: docker-only
+ * knobs and decisions whose result reaches the box another way (carry bytes ride
+ * the custody seed, the env files ride it too).
+ */
+const HOST_LOCAL_OPT_KEYS = new Set([
+  'memory',
+  'cpus',
+  'pidsLimit',
+  'disk',
+  'sharedDockerCache',
+  'hostSnapshot',
+  'portless',
+  'carry',
+  'carryYes',
+  'carrySkip',
+  'carryAsk',
+  'envFiles',
+  'promptAnswers',
+  'gitPushMode',
+  'remoteHost',
+  'useBranch',
+  'imageRegistry',
+  'sessionName',
+  'inbound',
+  'resync',
+  'dangerouslySkipPermissions',
+]);
 
 /**
  * A docker box bind-mounts a host folder, so it can only ever be built where that
@@ -72,6 +149,18 @@ export function controlPlaneCreateRequest(
         'docker boxes need a local checkout — pick a cloud provider, or a `docker:<host>` engine this hub can reach',
     };
   }
+  // Refused HERE, not only at the CLI's own gate: once `gitPushMode` travels,
+  // any API client could hand a control box a `direct` create. `direct` copies a
+  // git credential into the box and its snapshots, which is exactly what token
+  // leasing exists to avoid — and the box lives on a machine the user does not
+  // own.
+  if (input.opts?.gitPushMode === 'direct') {
+    return {
+      ok: false,
+      error:
+        'git.pushMode=direct is refused for a control-box create: it copies a git credential into a box on a machine you do not own. Leave it on auto — the box leases a short-lived, repo-scoped token per push instead.',
+    };
+  }
   const noAgent = input.agent === 'none';
   const agent = noAgent ? undefined : (input.agent ?? 'claude');
   const branch = input.fromBranch?.trim();
@@ -85,28 +174,18 @@ export function controlPlaneCreateRequest(
   const startAgent = noAgent ? false : input.startAgent !== false;
   // Carry only the cloud-relevant box-shaping flags (undefined ones are omitted so
   // the worker falls back to the control box's config). Drop an all-empty object.
-  const o = input.opts;
-  const mappedOpts = o
-    ? {
-        ...(o.snapshot ? { snapshot: o.snapshot } : {}),
-        ...(o.image ? { image: o.image } : {}),
-        ...(o.withPlaywright !== undefined ? { withPlaywright: o.withPlaywright } : {}),
-        ...(o.withEnv !== undefined ? { withEnv: o.withEnv } : {}),
-        ...(o.vnc !== undefined ? { vnc: o.vnc } : {}),
-        ...(o.persistent !== undefined ? { persistent: o.persistent } : {}),
-        ...(o.bundleDepth !== undefined ? { bundleDepth: o.bundleDepth } : {}),
-        ...(o.build ? { build: o.build } : {}),
-        ...(o.credentialSync !== undefined ? { credentialSync: o.credentialSync } : {}),
-        // Empty means "borrow nothing", which is what an absent field already
-        // says — and the worker's fallback is the same, so sending `[]` would
-        // only add a field with no meaning.
-        ...(o.borrowCredentials && o.borrowCredentials.length > 0
-          ? { borrowCredentials: o.borrowCredentials }
-          : {}),
-      }
-    : {};
+  // Picked BY the canonical list, never by hand: a field named in one place and
+  // forgotten here is exactly how `size` reached every layer but this one and
+  // silently did nothing. Undefined entries are omitted so the worker still
+  // falls back to the control box's own config for anything unasked.
+  const mappedOpts = pickPortableOpts(input.opts);
+  const portable = new Set<string>(PORTABLE_CREATE_OPT_KEYS);
+  const dropped = Object.entries(input.opts ?? {})
+    .filter(([k, v]) => v !== undefined && !portable.has(k) && !HOST_LOCAL_OPT_KEYS.has(k))
+    .map(([k]) => k);
   return {
     ok: true,
+    dropped,
     request: {
       repoUrl,
       provider,

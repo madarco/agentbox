@@ -66,6 +66,37 @@ export interface CreateJobRequest {
 }
 
 /** Box-shaping create flags a control-box create honors (see CreateJobRequest.opts). */
+/**
+ * Every create option that is meaningful on a machine that is not the one that
+ * asked for the box.
+ *
+ * THE list, not a list: the hub's control-plane mapping picks by it rather than
+ * naming fields by hand, so widening is one key here instead of an edit in four
+ * files — three of which nobody remembers to make. A `size` that reached the
+ * CLI, the job type and the worker but not the mapping is what this exists to
+ * prevent.
+ *
+ * What is NOT here: docker-only knobs (limits, the shared cache, portless) and
+ * host-local ones (carry metadata, the env-file pick list, attach placement).
+ * They are not portable, and the CLI warns rather than pretending.
+ */
+export const PORTABLE_CREATE_OPT_KEYS = [
+  'snapshot',
+  'image',
+  'withPlaywright',
+  'withEnv',
+  'vnc',
+  'persistent',
+  'bundleDepth',
+  'build',
+  'credentialSync',
+  'borrowCredentials',
+  'size',
+  'location',
+] as const;
+
+export type PortableCreateOptKey = (typeof PORTABLE_CREATE_OPT_KEYS)[number];
+
 export interface CreateJobRequestOpts {
   /** Start from this checkpoint (CLI `--snapshot`). */
   snapshot?: string;

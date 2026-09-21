@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { controlPlaneCreateRequest } from '../lib/boxes/control-plane-create';
+import { PORTABLE_CREATE_OPT_KEYS, type PortableCreateOptKey } from '@agentbox/relay/control-plane';
+import {
+  controlPlaneCreateRequest,
+  type ControlPlaneCreateInput,
+} from '../lib/boxes/control-plane-create';
 
 const REPO = 'https://github.com/acme/widgets.git';
 
@@ -178,5 +182,105 @@ describe('controlPlaneCreateRequest', () => {
     // agent is named (so an adopt relaunches it) but the worker does NOT start it.
     expect(m.request).toEqual({ repoUrl: REPO, provider: 'e2b', agent: 'claude' });
     expect('startAgent' in m.request).toBe(false);
+  });
+});
+
+describe('the box shape the submitting machine resolved', () => {
+  it('carries size and location to the worker', () => {
+    // The machine that submits is the only one with the project's config: this
+    // box has no checkout and no ~/.agentbox/projects/<hash>. Dropping them
+    // here is not "use the project's value", it is the provider's default —
+    // which is how a project pinned to cx33 kept getting cx23.
+    const m = controlPlaneCreateRequest(
+      { provider: 'hetzner', opts: { size: 'cx33', location: 'nbg1' } },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toMatchObject({ size: 'cx33', location: 'nbg1' });
+  });
+
+  it('omits them when the submitter asked for nothing', () => {
+    // Absent means "the control box decides", which is the right default only
+    // when the project really has no preference.
+    const m = controlPlaneCreateRequest({ provider: 'hetzner', opts: { vnc: false } }, REPO);
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).not.toHaveProperty('size');
+    expect(m.request.opts).not.toHaveProperty('location');
+  });
+});
+
+describe('the portable key list is the mapping', () => {
+  // One value per key, so the round trip can assert on identity rather than
+  // truthiness. A new key added to the list without a value here fails the next
+  // test — which is the point: the list and the mapping cannot drift apart.
+  const SAMPLE: Record<PortableCreateOptKey, unknown> = {
+    snapshot: 'warm-1',
+    image: 'ghcr.io/acme/box:dev',
+    withPlaywright: true,
+    withEnv: true,
+    vnc: false,
+    persistent: true,
+    bundleDepth: 5,
+    build: true,
+    credentialSync: false,
+    borrowCredentials: ['codex'],
+    size: 'cx33',
+    location: 'nbg1',
+  };
+
+  it('carries every portable key, and the list names them all', () => {
+    for (const key of PORTABLE_CREATE_OPT_KEYS) {
+      expect(SAMPLE[key], `no sample value for the new key ${key}`).toBeDefined();
+    }
+    const opts = SAMPLE as ControlPlaneCreateInput['opts'];
+    const m = controlPlaneCreateRequest({ provider: 'hetzner', opts }, REPO);
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toEqual(SAMPLE);
+    expect(m.dropped).toEqual([]);
+  });
+
+  it('leaves host-local knobs at home without calling them a drift', () => {
+    // The CLI already warns about these; the box cannot honour them and the hub
+    // repeating it on every create would be noise.
+    const m = controlPlaneCreateRequest(
+      {
+        provider: 'hetzner',
+        // What a docker-shaped caller sends: the hub takes the wider
+        // CreateBoxInput, so these keys are legal on the wire.
+        opts: { memory: '4g', cpus: '2', portless: true, size: 'cx33' } as never,
+      },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toEqual({ size: 'cx33' });
+    expect(m.dropped).toEqual([]);
+  });
+
+  it('reports a key it has never heard of', () => {
+    // A newer CLI against an older control box: invisible to any client-side
+    // check, so the hub is the only thing that can say it.
+    const m = controlPlaneCreateRequest(
+      { provider: 'hetzner', opts: { somethingNewerCLIsSend: 'yes' } as never },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.dropped).toEqual(['somethingNewerCLIsSend']);
+  });
+
+  it('refuses a direct-push create outright', () => {
+    // It copies a git credential into a box on a machine the user does not own.
+    const m = controlPlaneCreateRequest(
+      { provider: 'hetzner', opts: { gitPushMode: 'direct' } },
+      REPO,
+    );
+    expect(m.ok).toBe(false);
+    if (m.ok) return;
+    expect(m.error).toContain('git.pushMode=direct is refused');
+    expect(m.error).toContain('leases');
   });
 });

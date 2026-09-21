@@ -31,7 +31,13 @@ export {
   type CreateBoxDeps,
   type CloneRepoRunGit,
 } from './create-worker.js';
-export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+export {
+  PORTABLE_CREATE_OPT_KEYS,
+  type CreateJobRequest,
+  type CreateJobRequestOpts,
+  type CreateJobRow,
+  type PortableCreateOptKey,
+} from './store/store.js';
 // The hub web UI streams a create's progress from the per-job log file the local
 // queue writes; a control-plane create job reuses the same path so one job-log
 // contract covers both create paths.

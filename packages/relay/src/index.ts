@@ -81,7 +81,13 @@ export {
   type CreateBoxDeps,
   type CloneRepoRunGit,
 } from './create-worker.js';
-export { type CreateJobRequest, type CreateJobRow } from './store/store.js';
+export {
+  PORTABLE_CREATE_OPT_KEYS,
+  type CreateJobRequest,
+  type CreateJobRequestOpts,
+  type CreateJobRow,
+  type PortableCreateOptKey,
+} from './store/store.js';
 export {
   ghHostFromRemote,
   parseGitRemote,

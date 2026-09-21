@@ -39,6 +39,7 @@ import {
   type ExecResult,
   type PromptAnswer,
   type Provider,
+  providerWarning,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import { createBoxFactSeams } from './backend/box-facts';
@@ -2188,6 +2189,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     const mapped = controlPlaneCreateRequest(input, repoUrl);
     if (!mapped.ok) return { ok: false, error: mapped.error };
+    if (mapped.dropped.length > 0) {
+      // Says so out loud rather than building a box that quietly is not what was
+      // asked for. Reaches a CLI as a job-log warning; a client that shows no
+      // logs still has it in the hub's own.
+      console.warn(
+        `[hub] ` +
+          providerWarning(
+            `this hub does not understand ${mapped.dropped.join(', ')} — the box is being built without ${mapped.dropped.length === 1 ? 'it' : 'them'} (upgrade the control box)`,
+          ),
+      );
+    }
     const id = randomUUID();
     await handle.store.enqueueCreateJob({
       id,
