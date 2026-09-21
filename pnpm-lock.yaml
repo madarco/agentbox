@@ -343,6 +343,31 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  e2e:
+    dependencies:
+      '@daytona/sdk':
+        specifier: ^0.196.0
+        version: 0.196.0(ws@8.21.0)
+      '@vercel/sandbox':
+        specifier: ^2.0.1
+        version: 2.0.1
+      e2b:
+        specifier: ^2.27.1
+        version: 2.27.1
+      execa:
+        specifier: ^9.5.2
+        version: 9.6.1
+      yaml:
+        specifier: ^2.6.1
+        version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.19
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/agent-claude:
     dependencies:
       '@agentbox/cli-kit':

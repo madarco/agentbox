@@ -1,0 +1,23 @@
+{
+  "name": "@agentbox/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pre-release e2e scenarios run against the packed CLI (see docs/release-e2e-plan.md)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@daytona/sdk": "^0.196.0",
+    "@vercel/sandbox": "^2.0.1",
+    "e2b": "^2.27.1",
+    "execa": "^9.5.2",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  }
+}

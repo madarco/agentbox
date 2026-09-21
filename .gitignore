@@ -34,3 +34,7 @@ TODO.md
 # at the repo root). Never commit — a transcript can hold secrets shown in output.
 /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
 *.swp
+
+# Release e2e run output (docs/release-e2e-plan.md)
+e2e/runs/
+e2e/tray-driver/.build/

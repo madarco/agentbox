@@ -33,7 +33,8 @@
     "tray:start": "open ../agentbox-tray/AgentBoxTray.app",
     "tray:stop": "pkill -x AgentBoxTray || true",
     "tray:restart": "pkill -x AgentBoxTray || true; sleep 1; open ../agentbox-tray/AgentBoxTray.app",
-    "tray:dev": "pnpm run tray:build && pnpm run tray:restart"
+    "tray:dev": "pnpm run tray:build && pnpm run tray:restart",
+    "e2e": "tsx e2e/src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

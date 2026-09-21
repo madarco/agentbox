@@ -11,7 +11,7 @@
 # config) while the credentials it needs are re-seeded in one second.
 #
 # Subcommands:
-#   up          create the VM if absent (cx33 / nbg1 / ubuntu-24.04) with node 20,
+#   up          create the VM if absent (cx33 / nbg1 / ubuntu-24.04) with node 24,
 #               docker, git, gh, tmux and a non-root `dev` user. Idempotent.
 #   creds       push the credential vault from this host: provider keys (the same
 #               filtered set the hub deploy copies), the *test account's* gh
@@ -106,13 +106,13 @@ ssh_dev() { ssh -i "$KEY" "${SSH_OPTS[@]}" "dev@$IP" "$@"; }
 ssh_dev_tty() { ssh -tt -i "$KEY" "${SSH_OPTS[@]}" "dev@$IP" "$@"; }
 ssh_root() { ssh -i "$KEY" "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 
-# --- cloud-init: node 20 + docker + git + gh + tmux, non-root `dev` user ------
+# --- cloud-init: node 24 + docker + git + gh + tmux, non-root `dev` user ------
 cloud_init() {
 cat <<'EOF'
 #cloud-config
 package_update: true
 runcmd:
-  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   - apt-get install -y nodejs docker.io git tmux unzip rsync ca-certificates curl
   - install -d -m 755 /etc/apt/keyrings
   - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
@@ -199,8 +199,8 @@ if [ -s $VAULT/gh-token ]; then
   gh auth login --with-token < $VAULT/gh-token
   gh auth setup-git
 fi
-git config --global user.email '$GIT_EMAIL'
-git config --global user.name '$GIT_NAME'
+git config --global user.email $(printf %q "$GIT_EMAIL")
+git config --global user.name $(printf %q "$GIT_NAME")
 git config --global init.defaultBranch main
 echo "   secrets: \$(grep -c . ~/.agentbox/secrets.env) keys | gh: \$(gh api user -q .login 2>/dev/null || echo 'NOT LOGGED IN')"
 EOF
