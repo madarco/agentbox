@@ -24,28 +24,28 @@ export function hubProfile(): HubProfile {
  * - `token`    localhost — a shared-secret cookie (no login screen). server.ts
  *              generates the token and opens the UI with `?token=`.
  * - `password` hetzner/vercel — better-auth email/password.
+ * - `locked`   a deployed profile with no signing secret: refuse to serve.
  * - `off`      no gate.
  */
-export type AuthMode = 'off' | 'token' | 'password';
-
-/** Whether better-auth password login is configured (hetzner/vercel). */
-function passwordConfigured(): boolean {
-  if (process.env.AGENTBOX_HUB_AUTH === 'off') return false;
-  if (process.env.AGENTBOX_HUB_AUTH === 'on') return true;
-  // Unset (plain `next start` / vercel): on only if a signing secret exists, so a
-  // secretless deploy never serves a login page with no user (a lockout).
-  return Boolean(process.env.BETTER_AUTH_SECRET);
-}
+export type AuthMode = 'off' | 'token' | 'password' | 'locked';
 
 /**
  * The active gate. `AGENTBOX_HUB_AUTH=off` disables everything. localhost uses
  * the lightweight token gate whenever server.ts has provisioned a token
  * (`AGENTBOX_HUB_TOKEN`); hetzner/vercel use better-auth.
+ *
+ * A deployed profile with no `BETTER_AUTH_SECRET` is `locked`, not `off`. Without
+ * a secret better-auth can neither sign a session nor seed the admin, so the hub
+ * would otherwise serve its whole UI and API — boxes, custody, git — to anyone who
+ * found the URL. That is reachable today by cancelling the login prompt during
+ * `hub setup` / `hub deploy`, and on vercel there is no redeploy path to undo it.
+ * Turning auth off is a deliberate act (`AGENTBOX_HUB_AUTH=off`), never a
+ * side effect of a missing variable.
  */
 export function authMode(): AuthMode {
   if (process.env.AGENTBOX_HUB_AUTH === 'off') return 'off';
   if (hubProfile() === 'localhost') return process.env.AGENTBOX_HUB_TOKEN ? 'token' : 'off';
-  return passwordConfigured() ? 'password' : 'off';
+  return process.env.BETTER_AUTH_SECRET ? 'password' : 'locked';
 }
 
 /** Whether any gate is active. */

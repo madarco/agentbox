@@ -40,7 +40,7 @@ function timingSafeEqualStr(a: string, b: string): boolean {
  * responses regardless of the admin token.
  */
 export function custodyByteReadAuthorized(args: {
-  mode: 'off' | 'token' | 'password';
+  mode: 'off' | 'token' | 'password' | 'locked';
   /** `process.env.AGENTBOX_RELAY_ADMIN_TOKEN` (or '' when unset). */
   adminToken: string;
   /** The `X-Agentbox-Admin-Token` header value (or '' when absent). */
@@ -49,6 +49,9 @@ export function custodyByteReadAuthorized(args: {
   isLoopback: boolean;
 }): boolean {
   if (args.mode === 'off') return true;
+  // `locked` is a misconfigured deployed hub (no signing secret). The gate 503s
+  // before a request gets here, but never let a byte-read be the exception.
+  if (args.mode === 'locked') return false;
   if (args.mode === 'token') return args.isLoopback;
   // password:
   if (args.adminToken.length === 0) return false;

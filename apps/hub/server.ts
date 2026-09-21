@@ -134,6 +134,27 @@ async function main(): Promise<void> {
   const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '';
   const custody: CustodyStore = new FsCustodyStore();
 
+  // Password profiles (hetzner/vercel): create/upgrade the auth tables and
+  // env-seed the admin. Dynamic import so localhost never loads node:sqlite /
+  // better-auth.
+  //
+  // This runs BEFORE the socket opens. The gate validates a session against these
+  // tables, so a request served between `listen` and the migration would find no
+  // tables — it fails closed, but a cold start would answer 401 to a legitimately
+  // signed-in user until the seed finished.
+  const bootMode = authMode();
+  if (bootMode === 'password') {
+    const { ensureAuthReady } = await import('./lib/auth');
+    await ensureAuthReady();
+    process.stdout.write('agentbox-hub: auth ready\n');
+  } else if (bootMode === 'locked') {
+    process.stdout.write(
+      'agentbox-hub: WARNING — BETTER_AUTH_SECRET is not set, so nobody can sign in and every ' +
+        'request will be refused with 503. Redeploy with `agentbox hub update`, or set ' +
+        'AGENTBOX_HUB_AUTH=off to serve deliberately without auth.\n',
+    );
+  }
+
   // `hub.gitAuth=gh`: make the stored GitHub token visible to git and `gh`
   // before anything can need it — the create worker clones with it, and the
   // relay's bundle path pushes with it. Must run before startRelayDaemon, whose
@@ -346,15 +367,8 @@ async function main(): Promise<void> {
     },
   };
 
-  // Password profiles (hetzner/vercel): create/upgrade the auth tables and
-  // env-seed the admin. Dynamic import so localhost never loads node:sqlite /
-  // better-auth.
-  const mode = authMode();
-  if (mode === 'password') {
-    const { ensureAuthReady } = await import('./lib/auth');
-    await ensureAuthReady();
-    process.stdout.write('agentbox-hub: auth ready\n');
-  }
+  // Auth tables + admin seed already ran above, before the socket opened.
+  const mode = bootMode;
 
   // Resident create worker (control box). Gated on AGENTBOX_HUB_WORKER=on so the
   // localhost profile never starts it; runs in-process because SQLite is

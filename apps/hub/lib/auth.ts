@@ -28,7 +28,8 @@ async function makeDatabase(): Promise<AuthDatabase> {
   if (hubProfile() === 'vercel') {
     const { Pool } = await import('pg');
     const connectionString = process.env.POSTGRES_URL;
-    if (!connectionString) throw new Error('POSTGRES_URL is required for the vercel hub auth store');
+    if (!connectionString)
+      throw new Error('POSTGRES_URL is required for the vercel hub auth store');
     return new Pool({ connectionString }) as unknown as AuthDatabase;
   }
   // Embedded profiles (hetzner, or localhost with auth explicitly on) → sqlite.
@@ -44,7 +45,14 @@ async function createAuthInstance() {
     database,
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL,
-    emailAndPassword: { enabled: true },
+    // Sign-in only. better-auth's catch-all route serves `/api/auth/sign-up/email`
+    // whenever email+password is enabled, and `/api/auth` is necessarily outside
+    // the gate's matcher (it is how sign-in works) — so without this flag anyone
+    // who can reach a deployed hub can register themselves a full-access account.
+    // There is no sign-up UI, which is exactly why it went unnoticed. Accounts are
+    // created by the env seed below; `ensureAuthReady` therefore cannot go through
+    // the sign-up endpoint either.
+    emailAndPassword: { enabled: true, disableSignUp: true },
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
     advanced: {
       defaultCookieAttributes: {
@@ -73,8 +81,14 @@ export function getAuth(): ReturnType<typeof createAuthInstance> {
 
 /**
  * Run migrations, then env-seed a single admin if the credentials are provided
- * and the user does not already exist. Idempotent: the duplicate-user APIError
- * on re-runs is swallowed. Called once at boot (embedded) / at deploy (vercel).
+ * and the user does not already exist. Idempotent. Called once at boot (embedded)
+ * / at deploy (vercel).
+ *
+ * The seed goes through the internal adapter rather than `auth.api.signUpEmail`,
+ * because sign-up is disabled above and that endpoint now refuses every caller —
+ * including this one. These are the same three writes the sign-up route makes
+ * (hash, create user, link a `credential` account), so the seeded admin is
+ * indistinguishable from a registered one.
  */
 export async function ensureAuthReady(): Promise<void> {
   const auth = await getAuth();
@@ -85,12 +99,23 @@ export async function ensureAuthReady(): Promise<void> {
   const password = process.env.AGENTBOX_HUB_ADMIN_PASSWORD;
   if (!email || !password) return;
 
-  try {
-    await auth.api.signUpEmail({ body: { email, password, name: email.split('@')[0] || 'admin' } });
-  } catch (err) {
-    // Already-seeded is the normal steady state; only surface unexpected errors.
-    const status = (err as { status?: string; statusCode?: number }).status;
-    const code = (err as { statusCode?: number }).statusCode;
-    if (status !== 'UNPROCESSABLE_ENTITY' && code !== 422) throw err;
-  }
+  const ctx = await auth.$context;
+  const normalized = email.toLowerCase();
+  // Already seeded is the normal steady state on every boot after the first. Note
+  // this never rotates an existing admin's password — changing the env var on a
+  // running hub does nothing, by design.
+  if ((await ctx.internalAdapter.findUserByEmail(normalized))?.user) return;
+
+  const hash = await ctx.password.hash(password);
+  const user = await ctx.internalAdapter.createUser({
+    email: normalized,
+    name: email.split('@')[0] || 'admin',
+    emailVerified: false,
+  });
+  await ctx.internalAdapter.linkAccount({
+    userId: user.id,
+    providerId: 'credential',
+    accountId: user.id,
+    password: hash,
+  });
 }

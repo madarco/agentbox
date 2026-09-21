@@ -212,6 +212,22 @@ function hetznerAuthBody(hubAuth: {
 }
 
 /**
+ * What the CLI says when the operator cancels the hub login prompt. Cancelling
+ * used to mean "deploy anyway, without web-UI auth" — which shipped a public
+ * control box with no signing secret and no admin, i.e. one anyone who found the
+ * URL could drive. The hub now refuses to serve in that state, so there is nothing
+ * left to gain by continuing: stop here, where the message can still be useful.
+ *
+ * Exported so `test/hub-setup-ux.test.ts` can assert it without a prompt.
+ */
+export const HUB_AUTH_REQUIRED_ERROR =
+  'An admin login is required. Without it the hub has no signing secret, so it can authenticate ' +
+  'nobody and refuses every request with 503 — and a hub left open is one anyone who finds its URL ' +
+  'can create boxes, read stored credentials and push git with. Re-run and set an email + password, ' +
+  'or pre-seed AGENTBOX_HUB_ADMIN_EMAIL, AGENTBOX_HUB_ADMIN_PASSWORD and BETTER_AUTH_SECRET in ' +
+  '~/.agentbox/control-plane/control-plane.env.';
+
+/**
  * Ensure `control-plane.env` carries the hub-auth block (a prior `setup --deploy
  * none` writes only the App creds). Appends it when `BETTER_AUTH_SECRET` is
  * absent; returns false only if the operator cancels the login prompt.
@@ -512,7 +528,8 @@ const setupSub = new Command('setup')
       // (no remote deploy spinner / healthz-over-the-internet), then return.
       if (target === 'local') {
         if (!(await ensureLocalHubAuth())) {
-          log.warn('cancelled — no admin login set; the exposed hub would be open. Not exposing.');
+          log.error(HUB_AUTH_REQUIRED_ERROR);
+          process.exitCode = 1;
           return;
         }
         const exposed = await runLocalExpose(opts, cmdLog.write.bind(cmdLog));
@@ -529,10 +546,15 @@ const setupSub = new Command('setup')
         // turns login on in the deployed hub so it is never left loginless — both
         // vercel and hetzner (the Caddy-HTTPS docker-compose deploy).
         const hubAuth = await resolveHubAuthEnv();
+        if (!hubAuth) {
+          log.error(HUB_AUTH_REQUIRED_ERROR);
+          process.exitCode = 1;
+          return;
+        }
         // hetzner + digitalocean read ENV_PATH (written to the VPS .env) — the
         // same docker-compose deploy — so append the auth env + the profile so
         // docker-compose enforces login there too.
-        if ((target === 'hetzner' || target === 'digitalocean') && hubAuth) {
+        if (target === 'hetzner' || target === 'digitalocean') {
           await writeFile(ENV_PATH, envBody + hetznerAuthBody(hubAuth), { mode: 0o600 });
           await chmod(ENV_PATH, 0o600);
         }
@@ -561,7 +583,7 @@ const setupSub = new Command('setup')
               ...(hostToken ? { GH_TOKEN: hostToken } : {}),
               AGENTBOX_RELAY_ADMIN_TOKEN: adminToken,
               AGENTBOX_HUB_API_KEY: hubApiKey,
-              ...(hubAuth ?? {}),
+              ...hubAuth,
             };
             deployedUrl = (await deployControlPlaneToVercel({ env, repo, ref, log: onLog })).url;
           } else {
@@ -772,7 +794,8 @@ const exposeSub = new Command('expose')
         return;
       }
       if (!(await ensureLocalHubAuth())) {
-        log.warn('cancelled — an admin login is required so the exposed hub is not left open.');
+        log.error(HUB_AUTH_REQUIRED_ERROR);
+        process.exitCode = 1;
         return;
       }
       const exposed = await runLocalExpose(opts, () => {});
@@ -1909,7 +1932,9 @@ const deployHetznerSub = new Command('hetzner')
         return;
       }
       if (!(await ensureHetznerHubAuth())) {
-        log.warn('login prompt cancelled — deploying without web-UI auth.');
+        log.error(HUB_AUTH_REQUIRED_ERROR);
+        process.exitCode = 1;
+        return;
       }
       // Mint the headless /api/v1 bearer into the env if it isn't there yet, so a
       // redeploy of a pre-existing control box also gets it (setup writes it for
@@ -2016,7 +2041,9 @@ const deployDigitalOceanSub = new Command('digitalocean')
         return;
       }
       if (!(await ensureHetznerHubAuth())) {
-        log.warn('login prompt cancelled — deploying without web-UI auth.');
+        log.error(HUB_AUTH_REQUIRED_ERROR);
+        process.exitCode = 1;
+        return;
       }
       await ensureHubApiKeyInEnv();
       const source = resolveHubDeploySource(AGENTBOX_VERSION, {

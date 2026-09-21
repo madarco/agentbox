@@ -12,12 +12,23 @@ export {};
 
 process.env.AGENTBOX_HUB_PROFILE ??= 'vercel';
 
-const { authEnabled } = await import('../lib/auth-config');
-if (!authEnabled()) {
-  // No BETTER_AUTH_SECRET (and no explicit AGENTBOX_HUB_AUTH=on) → auth is off;
-  // skip so a secretless build never touches the database.
+const { authMode } = await import('../lib/auth-config');
+const mode = authMode();
+if (mode === 'off') {
+  // Auth explicitly disabled (AGENTBOX_HUB_AUTH=off) — skip so a secretless build
+  // never touches the database.
   process.stdout.write('agentbox-hub: auth disabled — skipping migrate\n');
   process.exit(0);
+}
+if (mode === 'locked') {
+  // No BETTER_AUTH_SECRET. Fail the deploy here rather than ship a hub that can
+  // neither sign a session nor seed its admin — on vercel there is no redeploy
+  // command to undo it afterwards.
+  process.stderr.write(
+    'agentbox-hub: BETTER_AUTH_SECRET is not set — refusing to deploy a hub that cannot authenticate anyone.\n' +
+      'Set it in the project env (or set AGENTBOX_HUB_AUTH=off to deploy deliberately without auth).\n',
+  );
+  process.exit(1);
 }
 
 const { ensureAuthReady } = await import('../lib/auth');
