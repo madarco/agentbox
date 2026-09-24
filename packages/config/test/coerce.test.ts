@@ -43,6 +43,7 @@ describe('coerceFromString', () => {
 
   it('accepts valid enum values', () => {
     expect(coerceFromString('engine.kind', 'orbstack')).toBe('orbstack');
+    expect(coerceFromString('engine.kind', 'colima')).toBe('colima');
     expect(coerceFromString('code.ide', 'cursor')).toBe('cursor');
   });
 

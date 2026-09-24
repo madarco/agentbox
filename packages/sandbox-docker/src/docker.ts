@@ -41,6 +41,15 @@ export interface RunBoxSpec {
    * `127.0.0.1` for loopback-only exposure.
    */
   portMappings?: Array<{ hostPort: number; containerPort: number; hostIp?: string }>;
+  /**
+   * Add the `--add-host=host.docker.internal:host-gateway` entry (default
+   * true). Colima must NOT get it: colima resolves `host.docker.internal` to
+   * the macOS host through its own network layer, and the explicit host-gateway
+   * entry overrides that with the VM's docker0 bridge gateway (172.17.0.1) —
+   * the box then can't reach the host relay. `createBox` computes this from the
+   * detected engine.
+   */
+  addHostGateway?: boolean;
 }
 
 export async function runBox(spec: RunBoxSpec): Promise<string> {
@@ -78,10 +87,16 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     '--cgroupns=private',
     // Make the host reachable from inside the container at the well-known DNS
     // name host.docker.internal. Docker Desktop / OrbStack ship this alias by
-    // default; on Linux native Docker it requires this explicit flag (no-op
-    // on the macOS engines). Boxes use it to reach the host relay process.
-    '--add-host=host.docker.internal:host-gateway',
+    // default; on Linux native Docker it requires an explicit entry (no-op on
+    // the macOS engines). Colima is the exception: it maps the name to the
+    // macOS host itself, and the entry would override that with the VM's
+    // docker0 gateway — see `addHostGateway` above. createBox passes
+    // `addHostGateway: false` for colima, so the entry is pushed after the
+    // literal below.
   ];
+  if (spec.addHostGateway !== false) {
+    args.push('--add-host=host.docker.internal:host-gateway');
+  }
   // Nested AgentBox-in-AgentBox dev only: the outer sandbox lacks
   // CAP_SYS_PTRACE, so the inner dockerd can't bind-mount /proc/<pid>/ns/net
   // for a non-root container init (image default USER is vscode → uid 1000).

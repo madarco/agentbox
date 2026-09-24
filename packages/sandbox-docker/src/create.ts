@@ -46,6 +46,7 @@ import {
   removeInBoxWorktree,
   seedWorkspace,
   seedWorkspaceFromDir,
+  unwritableGitBind,
   type RepoCarryOver,
   type RestoreWorktreePlan,
 } from './sync/in-box-git.js';
@@ -1000,9 +1001,19 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     createdAt,
   };
 
+  // Engine kind resolves host-side conventions that differ between engines.
+  // Cached per process, so this is one `docker info` at most. Used right below
+  // for the host-gateway add-host, and later for the portless/colima branches.
+  const engine = await detectEngine();
+
   await runBox({
     name: containerName,
     image: imageRef,
+    // Colima resolves host.docker.internal to the macOS host itself; the
+    // host-gateway entry would override that with the VM's docker0 gateway and
+    // cut the box off from the host relay. Every other engine needs (or
+    // tolerates) the entry.
+    addHostGateway: engine !== 'colima',
     extraVolumes,
     limits: effectiveLimits,
     portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
@@ -1061,6 +1072,22 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   //     layer at /workspace).
   if (!checkpointImage) {
     if (repoCarryOvers.length > 0) {
+      // Colima shares the host's bind-mounted `.git` with macOS ownership, so
+      // the box user (vscode/1000) usually can't write it and `git worktree
+      // add` fails with a cryptic EACCES. Surface that before seeding.
+      if (engine === 'colima') {
+        const unwritable = await unwritableGitBind(containerName, repoCarryOvers);
+        if (unwritable !== null) {
+          // Nothing to inspect here — the engine can't host the .git bind, so
+          // tear the container + provisional record down like the useBranch
+          // seed-failure path does.
+          await execa('docker', ['rm', '-f', containerName], { reject: false });
+          await removeBoxRecord(id);
+          throw new Error(
+            `colima engine: the box's agent (uid 1000) cannot write the host repo at ${unwritable} — colima mounts macOS files with their macOS ownership, so the bind-mounted .git is not writable by the box user. Create the box on this machine via remote-docker instead (\`agentbox remote-docker add <alias> localhost\`, needs SSH/Remote Login, then \`agentbox docker:<alias> create\`), or run Docker Desktop / OrbStack for local boxes. See the local-docker docs for the colima notes.`,
+          );
+        }
+      }
       try {
         await seedWorkspace({
           container: containerName,
@@ -1284,7 +1311,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   let portlessVncUrl: string | undefined;
   if (opts.portless === true && (webHostPort || (vncEnabled && vncHostPort))) {
     try {
-      const engine = await detectEngine();
+      // `engine` resolved above (before runBox), cached per process.
       if (engine === 'orbstack') {
         log('portless: skipped (OrbStack already provides <container>.orb.local)');
       } else {

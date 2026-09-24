@@ -38,6 +38,16 @@ describe('detectEngine', () => {
     expect(await detectEngine()).toBe('docker-desktop');
   });
 
+  it('detects colima from the VM hostname field even when the OS reports a plain distro', async () => {
+    // colima's `docker info` reports the guest distro as OperatingSystem and
+    // the VM hostname (`colima`) as Name — the probe carries both.
+    daemonSays('Ubuntu 22.04.5 LTS|colima');
+    expect(await detectEngine()).toBe('colima');
+    setEngineOverride(null);
+    daemonSays('colima');
+    expect(await detectEngine()).toBe('colima');
+  });
+
   it('falls back to "other" on an unknown daemon or a failed probe', async () => {
     daemonSays('Ubuntu 24.04');
     expect(await detectEngine()).toBe('other');
@@ -68,6 +78,13 @@ describe('detectEngine', () => {
     pin.value = 'orbstack';
     daemonSays('Docker Desktop');
     expect(await detectEngine()).toBe('orbstack');
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('honours a colima engine.kind pin', async () => {
+    pin.value = 'colima';
+    daemonSays('OrbStack');
+    expect(await detectEngine()).toBe('colima');
     expect(execaMock).not.toHaveBeenCalled();
   });
 

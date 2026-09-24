@@ -230,6 +230,38 @@ export async function chownGitBindParents(args: {
   }
 }
 
+/**
+ * Colima fail-fast: colima's file sharing (virtiofs on `vz`, sshfs on `qemu`)
+ * presents macOS bind mounts with their **macOS** ownership, so the host's
+ * bind-mounted `.git/` keeps its mac-user uid (typically 501) inside the box —
+ * while the box's agent runs as `vscode` (uid 1000). `git worktree add` (which
+ * registers into the bind, as `vscode`) then dies with a cryptic EACCES at
+ * create. Probes each bind's writability as the box user and returns the first
+ * unwritable repo path, or null when everything is writable (a macOS uid of
+ * 1000, or an engine that translates ownership, proceeds normally).
+ *
+ * Only called when the engine is colima — other engines get Docker
+ * Desktop/OrbStack's ownership translation or uid-matched binds for free.
+ */
+export async function unwritableGitBind(
+  container: string,
+  repos: Array<{ repo: { hostMainRepo: string } }>,
+): Promise<string | null> {
+  for (const r of repos) {
+    const gitdir = `${r.repo.hostMainRepo}/.git`;
+    // Inside the box the host repo sits at the identical absolute path (the
+    // bind mount), so the container-side path is the host path.
+    const result = await execa(
+      'docker',
+      ['exec', '--user', 'vscode', container, 'sh', '-c', `test -w '${gitdir}'`],
+      { reject: false },
+    );
+    // `test -w` exits non-zero when the box user can't write the dir.
+    if (result.exitCode !== 0) return gitdir;
+  }
+  return null;
+}
+
 export async function bindWorktrees(
   container: string,
   binds: WorktreeBindSpec[],

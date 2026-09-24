@@ -80,7 +80,7 @@ Want to help test what's coming? `npm -g install @madarco/agentbox@nightly` puts
 [nightly channel](https://agent-box.sh/docs/nightly) — pre-release builds, with stable releases still
 reaching you automatically. `agentbox self-update --channel stable` opts back out.
 
-Requirements: macOS (arm64 or Intel) or Linux, Docker ([Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev/)), Node `>=20.10`. The first `agentbox create` / `agentbox claude` builds the `agentbox/box:dev` image (~1 GB, one-time).
+Requirements: macOS (arm64 or Intel) or Linux, Docker ([Docker Desktop](https://www.docker.com/products/docker-desktop/), [OrbStack](https://orbstack.dev/) or [Colima](https://github.com/abiosoft/colima) — colima works best via the `remote-docker` provider, see [local-docker](/docs/local-docker) for the engine notes), Node `>=20.10`. The first `agentbox create` / `agentbox claude` builds the `agentbox/box:dev` image (~1 GB, one-time).
 Uses `portless` to give box web apps the same URL from inside the box and on the host.
 
 ## Cloud Providers

@@ -43,7 +43,7 @@ export async function dockerChecks(): Promise<CheckResult[]> {
         detail: 'not found',
         hint: linux
           ? 'install docker engine: https://docs.docker.com/engine/install/'
-          : 'install Docker Desktop, OrbStack, or docker engine',
+          : 'install Docker Desktop, OrbStack, or Colima',
       },
     ];
   }
@@ -92,7 +92,8 @@ export async function dockerChecks(): Promise<CheckResult[]> {
     } else if (linux) {
       hint = 'start Docker: `sudo systemctl start docker` (install docker engine if missing)';
     } else {
-      hint = 'start Docker (Desktop / OrbStack)';
+      hint =
+        'start Docker (Desktop / OrbStack) — or `colima start` + `docker context use colima` if you run Colima';
     }
     return [
       cliRes,

@@ -13,7 +13,7 @@ import { pluginAgentSettings } from './agent-plugins.js';
 import { PROVIDERS, PROVIDER_NAMES, perProviderConfigKey, type ProviderKind } from './providers.js';
 
 export type IdeFlavor = 'vscode' | 'cursor' | 'auto';
-export type EngineKind = 'orbstack' | 'docker-desktop' | 'other' | 'auto';
+export type EngineKind = 'orbstack' | 'docker-desktop' | 'colima' | 'other' | 'auto';
 export type BrowserKind = 'agent-browser' | 'playwright' | 'both';
 /** Sandbox backend new boxes are created on. Defined in `providers.ts` (the single source of truth) and re-exported here for back-compat. */
 export type { ProviderKind };
@@ -1262,9 +1262,9 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
   {
     key: 'engine.kind',
     type: 'enum',
-    enumValues: ['orbstack', 'docker-desktop', 'other', 'auto'] as const,
+    enumValues: ['orbstack', 'docker-desktop', 'colima', 'other', 'auto'] as const,
     description:
-      'Override the docker-engine auto-detection (used for OrbStack-only optimisations).',
+      'Override the docker-engine auto-detection (used for OrbStack-only optimisations, and to name colima for the local-docker/colima notes).',
   },
   {
     key: 'browser.default',

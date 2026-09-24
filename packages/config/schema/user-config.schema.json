@@ -454,6 +454,7 @@
           "enum": [
             "orbstack",
             "docker-desktop",
+            "colima",
             "other",
             "auto"
           ]

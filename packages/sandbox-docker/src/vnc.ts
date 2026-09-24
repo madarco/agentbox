@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { buildNoVncUrl, type BoxRecord, type Provider } from '@agentbox/core';
 import { execInBox } from './docker.js';
-import { detectEngine } from './sync/host-export.js';
+import { detectEngine, type DockerEngine } from './sync/host-export.js';
 
 export interface VncLaunchResult {
   up: boolean;
@@ -99,7 +99,7 @@ export function buildVncUrls(
     portlessVncAlias?: string;
     portlessVncUrl?: string;
   },
-  engine: 'orbstack' | 'docker-desktop' | 'other',
+  engine: DockerEngine,
 ): VncUrls {
   if (!record.vncEnabled || !record.vncPassword) return {};
   const containerPort = record.vncContainerPort ?? VNC_CONTAINER_PORT;

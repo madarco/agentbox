@@ -24,6 +24,7 @@ const VALID: Fixture[] = [
   { name: 'box defaultCheckpoint', yaml: 'box:\n  defaultCheckpoint: warm-1\n' },
   { name: 'checkpoint maxLayers', yaml: 'checkpoint:\n  maxLayers: 3\n' },
   { name: 'engine override', yaml: 'engine:\n  kind: orbstack\n' },
+  { name: 'engine colima', yaml: 'engine:\n  kind: colima\n' },
   {
     name: 'kitchen sink',
     yaml: `

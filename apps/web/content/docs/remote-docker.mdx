@@ -181,7 +181,7 @@ back to `docker`.
 
 - **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
 - **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` _after_ the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
-- **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
+- **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH). A colima-driven Mac is a first-class remote — and the supported way to use colima at all, since local docker boxes on colima hit its macOS file-ownership sharing (see [local-docker](/docs/local-docker)).
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
 - **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
 - **Host aliases are per machine until you share them.** `agentbox remote-docker add` writes `~/.agentbox/remote-docker-hosts.json` on the machine you ran it on. A [control box](/docs/deployed-hub) has neither that file nor your `~/.ssh/config`, so it knows nothing about your engines until you run `agentbox remote-docker share <alias>` — see below.

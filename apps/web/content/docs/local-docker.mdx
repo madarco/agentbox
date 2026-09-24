@@ -10,7 +10,8 @@ Each box is one local container. `/workspace` is an in-container git worktree on
 ## Requirements
 
 - macOS (arm64 or Intel) or Linux.
-- A Docker engine: **Docker Desktop** or **OrbStack**.
+- A Docker engine: **Docker Desktop**, **OrbStack** — or **Colima** (see the
+  [Colima notes](#colima) below for what works and what doesn't).
 - Node `>=20.10`.
 - First create pulls (or builds) the `agentbox/box:dev` image, a one-time ~1 GB cost covered below.
 
@@ -30,7 +31,25 @@ agentbox install
 
 Installation basics are also covered in [teleport-a-project](/docs/teleport-a-project); override the engine with `engine.kind` in [configuration](/docs/configuration).
 
-Which engine you are on is read off the daemon itself — `docker info`'s operating system, matched against OrbStack and Docker Desktop — and it decides host-side conventions like a box's `.orb.local` URL. It is resolved once per process, so after switching engines restart the two long-running ones (`agentbox hub restart`, `agentbox relay restart`) or they keep minting URLs for the engine they started on. Boxes created on the old engine stay on it — that daemon still owns their containers. Pin the answer with `engine.kind` to take the detection out of the loop.
+Which engine you are on is read off the daemon itself — `docker info`'s operating system and hostname, matched against OrbStack, Docker Desktop and Colima — and it decides host-side conventions like a box's `.orb.local` URL. It is resolved once per process, so after switching engines restart the two long-running ones (`agentbox hub restart`, `agentbox relay restart`) or they keep minting URLs for the engine they started on. Boxes created on the old engine stay on it — that daemon still owns their containers. Pin the answer with `engine.kind` to take the detection out of the loop.
+
+## Colima
+
+[Colima](https://github.com/abiosoft/colima) is detected and supported, with one structural caveat.
+
+**The supported path is `remote-docker` on the same machine.** The [remote-docker](/docs/remote-docker) provider syncs the workspace into the box instead of bind-mounting your `.git`, so it is unaffected by colima's file-sharing semantics — and its `ssh bash -lc 'docker …'` transport finds the Homebrew-installed `docker` CLI that colima uses. With SSH (Remote Login) enabled:
+
+```bash
+agentbox remote-docker add colima localhost
+agentbox docker:colima create -y
+```
+
+**Local docker boxes on colima fail fast with guidance.** Local boxes bind-mount the host's `.git/` and run in-box git as the box user (`vscode`, uid 1000). Colima shares macOS files with their **macOS** ownership, so bind-mounted `.git` keeps your mac uid (typically 501) and the box's git can't write it — `create` stops with a clear message pointing here rather than a cryptic permission error. It only works if your macOS uid happens to be 1000. Two things make the local path behave right on colima:
+
+- AgentBox does **not** pass `--add-host=host.docker.internal:host-gateway` on colima — the flag would override colima's native `host.docker.internal → macOS host` mapping with the VM's docker0 gateway and cut the box off from the host relay.
+- The engine is detected from the colima VM's hostname (`colima`), so `engine.kind: colima` is a valid pin and `agentbox doctor` names the engine correctly.
+
+Docker Desktop / OrbStack remain the smooth engines for local boxes on macOS.
 
 ## First-run image
 

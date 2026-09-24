@@ -33,7 +33,7 @@ export {
   buildHostEnvFindArgs,
 } from '@agentbox/sandbox-core';
 
-export type DockerEngine = 'orbstack' | 'docker-desktop' | 'other';
+export type DockerEngine = 'orbstack' | 'docker-desktop' | 'colima' | 'other';
 
 /** In-container path bind-mounted to the per-box host export dir by createBox. */
 export const CONTAINER_EXPORT_MERGED = '/host-export';
@@ -69,9 +69,11 @@ async function pinnedEngine(): Promise<DockerEngine | null> {
 /**
  * Which docker engine this host runs, deciding the host-side conventions that
  * differ between them (a box's `.orb.local` URL, Portless, volume paths).
- * `docker info --format '{{.OperatingSystem}}'` returns strings like "OrbStack"
- * or "Docker Desktop" — the only two that matter on macOS. An `engine.kind`
- * pin wins over the probe.
+ * `docker info --format '{{.OperatingSystem}}|{{.Name}}'` returns strings like
+ * "OrbStack" or "Docker Desktop" for the first two macOS engines and the
+ * daemon's hostname (`colima` for a colima VM, `ubuntu`/… for native Linux) in
+ * the second field. The first two fields are the ones that matter on macOS; an
+ * `engine.kind` pin wins over the probe.
  *
  * Resolved ONCE per process. Switching engines is a thing people do about
  * never, so the cost of noticing (a `docker info` on a live timer, in every
@@ -87,12 +89,19 @@ export async function detectEngine(): Promise<DockerEngine> {
     cachedEngine = pinned;
     return cachedEngine;
   }
-  const result = await execa('docker', ['info', '--format', '{{.OperatingSystem}}'], {
+  const result = await execa('docker', ['info', '--format', '{{.OperatingSystem}}|{{.Name}}'], {
     reject: false,
   });
-  const os = (result.stdout ?? '').trim().toLowerCase();
-  if (os.includes('orbstack')) cachedEngine = 'orbstack';
-  else if (os.includes('docker desktop')) cachedEngine = 'docker-desktop';
+  const [os, name] = (result.stdout ?? '').trim().toLowerCase().split('|');
+  if ((os ?? '').includes('orbstack') || (name ?? '').includes('orbstack'))
+    cachedEngine = 'orbstack';
+  else if ((os ?? '').includes('docker desktop') || (name ?? '').includes('docker desktop'))
+    cachedEngine = 'docker-desktop';
+  // The colima VM's hostname is `colima`, so the daemon's Name field identifies
+  // it even though the OperatingSystem field reports the guest distro
+  // ("Ubuntu 22.04.5 LTS"). The colima docker context is also named `colima`.
+  else if ((os ?? '').includes('colima') || (name ?? '').includes('colima'))
+    cachedEngine = 'colima';
   else cachedEngine = 'other';
   return cachedEngine;
 }
