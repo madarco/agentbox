@@ -320,6 +320,11 @@
           "type": "string",
           "minLength": 1
         },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z._-]*$"
+        },
         "modelAuth": {
           "type": "string",
           "pattern": "^(none|codex(,codex)*)$"

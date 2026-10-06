@@ -6,6 +6,7 @@ import {
   parseDockerPort,
   parseSize,
   parseSnapshotName,
+  remoteDockerBackend,
 } from '../src/backend.js';
 
 describe('mapDockerState', () => {
@@ -73,6 +74,12 @@ describe('snapshot names', () => {
 
   it('rejects a name with no separator rather than committing to a bad ref', () => {
     expect(() => parseSnapshotName('agentbox-ckpt-x:setup')).toThrow(/malformed snapshot name/);
+  });
+});
+
+describe('remoteDockerBackend', () => {
+  it('seeds host static agent config into each live remote box', () => {
+    expect(remoteDockerBackend.seedAgentStaticAtCreate).toBe(true);
   });
 });
 

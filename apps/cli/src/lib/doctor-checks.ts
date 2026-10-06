@@ -24,6 +24,7 @@ import {
   type CheckResult,
   type CheckStatus,
 } from '@agentbox/sandbox-core';
+import { checkExternalPiMcpConfigs } from '@agentbox/agent-pi';
 import { detectEngine, detectPortless, portlessServiceStatus } from '@agentbox/sandbox-docker';
 import type { ControlBoxInventory } from '../control-plane/control-box-inventory.js';
 import { getRuntimeProviderNames, loadProviderModule } from '../provider/loaders.js';
@@ -193,15 +194,17 @@ async function checkTmux(): Promise<CheckResult> {
 }
 
 export async function runSystemChecks(): Promise<CheckResult[]> {
-  const [git, gh, ssh, sshfs, tmux, config] = await Promise.all([
+  const [git, gh, ssh, sshfs, tmux, config, externalPiMcp] = await Promise.all([
     checkGit(),
     checkGh(),
     checkSsh(),
     checkSshfs(),
     checkTmux(),
     checkConfig(),
+    checkExternalPiMcpConfigs(),
   ]);
   const results = [checkNode(), checkPlatform(), checkAgentboxHome(), git, gh, ssh, sshfs, tmux];
+  if (externalPiMcp) results.push(externalPiMcp);
   results.push(...(await checkBoxesOnStaleRelayPort()));
   // macFUSE is a macOS concept; on Linux FUSE is a kernel module and sshfs alone
   // is the signal, so don't show a spurious row.

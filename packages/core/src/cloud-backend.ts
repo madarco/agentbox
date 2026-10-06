@@ -245,6 +245,15 @@ export interface CloudBackend {
   readonly name: string;
 
   /**
+   * Seed the host's static agent config into each newly provisioned box.
+   *
+   * Most cloud backends bake this config into their prepared snapshot. Remote
+   * Docker only prepares a shared base image, so it opts in and receives the
+   * current host config after `provision` and before agent setup.
+   */
+  readonly seedAgentStaticAtCreate?: boolean;
+
+  /**
    * Port the in-box WebProxy binds and that the provider exposes + treats as the
    * box's "web" port (what `resolveUrl(kind:'web')` resolves and `agentbox url`
    * opens). Defaults to `CLOUD_WEB_PROXY_PORT` (80) when absent — docker/hetzner/

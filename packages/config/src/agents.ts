@@ -135,6 +135,13 @@ export const AGENT_KINDS = [
       'Use a per-box Pi config/data volume (~/.pi/agent) instead of the shared one.',
     settings: [
       {
+        key: 'version',
+        type: 'string',
+        default: 'latest',
+        description:
+          'Exact Pi version or npm dist-tag installed in boxes (for example `0.85.1`). Bake-time: changing it derives a new agent image.',
+      },
+      {
         key: 'modelAuth',
         type: 'enum-list',
         enumValues: ['none', 'codex'],

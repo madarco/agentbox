@@ -112,6 +112,7 @@ function seedEnvPatterns(req: CreateBoxRequest): string[] | undefined {
 }
 import { bashScript, quoteShellArgv } from './shell.js';
 import { seedGitCredentials } from './sync/git-identity.js';
+import { seedAgentStaticAtCreateIfRequested } from './sync/agent-static.js';
 import { seedCloudWorkspace } from './sync/workspace-seed.js';
 import type { SeedCloudWorkspaceResult } from './sync/workspace-seed.js';
 
@@ -969,6 +970,16 @@ export function createCloudProvider(
         : undefined;
 
       try {
+        // Snapshot-backed providers bake static agent config during prepare.
+        // Remote Docker prepares only a shared base image, so it opts in to
+        // seed current host config after provisioning. Keep this inside the
+        // cleanup guard: staging or upload failure must destroy the new box.
+        await seedAgentStaticAtCreateIfRequested(backend, handle, {
+          hostWorkspace: req.workspacePath,
+          agents: req.agents,
+          onLog: log,
+        });
+
         // Checkpoint-restore conflicts (overlay): surface to the CLI so it
         // injects the same "conflicting host changes SKIPPED … agentbox-ctl
         // reload" prompt into the agent that docker does. Undefined on a fresh
@@ -1016,8 +1027,9 @@ export function createCloudProvider(
         //                      AGENTS.override box-facts → OpenCode model →
         //                      _claude.json overlay → dynamic workflows/memory.
         //   seedGitIdentity  = git committer identity (cloud has no ~/.gitconfig).
-        // Workspace *seed* (above, via seedCloudWorkspace) + static config (baked
-        // at prepare) stay outside the facade.
+        // Workspace *seed* (above, via seedCloudWorkspace) + static config
+        // (baked at prepare, or seeded live for opted-in backends) stay outside
+        // the facade.
         const syncCtx = makeSyncContext({
           boxName: name,
           boxId: id,

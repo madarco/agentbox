@@ -10,7 +10,7 @@
 
 import { agentPushExcludes } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -22,7 +22,13 @@ import {
   ensureVolume,
   volumeExists,
 } from '@agentbox/sandbox-docker';
-import { AgentInstallError, ensureAgentInstalled, resolveAgentSpec } from '@agentbox/sandbox-core';
+import {
+  AgentInstallError,
+  ensureAgentInstalled,
+  findBrokenSymlinks,
+  mkStageDir,
+  resolveAgentSpec,
+} from '@agentbox/sandbox-core';
 
 const PI_SPEC = resolveAgentSpec('pi');
 
@@ -52,10 +58,9 @@ export const PI_FORWARDED_ENV_KEYS = PI_SPEC.forwardedEnvKeys;
  * `auth.json` must land in it. The vendored `fd`/`rg` under `bin/` are dropped
  * by the spec's own list — they are host-native binaries.
  */
-function configVolumeExcludeFlags(): string {
+function configVolumeExcludePatterns(): string[] {
   const path = PI_SPEC.staticPaths[0];
-  const derived = path ? agentPushExcludes(PI_SPEC, path, 'volume') : [];
-  return derived.map((p) => `--exclude=${p}`).join(' ');
+  return path ? agentPushExcludes(PI_SPEC, path, 'volume') : [];
 }
 
 export interface PiConfigSpec {
@@ -73,6 +78,48 @@ async function pathExists(p: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface StagedPiConfig {
+  path: string;
+  cleanup(): Promise<void>;
+}
+
+/**
+ * Make a Docker-readable Pi tree while the host can still resolve every link.
+ * Exported for a filesystem-level regression test; callers must clean it up.
+ */
+export async function stagePiConfigForDocker(hostPiDir: string): Promise<StagedPiConfig> {
+  const stageDir = await mkStageDir('pi-docker-static');
+  try {
+    const archive = join(stageDir, '.pi-config.tar');
+    const broken = await findBrokenSymlinks(hostPiDir);
+    // Host tar follows links before Docker changes their path context. Unlike
+    // macOS's old rsync, it also filters a broken link before trying to follow
+    // it (rsync exits 23 even when that link has an exclude rule).
+    await execa(
+      'tar',
+      [
+        '-chf',
+        archive,
+        ...broken.map((p) => `--exclude=./${p}`),
+        ...configVolumeExcludePatterns().map((p) => `--exclude=${p}`),
+        '-C',
+        hostPiDir,
+        '.',
+      ],
+      { env: { ...process.env, COPYFILE_DISABLE: '1' } },
+    );
+    await execa('tar', ['-xf', archive, '-C', stageDir]);
+    await rm(archive, { force: true });
+    return {
+      path: stageDir,
+      cleanup: () => rm(stageDir, { recursive: true, force: true }),
+    };
+  } catch (err) {
+    await rm(stageDir, { recursive: true, force: true });
+    throw err;
   }
 }
 
@@ -123,21 +170,32 @@ export async function ensurePiVolume(
   const chown = `chown -R ${CONTAINER_USER}:${CONTAINER_USER} /dst`;
 
   if (opts.syncFromHost && (await pathExists(HOST_PI_DIR))) {
-    await execa('docker', [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/dst`,
-      '-v',
-      `${HOST_PI_DIR}:/src:ro`,
-      opts.image,
-      'sh',
-      '-c',
-      `rsync -a ${configVolumeExcludeFlags()} /src/ /dst/ && ${chown}`,
-    ]);
-    return { created, synced: true };
+    // Materialize links on the HOST before mounting the source into Docker.
+    // A helper that sees the tree only at /src cannot follow either an absolute
+    // macOS link (/Users/...) or a relative link that escapes ~/.pi/agent. Pi
+    // skill installs commonly use both, so copying the raw tree left dozens of
+    // valid host skills as broken links in Linux. Cloud staging already uses
+    // this host-side `-L` model; keep Docker equivalent.
+    const stage = await stagePiConfigForDocker(HOST_PI_DIR);
+    try {
+      await execa('docker', [
+        'run',
+        '--rm',
+        '--user',
+        '0',
+        '-v',
+        `${spec.volume}:/dst`,
+        '-v',
+        `${stage.path}:/src:ro`,
+        opts.image,
+        'sh',
+        '-c',
+        `rsync -a /src/ /dst/ && ${chown}`,
+      ]);
+      return { created, synced: true };
+    } finally {
+      await stage.cleanup();
+    }
   }
 
   await execa(

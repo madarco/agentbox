@@ -264,6 +264,10 @@ export function buildRunArgv(opts: {
 
 export const remoteDockerBackend: CloudBackend = {
   name: BACKEND_NAME,
+  // Unlike snapshot-backed cloud providers, Remote Docker prepares a shared
+  // base image with no host-specific config. Seed the current host config into
+  // each box after provisioning instead.
+  seedAgentStaticAtCreate: true,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const log = req.onLog ?? ((): void => {});

@@ -61,5 +61,6 @@ export function registerPiAgent(): void {
 }
 
 export * from './docker-sync.js';
+export * from './doctor.js';
 export { stagePiCredentialsForUpload, stagePiStaticForUpload } from './host-stage.js';
 export { piStagedItems } from './staged-items.js';

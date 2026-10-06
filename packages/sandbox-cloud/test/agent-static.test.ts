@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildAgentStaticSeedCommands } from '../src/sync/agent-static.js';
+import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import { makeMockCloudBackend } from '../src/mock-backend.js';
+import {
+  buildAgentStaticSeedCommands,
+  seedAgentStaticAtCreateIfRequested,
+} from '../src/sync/agent-static.js';
 
 const STAGES = [
   { kind: 'claude' as const, extractDir: '/home/vscode/.claude' },
@@ -61,5 +66,40 @@ describe('buildAgentStaticSeedCommands', () => {
     const joined = buildAgentStaticSeedCommands(STAGES).join('\n');
     expect(joined).toContain('[ -d /home/vscode/.claude ]');
     expect(joined).toContain('|| true');
+  });
+});
+
+describe('seedAgentStaticAtCreateIfRequested', () => {
+  const handle: CloudHandle = { sandboxId: 'remote-box' };
+
+  it('seeds static host config for backends whose base image does not bake it', async () => {
+    const backend: CloudBackend = {
+      ...makeMockCloudBackend(),
+      seedAgentStaticAtCreate: true,
+    };
+    let seeded = 0;
+    await seedAgentStaticAtCreateIfRequested(
+      backend,
+      handle,
+      { agents: ['pi'] },
+      async (seenBackend, seenHandle, seenOptions) => {
+        expect(seenBackend).toBe(backend);
+        expect(seenHandle).toBe(handle);
+        expect(seenOptions?.agents).toEqual(['pi']);
+        seeded += 1;
+        return { seeded: ['pi'] };
+      },
+    );
+    expect(seeded).toBe(1);
+  });
+
+  it('does not duplicate static config for snapshot-backed providers', async () => {
+    const backend = makeMockCloudBackend();
+    let seeded = 0;
+    await seedAgentStaticAtCreateIfRequested(backend, handle, {}, async () => {
+      seeded += 1;
+      return { seeded: [] };
+    });
+    expect(seeded).toBe(0);
   });
 });

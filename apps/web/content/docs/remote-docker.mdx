@@ -179,7 +179,8 @@ back to `docker`.
 
 ## Good to know
 
-- **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
+- **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container). Agent commands do not expose `--size`, so set `box.sizeRemoteDocker` globally or in `agentbox.yaml` before running them.
+- **Host agent config is seeded per box.** Remote Docker prepares a shared base image rather than a host-specific snapshot, so each create copies the current non-secret static agent config and materialized skills into the new box. Credentials remain a separate, explicit sync.
 - **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` _after_ the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
 - **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.

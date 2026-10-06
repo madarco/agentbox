@@ -250,6 +250,18 @@ describe('agent settings reach the install shell as env', () => {
     expect(root?.[2]).not.toContain('AGENTBOX_AGENT_SETTING_');
   });
 
+  it('installs the configured Pi version rather than an implicit latest', async () => {
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'pi', { settings: { version: '0.85.1', modelAuth: 'none' } });
+    const install = execs(t)
+      .map((c) => c.join(' '))
+      .find((c) => c.includes('@earendil-works/pi-coding-agent@'));
+    expect(install).toContain("AGENTBOX_AGENT_SETTING_VERSION='0.85.1'");
+    expect(install).toContain(
+      '"@earendil-works/pi-coding-agent@${AGENTBOX_AGENT_SETTING_VERSION}"',
+    );
+  });
+
   it('emits nothing for an agent with no settings', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
     await ensureAgentInstalled(t, 'codex');

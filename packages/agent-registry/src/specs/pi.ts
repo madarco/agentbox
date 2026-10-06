@@ -29,7 +29,17 @@ export const piSpec: AgentSyncSpec = {
     // The `pi.dev/install.sh` script is only an npm wrapper (it shells
     // `npm i -g` with a spinner), so the npm recipe is the same install with
     // one less moving part — and no CDN to 403 us.
-    recipe: { kind: 'npm', package: '@earendil-works/pi-coding-agent' },
+    recipe: {
+      kind: 'exec',
+      // `pi.version` is an exact version or npm dist-tag, not a free-form npm
+      // spec. Validate before interpolation so a config value cannot become
+      // shell syntax. This gives reproducible boxes without hard-coding one Pi
+      // release into AgentBox itself.
+      script:
+        'case "$AGENTBOX_AGENT_SETTING_VERSION" in ' +
+        `''|*[!0-9A-Za-z._-]*) echo "agentbox: invalid pi.version (use an exact version or npm dist-tag)" >&2; exit 64;; ` +
+        'esac; npm install -g "@earendil-works/pi-coding-agent@${AGENTBOX_AGENT_SETTING_VERSION}" 2>&1',
+    },
     runAs: 'root',
     postInstall: [
       // Fail the INSTALL, not the launch, on too old a Node.
@@ -170,6 +180,14 @@ export const piSpec: AgentSyncSpec = {
     },
   },
   settings: [
+    {
+      key: 'version',
+      type: 'string',
+      default: 'latest',
+      affectsBake: true,
+      description:
+        'Exact Pi version or npm dist-tag installed in boxes (for example `0.85.1`). Bake-time: changing it derives a new agent image.',
+    },
     {
       key: 'modelAuth',
       type: 'enum-list',

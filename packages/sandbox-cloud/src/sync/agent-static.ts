@@ -33,6 +33,8 @@ const REMOTE_CLAUDE_MD = '/tmp/agentbox-custom-CLAUDE.md';
 export interface SeedAgentStaticOptions {
   /** Host workspace path, threaded into the claude stager. */
   hostWorkspace?: string;
+  /** Agents selected for this box. Shared `~/.agents` skills are always included. */
+  agents?: readonly string[];
   /** Absolute host path to the provider's `/etc/claude-code/CLAUDE.md` overlay. */
   claudeMdOverlay?: string;
   onLog?: (line: string) => void;
@@ -83,13 +85,33 @@ export interface SeedAgentStaticResult {
   seeded: AgentStaticStage['kind'][];
 }
 
+type SeedAgentStatic = typeof seedAgentStaticIntoCloudBox;
+
+/**
+ * Seed static config on create only for backends that cannot bake it into a
+ * prepared snapshot. The injectable seeder keeps the provider gate testable
+ * without reading the developer's real home directory.
+ */
+export async function seedAgentStaticAtCreateIfRequested(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: SeedAgentStaticOptions = {},
+  seed: SeedAgentStatic = seedAgentStaticIntoCloudBox,
+): Promise<void> {
+  if (!backend.seedAgentStaticAtCreate) return;
+  await seed(backend, handle, opts);
+}
+
 export async function seedAgentStaticIntoCloudBox(
   backend: CloudBackend,
   handle: CloudHandle,
   opts: SeedAgentStaticOptions = {},
 ): Promise<SeedAgentStaticResult> {
   const log = opts.onLog ?? (() => {});
-  const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
+  const stages = await stageAllAgentStatic({
+    hostWorkspace: opts.hostWorkspace,
+    agents: opts.agents,
+  });
   try {
     for (const s of stages) {
       for (const w of s.staged.warnings) log(w);
