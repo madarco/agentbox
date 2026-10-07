@@ -11,9 +11,11 @@ import {
   inspectBox,
   execInBox,
   recordLastAgent,
+  resolveContainerConfigVolume,
   seedAgentDeclaredFiles,
   startBox,
   unpauseBox,
+  withContainerConfigVolume,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
 import { runModelAuthIngest } from '@agentbox/sandbox-core';
@@ -63,7 +65,7 @@ export function resolveSessionName(
  * session already resolved by the caller (teleport); it is uploaded once the box
  * is up and its flags ride ahead of the user's args.
  */
-async function startOrAttach(
+export async function startOrAttach(
   a: AgentCliSpec,
   box: BoxRecord,
   agentArgs: string[],
@@ -143,37 +145,46 @@ async function startOrAttach(
     spinner: s,
   });
 
+  // Installation creates the config layout and credential links. Do it before
+  // staging an unmounted config tree so copy-back preserves those links.
+  s.message(`checking ${a.id}`);
+  await a.runtime.ensureInstalled(box.container, {
+    onProgress: (line) => s.message(clampSpinnerLine(line)),
+  });
+
   // Re-sync the host's config into the box volume so host-side changes (new MCP
   // servers, refreshed auth state, …) reach the in-box agent. Runs for
   // `<agent> start` (opt out with --no-sync-config), never for `<agent> attach`
   // — a plain reattach must not clobber the in-box state with the host copy.
-  const volume = a.runtime.resolveConfigVolume(box);
+  const configDir = a.spec.staticPaths[0]?.boxDir;
+  const volume = configDir
+    ? resolveContainerConfigVolume(insp.dockerInspect, configDir)
+    : a.runtime.resolveConfigVolume(box);
   const syncConfig = opts.syncConfig !== false;
-  if (syncConfig && volume) {
-    s.message(`syncing ${a.text.syncConfigLabel} into box volume`);
-    await a.runtime.ensureVolume(
-      { volume },
-      { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
-    );
-  }
-  // Box-only, image-versioned seeding. The DECLARED files (`spec.seeds`:
-  // codex's activity hooks, opencode's state plugin, claude's setup skill) are
-  // placed for every agent from one call; the hook is only for the rest
-  // (claude's credential mirror + plugin native deps). Runs even with
-  // --no-sync-config so an image upgrade still propagates.
-  if (volume) await seedAgentDeclaredFiles(a.id, volume, box.image);
+  const message = (line: string): void => s.message(clampSpinnerLine(line));
+  const prepareConfig = async (target: string) => {
+    if (syncConfig) {
+      s.message(`syncing ${a.text.syncConfigLabel} into box`);
+      await a.runtime.ensureVolume(
+        { volume: target },
+        { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
+      );
+    }
+    // Image-owned hooks/skills must propagate even with --no-sync-config.
+    await seedAgentDeclaredFiles(a.id, target, box.image);
+    return a.hooks?.afterVolumeSync?.(box, { volume: target, message });
+  };
   const seeded = volume
-    ? await a.hooks?.afterVolumeSync?.(box, {
-        volume,
-        message: (line) => s.message(clampSpinnerLine(line)),
-      })
-    : undefined;
-
-  // Install the agent if this box's image lacks it — a box created for another
-  // agent, or from a checkpoint predating the agent selection. No-op otherwise.
-  s.message(`checking ${a.id}`);
-  await a.runtime.ensureInstalled(box.container, {
-    onProgress: (line) => s.message(clampSpinnerLine(line)),
+    ? await prepareConfig(volume)
+    : configDir
+      ? await withContainerConfigVolume(
+          { container: box.container, image: box.image, configDir },
+          prepareConfig,
+        )
+      : undefined;
+  const configured = await a.hooks?.afterConfigSync?.(box, {
+    volume,
+    message,
   });
 
   // Re-run the model-auth ingest before the session comes up. Hash-gated, so
@@ -250,6 +261,7 @@ async function startOrAttach(
   s.stop(`box ${box.container} ready`);
   if (resyncWarning && ownsFirstTurn) log.warn(resyncWarning);
   for (const emit of seeded?.deferred ?? []) emit();
+  for (const emit of configured?.deferred ?? []) emit();
 
   if (!wantAttach) {
     outro(

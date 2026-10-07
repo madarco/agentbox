@@ -46,6 +46,11 @@ agentbox attach 1
 agentbox claude attach 1
 agentbox claude start 1
 
+# Start a second agent in a local Docker box, syncing its host config first
+agentbox codex start 1
+# Keep the box's config instead; image-owned hooks/skills are still seeded
+agentbox codex start 1 --no-sync-config
+
 # Teleport + resume your most recent host Claude session into the box
 agentbox claude -c
 agentbox claude --resume <session-id>

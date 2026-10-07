@@ -209,7 +209,7 @@ export const claudeCliSpec: Omit<AgentCliSpec, 'attachWrapped'> = {
       return { deferred: [...pruneOutput(rebuild), () => ctx.host.showInstallHint()] };
     },
 
-    async afterVolumeSync(box, { volume, message }) {
+    async afterVolumeSync(box, { volume }) {
       // The /agentbox-setup skill is seeded by the shared body from
       // `spec.seeds` — what stays here is real behavior, not file placement.
       // Mirror the in-box OAuth credentials with the host backup. Runs regardless
@@ -220,11 +220,14 @@ export const claudeCliSpec: Omit<AgentCliSpec, 'attachWrapped'> = {
         { volume },
         { image: box.image, isolate: volume !== SHARED_CLAUDE_VOLUME },
       );
+    },
+
+    async afterConfigSync(box, { volume, message }) {
       // Idempotent — gated by a per-plugin marker, so a no-op on later starts
       // unless a new plugin was synced just now.
       message('checking plugin native deps');
       const rebuild = await rebuildPluginNativeDeps(box.container, {
-        volume: box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
+        volume,
         onProgress: (line) => message(line),
       });
       return { deferred: pruneOutput(rebuild) };
