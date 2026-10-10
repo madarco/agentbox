@@ -25,6 +25,13 @@ jobs:
       - run: pnpm check:plugin-skill
       - run: pnpm lint
       - run: pnpm build
+      # The Smol example is an external plugin, not a pnpm workspace package;
+      # install its published SDK dependencies as an end user would.
+      - name: Typecheck and bundle Smol provider
+        run: |
+          npm ci --prefix examples/agentbox-provider-smol --ignore-scripts --no-audit --no-fund
+          npm run typecheck --prefix examples/agentbox-provider-smol
+          npm run build --prefix examples/agentbox-provider-smol
       # `turbo run build` stops at the hub's plain `next build`; the standalone
       # bundle (what `agentbox hub` actually spawns) is only produced here, and
       # the wiring check needs it — the relay's cloud-backend injection can only

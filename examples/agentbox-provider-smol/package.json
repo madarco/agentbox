@@ -1,0 +1,38 @@
+{
+  "name": "agentbox-provider-smol",
+  "version": "0.1.0",
+  "description": "Smol Machines local microVM provider for AgentBox",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.10"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
+  "agentbox": {
+    "providerApiVersion": 4
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target node20 --no-splitting",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test",
+    "test:e2e": "AGENTBOX_SMOL_LIVE=1 bun test ./test/backend-e2e.test.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@madarco/agentbox-provider-sdk": "^4.3.0",
+    "smolmachines": "^1.26.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
