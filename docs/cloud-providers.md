@@ -792,8 +792,8 @@ The `CloudBackend` interface is the same, but the implementation
   SSH-keys-import API (that would make the key reusable on other VPSes).
 - **Per-box Hetzner Cloud Firewall**, also minted at provision time,
   rule set = `[{direction: 'in', port: '22', protocol: 'tcp', source_ips: ['<host-egress>/32']}]`.
-  Outbound unrestricted. Source IP auto-detected via a 3-probe race
-  (api.ipify.org → ifconfig.io → icanhazip.com); if all three fail, the
+  Outbound unrestricted. Source IPv4 auto-detected via three sequential probes
+  (api.ipify.org → ipv4.icanhazip.com → 4.ident.me); if none returns valid IPv4, the
   call **fails loud** rather than silently opening `0.0.0.0/0`. Override
   via `AGENTBOX_HETZNER_FIREWALL_SOURCE` env or `--firewall-source <cidr>`
   on the prepare command.

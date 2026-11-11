@@ -165,7 +165,7 @@ The temporary Droplet that `agentbox prepare` bakes the base snapshot on is plac
 
 ## Firewall
 
-Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IP only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed inbound.
+Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IPv4 address only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over IPv4 SSH, so port 22 from your IP is genuinely all that's exposed inbound.
 
 If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox digitalocean firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
 
