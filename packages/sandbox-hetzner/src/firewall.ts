@@ -202,7 +202,7 @@ export function firewallNeedsSync(
  *
  * Whitespace is trimmed. Does **not** validate the address itself — that's
  * either the API's job (it'll reject bad CIDRs with a clear `validation`
- * error) or `detectEgressIp`'s job (it only returns valid IPv4/IPv6).
+ * error) or `detectEgressIp`'s job (it only returns valid IPv4).
  */
 export function normalizeSourceCidr(raw: string): string {
   const trimmed = raw.trim();

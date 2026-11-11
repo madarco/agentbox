@@ -139,7 +139,7 @@ Before AgentBox creates any billable resource (firewall, SSH key, server), it va
 
 ## Firewall
 
-Each box gets its own Hetzner Cloud Firewall with a single rule: inbound TCP port 22 from your host's egress IP only. All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed.
+Each box gets its own Hetzner Cloud Firewall with a single rule: inbound TCP port 22 from your host's egress IPv4 address only. All box traffic flows over IPv4 SSH, so port 22 from your IP is genuinely all that's exposed.
 
 If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox hetzner firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
 

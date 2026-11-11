@@ -37,6 +37,29 @@ describe('detectEgressIp', () => {
     expect(ip).toBe('198.51.100.7');
   });
 
+  it('skips IPv6 and returns IPv4 from the next probe', async () => {
+    const ip = await detectEgressIp({
+      probes: ['https://probe-a', 'https://probe-b'],
+      fetchImpl: fakeFetch({
+        'https://probe-a': { status: 200, body: '2001:db8::1\n' },
+        'https://probe-b': { status: 200, body: '198.51.100.7\n' },
+      }),
+    });
+    expect(ip).toBe('198.51.100.7');
+  });
+
+  it('rejects when every probe returns IPv6', async () => {
+    await expect(
+      detectEgressIp({
+        probes: ['https://probe-a', 'https://probe-b'],
+        fetchImpl: fakeFetch({
+          'https://probe-a': { status: 200, body: '2001:db8::1' },
+          'https://probe-b': { status: 200, body: '2001:db8::2' },
+        }),
+      }),
+    ).rejects.toThrow(/could not auto-detect.*IPv4/);
+  });
+
   it('fails loud when every probe fails (no 0.0.0.0/0 silent default)', async () => {
     await expect(
       detectEgressIp({
