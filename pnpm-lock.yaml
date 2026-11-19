@@ -89,6 +89,9 @@ importers:
       supports-hyperlinks:
         specifier: ^3.1.0
         version: 3.2.0
+      undici:
+        specifier: ^7.26.0
+        version: 7.26.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -265,6 +268,9 @@ importers:
       tailwind-merge:
         specifier: ^3.2.0
         version: 3.6.0
+      undici:
+        specifier: ^7.26.0
+        version: 7.26.0
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.1.14
@@ -1031,6 +1037,9 @@ importers:
       e2b:
         specifier: ^2.27.1
         version: 2.27.1
+      undici:
+        specifier: ^7.26.0
+        version: 7.26.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.1

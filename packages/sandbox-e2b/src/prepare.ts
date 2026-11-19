@@ -51,6 +51,7 @@ import {
 import { stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { ensureE2bCredentials } from './credentials.js';
 import { resolveApiKey, Template } from './sdk.js';
+import { withHttp1Uploads } from './upload-http1.js';
 import {
   preparedEntryFor,
   preparedStatePath,
@@ -370,15 +371,17 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
     progress(
       `running Template.build('${templateName}', { cpuCount: ${String(cpuCount)}, memoryMB: ${String(memoryMB)} })`,
     );
-    const info = await Template.build(finalTemplate, templateName, {
-      apiKey,
-      cpuCount,
-      memoryMB,
-      onBuildLogs: (entry: LogEntryLike) => {
-        // LogEntry exposes timestamp / level / message; stream the human form.
-        log(`[build] ${formatBuildLog(entry)}`);
-      },
-    });
+    const info = await withHttp1Uploads(() =>
+      Template.build(finalTemplate, templateName, {
+        apiKey,
+        cpuCount,
+        memoryMB,
+        onBuildLogs: (entry: LogEntryLike) => {
+          // LogEntry exposes timestamp / level / message; stream the human form.
+          log(`[build] ${formatBuildLog(entry)}`);
+        },
+      }),
+    );
     progress(`template built: id=${info.templateId} build=${info.buildId} name=${info.name}`);
 
     // Persist. `Sandbox.create({ template })` auto-appends `:default` when no

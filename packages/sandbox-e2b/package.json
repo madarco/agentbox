@@ -35,7 +35,8 @@
     "@agentbox/sandbox-core": "workspace:*",
     "@clack/prompts": "^0.9.0",
     "commander": "^12.1.0",
-    "e2b": "^2.27.1"
+    "e2b": "^2.27.1",
+    "undici": "^7.26.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
