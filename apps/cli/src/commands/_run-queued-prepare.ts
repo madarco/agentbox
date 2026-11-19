@@ -29,6 +29,7 @@ import { openCommandLog } from '@agentbox/cli-kit';
 import { getProvider, isKnownProvider } from '../provider/registry.js';
 import { parseProviderSpec } from '../provider/spec.js';
 import { sharePreparedBase, tryAdoptPreparedBase } from '../control-plane/prepared-custody.js';
+import { failText } from './_fail-text.js';
 
 export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
   .description('internal: run a queued provider image-bake job (do not invoke directly)')
@@ -57,8 +58,7 @@ export const runQueuedPrepareCommand = new Command('_run-queued-prepare')
       log.close();
       process.exit(0);
     } catch (err) {
-      const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      log.write(`FAIL: ${msg}`);
+      log.write(`FAIL: ${failText(err)}`);
       if (job) {
         try {
           const failed: QueueJob = {

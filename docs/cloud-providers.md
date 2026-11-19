@@ -1005,6 +1005,10 @@ brief:
   OpenCode, agentbox-ctl, the vscode user, VNC, tmux). The resulting
   `templateId:tag` is persisted to `~/.agentbox/e2b-prepared.json` and to
   `box.imageE2b`; every `create --provider e2b` boots from it in seconds.
+  The SDK PUTs every `copy()` source to GCS at once; on Node >= 26 global
+  `fetch` speaks HTTP/2 and GCS resets the burst (`NGHTTP2_ENHANCE_YOUR_CALM`,
+  surfaced as `FileUploadError: ... fetch failed`), so `prepareE2b` wraps the
+  build in `withHttp1Uploads` (`packages/sandbox-e2b/src/upload-http1.ts`).
 - **In-box docker (DinD).** Contrary to the original "same as Vercel"
   assumption, E2B's microVM grants the capabilities a container runtime needs
   (full root + `cap_sys_admin` + working namespaces, verified 2026-06-23). The

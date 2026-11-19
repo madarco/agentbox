@@ -71,6 +71,7 @@ import { cloudAgentStartDetached } from './_cloud-attach.js';
 import { spawnQueuedOpenTerminal } from '../terminal/queue-open.js';
 import { resolvePortlessNonInteractive } from '../portless-prompt.js';
 import { buildSetupInitialPrompt } from '../wizard.js';
+import { failText } from './_fail-text.js';
 
 /**
  * Seed the setup-wizard prompt when the hub requested it (`job.setupWizard`):
@@ -268,8 +269,7 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
       log.close();
       process.exit(0);
     } catch (err) {
-      const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      log.write(`FAIL: ${msg}`);
+      log.write(`FAIL: ${failText(err)}`);
       if (job) {
         try {
           const persisted = await readJob(id);
