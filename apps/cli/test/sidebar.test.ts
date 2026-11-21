@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  altKeyLabel,
+  dashboardKeysHelp,
   activityCell,
   sidebarLines,
   statusLine,
@@ -38,9 +40,9 @@ describe('activityCell', () => {
     ).toBe('▲ prompt');
   });
   it('▲ prompt also wins over [stopped] / [paused] container states', () => {
-    expect(
-      activityCell({ id: '1', name: 'a', state: 'paused', pendingPrompt: true }),
-    ).toBe('▲ prompt');
+    expect(activityCell({ id: '1', name: 'a', state: 'paused', pendingPrompt: true })).toBe(
+      '▲ prompt',
+    );
   });
 });
 
@@ -149,7 +151,7 @@ describe('statusLine', () => {
     expect(s).toContain('48;5;39');
     expect(p).toHaveLength(100);
     expectCollapsed(p); // both "Control+Option+↑/↓: switch" and "Control+a: more"
-    expect(p).toContain('Control+Option+↑/↓: switch'); // important: box switching
+    expect(p).toMatch(/Control\+(Option|Alt)\+↑\/↓: switch/); // important: box switching
     expect(p).toContain('api (idle)'); // brand core intact
     expect(p).not.toContain('Control+a c: code'); // full hints dropped
   });
@@ -202,7 +204,7 @@ describe('statusLine', () => {
     const printable = stripAnsi(s);
     expect(printable).toHaveLength(200);
     expect(printable).toContain('Control+a c: code');
-    expect(printable).toContain('Control+Option+↑/↓: switch');
+    expect(printable).toMatch(/Control\+(Option|Alt)\+↑\/↓: switch/);
     expect(printable).toContain('│');
     expect(printable).not.toContain('⌥');
     expect(printable).not.toContain('^a');
@@ -415,7 +417,13 @@ describe('session title', () => {
 
   it('status bar appends "— <title>" to the brand block', () => {
     const s = statusLine(
-      { id: '1', name: 'api', state: 'running', activity: 'working', sessionTitle: 'Refactor auth' },
+      {
+        id: '1',
+        name: 'api',
+        state: 'running',
+        activity: 'working',
+        sessionTitle: 'Refactor auth',
+      },
       200,
     );
     expect(stripAnsi(s)).toContain('api (working) — Refactor auth');
@@ -437,5 +445,21 @@ describe('session title', () => {
     const s = statusLine({ id: '1', name: 'api', state: 'running', activity: 'idle' }, 200);
     expect(stripAnsi(s)).toContain('api (idle) ');
     expect(stripAnsi(s)).not.toContain('—');
+  });
+});
+
+describe('platform modifier label', () => {
+  it('says Option on darwin and Alt everywhere else', () => {
+    expect(altKeyLabel('darwin')).toBe('Option');
+    expect(altKeyLabel('linux')).toBe('Alt');
+    expect(altKeyLabel('win32')).toBe('Alt');
+  });
+
+  it('dashboard --help lists both switch chords with the platform label', () => {
+    const linux = dashboardKeysHelp('linux');
+    expect(linux).toContain('Control+Alt+↑/↓');
+    expect(linux).toContain('Control+a ↑/↓');
+    expect(linux).not.toContain('Option');
+    expect(dashboardKeysHelp('darwin')).toContain('Control+Option+↑/↓');
   });
 });

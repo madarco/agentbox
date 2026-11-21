@@ -30,8 +30,8 @@ type State = 'normal' | 'leader' | 'esc' | 'mouseX10';
 /**
  * Byte-level host-stdin parser.
  *
- * - Switch boxes: `Ctrl+Option+Up/Down` (CSI `1;7A`/`1;7B`) — the one chord
- *   macOS/iTerm2 reliably emits.
+ * - Switch boxes: `Ctrl+Alt+Up/Down` (Option on macOS; CSI `1;7A`/`1;7B`), or
+ *   `Ctrl-a Up/Down` where the desktop grabs Ctrl+Alt+arrows before the terminal.
  * - Everything else (screen/code/url/quit/…) is a `Ctrl-a <key>` leader chord —
  *   `Ctrl+Option+<letter>` is too terminal-dependent to rely on.
  *
@@ -41,6 +41,8 @@ type State = 'normal' | 'leader' | 'esc' | 'mouseX10';
 export class InputParser {
   private state: State = 'normal';
   private esc: number[] = [];
+  /** The pending escape sequence started right after a Ctrl-a leader. */
+  private escAfterLeader = false;
   private fwd: number[] = [];
   private timer: unknown = null;
   private timerId = 0;
@@ -86,6 +88,16 @@ export class InputParser {
         if (b === LEADER) {
           this.fwd.push(LEADER); // double Ctrl-a → one literal Ctrl-a
           this.flush();
+        } else if (b === ESC) {
+          // Ctrl-a ↑/↓: the switch chord for desktops that grab Ctrl+Alt+↑/↓
+          // (Cinnamon, XFCE, older GNOME) before the terminal ever sees it.
+          this.onEvent({ type: 'leader', active: false });
+          this.state = 'esc';
+          this.esc = [ESC];
+          this.escAfterLeader = true;
+          this.arm(this.escMs, 'esc');
+          i++;
+          continue;
         } else {
           const c = String.fromCharCode(b);
           if (c === 's') this.onEvent({ type: 'action', name: 'screen' });
@@ -95,7 +107,7 @@ export class InputParser {
           else if (c === 'p') this.onEvent({ type: 'action', name: 'pause' });
           // `k` (kill) destroys; matches the attach footer's Ctrl+a k and keeps
           // `d` reserved for detach there, so the same chord never means two
-          // different things across the two UIs. Box switching is Control+Option+↑/↓.
+          // different things across the two UIs. Box switching is Ctrl+Alt/Option+↑/↓ or Ctrl-a ↑/↓.
           else if (c === 'k') this.onEvent({ type: 'action', name: 'destroy' });
           else if (c === 'q') this.onEvent({ type: 'quit' });
           else if (c === 'j' || c === 'n' || c === 'N')
@@ -170,6 +182,12 @@ export class InputParser {
     const s = String.fromCharCode(...this.esc);
     if (s === '\x1b[1;7A') return void this.onEvent({ type: 'switch', dir: 'prev' });
     if (s === '\x1b[1;7B') return void this.onEvent({ type: 'switch', dir: 'next' });
+    if (this.escAfterLeader) {
+      if (s === '\x1b[A' || s === '\x1bOA')
+        return void this.onEvent({ type: 'switch', dir: 'prev' });
+      if (s === '\x1b[B' || s === '\x1bOB')
+        return void this.onEvent({ type: 'switch', dir: 'next' });
+    }
     const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(s);
     if (m) return this.emitMouseSgr(m);
     this.forwardVerbatim(this.esc);
@@ -201,6 +219,7 @@ export class InputParser {
   private reset(): void {
     this.state = 'normal';
     this.esc = [];
+    this.escAfterLeader = false;
   }
 
   private flush(): void {
