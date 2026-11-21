@@ -8,7 +8,6 @@ import {
   machineKeyFor,
   machineKeyIn,
   registerProject,
-  sameMachine,
   sanitizeMnemonic,
   thisMachine,
   toMachineRef,
@@ -546,6 +545,15 @@ function matchWorkspace(
   if (input.id) return records.find((r) => r.id === input.id);
   const byRoot = records.find((r) => hostEntryOf(r.hosts, input.machine)?.root === input.root);
   if (byRoot) return byRoot;
+  // A client with no id whose machine was adopted under an id still names the
+  // same record (by label and folder): it merges into it, under its hostname,
+  // rather than minting a rival workspace for the folder.
+  if (!input.machine.id) {
+    const adopted = records.find((r) =>
+      Object.values(r.hosts).some((h) => h.label === input.machine.label && h.root === input.root),
+    );
+    if (adopted) return adopted;
+  }
   const repos = new Set(
     projects.map((p) => normalizeRepoUrl(p.repoUrl)).filter((r): r is string => Boolean(r)),
   );
@@ -580,14 +588,17 @@ export async function addWorkspace(
     ...(localId ? { id: localId } : {}),
     label: (deps.hostname ?? getMachineLabel)(),
   };
-  // A scan with no id is from a client that predates machine ids; when it names
-  // this hub's own hostname it IS this machine, and keys under this machine's id.
+  const root = stripTrailingSlash(input.root);
+  // A scan with no id is from a client that predates machine ids, and its
+  // hostname vouches for nothing: on a hub other PCs reach, a PC may share the
+  // hub's name. It is this machine only when its folder is on this disk;
+  // otherwise it stays keyed by hostname, never under this hub's id.
   const machine: MachineRef = input.machineId
     ? { id: input.machineId, label: input.host }
-    : input.host === local.label
+    : input.host === local.label && (await isDirectory(root))
       ? local
       : { label: input.host };
-  const root = stripTrailingSlash(input.root);
+  const isLocal = machine.id !== undefined ? machine.id === local.id : machine === local;
   const scanned = input.projects.map((p) => {
     const path = stripTrailingSlash(p.path);
     return {
@@ -599,7 +610,7 @@ export async function addWorkspace(
       } satisfies WorkspaceProject,
     };
   });
-  if (sameMachine({ host: machine.label, machineId: machine.id }, local)) {
+  if (isLocal) {
     await Promise.all(scanned.map((s) => register(s.path).catch(() => {})));
   }
   const projects = scanned.map((s) => s.project);
@@ -645,26 +656,27 @@ async function addLocked(
     async () => {
       const now = new Date().toISOString();
       const current = existing ? ((await readWorkspaceRecord(id, false)) ?? existing) : undefined;
-      const prevKey = current ? machineKeyIn(current.hosts, machine) : undefined;
+      let prevKey = current ? machineKeyIn(current.hosts, machine) : undefined;
+      // A hostname-keyed entry for a DIFFERENT folder is not proof it is this
+      // machine's: it may be a namesake's, so it is left where it is.
+      if (machine.id && prevKey === machine.label && current?.hosts[prevKey]?.root !== root) {
+        prevKey = undefined;
+      }
       const { projects, projectRoots } = keepLocalProjectIds(
         scan,
         prevKey === undefined ? undefined : current?.hosts[prevKey],
       );
-      // An id-less scan that found an entry already re-keyed under an id (by its
-      // label) updates that entry in place: rewriting it under the bare
-      // hostname would undo the adoption.
-      const prevIsIdKeyed = prevKey !== undefined && current?.hosts[prevKey]?.label !== undefined;
-      const key = machine.id ? machine.id : prevIsIdKeyed ? prevKey : machine.label;
+      const key = machineKeyFor(machine);
       const host: WorkspaceHost = {
         root,
         projectRoots,
         seenAt: now,
-        ...(key !== machine.label || machine.id ? { label: machine.label } : {}),
+        ...(machine.id ? { label: machine.label } : {}),
       };
       const hosts = { ...(current?.hosts ?? {}) };
       // The machine's hostname-keyed entry, from before it sent an id: replaced
       // by the id-keyed one, never kept beside it.
-      if (prevKey !== undefined && prevKey !== key && !prevIsIdKeyed) delete hosts[prevKey];
+      if (prevKey !== undefined && prevKey !== key) delete hosts[prevKey];
       hosts[key] = host;
       // A project this scan did not find is dropped, unless another machine
       // still maps it: that scan speaks only for its own host.

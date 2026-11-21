@@ -203,9 +203,10 @@ describe('addWorkspace', () => {
   it('targets the record an id names, whatever its folder', async () => {
     const root = await makeTree();
     const first = await add(root, scanOf(root, ['a']));
-    const moved = await add('/moved', [], { id: first.id });
+    const elsewhere = await makeTree();
+    const moved = await add(elsewhere, [], { id: first.id });
     expect(moved.id).toBe(first.id);
-    expect(moved.hosts[ME.id]?.root).toBe('/moved');
+    expect(moved.hosts[ME.id]?.root).toBe(elsewhere);
   });
 
   it('keeps two unrelated folders apart', async () => {

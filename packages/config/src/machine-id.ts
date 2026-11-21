@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -37,47 +45,119 @@ export function machineIdFile(): string {
 
 const cache = new Map<string, string>();
 
-function readId(file: string): string | undefined {
+type IdState = { kind: 'id'; id: string } | { kind: 'missing' } | { kind: 'invalid' };
+
+/**
+ * What the id file holds. Only ENOENT counts as missing; any other read error
+ * (EACCES on a file an elevated process minted, EIO) throws, so the caller can
+ * never mistake an unreadable id for an absent one and overwrite it.
+ */
+function readState(file: string): IdState {
+  let raw: string;
   try {
-    const raw = readFileSync(file, 'utf8').trim();
-    return isMachineId(raw) ? raw : undefined;
-  } catch {
-    return undefined;
+    raw = readFileSync(file, 'utf8').trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing' };
+    throw err;
+  }
+  return isMachineId(raw) ? { kind: 'id', id: raw } : { kind: 'invalid' };
+}
+
+function freshIdFile(file: string): string {
+  const tmp = `${file}.${String(process.pid)}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, `${randomUUID()}\n`, { flag: 'wx', mode: 0o600 });
+  return tmp;
+}
+
+/** Publishes a fresh id where none exists; `false` when another process got there first. */
+function linkFresh(file: string): boolean {
+  const tmp = freshIdFile(file);
+  try {
+    linkSync(tmp, file);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+const LOCK_WAIT_MS = 2000;
+const LOCK_STALE_MS = 10_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Replaces a file that holds no id, under a `mkdir` lock so concurrent
+ * repairers converge: only the lock holder writes, and it re-reads under the
+ * lock first, so a file someone else already repaired is never replaced. A
+ * waiter re-reads until the holder is done. A lock older than
+ * {@link LOCK_STALE_MS} is a crashed holder's and is taken over.
+ */
+function repairInvalid(file: string): void {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    if (readState(file).kind === 'id') return;
+    let age = 0;
+    try {
+      age = Date.now() - statSync(lock).mtimeMs;
+    } catch {
+      continue; // released between our mkdir and stat
+    }
+    if (age > LOCK_STALE_MS) {
+      rmSync(lock, { recursive: true, force: true });
+      continue;
+    }
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${lock}`);
+    sleepSync(25);
+  }
+  try {
+    const state = readState(file);
+    if (state.kind === 'invalid') renameSync(freshIdFile(file), file);
+    else if (state.kind === 'missing') linkFresh(file);
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
   }
 }
 
 /**
- * This machine's id, minting it on first use.
+ * This machine's id, minting it on first use. An id already on disk is never
+ * replaced.
  *
- * The id is written to a private temp file first and then hard-linked into
- * place: `link` fails with EEXIST when the file is already there, so two
- * processes racing on a fresh home agree on the winner's id, and nobody ever
- * reads a half-written file. A file that exists but holds no id (hand-edited,
- * or truncated by an older build) is replaced by rename, then re-read, so every
- * racer caches whatever ended up on disk.
+ * A fresh id is written to a private temp file and hard-linked into place:
+ * `link` fails with EEXIST when the file is already there, so processes racing
+ * on a fresh home agree on the winner's id and nobody reads a half-written file.
+ * A file that exists but holds no id (hand-edited, or truncated by a crash) is
+ * repaired under a lock ({@link repairInvalid}). A file that cannot be read
+ * throws rather than being taken for missing.
  */
 export function getMachineId(): string {
   const file = machineIdFile();
   const cached = cache.get(file);
   if (cached) return cached;
-  let id = readId(file);
-  if (!id) {
+  let state = readState(file);
+  if (state.kind !== 'id') {
     mkdirSync(dirname(file), { recursive: true });
-    const tmp = `${file}.${String(process.pid)}.${randomUUID()}.tmp`;
-    writeFileSync(tmp, `${randomUUID()}\n`, { flag: 'wx', mode: 0o600 });
-    try {
-      linkSync(tmp, file);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      if (!readId(file)) renameSync(tmp, file);
-    } finally {
-      rmSync(tmp, { force: true });
+    if (state.kind === 'missing') linkFresh(file);
+    state = readState(file);
+    if (state.kind === 'invalid') {
+      repairInvalid(file);
+      state = readState(file);
     }
-    id = readId(file);
-    if (!id) throw new Error(`could not mint a machine id at ${file}`);
+    if (state.kind !== 'id') throw new Error(`could not mint a machine id at ${file}`);
   }
-  cache.set(file, id);
-  return id;
+  cache.set(file, state.id);
+  return state.id;
 }
 
 /**
@@ -130,8 +210,8 @@ export function sameMachine(
 /**
  * The key a `hosts` map (workspace folder mappings) holds for machine `me`: its
  * id, else — for an entry written before the id existed — its hostname. A `me`
- * with no id (an older client) also finds an id-keyed entry labelled with its
- * hostname.
+ * with no id never finds an id-keyed entry by its label: a hostname vouches for
+ * nothing, and another machine may share it.
  */
 export function machineKeyIn(
   hosts: Readonly<Record<string, unknown>>,
@@ -140,14 +220,6 @@ export function machineKeyIn(
   const m = toMachineRef(me);
   if (m.id && Object.hasOwn(hosts, m.id)) return m.id;
   if (Object.hasOwn(hosts, m.label)) return m.label;
-  // A caller with no id can only vouch for its hostname: let it find the entry
-  // its machine has since re-keyed under an id and labelled with that name.
-  if (!m.id) {
-    return Object.entries(hosts).find(
-      ([, v]) =>
-        typeof v === 'object' && v !== null && (v as { label?: unknown }).label === m.label,
-    )?.[0];
-  }
   return undefined;
 }
 

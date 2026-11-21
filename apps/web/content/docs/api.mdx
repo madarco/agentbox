@@ -172,7 +172,8 @@ A workspace groups one or more projects, owning a task list and its manager sess
 **machine-independent**: `projects` are repos, and `hosts` maps every machine that has a checkout to
 its folders (`{ "<machine id>": { root, projectRoots, seenAt, label } }`, where `label` is that
 machine's hostname; an entry written before machine ids is keyed by the hostname and has no
-`label`), so a hub that never cloned a repo —
+`label`, and so is one a client registers without a `machineId`, unless its folder is on the hub's
+own disk), so a hub that never cloned a repo —
 a control box — still joins the boxes built from it to the right workspace. `root` on the payload is
 the _reading hub's_ own folder and is absent when it has none. You rarely register one by hand:
 detecting a manager session in a folder no workspace contains creates one there. Host state: a

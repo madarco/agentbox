@@ -12,6 +12,7 @@
 //     before machine ids its `host`), or its pty socket answers here —
 //     `wrong_host`, with the machine to retry against;
 //   - a record this hub does not host is shown from its last heartbeat.
+import { stat } from 'node:fs/promises';
 import { homedir, hostname as osHostname } from 'node:os';
 import {
   addWorkspace,
@@ -257,14 +258,31 @@ export function createManagerBackend(
   /**
    * {@link storeIsLocal}, or a pty manager whose socket answers in this user's
    * own `~/.agentbox/pty` — proof that it runs here whatever the record's host
-   * says (a hostname flip, or a record from before machine ids). A record found
-   * local either way is re-stamped with this machine's id and current label, so
-   * the next read matches it directly.
+   * says (a hostname flip, or a record from before machine ids).
+   *
+   * A record found local is re-stamped with this machine's id and current label
+   * so the next read matches it directly — but only with proof: its id, its
+   * socket, or (for a record matched by hostname alone) its folder on this
+   * disk. A hostname vouches for nothing on a hub a same-named PC reaches, and
+   * stamping this hub's id onto that PC's record would hand it to this machine
+   * for good.
    */
   async function isLocal(rec: ManagerRecord): Promise<boolean> {
-    const here = storeIsLocal(rec) || (await ptySessionAnswersHere(rec, probe));
-    if (here) await restamp(rec);
-    return here;
+    const m = me();
+    if (rec.machineId && m.id) {
+      if (rec.machineId === m.id || (await ptySessionAnswersHere(rec, probe))) {
+        await restamp(rec);
+        return true;
+      }
+      return false;
+    }
+    if (await ptySessionAnswersHere(rec, probe)) {
+      await restamp(rec);
+      return true;
+    }
+    if (!storeIsLocal(rec)) return false;
+    if (await isDirectory(rec.cwd)) await restamp(rec);
+    return true;
   }
 
   /** Move a record matched by hostname (or by its socket) onto this machine's id. */
@@ -890,8 +908,12 @@ export function createManagerBackend(
       }
       // An absent host is this hub's own machine; a client that sends a host but
       // no id predates machine ids, and its hostname is all it can vouch for.
+      // That hostname is only this hub's machine when the session's folder is on
+      // this disk: on a hub other PCs reach, a PC may share the hub's name, and
+      // its records must stay keyed by hostname, never under this hub's id.
       const machine: MachineRef =
-        input.host === undefined || (!input.machineId && input.host === me().label)
+        input.host === undefined ||
+        (!input.machineId && input.host === me().label && (await isDirectory(input.cwd)))
           ? me()
           : detectMachineRef(input);
       const host = machine.label;
@@ -1463,4 +1485,8 @@ export function createManagerBackend(
       return out;
     },
   };
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  return (await stat(path).catch(() => null))?.isDirectory() === true;
 }

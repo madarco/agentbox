@@ -113,16 +113,54 @@ describe('workspace host maps adopt a hostname-keyed entry', () => {
     expect(Object.keys(read!.hosts)).toEqual([HERE]);
   });
 
-  it('keeps an id-keyed entry when a client with no id rescans it', async () => {
+  it('never folds a scan with no id into an id-keyed entry by its hostname', async () => {
     const legacy = await legacyRecord('desk.lan', '/home/dev/w');
     await restampWorkspaceHost(legacy.id, { id: PC, label: 'desk.lan' });
-    // An older CLI on the same machine: only its hostname to offer.
+    // Only a hostname to offer: it may be an older CLI on that PC, or a namesake.
     const rec = await addWorkspace(
       { host: 'desk.lan', root: '/home/dev/w', projects: [{ path: '/home/dev/w/local' }] },
       noRegister,
     );
-    expect(Object.keys(rec.hosts)).toEqual([PC]);
-    expect(rec.hosts[PC]?.label).toBe('desk.lan');
+    // The adoption stands; the id-less scan is kept apart under its hostname.
+    expect(rec.hosts[PC]).toMatchObject({ root: '/home/dev/w', label: 'desk.lan' });
+    expect(rec.hosts['desk.lan']?.label).toBeUndefined();
+  });
+
+  it("keeps a scan with no id naming this hub's hostname off the hub's id when its folder is not here", async () => {
+    // A PC sharing the hub's name, on a hub other PCs reach.
+    const rec = await addWorkspace(
+      { host: HERE, root: '/pc/only/w', projects: [{ path: '/pc/only/w/local' }] },
+      noRegister,
+    );
+    expect(Object.keys(rec.hosts)).toEqual([HERE]);
+    expect(rec.hosts[getMachineId()]).toBeUndefined();
+  });
+
+  it("keys a scan with no id naming this hub's hostname under the hub's id when its folder is here", async () => {
+    const root = join(assertTempHome(), 'local-scan');
+    await mkdir(join(root, 'local'), { recursive: true });
+    const rec = await addWorkspace(
+      { host: HERE, root, projects: [{ path: join(root, 'local') }] },
+      noRegister,
+    );
+    expect(Object.keys(rec.hosts)).toEqual([getMachineId()]);
+    expect(rec.hosts[getMachineId()]).toMatchObject({ root, label: HERE });
+  });
+
+  it("does not take over a namesake's legacy entry for a different folder", async () => {
+    const legacy = await legacyRecord('desk.lan', '/home/dev/w');
+    const rec = await addWorkspace(
+      {
+        id: legacy.id,
+        host: 'desk.lan',
+        machineId: PC,
+        root: '/home/other/w',
+        projects: [],
+      },
+      noRegister,
+    );
+    expect(rec.hosts['desk.lan']?.root).toBe('/home/dev/w');
+    expect(rec.hosts[PC]?.root).toBe('/home/other/w');
   });
 
   it("re-keys a PC's entry on its detect (restampWorkspaceHost)", async () => {

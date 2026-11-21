@@ -1,6 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   getMachineId,
@@ -57,6 +69,83 @@ describe('getMachineId', () => {
     expect(readFileSync(machineIdFile(), 'utf8').trim()).toBe(id);
   });
 
+  it('never overwrites an id file it cannot read', () => {
+    const home = freshHome();
+    const file = join(home, '.agentbox', 'machine-id');
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${A}\n`);
+    chmodSync(file, 0o000);
+    try {
+      expect(() => getMachineId()).toThrow(/EACCES/);
+      expect(tryGetMachineId()).toBeUndefined();
+    } finally {
+      chmodSync(file, 0o600);
+    }
+    expect(readFileSync(file, 'utf8').trim()).toBe(A);
+  });
+
+  it('waits for a repair another process holds the lock for, and takes its id', () => {
+    const home = freshHome();
+    const file = join(home, '.agentbox', 'machine-id');
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'garbage');
+    mkdirSync(`${file}.lock`);
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `setTimeout(() => { const fs = require('fs'); fs.writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(`${B}\n`)}); fs.rmdirSync(${JSON.stringify(`${file}.lock`)}); }, 300)`,
+      ],
+      { stdio: 'ignore' },
+    );
+    try {
+      expect(getMachineId()).toBe(B);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it('takes over a lock a crashed repairer left behind', () => {
+    const home = freshHome();
+    const file = join(home, '.agentbox', 'machine-id');
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'garbage');
+    mkdirSync(`${file}.lock`);
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(`${file}.lock`, old, old);
+    const id = getMachineId();
+    expect(isMachineId(id)).toBe(true);
+    expect(readFileSync(file, 'utf8').trim()).toBe(id);
+    expect(existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it('converges on one id when many processes repair a corrupt file at once', async () => {
+    const home = freshHome();
+    const file = join(home, '.agentbox', 'machine-id');
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'garbage');
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+    const src = resolve(dirname(fileURLToPath(import.meta.url)), '../src/machine-id.ts');
+    const run = promisify(execFile);
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        run(
+          process.execPath,
+          [
+            '--import',
+            'tsx',
+            '-e',
+            `import(${JSON.stringify(src)}).then((m) => process.stdout.write(m.getMachineId()))`,
+          ],
+          { cwd: repoRoot, env: { ...process.env, HOME: home } },
+        ).then((r) => r.stdout.trim()),
+      ),
+    );
+    const onDisk = readFileSync(file, 'utf8').trim();
+    expect(isMachineId(onDisk)).toBe(true);
+    expect(new Set(ids)).toEqual(new Set([onDisk]));
+  }, 30_000);
+
   it('degrades to no id (hostname matching) when the home cannot hold one', () => {
     const home = freshHome();
     // A HOME that is a file: ~/.agentbox cannot be created under it.
@@ -94,12 +183,13 @@ describe('sameMachine', () => {
 });
 
 describe('machineKeyIn', () => {
-  it('finds a machine by id, then by a legacy hostname key, then (id-less callers) by label', () => {
+  it('finds a machine by id, then by a legacy hostname key, never an id entry by label', () => {
     const hosts = { [A]: { label: 'mac.local' }, 'desk.lan': {} };
     expect(machineKeyIn(hosts, { id: A, label: 'mac-2.local' })).toBe(A);
     expect(machineKeyIn(hosts, { id: B, label: 'desk.lan' })).toBe('desk.lan');
-    expect(machineKeyIn(hosts, 'mac.local')).toBe(A);
-    // A caller WITH an id never claims another machine's id-keyed entry by name.
+    // A hostname alone never claims an id-keyed entry: another machine may share it.
+    expect(machineKeyIn(hosts, 'mac.local')).toBeUndefined();
+    // Nor does a caller WITH an id claims another machine's id-keyed entry by name.
     expect(machineKeyIn(hosts, { id: B, label: 'mac.local' })).toBeUndefined();
   });
 

@@ -1218,6 +1218,40 @@ describe('machine identity (a hostname flip orphans nothing)', () => {
     void wsId;
   });
 
+  it('does not stamp its id on a record matched by hostname alone whose folder is not here', async () => {
+    const { managers, wsId, root } = await flippable();
+    const registered = await managers.registerManager(wsId, {
+      id: 'abababababababab',
+      agent: 'claude',
+      kind: 'tmux',
+      host: 'laptop',
+      // A folder this disk does not have: the record may be a same-named PC's.
+      cwd: join(root, 'not-on-this-disk'),
+      tmuxSession: 'agentbox-manager-abababababababab',
+    });
+    if (!registered.ok) throw new Error(registered.error);
+    expect(registered.manager.machineId).toBeUndefined();
+    const view = await managers.getManager('abababababababab');
+    // Still served as here (the legacy hostname match), but never adopted.
+    expect(view).toMatchObject({ host: 'laptop', hostIsHub: true });
+    expect(view?.machineId).toBeUndefined();
+  });
+
+  it("keeps a detect with no id naming this hub's hostname off the hub's id when its folder is not here", async () => {
+    const { managers } = await flippable();
+    const res = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S2,
+      cwd: '/pc/only/work',
+      host: 'laptop',
+    });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.manager.machineId).toBeUndefined();
+    if (res.workspace) {
+      expect(Object.keys(res.workspace.hosts)).not.toContain(getMachineId());
+    }
+  });
+
   it('serves a pty manager whose socket answers here, whatever host the record names', async () => {
     const { managers, wsId, root } = await flippable();
     const id = 'dddddddddddddddd';
