@@ -149,7 +149,14 @@ export function startEgressWatchLoop(deps: EgressWatchDeps): EgressWatchHandle {
       for (const box of stale) {
         const name = box.provider as string;
         if (!backends.has(name)) {
-          backends.set(name, await resolveBackend(name).catch(() => null));
+          const resolved = await resolveBackend(name).catch(() => null);
+          if (!resolved?.repairReachability) {
+            // Left unverified (retried next tick); say why, once per tick.
+            log(
+              `egress-watch: no ${name} backend with firewall repair in this relay; skipping its boxes`,
+            );
+          }
+          backends.set(name, resolved);
         }
         const backend = backends.get(name);
         if (!backend?.repairReachability) continue;
