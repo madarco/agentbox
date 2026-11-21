@@ -1,5 +1,27 @@
 import type { AgentQuestionPayload } from '@agentbox/ctl';
 
+/** macOS keyboards label the key Option; everyone else's says Alt. */
+export function altKeyLabel(platform: NodeJS.Platform = process.platform): 'Option' | 'Alt' {
+  return platform === 'darwin' ? 'Option' : 'Alt';
+}
+const ALT_KEY = altKeyLabel();
+const SWITCH_KEYS_SHORT = `Ctrl+${ALT_KEY}+↑/↓ or Ctrl-a ↑/↓`;
+
+/** The keymap block appended to `agentbox dashboard --help`. Pure. */
+export function dashboardKeysHelp(platform: NodeJS.Platform = process.platform): string {
+  const alt = altKeyLabel(platform);
+  const rows: Array<readonly [string, string]> = [
+    [`Control+${alt}+↑/↓`, 'switch box'],
+    ['Control+a ↑/↓', `switch box (where the desktop takes Control+${alt}+arrows)`],
+    ['Control+a c/s/u', 'open the box in the editor / in-box desktop / web app'],
+    ['Control+a p/t/k', 'pause / stop / destroy the selected box'],
+    ['Control+a q', 'quit the dashboard'],
+    ['Control+a Control+a', 'send a literal Control+a to the box'],
+  ];
+  const w = Math.max(...rows.map(([k]) => k.length)) + 3;
+  return ['', 'Keys:', ...rows.map(([k, d]) => `  ${k.padEnd(w)}${d}`), ''].join('\n');
+}
+
 export interface SidebarBox {
   id: string;
   name: string;
@@ -216,7 +238,7 @@ export function menuLines(boxName: string, w: number, h: number): string[] {
     '   [p]  Start Pi',
     '   [s]  Open a shell',
     '',
-    '  Ctrl+Option+↑/↓ switch · Ctrl-a then c/s/u/q (code/screen/url/quit)',
+    `  ${SWITCH_KEYS_SHORT} switch · Ctrl-a then c/s/u/q (code/screen/url/quit)`,
   ];
   const top = Math.max(0, Math.floor((h - body.length) / 2));
   const out: string[] = [];
@@ -252,7 +274,7 @@ export function lifecycleMenuLines(
         state === 'paused' ? '   [u]  Unpause' : '   [s]  Start',
         '   [d]  Destroy',
         '',
-        '  Ctrl+Option+↑/↓ switch · Ctrl-a then q quit',
+        `  ${SWITCH_KEYS_SHORT} switch · Ctrl-a then q quit`,
       ];
   const top = Math.max(0, Math.floor((h - body.length) / 2));
   const out: string[] = [];
@@ -277,7 +299,7 @@ export function createMenuLines(where: string, w: number, h: number): string[] {
     '',
     `  in ${where}`,
     '',
-    '  Ctrl+Option+↑/↓ switch · Ctrl-a then q quit',
+    `  ${SWITCH_KEYS_SHORT} switch · Ctrl-a then q quit`,
   ];
   const top = Math.max(0, Math.floor((h - body.length) / 2));
   const out: string[] = [];
@@ -303,7 +325,7 @@ const BAR_RESET = '\x1b[0m';
 
 // [key chord, label]. Modifiers spelled out (no ⌥/^ glyphs); arrows use the
 // ↑/↓ glyphs. Rendered as `KEYS: label` with the chord white, label gray.
-const SWITCH_HINT: readonly [string, string] = ['Control+Option+↑/↓', 'switch'];
+const SWITCH_HINT: readonly [string, string] = [`Control+${ALT_KEY}+↑/↓`, 'switch'];
 const HINT_GROUPS: ReadonlyArray<readonly [string, string]> = [
   SWITCH_HINT,
   ['Control+a c', 'code'],
@@ -324,6 +346,7 @@ export const COLLAPSED_HINT_GROUPS: ReadonlyArray<readonly [string, string]> = [
 /** The expanded "which-key" chord menu shown while the Ctrl-a leader is
  *  pending — every chord, compact (`KEY: label`), reverts on the next key. */
 export const ADVANCED_HINT_GROUPS: ReadonlyArray<readonly [string, string]> = [
+  ['↑/↓', 'switch'],
   ['c', 'code'],
   ['s', 'screen'],
   ['u', 'url'],

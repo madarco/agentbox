@@ -99,7 +99,7 @@ agentbox dashboard
 agentbox dashboard --project
 ```
 
-Switch boxes with `Control+Option+↑/↓`. Everything else is a `Ctrl+a` leader chord — press `Ctrl+a` to show the which-key menu in the footer, then a single key (`c` code, `s` screen, `u` url, `p` pause, and so on). These shell out to the same commands above, so they inherit the same behavior.
+Switch boxes with `Control+Alt+↑/↓` (`Control+Option+↑/↓` on macOS), or with `Ctrl+a` then `↑/↓`, which works even where the desktop keeps `Control+Alt+arrows` for itself (Cinnamon, XFCE). Everything else is a `Ctrl+a` leader chord — press `Ctrl+a` to show the which-key menu in the footer, then a single key (`c` code, `s` screen, `u` url, `p` pause, and so on). These shell out to the same commands above, so they inherit the same behavior.
 
 {/* SCREENSHOT /screenshots/dashboard.png — REPRO: drive the TUI via the PTY harness — pnpm drive start --cols 96 --rows 19 --cwd <project> -- agentbox dashboard <box> ; pnpm drive screen <id> ; strip the pnpm/tsx wrapper lines ; render via /tmp/gen-term.js and screenshot headlessly. */}
 
