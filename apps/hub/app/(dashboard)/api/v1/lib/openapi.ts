@@ -1006,7 +1006,8 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     host: {
                       type: 'string',
-                      description: 'Hostname of the machine the folders are on (its display label).',
+                      description:
+                        'Hostname of the machine the folders are on (its display label).',
                     },
                     machineId: {
                       type: 'string',
@@ -1686,7 +1687,8 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     host: {
                       type: 'string',
-                      description: 'Hostname of the machine the session runs on (its display label).',
+                      description:
+                        'Hostname of the machine the session runs on (its display label).',
                     },
                     machineId: {
                       type: 'string',
@@ -2287,7 +2289,8 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     host: {
                       type: 'string',
-                      description: 'Hostname of the machine the session runs on (its display label).',
+                      description:
+                        'Hostname of the machine the session runs on (its display label).',
                     },
                     machineId: {
                       type: 'string',
@@ -4277,7 +4280,7 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'string',
               format: 'uuid',
               description:
-                "The id of that machine (`~/.agentbox/machine-id`): what decides where the session runs. Absent on a record from before machine ids, which `host` then identifies until the machine re-stamps it.",
+                'The id of that machine (`~/.agentbox/machine-id`): what decides where the session runs. Absent on a record from before machine ids, which `host` then identifies until the machine re-stamps it.',
             },
             hostIsHub: {
               type: 'boolean',

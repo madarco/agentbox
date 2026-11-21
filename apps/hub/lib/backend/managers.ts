@@ -82,7 +82,12 @@ import {
   ptySessionAnswersHere,
   restampWorkspaceHost,
 } from '@agentbox/relay';
-import { loadEffectiveConfig, sameMachine, sameMachineRef, type MachineRef } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  sameMachine,
+  sameMachineRef,
+  type MachineRef,
+} from '@agentbox/config';
 import { PTY_PROTOCOL_VERSION } from '@agentbox/core';
 import { readPtyMeta } from '@agentbox/sandbox-core';
 import { hubMachine, reconcileContext, type BackendDeps } from './deps';
@@ -264,7 +269,10 @@ export function createManagerBackend(
     // re-stamped by this machine's next detect or registration.
     if (store.kind !== 'file') return;
     await store
-      .patchManager(rec.workspaceId, rec.id, { host: m.label, ...(m.id ? { machineId: m.id } : {}) })
+      .patchManager(rec.workspaceId, rec.id, {
+        host: m.label,
+        ...(m.id ? { machineId: m.id } : {}),
+      })
       .catch(() => null);
     rec.host = m.label;
     if (m.id) rec.machineId = m.id;
@@ -849,7 +857,7 @@ export function createManagerBackend(
 
   /** Report one manager this machine runs, best-effort. */
   async function beat(rec: ManagerRecord): Promise<void> {
-    if (store.kind !== 'remote' || !storeIsLocal(rec)) return;
+    if (store.kind !== 'remote' || !(await isLocal(rec))) return;
     const claimed = new Set<string>();
     for (const m of await store.listManagers()) {
       claimed.add(managerSessionName(m.id));

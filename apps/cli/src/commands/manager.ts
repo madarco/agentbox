@@ -203,10 +203,7 @@ async function ptyAnswersHere(m: Pick<HubApiManager, 'id' | 'kind'>): Promise<bo
  * on; when that is this one, the local hub CAN do it — the record simply lives
  * somewhere else.
  */
-export function retryOnLocalHub(
-  err: unknown,
-  host: MachineRef | string = thisMachine(),
-): boolean {
+export function retryOnLocalHub(err: unknown, host: MachineRef | string = thisMachine()): boolean {
   if (!(err instanceof HubApiError)) return false;
   if (err.code !== 'wrong_host' && err.code !== 'manager_unreachable') return false;
   const me = toMachineRef(host);

@@ -61,9 +61,7 @@ describe('retryOnLocalHub', () => {
 
   it('matches a refusal by machine id first, then by hostname for an id-less one', () => {
     const me = { id: A, label: 'laptop-2' };
-    expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop', machineId: A }), me)).toBe(
-      true,
-    );
+    expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop', machineId: A }), me)).toBe(true);
     expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop-2', machineId: B }), me)).toBe(
       false,
     );

@@ -128,7 +128,8 @@ export function machineKeyIn(
   // its machine has since re-keyed under an id and labelled with that name.
   if (!m.id) {
     return Object.entries(hosts).find(
-      ([, v]) => typeof v === 'object' && v !== null && (v as { label?: unknown }).label === m.label,
+      ([, v]) =>
+        typeof v === 'object' && v !== null && (v as { label?: unknown }).label === m.label,
     )?.[0];
   }
   return undefined;
