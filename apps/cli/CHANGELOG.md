@@ -11,6 +11,45 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-11-21
+
+### Added
+
+- **Provider SDK 4.4.0**: a backend can declare `seedsAgentStaticAtCreate` so
+  `create` seeds the host's agent config into every box (as remote-docker does).
+
+### Fixed
+
+- **Model gateways on your machine work from docker boxes.** A loopback
+  endpoint in your agent config (`http://127.0.0.1:<port>/v1` for a local
+  LiteLLM, Ollama or LM Studio) is rewritten to `host.docker.internal` for
+  codex, claude, opencode and pi. On a native Linux engine you get a warning if
+  the gateway only listens on 127.0.0.1, and cloud boxes warn that loopback
+  there is the box itself. Your host files are never modified.
+- **In-box docker runs images with a non-root `USER`** (pgweb, redisinsight, ...)
+  instead of failing with `bind-mount /proc/N/ns/net: permission denied`.
+  Docker and remote-docker boxes now get `CAP_SYS_PTRACE`. Existing boxes need a
+  recreate.
+- **Docker boxes reap orphaned processes**: boxes run with `--init`, so zombies
+  no longer pile up until they hit the pids limit.
+- **Box and host git no longer prune each other's worktrees.** An in-box
+  `git gc` used to unregister your older host worktrees, and destroying a box
+  could drop the registrations of other live boxes.
+- **`<agent> start <box>` in a box created for a different agent** now syncs that
+  agent's host config, instead of starting it with the default provider and model.
+- **Pi config carries into docker and remote-docker boxes**, including
+  symlinked skills, and remote-docker boxes now receive the host's static agent
+  config and skills at create. Links that can't be resolved are now named in the create log
+  instead of disappearing silently.
+- **Hetzner and DigitalOcean creates on an IPv6-capable host** lock the firewall
+  to your IPv4 egress, instead of failing with `422 invalid_input`.
+- **`agentbox dashboard`**: `Ctrl-a` then Up/Down switches boxes on desktops that
+  grab Ctrl+Alt+arrows (Cinnamon, XFCE, older GNOME), and the modifier shows as
+  Alt rather than Option on Linux and Windows.
+- **E2B bakes no longer fail on Node 26** (`FileUploadError ... fetch failed`).
+- **`agentbox <agent> --provider docker:<host> -i`** keeps the remote host on the
+  queued run, instead of failing with "remote-docker needs an SSH destination".
+
 ## [0.33.0] - 2026-09-21
 
 ### Breaking
