@@ -37,6 +37,16 @@ build images from a Dockerfile). Three things differ from Hetzner:
   blocks *all* outbound traffic, so the per-box firewall ships allow-all
   outbound rules (tcp/udp/icmp → `0.0.0.0/0` + `::/0`) alongside the SSH-only
   inbound rule locked to the host egress IP.
+- **Host egress is IPv4-only (both VPS providers).** The shared detector
+  (`detectEgressIp`/`detectEgressCidr` in `@agentbox/sandbox-core`) probes over
+  `family: 4` and accepts only an IPv4 answer, because the host dials the VPS's
+  public IPv4. It used to accept an IPv6 answer and the callers appended `/32`,
+  which Hetzner rejects (422 `rules[].source_ips`). No IPv4 → fail loud. Each
+  call site passes its own `overrideHint` (the `*_EGRESS_HINT` constants in each
+  provider's `egress-ip.ts`): `create` names `AGENTBOX_<PROVIDER>_FIREWALL_SOURCE`
+  / `--inbound open`, `firewall sync` names its `--source`, `inbound` and the
+  connect-failure repair point at those two, and prepare / control-plane deploy
+  name nothing because they have no override.
 
 Defaults: size `s-2vcpu-4gb`, region `nyc3`, stock image `ubuntu-24-04-x64`.
 Override per box with `box.sizeDigitalocean` / `AGENTBOX_DIGITALOCEAN_REGION`.
@@ -792,11 +802,14 @@ The `CloudBackend` interface is the same, but the implementation
   SSH-keys-import API (that would make the key reusable on other VPSes).
 - **Per-box Hetzner Cloud Firewall**, also minted at provision time,
   rule set = `[{direction: 'in', port: '22', protocol: 'tcp', source_ips: ['<host-egress>/32']}]`.
-  Outbound unrestricted. Source IP auto-detected via a 3-probe race
-  (api.ipify.org → ifconfig.io → icanhazip.com); if all three fail, the
-  call **fails loud** rather than silently opening `0.0.0.0/0`. Override
-  via `AGENTBOX_HETZNER_FIREWALL_SOURCE` env or `--firewall-source <cidr>`
-  on the prepare command.
+  Outbound unrestricted. Source IP is the host's **IPv4** egress, auto-detected
+  by probing in sequence over IPv4 only (api4.ipify.org → ipv4.icanhazip.com →
+  ifconfig.io; an IPv6 answer is skipped); if none yields an IPv4 address, the
+  call **fails loud** rather than silently opening `0.0.0.0/0`. Overrides
+  differ per command and the error names only the one that applies: `create`
+  takes `AGENTBOX_HETZNER_FIREWALL_SOURCE` or `--inbound open`, and
+  `agentbox hetzner firewall sync` takes `--source <cidr>`. Prepare and
+  control-plane deploy have no override.
 - **State mapping** (`backend.state`): Hetzner `running` → `running`;
   transitional states (`starting`/`initializing`/`stopping`/`migrating`/`rebuilding`)
   all report `running` so callers don't ping-pong; `off` → `paused`

@@ -37,7 +37,12 @@ import {
   type DigitalOceanDroplet,
   type DigitalOceanDropletStatus,
 } from './client.js';
-import { detectEgressIp } from './egress-ip.js';
+import {
+  CREATE_EGRESS_HINT,
+  INBOUND_EGRESS_HINT,
+  REPAIR_EGRESS_HINT,
+  detectEgressCidr,
+} from './egress-ip.js';
 import {
   createPerBoxFirewall,
   deletePerBoxFirewall,
@@ -443,7 +448,7 @@ export const digitaloceanBackend: CloudBackend = {
         ? null
         : egressOverride
           ? normalizeSourceCidr(egressOverride)
-          : `${await detectEgressIp({ onLog })}/32`;
+          : await detectEgressCidr({ onLog, overrideHint: CREATE_EGRESS_HINT });
     const sources = resolveInboundSources(inboundPolicy, hostEgress);
     progress(`firewall inbound: ${describeInbound(inboundPolicy)} -> ${sources.join(', ')}`);
 
@@ -703,7 +708,8 @@ export const digitaloceanBackend: CloudBackend = {
     if (!fw) {
       throw new Error(`digitalocean: no per-box firewall found for droplet ${h.sandboxId}`);
     }
-    const hostEgress = policy.mode === 'open' ? null : `${await detectEgressIp({})}/32`;
+    const hostEgress =
+      policy.mode === 'open' ? null : await detectEgressCidr({ overrideHint: INBOUND_EGRESS_HINT });
     const sources = resolveInboundSources(policy, hostEgress);
     await syncFirewallSource(c, fw, sources);
     return { sources };
@@ -724,7 +730,7 @@ export const digitaloceanBackend: CloudBackend = {
     if (!fw) return { changed: false };
     const allowed = fw.inbound_rules.find((r) => r.ports === '22')?.sources.addresses ?? [];
     if (allowed.includes('0.0.0.0/0')) return { changed: false };
-    const currentEgress = `${await detectEgressIp({})}/32`;
+    const currentEgress = await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT });
     if (allowed.includes(currentEgress)) return { changed: false };
     const sources = resolveInboundSources(policy, currentEgress);
     await syncFirewallSource(c, fw, sources);
