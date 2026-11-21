@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspaceAdd } from './_workspace-input';
 import { assertTempHome } from '../../../scripts/test-home.js';
+import { getMachineId } from '@agentbox/config';
 import { createManagerBackend, HEARTBEAT_STALE_MS } from '../lib/backend/managers';
 import { MANAGER_CARRIER_MISSING } from '../lib/backend/errors';
 import { createServer, type Server } from 'node:net';
@@ -1139,5 +1140,123 @@ describe('with the records on a control box', () => {
     });
     expect(store.calls).toEqual([`attach-box ${started.manager.id} {"boxJobId":"job-7"}`]);
     expect((await managers.getManager(started.manager.id))?.boxJobIds).toEqual(['job-7']);
+  });
+});
+
+describe('machine identity (a hostname flip orphans nothing)', () => {
+  const PC = '11111111-2222-4333-8444-555555555555';
+  const sockets: Server[] = [];
+  const socketPaths: string[] = [];
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    for (const path of socketPaths.splice(0)) await rm(path, { force: true });
+    await rm(ptyDir(), { recursive: true, force: true });
+  });
+
+  /** A harness whose hostname can flip under it, as macOS does on a Bonjour collision. */
+  async function flippable(): Promise<{
+    h: Harness;
+    name: { value: string };
+    managers: ReturnType<typeof backends>['managers'];
+    wsId: string;
+    root: string;
+  }> {
+    const h = harness();
+    const name = { value: 'laptop' };
+    h.deps.hostname = () => name.value;
+    const { workspaces, managers } = backends(h);
+    const root = await makeFolder();
+    const added = await workspaces.addWorkspace(
+      await workspaceAdd(root, { host: 'laptop', machineId: getMachineId() }),
+    );
+    if (!added.ok) throw new Error(added.error);
+    return { h, name, managers, wsId: added.workspace.id, root };
+  }
+
+  it('adopts a record stamped with the old hostname and re-stamps it with the id', async () => {
+    const { name, managers, wsId, root } = await flippable();
+    // Exactly what a build from before machine ids registered: a hostname, no id.
+    const registered = await managers.registerManager(wsId, {
+      id: 'cccccccccccccccc',
+      agent: 'claude',
+      kind: 'tmux',
+      host: 'laptop',
+      cwd: root,
+      tmuxSession: 'agentbox-manager-cccccccccccccccc',
+    });
+    if (!registered.ok) throw new Error(registered.error);
+    const view = await managers.getManager('cccccccccccccccc');
+    expect(view).toMatchObject({ hostIsHub: true, host: 'laptop', machineId: getMachineId() });
+    // The name flips; the record was adopted, so it is still this machine's.
+    name.value = 'laptop-2';
+    expect(await managers.getManager('cccccccccccccccc')).toMatchObject({ hostIsHub: true });
+    expect(await managers.resumeManager('cccccccccccccccc')).not.toMatchObject({
+      code: 'wrong_host',
+    });
+    // And the workspace's folder is still here: a start does not answer wrong_host.
+    expect(await managers.listManagerSessions(wsId)).toMatchObject({ ok: true });
+  });
+
+  it('refuses a machine that merely shares this hostname, naming it by id', async () => {
+    const { managers, wsId, root } = await flippable();
+    const res = await managers.detectManager({
+      agent: 'claude',
+      sessionId: S2,
+      cwd: root,
+      pid: 7,
+      host: 'laptop',
+      machineId: PC,
+    });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.manager).toMatchObject({ host: 'laptop', machineId: PC, hostIsHub: false });
+    expect(await managers.stopManager(res.manager.id)).toMatchObject({
+      ok: false,
+      code: 'wrong_host',
+      details: { host: 'laptop', machineId: PC },
+    });
+    void wsId;
+  });
+
+  it('serves a pty manager whose socket answers here, whatever host the record names', async () => {
+    const { managers, wsId, root } = await flippable();
+    const id = 'dddddddddddddddd';
+    // Short path: the suite's temp $HOME is past the unix socket length limit.
+    const socketPath = `/tmp/abt-${id}.sock`;
+    socketPaths.push(socketPath);
+    const socket = createServer(() => {});
+    await new Promise<void>((resolve) => socket.listen(socketPath, () => resolve()));
+    sockets.push(socket);
+    const runId = 'e'.repeat(32);
+    await writePtyMeta({
+      v: 1,
+      managerId: id,
+      workspaceId: wsId,
+      agent: 'claude',
+      cwd: root,
+      socket: socketPath,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      token: 'f'.repeat(64),
+      runId,
+      cols: 120,
+      rows: 34,
+      pinned: false,
+      leaseGraceMs: 60_000,
+    });
+    const registered = await managers.registerManager(wsId, {
+      id,
+      agent: 'claude',
+      kind: 'pty',
+      host: 'Marcos-MacBook-Pro.local',
+      cwd: root,
+      pty: { pid: process.pid, socket: socketPath, runId },
+    });
+    if (!registered.ok) throw new Error(registered.error);
+    const view = await managers.getManager(id);
+    expect(view).toMatchObject({ status: 'running', hostIsHub: true });
+    // Re-stamped, so the next read matches it without dialing the socket.
+    expect(view).toMatchObject({ host: 'laptop', machineId: getMachineId() });
+    expect(await managers.attachManager(id)).not.toMatchObject({ code: 'wrong_host' });
   });
 });

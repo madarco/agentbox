@@ -193,7 +193,7 @@ export function runsHere(
 async function ptyAnswersHere(m: Pick<HubApiManager, 'id' | 'kind'>): Promise<boolean> {
   if (m.kind !== 'pty') return false;
   const meta = await readPtyMeta(m.id);
-  return meta !== null && meta !== undefined && (await ptyHostAlive(meta.socket));
+  return meta !== undefined && (await ptyHostAlive(meta.socket));
 }
 
 /**

@@ -1295,8 +1295,10 @@ export interface WorkspaceProjectInput {
 }
 
 export interface WorkspaceAddInput {
-  /** `os.hostname()` of the machine that scanned the folders. */
+  /** Hostname of the machine that scanned the folders: its label. */
   host: string;
+  /** `getMachineId()` of that machine; absent from a client that predates machine ids. */
+  machineId?: string;
   /** Absolute folder on `host`. */
   root: string;
   name?: string;
@@ -1306,6 +1308,17 @@ export interface WorkspaceAddInput {
 }
 
 const WORKSPACE_ID_RE = /^[0-9a-f]{16}$/;
+
+// Mirrors `isMachineId` in @agentbox/config, kept local for the same bundle reason as PROVIDERS.
+const MACHINE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** A client's `getMachineId()`: optional (older clients send none), a UUID when present. */
+function optionalMachineId(v: unknown): Parsed<string | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  return typeof v === 'string' && MACHINE_ID_RE.test(v)
+    ? { ok: true, value: v }
+    : { ok: false, message: 'machineId must be a machine id (a lowercase UUID)' };
+}
 
 function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
   if (v === undefined) return { ok: true, value: [] };
@@ -1341,10 +1354,12 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
  */
 export function parseWorkspaceAdd(body: unknown): Parsed<WorkspaceAddInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { host, root, name, projects, id } = body;
+  const { host, root, name, projects, id, machineId } = body;
   if (typeof host !== 'string' || host.trim().length === 0 || host.length > 255) {
     return { ok: false, message: 'host is required (the hostname the folders are on)' };
   }
+  const parsedMachine = optionalMachineId(machineId);
+  if (!parsedMachine.ok) return parsedMachine;
   if (typeof root !== 'string' || root.length === 0) {
     return { ok: false, message: 'root is required (absolute folder path on `host`)' };
   }
@@ -1368,6 +1383,7 @@ export function parseWorkspaceAdd(body: unknown): Parsed<WorkspaceAddInput> {
     ok: true,
     value: {
       host,
+      ...(parsedMachine.value ? { machineId: parsedMachine.value } : {}),
       root,
       projects: parsedProjects.value,
       ...(parsedName.value ? { name: parsedName.value } : {}),
@@ -1686,6 +1702,7 @@ export interface ManagerDetectInput {
   cwd: string;
   pid?: number;
   host?: string;
+  machineId?: string;
   managerId?: string;
   tmuxPane?: string;
   tmuxSession?: string;
@@ -1716,6 +1733,7 @@ export function parseManagerDetect(
     cwd,
     pid,
     host,
+    machineId,
     managerId,
     boxId,
     boxJobId,
@@ -1754,6 +1772,12 @@ export function parseManagerDetect(
   if (parsedHost.value !== undefined && parsedHost.value.length > 255) {
     return { ok: false, message: 'host too long (max 255 chars)' };
   }
+  const parsedMachine = optionalMachineId(machineId);
+  if (!parsedMachine.ok) return parsedMachine;
+  // An id names the machine `host` labels: alone it would stamp a record with no label.
+  if (parsedMachine.value && !parsedHost.value) {
+    return { ok: false, message: 'machineId needs host (its hostname label)' };
+  }
   const parsedManager = optionalManagerId(managerId, 'managerId');
   if (!parsedManager.ok) return parsedManager;
   const parsedProjects = parseWorkspaceProjects(projects);
@@ -1778,6 +1802,7 @@ export function parseManagerDetect(
       cwd,
       ...(pid !== undefined ? { pid: pid as number } : {}),
       ...(parsedHost.value ? { host: parsedHost.value } : {}),
+      ...(parsedMachine.value ? { machineId: parsedMachine.value } : {}),
       ...(parsedManager.value ? { managerId: parsedManager.value } : {}),
       ...(typeof tmuxPane === 'string' ? { tmuxPane } : {}),
       ...(typeof tmuxSession === 'string' ? { tmuxSession } : {}),
@@ -1834,6 +1859,7 @@ export interface ManagerRegisterInput {
   agent: string;
   kind: 'tmux' | 'pty';
   host: string;
+  machineId?: string;
   cwd: string;
   /** `tmux` only. */
   tmuxSession?: string;
@@ -1858,7 +1884,7 @@ export function parseManagerRegister(
   allowedAgents: readonly string[] = MANAGER_AGENT_NAMES,
 ): Parsed<ManagerRegisterInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { id, agent, kind, host, cwd, tmuxSession, pty, sessionId, argv } = body;
+  const { id, agent, kind, host, machineId, cwd, tmuxSession, pty, sessionId, argv } = body;
   const parsedId = optionalManagerId(id, 'id');
   if (!parsedId.ok) return parsedId;
   if (typeof agent !== 'string' || !allowedAgents.includes(agent)) {
@@ -1870,6 +1896,8 @@ export function parseManagerRegister(
   if (typeof host !== 'string' || host.length === 0 || host.length > MANAGER_HOST_MAX) {
     return { ok: false, message: `host is required (max ${String(MANAGER_HOST_MAX)} chars)` };
   }
+  const parsedMachine = optionalMachineId(machineId);
+  if (!parsedMachine.ok) return parsedMachine;
   if (typeof cwd !== 'string' || !cwd.startsWith('/') || cwd.length > 4096) {
     return { ok: false, message: 'cwd must be an absolute path' };
   }
@@ -1906,6 +1934,7 @@ export function parseManagerRegister(
       agent,
       kind,
       host,
+      ...(parsedMachine.value ? { machineId: parsedMachine.value } : {}),
       cwd,
       ...(kind === 'tmux' ? { tmuxSession: tmuxSession as string } : {}),
       ...(parsedPty.value ? { pty: parsedPty.value } : {}),

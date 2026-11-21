@@ -24,7 +24,6 @@ import {
 import {
   AGENT_SESSION_ENV_VARS,
   encodeClaudeProjectsKey,
-  ptySocketPath,
   readPtyMeta,
   removePtySession,
   scrubAgentSessionEnv,
@@ -556,11 +555,13 @@ export function runsOnThisMachine(
 }
 
 /**
- * A pty-hosted manager's socket, in THIS user's `~/.agentbox/pty`, answering.
+ * A pty-hosted manager's host, found through THIS user's `~/.agentbox/pty`
+ * meta and answering on its socket.
  *
- * Strictly stronger evidence of locality than any recorded name: the socket is
- * addressed by the manager id alone, under this machine's own home, so a host
- * serving it is running here — whatever the record's `host` says. It is what
+ * Strictly stronger evidence of locality than any recorded name: the meta is
+ * addressed by the manager id alone, under this machine's own home, and a unix
+ * socket only connects on the machine it lives on — whatever the record's
+ * `host` says. It is what
  * keeps a session reachable when the hostname flips under it.
  */
 export async function ptySessionAnswersHere(
@@ -568,7 +569,9 @@ export async function ptySessionAnswersHere(
   probe: Pick<ManagerProbe, 'ptyHostAlive' | 'ptyBaseDir'> = {},
 ): Promise<boolean> {
   if (rec.kind !== 'pty') return false;
-  return await (probe.ptyHostAlive ?? ptyHostAlive)(ptySocketPath(rec.id, probe.ptyBaseDir));
+  const meta = await readPtyMeta(rec.id, probe.ptyBaseDir).catch(() => null);
+  if (meta?.managerId !== rec.id) return false;
+  return await (probe.ptyHostAlive ?? ptyHostAlive)(meta.socket);
 }
 
 /** {@link runsOnThisMachine}, or proven local by its pty socket (see {@link ptySessionAnswersHere}). */
