@@ -41,7 +41,7 @@ export interface AgentCloudModule {
    * needed: `stageAllAgentStatic` already covers any agent from its registry
    * row. Only an agent whose staging is more than a copy supplies one.
    */
-  stageStatic?(opts: { hostWorkspace?: string }): Promise<CloudStageResult>;
+  stageStatic?(opts: { hostWorkspace?: string; hostHome?: string }): Promise<CloudStageResult>;
   /**
    * Run AFTER this agent's declared `seeds` are placed, before dynamic config.
    *

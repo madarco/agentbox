@@ -80,6 +80,7 @@ import {
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
 } from './sync/agent-credentials.js';
+import { seedAgentStaticForCreate } from './sync/agent-static.js';
 import {
   cloudSnapshotName,
   currentCloudBaseFingerprint,
@@ -1017,7 +1018,8 @@ export function createCloudProvider(
         //                      _claude.json overlay → dynamic workflows/memory.
         //   seedGitIdentity  = git committer identity (cloud has no ~/.gitconfig).
         // Workspace *seed* (above, via seedCloudWorkspace) + static config (baked
-        // at prepare) stay outside the facade.
+        // at prepare, or seeded below for `seedsAgentStaticAtCreate` backends)
+        // stay outside the facade.
         const syncCtx = makeSyncContext({
           boxName: name,
           boxId: id,
@@ -1032,6 +1034,16 @@ export function createCloudProvider(
         // missing binary is otherwise silent — tmux launches it, the session
         // dies, and attach reports "no server running".
         await ensureAgentsInstalledForCloud(backend, handle, {
+          agents: agentVolumes.agents,
+          onLog: log,
+        });
+
+        // A backend whose `prepare` did not bake the host's static agent config
+        // (remote-docker: one shared agentless image per engine) gets it here,
+        // narrowed to this box's agents. After the install so the agent's own
+        // dirs exist; before the credential seed, which does not touch them.
+        await seedAgentStaticForCreate(backend, handle, {
+          hostWorkspace: req.workspacePath,
           agents: agentVolumes.agents,
           onLog: log,
         });

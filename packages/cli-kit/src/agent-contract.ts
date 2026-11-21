@@ -168,6 +168,13 @@ export interface AgentRuntime {
   /** Same offer before a CLOUD box: cloud has no shared volume, so the login has
    *  to land in the host backup for the per-box push to seed. */
   offerCloudLogin(o: { image: string; yes: boolean; hostWorkspace: string }): Promise<void>;
+  /**
+   * One line per piece of host config the box will NOT receive, printed before
+   * the box is built so a missing setup does not look like data loss — Pi's MCP
+   * servers defined outside `~/.pi/agent` are the case. Names files only, never
+   * their contents. Absent = nothing to say.
+   */
+  hostConfigNotices?(): Promise<string[]>;
   /** The `<agent> login` subcommand's sign-in: guided under a pty, or the
    *  agent's own TUI when forced / unavailable. */
   signIn(image: string, extraArgs: string[], o: { passthrough?: boolean }): Promise<SignInResult>;

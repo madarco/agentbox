@@ -55,7 +55,7 @@ export async function stageAllAgentStatic(
       // snapshot from its registry row, with nothing registered here.
       const dedicated = agentCloudModule(spec.id)?.stageStatic;
       const result = dedicated
-        ? await dedicated({ hostWorkspace: opts.hostWorkspace })
+        ? await dedicated({ hostWorkspace: opts.hostWorkspace, hostHome: opts.hostHome })
         : await stageAgentStaticForUpload(spec.id, { hostHome: opts.hostHome });
       // `staticPaths[0].boxDir` is the extract root for every source of an
       // agent: the relocations inside the tarball are relative to it.

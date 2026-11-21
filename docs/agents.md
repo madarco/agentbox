@@ -105,6 +105,11 @@ do with a setting:
 | `tuiEnvFrom` | `agentTuiEnv` picks the launch env |
 | *(everything)* | `renderAgentSettingEnv` exports `AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>` into the agent's own `recipe` and `postInstall` |
 
+Pi's `version` is the worked example of the third row: its recipe is an `exec`
+that reads `AGENTBOX_AGENT_SETTING_VERSION` (default `latest`), validates it
+against npm's version/dist-tag alphabet, and installs that release. Nothing
+outside Pi's row knows the setting exists.
+
 The third is the point. An agent installed from an npm package can put arbitrary
 logic in its `postInstall` and read its own settings there, so a setting nothing
 in this repo was written to understand still reaches the bake — on every
@@ -209,6 +214,22 @@ makes a single list safe for both:
   with an `allowDatabases` opt-out nothing declares. Hand-enumerating these is
   what went stale: codex's list named `state_*` and `logs_*`, and three later
   databases shipped live into every box.
+
+### Symlinks are resolved on the host
+
+An agent's config often links outside its own tree — Pi's `skills/*` into a
+checkout elsewhere, by absolute macOS path. A helper container that mounts the
+config dir at `/src` sees those links with no host context, so they arrive
+dangling. The generic stager (`stageAgentStaticForUpload`) runs `rsync -L` on
+the HOST, skips links that are broken there (reporting each, including one
+nested under a linked dir), and takes `target: 'volume'` so a docker volume sync
+can use it too. Pi's docker volume sync streams that tarball to the helper on
+stdin rather than bind-mounting `~/.pi/agent`. A `~/.pi/agent/mcp.json` that is
+a symlink out of the tree (stow, chezmoi) is followed like any other file: it is
+Pi's own config. `scanPiMcpConfig` produces the create-time notice, both for
+that link and for MCP definitions AgentBox does not copy (the shared
+`~/.config/mcp/mcp.json`, other tools' configs pulled in by `imports`): file
+paths and counts only, never a server name or any part of a definition.
 
 Claude's docker volume is deliberately NOT converged on its spec list: those
 excludes are snapshot hygiene and include ~20 entries the volume wants,

@@ -28,12 +28,13 @@
  * ship both.
  */
 
-import { copyFile, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join, relative } from 'node:path';
+import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import { resolveAgentSpec } from './registry.js';
-import type { AgentId, AgentPathMap } from '@agentbox/core';
+import { findUnsyncableSymlinks } from './host-links.js';
+import type { AgentId, AgentPathMap, AgentPushTarget } from '@agentbox/core';
 import { agentPushExcludes } from '@agentbox/core';
 
 /**
@@ -61,30 +62,18 @@ export async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Every symlink under `root` that `rsync -L` cannot dereference, as rsync-style
+ * paths relative to `root`.
+ *
+ * Follows symlinked DIRECTORIES into their targets: `-L` descends into them, so
+ * a skill linked to a checkout elsewhere that itself holds a dangling link
+ * would otherwise abort the whole stage (rsync exit 23) even though the
+ * top-level link resolves. Nothing on this host is out of reach of a host-side
+ * rsync, hence `/` as the only reachable root.
+ */
 export async function findBrokenSymlinks(root: string): Promise<string[]> {
-  const broken: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      const full = join(dir, ent.name);
-      if (ent.isSymbolicLink()) {
-        try {
-          await stat(full);
-        } catch {
-          broken.push(relative(root, full));
-        }
-      } else if (ent.isDirectory()) {
-        await walk(full);
-      }
-    }
-  }
-  await walk(root);
-  return broken;
+  return findUnsyncableSymlinks(root, ['/']);
 }
 
 export async function mkStageDir(prefix: string): Promise<string> {
@@ -184,7 +173,15 @@ export async function stageSingleFileTarball(
  */
 export async function stageAgentStaticForUpload(
   agent: string,
-  opts: { hostHome?: string } = {},
+  opts: {
+    hostHome?: string;
+    /**
+     * `'snapshot'` (default) keeps the credential file out — a cloud base is
+     * shared by every box. `'volume'` keeps it in: the docker config volume
+     * this feeds IS the box's credential store.
+     */
+    target?: AgentPushTarget;
+  } = {},
 ): Promise<StageResult> {
   const spec = resolveAgentSpec(agent);
   const hostHome = opts.hostHome ?? homedir();
@@ -197,6 +194,8 @@ export async function stageAgentStaticForUpload(
   }
   if (present.length === 0) return emptyResult();
 
+  const target = opts.target ?? 'snapshot';
+  const warnings: string[] = [];
   const stageDir = await mkStageDir(`${spec.id}-static`);
   let tarballPath: string | null = null;
   try {
@@ -207,6 +206,13 @@ export async function stageAgentStaticForUpload(
       // exclude. Rule order is first-match-wins: the anchored broken-symlink
       // excludes come first, then the includes that carve out of the excludes.
       const broken = await findBrokenSymlinks(hostPath);
+      // Named, never silently dropped: a skill that is a dangling link on the
+      // host would otherwise just be missing in the box with no hint why.
+      for (const r of broken) {
+        warnings.push(
+          `${spec.id}: skipped ${join(hostPath, r)} — it is a broken symlink on this host`,
+        );
+      }
       await execa('rsync', [
         '-a',
         STAGE_WRITABLE_CHMOD,
@@ -216,13 +222,13 @@ export async function stageAgentStaticForUpload(
         ...(path.include ?? []).map((pat) => `--include=${pat}`),
         // One list for both transports. `agentPushExcludes` adds the
         // live-database deny and, for a SHARED snapshot, the credential file.
-        ...agentPushExcludes(spec, path, 'snapshot').map((pat) => `--exclude=${pat}`),
+        ...agentPushExcludes(spec, path, target).map((pat) => `--exclude=${pat}`),
         `${hostPath}/`,
         `${dest}/`,
       ]);
     }
     tarballPath = await tarballFromDir(stageDir, `${spec.id}-static`);
-    return { tarballPath, cleanup: makeCleanup([stageDir, tarballPath]), warnings: [] };
+    return { tarballPath, cleanup: makeCleanup([stageDir, tarballPath]), warnings };
   } catch (err) {
     await rm(stageDir, { recursive: true, force: true });
     if (tarballPath) await rm(tarballPath, { force: true });

@@ -320,6 +320,10 @@
           "type": "string",
           "minLength": 1
         },
+        "version": {
+          "type": "string",
+          "pattern": "^(?![xX]$)((0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?|[A-Za-z][A-Za-z0-9._-]*)$"
+        },
         "modelAuth": {
           "type": "string",
           "pattern": "^(none|codex(,codex)*)$"

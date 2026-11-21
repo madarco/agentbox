@@ -6,7 +6,16 @@ import {
   parseDockerPort,
   parseSize,
   parseSnapshotName,
+  remoteDockerBackend,
 } from '../src/backend.js';
+
+describe('static agent config', () => {
+  it('is seeded at create, because prepare bakes only the shared agentless image', () => {
+    // Without this a `agentbox docker:<host> pi` box arrived with none of the
+    // host's ~/.pi/agent config or skills (nor ~/.claude, ~/.agents, ...).
+    expect(remoteDockerBackend.seedsAgentStaticAtCreate).toBe(true);
+  });
+});
 
 describe('mapDockerState', () => {
   // A spec-mirror table: `docker inspect -f {{.State.Status}}` has a closed set

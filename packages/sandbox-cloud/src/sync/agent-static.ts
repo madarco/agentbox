@@ -11,6 +11,9 @@
  *   - **daytona `linux-vm`** — Daytona builds a VM snapshot only from a
  *     prebuilt registry image. There are no layers to add, so the seed has to
  *     run against a booted sandbox and be captured by a snapshot afterwards.
+ *   - **remote-docker** (`seedsAgentStaticAtCreate`) — its base is ONE shared
+ *     image per remote engine with no host config in it, so the seed runs on
+ *     every create instead of at prepare.
  *   - (hetzner does the same thing today, inline over ssh/scp — it can adopt
  *     this once the shapes are reconciled.)
  *
@@ -33,6 +36,13 @@ const REMOTE_CLAUDE_MD = '/tmp/agentbox-custom-CLAUDE.md';
 export interface SeedAgentStaticOptions {
   /** Host workspace path, threaded into the claude stager. */
   hostWorkspace?: string;
+  /**
+   * Which agents to seed. Absent = all. A per-create seed narrows to the box's
+   * own agents, so a `agentbox pi` box does not receive `~/.claude` too.
+   */
+  agents?: readonly string[];
+  /** Defaults to `homedir()`; a test points it at a fixture home. */
+  hostHome?: string;
   /** Absolute host path to the provider's `/etc/claude-code/CLAUDE.md` overlay. */
   claudeMdOverlay?: string;
   onLog?: (line: string) => void;
@@ -89,7 +99,11 @@ export async function seedAgentStaticIntoCloudBox(
   opts: SeedAgentStaticOptions = {},
 ): Promise<SeedAgentStaticResult> {
   const log = opts.onLog ?? (() => {});
-  const stages = await stageAllAgentStatic({ hostWorkspace: opts.hostWorkspace });
+  const stages = await stageAllAgentStatic({
+    hostWorkspace: opts.hostWorkspace,
+    ...(opts.agents ? { agents: opts.agents } : {}),
+    ...(opts.hostHome ? { hostHome: opts.hostHome } : {}),
+  });
   try {
     for (const s of stages) {
       for (const w of s.staged.warnings) log(w);
@@ -122,4 +136,18 @@ export async function seedAgentStaticIntoCloudBox(
   } finally {
     await Promise.all(stages.map((s) => s.staged.cleanup()));
   }
+}
+
+/**
+ * The create-time seed: a no-op (null) unless the backend declared that its
+ * `prepare` does not bake the host's static agent config. See
+ * `CloudBackend.seedsAgentStaticAtCreate`.
+ */
+export async function seedAgentStaticForCreate(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  opts: SeedAgentStaticOptions = {},
+): Promise<SeedAgentStaticResult | null> {
+  if (!backend.seedsAgentStaticAtCreate) return null;
+  return seedAgentStaticIntoCloudBox(backend, handle, opts);
 }

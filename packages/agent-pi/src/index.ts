@@ -13,7 +13,7 @@ import {
   type AgentSyncModule,
 } from '@agentbox/sandbox-docker';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
-import { stagePiCredentialsForUpload } from './host-stage.js';
+import { stagePiCredentialsForUpload, stagePiStaticForUpload } from './host-stage.js';
 import { buildPiMounts, ensurePiVolume, piSessionInfo, resolvePiVolume } from './docker-sync.js';
 
 /** Pi's docker behavior. No post-sync hook and no expiring credential. */
@@ -48,9 +48,13 @@ export const piSyncModule: AgentSyncModule = {
 export const piCloudModule: AgentCloudModule = {
   id: 'pi',
   stageCredentials: () => stagePiCredentialsForUpload(),
+  // Its own static stager, not the generic one `stageAllAgentStatic` would
+  // fall back to: an `mcp.json` symlinked out of `~/.pi/agent` must not be
+  // dereferenced into a snapshot (see `scanPiMcpConfig`).
+  stageStatic: (o) => stagePiStaticForUpload(o.hostHome ? { hostHome: o.hostHome } : {}),
   // Required by the contract, and genuinely nothing to do: Pi's declared
-  // `seeds` place the activity extension, its static config rides
-  // `stageAllAgentStatic`, and it keeps no per-box state the host owns.
+  // `seeds` place the activity extension and it keeps no per-box state the
+  // host owns.
   afterSeed: () => Promise.resolve(),
 };
 
@@ -62,4 +66,5 @@ export function registerPiAgent(): void {
 
 export * from './docker-sync.js';
 export { stagePiCredentialsForUpload, stagePiStaticForUpload } from './host-stage.js';
+export { scanPiMcpConfig, type PiMcpScan } from './mcp-notice.js';
 export { piStagedItems } from './staged-items.js';

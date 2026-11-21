@@ -91,6 +91,7 @@ Remote Docker is a **cloud** provider that happens to speak Docker. That sounds 
 The [local Docker](/docs/local-docker) provider bind-mounts your repo's `.git/` straight into the container. That's what makes an in-box commit land in your host repo instantly, with no sync at all. A bind mount cannot cross a network — so on a remote engine, your workspace has to be **synced** rather than shared, exactly like [Hetzner](/docs/hetzner) or [Daytona](/docs/daytona):
 
 - **Into the box**, at create: a shallow git clone plus your uncommitted and untracked changes, carried over as-is. Your working state arrives intact.
+- **Your agent config**, at every create: the box image on the remote engine is shared and agentless, so it holds none of your host config. AgentBox uploads the static config of the box's own agent (`~/.pi/agent`, `~/.claude`, `~/.codex`, …, plus the shared `~/.agents` skills) into each new box, symlinks resolved on your machine, and pushes the login separately — the same split the cloud providers use.
 - **Back out**, on `git push`: the box's branch travels home as a git bundle through the host relay, and the push runs from _your_ machine with _your_ credentials. The remote machine never sees a git credential. See [sync-and-git](/docs/sync-and-git).
 
 Everything reaches the box over **one SSH connection per box** (an OpenSSH ControlMaster), so `docker` commands don't pay a handshake each time. The box's web app, VNC and sshd are published on the remote's loopback and forwarded to yours, so `agentbox url` opens in your browser as usual.
