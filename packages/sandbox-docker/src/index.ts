@@ -401,3 +401,7 @@ export {
 } from './registry-auth.js';
 
 export { seedAgentDeclaredFiles, seedLabels } from './sync/agents/seed.js';
+export {
+  resolveContainerConfigVolume,
+  withContainerConfigVolume,
+} from './sync/container-config.js';

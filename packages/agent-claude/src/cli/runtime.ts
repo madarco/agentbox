@@ -172,9 +172,8 @@ export const claudeRuntime: AgentRuntime = {
     }),
   buildAttachArgv: (container, sessionName) => buildClaudeAttachArgv(container, sessionName),
 
-  // Unlike codex/opencode, claude ALWAYS syncs: a box with no recorded volume
-  // still has the shared one, and its ~/.claude carries MCP servers and OAuth
-  // state the in-box claude needs.
+  // Legacy records can omit the shared volume. Start verifies actual mounts
+  // before using this fallback; boxes created for another agent do not have it.
   resolveConfigVolume: (box: BoxRecord) => box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME,
   createBoxConfig: (isolate) => ({ claudeConfig: { isolate } }),
 

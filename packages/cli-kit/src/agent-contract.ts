@@ -119,11 +119,9 @@ export interface AgentRuntime {
   buildAttachArgv(container: string, sessionName: string | undefined): string[];
 
   /**
-   * The volume `<agent> start` rsyncs the host config into, or undefined to skip
-   * the sync entirely. Not the same question for every agent: claude falls back
-   * to the shared volume (its config always syncs), while codex and opencode
-   * skip when the box has no volume of theirs mounted — a box created by a plain
-   * `agentbox create` on a host with no such config.
+   * The agent's recorded/default volume. Callers syncing a running container
+   * must verify its mounts: a second agent may have no config volume, and a
+   * legacy shared-volume fallback may name a volume the box cannot see.
    */
   resolveConfigVolume(box: BoxRecord): string | undefined;
   /** The `createBox` per-agent config option (`{ codexConfig: { isolate } }`). */
@@ -456,11 +454,17 @@ export interface AgentCommandHooks {
   ): Promise<HookOutput | void>;
   /**
    * Runs on `<agent> start` / `<agent> attach` after the config volume is
-   * synced, before the agent is launched — hook/plugin seeding.
+   * synced, before the agent is launched. The volume may be temporary, so this
+   * hook must write through `o.volume`; the live box is updated afterwards.
    */
   afterVolumeSync?(
     box: BoxRecord,
     o: { volume: string; message: (line: string) => void },
+  ): Promise<HookOutput | void>;
+  /** Runs against the live config after copy-back; `volume` is present only if mounted. */
+  afterConfigSync?(
+    box: BoxRecord,
+    o: { volume?: string; message: (line: string) => void },
   ): Promise<HookOutput | void>;
   /**
    * Extra wrapped-attach wiring (claude's clipboard paste handlers).

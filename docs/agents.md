@@ -316,7 +316,7 @@ Timings on a warm layer cache: base 56s, `+claude` 23s, `+codex` 21s, repeat
 
 ## Adding an agent to a running box
 
-Point a second agent at an existing box (`agentbox codex <claude-box>`, or the
+Point a second agent at an existing box (`agentbox codex start <claude-box>`, or the
 dashboard's agent switch) and it is installed on demand.
 
 The binary install is the easy half. The subtle half is credentials: **docker
@@ -324,6 +324,25 @@ fixes a container's mounts at `docker run`**, so the new agent's config volume
 can never be attached to a box that is already running. Syncing the host-side
 volume would write somewhere the box cannot see and leave the agent
 unauthenticated with no visible error.
+
+The local CLI's `<agent> start` checks the container's actual config mount
+using its existing `inspectBox` result, rather than trusting a recorded or
+default volume name. When no config volume is mounted, it stages the box's
+existing config tree into a temporary volume,
+runs the agent's normal host merge and declared-file seeding there, and streams
+the result back into an in-box staging directory before starting the session.
+The existing Docker tar-stream helper handles both transfers; no config tree
+is staged on the host. This preserves
+box-owned configuration and credential symlinks, and applies the agent's normal
+purges. The temporary volume is removed, never recorded as a box mount. Claude's
+credential seed runs against that volume; its plugin dependency rebuild runs
+against the live box only after copy-back.
+
+`--no-sync-config` and per-agent `attach` skip the host merge but still place
+image-owned hooks/skills. An already-running target session skips preparation
+entirely. Sync/copy failures prevent a fresh session from starting. This fallback
+belongs to the existing direct CLI start/attach path; the dashboard's agent
+switch and cloud startup retain their separate behavior.
 
 So `ensureAgentInstalled` pushes the credential **as a file** over the
 `SyncTransport` (`pushCredentialToBox`), preferring the `~/.agentbox` backup —
