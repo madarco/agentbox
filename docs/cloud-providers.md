@@ -135,6 +135,11 @@ otherwise have grown a per-provider tail:
   and absent-tolerant: almost no host has a `~/.openclaw`, and staging one
   produces `tarballPath: null` rather than failing a bake
   (`packages/sandbox-cloud/test/agent-static-all.test.ts`).
+  A model endpoint on host loopback (`http://127.0.0.1:<port>` in codex/claude/
+  opencode/pi config) is staged unchanged and reported as a `providerWarning` per
+  endpoint, because a cloud box has no route back to the host. Local docker rewrites
+  it to `host.docker.internal` instead; see "Host-loopback model endpoints" in
+  [`architecture.md`](./architecture.md).
 - **The run-env** (`boxRunEnv`) is merged by `agentRunEnv` at provision time on the
   clouds, and returned by the agent's docker module on docker. Those are two
   different code paths for one declaration, which is exactly where they drift —

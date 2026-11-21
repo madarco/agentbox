@@ -7,10 +7,12 @@
  * short-circuit to the SDK attach path before any of that.
  */
 import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@agentbox/config';
+import { parseProviderWarning, type LoopbackEndpoint } from '@agentbox/core';
 import {
   agentSyncModule,
   inspectBox,
   execInBox,
+  loopbackEndpointNotes,
   recordLastAgent,
   openAgentConfigTarget,
   seedAgentDeclaredFiles,
@@ -167,14 +169,20 @@ export async function startOrAttach(
   const message = (line: string): void => s.message(clampSpinnerLine(line));
   let seeded: HookOutput | void = undefined;
   let configured: HookOutput | void = undefined;
+  let endpointWarnings: string[] = [];
   if (target) {
     try {
       const volume = target.volume;
       if (syncConfig) {
         s.message(`syncing ${a.text.syncConfigLabel} into box volume`);
-        await a.runtime.ensureVolume(
+        const synced = await a.runtime.ensureVolume(
           { volume },
           { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
+        );
+        // Shown after the spinner: a host-loopback endpoint was rewritten, or the
+        // gateway behind it will refuse the box (#403).
+        endpointWarnings = (await loopbackEndpointNotes(a.id, loopbackEndpointsOf(synced))).map(
+          (n) => parseProviderWarning(n) ?? n,
         );
       }
       // Box-only, image-versioned seeding. The DECLARED files (`spec.seeds`:
@@ -279,6 +287,7 @@ export async function startOrAttach(
 
   s.stop(`box ${box.container} ready`);
   if (resyncWarning && ownsFirstTurn) log.warn(resyncWarning);
+  for (const w of endpointWarnings) log.warn(w);
   for (const emit of seeded?.deferred ?? []) emit();
   for (const emit of configured?.deferred ?? []) emit();
 
@@ -430,4 +439,11 @@ export function wireStartAction(a: AgentCliSpec, cmd: Command): Command {
       handleLifecycleError(err);
     }
   });
+}
+
+/** The `loopbackEndpoints` an agent runtime's `ensureVolume` reported, if any. */
+function loopbackEndpointsOf(result: unknown): LoopbackEndpoint[] {
+  if (typeof result !== 'object' || result === null) return [];
+  const list = (result as { loopbackEndpoints?: unknown }).loopbackEndpoints;
+  return Array.isArray(list) ? (list as LoopbackEndpoint[]) : [];
 }

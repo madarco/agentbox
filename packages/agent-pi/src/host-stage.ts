@@ -7,6 +7,7 @@
  */
 
 import { homedir } from 'node:os';
+import { formatLoopbackUnreachable, providerWarning, scanLoopbackJsonFiles } from '@agentbox/core';
 import { join } from 'node:path';
 import {
   emptyResult,
@@ -15,6 +16,7 @@ import {
   type StageResult,
 } from '@agentbox/sandbox-core';
 import type { AgentPushTarget } from '@agentbox/core';
+import { piEndpointFiles } from './endpoints.js';
 import { piAuthFileHasProviders } from './auth-shape.js';
 
 export interface StagePiOptions {
@@ -34,7 +36,19 @@ export interface StagePiOptions {
 export async function stagePiStaticForUpload(
   opts: StagePiOptions & { target?: AgentPushTarget } = {},
 ): Promise<StageResult> {
-  return stageAgentStaticForUpload('pi', opts);
+  const staged = await stageAgentStaticForUpload('pi', opts);
+  // The docker volume sync rewrites loopback endpoints itself (see
+  // `ensurePiVolume`); only a cloud/remote box, with no route back to this
+  // machine, gets the unreachable warning (#403).
+  if (opts.target === 'volume') return staged;
+  const endpoints = await scanLoopbackJsonFiles(piEndpointFiles(opts.hostHome ?? homedir()));
+  return {
+    ...staged,
+    warnings: [
+      ...staged.warnings,
+      ...endpoints.map((e) => providerWarning(formatLoopbackUnreachable('pi', e))),
+    ],
+  };
 }
 
 /**

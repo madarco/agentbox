@@ -9,6 +9,7 @@ import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { requireAgentCredential } from '@agentbox/core';
 import {
   extractVolumeAuthToBackup,
+  loopbackEndpointNotes,
   registerAgentSyncModule,
   type AgentSyncModule,
 } from '@agentbox/sandbox-docker';
@@ -21,7 +22,14 @@ export const piSyncModule: AgentSyncModule = {
   id: 'pi',
   resolveVolume: (opts) => resolvePiVolume(opts),
   buildMounts: (spec, env) => buildPiMounts(spec, env),
-  ensureVolume: async (spec, opts) => ensurePiVolume(spec, opts),
+  ensureVolume: async (spec, opts) => {
+    const r = await ensurePiVolume(spec, opts);
+    return {
+      created: r.created,
+      synced: r.synced,
+      notes: await loopbackEndpointNotes('pi', r.loopbackEndpoints),
+    };
+  },
   sessionInfo: (container) => piSessionInfo(container),
   // Extract-only, same as codex/opencode: no host bind mount and no expiry
   // field, so the helper runs unconditionally and reports nothing copied when
@@ -41,7 +49,8 @@ export const piSyncModule: AgentSyncModule = {
 };
 
 /**
- * Pi's cloud behavior: only the credential stager is its own. There is no
+ * Pi's cloud behavior: the credential stager, and a static stager that is the
+ * generic one plus the loopback-endpoint report. There is no
  * `afterSeed` — unlike OpenCode, Pi keeps no per-box state the host is
  * authoritative for (its model choice lives in the synced `settings.json`).
  */
@@ -49,8 +58,9 @@ export const piCloudModule: AgentCloudModule = {
   id: 'pi',
   stageCredentials: () => stagePiCredentialsForUpload(),
   // Its own static stager, not the generic one `stageAllAgentStatic` would
-  // fall back to: an `mcp.json` symlinked out of `~/.pi/agent` must not be
-  // dereferenced into a snapshot (see `scanPiMcpConfig`).
+  // fall back to: it dereferences linked skills and an `mcp.json` a dotfile
+  // manager made a symlink, and reports host-loopback `models.json` endpoints,
+  // which a cloud box cannot reach (#403).
   stageStatic: (o) => stagePiStaticForUpload(o.hostHome ? { hostHome: o.hostHome } : {}),
   // Required by the contract, and genuinely nothing to do: Pi's declared
   // `seeds` place the activity extension and it keeps no per-box state the

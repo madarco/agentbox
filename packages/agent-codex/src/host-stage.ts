@@ -1,4 +1,9 @@
-import { agentPushExcludes } from '@agentbox/core';
+import {
+  agentPushExcludes,
+  formatLoopbackUnreachable,
+  providerWarning,
+  type LoopbackEndpoint,
+} from '@agentbox/core';
 /**
  * Codex's host-side staging — the part that is more than a copy.
  *
@@ -87,15 +92,17 @@ const CODEX_KEYCHAIN_WARNING =
 async function sanitizeStagedCodexConfig(
   configPath: string,
   hostHome: string,
-): Promise<{ keptMarketplaces: string[] } | null> {
+): Promise<{ keptMarketplaces: string[]; loopbackEndpoints: LoopbackEndpoint[] } | null> {
   try {
-    if (!(await pathExists(configPath))) return { keptMarketplaces: [] };
-    const { text, changed, keptMarketplaces } = sanitizeCodexConfigForBox(
+    if (!(await pathExists(configPath))) return { keptMarketplaces: [], loopbackEndpoints: [] };
+    // No `loopbackHost`: a cloud box has no route back to this machine, so a
+    // loopback endpoint is reported, never rewritten (#403).
+    const { text, changed, keptMarketplaces, loopbackEndpoints } = sanitizeCodexConfigForBox(
       await readFile(configPath, 'utf8'),
       hostHome,
     );
     if (changed) await writeFile(configPath, text);
-    return { keptMarketplaces };
+    return { keptMarketplaces, loopbackEndpoints };
   } catch {
     // leave the rsynced copy as-is
     return null;
@@ -170,7 +177,9 @@ export async function stageCodexStaticForUpload(
     return {
       tarballPath,
       cleanup: makeCleanup([stageDir, tarballPath]),
-      warnings: [],
+      warnings: (sanitized?.loopbackEndpoints ?? []).map((e) =>
+        providerWarning(formatLoopbackUnreachable('codex', e)),
+      ),
     };
   } catch (err) {
     await rm(stageDir, { recursive: true, force: true });

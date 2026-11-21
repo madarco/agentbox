@@ -229,10 +229,7 @@ trust_level = "trusted"
   });
 
   it('merging into the minimal config keeps /workspace trust and box state', () => {
-    const { text, marketplaces } = mergeCodexConfigForBox(
-      MINIMAL_TRUSTED_CODEX_CONFIG,
-      BOX_CONFIG,
-    );
+    const { text, marketplaces } = mergeCodexConfigForBox(MINIMAL_TRUSTED_CODEX_CONFIG, BOX_CONFIG);
     const cfg = parse(text) as Record<string, unknown>;
     expect(obj(obj(cfg['projects'])['/workspace'])['trust_level']).toBe('trusted');
     // with no host config, the box's own model pick survives
@@ -242,5 +239,60 @@ trust_level = "trusted"
 
   it('throws on an unparseable host base (caller catch handles the fallback)', () => {
     expect(() => mergeCodexConfigForBox('not = = toml', BOX_CONFIG)).toThrow();
+  });
+});
+
+describe('sanitizeCodexConfigForBox loopback model providers (#403)', () => {
+  const toml = [
+    'model_provider = "gw"',
+    '[model_providers.gw]',
+    'base_url = "http://127.0.0.1:4000/v1"',
+    '[model_providers.ollama]',
+    'base_url = "http://localhost:11434/v1"',
+    '[model_providers.remote]',
+    'base_url = "https://api.example.com/v1"',
+  ].join('\n');
+
+  it('rewrites loopback base_url hosts to the given alias, keeping port and path', () => {
+    const r = sanitizeCodexConfigForBox(toml, '/home/u', { loopbackHost: 'host.docker.internal' });
+    const cfg = parse(r.text) as { model_providers: Record<string, { base_url: string }> };
+    expect(cfg.model_providers['gw']?.base_url).toBe('http://host.docker.internal:4000/v1');
+    expect(cfg.model_providers['ollama']?.base_url).toBe('http://host.docker.internal:11434/v1');
+    expect(cfg.model_providers['remote']?.base_url).toBe('https://api.example.com/v1');
+    expect(r.loopbackEndpoints.map((e) => e.where)).toEqual([
+      '~/.codex/config.toml model_providers.gw.base_url',
+      '~/.codex/config.toml model_providers.ollama.base_url',
+    ]);
+  });
+
+  it('only reports (no rewrite) when no alias is given', () => {
+    const r = sanitizeCodexConfigForBox(toml, '/home/u');
+    const cfg = parse(r.text) as { model_providers: Record<string, { base_url: string }> };
+    expect(cfg.model_providers['gw']?.base_url).toBe('http://127.0.0.1:4000/v1');
+    expect(r.loopbackEndpoints.map((e) => [e.url, e.port, e.rewrittenTo])).toEqual([
+      ['http://127.0.0.1:4000/v1', 4000, undefined],
+      ['http://localhost:11434/v1', 11434, undefined],
+    ]);
+    expect(r.changed).toBe(true); // the /workspace pre-trust, not a rewrite
+  });
+
+  it('the rewrite reaches the box through the merge; box-only providers are untouched', () => {
+    const host = sanitizeCodexConfigForBox(toml, '/home/u', {
+      loopbackHost: 'host.docker.internal',
+    }).text;
+    const box = '[model_providers.boxlocal]\nbase_url = "http://127.0.0.1:9000/v1"\n';
+    // host has model_providers, so the host table wins wholesale (host-authoritative)
+    const merged = parse(mergeCodexConfigForBox(host, box).text) as {
+      model_providers: Record<string, { base_url: string }>;
+    };
+    expect(merged.model_providers['gw']?.base_url).toBe('http://host.docker.internal:4000/v1');
+    // with no host providers, a box-only loopback provider survives verbatim
+    const hostless = sanitizeCodexConfigForBox('model = "x"', '/home/u', {
+      loopbackHost: 'host.docker.internal',
+    }).text;
+    const kept = parse(mergeCodexConfigForBox(hostless, box).text) as {
+      model_providers: Record<string, { base_url: string }>;
+    };
+    expect(kept.model_providers['boxlocal']?.base_url).toBe('http://127.0.0.1:9000/v1');
   });
 });
