@@ -99,6 +99,8 @@ Capture warm state to start future boxes fast with `agentbox checkpoint create <
 
 The bind-mounted host `.git/` means commits land on the host immediately; pushes go through the host relay, so no credentials live in the box (see [sync-and-git](/docs/sync-and-git)). Inspect a box's files on the host with `agentbox open` or `agentbox download`.
 
+The box and your host share that `.git/` but not each other's worktree folders, so AgentBox keeps git cleanup on either side from deleting the other's worktrees. Inside the box, `git gc` is set never to prune worktrees, so your other host worktrees stay registered. On the host, each live box's worktree is locked (`git worktree list` shows it as `locked`, with the reason `agentbox box <container>`), so a host `git gc` or `git worktree prune` leaves it alone. `agentbox destroy` removes only that box's registration; the `agentbox/<box-name>` branch stays. Don't run `git worktree prune` inside a box: it ignores the gc setting and would unregister your host worktrees.
+
 ## Specs
 
 | Spec             |                                                                                                                                  |
