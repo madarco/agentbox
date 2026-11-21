@@ -17,6 +17,29 @@ import type { AgentSyncSpec } from '@agentbox/core';
 import { buildCodexImportScript, codexImportMarker } from './_codex-import.js';
 
 const PI_BOX_DIR = `${BOX_HOME}/.pi/agent`;
+const PI_NPM_PACKAGE = '@earendil-works/pi-coding-agent';
+
+/**
+ * `npm install -g <pkg>@<pi.version>`, defaulting to `latest`.
+ *
+ * Exported for the test that runs it through a real shell: the guard is the
+ * only thing between a config value and an npm argv.
+ */
+export function buildPiNpmInstall(pkg: string): string {
+  // Exact semver or a dist-tag, nothing else: a range (`^0.70`, `1.x`) would
+  // drift exactly like `latest`. The charset `case` runs first so a newline can
+  // never let grep match one line of a multi-line value.
+  const exact =
+    '(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?';
+  const tag = '[A-Za-z][A-Za-z0-9._-]*';
+  return [
+    'v="${AGENTBOX_AGENT_SETTING_VERSION:-latest}"',
+    'case "$v" in ""|x|X|*[!0-9A-Za-z._+-]*) ok=0;; *) ok=1;; esac',
+    `if [ "$ok" = 1 ] && printf "%s\\n" "$v" | grep -Eqx "${exact}|${tag}"; then :; else ` +
+      'echo "agentbox: pi.version must be an exact version such as 0.70.2 or an npm dist-tag such as latest (got: $v)" >&2; exit 64; fi',
+    `npm install -g "${pkg}@$v" 2>&1`,
+  ].join('; ');
+}
 /** Baked alongside the setup guide: Pi's activity-reporting extension. */
 const PI_EXTENSION_PATH = '/usr/local/share/agentbox/pi-agentbox-extension.js';
 
@@ -29,7 +52,14 @@ export const piSpec: AgentSyncSpec = {
     // The `pi.dev/install.sh` script is only an npm wrapper (it shells
     // `npm i -g` with a spinner), so the npm recipe is the same install with
     // one less moving part — and no CDN to 403 us.
-    recipe: { kind: 'npm', package: '@earendil-works/pi-coding-agent' },
+    //
+    // `exec` rather than `{ kind: 'npm' }` only to read `pi.version` (exported
+    // as AGENTBOX_AGENT_SETTING_VERSION at every install site — the derived
+    // docker layer, each provider's bake, and `ensureAgentInstalled`). The
+    // value is user config, so it must be an exact version or a dist-tag before
+    // it reaches the command line, and is expanded inside double quotes so it
+    // can never be more than one argument. Unset or empty means `latest`.
+    recipe: { kind: 'exec', script: buildPiNpmInstall(PI_NPM_PACKAGE) },
     runAs: 'root',
     postInstall: [
       // Fail the INSTALL, not the launch, on too old a Node.
@@ -170,6 +200,16 @@ export const piSpec: AgentSyncSpec = {
     },
   },
   settings: [
+    {
+      key: 'version',
+      type: 'string',
+      default: 'latest',
+      description:
+        'Which Pi release is installed into a box: an exact version (`0.70.2`) or npm dist-tag (`latest`); ranges such as `^0.70` are refused. Pin it so boxes stop drifting to whatever was newest at bake time. Bake-time - changing it re-derives the agent layer; a runtime install into an existing box reads it too.',
+      // Two versions are two derived agent artifacts. The default folds to the
+      // identity, so leaving it unset changes no existing fingerprint.
+      affectsBake: true,
+    },
     {
       key: 'modelAuth',
       type: 'enum-list',

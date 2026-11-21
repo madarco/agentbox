@@ -279,6 +279,21 @@ export interface CloudBackend {
   readonly stageFilesAsRoot?: boolean;
 
   /**
+   * The host's static agent config (`~/.pi/agent`, `~/.claude`, `~/.agents`,
+   * …) is NOT baked into this backend's base, so `create` must seed it into
+   * every box.
+   *
+   * The VPS / microVM providers bake it during `prepare` (their snapshot IS the
+   * base), so the create path historically assumed it was already there.
+   * Remote Docker breaks that: its `prepare` only builds the shared, agentless
+   * box image on the remote engine — one image for whoever uses that engine —
+   * so without this a remote box arrived with none of the host's agent config
+   * or skills. Declared by the backend rather than matched on `name` so an
+   * out-of-tree provider with the same shape can opt in.
+   */
+  readonly seedsAgentStaticAtCreate?: boolean;
+
+  /**
    * Box user an attach must drop to, for backends whose interactive session
    * lands as root.
    *

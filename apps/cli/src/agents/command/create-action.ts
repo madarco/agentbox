@@ -613,6 +613,11 @@ export async function runAgentCreate(
         hostWorkspace: opts.workspace,
       });
     }
+    // Host config this box will NOT receive (Pi's MCP definitions outside
+    // ~/.pi/agent). Here because it runs once per create on both paths, right
+    // before the box is built — and best-effort: a scan must never cost a box.
+    const notices = await a.runtime.hostConfigNotices?.().catch(() => []);
+    for (const n of notices ?? []) log.info(n);
   };
   // Portless is Docker Desktop-only — skip on cloud.
   const offerPortless = async (): Promise<void> => {
