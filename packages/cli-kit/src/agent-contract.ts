@@ -456,11 +456,23 @@ export interface AgentCommandHooks {
   ): Promise<HookOutput | void>;
   /**
    * Runs on `<agent> start` / `<agent> attach` after the config volume is
-   * synced, before the agent is launched — hook/plugin seeding.
+   * synced, before the agent is launched. `o.volume` may be a staging volume
+   * that is mirrored into the container afterwards (a box created for another
+   * agent), so this hook writes through the volume only and must not touch the
+   * container's config dir: the mirror would undo it.
    */
   afterVolumeSync?(
     box: BoxRecord,
     o: { volume: string; message: (line: string) => void },
+  ): Promise<HookOutput | void>;
+  /**
+   * Runs after {@link afterVolumeSync}, once the config is live in the
+   * container — for work done inside the box (claude's plugin native-deps
+   * rebuild). `volume` is set only when the container really mounts it.
+   */
+  afterConfigSync?(
+    box: BoxRecord,
+    o: { volume?: string; message: (line: string) => void },
   ): Promise<HookOutput | void>;
   /**
    * Extra wrapped-attach wiring (claude's clipboard paste handlers).

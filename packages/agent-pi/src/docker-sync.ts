@@ -17,6 +17,7 @@ import { execa } from 'execa';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  tmuxSessionEnvArgs,
   CONTAINER_USER,
   createDockerSyncTransport,
   ensureVolume,
@@ -239,6 +240,11 @@ export async function startPiSession(opts: StartPiSessionOptions): Promise<void>
       '-d',
       '-s',
       sessionName,
+      // On the session, not just the exec: when another agent's session already
+      // runs, the tmux server exists and a new session inherits ITS environment,
+      // not this client's. A box created for another agent never had these set
+      // on the container, and without them the synced config is not read.
+      ...tmuxSessionEnvArgs(PI_BOX_RUN_ENV),
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],
