@@ -1,13 +1,20 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { hostname as osHostname } from 'node:os';
 import { basename, join } from 'node:path';
 import {
+  getMachineId,
+  getMachineLabel,
   hashProjectPath,
   listProjectsConfigured,
+  machineKeyFor,
+  machineKeyIn,
   registerProject,
+  sameMachine,
   sanitizeMnemonic,
+  thisMachine,
+  toMachineRef,
   withFileLock,
+  type MachineRef,
   type ProjectEntry,
 } from '@agentbox/config';
 import { normalizeRepoUrl } from './timeline-pr.js';
@@ -164,27 +171,66 @@ export function repoProjectKey(originUrl: string): string | undefined {
  * is its normalised remote; a project with no remote exists only where its
  * folder is, so its id carries the host.
  */
-export function workspaceProjectId(host: string, path: string, repoUrl?: string): string {
+export function workspaceProjectId(
+  host: MachineRef | string,
+  path: string,
+  repoUrl?: string,
+): string {
   return (
     (repoUrl === undefined ? undefined : repoProjectKey(repoUrl)) ??
-    hashProjectPath(`${host}:${stripTrailingSlash(path)}`)
+    hashProjectPath(`${machineKeyFor(host)}:${stripTrailingSlash(path)}`)
   );
+}
+
+/**
+ * A machine as the workspace layer names it: a `MachineRef`, or a bare hostname
+ * from a caller (or a record) that predates machine ids.
+ */
+export type HostArg = MachineRef | string;
+
+/**
+ * Machine `host`'s entry in a `hosts` map: under its id, else under its hostname
+ * for an entry written before ids existed (adopted, and re-stamped by the next
+ * write — see {@link restampHosts}).
+ */
+export function hostEntryOf<H>(hosts: Readonly<Record<string, H>>, host: HostArg): H | undefined {
+  const key = machineKeyIn(hosts, host);
+  return key === undefined ? undefined : hosts[key];
+}
+
+/**
+ * `hosts` with machine `me`'s legacy hostname-keyed entry moved under its id and
+ * labelled, or `null` when there is nothing to move. Only an id-less entry is
+ * moved: an entry keyed by some other machine's id is never touched.
+ */
+export function restampHosts(
+  hosts: Readonly<Record<string, WorkspaceHost>>,
+  me: MachineRef,
+): Record<string, WorkspaceHost> | null {
+  if (!me.id) return null;
+  const legacy = hosts[me.label];
+  const current = hosts[me.id];
+  if (!legacy && (!current || current.label === me.label)) return null;
+  const next = { ...hosts };
+  if (legacy && me.label !== me.id) delete next[me.label];
+  next[me.id] = { ...(current ?? legacy!), label: me.label };
+  return next;
 }
 
 /** This machine's folder for a workspace, when it has one. */
 export function workspaceRootOn(
   rec: { hosts: Record<string, { root: string }> },
-  host: string,
+  host: HostArg,
 ): string | undefined {
-  return rec.hosts[host]?.root;
+  return hostEntryOf(rec.hosts, host)?.root;
 }
 
 /** This machine's project folders for a workspace, in record order. */
 export function workspaceProjectRootsOn(
   rec: Pick<WorkspaceRecord, 'projects' | 'hosts'>,
-  host: string,
+  host: HostArg,
 ): string[] {
-  const map = rec.hosts[host]?.projectRoots ?? {};
+  const map = hostEntryOf(rec.hosts, host)?.projectRoots ?? {};
   const ordered = rec.projects.map((p) => map[p.id]).filter((p): p is string => Boolean(p));
   // A mapping for a project the record no longer lists is still a folder on this
   // machine; keeping it makes the read total rather than silently short.
@@ -229,7 +275,7 @@ function isV1(raw: unknown): raw is WorkspaceRecordV1 {
  */
 export function upgradeWorkspaceRecord(
   raw: WorkspaceRecordV1,
-  host: string,
+  host: HostArg,
   projects: readonly Pick<ProjectEntry, 'hash' | 'originalPath' | 'originUrl'>[],
 ): WorkspaceRecord {
   const known = new Map(projects.map((p) => [p.hash, p]));
@@ -257,7 +303,14 @@ export function upgradeWorkspaceRecord(
     id: raw.id,
     name: raw.name,
     projects: out,
-    hosts: { [host]: { root: raw.root, projectRoots, seenAt: raw.updatedAt } },
+    hosts: {
+      [machineKeyFor(host)]: {
+        root: raw.root,
+        projectRoots,
+        seenAt: raw.updatedAt,
+        ...(toMachineRef(host).id ? { label: toMachineRef(host).label } : {}),
+      },
+    },
     taskCounter: raw.taskCounter,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
@@ -276,7 +329,7 @@ export function upgradeWorkspaceRecord(
  */
 async function parseRecord(
   raw: string,
-  host: string,
+  host: MachineRef,
   registry: () => Promise<ProjectEntry[]>,
   migrate: boolean,
 ): Promise<WorkspaceRecord | null> {
@@ -290,7 +343,36 @@ async function parseRecord(
     return upgraded;
   }
   const rec = parsed as WorkspaceRecord;
-  return rec.version === 2 && typeof rec.id === 'string' ? rec : null;
+  if (rec.version !== 2 || typeof rec.id !== 'string') return null;
+  // This machine's own folder mapping, written under its hostname before machine
+  // ids existed: adopt it under the id, so a later hostname flip cannot orphan it.
+  const hosts = restampHosts(rec.hosts, host);
+  if (!hosts) return rec;
+  const restamped = { ...rec, hosts };
+  if (migrate) await persistRestamp(rec.id, host);
+  return restamped;
+}
+
+/** Write a re-stamped host mapping back, under the lock, re-reading first. Best-effort. */
+async function persistRestamp(id: string, me: MachineRef): Promise<void> {
+  try {
+    const dir = await resolveWorkspaceDir(id);
+    if (!dir) return;
+    await withFileLock(
+      workspaceFile(dir),
+      async () => {
+        const raw = await readFile(workspaceFile(dir), 'utf8').catch(() => null);
+        if (raw === null) return;
+        const cur = JSON.parse(raw) as WorkspaceRecord;
+        if (cur.version !== 2) return;
+        const hosts = restampHosts(cur.hosts, me);
+        if (hosts) await writeWorkspace({ ...cur, hosts });
+      },
+      WORKSPACE_LOCK,
+    );
+  } catch {
+    // the in-memory re-stamp still serves this read
+  }
 }
 
 /**
@@ -333,7 +415,7 @@ async function readWorkspaceRecord(id: string, migrate: boolean): Promise<Worksp
   if (!dir) return null;
   try {
     const raw = await readFile(workspaceFile(dir), 'utf8');
-    return await parseRecord(raw, osHostname(), registryOnce(), migrate);
+    return await parseRecord(raw, thisMachine(), registryOnce(), migrate);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     return null; // malformed: treat as absent, like loadQueue's skip
@@ -349,7 +431,7 @@ export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
-  const host = osHostname();
+  const host = thisMachine();
   const registry = registryOnce();
   const out: WorkspaceRecord[] = [];
   for (const name of entries) {
@@ -367,7 +449,7 @@ export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
 }
 
 export async function writeWorkspace(rec: WorkspaceRecord): Promise<void> {
-  const mnemonic = workspaceRootOn(rec, osHostname()) ?? Object.values(rec.hosts)[0]?.root;
+  const mnemonic = workspaceRootOn(rec, thisMachine()) ?? Object.values(rec.hosts)[0]?.root;
   const dir = (await resolveWorkspaceDir(rec.id)) ?? workspaceDir(rec.id, mnemonic);
   await mkdir(dir, { recursive: true });
   const final = workspaceFile(dir);
@@ -401,6 +483,8 @@ export interface AddWorkspaceDeps {
   register?: (absPath: string) => Promise<void>;
   /** The hub's own hostname; only its own folders reach the project registry. */
   hostname?: () => string;
+  /** The hub's own machine id (seam; defaults to `getMachineId()`). */
+  machineId?: () => string;
   /** Seam for the id of a new record. */
   newId?: () => string;
 }
@@ -414,8 +498,14 @@ export interface WorkspaceProjectInput {
 }
 
 export interface AddWorkspaceInput {
-  /** `os.hostname()` of the machine that scanned these folders. */
+  /** Hostname of the machine that scanned these folders: its label. */
   host: string;
+  /**
+   * `getMachineId()` of that machine — its identity, and the key its folders are
+   * stored under. Absent from a client that predates machine ids: the hostname
+   * is then the key, as before.
+   */
+  machineId?: string;
   /** Absolute folder on `host`. */
   root: string;
   name?: string;
@@ -436,11 +526,11 @@ export interface AddWorkspaceInput {
  */
 function matchWorkspace(
   records: WorkspaceRecord[],
-  input: { id?: string; host: string; root: string },
+  input: { id?: string; machine: MachineRef; root: string },
   projects: readonly WorkspaceProject[],
 ): WorkspaceRecord | undefined {
   if (input.id) return records.find((r) => r.id === input.id);
-  const byRoot = records.find((r) => r.hosts[input.host]?.root === input.root);
+  const byRoot = records.find((r) => hostEntryOf(r.hosts, input.machine)?.root === input.root);
   if (byRoot) return byRoot;
   const repos = new Set(
     projects.map((p) => normalizeRepoUrl(p.repoUrl)).filter((r): r is string => Boolean(r)),
@@ -448,7 +538,7 @@ function matchWorkspace(
   if (repos.size === 0) return undefined;
   return records.find(
     (r) =>
-      r.hosts[input.host] === undefined &&
+      hostEntryOf(r.hosts, input.machine) === undefined &&
       r.projects.some((p) => {
         const repo = normalizeRepoUrl(p.repoUrl);
         return repo !== undefined && repos.has(repo);
@@ -471,20 +561,30 @@ export async function addWorkspace(
   deps: AddWorkspaceDeps = {},
 ): Promise<WorkspaceRecord> {
   const register = deps.register ?? ((p: string) => registerProject(p));
-  const localHost = (deps.hostname ?? osHostname)();
+  const local: MachineRef = {
+    id: (deps.machineId ?? getMachineId)(),
+    label: (deps.hostname ?? getMachineLabel)(),
+  };
+  // A scan with no id is from a client that predates machine ids; when it names
+  // this hub's own hostname it IS this machine, and keys under this machine's id.
+  const machine: MachineRef = input.machineId
+    ? { id: input.machineId, label: input.host }
+    : input.host === local.label
+      ? local
+      : { label: input.host };
   const root = stripTrailingSlash(input.root);
   const scanned = input.projects.map((p) => {
     const path = stripTrailingSlash(p.path);
     return {
       path,
       project: {
-        id: workspaceProjectId(input.host, path, p.repoUrl),
+        id: workspaceProjectId(machine, path, p.repoUrl),
         name: p.name ?? basename(path),
         ...(p.repoUrl ? { repoUrl: p.repoUrl } : {}),
       } satisfies WorkspaceProject,
     };
   });
-  if (input.host === localHost) {
+  if (sameMachine({ host: machine.label, machineId: machine.id }, local)) {
     await Promise.all(scanned.map((s) => register(s.path).catch(() => {})));
   }
   const projects = scanned.map((s) => s.project);
@@ -497,7 +597,7 @@ export async function addWorkspace(
   // both miss the match and mint two workspaces for one folder.
   return withFileLock(
     ADD_LOCK,
-    async () => addLocked(input, deps, { root, projects, projectRoots }),
+    async () => addLocked(input, machine, deps, { root, projects, projectRoots }),
     WORKSPACE_LOCK,
   );
 }
@@ -505,11 +605,16 @@ export async function addWorkspace(
 /** The match-and-write half of `addWorkspace`, already under {@link ADD_LOCK}. */
 async function addLocked(
   input: AddWorkspaceInput,
+  machine: MachineRef,
   deps: AddWorkspaceDeps,
   scan: { root: string; projects: WorkspaceProject[]; projectRoots: Record<string, string> },
 ): Promise<WorkspaceRecord> {
-  const { root, projects, projectRoots } = scan;
-  const existing = matchWorkspace(await listWorkspaces(), input, projects);
+  const { root } = scan;
+  const existing = matchWorkspace(
+    await listWorkspaces(),
+    { ...(input.id ? { id: input.id } : {}), machine, root },
+    scan.projects,
+  );
   // An id that names nothing is a stale reference, not a request for a new
   // workspace: minting one here would answer `POST /workspaces {id}` with a
   // record under a DIFFERENT id, and leave the caller's tasks behind.
@@ -525,14 +630,29 @@ async function addLocked(
     async () => {
       const now = new Date().toISOString();
       const current = existing ? ((await readWorkspaceRecord(id, false)) ?? existing) : undefined;
-      const host: WorkspaceHost = { root, projectRoots, seenAt: now };
-      const hosts = { ...(current?.hosts ?? {}), [input.host]: host };
+      const prevKey = current ? machineKeyIn(current.hosts, machine) : undefined;
+      const { projects, projectRoots } = keepLocalProjectIds(
+        scan,
+        prevKey === undefined ? undefined : current?.hosts[prevKey],
+      );
+      const key = machineKeyFor(machine);
+      const host: WorkspaceHost = {
+        root,
+        projectRoots,
+        seenAt: now,
+        ...(machine.id ? { label: machine.label } : {}),
+      };
+      const hosts = { ...(current?.hosts ?? {}) };
+      // The machine's hostname-keyed entry, from before it sent an id: replaced
+      // by the id-keyed one, never kept beside it.
+      if (prevKey !== undefined && prevKey !== key) delete hosts[prevKey];
+      hosts[key] = host;
       // A project this scan did not find is dropped, unless another machine
       // still maps it: that scan speaks only for its own host.
       const kept = (current?.projects ?? []).filter(
         (p) =>
           !projects.some((n) => n.id === p.id) &&
-          Object.entries(hosts).some(([h, m]) => h !== input.host && p.id in m.projectRoots),
+          Object.entries(hosts).some(([h, m]) => h !== key && p.id in m.projectRoots),
       );
       const rec: WorkspaceRecord = {
         version: 2,
@@ -549,6 +669,42 @@ async function addLocked(
     },
     WORKSPACE_LOCK,
   );
+}
+
+/**
+ * A no-remote project's id hashes the machine that holds it, and that name used
+ * to be the hostname. Re-deriving it from the machine id would hand the same
+ * folder a new id and orphan every task filed against the old one, so a folder
+ * this machine already mapped keeps the id it was mapped under.
+ */
+function keepLocalProjectIds(
+  scan: { projects: WorkspaceProject[]; projectRoots: Record<string, string> },
+  previous: WorkspaceHost | undefined,
+): { projects: WorkspaceProject[]; projectRoots: Record<string, string> } {
+  if (!previous) return scan;
+  const byPath = new Map(Object.entries(previous.projectRoots).map(([pid, path]) => [path, pid]));
+  const projects: WorkspaceProject[] = [];
+  const projectRoots: Record<string, string> = {};
+  for (const p of scan.projects) {
+    const path = scan.projectRoots[p.id];
+    const old = path === undefined ? undefined : byPath.get(path);
+    const id = !p.repoUrl && old !== undefined ? old : p.id;
+    projects.push(id === p.id ? p : { ...p, id });
+    if (path !== undefined) projectRoots[id] = path;
+  }
+  return { projects, projectRoots };
+}
+
+/**
+ * Re-key machine `me`'s legacy hostname entry in workspace `id` under its id.
+ * For a machine other than the reading hub's (whose own entries a read already
+ * adopts): a PC's detect on a control box. A no-op when there is nothing to move.
+ */
+export async function restampWorkspaceHost(id: string, me: MachineRef): Promise<void> {
+  if (!me.id) return;
+  const rec = await readWorkspace(id);
+  if (!rec || !restampHosts(rec.hosts, me)) return;
+  await updateWorkspace(id, (cur) => ({ ...cur, hosts: restampHosts(cur.hosts, me) ?? cur.hosts }));
 }
 
 export async function renameWorkspace(id: string, name: string): Promise<WorkspaceRecord | null> {
@@ -574,10 +730,10 @@ export async function removeWorkspace(id: string): Promise<boolean> {
  */
 export function workspaceProjectIds(
   rec: Pick<WorkspaceRecord, 'projects' | 'hosts'>,
-  host: string = osHostname(),
+  host: HostArg = thisMachine(),
 ): string[] {
   const ids = new Set(rec.projects.map((p) => p.id));
-  for (const path of Object.values(rec.hosts[host]?.projectRoots ?? {})) {
+  for (const path of Object.values(hostEntryOf(rec.hosts, host)?.projectRoots ?? {})) {
     ids.add(hashProjectPath(path));
   }
   return [...ids];
@@ -587,8 +743,8 @@ export function workspaceProjectIds(
  * The record as the API serves it, from the reading hub's point of view: its own
  * folder (when it has one) and the project ids its clients hold.
  */
-export function toWorkspaceView(rec: WorkspaceRecord, host: string = osHostname()): Workspace {
-  const local = rec.hosts[host];
+export function toWorkspaceView(rec: WorkspaceRecord, host: HostArg = thisMachine()): Workspace {
+  const local = hostEntryOf(rec.hosts, host);
   return {
     id: rec.id,
     name: rec.name,
@@ -609,13 +765,13 @@ export function toWorkspaceView(rec: WorkspaceRecord, host: string = osHostname(
 export function findWorkspaceContaining<T extends { hosts: Record<string, { root: string }> }>(
   records: readonly T[],
   absPath: string,
-  host: string,
+  host: HostArg,
 ): T | null {
   const target = stripTrailingSlash(absPath);
   let best: T | null = null;
   let bestRoot = '';
   for (const rec of records) {
-    const root = rec.hosts[host]?.root;
+    const root = hostEntryOf(rec.hosts, host)?.root;
     if (!root) continue;
     if (target !== root && !target.startsWith(`${root}/`)) continue;
     if (!best || root.length > bestRoot.length) {
@@ -630,8 +786,8 @@ export function findWorkspaceContaining<T extends { hosts: Record<string, { root
 export interface BoxWorkspaceKey {
   /** The box repo's `origin`. The only key that works from a machine with no checkout. */
   originUrl?: string;
-  /** The machine `projectRoot` is on. */
-  host?: string;
+  /** The machine `projectRoot` is on (a bare string is its hostname). */
+  host?: HostArg;
   /** The box's project folder on `host`. */
   projectRoot?: string;
 }
@@ -658,7 +814,7 @@ export function workspaceForBox<
     projects: readonly { repoUrl?: string }[];
     hosts: Record<string, { root: string }>;
   },
->(records: readonly T[], key: BoxWorkspaceKey, localHost: string = osHostname()): T | null {
+>(records: readonly T[], key: BoxWorkspaceKey, localHost: HostArg = thisMachine()): T | null {
   if (key.projectRoot) {
     const here = findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
     if (here) return here;

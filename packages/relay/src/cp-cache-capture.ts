@@ -13,10 +13,11 @@
 import { execFile } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { getMachineId, getMachineLabel } from '@agentbox/config';
 import { cpCacheMetaPath, cpCacheTarPath, type CpCacheMeta } from './cp-cache.js';
 
 export interface CpCacheCaptureDeps {
@@ -77,7 +78,8 @@ export async function captureCpCacheEntry(
       isDir: info.isDirectory(),
       capturedAt: new Date().toISOString(),
       size: tarInfo.size,
-      capturedOn: hostname(),
+      capturedOn: getMachineLabel(),
+      capturedOnMachineId: getMachineId(),
     };
     const base = deps.controlPlaneUrl.replace(/\/+$/, '');
     await putBlob(

@@ -7,7 +7,7 @@
  * box exists either way, and failing the create over a bookkeeping call would be
  * worse than a warning.
  */
-import { hostname } from 'node:os';
+import { thisMachine } from '@agentbox/config';
 import { log } from '@agentbox/cli-kit';
 import { findWorkspaceContaining } from '@agentbox/relay';
 import type { HubApiClient, HubApiAssignTarget } from '../control-plane/hub-api-client.js';
@@ -44,7 +44,7 @@ export async function preflightTaskAssignment(
   const ws =
     (process.env['AGENTBOX_WORKSPACE']
       ? workspaces.find((w) => w.id === process.env['AGENTBOX_WORKSPACE'])
-      : undefined) ?? findWorkspaceContaining(workspaces, projectRoot, hostname());
+      : undefined) ?? findWorkspaceContaining(workspaces, projectRoot, thisMachine());
   if (!ws) {
     throw new TaskIdError(
       `--tasks needs a workspace: no registered workspace contains ${projectRoot}. Register one with \`agentbox workspace add\`.`,

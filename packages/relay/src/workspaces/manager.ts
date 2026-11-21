@@ -10,13 +10,21 @@ import {
   writeFile,
   mkdir,
 } from 'node:fs/promises';
-import { homedir, hostname as osHostname } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
-import { withFileLock } from '@agentbox/config';
+import {
+  getMachineId,
+  getMachineLabel,
+  sameMachine,
+  thisMachine,
+  withFileLock,
+  type MachineRef,
+} from '@agentbox/config';
 import {
   AGENT_SESSION_ENV_VARS,
   encodeClaudeProjectsKey,
+  ptySocketPath,
   readPtyMeta,
   removePtySession,
   scrubAgentSessionEnv,
@@ -285,7 +293,7 @@ function migrateRecord(rec: StoredManagerRecord): ManagerRecord {
   const kind: ManagerKind = rec.kind === 'hub' ? 'tmux' : rec.kind;
   return kind === rec.kind && rec.host
     ? (rec as ManagerRecord)
-    : { ...rec, kind, host: rec.host ?? osHostname() };
+    : { ...rec, kind, host: rec.host ?? getMachineLabel() };
 }
 
 async function readExitFile(file: string): Promise<number | undefined> {
@@ -415,6 +423,10 @@ export function registeredManager(
   };
   // One carrier at a time: a record re-registered on the other one must not
   // keep the old carrier's fields, or every probe would read the dead half.
+  // The registering machine is where it runs now; an id-less registration
+  // (an older client) cannot vouch for the previous run's id.
+  if (input.machineId) next.machineId = input.machineId;
+  else delete next.machineId;
   if (input.kind === 'pty') delete next.tmuxSession;
   if (input.kind === 'tmux') delete next.pty;
   delete next.pid;
@@ -521,9 +533,50 @@ export interface ManagerProbe {
   ptyHostAlive?: (socket: string) => Promise<boolean>;
   ptyStop?: (meta: { socket: string; token: string }) => Promise<boolean>;
   hostname?: () => string;
+  /** This machine's id (seam; defaults to `getMachineId()`). */
+  machineId?: () => string;
+  /** Where this machine's pty sockets live (seam for `~/.agentbox`). */
+  ptyBaseDir?: string;
   isPidAlive?: (pid: number) => boolean;
   processStartTime?: (pid: number) => Promise<string | undefined>;
   now?: () => number;
+}
+
+/** The machine a probe runs on: its id, labelled with its hostname. */
+export function probeMachine(probe: Pick<ManagerProbe, 'hostname' | 'machineId'> = {}): MachineRef {
+  return { id: (probe.machineId ?? getMachineId)(), label: (probe.hostname ?? getMachineLabel)() };
+}
+
+/** Whether `rec` names this machine, by machine id — or, for a record that predates ids, by hostname. */
+export function runsOnThisMachine(
+  rec: Pick<ManagerRecord, 'host' | 'machineId'>,
+  probe: Pick<ManagerProbe, 'hostname' | 'machineId'> = {},
+): boolean {
+  return sameMachine(rec, probeMachine(probe));
+}
+
+/**
+ * A pty-hosted manager's socket, in THIS user's `~/.agentbox/pty`, answering.
+ *
+ * Strictly stronger evidence of locality than any recorded name: the socket is
+ * addressed by the manager id alone, under this machine's own home, so a host
+ * serving it is running here — whatever the record's `host` says. It is what
+ * keeps a session reachable when the hostname flips under it.
+ */
+export async function ptySessionAnswersHere(
+  rec: Pick<ManagerRecord, 'id' | 'kind'>,
+  probe: Pick<ManagerProbe, 'ptyHostAlive' | 'ptyBaseDir'> = {},
+): Promise<boolean> {
+  if (rec.kind !== 'pty') return false;
+  return await (probe.ptyHostAlive ?? ptyHostAlive)(ptySocketPath(rec.id, probe.ptyBaseDir));
+}
+
+/** {@link runsOnThisMachine}, or proven local by its pty socket (see {@link ptySessionAnswersHere}). */
+export async function isManagerLocal(
+  rec: Pick<ManagerRecord, 'id' | 'kind' | 'host' | 'machineId'>,
+  probe: ManagerProbe = {},
+): Promise<boolean> {
+  return runsOnThisMachine(rec, probe) || (await ptySessionAnswersHere(rec, probe));
 }
 
 /** Derived from the process, never from the record, and never writes. */
@@ -531,21 +584,21 @@ export async function managerStatus(
   rec: ManagerRecord,
   probe: ManagerProbe = {},
 ): Promise<ManagerStatus> {
-  const host = (probe.hostname ?? osHostname)();
-  if (rec.kind === 'pty' && rec.host === host) {
+  const here = runsOnThisMachine(rec, probe);
+  if (rec.kind === 'pty' && (here || (await ptySessionAnswersHere(rec, probe)))) {
     // The socket IS the liveness: a host that answers is serving the session,
     // and the pid guards against a meta file left by a crash.
     if (!rec.pty) return 'stopped';
     if (await (probe.ptyHostAlive ?? ptyHostAlive)(rec.pty.socket)) return 'running';
     return 'stopped';
   }
-  if (rec.kind === 'tmux' && rec.host === host) {
+  if (rec.kind === 'tmux' && here) {
     const session = rec.tmuxSession ?? managerSessionName(rec.id);
     return (await tmuxSessionExists(session, probe.exec ?? defaultExec)) ? 'running' : 'stopped';
   }
   // A pid is only meaningful on the machine it came from: probing it on a remote
   // hub would ask about whatever unrelated process holds that number there.
-  if (rec.pid !== undefined && rec.host === host) {
+  if (rec.pid !== undefined && here) {
     if (!(probe.isPidAlive ?? isPidAlive)(rec.pid)) return 'stopped';
     if (rec.pidStartedAt) {
       // An unreadable start time is not evidence the process changed.
@@ -572,8 +625,11 @@ export async function readManagerExit(wsId: string, id: string): Promise<number 
  * The session's transcript, tmux server and pid are only on the machine it runs
  * on, so no other hub can resume it — whatever kind it is.
  */
-export function ranElsewhere(rec: ManagerRecord, host: string): boolean {
-  return rec.host !== host;
+export function ranElsewhere(
+  rec: Pick<ManagerRecord, 'host' | 'machineId'>,
+  host: MachineRef | string,
+): boolean {
+  return !sameMachine(rec, host);
 }
 
 /**
@@ -606,6 +662,10 @@ export function toManagerView(
     lastExit?: number;
     /** The reading hub's hostname, for `hostIsHub`; defaults to this machine's. */
     hostname?: string;
+    /** The reading hub's machine id, for `hostIsHub`; defaults to this machine's. */
+    machineId?: string;
+    /** Locality already proven another way (a pty socket answering here). */
+    local?: boolean;
     /** The manager's detached Claude background session (see `backgroundFor`). */
     background?: ManagerBackground;
     /**
@@ -628,7 +688,17 @@ export function toManagerView(
   } = {
     ...rec,
     status: ctx.status,
-    hostIsHub: rec.host === (ctx.hostname ?? osHostname()),
+    hostIsHub:
+      ctx.local === true ||
+      sameMachine(
+        rec,
+        ctx.hostname === undefined && ctx.machineId === undefined
+          ? thisMachine()
+          : {
+              ...(ctx.machineId ? { id: ctx.machineId } : {}),
+              label: ctx.hostname ?? getMachineLabel(),
+            },
+      ),
     resumable: block === undefined,
     ...(block ? { resumeBlockedBy: block } : {}),
     workspaceName: ctx.workspaceName,
@@ -675,8 +745,10 @@ export interface DetectManagerInput {
   pid?: number;
   /** The pid's start time on the hub's machine; only when `host` is the hub's. */
   pidStartedAt?: string;
-  /** `os.hostname()` of the machine the session runs on. */
+  /** Hostname of the machine the session runs on: its label. */
   host: string;
+  /** `getMachineId()` of that machine; absent from a client that predates machine ids. */
+  machineId?: string;
   /** `$AGENTBOX_MANAGER` of the caller: set inside a hub-run manager's own session. */
   managerId?: string;
   /**
@@ -726,6 +798,7 @@ export async function upsertDetectedManager(
               cwd: input.cwd,
               sessionId: input.sessionId,
               host: input.host,
+              ...(input.machineId ? { machineId: input.machineId } : {}),
               tmuxSession: input.tmuxSession,
               boxIds: [],
               boxJobIds: [],
@@ -740,6 +813,7 @@ export async function upsertDetectedManager(
               cwd: input.cwd,
               sessionId: input.sessionId,
               host: input.host,
+              ...(input.machineId ? { machineId: input.machineId } : {}),
               ...(input.pid !== undefined ? { pid: input.pid } : {}),
               ...(input.pid !== undefined && input.pidStartedAt
                 ? { pidStartedAt: input.pidStartedAt }
@@ -786,6 +860,10 @@ export async function upsertDetectedManager(
         delete next.lastExit;
       }
       next.host = input.host;
+      // The detecting machine is where the session runs now; an id-less client
+      // cannot vouch for an id, so a stale one is dropped rather than kept.
+      if (input.machineId) next.machineId = input.machineId;
+      else delete next.machineId;
       if (next.kind === 'external') {
         if (input.pid !== undefined) next.pid = input.pid;
         else delete next.pid;
@@ -959,6 +1037,8 @@ export interface StartManagerSessionInput {
   env?: NodeJS.ProcessEnv;
   /** This machine's hostname, for the registration's `host`. */
   hostname?: () => string;
+  /** This machine's id, for the registration's `machineId`. */
+  machineId?: () => string;
   /** `auto` (the default) is the pty host when it can run, else tmux. */
   carrier?: ManagerCarrier;
   /** Resolved config for the pty host; ignored by the tmux carrier. */
@@ -993,6 +1073,7 @@ export async function startManagerSession(
       argv: input.argv,
       ...(input.env ? { env: input.env } : {}),
       ...(input.hostname ? { hostname: input.hostname } : {}),
+      ...(input.machineId ? { machineId: input.machineId } : {}),
       ...(input.ptySettings ? { settings: input.ptySettings } : {}),
       ...(input.spawnPtyHost ? { spawnHost: input.spawnPtyHost } : {}),
       ...(input.ptyBaseDir ? { baseDir: input.ptyBaseDir } : {}),
@@ -1052,7 +1133,8 @@ export async function startManagerTmuxSession(
     id: rec.id,
     agent: rec.agent,
     kind: 'tmux',
-    host: (input.hostname ?? osHostname)(),
+    host: (input.hostname ?? getMachineLabel)(),
+    machineId: (input.machineId ?? getMachineId)(),
     cwd: rec.cwd,
     tmuxSession: session,
     argv: input.argv,
@@ -1412,10 +1494,10 @@ export async function resumeManagerSession(
   opts: { prompt?: string } = {},
 ): Promise<ManagerRegistration> {
   const id = rec.id;
-  const host = (probe.hostname ?? osHostname)();
-  if (ranElsewhere(rec, host)) {
+  const me = probeMachine(probe);
+  if (ranElsewhere(rec, me) && !(await ptySessionAnswersHere(rec, probe))) {
     throw new ManagerConflictError(
-      `manager ${id} runs on ${rec.host}; its transcript is not on this machine (${host}), so it cannot be resumed here`,
+      `manager ${id} runs on ${rec.host}; its transcript is not on this machine (${me.label}), so it cannot be resumed here`,
     );
   }
   if ((await managerStatus(rec, probe)) === 'running') {
@@ -1440,6 +1522,7 @@ export async function resumeManagerSession(
     manager: rec,
     argv: buildManagerArgv(rec.agent, rec.sessionId, opts.prompt),
     ...(probe.hostname ? { hostname: probe.hostname } : {}),
+    ...(probe.machineId ? { machineId: probe.machineId } : {}),
     ...(probe.exec ? { exec: probe.exec } : {}),
     ...(probe.env ? { env: probe.env } : {}),
     // Without these a resume ignored the project's `manager.*` config entirely:

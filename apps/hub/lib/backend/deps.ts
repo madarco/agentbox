@@ -5,7 +5,9 @@ import type { ManagerCarrier, ManagerExec, PushLineStat, SpawnPtyHost } from '@a
 // its methods there. A slice takes this narrow dependency object instead of the
 // relay handle, so it can be unit-tested without a relay and reviewed without
 // reading the box/provider code it does not touch.
-import type { QueueJob, ReconcileContext } from '@agentbox/relay';
+import type { HostArg, QueueJob, ReconcileContext } from '@agentbox/relay';
+import { hostname as osHostname } from 'node:os';
+import { getMachineId, type MachineRef } from '@agentbox/config';
 
 /** What the timeline needs to know about one box, read from the host's records. */
 export interface TimelineBoxFact {
@@ -24,8 +26,8 @@ export interface TimelineBoxFact {
    * machine created), so the timeline joins on it before the folder.
    */
   originUrl?: string;
-  /** The machine `projectRoot` is on — this hub's own hostname for a local record. */
-  host?: string;
+  /** The machine `projectRoot` is on — this hub's own machine for a local record. */
+  host?: HostArg;
 }
 
 export interface DiffStat {
@@ -80,6 +82,8 @@ export interface BackendDeps {
    * depend on the machine running the suite.
    */
   hostname?: () => string;
+  /** The hub's own machine id (`getMachineId()`); pinned by tests like `hostname`. */
+  machineId?: () => string;
   isPidAlive?: (pid: number) => boolean;
   /** `ps -o lstart=` of a pid; faked in tests like the pid probe. */
   processStartTime?: (pid: number) => Promise<string | undefined>;
@@ -126,4 +130,12 @@ export async function reconcileContext(deps: BackendDeps): Promise<ReconcileCont
       ...(j.boxId ? { boxId: j.boxId } : {}),
     })),
   };
+}
+
+/**
+ * The machine this hub runs on: its id, labelled with its hostname. Records name
+ * a machine by id; the hostname only matches one written before ids existed.
+ */
+export function hubMachine(deps: Pick<BackendDeps, 'hostname' | 'machineId'>): MachineRef {
+  return { id: (deps.machineId ?? getMachineId)(), label: (deps.hostname ?? osHostname)() };
 }

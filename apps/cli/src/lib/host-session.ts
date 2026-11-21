@@ -8,7 +8,8 @@
  */
 import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
-import { homedir, hostname } from 'node:os';
+import { homedir } from 'node:os';
+import { getMachineId, getMachineLabel, type MachineRef } from '@agentbox/config';
 import { basename, dirname, join } from 'node:path';
 import { log } from '@agentbox/cli-kit';
 import { findWorkspaceContaining, sessionTurn } from '@agentbox/relay';
@@ -88,7 +89,10 @@ export interface HostSessionHint {
   /** The folder the session runs in — where `--resume` finds its transcript. */
   cwd: string;
   pid?: number;
+  /** This machine's hostname: its label. */
   host: string;
+  /** This machine's `getMachineId()`: its identity. */
+  machineId?: string;
   /** Set inside a hub-run manager's own session. */
   managerId?: string;
   /** `$TMUX_PANE` when the session's terminal runs inside tmux: where the hub can type to it. */
@@ -108,6 +112,7 @@ export interface HostSessionDeps {
   cwd?: string;
   home?: string;
   hostname?: () => string;
+  machineId?: () => string;
   exists?: (path: string) => boolean;
   listDir?: (dir: string) => string[];
   mtimeMs?: (path: string) => number | undefined;
@@ -224,7 +229,8 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
     agent = nearest?.name === 'claude' ? 'claude' : 'codex';
   }
   const cwd = deps.cwd ?? process.cwd();
-  const host = (deps.hostname ?? hostname)();
+  const host = (deps.hostname ?? getMachineLabel)();
+  const machineId = (deps.machineId ?? getMachineId)();
   const hint = env['AGENTBOX_MANAGER']?.trim();
   const managerId = hint && MANAGER_ID_RE.test(hint) ? hint : undefined;
   const run = env['AGENTBOX_MANAGER_RUN']?.trim();
@@ -241,6 +247,7 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
       : undefined;
   const base = {
     host,
+    machineId,
     ...(managerId ? { managerId } : {}),
     ...(runId ? { runId } : {}),
     ...(livePane ? { tmuxPane: livePane } : {}),
@@ -329,6 +336,14 @@ export interface RegisteredManager {
  * on every `agentbox tasks`/`create` call from inside a session. The folders the
  * hub refuses to create a workspace at are answered here, without reading disk.
  */
+/** The machine a hint was detected on. */
+function hintMachine(hint: Pick<HostSessionHint, 'host' | 'machineId'>): MachineRef {
+  return {
+    id: hint.machineId ?? getMachineId(),
+    label: hint.host || getMachineLabel(),
+  };
+}
+
 async function scanNeededFor(
   client: Pick<HubApiClient, 'listWorkspaces'>,
   hint: HostSessionHint,
@@ -341,7 +356,7 @@ async function scanNeededFor(
     const workspaces = fetched ?? (await client.listWorkspaces());
     // This machine's own name, as the hint reports it: a folder mapping under
     // any other host names a path somewhere else.
-    return findWorkspaceContaining(workspaces, cwd, hint.host || hostname()) === null;
+    return findWorkspaceContaining(workspaces, cwd, hintMachine(hint)) === null;
   } catch {
     // The listing is only how we AVOID the scan; a hub that cannot answer still
     // gets the facts it may need to register the folder.

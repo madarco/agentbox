@@ -467,13 +467,18 @@ export interface HubApiWorkspaceHost {
   /** Project id -> absolute path on that machine. */
   projectRoots: Record<string, string>;
   seenAt: string;
+  /** That machine's hostname, on an entry keyed by its machine id. */
+  label?: string;
 }
 
 export interface HubApiWorkspace {
   id: string;
   name: string;
   projects: HubApiWorkspaceProject[];
-  /** Keyed by hostname; a workspace can be checked out on several machines. */
+  /**
+   * Keyed by machine id (hostname for an entry written before machine ids); a
+   * workspace can be checked out on several machines.
+   */
   hosts: Record<string, HubApiWorkspaceHost>;
   /** The HUB's own folder for it; absent when the hub holds no checkout. */
   root?: string;
@@ -504,6 +509,8 @@ function normalizeWorkspace(ws: HubApiWorkspace): HubApiWorkspace {
 /** `POST /workspaces`: the scan the client ran on its own machine. */
 export interface HubApiWorkspaceAdd {
   host: string;
+  /** This machine's `getMachineId()`: the key its folders are stored under. */
+  machineId?: string;
   root: string;
   name?: string;
   projects: { path: string; name?: string; repoUrl?: string }[];
@@ -580,8 +587,10 @@ export interface HubApiManager {
   cwd: string;
   sessionId?: string;
   title?: string;
-  /** The machine the session runs on: only there can it be attached, resumed or typed into. */
+  /** The machine the session runs on (its hostname label): only there can it be attached, resumed or typed into. */
   host: string;
+  /** That machine's id; absent on a record from before machine ids, which `host` then identifies. */
+  machineId?: string;
   /** Whether the hub that answered is that machine. */
   hostIsHub: boolean;
   pid?: number;
@@ -614,6 +623,7 @@ export interface HubApiManagerDetect {
   cwd: string;
   pid?: number;
   host?: string;
+  machineId?: string;
   managerId?: string;
   tmuxPane?: string;
   tmuxSession?: string;

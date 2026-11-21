@@ -3,7 +3,6 @@
 // are only ever true NOW — a box working a task, a PR waiting to be merged —
 // which are built at read time and never stored.
 import { stat } from 'node:fs/promises';
-import { hostname as osHostname } from 'node:os';
 import {
   findManager,
   parseShortstat,
@@ -31,7 +30,14 @@ import {
   type WorkTask,
 } from '@agentbox/relay';
 import { inBackground } from './background';
-import { reconcileContext, type BackendDeps, type DiffStat, type TimelineBoxFact } from './deps';
+import { sameMachineRef, type MachineRef } from '@agentbox/config';
+import {
+  hubMachine,
+  reconcileContext,
+  type BackendDeps,
+  type DiffStat,
+  type TimelineBoxFact,
+} from './deps';
 import { createGithubPrSync, type GithubPrSync } from './github-prs';
 import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
@@ -379,16 +385,16 @@ function orNullAfter<T>(p: Promise<T | null>, ms: number): Promise<T | null> {
   });
 }
 
-/** This hub's own hostname: a workspace's folders are keyed by it. */
-function hostOf(deps: BackendDeps): string {
-  return (deps.hostname ?? osHostname)();
+/** This hub's own machine: a workspace's folders are keyed by it. */
+function hostOf(deps: BackendDeps): MachineRef {
+  return hubMachine(deps);
 }
 
 export function createTimelineBackend(
   deps: BackendDeps,
   opts: TimelineBackendOptions = {},
 ): TimelineBackend {
-  const localHost = (): string => hostOf(deps);
+  const localHost = (): MachineRef => hostOf(deps);
   const sync = opts.sync ?? createGithubPrSync(deps);
   const now = opts.now ?? Date.now;
   const diffTimeout = opts.diffTimeoutMs ?? DIFF_TIMEOUT_MS;
@@ -614,7 +620,7 @@ export interface BoxTimelineSeams {
  */
 export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBackend {
   const { deps } = seams;
-  const localHost = (): string => hostOf(deps);
+  const localHost = (): MachineRef => hostOf(deps);
 
   /** The box's persisted record; nothing when no workspace exists to log it in. */
   async function factOf(id: string): Promise<TimelineBoxFact | undefined> {
@@ -649,7 +655,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
 
   /** A folder on THIS machine, still there. A fact with no host names one here (Phase 1's rule). */
   async function hostRepoHere(fact: TimelineBoxFact): Promise<boolean> {
-    if (fact.host && fact.host !== localHost()) return false;
+    if (fact.host && !sameMachineRef(fact.host, localHost())) return false;
     if (!fact.projectRoot) return false;
     return (await stat(fact.projectRoot).catch(() => null)) !== null;
   }

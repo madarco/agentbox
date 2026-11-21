@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { hashProjectPath } from '@agentbox/config';
+import { hashProjectPath, thisMachine } from '@agentbox/config';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addWorkspace,
@@ -30,6 +30,8 @@ import {
 const noRegister = { register: async () => {} };
 
 const HERE = hostname();
+/** Where this machine's folders are keyed: its machine id, not its hostname. */
+const ME = thisMachine();
 
 // The temp HOME is per FILE, so the registry carries over between tests here.
 beforeEach(async () => {
@@ -127,15 +129,15 @@ describe('addWorkspace', () => {
     expect(ws.projects.map((p) => p.id)).toEqual(
       ['a', 'b', 'c'].map((n) => hashProjectPath(`github.com/acme/${n}`)),
     );
-    expect(ws.hosts[HERE]?.root).toBe(root);
-    expect(ws.hosts[HERE]?.projectRoots[ws.projects[0]!.id]).toBe(join(root, 'a'));
+    expect(ws.hosts[ME.id]?.root).toBe(root);
+    expect(ws.hosts[ME.id]?.projectRoots[ws.projects[0]!.id]).toBe(join(root, 'a'));
     expect(ws.taskCounter).toBe(0);
   });
 
   it('keys a project with no remote by host and folder', async () => {
     const root = await makeTree();
     const ws = await add(root, scanOf(root, ['a'], false));
-    expect(ws.projects[0]!.id).toBe(workspaceProjectId(HERE, join(root, 'a')));
+    expect(ws.projects[0]!.id).toBe(workspaceProjectId(ME, join(root, 'a')));
     expect(ws.projects[0]!.repoUrl).toBeUndefined();
   });
 
@@ -180,7 +182,7 @@ describe('addWorkspace', () => {
       noRegister,
     );
     expect(theirs.id).toBe(mine.id);
-    expect(theirs.hosts[HERE]?.root).toBe(root);
+    expect(theirs.hosts[ME.id]?.root).toBe(root);
     expect(theirs.hosts['laptop']?.root).toBe('/home/dev/work');
     // `b` is only on this machine, and a scan from another host does not drop it.
     expect(theirs.projects).toHaveLength(2);
@@ -194,7 +196,7 @@ describe('addWorkspace', () => {
     const first = await add(one, scanOf(one, ['a']));
     const second = await add(two, scanOf(two, ['a']));
     expect(second.id).not.toBe(first.id);
-    expect((await readWorkspace(first.id))?.hosts[HERE]?.root).toBe(one);
+    expect((await readWorkspace(first.id))?.hosts[ME.id]?.root).toBe(one);
     expect(await listWorkspaces()).toHaveLength(2);
   });
 
@@ -203,7 +205,7 @@ describe('addWorkspace', () => {
     const first = await add(root, scanOf(root, ['a']));
     const moved = await add('/moved', [], { id: first.id });
     expect(moved.id).toBe(first.id);
-    expect(moved.hosts[HERE]?.root).toBe('/moved');
+    expect(moved.hosts[ME.id]?.root).toBe('/moved');
   });
 
   it('keeps two unrelated folders apart', async () => {
@@ -255,7 +257,7 @@ describe('workspace registry', () => {
   it('the API view drops the counter and answers for the reading host', async () => {
     const root = await makeTree();
     const ws = await add(root, scanOf(root, ['a']));
-    const view = toWorkspaceView(ws, HERE);
+    const view = toWorkspaceView(ws, ME);
     expect(view).not.toHaveProperty('taskCounter');
     expect(view.root).toBe(root);
     // A box and the project registry key by folder, so both ids answer.
@@ -320,7 +322,7 @@ describe('the v1 upgrade', () => {
     await writeFile(workspaceFile(dir), JSON.stringify({ ...v1, root }));
     const read = await readWorkspace(v1.id);
     expect(read?.version).toBe(2);
-    expect(read?.hosts[HERE]?.root).toBe(root);
+    expect(read?.hosts[ME.id]?.root).toBe(root);
     expect((await listWorkspaces()).map((w) => w.id)).toEqual([v1.id]);
   });
 

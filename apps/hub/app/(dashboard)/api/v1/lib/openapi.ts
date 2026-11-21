@@ -1006,7 +1006,13 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     host: {
                       type: 'string',
-                      description: '`os.hostname()` of the machine the folders are on.',
+                      description: 'Hostname of the machine the folders are on (its display label).',
+                    },
+                    machineId: {
+                      type: 'string',
+                      format: 'uuid',
+                      description:
+                        "That machine's `~/.agentbox/machine-id`: its identity. `host` is only its label. Optional for clients that predate machine ids.",
                     },
                     root: { type: 'string', description: 'Absolute folder path on `host`.' },
                     name: {
@@ -1680,7 +1686,13 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     host: {
                       type: 'string',
-                      description: 'Hostname of the machine the session runs on.',
+                      description: 'Hostname of the machine the session runs on (its display label).',
+                    },
+                    machineId: {
+                      type: 'string',
+                      format: 'uuid',
+                      description:
+                        "That machine's `~/.agentbox/machine-id`: its identity. `host` is only its label. Optional for clients that predate machine ids.",
                     },
                     managerId: { type: 'string', pattern: '^[0-9a-f]{16}$' },
                     tmuxPane: {
@@ -2275,7 +2287,13 @@ export function buildOpenApi(): Record<string, unknown> {
                     },
                     host: {
                       type: 'string',
-                      description: 'os.hostname() of the machine the session runs on.',
+                      description: 'Hostname of the machine the session runs on (its display label).',
+                    },
+                    machineId: {
+                      type: 'string',
+                      format: 'uuid',
+                      description:
+                        "That machine's `~/.agentbox/machine-id`: its identity. `host` is only its label. Optional for clients that predate machine ids.",
                     },
                     cwd: { type: 'string', description: 'Absolute folder on that machine.' },
                     tmuxSession: {
@@ -3944,6 +3962,11 @@ export function buildOpenApi(): Record<string, unknown> {
               description: 'Project id -> absolute path on that machine.',
             },
             seenAt: { type: 'string' },
+            label: {
+              type: 'string',
+              description:
+                "That machine's hostname, for display. Present on an entry keyed by machine id.",
+            },
           },
           required: ['root', 'projectRoots', 'seenAt'],
         },
@@ -3961,7 +3984,8 @@ export function buildOpenApi(): Record<string, unknown> {
             hosts: {
               type: 'object',
               additionalProperties: { $ref: '#/components/schemas/WorkspaceHost' },
-              description: 'Keyed by `os.hostname()` of the machine holding the folders.',
+              description:
+                "Keyed by the machine id of the machine holding the folders (an entry written before machine ids is keyed by its hostname and has no `label`). Each entry's `label` is that machine's hostname.",
             },
             root: {
               type: 'string',
@@ -4247,7 +4271,13 @@ export function buildOpenApi(): Record<string, unknown> {
             host: {
               type: 'string',
               description:
-                'os.hostname() of the machine the session runs on. Every process op (start, resume, attach, stop, sessions, message) only works on a hub running there; anywhere else it answers 409 `wrong_host` with `details.host` naming this machine, and the client retries against the hub on it.',
+                'Hostname of the machine the session runs on: a display label. Every process op (start, resume, attach, stop, sessions, message) only works on a hub running there; anywhere else it answers 409 `wrong_host` with `details.host` (the label) and `details.machineId` naming that machine, and the client retries against the hub on it.',
+            },
+            machineId: {
+              type: 'string',
+              format: 'uuid',
+              description:
+                "The id of that machine (`~/.agentbox/machine-id`): what decides where the session runs. Absent on a record from before machine ids, which `host` then identifies until the machine re-stamps it.",
             },
             hostIsHub: {
               type: 'boolean',
