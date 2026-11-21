@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
 import { agentSettingsFor } from '@agentbox/config';
-import type { AgentSettings } from '@agentbox/core';
-import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
+import type { AgentSettings, LoopbackEndpoint } from '@agentbox/core';
+import { DOCKER_HOST_ALIAS, findLoopbackEndpoints, LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
 import {
   agentTuiEnv,
   ensureAgentInstalled,
@@ -15,6 +15,7 @@ import {
 } from '@agentbox/sandbox-core';
 import {
   addProjectAlias,
+  claudeSettingsEndpointPaths,
   filterHostHooks,
   setInstallMethodNative,
   trustWorkspace,
@@ -119,6 +120,8 @@ export interface EnsureClaudeVolumeResult {
    * workspace `400 role 'system'` bug.
    */
   workspaceTrusted?: boolean;
+  /** Host-loopback `settings.json` `env.*_BASE_URL` values rewritten to `host.docker.internal` (#403). */
+  loopbackEndpoints?: LoopbackEndpoint[];
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -240,13 +243,16 @@ export async function ensureClaudeVolume(
   let installMethodFixed = false;
   let aliasedProjectKey = false;
   let workspaceTrusted = false;
+  let loopbackEndpoints: LoopbackEndpoint[] = [];
   try {
     const settingsResult = await maybeFilterTo(
       join(hostClaude, 'settings.json'),
       join(filterDir, 'settings.json'),
       hostHome,
+      { loopback: { host: DOCKER_HOST_ALIAS, source: '~/.claude/settings.json' } },
     );
     filteredHookCount += settingsResult.removedHooks;
+    loopbackEndpoints = settingsResult.loopbackEndpoints;
     if (!seedClaudeJson) {
       // The volume already has a `_claude.json`; write-once leaves it intact
       // (see seedClaudeJson). No host overlay is generated for it — the
@@ -290,7 +296,13 @@ export async function ensureClaudeVolume(
       installMethodFixed = true;
       workspaceTrusted = true;
     }
-    if (filteredHookCount > 0 || installMethodFixed || aliasedProjectKey || workspaceTrusted) {
+    if (
+      filteredHookCount > 0 ||
+      installMethodFixed ||
+      aliasedProjectKey ||
+      workspaceTrusted ||
+      loopbackEndpoints.length > 0
+    ) {
       args.push('-v', `${filterDir}:/src-filter:ro`);
     }
     // Pre-scan for symlinks the in-container rsync can't dereference. With
@@ -391,6 +403,7 @@ export async function ensureClaudeVolume(
     installMethodFixed,
     aliasedProjectKey,
     workspaceTrusted,
+    loopbackEndpoints,
   };
 }
 
@@ -409,18 +422,22 @@ async function maybeFilterTo(
     setInstallMethodNative?: boolean;
     aliasProject?: { from: string; to: string };
     trustWorkspacePath?: string;
+    /** Rewrite host-loopback `env.*_BASE_URL` values to `host` (#403). */
+    loopback?: { host: string; source: string };
   } = {},
 ): Promise<{
   removedHooks: number;
   installMethodFixed: boolean;
   aliasedProjectKey: boolean;
   workspaceTrusted: boolean;
+  loopbackEndpoints: LoopbackEndpoint[];
 }> {
   const zero = {
     removedHooks: 0,
     installMethodFixed: false,
     aliasedProjectKey: false,
     workspaceTrusted: false,
+    loopbackEndpoints: [],
   };
   let parsed: unknown;
   try {
@@ -448,7 +465,20 @@ async function maybeFilterTo(
     working = r.data;
     trusted = r.trusted;
   }
-  if (filtered.removedCommands.length === 0 && !installFixed && !aliased && !trusted) {
+  const loopbackEndpoints = opts.loopback
+    ? findLoopbackEndpoints(working, {
+        paths: claudeSettingsEndpointPaths(working),
+        source: opts.loopback.source,
+        rewriteHost: opts.loopback.host,
+      })
+    : [];
+  if (
+    filtered.removedCommands.length === 0 &&
+    !installFixed &&
+    !aliased &&
+    !trusted &&
+    loopbackEndpoints.length === 0
+  ) {
     return zero;
   }
   await writeFile(dest, JSON.stringify(working, null, 2));
@@ -457,6 +487,7 @@ async function maybeFilterTo(
     installMethodFixed: installFixed,
     aliasedProjectKey: aliased,
     workspaceTrusted: trusted,
+    loopbackEndpoints,
   };
 }
 

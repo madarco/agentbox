@@ -229,3 +229,18 @@ export function setInstallMethodNative<T = unknown>(data: T): SetInstallMethodNa
   obj.autoUpdatesProtectedForNative = true;
   return { data: clone as T, applied: changed };
 }
+
+/**
+ * Where Claude Code keeps model endpoints in `settings.json`: the `env` block's
+ * `*_BASE_URL` keys (`ANTHROPIC_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, …),
+ * which Claude Code exports into its own process. Derived from the data so a
+ * new `*_BASE_URL` variable needs no list here.
+ */
+export function claudeSettingsEndpointPaths(data: unknown): string[][] {
+  if (typeof data !== 'object' || data === null) return [];
+  const env = (data as Record<string, unknown>)['env'];
+  if (typeof env !== 'object' || env === null || Array.isArray(env)) return [];
+  return Object.keys(env)
+    .filter((k) => k.endsWith('_BASE_URL'))
+    .map((k) => ['env', k]);
+}

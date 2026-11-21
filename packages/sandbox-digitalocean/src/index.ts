@@ -132,7 +132,15 @@ export {
   mapDigitalOceanProvisionError,
   type SizeChoice,
 } from './preflight.js';
-export { detectEgressIp, type DetectEgressIpOptions } from './egress-ip.js';
+export {
+  CREATE_EGRESS_HINT,
+  INBOUND_EGRESS_HINT,
+  REPAIR_EGRESS_HINT,
+  SYNC_EGRESS_HINT,
+  detectEgressCidr,
+  detectEgressIp,
+  type DetectEgressIpOptions,
+} from './egress-ip.js';
 export {
   allowAllOutboundRules,
   controlPlaneInboundRules,

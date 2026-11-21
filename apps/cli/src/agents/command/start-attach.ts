@@ -7,10 +7,14 @@
  * short-circuit to the SDK attach path before any of that.
  */
 import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@agentbox/config';
+import { parseProviderWarning, type LoopbackEndpoint } from '@agentbox/core';
 import {
+  agentSyncModule,
   inspectBox,
   execInBox,
+  loopbackEndpointNotes,
   recordLastAgent,
+  openAgentConfigTarget,
   seedAgentDeclaredFiles,
   startBox,
   unpauseBox,
@@ -37,7 +41,7 @@ import {
 } from '../../session-teleport/index.js';
 import { clampSpinnerLine } from '@agentbox/cli-kit';
 import type { AgentStartOptions } from './options.js';
-import type { AgentCliSpec } from '@agentbox/cli-kit';
+import type { AgentCliSpec, HookOutput } from '@agentbox/cli-kit';
 
 /**
  * The tmux session `<agent> attach` / `<agent> start` should target: the
@@ -63,7 +67,7 @@ export function resolveSessionName(
  * session already resolved by the caller (teleport); it is uploaded once the box
  * is up and its flags ride ahead of the user's args.
  */
-async function startOrAttach(
+export async function startOrAttach(
   a: AgentCliSpec,
   box: BoxRecord,
   agentArgs: string[],
@@ -147,27 +151,61 @@ async function startOrAttach(
   // servers, refreshed auth state, …) reach the in-box agent. Runs for
   // `<agent> start` (opt out with --no-sync-config), never for `<agent> attach`
   // — a plain reattach must not clobber the in-box state with the host copy.
-  const volume = a.runtime.resolveConfigVolume(box);
+  //
+  // A box created for another agent has no volume of this agent's mounted (and
+  // docker cannot add one), so the target may be a staging volume that `flush`
+  // copies into the container's config dir — see `openAgentConfigTarget`.
   const syncConfig = opts.syncConfig !== false;
-  if (syncConfig && volume) {
-    s.message(`syncing ${a.text.syncConfigLabel} into box volume`);
-    await a.runtime.ensureVolume(
-      { volume },
-      { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
-    );
+  const target = await openAgentConfigTarget({
+    agent: a.id,
+    container: box.container,
+    boxId: box.id,
+    image: box.image,
+    recordVolume: a.runtime.resolveConfigVolume(box),
+    // attach and --no-sync-config never stage: they leave a box with no mounted
+    // volume of this agent's untouched, as they always have.
+    stage: syncConfig,
+  });
+  const message = (line: string): void => s.message(clampSpinnerLine(line));
+  let seeded: HookOutput | void = undefined;
+  let configured: HookOutput | void = undefined;
+  let endpointWarnings: string[] = [];
+  if (target) {
+    try {
+      const volume = target.volume;
+      if (syncConfig) {
+        s.message(`syncing ${a.text.syncConfigLabel} into box volume`);
+        const synced = await a.runtime.ensureVolume(
+          { volume },
+          { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
+        );
+        // Shown after the spinner: a host-loopback endpoint was rewritten, or the
+        // gateway behind it will refuse the box (#403).
+        endpointWarnings = (await loopbackEndpointNotes(a.id, loopbackEndpointsOf(synced))).map(
+          (n) => parseProviderWarning(n) ?? n,
+        );
+      }
+      // Box-only, image-versioned seeding. The DECLARED files (`spec.seeds`:
+      // codex's activity hooks, opencode's state plugin, claude's setup skill)
+      // are placed for every agent from one call; the hook is only for the rest
+      // (claude's credential mirror + plugin native deps). Runs even with
+      // --no-sync-config so an image upgrade still propagates.
+      await seedAgentDeclaredFiles(a.id, volume, box.image);
+      // The create-time post-sync step (codex's AGENTS.override.md box facts). A
+      // mounted volume got it when the box was created; a staged one is the
+      // first time this agent's config reaches the box.
+      if (!target.mounted) await agentSyncModule(a.id)?.afterVolumeSync?.(volume, box.image);
+      seeded = await a.hooks?.afterVolumeSync?.(box, { volume, message });
+      // One mirror, after everything that writes the volume (no-op when mounted).
+      await target.flush();
+    } finally {
+      await target.release();
+    }
+    configured = await a.hooks?.afterConfigSync?.(box, {
+      ...(target.mounted ? { volume: target.volume } : {}),
+      message,
+    });
   }
-  // Box-only, image-versioned seeding. The DECLARED files (`spec.seeds`:
-  // codex's activity hooks, opencode's state plugin, claude's setup skill) are
-  // placed for every agent from one call; the hook is only for the rest
-  // (claude's credential mirror + plugin native deps). Runs even with
-  // --no-sync-config so an image upgrade still propagates.
-  if (volume) await seedAgentDeclaredFiles(a.id, volume, box.image);
-  const seeded = volume
-    ? await a.hooks?.afterVolumeSync?.(box, {
-        volume,
-        message: (line) => s.message(clampSpinnerLine(line)),
-      })
-    : undefined;
 
   // Install the agent if this box's image lacks it — a box created for another
   // agent, or from a checkpoint predating the agent selection. No-op otherwise.
@@ -249,7 +287,9 @@ async function startOrAttach(
 
   s.stop(`box ${box.container} ready`);
   if (resyncWarning && ownsFirstTurn) log.warn(resyncWarning);
+  for (const w of endpointWarnings) log.warn(w);
   for (const emit of seeded?.deferred ?? []) emit();
+  for (const emit of configured?.deferred ?? []) emit();
 
   if (!wantAttach) {
     outro(
@@ -399,4 +439,11 @@ export function wireStartAction(a: AgentCliSpec, cmd: Command): Command {
       handleLifecycleError(err);
     }
   });
+}
+
+/** The `loopbackEndpoints` an agent runtime's `ensureVolume` reported, if any. */
+function loopbackEndpointsOf(result: unknown): LoopbackEndpoint[] {
+  if (typeof result !== 'object' || result === null) return [];
+  const list = (result as { loopbackEndpoints?: unknown }).loopbackEndpoints;
+  return Array.isArray(list) ? (list as LoopbackEndpoint[]) : [];
 }

@@ -568,6 +568,9 @@ export async function runAgentCreate(
       // agent-surface default is not one of them.
       createOpts: {
         ...pickQueueCreateOpts(a, opts),
+        // `providerName` is the bare name (`remote-docker`), so the engine host
+        // from `docker:<host>` has to ride alongside it or the worker has none.
+        ...(remoteHost ? { remoteHost } : {}),
         persistent,
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
         carry: carryForQueue,
@@ -613,6 +616,11 @@ export async function runAgentCreate(
         hostWorkspace: opts.workspace,
       });
     }
+    // Host config this box will NOT receive (Pi's MCP definitions outside
+    // ~/.pi/agent). Here because it runs once per create on both paths, right
+    // before the box is built — and best-effort: a scan must never cost a box.
+    const notices = await a.runtime.hostConfigNotices?.().catch(() => []);
+    for (const n of notices ?? []) log.info(n);
   };
   // Portless is Docker Desktop-only — skip on cloud.
   const offerPortless = async (): Promise<void> => {
@@ -1029,6 +1037,9 @@ export async function runAgentCreate(
         ? `  ·  n ${String(result.record.projectIndex)}`
         : '';
     s.stop(`box ready${nSuffix}`);
+    // Same as the hub path above: a providerWarning (e.g. a host-loopback model
+    // endpoint the volume sync rewrote) only flashed past inside the spinner.
+    for (const w of cmdLog.warnings()) log.warn(w);
     if (createResyncWarning && seedOwnsFirstTurn) log.warn(createResyncWarning);
     // Anything a hook wanted to print: deferred until now, because a `log.*`
     // while the spinner is live fights it for the same line.

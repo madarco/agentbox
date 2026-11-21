@@ -6,7 +6,16 @@ import {
   parseDockerPort,
   parseSize,
   parseSnapshotName,
+  remoteDockerBackend,
 } from '../src/backend.js';
+
+describe('static agent config', () => {
+  it('is seeded at create, because prepare bakes only the shared agentless image', () => {
+    // Without this a `agentbox docker:<host> pi` box arrived with none of the
+    // host's ~/.pi/agent config or skills (nor ~/.claude, ~/.agents, ...).
+    expect(remoteDockerBackend.seedsAgentStaticAtCreate).toBe(true);
+  });
+});
 
 describe('mapDockerState', () => {
   // A spec-mirror table: `docker inspect -f {{.State.Status}}` has a closed set
@@ -90,6 +99,7 @@ describe('buildRunArgv', () => {
     for (const flag of [
       '--cap-add=SYS_ADMIN',
       '--cap-add=NET_ADMIN',
+      '--cap-add=SYS_PTRACE',
       '--device=/dev/fuse',
       '--security-opt=apparmor:unconfined',
       '--security-opt=seccomp=unconfined',
@@ -122,6 +132,18 @@ describe('buildRunArgv', () => {
     const argv = buildRunArgv({ ...base, cpu: 4, memory: 8 });
     expect(argv[argv.indexOf('--cpus') + 1]).toBe('4');
     expect(argv[argv.indexOf('--memory') + 1]).toBe('8g');
+  });
+
+  it('runs an init as PID 1 so orphaned processes get reaped', () => {
+    const argv = buildRunArgv(base);
+    expect(argv.indexOf('--init')).toBeGreaterThan(-1);
+    expect(argv.indexOf('--init')).toBeLessThan(argv.indexOf('agentbox/box:abc'));
+  });
+
+  it('drops --init only for the missing-docker-init fallback', () => {
+    const argv = buildRunArgv({ ...base, init: false });
+    expect(argv).not.toContain('--init');
+    expect(argv.slice(-3)).toEqual(['agentbox/box:abc', 'sleep', 'infinity']);
   });
 
   it('ends with the image and a command that keeps the container alive', () => {

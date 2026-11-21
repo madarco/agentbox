@@ -73,7 +73,7 @@ Auto-approve is on by default because the box is isolated from your host; pass `
 
 You can run different agents in different boxes for the same project and switch between them with `agentbox dashboard`. Claude, Codex and Pi resume sessions; OpenCode does not yet (resume starts a fresh box).
 
-A box carries **only the agent you launched it for** — its binary, its config volume and its credentials. `agentbox claude` gives you a box with no Codex, OpenCode or Pi credentials in it at all. If you later point another agent at that same box (from `agentbox dashboard`, or by running `agentbox codex <box>`), AgentBox installs it on first use, which adds a few seconds to that one launch.
+A box carries **only the agent you launched it for** — its binary, its config volume and its credentials. `agentbox claude` gives you a box with no Codex, OpenCode or Pi credentials in it at all. If you later point another agent at that same box (from `agentbox dashboard`, or by running `agentbox codex <box>`), AgentBox installs it on first use, which adds a few seconds to that one launch. `agentbox <agent> start <box>` also syncs that agent's host config into the box (its model, provider and MCP settings), the same as a box created for it; `--no-sync-config` and `attach` skip the sync.
 
 <Callout title="WHY">
   An agent you aren't using has no reason to have its login sitting in the box. Shipping only the
@@ -100,6 +100,14 @@ agentbox pi login                     # opens Pi's TUI; run /login, then /exit
 Sign-in runs in a throwaway container, but the agent's own login TUI never takes over your terminal: AgentBox drives it behind the scenes, prints the approval URL, and prompts you for the code (or API key) itself. That keeps the flow identical in every terminal emulator.
 
 **Pi is the exception**, and not by omission: its only sign-in is the in-TUI `/login` slash command, so there is no prompt sequence a host can drive. `agentbox pi login` hands your terminal to Pi itself — run `/login`, pick a provider, then `/exit`, and the captured `auth.json` is reused by every later box. Pi also reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and the other provider keys straight from your environment, which is the headless path.
+
+### Pi's config in a box
+
+Every Pi box gets your host `~/.pi/agent` (settings, `AGENTS.md`, extensions, prompts, themes, skills), on local Docker, Remote Docker and every cloud provider. A few things worth knowing:
+
+- **Symlinked skills arrive as real files.** Skills under `~/.pi/agent/skills/` are often symlinks into a checkout elsewhere on your machine. AgentBox resolves them on the host before copying, so they work in the Linux box instead of arriving as dangling links. A link that is already broken on the host is skipped and named in the create log.
+- **Pin the version** with `agentbox config set pi.version 0.70.2` (an exact version or npm dist-tag; ranges such as `^0.70` are refused; default `latest`) so new boxes stop drifting to the newest release.
+- **MCP servers defined outside `~/.pi/agent` are not copied.** Pi's MCP extension can also read `~/.config/mcp/mcp.json` and import servers from other tools' configs (Claude Code, Cursor, …). Those files can hold API keys, so AgentBox leaves them on the host and prints a note at create time with the file and how many servers it defines — never a server's name or contents. `~/.pi/agent/mcp.json` itself is always copied, even when it is a symlink to a file elsewhere (as stow or chezmoi set it up); the note then tells you the box got a copy of that file. To use those servers in a box, put the ones you need in `~/.pi/agent/mcp.json`, or copy a file explicitly with [`carry:`](/docs/agentbox-yaml#carry).
 
 Two escape hatches:
 
@@ -180,6 +188,37 @@ Say yes to that prompt only when you see it — signing in when you did not need
   Sign in once on the host. Install a skill or sign in there, and the next box picks it up
   automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).
 </Callout>
+
+## Model gateways on your machine
+
+If your agent config points at a model gateway on your own machine (LiteLLM, Ollama, LM Studio, a
+local proxy) through `http://127.0.0.1:<port>` or `http://localhost:<port>`, that address means the
+box itself once it is inside a box. AgentBox handles these endpoints when it syncs your config:
+
+| Agent    | Where the endpoint lives                                                      |
+| -------- | ----------------------------------------------------------------------------- |
+| Codex    | `~/.codex/config.toml`: `model_providers.<id>.base_url`                       |
+| Claude   | `~/.claude/settings.json`: `env.*_BASE_URL` (e.g. `ANTHROPIC_BASE_URL`)       |
+| OpenCode | `~/.config/opencode/opencode.json(c)`: `provider.<id>.options.baseURL`        |
+| Pi       | `~/.pi/agent/models.json`: `providers.<id>.baseUrl` (and per-model `baseUrl`) |
+
+- **Local Docker** rewrites the host part to `host.docker.internal` in the box's copy (port and
+  path unchanged) and prints one line per rewrite. Only endpoints from your host config are
+  rewritten; config you change inside the box is left alone, so a box-local service stays reachable.
+  Your host files are never modified.
+- **Linux Docker engine**: there `host.docker.internal` is the docker bridge address (usually
+  `172.17.0.1`), so a gateway listening on `127.0.0.1` only still refuses the box. AgentBox probes
+  the bridge address on create and on `<agent> start`. If nothing answers, it warns you to bind the
+  gateway to `0.0.0.0` or the bridge address (for Ollama: `OLLAMA_HOST=0.0.0.0`). Docker Desktop and
+  OrbStack forward to your machine's loopback, so no change is needed there.
+- **Cloud providers** never rewrite: a cloud box has no route back to your machine. The bake
+  (`agentbox prepare`) warns once for each loopback endpoint; point it at an address the box can reach
+  (a public URL or a tunnel).
+- **Remote Docker** boxes do not receive your host agent config, so these endpoints never reach
+  them.
+
+Provider URLs set as host environment variables (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`) are not
+forwarded into boxes at all; set them in the agent's config file instead.
 
 ## Add an agent AgentBox does not ship
 

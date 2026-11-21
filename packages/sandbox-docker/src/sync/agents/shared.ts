@@ -96,6 +96,15 @@ function tmuxConfigSubcommands(sessionName: string): readonly (readonly string[]
  * See {@link tmuxConfigSubcommands} for the shared subcommand definitions
  * and why each setting is set the way it is.
  */
+/**
+ * `tmux new-session -e K=V` pairs for an agent's `boxRunEnv`. Needed because a
+ * new session inherits the tmux SERVER's environment, so `docker exec -e` alone
+ * does not reach it once another agent's session started the server.
+ */
+export function tmuxSessionEnvArgs(env: Readonly<Record<string, string>>): string[] {
+  return Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+}
+
 export function buildTmuxSessionArgs(sessionName: string): string[] {
   const out: string[] = [];
   for (const sub of tmuxConfigSubcommands(sessionName)) {

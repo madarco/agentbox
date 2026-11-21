@@ -37,6 +37,16 @@ build images from a Dockerfile). Three things differ from Hetzner:
   blocks *all* outbound traffic, so the per-box firewall ships allow-all
   outbound rules (tcp/udp/icmp → `0.0.0.0/0` + `::/0`) alongside the SSH-only
   inbound rule locked to the host egress IP.
+- **Host egress is IPv4-only (both VPS providers).** The shared detector
+  (`detectEgressIp`/`detectEgressCidr` in `@agentbox/sandbox-core`) probes over
+  `family: 4` and accepts only an IPv4 answer, because the host dials the VPS's
+  public IPv4. It used to accept an IPv6 answer and the callers appended `/32`,
+  which Hetzner rejects (422 `rules[].source_ips`). No IPv4 → fail loud. Each
+  call site passes its own `overrideHint` (the `*_EGRESS_HINT` constants in each
+  provider's `egress-ip.ts`): `create` names `AGENTBOX_<PROVIDER>_FIREWALL_SOURCE`
+  / `--inbound open`, `firewall sync` names its `--source`, `inbound` and the
+  connect-failure repair point at those two, and prepare / control-plane deploy
+  name nothing because they have no override.
 
 Defaults: size `s-2vcpu-4gb`, region `nyc3`, stock image `ubuntu-24-04-x64`.
 Override per box with `box.sizeDigitalocean` / `AGENTBOX_DIGITALOCEAN_REGION`.
@@ -125,6 +135,11 @@ otherwise have grown a per-provider tail:
   and absent-tolerant: almost no host has a `~/.openclaw`, and staging one
   produces `tarballPath: null` rather than failing a bake
   (`packages/sandbox-cloud/test/agent-static-all.test.ts`).
+  A model endpoint on host loopback (`http://127.0.0.1:<port>` in codex/claude/
+  opencode/pi config) is staged unchanged and reported as a `providerWarning` per
+  endpoint, because a cloud box has no route back to the host. Local docker rewrites
+  it to `host.docker.internal` instead; see "Host-loopback model endpoints" in
+  [`architecture.md`](./architecture.md).
 - **The run-env** (`boxRunEnv`) is merged by `agentRunEnv` at provision time on the
   clouds, and returned by the agent's docker module on docker. Those are two
   different code paths for one declaration, which is exactly where they drift —
@@ -792,11 +807,14 @@ The `CloudBackend` interface is the same, but the implementation
   SSH-keys-import API (that would make the key reusable on other VPSes).
 - **Per-box Hetzner Cloud Firewall**, also minted at provision time,
   rule set = `[{direction: 'in', port: '22', protocol: 'tcp', source_ips: ['<host-egress>/32']}]`.
-  Outbound unrestricted. Source IP auto-detected via a 3-probe race
-  (api.ipify.org → ifconfig.io → icanhazip.com); if all three fail, the
-  call **fails loud** rather than silently opening `0.0.0.0/0`. Override
-  via `AGENTBOX_HETZNER_FIREWALL_SOURCE` env or `--firewall-source <cidr>`
-  on the prepare command.
+  Outbound unrestricted. Source IP is the host's **IPv4** egress, auto-detected
+  by probing in sequence over IPv4 only (api4.ipify.org → ipv4.icanhazip.com →
+  ifconfig.io; an IPv6 answer is skipped); if none yields an IPv4 address, the
+  call **fails loud** rather than silently opening `0.0.0.0/0`. Overrides
+  differ per command and the error names only the one that applies: `create`
+  takes `AGENTBOX_HETZNER_FIREWALL_SOURCE` or `--inbound open`, and
+  `agentbox hetzner firewall sync` takes `--source <cidr>`. Prepare and
+  control-plane deploy have no override.
 - **State mapping** (`backend.state`): Hetzner `running` → `running`;
   transitional states (`starting`/`initializing`/`stopping`/`migrating`/`rebuilding`)
   all report `running` so callers don't ping-pong; `off` → `paused`
@@ -1005,6 +1023,10 @@ brief:
   OpenCode, agentbox-ctl, the vscode user, VNC, tmux). The resulting
   `templateId:tag` is persisted to `~/.agentbox/e2b-prepared.json` and to
   `box.imageE2b`; every `create --provider e2b` boots from it in seconds.
+  The SDK PUTs every `copy()` source to GCS at once; on Node >= 26 global
+  `fetch` speaks HTTP/2 and GCS resets the burst (`NGHTTP2_ENHANCE_YOUR_CALM`,
+  surfaced as `FileUploadError: ... fetch failed`), so `prepareE2b` wraps the
+  build in `withHttp1Uploads` (`packages/sandbox-e2b/src/upload-http1.ts`).
 - **In-box docker (DinD).** Contrary to the original "same as Vercel"
   assumption, E2B's microVM grants the capabilities a container runtime needs
   (full root + `cap_sys_admin` + working namespaces, verified 2026-06-23). The
@@ -1106,6 +1128,17 @@ scaffold already solved every one of them, so the provider implements the ~14
 the in-box relay + `CloudBoxPoller` bridge, git-push-by-bundle, carry, and
 credential sync unchanged.
 
+**Static agent config is seeded at create, not baked.** Every other cloud
+provider bakes the host's static agent config (`stageAllAgentStatic`) into its
+base snapshot during `prepare`, and the create path assumes it is there.
+Remote Docker's `prepare` builds only the shared, agentless box image on the
+engine — one image per engine, possibly shared with a control box — so it
+declares `CloudBackend.seedsAgentStaticAtCreate`, and `createCloudProvider`
+runs `seedAgentStaticForCreate` (upload + extract, narrowed to the box's own
+agents) after the agent install and before the credential seed. Without it a
+remote box arrived with none of `~/.pi/agent`, `~/.claude`, `~/.agents`, ….
+An out-of-tree provider with the same shape opts in with the same flag.
+
 **Transport.** One OpenSSH ControlMaster per box (`@agentbox/sandbox-core`'s
 `SshTunnelManager`, shared with hetzner/digitalocean), and every docker command
 runs through one chokepoint: `ssh <dest> bash -lc 'docker …'`
@@ -1172,12 +1205,23 @@ reverse-engineered from the `buildAttach` argv (an inference that only holds whe
 the box IS the machine).
 
 **Nested engines.** When the engine is itself an AgentBox box (the
-agentbox-in-agentbox dev loop), its dockerd has no `CAP_SYS_PTRACE` and cannot
-bind-mount `/proc/<pid>/ns/net` for a container init running as a different uid
-than the daemon. The provider detects this by asking the *engine*
+agentbox-in-agentbox dev loop) that was created before docker boxes got
+`CAP_SYS_PTRACE` (#396), its dockerd cannot bind-mount `/proc/<pid>/ns/net` for a
+container init running as a different uid than the daemon. Boxes created since
+carry the cap, but the workaround stays for older outer boxes. The provider detects this by asking the *engine*
 (`test -f /etc/agentbox/box.env`) — not by reading its own `AGENTBOX=1`, which
 would be the wrong signal, since the CLI can run in a box while the engine sits on
 a real machine — and forces the box init to uid 0.
+
+**PID 1 is tini.** `buildRunArgv` passes `--init`, the same as the local docker
+provider's `runBox`, so docker's bundled tini runs as PID 1 with `sleep infinity`
+as its child. Everything in a box arrives through `docker exec`, and a background
+job whose exec'd shell exits first is reparented to PID 1; a bare `sleep` never
+`wait()`s, so those piled up as zombies for the box's whole life (and exhausted a
+`--pids-limit`). If the engine has no `docker-init` (`exec: "docker-init":
+executable file not found`), provision removes the half-created container and
+retries once without `--init`, logging a warning; any other `docker run` failure
+is surfaced unchanged.
 
 **No credential.** There is nothing in `secrets.env`: the provider authenticates
 as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its

@@ -41,6 +41,7 @@ import {
 import { piLoginBinding } from './login-binding.js';
 import { piAuthAvailable } from './host-creds.js';
 import { piAuthFileHasProviders } from '../auth-shape.js';
+import { scanPiMcpConfig } from '../mcp-notice.js';
 
 const PI_SPEC = resolveAgentSpec('pi');
 /** Pi declares a credential; unwrap once so the two call sites below share it. */
@@ -184,6 +185,8 @@ export const piRuntime: AgentRuntime = {
         'Pi login finished but no auth.json was captured — sign in inside the box if needed.',
       );
   },
+
+  hostConfigNotices: async () => (await scanPiMcpConfig()).notices,
 
   signIn: (image, extraArgs) => signInToPi(image, extraArgs),
   loginBinding: (o) => piLoginBinding(o),

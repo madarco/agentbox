@@ -1,3 +1,5 @@
+import { readdir, readFile, rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { GitWorktreeRecord } from '@agentbox/core';
 import { execInBox } from '../docker.js';
@@ -230,12 +232,84 @@ export async function chownGitBindParents(args: {
   }
 }
 
+/**
+ * The box shares the host's `.git` (bind-mounted) but sees none of the host's
+ * other worktree folders, and the host sees none of the box's (they live in the
+ * container). Each side's prune would therefore deregister the other's
+ * worktrees (#408):
+ *
+ * - in-box `git gc` (incl. the `gc --auto` that commit/fetch/merge trigger)
+ *   prunes host worktrees idle past `gc.worktreePruneExpire`. `never` turns that
+ *   off; `--system` because ~/.gitconfig is the host's read-only bind.
+ * - a host `git gc` / `git worktree prune` would drop a live box's registration.
+ *   Prune skips locked entries, so each box locks its own; `removeInBoxWorktree`
+ *   drops the entry (lock included) on destroy.
+ *
+ * Runs from `bindWorktrees`, i.e. on create, checkpoint restore and every start,
+ * so boxes created before this existed are covered on their next start.
+ */
+export async function guardWorktreeRegistrations(
+  container: string,
+  gitWorktreePaths: string[],
+  log: (line: string) => void,
+): Promise<void> {
+  const cfg = await execa(
+    'docker',
+    [
+      'exec',
+      '--user',
+      'root',
+      container,
+      'git',
+      'config',
+      '--system',
+      'gc.worktreePruneExpire',
+      'never',
+    ],
+    { reject: false },
+  );
+  if (cfg.exitCode !== 0) {
+    log(
+      `could not set gc.worktreePruneExpire in-box (best-effort): ${(cfg.stderr || cfg.stdout).trim()}`,
+    );
+  }
+  for (const wt of gitWorktreePaths) {
+    const lock = await execa(
+      'docker',
+      [
+        'exec',
+        '--user',
+        'vscode',
+        container,
+        'git',
+        '-C',
+        wt,
+        'worktree',
+        'lock',
+        '--reason',
+        `agentbox box ${container}`,
+        wt,
+      ],
+      { reject: false },
+    );
+    const out = (lock.stderr || lock.stdout).trim();
+    if (lock.exitCode !== 0 && !out.includes('already locked')) {
+      log(`could not lock worktree ${wt} (best-effort): ${out}`);
+    }
+  }
+}
+
 export async function bindWorktrees(
   container: string,
   binds: WorktreeBindSpec[],
   onLog?: (line: string) => void,
 ): Promise<void> {
   const log = onLog ?? (() => {});
+  await guardWorktreeRegistrations(
+    container,
+    binds.map((b) => b.gitWorktreePath),
+    log,
+  );
   // Root first; nested mountpoints live inside the root worktree's tree so
   // the root bind has to be in place before we cover sub-paths.
   const ordered = [...binds].sort((a, b) =>
@@ -342,8 +416,9 @@ async function prefetchHostLfs(
  * tools canonicalize. Cost: the mount is per-container-namespace and
  * doesn't survive `docker stop`, so `startBox` re-binds via
  * {@link bindWorktrees}. Host's `git worktree list` will show each box's
- * registered path as `/home/vscode/.agentbox-worktrees/...` (container-only
- * — host marks it `prunable`, which is harmless).
+ * registered path as `/home/vscode/.agentbox-worktrees/...` (container-only,
+ * so host git would call it prunable; `bindWorktrees` locks it so a host
+ * `git gc` / `git worktree prune` leaves it alone).
  */
 export async function seedWorkspace(opts: SeedWorkspaceOptions): Promise<void> {
   const log = opts.onLog ?? (() => {});
@@ -681,23 +756,39 @@ export async function seedWorkspaceFromDir(opts: {
 }
 
 /**
- * Remove an in-container worktree from the host's main repo's worktree
- * registry. Called from `destroyBox` per registered worktree. The registered
- * path (`gitWorktreePath`) was a container-only path (under `WORKTREE_ROOT`),
- * so `git worktree remove` will see it as missing and we go straight to
- * `worktree prune` to drop the registry entry. Best-effort throughout.
+ * Deregister a box's worktree from the host main repo: delete exactly the
+ * `.git/worktrees/<id>` entry whose `gitdir` points at this box's path. Used by
+ * `destroyBox` and by a failed create's cleanup.
+ *
+ * Not `git worktree remove`: the entry is locked (see
+ * {@link guardWorktreeRegistrations}), and on a host where the container-only
+ * path happens to exist it would delete that directory. Never a repo-wide
+ * `git worktree prune` either, which would also deregister every other live box
+ * and any host worktree on an unmounted path (#408). The branch is kept.
  */
 export async function removeInBoxWorktree(args: {
   hostMainRepo: string;
   gitWorktreePath: string;
 }): Promise<void> {
-  const remove = await execa(
-    'git',
-    ['-C', args.hostMainRepo, 'worktree', 'remove', '--force', args.gitWorktreePath],
-    { reject: false },
-  );
-  if (remove.exitCode === 0) return;
-  await execa('git', ['-C', args.hostMainRepo, 'worktree', 'prune'], { reject: false });
+  const adminRoot = join(args.hostMainRepo, '.git', 'worktrees');
+  const want = resolve(args.gitWorktreePath, '.git');
+  let ids: string[];
+  try {
+    ids = await readdir(adminRoot);
+  } catch {
+    return;
+  }
+  for (const id of ids) {
+    const adminDir = join(adminRoot, id);
+    let gitdir: string;
+    try {
+      gitdir = (await readFile(join(adminDir, 'gitdir'), 'utf8')).trim();
+    } catch {
+      continue;
+    }
+    // `worktree.useRelativePaths` writes gitdir relative to the admin dir.
+    if (resolve(adminDir, gitdir) === want) await rm(adminDir, { recursive: true, force: true });
+  }
 }
 
 function ctParent(p: string): string {

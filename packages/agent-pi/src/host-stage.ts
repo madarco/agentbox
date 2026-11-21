@@ -1,13 +1,13 @@
 /**
  * Pi's host-side staging.
  *
- * Only the credential stager is Pi's own: preferring the `~/.agentbox` backup
- * over the tool's real path is a rule the generic stager has no way to express.
- * The static half is pure `staticPaths` data, so it rides
- * `stageAgentStaticForUpload` with nothing added.
+ * The credential stager is Pi's own: preferring the `~/.agentbox` backup over
+ * the tool's real path is a rule the generic stager has no way to express. The
+ * static half is `staticPaths` data on the generic stager.
  */
 
 import { homedir } from 'node:os';
+import { formatLoopbackUnreachable, providerWarning, scanLoopbackJsonFiles } from '@agentbox/core';
 import { join } from 'node:path';
 import {
   emptyResult,
@@ -15,6 +15,8 @@ import {
   stageSingleFileTarball,
   type StageResult,
 } from '@agentbox/sandbox-core';
+import type { AgentPushTarget } from '@agentbox/core';
+import { piEndpointFiles } from './endpoints.js';
 import { piAuthFileHasProviders } from './auth-shape.js';
 
 export interface StagePiOptions {
@@ -23,10 +25,30 @@ export interface StagePiOptions {
 
 /**
  * Filtered tarball of Pi's static config, extracting into
- * `/home/vscode/.pi/agent/`. Source, excludes and layout are all registry data.
+ * `/home/vscode/.pi/agent/`. Symlinks are dereferenced on the host, so a skill
+ * linked into another host directory arrives as real files, and so does an
+ * `mcp.json` that a dotfile manager (stow, chezmoi) made a symlink.
+ *
+ * One stager for both transports: the cloud bakes / remote-docker seed use the
+ * default `'snapshot'` target, the docker volume sync passes `'volume'` (which
+ * keeps `auth.json` — that volume is the box's credential store).
  */
-export async function stagePiStaticForUpload(opts: StagePiOptions = {}): Promise<StageResult> {
-  return stageAgentStaticForUpload('pi', opts);
+export async function stagePiStaticForUpload(
+  opts: StagePiOptions & { target?: AgentPushTarget } = {},
+): Promise<StageResult> {
+  const staged = await stageAgentStaticForUpload('pi', opts);
+  // The docker volume sync rewrites loopback endpoints itself (see
+  // `ensurePiVolume`); only a cloud/remote box, with no route back to this
+  // machine, gets the unreachable warning (#403).
+  if (opts.target === 'volume') return staged;
+  const endpoints = await scanLoopbackJsonFiles(piEndpointFiles(opts.hostHome ?? homedir()));
+  return {
+    ...staged,
+    warnings: [
+      ...staged.warnings,
+      ...endpoints.map((e) => providerWarning(formatLoopbackUnreachable('pi', e))),
+    ],
+  };
 }
 
 /**

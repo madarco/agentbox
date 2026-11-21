@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -141,6 +141,112 @@ describe('stageAgentStaticForUpload', () => {
         expect(entries).not.toContain('ipc/ipc.sock');
       } finally {
         if (closeSocket) await closeSocket();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    SUBPROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'dereferences links into OTHER host directories, absolute or relative',
+    async () => {
+      // The Pi failure: `~/.pi/agent/skills/*` are routinely symlinks into a
+      // checkout elsewhere (an absolute macOS path) or a sibling tree. Copied
+      // as links they dangle in a Linux box; staged with `-L` on the host they
+      // arrive as real files.
+      const home = await mkdtemp(join(tmpdir(), 'agentbox-stage-test-'));
+      try {
+        const outside = join(home, 'Projects', 'my-skills');
+        await writeFileAt(join(outside, 'abs', 'SKILL.md'), 'absolute skill');
+        await writeFileAt(join(outside, 'rel', 'SKILL.md'), 'relative skill');
+        const skills = join(home, '.pi', 'agent', 'skills');
+        await mkdir(skills, { recursive: true });
+        await symlink(join(outside, 'abs'), join(skills, 'abs'));
+        await symlink(join('..', '..', '..', 'Projects', 'my-skills', 'rel'), join(skills, 'rel'));
+
+        const res = await stageAgentStaticForUpload('pi', { hostHome: home });
+        const dir = await mkdtemp(join(tmpdir(), 'agentbox-stage-out-'));
+        await execa('tar', ['-xzf', res.tarballPath as string, '-C', dir]);
+        await res.cleanup();
+        try {
+          for (const name of ['abs', 'rel']) {
+            const st = await lstat(join(dir, 'skills', name));
+            expect(st.isSymbolicLink(), `${name} must not stay a link`).toBe(false);
+            expect(st.isDirectory()).toBe(true);
+          }
+          expect(await readFile(join(dir, 'skills', 'abs', 'SKILL.md'), 'utf8')).toBe(
+            'absolute skill',
+          );
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    SUBPROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    'names and skips a broken link, including one nested under a linked dir',
+    async () => {
+      // `-L` descends into a linked dir, so a dangling link INSIDE the target
+      // used to abort the whole stage with rsync exit 23 even though the
+      // top-level link resolved.
+      const home = await mkdtemp(join(tmpdir(), 'agentbox-stage-test-'));
+      try {
+        const outside = join(home, 'elsewhere', 'skill');
+        await writeFileAt(join(outside, 'SKILL.md'), 'ok');
+        await symlink(join(home, 'gone.md'), join(outside, 'dangling.md'));
+        const skills = join(home, '.pi', 'agent', 'skills');
+        await mkdir(skills, { recursive: true });
+        await symlink(outside, join(skills, 'linked'));
+        await symlink(join(home, 'nope'), join(skills, 'dead'));
+
+        const res = await stageAgentStaticForUpload('pi', { hostHome: home });
+        const entries = await tarEntries(res.tarballPath as string);
+        await res.cleanup();
+        expect(entries).toContain('skills/linked/SKILL.md');
+        expect(entries).not.toContain('skills/linked/dangling.md');
+        expect(entries).not.toContain('skills/dead');
+        expect(res.warnings.join('\n')).toMatch(/skills\/dead/);
+        expect(res.warnings.join('\n')).toMatch(/skills\/linked\/dangling\.md/);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    SUBPROCESS_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps the credential only for a 'volume' target",
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), 'agentbox-stage-test-'));
+      try {
+        const pi = join(home, '.pi', 'agent');
+        await writeFileAt(join(pi, 'settings.json'), '{}');
+        await writeFileAt(join(pi, 'auth.json'), '{"anthropic":{}}');
+        await writeFileAt(join(pi, 'mcp.json'), '{}');
+        await writeFileAt(join(pi, 'bin', 'rg'), 'host-native');
+
+        const snap = await stageAgentStaticForUpload('pi', { hostHome: home });
+        const snapEntries = await tarEntries(snap.tarballPath as string);
+        await snap.cleanup();
+        expect(snapEntries).not.toContain('auth.json');
+        expect(snapEntries).toContain('mcp.json');
+
+        const vol = await stageAgentStaticForUpload('pi', {
+          hostHome: home,
+          target: 'volume',
+        });
+        const volEntries = await tarEntries(vol.tarballPath as string);
+        await vol.cleanup();
+        expect(volEntries).toContain('auth.json');
+        expect(volEntries).toContain('settings.json');
+        expect(volEntries).toContain('mcp.json');
+        // The spec's own excludes still apply on both targets.
+        expect(volEntries.some((e) => e.startsWith('bin'))).toBe(false);
+      } finally {
         await rm(home, { recursive: true, force: true });
       }
     },

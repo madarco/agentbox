@@ -8,7 +8,7 @@
  * restated; that is what keeps this in step with the cloud stager.
  */
 
-import { agentPushExcludes } from '@agentbox/core';
+import type { LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -17,12 +17,16 @@ import { execa } from 'execa';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  tmuxSessionEnvArgs,
   CONTAINER_USER,
   createDockerSyncTransport,
   ensureVolume,
   volumeExists,
+  stageLoopbackOverlay,
 } from '@agentbox/sandbox-docker';
+import { piEndpointFiles } from './endpoints.js';
 import { AgentInstallError, ensureAgentInstalled, resolveAgentSpec } from '@agentbox/sandbox-core';
+import { stagePiStaticForUpload } from './host-stage.js';
 
 const PI_SPEC = resolveAgentSpec('pi');
 
@@ -32,7 +36,9 @@ export const DEFAULT_PI_SESSION = PI_SPEC.sessionName;
 /** Volume mount point inside the box — Pi's own config root. */
 const CONTAINER_PI_DIR = PI_SPEC.staticPaths[0]!.boxDir;
 /** Host source for the push, from the same registry entry. */
-const HOST_PI_DIR = join(homedir(), ...PI_SPEC.staticPaths[0]!.hostHomeRel);
+function hostPiDir(hostHome: string = homedir()): string {
+  return join(hostHome, ...PI_SPEC.staticPaths[0]!.hostHomeRel);
+}
 /** `PI_SKIP_VERSION_CHECK` and friends, as declared. */
 const PI_BOX_RUN_ENV = PI_SPEC.boxRunEnv;
 
@@ -44,19 +50,6 @@ const PI_BOX_RUN_ENV = PI_SPEC.boxRunEnv;
  * env rather than by logging in.
  */
 export const PI_FORWARDED_ENV_KEYS = PI_SPEC.forwardedEnvKeys;
-
-/**
- * `--exclude` flags for the config tree, rendered from the registry.
- *
- * `'volume'`, not `'snapshot'`: this volume IS the box's credential store, so
- * `auth.json` must land in it. The vendored `fd`/`rg` under `bin/` are dropped
- * by the spec's own list — they are host-native binaries.
- */
-function configVolumeExcludeFlags(): string {
-  const path = PI_SPEC.staticPaths[0];
-  const derived = path ? agentPushExcludes(PI_SPEC, path, 'volume') : [];
-  return derived.map((p) => `--exclude=${p}`).join(' ');
-}
 
 export interface PiConfigSpec {
   /** Resolved Docker volume name mounted at Pi's config root. */
@@ -92,6 +85,8 @@ export interface EnsurePiVolumeOptions {
   syncFromHost: boolean;
   /** Image used by the throwaway sync helper container (the box image). */
   image: string;
+  /** Defaults to `homedir()`; a test points it at a fixture home. */
+  hostHome?: string;
 }
 
 export interface EnsurePiVolumeResult {
@@ -99,6 +94,43 @@ export interface EnsurePiVolumeResult {
   created: boolean;
   /** True when the rsync helper ran (syncFromHost AND a host dir existed). */
   synced: boolean;
+  /** Non-fatal staging messages (a skipped broken symlink); the create log prints them. */
+  notes: string[];
+  /** Host-loopback `models.json` `baseUrl` values rewritten to `host.docker.internal` (#403). */
+  loopbackEndpoints: LoopbackEndpoint[];
+}
+
+/**
+ * The helper's script: unpack the host-staged tarball arriving on stdin, merge
+ * it into the volume, hand everything to the box user.
+ *
+ * WHY A TARBALL ON STDIN AND NOT A `-v ~/.pi/agent:/src` MOUNT. Pi configs
+ * routinely make `skills/*` symlinks into other host directories — absolute
+ * macOS paths, or targets outside `~/.pi/agent`. Behind a bind mount the
+ * helper sees those links with no host path context, so rsync copied them as
+ * links and they arrived dangling in the Linux box. Staging on the HOST with
+ * `rsync -L` (the same `stagePiStaticForUpload` the cloud bakes use)
+ * dereferences each link where its target actually exists, and stdin needs no
+ * Docker Desktop file-sharing entry for wherever the targets live.
+ *
+ * Additive (no `--delete`): host files win on overlap, box-only files (an
+ * `auth.json` written by an in-box `/login`) are kept. The excludes were
+ * already applied host-side by the stager.
+ *
+ * `withOverlay`: lay the rewritten endpoint files mounted at `/src-endpoints`
+ * over the result, so a host-loopback `baseUrl` reaches the host (#403).
+ */
+export function buildPiVolumeSyncScript(withOverlay = false): string {
+  const chown = `chown -R ${CONTAINER_USER}:${CONTAINER_USER} /dst`;
+  return [
+    'set -e',
+    's=$(mktemp -d)',
+    'tar -xzf - -C "$s" --no-same-owner',
+    'rsync -a "$s"/ /dst/',
+    'rm -rf "$s"',
+    ...(withOverlay ? ['cp -R /src-endpoints/. /dst/'] : []),
+    chown,
+  ].join('; ');
 }
 
 /**
@@ -122,22 +154,48 @@ export async function ensurePiVolume(
   // resolves the name from the box image's own passwd.
   const chown = `chown -R ${CONTAINER_USER}:${CONTAINER_USER} /dst`;
 
-  if (opts.syncFromHost && (await pathExists(HOST_PI_DIR))) {
-    await execa('docker', [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${spec.volume}:/dst`,
-      '-v',
-      `${HOST_PI_DIR}:/src:ro`,
-      opts.image,
-      'sh',
-      '-c',
-      `rsync -a ${configVolumeExcludeFlags()} /src/ /dst/ && ${chown}`,
-    ]);
-    return { created, synced: true };
+  if (opts.syncFromHost && (await pathExists(hostPiDir(opts.hostHome)))) {
+    // `'volume'`, not `'snapshot'`: this volume IS the box's credential store,
+    // so `auth.json` must land in it. The vendored host-native `fd`/`rg` under
+    // `bin/` are dropped by the spec's own exclude list.
+    const staged = await stagePiStaticForUpload({
+      target: 'volume',
+      ...(opts.hostHome ? { hostHome: opts.hostHome } : {}),
+    });
+    // A loopback `baseUrl` in the host's models.json is rewritten into an
+    // overlay laid over the synced copy, so the box reaches the host (#403).
+    const overlay = await stageLoopbackOverlay(piEndpointFiles(opts.hostHome));
+    try {
+      if (staged.tarballPath) {
+        await execa(
+          'docker',
+          [
+            'run',
+            '--rm',
+            '-i',
+            '--user',
+            '0',
+            '-v',
+            `${spec.volume}:/dst`,
+            ...(overlay.dir ? ['-v', `${overlay.dir}:/src-endpoints:ro`] : []),
+            opts.image,
+            'sh',
+            '-c',
+            buildPiVolumeSyncScript(Boolean(overlay.dir)),
+          ],
+          { inputFile: staged.tarballPath },
+        );
+        return {
+          created,
+          synced: true,
+          notes: staged.warnings,
+          loopbackEndpoints: overlay.endpoints,
+        };
+      }
+    } finally {
+      await overlay.cleanup();
+      await staged.cleanup();
+    }
   }
 
   await execa(
@@ -145,7 +203,7 @@ export async function ensurePiVolume(
     ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/dst`, opts.image, 'sh', '-c', chown],
     { reject: false },
   );
-  return { created, synced: false };
+  return { created, synced: false, notes: [], loopbackEndpoints: [] };
 }
 
 export interface PiMountResult {
@@ -239,6 +297,11 @@ export async function startPiSession(opts: StartPiSessionOptions): Promise<void>
       '-d',
       '-s',
       sessionName,
+      // On the session, not just the exec: when another agent's session already
+      // runs, the tmux server exists and a new session inherits ITS environment,
+      // not this client's. A box created for another agent never had these set
+      // on the container, and without them the synced config is not read.
+      ...tmuxSessionEnvArgs(PI_BOX_RUN_ENV),
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],

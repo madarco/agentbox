@@ -58,9 +58,14 @@ capture/restore mechanics, with code pointers. Source of truth:
    <containerPath>`.
 6. **No host worktree dir.** The worktree's working tree lives only in the
    container's writable layer. The host's `.git/worktrees/<name>/gitdir`
-   points to the container-only `/workspace` path — cosmetic in `git
-   worktree list` on the host, otherwise inert (`git push` doesn't need a
-   working tree).
+   points to the container-only `/workspace` path (`git push` doesn't need a
+   working tree). Because neither side can see the other's worktree folders,
+   `bindWorktrees` guards the shared registry on create, restore and every
+   start: `git config --system gc.worktreePruneExpire never` in the box (in-box
+   `git gc` / `gc --auto` no longer prunes host worktrees) and `git worktree
+   lock` on the box's own entry (a host `git gc` / `git worktree prune` skips
+   it, so `git worktree list` shows it as `locked`). `destroy` deletes only that
+   box's `.git/worktrees/<id>` entry; it never runs a repo-wide prune (#408).
 7. **Push/pull go through the relay** (`packages/relay/src/server.ts`):
    `git.push` runs `git -C <hostMainRepo> push <remote> <branch>` on host
    with user creds (refs are up-to-date in the shared `.git`); `git.pull` in

@@ -112,6 +112,11 @@ export interface AgentRuntime {
   }): Promise<void>;
   sessionInfo(container: string, sessionName: string): Promise<{ running: boolean }>;
   ensureInstalled(container: string, o: { onProgress: (line: string) => void }): Promise<unknown>;
+  /**
+   * Seed the box volume from the host config. A result carrying
+   * `loopbackEndpoints` (host-loopback model endpoints rewritten to
+   * `host.docker.internal`, #403) is reported by `<agent> start`.
+   */
   ensureVolume(
     target: { volume: string },
     o: { syncFromHost: boolean; image: string; hostWorkspace?: string },
@@ -168,6 +173,13 @@ export interface AgentRuntime {
   /** Same offer before a CLOUD box: cloud has no shared volume, so the login has
    *  to land in the host backup for the per-box push to seed. */
   offerCloudLogin(o: { image: string; yes: boolean; hostWorkspace: string }): Promise<void>;
+  /**
+   * One line per piece of host config the box will NOT receive, printed before
+   * the box is built so a missing setup does not look like data loss — Pi's MCP
+   * servers defined outside `~/.pi/agent` are the case. Names files only, never
+   * their contents. Absent = nothing to say.
+   */
+  hostConfigNotices?(): Promise<string[]>;
   /** The `<agent> login` subcommand's sign-in: guided under a pty, or the
    *  agent's own TUI when forced / unavailable. */
   signIn(image: string, extraArgs: string[], o: { passthrough?: boolean }): Promise<SignInResult>;
@@ -456,11 +468,23 @@ export interface AgentCommandHooks {
   ): Promise<HookOutput | void>;
   /**
    * Runs on `<agent> start` / `<agent> attach` after the config volume is
-   * synced, before the agent is launched — hook/plugin seeding.
+   * synced, before the agent is launched. `o.volume` may be a staging volume
+   * that is mirrored into the container afterwards (a box created for another
+   * agent), so this hook writes through the volume only and must not touch the
+   * container's config dir: the mirror would undo it.
    */
   afterVolumeSync?(
     box: BoxRecord,
     o: { volume: string; message: (line: string) => void },
+  ): Promise<HookOutput | void>;
+  /**
+   * Runs after {@link afterVolumeSync}, once the config is live in the
+   * container — for work done inside the box (claude's plugin native-deps
+   * rebuild). `volume` is set only when the container really mounts it.
+   */
+  afterConfigSync?(
+    box: BoxRecord,
+    o: { volume?: string; message: (line: string) => void },
   ): Promise<HookOutput | void>;
   /**
    * Extra wrapped-attach wiring (claude's clipboard paste handlers).

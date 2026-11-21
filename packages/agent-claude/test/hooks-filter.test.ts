@@ -109,7 +109,7 @@ describe('filterHostHooks', () => {
     expect((data as typeof realSettingsShape).enabledPlugins).toEqual({ 'code-review': true });
   });
 
-  it('handles data.hooks === null (Marco\'s real ~/.claude.json case)', () => {
+  it("handles data.hooks === null (Marco's real ~/.claude.json case)", () => {
     const { data, removedCommands } = filterHostHooks({ hooks: null, other: 1 }, home);
     expect(removedCommands).toEqual([]);
     expect(data).toEqual({ hooks: null, other: 1 });
@@ -252,7 +252,7 @@ describe('filterHostHooks — unexpected shapes', () => {
   it('handles non-array trigger values and bad leaf objects without throwing', () => {
     const weird = {
       hooks: {
-        StrangeTrigger: 'this should be an array but isn\'t',
+        StrangeTrigger: "this should be an array but isn't",
         AnotherOne: [
           {
             // entry.hooks isn't an array either
@@ -276,7 +276,10 @@ describe('trustWorkspace', () => {
   it('creates the projects map + entry when absent, reports trusted=true', () => {
     const r = trustWorkspace({ other: 1 }, WS);
     expect(r.trusted).toBe(true);
-    expect(r.data).toEqual({ other: 1, projects: { '/workspace': { hasTrustDialogAccepted: true } } });
+    expect(r.data).toEqual({
+      other: 1,
+      projects: { '/workspace': { hasTrustDialogAccepted: true } },
+    });
   });
 
   it('adds the entry when projects exists without /workspace', () => {
@@ -325,5 +328,33 @@ describe('trustWorkspace', () => {
       data: { projects: {} },
       trusted: false,
     });
+  });
+});
+
+describe('claudeSettingsEndpointPaths (#403)', () => {
+  it('selects every env.*_BASE_URL key and nothing else', async () => {
+    const { claudeSettingsEndpointPaths } = await import('../src/hooks-filter.js');
+    const { findLoopbackEndpoints } = await import('@agentbox/core');
+    const settings = {
+      env: {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4000',
+        ANTHROPIC_BEDROCK_BASE_URL: 'https://bedrock.example.com',
+        SOME_URL: 'http://127.0.0.1:9',
+      },
+      hooks: {},
+    };
+    expect(claudeSettingsEndpointPaths(settings)).toEqual([
+      ['env', 'ANTHROPIC_BASE_URL'],
+      ['env', 'ANTHROPIC_BEDROCK_BASE_URL'],
+    ]);
+    const found = findLoopbackEndpoints(settings, {
+      paths: claudeSettingsEndpointPaths(settings),
+      source: '~/.claude/settings.json',
+      rewriteHost: 'host.docker.internal',
+    });
+    expect(found).toHaveLength(1);
+    expect(settings.env.ANTHROPIC_BASE_URL).toBe('http://host.docker.internal:4000');
+    expect(settings.env.SOME_URL).toBe('http://127.0.0.1:9');
+    expect(claudeSettingsEndpointPaths({ env: null })).toEqual([]);
   });
 });

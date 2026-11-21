@@ -105,6 +105,11 @@ do with a setting:
 | `tuiEnvFrom` | `agentTuiEnv` picks the launch env |
 | *(everything)* | `renderAgentSettingEnv` exports `AGENTBOX_AGENT_SETTING_<UPPER_SNAKE_KEY>` into the agent's own `recipe` and `postInstall` |
 
+Pi's `version` is the worked example of the third row: its recipe is an `exec`
+that reads `AGENTBOX_AGENT_SETTING_VERSION` (default `latest`), validates it
+against npm's version/dist-tag alphabet, and installs that release. Nothing
+outside Pi's row knows the setting exists.
+
 The third is the point. An agent installed from an npm package can put arbitrary
 logic in its `postInstall` and read its own settings there, so a setting nothing
 in this repo was written to understand still reaches the bake — on every
@@ -209,6 +214,22 @@ makes a single list safe for both:
   with an `allowDatabases` opt-out nothing declares. Hand-enumerating these is
   what went stale: codex's list named `state_*` and `logs_*`, and three later
   databases shipped live into every box.
+
+### Symlinks are resolved on the host
+
+An agent's config often links outside its own tree — Pi's `skills/*` into a
+checkout elsewhere, by absolute macOS path. A helper container that mounts the
+config dir at `/src` sees those links with no host context, so they arrive
+dangling. The generic stager (`stageAgentStaticForUpload`) runs `rsync -L` on
+the HOST, skips links that are broken there (reporting each, including one
+nested under a linked dir), and takes `target: 'volume'` so a docker volume sync
+can use it too. Pi's docker volume sync streams that tarball to the helper on
+stdin rather than bind-mounting `~/.pi/agent`. A `~/.pi/agent/mcp.json` that is
+a symlink out of the tree (stow, chezmoi) is followed like any other file: it is
+Pi's own config. `scanPiMcpConfig` produces the create-time notice, both for
+that link and for MCP definitions AgentBox does not copy (the shared
+`~/.config/mcp/mcp.json`, other tools' configs pulled in by `imports`): file
+paths and counts only, never a server name or any part of a definition.
 
 Claude's docker volume is deliberately NOT converged on its spec list: those
 excludes are snapshot hygiene and include ~20 entries the volume wants,
@@ -336,6 +357,28 @@ resulting login back to the host.
 Because it runs over `SyncTransport` rather than `docker exec`, this is also the
 first time a **cloud** box booted from a snapshot that predates an agent can get
 that agent at all.
+
+The **config** half (on docker) is `openAgentConfigTarget`
+(`sandbox-docker/src/sync/agents/config-target.ts`), used by `<agent> start`. It
+checks `docker inspect` for a volume mounted at the agent's config dir (the dir
+comes from the agent's own `buildMounts`). Mounted means the ordinary path: sync
+into that volume. Otherwise it fills a per-box staging volume from the
+container's current config dir, the start path runs the same pipeline against
+it (host sync, declared seeds, the module's create-time `afterVolumeSync`, the
+CLI hook's `afterVolumeSync`), and `flush` mirrors it into the container once, as
+root, with `rsync -a --delete`. The staging volume began as a copy of that dir,
+so the mirror deletes only what the sync removed, as a mounted volume would.
+Work that has to happen inside the container (claude's plugin native-deps
+rebuild) goes in the CLI hook's `afterConfigSync`, which runs after the mirror;
+in `afterVolumeSync` the mirror would wipe it. The staging volume holds
+credentials, so it is removed in a `finally`, on SIGINT/SIGTERM, and as a
+leftover at the next staged start. If `docker inspect` fails, start errors out
+instead of falling back to the box record's volume. Staging happens only when
+the sync is on, so `attach` and `--no-sync-config` leave such a box alone, as
+before.
+An agent whose `boxRunEnv` points it at its config (opencode's
+`OPENCODE_CONFIG_DIR`) passes that env with `tmux new-session -e`, because the
+container never had it and a new session inherits the tmux server's env.
 
 ### Root escalation across seams
 

@@ -1,4 +1,4 @@
-import { agentPushExcludes } from '@agentbox/core';
+import { agentPushExcludes, type LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -7,11 +7,14 @@ import { execa } from 'execa';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  tmuxSessionEnvArgs,
   CONTAINER_USER,
   ensureVolume,
   volumeExists,
   createDockerSyncTransport,
+  stageLoopbackOverlay,
 } from '@agentbox/sandbox-docker';
+import { opencodeEndpointFiles } from './endpoints.js';
 import { ensureAgentInstalled, resolveAgentSpec, AgentInstallError } from '@agentbox/sandbox-core';
 
 /**
@@ -115,6 +118,8 @@ export interface EnsureOpencodeVolumeResult {
   created: boolean;
   /** True when the rsync helper ran (syncFromHost was true AND a host dir existed). */
   synced: boolean;
+  /** Host-loopback `provider.*.options.baseURL` values rewritten to `host.docker.internal` (#403). */
+  loopbackEndpoints: LoopbackEndpoint[];
 }
 
 /**
@@ -152,10 +157,16 @@ export async function ensureOpencodeVolume(
   const willSync = opts.syncFromHost && (hasData || hasConfig || hasState);
 
   if (willSync) {
+    // Rewritten copies of host config files with a loopback baseURL, laid over
+    // the rsynced config so the box reaches the host's gateway (#403).
+    const overlay = hasConfig
+      ? await stageLoopbackOverlay(opencodeEndpointFiles())
+      : { dir: null, endpoints: [], cleanup: async () => {} };
     const args = ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/dst`];
     if (hasData) args.push('-v', `${hostData}:/src-data:ro`);
     if (hasConfig) args.push('-v', `${hostConfig}:/src-config:ro`);
     if (hasState) args.push('-v', `${hostState}:/src-state:ro`);
+    if (overlay.dir) args.push('-v', `${overlay.dir}:/src-endpoints:ro`);
     const steps: string[] = [];
     if (hasData) {
       // Excludes come from the registry via `agentPushExcludes` — the same list
@@ -167,6 +178,7 @@ export async function ensureOpencodeVolume(
     }
     if (hasConfig) {
       steps.push('mkdir -p /dst/config && rsync -a /src-config/ /dst/config/');
+      if (overlay.dir) steps.push('cp -R /src-endpoints/. /dst/');
     }
     if (hasState) {
       // The selected model (`model.json`) is two-way state, not host-authoritative
@@ -180,8 +192,12 @@ export async function ensureOpencodeVolume(
     }
     steps.push('chown -R 1000:1000 /dst');
     args.push(opts.image, 'sh', '-c', steps.join(' && '));
-    await execa('docker', args);
-    return { created, synced: true };
+    try {
+      await execa('docker', args);
+    } finally {
+      await overlay.cleanup();
+    }
+    return { created, synced: true, loopbackEndpoints: overlay.endpoints };
   }
 
   // No host OpenCode state to sync — still make the (possibly freshly created,
@@ -202,7 +218,7 @@ export async function ensureOpencodeVolume(
     ],
     { reject: false },
   );
-  return { created, synced: false };
+  return { created, synced: false, loopbackEndpoints: [] };
 }
 
 export interface OpencodeMountResult {
@@ -326,6 +342,11 @@ export async function startOpencodeSession(opts: StartOpencodeSessionOptions): P
       '-d',
       '-s',
       sessionName,
+      // On the session, not just the exec: when another agent's session already
+      // runs, the tmux server exists and a new session inherits ITS environment,
+      // not this client's. A box created for another agent never had these set
+      // on the container, and without them the synced config is not read.
+      ...tmuxSessionEnvArgs(OPENCODE_BOX_RUN_ENV),
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],

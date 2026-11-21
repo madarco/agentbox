@@ -260,3 +260,47 @@ describe('agent settings reach the install shell as env', () => {
     ).not.toContain('AGENTBOX_AGENT_SETTING_');
   });
 });
+
+describe('pi.version through the real install site', () => {
+  /** The root install script `ensureAgentInstalled` issued, run under /bin/sh with a fake npm. */
+  async function installPi(
+    settings: Record<string, string>,
+  ): Promise<{ code: number; out: string }> {
+    const { spawnSync } = await import('node:child_process');
+    const { chmod, mkdtemp, rm, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const t = makeRecordingTransport({ execResult: missingThenOk() });
+    await ensureAgentInstalled(t, 'pi', { settings });
+    const install = execs(t).find((c) => c.join(' ').includes('npm install -g'));
+    const script = install![install!.length - 1]!.split('; npm install -g')[0]!;
+    const bin = await mkdtemp(join(tmpdir(), 'pi-install-'));
+    try {
+      await writeFile(join(bin, 'npm'), '#!/bin/sh\necho "npm $*"\n');
+      await chmod(join(bin, 'npm'), 0o755);
+      // Everything up to npm, then npm itself: the postInstall steps need root.
+      const r = spawnSync('sh', ['-c', `${script}; npm install -g "pkg@$v"`], {
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        encoding: 'utf8',
+      });
+      return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+    } finally {
+      await rm(bin, { recursive: true, force: true });
+    }
+  }
+
+  it('installs latest when pi.version was never set', async () => {
+    for (const settings of [{}, { modelAuth: 'none' }] as Record<string, string>[]) {
+      const r = await installPi(settings);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('npm install -g pkg@latest');
+    }
+  });
+
+  it('installs the pinned version and refuses a range', async () => {
+    expect((await installPi({ version: '0.85.1' })).out).toContain('pkg@0.85.1');
+    const range = await installPi({ version: '^0.85' });
+    expect(range.code).toBe(64);
+    expect(range.out).not.toContain('npm install');
+  });
+});

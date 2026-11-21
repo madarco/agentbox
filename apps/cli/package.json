@@ -69,6 +69,7 @@
     "react-dom": "^19",
     "smol-toml": "^1.7.0",
     "supports-hyperlinks": "^3.1.0",
+    "undici": "^7.26.0",
     "ws": "^8.21.0",
     "yaml": "^2.6.1"
   },

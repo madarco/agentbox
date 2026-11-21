@@ -91,6 +91,7 @@ Remote Docker is a **cloud** provider that happens to speak Docker. That sounds 
 The [local Docker](/docs/local-docker) provider bind-mounts your repo's `.git/` straight into the container. That's what makes an in-box commit land in your host repo instantly, with no sync at all. A bind mount cannot cross a network — so on a remote engine, your workspace has to be **synced** rather than shared, exactly like [Hetzner](/docs/hetzner) or [Daytona](/docs/daytona):
 
 - **Into the box**, at create: a shallow git clone plus your uncommitted and untracked changes, carried over as-is. Your working state arrives intact.
+- **Your agent config**, at every create: the box image on the remote engine is shared and agentless, so it holds none of your host config. AgentBox uploads the static config of the box's own agent (`~/.pi/agent`, `~/.claude`, `~/.codex`, …, plus the shared `~/.agents` skills) into each new box, symlinks resolved on your machine, and pushes the login separately — the same split the cloud providers use.
 - **Back out**, on `git push`: the box's branch travels home as a git bundle through the host relay, and the push runs from _your_ machine with _your_ credentials. The remote machine never sees a git credential. See [sync-and-git](/docs/sync-and-git).
 
 Everything reaches the box over **one SSH connection per box** (an OpenSSH ControlMaster), so `docker` commands don't pay a handshake each time. The box's web app, VNC and sshd are published on the remote's loopback and forwarded to yours, so `agentbox url` opens in your browser as usual.
@@ -182,6 +183,7 @@ back to `docker`.
 - **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).
 - **Ports are fixed at create.** Docker port mappings are immutable for a container's life, so a service you add to `agentbox.yaml` _after_ the box exists is still reachable through the box's web proxy, but won't get its own preview URL until you recreate it.
 - **macOS remotes work.** Docker Desktop, OrbStack and Colima are all found, because AgentBox runs `docker` in a login shell on the remote (which is why OrbStack's `~/.orbstack/bin` is on the PATH).
+- **Orphaned processes are reaped.** Boxes run with `docker run --init`. If the remote engine doesn't ship `docker-init`, the box starts without it and `create` logs a warning, and zombie processes then build up until the box is recreated.
 - **The remote engine is trusted.** Anyone with root on that machine can read the box. This is a "your own machine" provider, not an isolation boundary against the machine's owner.
 - **Concurrent boxes share the machine.** Nothing arbitrates between them beyond the limits you set.
 - **Host aliases are per machine until you share them.** `agentbox remote-docker add` writes `~/.agentbox/remote-docker-hosts.json` on the machine you ran it on. A [control box](/docs/deployed-hub) has neither that file nor your `~/.ssh/config`, so it knows nothing about your engines until you run `agentbox remote-docker share <alias>` — see below.

@@ -37,6 +37,7 @@ import type {
 import { loadEffectiveConfig } from '@agentbox/config';
 import { CLOUD_VNC_PORT, CLOUD_WEB_PROXY_PORT, bashScript } from '@agentbox/sandbox-cloud';
 import { readState, sshExec, type SshTargetArgs } from '@agentbox/sandbox-core';
+import { isMissingDockerInit, MISSING_DOCKER_INIT_WARNING } from '@agentbox/sandbox-docker';
 import { ensureRemoteImage } from './image.js';
 import {
   CONTAINER_USER,
@@ -209,6 +210,8 @@ export function buildRunArgv(opts: {
   memory?: number;
   /** The remote engine is itself inside an AgentBox sandbox — see `remoteIsNested`. */
   nestedEngine?: boolean;
+  /** `false` only as the fallback for an engine with no `docker-init`. */
+  init?: boolean;
 }): string[] {
   const argv = [
     'run',
@@ -225,14 +228,19 @@ export function buildRunArgv(opts: {
     // the local docker provider; we still avoid --privileged.
     '--cap-add=SYS_ADMIN',
     '--cap-add=NET_ADMIN',
+    // Inner dockerd bind-mounts /proc/<pid>/ns/net of a non-root container init, which needs PTRACE_MODE_READ.
+    '--cap-add=SYS_PTRACE',
     '--device=/dev/fuse',
     '--security-opt=apparmor:unconfined',
     '--security-opt=seccomp=unconfined',
     '--cgroupns=private',
   ];
+  // tini as PID 1 reaps orphaned processes; `sleep infinity` alone never does.
+  if (opts.init !== false) argv.push('--init');
   if (opts.nestedEngine) {
-    // The engine is itself inside an AgentBox sandbox, which has no
-    // CAP_SYS_PTRACE. Its dockerd therefore cannot bind-mount /proc/<pid>/ns/net
+    // The engine is itself inside an AgentBox sandbox, which may have no
+    // CAP_SYS_PTRACE (boxes created before #396 lack it, as can a third-party
+    // sandbox). Its dockerd then cannot bind-mount /proc/<pid>/ns/net
     // for a container whose init runs as a different uid than the daemon —
     // and the box image's default USER is vscode (1000), so `docker run` dies
     // with "bind-mount /proc/N/ns/net: permission denied". Forcing init to uid 0
@@ -264,6 +272,9 @@ export function buildRunArgv(opts: {
 
 export const remoteDockerBackend: CloudBackend = {
   name: BACKEND_NAME,
+  // `prepare` here builds only the shared agentless image on the remote engine,
+  // never the host's agent config, so every create seeds it.
+  seedsAgentStaticAtCreate: true,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const log = req.onLog ?? ((): void => {});
@@ -321,7 +332,7 @@ export const remoteDockerBackend: CloudBackend = {
       log('[provision] remote engine is itself an AgentBox box — running the box init as root');
     }
 
-    const argv = buildRunArgv({
+    const runOpts = {
       container,
       image,
       env: req.env ?? {},
@@ -330,9 +341,19 @@ export const remoteDockerBackend: CloudBackend = {
       nestedEngine,
       ...(cpu !== undefined ? { cpu } : {}),
       ...(memory !== undefined ? { memory } : {}),
-    });
+    };
     log(`[provision] docker run ${container} on ${remote.spec}`);
-    await dockerOnRemoteOrThrow(target, argv, { timeoutMs: 300_000 });
+    try {
+      await dockerOnRemoteOrThrow(target, buildRunArgv(runOpts), { timeoutMs: 300_000 });
+    } catch (err) {
+      if (!isMissingDockerInit(String(err))) throw err;
+      // The failed run leaves the named container behind in `Created` state.
+      await dockerOnRemote(target, ['rm', '-f', container]);
+      log(`[provision] ${MISSING_DOCKER_INIT_WARNING}`);
+      await dockerOnRemoteOrThrow(target, buildRunArgv({ ...runOpts, init: false }), {
+        timeoutMs: 300_000,
+      });
+    }
 
     return {
       sandboxId,

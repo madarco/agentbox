@@ -9,6 +9,7 @@
  */
 
 import {
+  loopbackEndpointNotes,
   registerAgentSyncModule,
   syncClaudeCredentials,
   type AgentSyncModule,
@@ -62,7 +63,14 @@ export const claudeSyncModule: AgentSyncModule = {
       image: opts.image,
       hostWorkspace: opts.hostWorkspace,
     });
-    return { created: r.created, synced: r.synced, notes: ensureNotes(r, opts.hostWorkspace) };
+    return {
+      created: r.created,
+      synced: r.synced,
+      notes: [
+        ...ensureNotes(r, opts.hostWorkspace),
+        ...(await loopbackEndpointNotes('claude', r.loopbackEndpoints ?? [])),
+      ],
+    };
   },
   sessionInfo: (container) => claudeSessionInfo(container),
   // Claude's OAuth token expires on its own; the others' do not.

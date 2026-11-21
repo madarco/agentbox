@@ -128,7 +128,7 @@ The multi-box flow a user drives from the manager.
 
 What the user sees on screen. Evidence goes into the report as screen dumps and screenshots, checked by the AI judge.
 
-- `agentbox dashboard` through `pnpm drive`: the sidebar lists the boxes, `Ctrl-a` opens the leader menu, switching boxes works, `Ctrl-a q` quits cleanly.
+- `agentbox dashboard` through `pnpm drive`: the sidebar lists the boxes, `Ctrl-a` opens the leader menu, switching boxes works both ways with `Ctrl+Alt+↑/↓` (`Option` on macOS) and with `Ctrl-a ↑/↓`, the footer names the platform's modifier, `Ctrl-a q` quits cleanly.
 - `agentbox shell <box>`, a one-shot `shell -- <cmd>`, then `shell ls` and `shell kill`.
 - Tray (Mac): open the menu; the New Box panel picks the right project and provider; start, stop and push a box from the menu, and check the effect through `/api/v1`.
 - Hub web UI (Playwright): the boxes page lists the same boxes, and the approval from S5 can be answered there.

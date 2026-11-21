@@ -122,3 +122,21 @@ export type {
   PtyFrame,
   PtyWindowSize,
 } from './pty-protocol.js';
+export type {
+  EndpointPath,
+  FindLoopbackOptions,
+  JsonEndpointRewrite,
+  LoopbackEndpoint,
+} from './loopback-endpoints.js';
+export {
+  DOCKER_HOST_ALIAS,
+  findLoopbackEndpoints,
+  formatLoopbackRewrite,
+  formatLoopbackUnreachable,
+  isLoopbackUrl,
+  rewriteLoopbackInJsonFile,
+  rewriteLoopbackInJsonText,
+  rewriteLoopbackUrl,
+  scanLoopbackJsonFiles,
+  stripJsonComments,
+} from './loopback-endpoints.js';

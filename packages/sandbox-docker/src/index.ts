@@ -19,11 +19,20 @@ export {
   buildTermSafeTmuxExec,
   buildTmuxConfigShellSnippet,
   buildTmuxSessionArgs,
+  tmuxSessionEnvArgs,
   CONTAINER_USER,
   TERM_FALLBACK_SNIPPET,
 } from './sync/agents/shared.js';
 
 export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
+export {
+  localBridgeGateway,
+  loopbackEndpointNotes,
+  stageLoopbackOverlay,
+  tcpReachable,
+  type EndpointConfigFile,
+  type LoopbackOverlay,
+} from './host-endpoints.js';
 export { providerModule, dockerChecks } from './provider-module.js';
 export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
 export {
@@ -74,7 +83,13 @@ export {
   volumeSizeBytes,
 } from './stats.js';
 export { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
-export { execInBox, removeImage, type DockerExecResult } from './docker.js';
+export {
+  execInBox,
+  isMissingDockerInit,
+  MISSING_DOCKER_INIT_WARNING,
+  removeImage,
+  type DockerExecResult,
+} from './docker.js';
 export {
   detectGitRepos,
   GitWorktreeError,
@@ -401,3 +416,9 @@ export {
 } from './registry-auth.js';
 
 export { seedAgentDeclaredFiles, seedLabels } from './sync/agents/seed.js';
+export {
+  agentConfigDir,
+  agentConfigStagingVolume,
+  openAgentConfigTarget,
+  type AgentConfigTarget,
+} from './sync/agents/config-target.js';
