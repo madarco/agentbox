@@ -19,6 +19,7 @@ export {
   buildTermSafeTmuxExec,
   buildTmuxConfigShellSnippet,
   buildTmuxSessionArgs,
+  tmuxSessionEnvArgs,
   CONTAINER_USER,
   TERM_FALLBACK_SNIPPET,
 } from './sync/agents/shared.js';
@@ -401,3 +402,9 @@ export {
 } from './registry-auth.js';
 
 export { seedAgentDeclaredFiles, seedLabels } from './sync/agents/seed.js';
+export {
+  agentConfigDir,
+  agentConfigStagingVolume,
+  openAgentConfigTarget,
+  type AgentConfigTarget,
+} from './sync/agents/config-target.js';

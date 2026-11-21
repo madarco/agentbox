@@ -337,6 +337,28 @@ Because it runs over `SyncTransport` rather than `docker exec`, this is also the
 first time a **cloud** box booted from a snapshot that predates an agent can get
 that agent at all.
 
+The **config** half (on docker) is `openAgentConfigTarget`
+(`sandbox-docker/src/sync/agents/config-target.ts`), used by `<agent> start`. It
+checks `docker inspect` for a volume mounted at the agent's config dir (the dir
+comes from the agent's own `buildMounts`). Mounted means the ordinary path: sync
+into that volume. Otherwise it fills a per-box staging volume from the
+container's current config dir, the start path runs the same pipeline against
+it (host sync, declared seeds, the module's create-time `afterVolumeSync`, the
+CLI hook's `afterVolumeSync`), and `flush` mirrors it into the container once, as
+root, with `rsync -a --delete`. The staging volume began as a copy of that dir,
+so the mirror deletes only what the sync removed, as a mounted volume would.
+Work that has to happen inside the container (claude's plugin native-deps
+rebuild) goes in the CLI hook's `afterConfigSync`, which runs after the mirror;
+in `afterVolumeSync` the mirror would wipe it. The staging volume holds
+credentials, so it is removed in a `finally`, on SIGINT/SIGTERM, and as a
+leftover at the next staged start. If `docker inspect` fails, start errors out
+instead of falling back to the box record's volume. Staging happens only when
+the sync is on, so `attach` and `--no-sync-config` leave such a box alone, as
+before.
+An agent whose `boxRunEnv` points it at its config (opencode's
+`OPENCODE_CONFIG_DIR`) passes that env with `tmux new-session -e`, because the
+container never had it and a new session inherits the tmux server's env.
+
 ### Root escalation across seams
 
 Docker honours `exec --user root`; cloud backends run as the box user by name and
