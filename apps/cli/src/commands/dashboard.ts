@@ -70,7 +70,12 @@ import { Compositor, type RightTarget } from '../dashboard/compositor.js';
 import { loadPtyBackend, type PtySpawn, type TerminalCtor } from '@agentbox/cli-kit';
 import { restoreAgentSessions } from '../agent-sessions.js';
 import { providerForBox } from '../provider/registry.js';
-import { NEW_BOX_ID, NEW_BOX_LABEL, type SidebarBox } from '../dashboard/sidebar.js';
+import {
+  dashboardKeysHelp,
+  NEW_BOX_ID,
+  NEW_BOX_LABEL,
+  type SidebarBox,
+} from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 import { claudeRuntime } from '@agentbox/agent-claude/cli';
@@ -182,6 +187,7 @@ export const dashboardCommand = new Command('dashboard')
   .description('Box list + the selected box live Agent session')
   .argument('[box]', 'initial box (default: first running box; -p restricts to the cwd project)')
   .option('-p, --project', "only this project's boxes (default: all boxes globally)")
+  .addHelpText('after', dashboardKeysHelp())
   .action(async (idOrName: string | undefined, opts: DashboardOptions) => {
     try {
       if (!process.stdout.isTTY || !process.stdin.isTTY) {

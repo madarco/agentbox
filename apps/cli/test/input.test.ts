@@ -42,8 +42,27 @@ describe('InputParser keymap', () => {
   });
 
   // Leader events are footer-only chrome; filter them out for chord assertions.
-  const chords = (events: InputEvent[]): InputEvent[] =>
-    events.filter((e) => e.type !== 'leader');
+  const chords = (events: InputEvent[]): InputEvent[] => events.filter((e) => e.type !== 'leader');
+
+  it('Ctrl-a then Up/Down (normal or application cursor mode) switches', () => {
+    const h = harness();
+    h.parser.feed(Buffer.from('\x01\x1b[A'));
+    h.parser.feed(Buffer.from('\x01'));
+    h.parser.feed(Buffer.from('\x1bOB'));
+    expect(h.events.filter((e) => e.type === 'switch')).toEqual([
+      { type: 'switch', dir: 'prev' },
+      { type: 'switch', dir: 'next' },
+    ]);
+    expect(h.fwd()).toBe('');
+  });
+
+  it('a bare Up arrow without the leader is still forwarded to the pane', () => {
+    const h = harness();
+    h.parser.feed(Buffer.from('\x1b[A'));
+    h.parser.feed(Buffer.from('\x01\x1b[C')); // Ctrl-a Right: not a chord, passes through
+    expect(h.events.some((e) => e.type === 'switch')).toBe(false);
+    expect(h.fwd()).toBe('\x1b[A\x1b[C');
+  });
 
   it('Ctrl-a leader: s/c/u → actions, q → quit, j → switch next', () => {
     const h = harness();
@@ -109,9 +128,7 @@ describe('InputParser keymap', () => {
     h.parser.feed(Buffer.from([0x01, 0x7a])); // ^A z
     expect(h.fwd()).toBe('z');
     expect(
-      h.events.some(
-        (e) => e.type === 'action' || e.type === 'switch' || e.type === 'quit',
-      ),
+      h.events.some((e) => e.type === 'action' || e.type === 'switch' || e.type === 'quit'),
     ).toBe(false);
   });
 

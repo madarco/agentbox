@@ -309,7 +309,7 @@ export class Compositor {
         }
         // Relay prompt for the selected box: intercept y/N/Esc/Ctrl-c
         // single-byte keystrokes. Multi-byte chunks starting with ESC
-        // (CSI: mouse, arrows, Ctrl+Option+↑↓, focus events) fall through
+        // (CSI: mouse, arrows, Ctrl+Alt/Option+↑↓, focus events) fall through
         // — they're not user "answer" intent. Same byte-classification as
         // the wrapped-pty input-router so behavior matches.
         if (e.type === 'forward' && this.activePrompts.has(this.selectedId)) {
