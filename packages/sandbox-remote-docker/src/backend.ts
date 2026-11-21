@@ -37,6 +37,7 @@ import type {
 import { loadEffectiveConfig } from '@agentbox/config';
 import { CLOUD_VNC_PORT, CLOUD_WEB_PROXY_PORT, bashScript } from '@agentbox/sandbox-cloud';
 import { readState, sshExec, type SshTargetArgs } from '@agentbox/sandbox-core';
+import { isMissingDockerInit, MISSING_DOCKER_INIT_WARNING } from '@agentbox/sandbox-docker';
 import { ensureRemoteImage } from './image.js';
 import {
   CONTAINER_USER,
@@ -209,6 +210,8 @@ export function buildRunArgv(opts: {
   memory?: number;
   /** The remote engine is itself inside an AgentBox sandbox — see `remoteIsNested`. */
   nestedEngine?: boolean;
+  /** `false` only as the fallback for an engine with no `docker-init`. */
+  init?: boolean;
 }): string[] {
   const argv = [
     'run',
@@ -230,6 +233,8 @@ export function buildRunArgv(opts: {
     '--security-opt=seccomp=unconfined',
     '--cgroupns=private',
   ];
+  // tini as PID 1 reaps orphaned processes; `sleep infinity` alone never does.
+  if (opts.init !== false) argv.push('--init');
   if (opts.nestedEngine) {
     // The engine is itself inside an AgentBox sandbox, which has no
     // CAP_SYS_PTRACE. Its dockerd therefore cannot bind-mount /proc/<pid>/ns/net
@@ -321,7 +326,7 @@ export const remoteDockerBackend: CloudBackend = {
       log('[provision] remote engine is itself an AgentBox box — running the box init as root');
     }
 
-    const argv = buildRunArgv({
+    const runOpts = {
       container,
       image,
       env: req.env ?? {},
@@ -330,9 +335,19 @@ export const remoteDockerBackend: CloudBackend = {
       nestedEngine,
       ...(cpu !== undefined ? { cpu } : {}),
       ...(memory !== undefined ? { memory } : {}),
-    });
+    };
     log(`[provision] docker run ${container} on ${remote.spec}`);
-    await dockerOnRemoteOrThrow(target, argv, { timeoutMs: 300_000 });
+    try {
+      await dockerOnRemoteOrThrow(target, buildRunArgv(runOpts), { timeoutMs: 300_000 });
+    } catch (err) {
+      if (!isMissingDockerInit(String(err))) throw err;
+      // The failed run leaves the named container behind in `Created` state.
+      await dockerOnRemote(target, ['rm', '-f', container]);
+      log(`[provision] ${MISSING_DOCKER_INIT_WARNING}`);
+      await dockerOnRemoteOrThrow(target, buildRunArgv({ ...runOpts, init: false }), {
+        timeoutMs: 300_000,
+      });
+    }
 
     return {
       sandboxId,

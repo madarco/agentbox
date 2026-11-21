@@ -1196,6 +1196,16 @@ than the daemon. The provider detects this by asking the *engine*
 would be the wrong signal, since the CLI can run in a box while the engine sits on
 a real machine — and forces the box init to uid 0.
 
+**PID 1 is tini.** `buildRunArgv` passes `--init`, the same as the local docker
+provider's `runBox`, so docker's bundled tini runs as PID 1 with `sleep infinity`
+as its child. Everything in a box arrives through `docker exec`, and a background
+job whose exec'd shell exits first is reparented to PID 1; a bare `sleep` never
+`wait()`s, so those piled up as zombies for the box's whole life (and exhausted a
+`--pids-limit`). If the engine has no `docker-init` (`exec: "docker-init":
+executable file not found`), provision removes the half-created container and
+retries once without `--init`, logging a warning; any other `docker run` failure
+is surfaced unchanged.
+
 **No credential.** There is nothing in `secrets.env`: the provider authenticates
 as the user, through their own `~/.ssh/config`, agent and `known_hosts`. Its
 `providerModule` deliberately omits `ensureCredentials` / `readCredStatus`, so the

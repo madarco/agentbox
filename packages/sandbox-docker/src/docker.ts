@@ -41,9 +41,27 @@ export interface RunBoxSpec {
    * `127.0.0.1` for loopback-only exposure.
    */
   portMappings?: Array<{ hostPort: number; containerPort: number; hostIp?: string }>;
+  onLog?: (line: string) => void;
 }
 
-export async function runBox(spec: RunBoxSpec): Promise<string> {
+/**
+ * `docker run --init` failing because the engine has no `docker-init` binary
+ * (some distro packages and docker-compatible engines don't ship it). Matched
+ * narrowly so any other `docker run` failure still surfaces as-is. Covers the
+ * default PATH lookup and a daemon `init-path` pointing at a missing file.
+ */
+const MISSING_DOCKER_INIT_RE =
+  /exec: "[^"]*docker-init": (?:executable file not found|stat [^"]*: no such file or directory)/;
+
+export function isMissingDockerInit(output: string): boolean {
+  return MISSING_DOCKER_INIT_RE.test(output);
+}
+
+export const MISSING_DOCKER_INIT_WARNING =
+  'warning: docker engine has no docker-init; box runs without --init, so orphaned processes will not be reaped';
+
+/** The `docker run` argv for a box. `init: false` is only the missing-docker-init fallback. */
+export function runBoxArgv(spec: RunBoxSpec, opts: { init?: boolean } = {}): string[] {
   const args: string[] = [
     'run',
     '-d',
@@ -82,6 +100,10 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     // on the macOS engines). Boxes use it to reach the host relay process.
     '--add-host=host.docker.internal:host-gateway',
   ];
+  // PID 1 must reap orphans: `sleep infinity` never wait()s, so every process
+  // whose parent exits first (agent background jobs, exec'd shells) would stay
+  // a zombie for the box's lifetime. --init makes docker's tini PID 1.
+  if (opts.init !== false) args.push('--init');
   // Nested AgentBox-in-AgentBox dev only: the outer sandbox lacks
   // CAP_SYS_PTRACE, so the inner dockerd can't bind-mount /proc/<pid>/ns/net
   // for a non-root container init (image default USER is vscode → uid 1000).
@@ -121,9 +143,22 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     args.push('-e', `${k}=${val}`);
   }
   args.push(spec.image, 'sleep', 'infinity');
+  return args;
+}
 
-  const { stdout } = await execa('docker', args);
-  return stdout.trim();
+export async function runBox(spec: RunBoxSpec): Promise<string> {
+  try {
+    const { stdout } = await execa('docker', runBoxArgv(spec));
+    return stdout.trim();
+  } catch (err) {
+    const stderr = (err as { stderr?: unknown }).stderr;
+    if (!isMissingDockerInit(typeof stderr === 'string' ? stderr : String(err))) throw err;
+    // The failed run leaves the named container behind in `Created` state.
+    await execa('docker', ['rm', '-f', spec.name], { reject: false });
+    spec.onLog?.(MISSING_DOCKER_INIT_WARNING);
+    const { stdout } = await execa('docker', runBoxArgv(spec, { init: false }));
+    return stdout.trim();
+  }
 }
 
 /**

@@ -1015,6 +1015,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ...portlessEnv,
       ...(opts.claudeEnv ?? {}),
     },
+    onLog: log,
   });
   log(`container ${containerName} started`);
 
