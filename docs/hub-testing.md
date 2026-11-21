@@ -111,7 +111,8 @@ Then inside the box, the section-1 recipe works as-is. Two box-specific notes:
 - The box has no cloud credentials unless you carried them, so hub-driven **creates** will fail;
   registration, approvals and the API surface all still work.
 - Build images with `docker build --network=host -t agentbox/box:dev -f apps/cli/runtime/docker/Dockerfile.box apps/cli/runtime/docker`
-  rather than `agentbox prepare` — the box runs without `CAP_SYS_PTRACE`.
+  rather than `agentbox prepare` (prepare inside a box is untested; boxes created before #396 also
+  lack `CAP_SYS_PTRACE`, so their dockerd can't run non-root containers).
 
 ### Testing the VPS image itself, without a VPS
 

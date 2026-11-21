@@ -77,6 +77,8 @@ export function runBoxArgv(spec: RunBoxSpec, opts: { init?: boolean } = {}): str
     // need. Both are scoped to the outer box's namespaces — inner containers
     // can't escape it. We still avoid --privileged for cloud portability.
     '--cap-add=NET_ADMIN',
+    // Inner dockerd bind-mounts /proc/<pid>/ns/net of a non-root container init, which needs PTRACE_MODE_READ.
+    '--cap-add=SYS_PTRACE',
     // /dev/fuse + SYS_ADMIN + apparmor:unconfined used to be required for the
     // outer /workspace FUSE overlay. That overlay is gone, but they're still
     // load-bearing for the *inner* dockerd's storage driver, which
@@ -104,12 +106,12 @@ export function runBoxArgv(spec: RunBoxSpec, opts: { init?: boolean } = {}): str
   // whose parent exits first (agent background jobs, exec'd shells) would stay
   // a zombie for the box's lifetime. --init makes docker's tini PID 1.
   if (opts.init !== false) args.push('--init');
-  // Nested AgentBox-in-AgentBox dev only: the outer sandbox lacks
-  // CAP_SYS_PTRACE, so the inner dockerd can't bind-mount /proc/<pid>/ns/net
-  // for a non-root container init (image default USER is vscode → uid 1000).
-  // Forcing init to uid 0 makes init's /proc readable by daemon (same uid) so
-  // netns setup succeeds. Gated on AGENTBOX=1 so normal-host runs are
-  // unaffected. shell/exec flows pass --user explicitly (CONTAINER_USER),
+  // Nested AgentBox-in-AgentBox dev only: an outer box created before boxes got
+  // CAP_SYS_PTRACE (#396) still lacks it, so its dockerd can't bind-mount
+  // /proc/<pid>/ns/net for a non-root container init (image default USER is
+  // vscode → uid 1000). Forcing init to uid 0 makes init's /proc readable by
+  // daemon (same uid) so netns setup succeeds. Gated on AGENTBOX=1 so
+  // normal-host runs are unaffected. shell/exec flows pass --user explicitly (CONTAINER_USER),
   // so this only changes which uid the supervisor + service tree run as
   // inside a nested box.
   if (process.env.AGENTBOX === '1') {

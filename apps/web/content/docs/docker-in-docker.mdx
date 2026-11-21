@@ -13,6 +13,8 @@ Docker-in-Docker is on by default — no flag needed. The box images bake the do
 
 The in-container `vscode` user is in the `docker` group, so the agent runs `docker` with no `sudo`.
 
+Inner containers can run as any user, including images whose `USER` is non-root (for example `sosedoff/pgweb` or `redis/redisinsight`). On the docker and remote-docker providers, a box created by an older AgentBox release lacks the `SYS_PTRACE` capability this needs, and such images fail with `bind-mount /proc/<pid>/ns/net ...: permission denied`. Recreate the box (or restore a checkpoint into a new one) to pick up the fix; `stop`/`start` keeps the old capabilities.
+
 ```bash
 agentbox shell mybox -- docker run --rm hello-world
 agentbox shell mybox -- bash -lc 'cd /workspace && docker compose up -d'
@@ -22,8 +24,9 @@ The inner daemon never touches your host Docker daemon. Use [`agentbox shell`](/
 
 <Callout title="WHY">
   AgentBox never runs the outer container with `--privileged`. It grants only the capabilities DinD
-  needs, which is exactly why the same setup works on cloud providers that reject privileged
-  containers.
+  needs (`SYS_ADMIN`, `NET_ADMIN`, `SYS_PTRACE`, `/dev/fuse`, unconfined seccomp/AppArmor, a private
+  cgroup namespace), which is exactly why the same setup works on cloud providers that reject
+  privileged containers.
 </Callout>
 
 ## Storage driver

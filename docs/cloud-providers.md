@@ -1189,9 +1189,10 @@ reverse-engineered from the `buildAttach` argv (an inference that only holds whe
 the box IS the machine).
 
 **Nested engines.** When the engine is itself an AgentBox box (the
-agentbox-in-agentbox dev loop), its dockerd has no `CAP_SYS_PTRACE` and cannot
-bind-mount `/proc/<pid>/ns/net` for a container init running as a different uid
-than the daemon. The provider detects this by asking the *engine*
+agentbox-in-agentbox dev loop) that was created before docker boxes got
+`CAP_SYS_PTRACE` (#396), its dockerd cannot bind-mount `/proc/<pid>/ns/net` for a
+container init running as a different uid than the daemon. Boxes created since
+carry the cap, but the workaround stays for older outer boxes. The provider detects this by asking the *engine*
 (`test -f /etc/agentbox/box.env`) — not by reading its own `AGENTBOX=1`, which
 would be the wrong signal, since the CLI can run in a box while the engine sits on
 a real machine — and forces the box init to uid 0.

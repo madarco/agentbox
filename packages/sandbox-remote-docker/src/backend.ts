@@ -228,6 +228,8 @@ export function buildRunArgv(opts: {
     // the local docker provider; we still avoid --privileged.
     '--cap-add=SYS_ADMIN',
     '--cap-add=NET_ADMIN',
+    // Inner dockerd bind-mounts /proc/<pid>/ns/net of a non-root container init, which needs PTRACE_MODE_READ.
+    '--cap-add=SYS_PTRACE',
     '--device=/dev/fuse',
     '--security-opt=apparmor:unconfined',
     '--security-opt=seccomp=unconfined',
@@ -236,8 +238,9 @@ export function buildRunArgv(opts: {
   // tini as PID 1 reaps orphaned processes; `sleep infinity` alone never does.
   if (opts.init !== false) argv.push('--init');
   if (opts.nestedEngine) {
-    // The engine is itself inside an AgentBox sandbox, which has no
-    // CAP_SYS_PTRACE. Its dockerd therefore cannot bind-mount /proc/<pid>/ns/net
+    // The engine is itself inside an AgentBox sandbox, which may have no
+    // CAP_SYS_PTRACE (boxes created before #396 lack it, as can a third-party
+    // sandbox). Its dockerd then cannot bind-mount /proc/<pid>/ns/net
     // for a container whose init runs as a different uid than the daemon —
     // and the box image's default USER is vscode (1000), so `docker run` dies
     // with "bind-mount /proc/N/ns/net: permission denied". Forcing init to uid 0
