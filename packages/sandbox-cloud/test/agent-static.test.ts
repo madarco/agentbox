@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { buildAgentStaticSeedCommands } from '../src/sync/agent-static.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execa } from 'execa';
+import type { CloudBackend } from '@agentbox/core';
+import {
+  buildAgentStaticSeedCommands,
+  seedAgentStaticForCreate,
+} from '../src/sync/agent-static.js';
 
 const STAGES = [
   { kind: 'claude' as const, extractDir: '/home/vscode/.claude' },
@@ -62,4 +70,97 @@ describe('buildAgentStaticSeedCommands', () => {
     expect(joined).toContain('[ -d /home/vscode/.claude ]');
     expect(joined).toContain('|| true');
   });
+});
+
+describe('seedAgentStaticForCreate (remote-docker: no static config baked at prepare)', () => {
+  function recordingBackend(
+    seeds: boolean,
+    uploaded: Map<string, string[]>,
+    execs: string[],
+  ): CloudBackend {
+    return {
+      name: 'rec',
+      ...(seeds ? { seedsAgentStaticAtCreate: true } : {}),
+      provision: async () => ({ sandboxId: 'sb' }),
+      get: async () => null,
+      start: async () => {},
+      stop: async () => {},
+      pause: async () => {},
+      resume: async () => {},
+      destroy: async () => {},
+      state: async () => 'running',
+      exec: async (_h, cmd) => {
+        execs.push(cmd);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      // The tarball is deleted once the seed finishes, so list it on arrival.
+      uploadFile: async (_h, local, remote) => {
+        const { stdout } = await execa('tar', ['-tzf', local]);
+        uploaded.set(
+          remote,
+          stdout
+            .split('\n')
+            .map((l) => l.replace(/^\.\//, '').replace(/\/$/, ''))
+            .filter((l) => l.length > 0 && l !== '.'),
+        );
+      },
+      downloadFile: async () => {},
+      listFiles: async () => [],
+      previewUrl: async () => ({ url: 'https://x' }),
+    };
+  }
+
+  let home: string;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'seed-create-'));
+  });
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('is a no-op for a backend whose prepare bakes the config', async () => {
+    const uploaded = new Map<string, string[]>();
+    const execs: string[] = [];
+    const res = await seedAgentStaticForCreate(
+      recordingBackend(false, uploaded, execs),
+      { sandboxId: 'sb' },
+      { hostHome: home, agents: ['pi'] },
+    );
+    expect(res).toBeNull();
+    expect(uploaded.size).toBe(0);
+    expect(execs).toEqual([]);
+  });
+
+  it('uploads and extracts the host Pi config, skills dereferenced, credential excluded', async () => {
+    const outside = join(home, 'src', 'skills', 'deploy');
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, 'SKILL.md'), 'deploy');
+    const pi = join(home, '.pi', 'agent');
+    await mkdir(join(pi, 'skills'), { recursive: true });
+    await writeFile(join(pi, 'settings.json'), '{}');
+    // Per-box credential push owns this; the static seed must not carry it.
+    await writeFile(join(pi, 'auth.json'), '{"anthropic":{}}');
+    await symlink(outside, join(pi, 'skills', 'deploy'));
+    // Another agent's config: not this box's agent, so not seeded.
+    await mkdir(join(home, '.agentbox-example'), { recursive: true });
+    await writeFile(join(home, '.agentbox-example', 'settings.json'), '{}');
+
+    const uploaded = new Map<string, string[]>();
+    const execs: string[] = [];
+    const res = await seedAgentStaticForCreate(
+      recordingBackend(true, uploaded, execs),
+      { sandboxId: 'sb' },
+      { hostHome: home, agents: ['pi'] },
+    );
+
+    expect(res?.seeded).toEqual(['pi']);
+    const entries = uploaded.get('/tmp/agentbox-seed-pi.tar.gz');
+    expect(entries).toContain('settings.json');
+    expect(entries).toContain('skills/deploy/SKILL.md');
+    expect(entries).not.toContain('auth.json');
+    expect([...uploaded.keys()].some((k) => k.includes('example'))).toBe(false);
+    expect(execs.join('\n')).toContain(
+      'tar -xzf /tmp/agentbox-seed-pi.tar.gz -C /home/vscode/.pi/agent',
+    );
+  }, 30_000);
 });

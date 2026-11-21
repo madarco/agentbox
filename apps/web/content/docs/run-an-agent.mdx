@@ -101,6 +101,14 @@ Sign-in runs in a throwaway container, but the agent's own login TUI never takes
 
 **Pi is the exception**, and not by omission: its only sign-in is the in-TUI `/login` slash command, so there is no prompt sequence a host can drive. `agentbox pi login` hands your terminal to Pi itself — run `/login`, pick a provider, then `/exit`, and the captured `auth.json` is reused by every later box. Pi also reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` and the other provider keys straight from your environment, which is the headless path.
 
+### Pi's config in a box
+
+Every Pi box gets your host `~/.pi/agent` (settings, `AGENTS.md`, extensions, prompts, themes, skills), on local Docker, Remote Docker and every cloud provider. A few things worth knowing:
+
+- **Symlinked skills arrive as real files.** Skills under `~/.pi/agent/skills/` are often symlinks into a checkout elsewhere on your machine. AgentBox resolves them on the host before copying, so they work in the Linux box instead of arriving as dangling links. A link that is already broken on the host is skipped and named in the create log.
+- **Pin the version** with `agentbox config set pi.version 0.70.2` (an exact version or npm dist-tag; ranges such as `^0.70` are refused; default `latest`) so new boxes stop drifting to the newest release.
+- **MCP servers defined outside `~/.pi/agent` are not copied.** Pi's MCP extension can also read `~/.config/mcp/mcp.json` and import servers from other tools' configs (Claude Code, Cursor, …). Those files can hold API keys, so AgentBox leaves them on the host and prints a note at create time with the file and how many servers it defines — never a server's name or contents. `~/.pi/agent/mcp.json` itself is always copied, even when it is a symlink to a file elsewhere (as stow or chezmoi set it up); the note then tells you the box got a copy of that file. To use those servers in a box, put the ones you need in `~/.pi/agent/mcp.json`, or copy a file explicitly with [`carry:`](/docs/agentbox-yaml#carry).
+
 Two escape hatches:
 
 - `--interactive` hands your terminal to the agent's own login TUI — the old behavior. Use it for a login method the guided prompt can't drive (an exotic `agentbox claude login -- --sso`, or OpenCode's GitHub Copilot picker, which AgentBox falls back to automatically).

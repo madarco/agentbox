@@ -1110,6 +1110,17 @@ scaffold already solved every one of them, so the provider implements the ~14
 the in-box relay + `CloudBoxPoller` bridge, git-push-by-bundle, carry, and
 credential sync unchanged.
 
+**Static agent config is seeded at create, not baked.** Every other cloud
+provider bakes the host's static agent config (`stageAllAgentStatic`) into its
+base snapshot during `prepare`, and the create path assumes it is there.
+Remote Docker's `prepare` builds only the shared, agentless box image on the
+engine — one image per engine, possibly shared with a control box — so it
+declares `CloudBackend.seedsAgentStaticAtCreate`, and `createCloudProvider`
+runs `seedAgentStaticForCreate` (upload + extract, narrowed to the box's own
+agents) after the agent install and before the credential seed. Without it a
+remote box arrived with none of `~/.pi/agent`, `~/.claude`, `~/.agents`, ….
+An out-of-tree provider with the same shape opts in with the same flag.
+
 **Transport.** One OpenSSH ControlMaster per box (`@agentbox/sandbox-core`'s
 `SshTunnelManager`, shared with hetzner/digitalocean), and every docker command
 runs through one chokepoint: `ssh <dest> bash -lc 'docker …'`

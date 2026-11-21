@@ -91,6 +91,7 @@ export {
 export {
   buildAgentStaticSeedCommands,
   seedAgentStaticIntoCloudBox,
+  seedAgentStaticForCreate,
   type SeedAgentStaticOptions,
   type SeedAgentStaticResult,
 } from './sync/agent-static.js';

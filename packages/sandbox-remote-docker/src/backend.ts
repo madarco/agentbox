@@ -264,6 +264,9 @@ export function buildRunArgv(opts: {
 
 export const remoteDockerBackend: CloudBackend = {
   name: BACKEND_NAME,
+  // `prepare` here builds only the shared agentless image on the remote engine,
+  // never the host's agent config, so every create seeds it.
+  seedsAgentStaticAtCreate: true,
 
   async provision(req: CloudProvisionRequest): Promise<CloudHandle> {
     const log = req.onLog ?? ((): void => {});
