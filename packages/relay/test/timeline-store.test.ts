@@ -2,6 +2,7 @@ import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { thisMachine } from '@agentbox/config';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addWorkspace,
@@ -166,7 +167,7 @@ describe('timeline store', () => {
 
   it('finds the workspace a box belongs to, by folder and by repo', async () => {
     const ws = await makeWorkspace();
-    const here = hostname();
+    const here = thisMachine();
     expect(
       (await readWorkspaceForBox({ host: here, projectRoot: join(ws.root, 'app', 'src') }))?.id,
     ).toBe(ws.id);

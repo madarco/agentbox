@@ -1,7 +1,6 @@
 // The workspace domain: workspaces and their tasks (managers are their own
 // slice, `managers.ts`). Everything here reaches state through @agentbox/relay's
 // workspace store; nothing here knows about providers, containers or git.
-import { hostname as osHostname } from 'node:os';
 import { isAbsolute } from 'node:path';
 import {
   addTask,
@@ -39,7 +38,7 @@ import {
   type WorkTask,
 } from '@agentbox/relay';
 import { inBackground } from './background';
-import { reconcileContext as fleetContext, type BackendDeps } from './deps';
+import { hubMachine, reconcileContext as fleetContext, type BackendDeps } from './deps';
 import type {
   ActionResult,
   AddTaskInput,
@@ -67,6 +66,7 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
   const probe: ManagerProbe = {
     ...(deps.managerExec ? { exec: deps.managerExec } : {}),
     ...(deps.hostname ? { hostname: deps.hostname } : {}),
+    ...(deps.machineId ? { machineId: deps.machineId } : {}),
     ...(deps.isPidAlive ? { isPidAlive: deps.isPidAlive } : {}),
     ...(deps.processStartTime ? { processStartTime: deps.processStartTime } : {}),
   };
@@ -94,7 +94,7 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
   ): Promise<WorkspaceView | null> {
     if (!rec) return null;
     const [tasks, managers] = await Promise.all([tasksOf(rec.id, ctx), managerCounts(rec.id)]);
-    const base: Workspace = toWorkspaceView(rec, (deps.hostname ?? osHostname)());
+    const base: Workspace = toWorkspaceView(rec, hubMachine(deps));
     return {
       ...base,
       taskCounts: {
@@ -436,7 +436,7 @@ export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
 
     async workspaceIdByProject(): Promise<Map<string, string>> {
       const out = new Map<string, string>();
-      const host = (deps.hostname ?? osHostname)();
+      const host = hubMachine(deps);
       for (const ws of await listWorkspaces()) {
         for (const pid of workspaceProjectIds(ws, host)) out.set(pid, ws.id);
       }

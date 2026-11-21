@@ -18,7 +18,6 @@
  * a given manager is on, and `hostIsHub` whether the hub that answered is it.
  */
 import { spawnSync } from 'node:child_process';
-import { hostname } from 'node:os';
 import { confirm, isCancel, log, select } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
@@ -27,7 +26,13 @@ import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/worksp
 import { detectHostSession, registerHostManager } from '../lib/host-session.js';
 import { renderTable } from '../lib/text-table.js';
 import { detectHostTerminal, spawnInNewTerminal } from '../terminal/host.js';
-import { loadEffectiveConfig } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  sameMachine,
+  thisMachine,
+  toMachineRef,
+  type MachineRef,
+} from '@agentbox/config';
 import { readPtyMeta } from '@agentbox/sandbox-core';
 import { attachPtySession } from '../manager/pty-attach.js';
 import type {
@@ -37,7 +42,7 @@ import type {
 } from '../control-plane/hub-api-client.js';
 import type { AttachOpenIn } from '@agentbox/config';
 import { visibleAgentSpecs } from '@agentbox/agent-registry';
-import { RESUMABLE_MANAGER_AGENTS } from '@agentbox/relay';
+import { ptySessionAnswersHere, RESUMABLE_MANAGER_AGENTS } from '@agentbox/relay';
 
 /**
  * Agents a manager can be. Registry-driven, so an agent added with
@@ -172,8 +177,11 @@ function ago(iso: string): string {
  * about where to run it: `host` does. Running tmux against a session on another
  * machine fails with a bare non-zero exit that reads as a broken manager.
  */
-export function runsHere(m: Pick<HubApiManager, 'host'>, host: string = hostname()): boolean {
-  return m.host === host;
+export function runsHere(
+  m: Pick<HubApiManager, 'host' | 'machineId'>,
+  host: MachineRef | string = thisMachine(),
+): boolean {
+  return sameMachine(m, host);
 }
 
 /**
@@ -183,15 +191,25 @@ export function runsHere(m: Pick<HubApiManager, 'host'>, host: string = hostname
  * on; when that is this one, the local hub CAN do it — the record simply lives
  * somewhere else.
  */
-export function retryOnLocalHub(err: unknown, host: string = hostname()): boolean {
+export function retryOnLocalHub(err: unknown, host: MachineRef | string = thisMachine()): boolean {
   if (!(err instanceof HubApiError)) return false;
   if (err.code !== 'wrong_host' && err.code !== 'manager_unreachable') return false;
-  const details = err.details as { host?: unknown; hosts?: unknown } | undefined;
+  const me = toMachineRef(host);
+  const details = err.details as
+    | { host?: unknown; hosts?: unknown; machineId?: unknown; machineIds?: unknown }
+    | undefined;
   // A refusal about a WORKSPACE names every machine that has a checkout of it:
   // `host` is only the first of them, so a two-PC workspace would otherwise
   // refuse the retry on whichever PC lost the coin toss.
-  if (Array.isArray(details?.hosts)) return details.hosts.includes(host);
-  return typeof details?.host === 'string' && details.host === host;
+  if (Array.isArray(details?.hosts)) {
+    // `machineIds` is index-aligned with `hosts`: null marks an entry from before
+    // machine ids, the only kind a hostname may still stand for.
+    const ids: unknown[] = Array.isArray(details.machineIds) ? details.machineIds : [];
+    if (me.id && ids.includes(me.id)) return true;
+    return details.hosts.some((h, i) => h === me.label && (ids[i] ?? null) === null);
+  }
+  if (typeof details?.machineId === 'string' && me.id) return details.machineId === me.id;
+  return typeof details?.host === 'string' && details.host === me.label;
 }
 
 /**
@@ -310,7 +328,7 @@ async function attachToSession(
 ): Promise<boolean> {
   // A pty-hosted manager first: its socket and token are readable only here, on
   // the machine that runs it, which is also the only machine that could attach.
-  if (runsHere(m) && (await readPtyMeta(m.id))) {
+  if ((runsHere(m) && (await readPtyMeta(m.id))) || (await ptySessionAnswersHere(m))) {
     return await attachToPtySession(m, openIn, opts);
   }
   if (!runsHere(m) && m.attachCommand) {

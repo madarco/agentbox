@@ -7,7 +7,8 @@
  */
 import { spawn } from 'node:child_process';
 import { access, mkdir, open as openFile, rm } from 'node:fs/promises';
-import { hostname as osHostname } from 'node:os';
+import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
+import { optionalMachineId } from './manager.js';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -49,6 +50,7 @@ export interface StartManagerPtyInput {
   argv: string[];
   env?: NodeJS.ProcessEnv;
   hostname?: () => string;
+  machineId?: () => string;
   settings?: Partial<PtyCarrierSettings>;
   /** Injected in tests so a start never spawns a real agent. */
   spawnHost?: SpawnPtyHost;
@@ -210,7 +212,8 @@ export async function startManagerPtySession(
     id: rec.id,
     agent: rec.agent,
     kind: 'pty',
-    host: (input.hostname ?? osHostname)(),
+    host: (input.hostname ?? getMachineLabel)(),
+    ...optionalMachineId((input.machineId ?? tryGetMachineId)()),
     cwd: rec.cwd,
     pty: {
       pid: meta.pid,
