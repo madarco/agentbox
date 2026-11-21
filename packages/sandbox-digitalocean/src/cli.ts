@@ -134,7 +134,11 @@ const firewallSyncSub = new Command('sync')
             onLog: (l) => process.stdout.write(`digitalocean: ${l}\n`),
             overrideHint: SYNC_EGRESS_HINT,
           });
-      const current = decodeBoxFirewall(firewall, staticInboundSources(box.cloud?.inbound));
+      const current = decodeBoxFirewall(
+        firewall,
+        droplet.tags,
+        staticInboundSources(box.cloud?.inbound),
+      );
       const key = localMachineKey();
       const next = {
         staticSources: current.staticSources,
@@ -143,7 +147,7 @@ const firewallSyncSub = new Command('sync')
       process.stdout.write(
         `digitalocean: updating firewall ${firewall.id} for box '${box.name}': ${key} -> ${cidrs.join(', ')}\n`,
       );
-      await writeBoxFirewall(client, firewall, next);
+      await writeBoxFirewall(client, firewall, { id: droplet.id, tags: droplet.tags }, next);
       process.stdout.write(
         `digitalocean: firewall ${firewall.id} now allows SSH from ${boxFirewallSources(next).join(', ')}\n`,
       );
@@ -177,11 +181,18 @@ const firewallShowSub = new Command('show')
         const sources = rule.sources.addresses?.join(', ') ?? '—';
         lines.push(`  in ${rule.protocol}${rule.ports ? `:${rule.ports}` : ''} from=${sources}`);
       }
-      const decoded = decodeBoxFirewall(firewall, staticInboundSources(box.cloud?.inbound));
+      const decoded = decodeBoxFirewall(
+        firewall,
+        droplet.tags,
+        staticInboundSources(box.cloud?.inbound),
+      );
       lines.push('devices:');
       for (const e of decoded.entries) {
         const seen = e.seen > 0 ? new Date(e.seen * 1000).toISOString() : 'unknown';
-        lines.push(`  ${e.key}${e.hub ? ' (hub)' : ''}: ${e.cidrs.join(', ')}  seen ${seen}`);
+        const label = e.label ? ` [${e.label}]` : '';
+        lines.push(
+          `  ${e.key}${label}${e.hub ? ' (hub)' : ''}: ${e.cidrs.join(', ')}  seen ${seen}`,
+        );
       }
       lines.push(`this machine: ${localMachineKey()}`);
       lines.push('outbound:');

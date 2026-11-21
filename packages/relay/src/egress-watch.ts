@@ -20,7 +20,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { BoxRecord, CloudBackend } from '@agentbox/core';
-import { STATE_DIR, detectDeviceCidrs, readState } from '@agentbox/sandbox-core';
+import { STATE_DIR, detectDeviceCidrs, ipv4Cidrs, readState } from '@agentbox/sandbox-core';
 import { resolveCloudBackend } from './host-actions.js';
 
 /** Providers with a per-box firewall that pins SSH to host egress IPs. */
@@ -30,9 +30,17 @@ export const EGRESS_CACHE_FILE = join(STATE_DIR, 'egress-ip.json');
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 
-interface EgressCache {
+/**
+ * What the watcher last saw: the egress, and per running box the IPv4 egress
+ * its firewall was last confirmed to admit. Per box, not one global value, so
+ * a box whose repair failed, or that was paused through the change, is still
+ * repaired on a later tick.
+ */
+export interface EgressCache {
   cidrs: string[];
-  detectedAt: string;
+  /** boxId -> IPv4 egress key (`ipv4Cidrs(...).join(',')`) last verified. */
+  boxes: Record<string, string>;
+  detectedAt?: string;
 }
 
 export interface EgressWatchDeps {
@@ -44,8 +52,8 @@ export interface EgressWatchDeps {
   /** Injectable for tests; defaults to `resolveCloudBackend`. */
   resolveBackend?: (name: string) => Promise<CloudBackend>;
   /** Injectable for tests; default `~/.agentbox/egress-ip.json`. */
-  readCache?: () => Promise<string[] | null>;
-  writeCache?: (cidrs: string[]) => Promise<void>;
+  readCache?: () => Promise<EgressCache | null>;
+  writeCache?: (cache: EgressCache) => Promise<void>;
   intervalMs?: number;
 }
 
@@ -71,31 +79,28 @@ export function selectFirewallBoxes(boxes: readonly BoxRecord[]): BoxRecord[] {
   );
 }
 
-function sameCidrs(a: readonly string[] | null, b: readonly string[]): boolean {
-  if (!a || a.length !== b.length) return false;
-  const s = new Set(a);
-  return b.every((x) => s.has(x));
-}
-
-async function defaultReadCache(): Promise<string[] | null> {
+async function defaultReadCache(): Promise<EgressCache | null> {
   try {
     const raw = JSON.parse(await readFile(EGRESS_CACHE_FILE, 'utf8')) as Partial<EgressCache>;
-    return Array.isArray(raw.cidrs) ? raw.cidrs.filter((c) => typeof c === 'string') : null;
+    return {
+      cidrs: Array.isArray(raw.cidrs) ? raw.cidrs.filter((c) => typeof c === 'string') : [],
+      boxes: raw.boxes && typeof raw.boxes === 'object' ? raw.boxes : {},
+    };
   } catch {
     return null;
   }
 }
 
-async function defaultWriteCache(cidrs: string[]): Promise<void> {
+async function defaultWriteCache(cache: EgressCache): Promise<void> {
   await mkdir(dirname(EGRESS_CACHE_FILE), { recursive: true });
-  const body: EgressCache = { cidrs, detectedAt: new Date().toISOString() };
+  const body: EgressCache = { ...cache, detectedAt: new Date().toISOString() };
   await writeFile(EGRESS_CACHE_FILE, JSON.stringify(body, null, 2) + '\n', 'utf8');
 }
 
 export function startEgressWatchLoop(deps: EgressWatchDeps): EgressWatchHandle {
   const { log } = deps;
   const listBoxes = deps.listBoxes ?? (async () => (await readState()).boxes);
-  const detect = deps.detect ?? (() => detectDeviceCidrs());
+  const detect = deps.detect ?? (() => detectDeviceCidrs({ fresh: true }));
   const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
   const readCache = deps.readCache ?? defaultReadCache;
   const writeCache = deps.writeCache ?? defaultWriteCache;
@@ -124,16 +129,24 @@ export function startEgressWatchLoop(deps: EgressWatchDeps): EgressWatchHandle {
         lastProbeFailure = msg;
         return;
       }
-      const cached = await readCache();
-      if (sameCidrs(cached, cidrs)) return;
-
-      log(
-        `egress-watch: egress ${cached ? `changed ${cached.join(', ')} -> ` : 'is '}${cidrs.join(', ')}; ` +
-          `checking ${String(boxes.length)} box firewall(s)`,
-      );
-      let allOk = true;
+      // Only IPv4 decides: boxes are dialled on IPv4, and the IPv6 probe is
+      // best-effort — a flaky miss must not look like a network change.
+      const v4 = ipv4Cidrs(cidrs).join(',');
+      const cache = (await readCache()) ?? { cidrs: [], boxes: {} };
+      const stale = boxes.filter((b) => cache.boxes[b.id] !== v4);
+      // Carry only boxes still running: a paused box re-verifies when it resumes.
+      const verified: Record<string, string> = {};
+      for (const b of boxes) {
+        const v = cache.boxes[b.id];
+        if (v === v4) verified[b.id] = v;
+      }
+      if (stale.length > 0) {
+        log(
+          `egress-watch: egress ${cidrs.join(', ')}; checking ${String(stale.length)} box firewall(s)`,
+        );
+      }
       const backends = new Map<string, CloudBackend | null>();
-      for (const box of boxes) {
+      for (const box of stale) {
         const name = box.provider as string;
         if (!backends.has(name)) {
           backends.set(name, await resolveBackend(name).catch(() => null));
@@ -146,20 +159,23 @@ export function startEgressWatchLoop(deps: EgressWatchDeps): EgressWatchHandle {
             ...(box.cloud?.inbound ? { inbound: box.cloud.inbound } : {}),
           });
           if (r.changed) log(`egress-watch: ${box.name}: ${r.detail ?? 'firewall updated'}`);
+          verified[box.id] = v4;
         } catch (err) {
-          allOk = false;
+          // Left unverified, so the next tick retries it.
           log(
             `egress-watch: ${box.name}: repair failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
-      // Cache only a fully applied change, so a failed box is retried next tick.
-      if (allOk) await writeCache(cidrs).catch(() => undefined);
+      const same =
+        cache.cidrs.join(',') === cidrs.join(',') &&
+        Object.keys(verified).length === Object.keys(cache.boxes).length &&
+        Object.entries(verified).every(([k, v]) => cache.boxes[k] === v);
+      if (!same) await writeCache({ cidrs, boxes: verified }).catch(() => undefined);
     } finally {
       ticking = false;
     }
   }
-
   const run = (): void => {
     inFlight = tick().catch((err: unknown) => {
       log(`egress-watch: tick failed: ${err instanceof Error ? err.message : String(err)}`);

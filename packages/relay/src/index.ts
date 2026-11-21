@@ -260,6 +260,7 @@ export {
   FIREWALL_PROVIDERS,
   selectFirewallBoxes,
   startEgressWatchLoop,
+  type EgressCache,
   type EgressWatchDeps,
   type EgressWatchHandle,
 } from './egress-watch.js';

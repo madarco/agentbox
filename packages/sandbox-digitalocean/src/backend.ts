@@ -43,6 +43,7 @@ import {
   createPerBoxFirewall,
   decodeBoxFirewall,
   deletePerBoxFirewall,
+  DEVICE_TAG_PREFIX,
   findFirewallForDroplet,
   normalizeSourceCidr,
   writeBoxFirewall,
@@ -66,6 +67,7 @@ import {
   describeInbound,
   detectDeviceCidrs,
   deviceEntryNeedsUpdate,
+  isControlBoxProcess,
   localMachineKey,
   normalizeAgentSet,
   parseInboundSpec,
@@ -299,6 +301,52 @@ interface PerBoxState {
   knownHosts: string;
 }
 
+/** Pause before re-reading a box we just wrote (lets a racing write land). */
+const VERIFY_SETTLE_MS = 1_500;
+
+/**
+ * Upsert this machine's entry with read → write → re-read. DigitalOcean has
+ * no conditional update, so two machines repairing one box at once can each
+ * overwrite the other's entry; the re-read catches a lost write and redoes it
+ * (bounded). A droplet or firewall that is gone is nothing to repair.
+ */
+async function ensureSelfOnFirewall(
+  sandboxId: string,
+  policy: InboundPolicy | undefined,
+  cidrs: string[],
+): Promise<{ changed: boolean; detail?: string }> {
+  const c = client();
+  const id = Number.parseInt(sandboxId, 10);
+  const key = localMachineKey();
+  const hub = isControlBoxProcess();
+  let wrote = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const droplet = await c.getDroplet(id);
+    if (!droplet) return { changed: false };
+    const fw = await findFirewallForDroplet(c, id, droplet.tags ?? []);
+    if (!fw) return { changed: false };
+    const current = decodeBoxFirewall(fw, droplet.tags ?? [], staticInboundSources(policy));
+    if (!deviceEntryNeedsUpdate(current.entries, current.staticSources, key, cidrs, hub)) {
+      return wrote
+        ? {
+            changed: true,
+            detail: `firewall updated: SSH allowed from this machine (${key}) at ${cidrs.join(', ')} (${String(current.entries.length)} device entr${current.entries.length === 1 ? 'y' : 'ies'})`,
+          }
+        : { changed: false };
+    }
+    const next: BoxFirewallSsh = {
+      staticSources: current.staticSources,
+      entries: upsertDeviceEntry(current.entries, selfDeviceEntry(cidrs, { key, hub })),
+    };
+    await writeBoxFirewall(c, fw, { id, tags: droplet.tags ?? [] }, next);
+    wrote = true;
+    await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS));
+  }
+  throw new Error(
+    `digitalocean: this machine's firewall entry on droplet ${sandboxId} kept being overwritten by a concurrent update`,
+  );
+}
+
 function perBoxDir(sandboxId: string): string {
   return resolvePath(defaultBoxSshDir(sandboxId), '..');
 }
@@ -479,6 +527,7 @@ export const digitaloceanBackend: CloudBackend = {
 
     let firewallId: string | null = null;
     let dropletId: number | null = null;
+    let deviceTags: string[] = [];
     try {
       // 4. Firewall — created with the per-box tag BEFORE the droplet, so
       // DigitalOcean auto-applies it the moment the droplet boots.
@@ -488,6 +537,7 @@ export const digitaloceanBackend: CloudBackend = {
         tag: boxTag,
       });
       firewallId = firewall.id;
+      deviceTags = firewall.deviceTags;
 
       // 5. Cloud-init for the box: vscode user, pubkey, /etc/hosts alias,
       // optional box.env passthrough from req.env. The relay/bridge secrets are
@@ -517,7 +567,8 @@ export const digitaloceanBackend: CloudBackend = {
               size,
               image: imageRef,
               user_data: cloudInit,
-              tags: [boxTag, 'agentbox'],
+              // + the device entries (see firewall.ts): the droplet carries them.
+              tags: [boxTag, 'agentbox', ...deviceTags],
               ipv6: false,
             }),
         );
@@ -619,7 +670,7 @@ export const digitaloceanBackend: CloudBackend = {
       }
       if (firewallId !== null) {
         try {
-          await deletePerBoxFirewall(c, firewallId, { tags: [boxTag] });
+          await deletePerBoxFirewall(c, firewallId, { tags: [boxTag, ...deviceTags] });
         } catch {
           // best-effort
         }
@@ -721,14 +772,14 @@ export const digitaloceanBackend: CloudBackend = {
     if (!fw) {
       throw new Error(`digitalocean: no per-box firewall found for droplet ${h.sandboxId}`);
     }
-    const current = decodeBoxFirewall(fw, staticInboundSources(h.inbound));
+    const current = decodeBoxFirewall(fw, droplet.tags ?? [], staticInboundSources(h.inbound));
     let entries = current.entries;
     if (policy.mode !== 'open') {
       const cidrs = await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT });
       entries = upsertDeviceEntry(entries, selfDeviceEntry(cidrs));
     }
     const next: BoxFirewallSsh = { staticSources: staticInboundSources(policy), entries };
-    await writeBoxFirewall(c, fw, next);
+    await writeBoxFirewall(c, fw, { id, tags: droplet.tags ?? [] }, next);
     return { sources: boxFirewallSources(next) };
   },
 
@@ -737,30 +788,12 @@ export const digitaloceanBackend: CloudBackend = {
     // replacing only its own entry — other machines' entries are carried over,
     // so attaching from a second PC never locks the first one out. Called on a
     // connection-establishment failure and by the relay's egress watcher on an
-    // IP change. `open` firewalls are already reachable → no-op.
-    const c = client();
-    const id = Number.parseInt(h.sandboxId, 10);
+    // IP change. `open` firewalls are already reachable → no-op. API errors
+    // propagate (the watcher must not record a failed read as healed).
     const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
     if (policy.mode === 'open') return { changed: false };
-    const droplet = await c.getDroplet(id).catch(() => null);
-    if (!droplet) return { changed: false };
-    const fw = await findFirewallForDroplet(c, id, droplet.tags ?? []).catch(() => null);
-    if (!fw) return { changed: false };
-    const current = decodeBoxFirewall(fw, staticInboundSources(policy));
     const cidrs = await detectDeviceCidrs({ overrideHint: REPAIR_EGRESS_HINT });
-    const key = localMachineKey();
-    if (!deviceEntryNeedsUpdate(current.entries, current.staticSources, key, cidrs)) {
-      return { changed: false };
-    }
-    const next: BoxFirewallSsh = {
-      staticSources: current.staticSources,
-      entries: upsertDeviceEntry(current.entries, selfDeviceEntry(cidrs, { key })),
-    };
-    await writeBoxFirewall(c, fw, next);
-    return {
-      changed: true,
-      detail: `firewall updated: SSH allowed from ${key} at ${cidrs.join(', ')} (${String(next.entries.length)} device entr${next.entries.length === 1 ? 'y' : 'ies'})`,
-    };
+    return ensureSelfOnFirewall(h.sandboxId, policy, cidrs);
   },
 
   async destroy(h: CloudHandle): Promise<void> {
@@ -779,7 +812,10 @@ export const digitaloceanBackend: CloudBackend = {
         // The firewall carries only the unique per-box tag (never the shared
         // `agentbox` tag) plus its own device tags (box-unique by their
         // discriminator), so this is the safe set to delete alongside it.
-        firewallTags = fw?.tags;
+        // Plus this box's device-entry tags on the droplet (box-unique too).
+        firewallTags = fw
+          ? [...fw.tags, ...droplet.tags.filter((t) => t.startsWith(DEVICE_TAG_PREFIX))]
+          : undefined;
       }
     } catch {
       // ignore — we'll still try to delete the droplet

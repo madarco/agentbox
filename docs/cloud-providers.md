@@ -47,6 +47,50 @@ build images from a Dockerfile). Three things differ from Hetzner:
   / `--inbound open`, `firewall sync` names its `--source`, `inbound` and the
   connect-failure repair point at those two, and prepare / control-plane deploy
   name nothing because they have no override.
+- **The SSH allowlist is per device, additive (both VPS providers).** A box
+  firewall holds one entry per machine — key, egress CIDRs (the IPv4 `/32`
+  plus the IPv6 `/64` when the host has one; `detectEgressIpv6` is
+  best-effort and never fails a command), and a `seen` time — on top of the
+  static policy part (`open` / whitelist CIDRs). Create writes the creating
+  machine's entry; `repairReachability`, `firewall sync` and `inbound`
+  replace **only the caller's own entry** and carry every other one over, so
+  attaching from a second PC no longer locks the first one out (it used to be
+  "last PC wins"). The list is capped at `DEVICE_ALLOWLIST_CAP` (10): past it
+  the oldest `seen` goes first. An entry written by the control box
+  (`AGENTBOX_HUB_WORKER=on`) is flagged `hub` and never evicted; a hub create
+  also writes the admin PC CIDR as an `admin` entry. The entries live on the
+  provider so another PC reads them: Hetzner as one tcp/22 rule per device
+  with `description: agentbox-device key=<k> host=<label> seen=<epoch>[ hub]`;
+  DigitalOcean (rules have no description, and a firewall takes at most 5
+  tags) as one tcp/22 rule with the union plus **droplet** tags
+  `abdev:<disc>:<key>:<label>:<seen>:<h|n>:<hex cidrs>`, where `<disc>` is a
+  hash of the box tag so the account-global tag is unique to that box and safe
+  to delete on replace / destroy. An entry that can't be encoded is dropped
+  from the rule too, so no address is left without an owner. A box written
+  before this has its non-policy addresses read as one `legacy` entry
+  (`seen: 0`, first to be evicted). CIDRs compare by value (`cidrKey`), so an
+  API echoing `2001:db8:1::/64` matches the `2001:db8:1:0::/64` we wrote, and
+  a probe that found no IPv6 is not a change (only the IPv4 set, a new IPv6
+  prefix, or the `hub` flag trigger a rewrite). The update is read → write →
+  re-read (up to 3 tries): neither API has a conditional write, so two PCs
+  repairing one box at once could drop each other's entry, and the re-read
+  catches that. The machine key is a random id minted once into
+  `~/.agentbox/device-key` (not the hostname: two Macs named `MacBook-Pro`
+  would share it, and macOS hostnames flip); the hostname is only a label.
+  `localMachineKey()` in `@agentbox/sandbox-core` (`device-allowlist.ts`) is
+  the one function to switch to `getMachineId()` once that lands.
+- **The relay watches the egress IP** (`packages/relay/src/egress-watch.ts`,
+  started by `startRelayDaemon`). On start and every 5 minutes it reads
+  `state.json`; with no running, non-`open` hetzner/digitalocean box it stops
+  there — no probe, no provider call. Otherwise it probes the egress and
+  calls the backend's `repairReachability` for each box whose firewall was
+  not yet verified at this IPv4 egress (`~/.agentbox/egress-ip.json` keeps,
+  per running box, the egress it was last verified at). A box whose repair
+  failed, or that was paused through the change, stays unverified and is
+  repaired on a later tick. The watcher's probe is memoized for 15s so the
+  per-box repairs reuse it. This also
+  heals the box→host direction (a box `git push` over the host's
+  ControlMaster), which no CLI wrapper reaches.
 
 Defaults: size `s-2vcpu-4gb`, region `nyc3`, stock image `ubuntu-24-04-x64`.
 Override per box with `box.sizeDigitalocean` / `AGENTBOX_DIGITALOCEAN_REGION`.
@@ -805,9 +849,10 @@ The `CloudBackend` interface is the same, but the implementation
   Private key never leaves the host. Pubkey is injected via cloud-init's
   `users.vscode.ssh_authorized_keys` — explicitly NOT via Hetzner's
   SSH-keys-import API (that would make the key reusable on other VPSes).
-- **Per-box Hetzner Cloud Firewall**, also minted at provision time,
-  rule set = `[{direction: 'in', port: '22', protocol: 'tcp', source_ips: ['<host-egress>/32']}]`.
-  Outbound unrestricted. Source IP is the host's **IPv4** egress, auto-detected
+- **Per-box Hetzner Cloud Firewall**, also minted at provision time: one
+  inbound tcp/22 rule per device entry (`description: agentbox-device key=… seen=…`)
+  plus a static `agentbox: SSH inbound` rule when the policy has sources (see
+  "The SSH allowlist is per device" above). Outbound unrestricted. Source IP is the host's **IPv4** egress, auto-detected
   by probing in sequence over IPv4 only (api4.ipify.org → ipv4.icanhazip.com →
   ifconfig.io; an IPv6 answer is skipped); if none yields an IPv4 address, the
   call **fails loud** rather than silently opening `0.0.0.0/0`. Overrides
@@ -950,11 +995,12 @@ hetzner-specific code (verified live in Phase-7 smoke).
   via `GET /locations`, persists to `~/.agentbox/secrets.env`.
 - `agentbox hetzner login --status` — masked token + source.
 - `agentbox hetzner firewall sync <box> [--source <cidr>]` —
-  re-detects egress IP, updates the per-box firewall via
-  `setFirewallRules`. The common "I moved networks and ssh times out"
-  recovery.
-- `agentbox hetzner firewall show <box>` — prints current rules + the
-  host's current egress IP, with a `WARN` line on drift.
+  re-detects this machine's egress and adds or replaces its own device
+  entry via `setFirewallRules`, keeping every other machine's. The relay's
+  egress watcher normally does this on its own; this is the manual path.
+- `agentbox hetzner firewall show <box>` — prints current rules with their
+  device labels, this machine's key, and the host's current egress IP, with
+  a `WARN` line on drift.
 
 ## 3b. The Vercel shape
 

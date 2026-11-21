@@ -10,13 +10,23 @@
  * first. An entry written by the control box (`hub`) is never evicted, because
  * the hub must keep reaching the boxes it manages.
  *
- * The entries live ON the provider firewall (Hetzner rule descriptions,
- * DigitalOcean firewall tags), not host-side, so a second PC reading the box
- * sees who owns which address. Pure: the providers encode/decode and do the I/O.
+ * The entries live ON the provider (Hetzner rule descriptions, DigitalOcean
+ * droplet tags), not host-side, so a second PC reading the box sees who owns
+ * which address. Pure apart from {@link localMachineKey} and the detector: the
+ * providers encode/decode and do the API I/O.
  */
 
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { detectEgressCidr, detectEgressIpv6, type DetectEgressIpOptions } from './egress-ip.js';
+import { dirname, join } from 'node:path';
+import {
+  cidrKey,
+  detectEgressCidr,
+  detectEgressIpv6,
+  type DetectEgressIpOptions,
+} from './egress-ip.js';
+import { STATE_DIR } from './state.js';
 
 export interface DeviceAllowEntry {
   /** Stable per-machine key (see {@link localMachineKey}). */
@@ -27,6 +37,8 @@ export interface DeviceAllowEntry {
   seen: number;
   /** Written by the control box: never evicted by the cap. */
   hub?: boolean;
+  /** Human label (the sanitized hostname) for `firewall show`; not identity. */
+  label?: string;
 }
 
 /** Most entries a box firewall keeps. */
@@ -38,24 +50,48 @@ export const LEGACY_DEVICE_KEY = 'legacy';
 /** Key for the admin PC CIDR a control box adds when it creates a box. */
 export const ADMIN_DEVICE_KEY = 'admin';
 
+export const DEVICE_KEY_FILE = join(STATE_DIR, 'device-key');
+
 /**
  * This machine's key on box firewalls. The single seam for machine identity:
- * once `getMachineId()` (`~/.agentbox/machine-id`) lands, return that here.
- * Until then it is the sanitized hostname, which means a renamed host (or a
- * macOS `-2` Bonjour suffix) writes a second entry and the old one ages out
- * through the cap rather than being replaced.
+ * once `getMachineId()` (`~/.agentbox/machine-id`, branch `feat/machine-id`)
+ * lands, derive the key from it here and nothing else changes.
+ *
+ * Until then: a random id minted once into `~/.agentbox/device-key`. Not the
+ * hostname — two Macs both named `MacBook-Pro` would share a key and replace
+ * each other's entry, and macOS hostnames flip (`-2` suffix, DHCP names),
+ * which would pile up entries. The hostname rides along as a label only.
  */
-export function localMachineKey(): string {
-  return sanitizeDeviceKey(hostname()) || 'host';
+export function localMachineKey(file: string = DEVICE_KEY_FILE): string {
+  try {
+    const existing = sanitizeDeviceKey(readFileSync(file, 'utf8'));
+    if (existing) return existing;
+  } catch {
+    // first use on this machine
+  }
+  const minted = randomBytes(6).toString('hex');
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, minted + '\n', { mode: 0o600 });
+  } catch {
+    // unwritable home: the key is per-process then, and the extra entry ages out
+  }
+  return minted;
+}
+
+/** The label shown next to this machine's entry. */
+export function localMachineLabel(): string {
+  return sanitizeDeviceKey(hostname()).slice(0, 24).replace(/-+$/, '') || 'host';
 }
 
 /**
- * Restrict a key to `[a-z0-9-]`, at most 32 chars: it has to fit a Hetzner rule
- * description and a DigitalOcean tag (`[A-Za-z0-9_:-]`, where `:` is our
- * field separator).
+ * Restrict a key/label to `[a-z0-9-]`, at most 32 chars: it has to fit a
+ * Hetzner rule description and a DigitalOcean tag (`[A-Za-z0-9_:-]`, where `:`
+ * is our field separator).
  */
 export function sanitizeDeviceKey(raw: string): string {
   return raw
+    .trim()
     .toLowerCase()
     .replace(/\.local$/, '')
     .replace(/[^a-z0-9-]+/g, '-')
@@ -69,26 +105,42 @@ export function isControlBoxProcess(env: NodeJS.ProcessEnv = process.env): boole
   return env.AGENTBOX_HUB_WORKER === 'on';
 }
 
+const DETECT_MEMO_MS = 15_000;
+let detectMemo: { at: number; cidrs: string[] } | null = null;
+
 /**
  * This machine's egress CIDRs for its firewall entry: the IPv4 `/32` (required,
  * throws like {@link detectEgressCidr}) plus the IPv6 `/64` when the host has
- * one. IPv4 only is enough to reach the box (it is dialled on its public IPv4);
- * the IPv6 prefix is added so a later dual-stack dial is not blocked.
+ * one. IPv4 alone reaches the box (it is dialled on its public IPv4); the IPv6
+ * prefix is added so a later dual-stack dial is not blocked.
+ *
+ * Memoized for a few seconds so the egress watcher's probe is reused by the
+ * per-box repairs it triggers right after, instead of probing once per box.
  */
 export async function detectDeviceCidrs(
-  opts: Pick<DetectEgressIpOptions, 'onLog' | 'overrideHint'> = {},
+  opts: Pick<DetectEgressIpOptions, 'onLog' | 'overrideHint'> & { fresh?: boolean } = {},
 ): Promise<string[]> {
+  if (!opts.fresh && detectMemo && Date.now() - detectMemo.at < DETECT_MEMO_MS) {
+    return [...detectMemo.cidrs];
+  }
   const [v4, v6] = await Promise.all([
     detectEgressCidr(opts),
     detectEgressIpv6({ onLog: opts.onLog }).catch(() => null),
   ]);
-  return v6 ? [v4, v6] : [v4];
+  const cidrs = v6 ? [v4, v6] : [v4];
+  detectMemo = { at: Date.now(), cidrs };
+  return [...cidrs];
+}
+
+/** The IPv4 CIDRs of a list — what decides reachability (boxes are dialled on IPv4). */
+export function ipv4Cidrs(cidrs: readonly string[]): string[] {
+  return cidrs.filter((c) => !c.includes(':'));
 }
 
 /** This machine's entry for the given egress CIDRs, stamped now. */
 export function selfDeviceEntry(
   cidrs: string[],
-  opts: { key?: string; nowSec?: number; hub?: boolean } = {},
+  opts: { key?: string; nowSec?: number; hub?: boolean; label?: string } = {},
 ): DeviceAllowEntry {
   const hub = opts.hub ?? isControlBoxProcess();
   return {
@@ -96,6 +148,7 @@ export function selfDeviceEntry(
     cidrs: dedupe(cidrs),
     seen: opts.nowSec ?? Math.floor(Date.now() / 1000),
     ...(hub ? { hub: true } : {}),
+    label: opts.label ?? localMachineLabel(),
   };
 }
 
@@ -123,20 +176,26 @@ export function upsertDeviceEntry(
 }
 
 /**
- * Whether this machine must (re)write its entry: true when it has none, or its
- * entry holds different CIDRs than `cidrs`. A firewall open to the world never
- * needs it.
+ * Whether this machine must (re)write its entry: it has none; its IPv4 set
+ * differs; the probe found an IPv6 prefix the entry lacks; or its `hub` flag is
+ * wrong. A probe that found NO IPv6 does not count as a change — the IPv6 probe
+ * is best-effort, and a flaky miss must not rewrite every firewall. A firewall
+ * open to the world never needs it.
  */
 export function deviceEntryNeedsUpdate(
   entries: readonly DeviceAllowEntry[],
   staticSources: readonly string[],
   key: string,
   cidrs: readonly string[],
+  hub: boolean = isControlBoxProcess(),
 ): boolean {
   if (staticSources.includes('0.0.0.0/0')) return false;
   const mine = entries.find((e) => e.key === key);
   if (!mine) return true;
-  return !sameSet(mine.cidrs, cidrs);
+  if (Boolean(mine.hub) !== hub) return true;
+  if (!sameSet(ipv4Cidrs(mine.cidrs), ipv4Cidrs(cidrs))) return true;
+  const have = new Set(mine.cidrs.map(cidrKey));
+  return cidrs.some((c) => c.includes(':') && !have.has(cidrKey(c)));
 }
 
 /** The flat SSH source list a firewall rule set has to admit. */
@@ -158,18 +217,26 @@ export function legacyEntryFor(
   sources: readonly string[],
   known: readonly string[],
 ): DeviceAllowEntry | null {
-  const knownSet = new Set(known);
-  const orphan = dedupe(sources.filter((s) => !knownSet.has(s)));
+  const knownSet = new Set(known.map(cidrKey));
+  const orphan = dedupe(sources.filter((s) => !knownSet.has(cidrKey(s))));
   return orphan.length > 0 ? { key: LEGACY_DEVICE_KEY, cidrs: orphan, seen: 0 } : null;
 }
 
 function dedupe(xs: readonly string[]): string[] {
-  return [...new Set(xs)];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of xs) {
+    const k = cidrKey(x);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
 }
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  const sa = new Set(a);
-  const sb = new Set(b);
+  const sa = new Set(a.map(cidrKey));
+  const sb = new Set(b.map(cidrKey));
   if (sa.size !== sb.size) return false;
   for (const x of sa) if (!sb.has(x)) return false;
   return true;

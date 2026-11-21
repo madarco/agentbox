@@ -11,7 +11,7 @@ import {
   controlPlaneInboundRules,
   decodeBoxFirewall,
   decodeDeviceTag,
-  deviceTagsFor,
+  encodeBoxDevices,
   encodeDeviceTag,
   firewallDiscriminator,
   firewallNeedsSync,
@@ -107,86 +107,118 @@ describe('firewallNeedsSync', () => {
   });
 });
 
-describe('per-device entries in firewall tags', () => {
-  const pcA: DeviceAllowEntry = { key: 'pc-a', cidrs: ['1.1.1.1/32'], seen: 100 };
+describe('per-device entries in droplet tags', () => {
+  const pcA: DeviceAllowEntry = { key: 'a1b2c3', cidrs: ['1.1.1.1/32'], seen: 100, label: 'mac' };
   const v6: DeviceAllowEntry = {
-    key: 'pc-b',
-    cidrs: ['2.2.2.2/32', '2001:db8:1:2::/64'],
+    key: 'd4e5f6',
+    cidrs: ['2.2.2.2/32', '2001:db8:1:0::/64'],
     seen: 200,
     hub: true,
   };
+  const BOX_TAG = 'agentbox-box-1';
+  const disc = firewallDiscriminator(BOX_TAG);
 
-  it('round-trips an entry through a DO-legal tag', () => {
+  it('round-trips an entry through a DO-legal tag, IPv6 in the detector form', () => {
     for (const e of [pcA, v6]) {
-      const tag = encodeDeviceTag('0123abcd', e);
+      const tag = encodeDeviceTag(disc, e);
       expect(tag).toMatch(/^[A-Za-z0-9_:-]{1,255}$/);
       expect(decodeDeviceTag(tag as string)).toEqual(e);
     }
   });
 
-  it('refuses an entry it cannot represent rather than writing a bad tag', () => {
-    expect(encodeDeviceTag('0123abcd', { key: 'x', cidrs: ['not-an-ip'], seen: 1 })).toBeNull();
+  it('refuses an entry it cannot represent, and keeps its addresses out of the rule', () => {
+    expect(encodeDeviceTag(disc, { key: 'x', cidrs: ['not-an-ip'], seen: 1 })).toBeNull();
+    const enc = encodeBoxDevices(BOX_TAG, {
+      staticSources: [],
+      entries: [pcA, { key: 'x', cidrs: ['not-an-ip'], seen: 1 }],
+    });
+    expect(enc.ssh.entries).toEqual([pcA]);
+    expect(enc.tags).toHaveLength(1);
   });
 
-  it('device tags differ per firewall (account-global tags must not be shared across boxes)', () => {
+  it('device tags differ per box (account-global tags must not be shared)', () => {
     const ssh = { staticSources: [], entries: [pcA] };
-    expect(deviceTagsFor('agentbox-a-1', ssh)).not.toEqual(deviceTagsFor('agentbox-b-1', ssh));
-    expect(firewallDiscriminator('agentbox-a-1')).toMatch(/^[0-9a-f]{8}$/);
+    expect(encodeBoxDevices('agentbox-a-1', ssh).tags).not.toEqual(
+      encodeBoxDevices('agentbox-b-1', ssh).tags,
+    );
+    expect(disc).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  function fwWith(ssh: BoxFirewallSsh): DigitalOceanFirewall {
+  function box(ssh: BoxFirewallSsh): { fw: DigitalOceanFirewall; dropletTags: string[] } {
+    const enc = encodeBoxDevices(BOX_TAG, ssh);
     return {
-      id: 'fw-1',
-      name: 'agentbox-box',
-      status: 'succeeded',
-      inbound_rules: sshInboundRules(boxFirewallSources(ssh)),
-      outbound_rules: allowAllOutboundRules(),
-      droplet_ids: [42],
-      tags: ['agentbox-box-1', ...deviceTagsFor('agentbox-box-1', ssh)],
+      fw: {
+        id: 'fw-1',
+        name: 'agentbox-box',
+        status: 'succeeded',
+        inbound_rules: sshInboundRules(boxFirewallSources(enc.ssh)),
+        outbound_rules: allowAllOutboundRules(),
+        droplet_ids: [42],
+        tags: [BOX_TAG],
+      },
+      dropletTags: [BOX_TAG, 'agentbox', ...enc.tags],
     };
   }
 
   it('decodes entries back and keeps unowned addresses static', () => {
-    const fw = fwWith({ staticSources: ['10.0.0.0/8'], entries: [pcA, v6] });
-    const back = decodeBoxFirewall(fw, []);
+    const { fw, dropletTags } = box({ staticSources: ['10.0.0.0/8'], entries: [pcA, v6] });
+    const back = decodeBoxFirewall(fw, dropletTags, []);
     expect(back.staticSources).toEqual(['10.0.0.0/8']);
     expect(back.entries).toEqual(expect.arrayContaining([pcA, v6]));
   });
 
-  it('reads a pre-device firewall: creator egress -> legacy entry, whitelist stays static', () => {
-    const fw: DigitalOceanFirewall = {
-      ...fwWith({ staticSources: ['1.1.1.1/32', '10.0.0.0/8'], entries: [] }),
-      tags: ['agentbox-box-1'],
-    };
-    const back = decodeBoxFirewall(fw, ['10.0.0.0/8']);
+  it("ignores another box's device tags on the same droplet tag list", () => {
+    const other = encodeBoxDevices('agentbox-other-9', { staticSources: [], entries: [v6] });
+    const { fw, dropletTags } = box({ staticSources: [], entries: [pcA] });
+    const back = decodeBoxFirewall(fw, [...dropletTags, ...other.tags], []);
+    expect(back.entries).toEqual([pcA]);
+  });
+
+  it('matches an IPv6 rule the API echoes in compressed form', () => {
+    const { fw, dropletTags } = box({ staticSources: [], entries: [v6] });
+    fw.inbound_rules = sshInboundRules(['2.2.2.2/32', '2001:db8:1::/64']);
+    const back = decodeBoxFirewall(fw, dropletTags, []);
+    expect(back.staticSources).toEqual([]);
+  });
+
+  it('reads a pre-device box: creator egress -> legacy entry, whitelist stays static', () => {
+    const { fw } = box({ staticSources: ['1.1.1.1/32', '10.0.0.0/8'], entries: [] });
+    const back = decodeBoxFirewall(fw, [BOX_TAG], ['10.0.0.0/8']);
     expect(back.staticSources).toEqual(['10.0.0.0/8']);
     expect(back.entries).toEqual([{ key: 'legacy', cidrs: ['1.1.1.1/32'], seen: 0 }]);
   });
 
-  it("a second PC's write keeps the first PC's address and drops only its own old tag", async () => {
-    const pcBOld: DeviceAllowEntry = { key: 'pc-b', cidrs: ['3.3.3.3/32'], seen: 150 };
-    const fw = fwWith({ staticSources: [], entries: [pcA, pcBOld] });
+  it("a second PC's write keeps the first PC's address and swaps only its own tag", async () => {
+    const pcBOld: DeviceAllowEntry = { key: 'b0b0b0', cidrs: ['3.3.3.3/32'], seen: 150 };
+    const { fw, dropletTags } = box({ staticSources: [], entries: [pcA, pcBOld] });
     const created: string[] = [];
+    const tagged: string[] = [];
     const deleted: string[] = [];
     let body: { inbound_rules: DigitalOceanInboundRule[]; tags?: string[] } | undefined;
     const client = {
       createTag: async (t: string) => void created.push(t),
+      tagDroplet: async (t: string) => void tagged.push(t),
       deleteTag: async (t: string) => void deleted.push(t),
       updateFirewall: async (_id: string, b: typeof body) => {
         body = b;
         return fw;
       },
     } as unknown as DigitalOceanClient;
-    const current = decodeBoxFirewall(fw, []);
-    const pcBNew: DeviceAllowEntry = { key: 'pc-b', cidrs: ['4.4.4.4/32'], seen: 300 };
-    await writeBoxFirewall(client, fw, {
-      staticSources: current.staticSources,
-      entries: upsertDeviceEntry(current.entries, pcBNew),
-    });
+    const current = decodeBoxFirewall(fw, dropletTags, []);
+    const pcBNew: DeviceAllowEntry = { key: 'b0b0b0', cidrs: ['4.4.4.4/32'], seen: 300 };
+    await writeBoxFirewall(
+      client,
+      fw,
+      { id: 42, tags: dropletTags },
+      {
+        staticSources: current.staticSources,
+        entries: upsertDeviceEntry(current.entries, pcBNew),
+      },
+    );
     expect(body?.inbound_rules[0]?.sources.addresses?.sort()).toEqual(['1.1.1.1/32', '4.4.4.4/32']);
-    expect(body?.tags).toContain('agentbox-box-1');
-    const disc = firewallDiscriminator('agentbox-box-1');
+    expect(body?.tags).toEqual([BOX_TAG]);
     expect(created).toEqual([encodeDeviceTag(disc, pcBNew)]);
+    expect(tagged).toEqual([encodeDeviceTag(disc, pcBNew)]);
     expect(deleted).toEqual([encodeDeviceTag(disc, pcBOld)]);
   });
 });

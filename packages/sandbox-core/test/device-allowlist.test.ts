@@ -1,15 +1,19 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEVICE_ALLOWLIST_CAP,
   allowedSourcesOf,
   deviceEntryNeedsUpdate,
   legacyEntryFor,
+  localMachineKey,
   sanitizeDeviceKey,
   selfDeviceEntry,
   upsertDeviceEntry,
   type DeviceAllowEntry,
 } from '../src/device-allowlist.js';
-import { ipv6Prefix64, detectEgressIpv6 } from '../src/egress-ip.js';
+import { cidrKey, ipv6Prefix64, detectEgressIpv6 } from '../src/egress-ip.js';
 
 const e = (key: string, seen: number, cidr = `10.0.0.${String(seen % 255)}/32`, hub = false) =>
   ({ key, cidrs: [cidr], seen, ...(hub ? { hub: true } : {}) }) as DeviceAllowEntry;
@@ -76,12 +80,15 @@ describe('helpers', () => {
   });
 
   it('selfDeviceEntry marks the control box process as hub', () => {
-    expect(selfDeviceEntry(['1.1.1.1/32'], { key: 'k', nowSec: 5, hub: true })).toEqual({
-      key: 'k',
-      cidrs: ['1.1.1.1/32'],
-      seen: 5,
-      hub: true,
-    });
+    expect(selfDeviceEntry(['1.1.1.1/32'], { key: 'k', nowSec: 5, hub: true, label: 'l' })).toEqual(
+      {
+        label: 'l',
+        key: 'k',
+        cidrs: ['1.1.1.1/32'],
+        seen: 5,
+        hub: true,
+      },
+    );
     expect(
       selfDeviceEntry(['1.1.1.1/32'], { key: 'k', nowSec: 5, hub: false }).hub,
     ).toBeUndefined();
@@ -103,5 +110,40 @@ describe('IPv6 egress', () => {
     expect(await detectEgressIpv6({ get, probes: ['https://x'] })).toBeNull();
     const ok = async () => ({ status: 200, body: '2001:db8:1:2::5\n' });
     expect(await detectEgressIpv6({ get: ok, probes: ['https://x'] })).toBe('2001:db8:1:2::/64');
+  });
+});
+
+describe('review fixes', () => {
+  it('a missed IPv6 probe is not a change; a new IPv6 prefix or v4 is', () => {
+    const mine: DeviceAllowEntry = {
+      key: 'me',
+      cidrs: ['5.5.5.5/32', '2001:db8:1:0::/64'],
+      seen: 1,
+    };
+    expect(deviceEntryNeedsUpdate([mine], [], 'me', ['5.5.5.5/32'], false)).toBe(false);
+    expect(
+      deviceEntryNeedsUpdate([mine], [], 'me', ['5.5.5.5/32', '2001:db8:2:0::/64'], false),
+    ).toBe(true);
+    expect(deviceEntryNeedsUpdate([mine], [], 'me', ['6.6.6.6/32'], false)).toBe(true);
+  });
+
+  it('compares IPv6 CIDRs by value, not spelling', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32', '2001:db8:1::/64'], seen: 1 };
+    expect(cidrKey('2001:db8:1::/64')).toBe(cidrKey('2001:DB8:1:0::/64'));
+    expect(
+      deviceEntryNeedsUpdate([mine], [], 'me', ['5.5.5.5/32', '2001:db8:1:0::/64'], false),
+    ).toBe(false);
+  });
+
+  it('upgrades an entry to hub when the control box writes it', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 1 };
+    expect(deviceEntryNeedsUpdate([mine], [], 'me', ['5.5.5.5/32'], true)).toBe(true);
+  });
+
+  it('localMachineKey mints once and then reuses the persisted key', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'devkey-')), 'device-key');
+    const k = localMachineKey(file);
+    expect(k).toMatch(/^[0-9a-f]{12}$/);
+    expect(localMachineKey(file)).toBe(k);
   });
 });

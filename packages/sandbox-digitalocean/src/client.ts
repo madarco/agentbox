@@ -195,7 +195,9 @@ export interface DigitalOceanClient {
   /** GET /droplets/{id}. Returns null on 404. */
   getDroplet(id: number): Promise<DigitalOceanDroplet | null>;
   /** POST /droplets. Returns the created droplet + the create-action id (if any). */
-  createDroplet(req: CreateDropletRequest): Promise<{ droplet: DigitalOceanDroplet; actionId: number | null }>;
+  createDroplet(
+    req: CreateDropletRequest,
+  ): Promise<{ droplet: DigitalOceanDroplet; actionId: number | null }>;
   /** GET /droplets (optionally filtered by a single tag). Paginates. */
   listDroplets(opts?: { tag_name?: string }): Promise<DigitalOceanDroplet[]>;
   /** DELETE /droplets/{id}. Idempotent on 404. */
@@ -247,6 +249,8 @@ export interface DigitalOceanClient {
   createTag(name: string): Promise<void>;
   /** DELETE /tags/{name}. Idempotent on 404 (already gone). */
   deleteTag(name: string): Promise<void>;
+  /** POST /tags/{name}/resources — apply an existing tag to a droplet. */
+  tagDroplet(name: string, dropletId: number): Promise<void>;
 }
 
 interface MakeClientOptions {
@@ -275,7 +279,11 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
     );
   }
   const token: string = rawToken.trim();
-  const endpoint = (opts.endpoint ?? process.env.DIGITALOCEAN_API_URL ?? DEFAULT_DO_ENDPOINT).replace(/\/$/, '');
+  const endpoint = (
+    opts.endpoint ??
+    process.env.DIGITALOCEAN_API_URL ??
+    DEFAULT_DO_ENDPOINT
+  ).replace(/\/$/, '');
   const fetchImpl = opts.fetchImpl ?? fetch;
 
   async function req<T>(
@@ -345,7 +353,10 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
     return path.includes('?') ? `${path}&per_page=200` : `${path}?per_page=200`;
   }
 
-  async function dropletAction(id: number, payload: Record<string, unknown>): Promise<DigitalOceanAction> {
+  async function dropletAction(
+    id: number,
+    payload: Record<string, unknown>,
+  ): Promise<DigitalOceanAction> {
     const r = await reqExpect<{ action: DigitalOceanAction }>(
       'POST',
       `/droplets/${String(id)}/actions`,
@@ -368,7 +379,8 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
         droplet: DigitalOceanDroplet;
         links?: { actions?: Array<{ id: number; rel: string }> };
       }>('POST', '/droplets', reqBody);
-      const createAction = r.links?.actions?.find((a) => a.rel === 'create') ?? r.links?.actions?.[0];
+      const createAction =
+        r.links?.actions?.find((a) => a.rel === 'create') ?? r.links?.actions?.[0];
       return { droplet: r.droplet, actionId: createAction?.id ?? null };
     },
     async listDroplets(opts) {
@@ -403,7 +415,10 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
       );
     },
     async getSnapshot(id) {
-      const r = await req<{ snapshot: DigitalOceanSnapshot }>('GET', `/snapshots/${encodeURIComponent(id)}`);
+      const r = await req<{ snapshot: DigitalOceanSnapshot }>(
+        'GET',
+        `/snapshots/${encodeURIComponent(id)}`,
+      );
       return r?.snapshot ?? null;
     },
     async deleteSnapshot(id) {
@@ -429,7 +444,10 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
       return r.firewall;
     },
     async getFirewall(id) {
-      const r = await req<{ firewall: DigitalOceanFirewall }>('GET', `/firewalls/${encodeURIComponent(id)}`);
+      const r = await req<{ firewall: DigitalOceanFirewall }>(
+        'GET',
+        `/firewalls/${encodeURIComponent(id)}`,
+      );
       return r?.firewall ?? null;
     },
     async listFirewalls() {
@@ -458,6 +476,11 @@ export function makeDigitalOceanClient(opts: MakeClientOptions = {}): DigitalOce
     },
     async deleteTag(name) {
       await req<unknown>('DELETE', `/tags/${encodeURIComponent(name)}`);
+    },
+    async tagDroplet(name, dropletId) {
+      await req<unknown>('POST', `/tags/${encodeURIComponent(name)}/resources`, {
+        resources: [{ resource_id: String(dropletId), resource_type: 'droplet' }],
+      });
     },
   };
 }

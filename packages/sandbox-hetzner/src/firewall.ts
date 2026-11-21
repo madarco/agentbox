@@ -26,7 +26,8 @@ import {
 import { withHetznerRetry } from './retry.js';
 
 const STATIC_RULE_DESCRIPTION = 'agentbox: SSH inbound';
-const DEVICE_RULE_RE = /^agentbox-device key=([a-z0-9-]+) seen=(\d+)( hub)?$/;
+const DEVICE_RULE_RE =
+  /^agentbox-device key=([a-z0-9-]+)(?: host=([a-z0-9-]+))? seen=(\d+)( hub)?$/;
 
 /**
  * A box firewall's SSH rules split into the static policy part (`open` /
@@ -41,7 +42,8 @@ export interface BoxFirewallSsh {
 
 /** The description that carries a device entry's metadata on its rule. */
 export function deviceRuleDescription(e: DeviceAllowEntry): string {
-  return `agentbox-device key=${e.key} seen=${String(e.seen)}${e.hub ? ' hub' : ''}`;
+  const host = e.label ? ` host=${e.label}` : '';
+  return `agentbox-device key=${e.key}${host} seen=${String(e.seen)}${e.hub ? ' hub' : ''}`;
 }
 
 /**
@@ -64,8 +66,9 @@ export function decodeBoxFirewall(
       entries.push({
         key: m[1] as string,
         cidrs: r.source_ips ?? [],
-        seen: Number.parseInt(m[2] as string, 10),
-        ...(m[3] ? { hub: true } : {}),
+        seen: Number.parseInt(m[3] as string, 10),
+        ...(m[4] ? { hub: true } : {}),
+        ...(m[2] ? { label: m[2] } : {}),
       });
     } else {
       unlabeled.push(...(r.source_ips ?? []));

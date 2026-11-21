@@ -73,6 +73,7 @@ import {
   describeInbound,
   detectDeviceCidrs,
   deviceEntryNeedsUpdate,
+  isControlBoxProcess,
   localMachineKey,
   normalizeAgentSet,
   parseInboundSpec,
@@ -322,6 +323,47 @@ async function readBoxFirewall(
     // `||`, not `??`: a name with nothing label-legal in it sanitizes to ''.
     boxRef: server.labels['agentbox.box'] || sandboxId,
   };
+}
+
+/** Pause before re-reading a firewall we just wrote (lets a racing write land). */
+const VERIFY_SETTLE_MS = 1_500;
+
+/**
+ * Upsert this machine's entry with read → write → re-read. Hetzner has no
+ * conditional update, so two machines repairing one box at once can each
+ * overwrite the other's entry; the re-read catches a lost write and redoes
+ * it (bounded). Null firewall (server/firewall gone) is nothing to repair.
+ */
+async function ensureSelfOnFirewall(
+  sandboxId: string,
+  policy: InboundPolicy | undefined,
+  cidrs: string[],
+): Promise<{ changed: boolean; detail?: string }> {
+  const key = localMachineKey();
+  const hub = isControlBoxProcess();
+  let wrote = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const fw = await readBoxFirewall(sandboxId, policy);
+    if (!fw) return { changed: false };
+    if (!deviceEntryNeedsUpdate(fw.ssh.entries, fw.ssh.staticSources, key, cidrs, hub)) {
+      return wrote
+        ? {
+            changed: true,
+            detail: `firewall updated: SSH allowed from this machine (${key}) at ${cidrs.join(', ')} (${String(fw.ssh.entries.length)} device entr${fw.ssh.entries.length === 1 ? 'y' : 'ies'})`,
+          }
+        : { changed: false };
+    }
+    const next: BoxFirewallSsh = {
+      staticSources: fw.ssh.staticSources,
+      entries: upsertDeviceEntry(fw.ssh.entries, selfDeviceEntry(cidrs, { key, hub })),
+    };
+    await writeBoxFirewall(client(), fw.firewallId, next);
+    wrote = true;
+    await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS));
+  }
+  throw new Error(
+    `hetzner: this machine's firewall entry on server ${sandboxId} kept being overwritten by a concurrent update`,
+  );
 }
 
 async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string): Promise<void> {
@@ -845,25 +887,12 @@ export const hetznerBackend: CloudBackend = {
     // over, so attaching from a second PC never locks the first one out.
     // Called on a connection-establishment failure (`recover`, the initial
     // attach connect) and by the relay's egress watcher on an IP change, never
-    // on a mid-session drop. An `open` box is already reachable: no-op.
+    // on a mid-session drop. An `open` box is already reachable: no-op. API
+    // errors propagate (the watcher must not record a failed read as healed).
     const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
     if (policy.mode === 'open') return { changed: false };
-    const fw = await readBoxFirewall(h.sandboxId, policy).catch(() => null);
-    if (!fw) return { changed: false };
     const cidrs = await detectDeviceCidrs({ overrideHint: REPAIR_EGRESS_HINT });
-    const key = localMachineKey();
-    if (!deviceEntryNeedsUpdate(fw.ssh.entries, fw.ssh.staticSources, key, cidrs)) {
-      return { changed: false };
-    }
-    const next: BoxFirewallSsh = {
-      staticSources: fw.ssh.staticSources,
-      entries: upsertDeviceEntry(fw.ssh.entries, selfDeviceEntry(cidrs, { key })),
-    };
-    await writeBoxFirewall(client(), fw.firewallId, next);
-    return {
-      changed: true,
-      detail: `firewall updated: SSH allowed from ${key} at ${cidrs.join(', ')} (${String(next.entries.length)} device entr${next.entries.length === 1 ? 'y' : 'ies'})`,
-    };
+    return ensureSelfOnFirewall(h.sandboxId, policy, cidrs);
   },
 
   async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {

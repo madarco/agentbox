@@ -172,18 +172,37 @@ export async function detectEgressIpv6(
   return null;
 }
 
-/** `2001:db8:1:2:aaaa::1` -> `2001:db8:1:2::/64`; null for anything not IPv6. */
-export function ipv6Prefix64(addr: string): string | null {
+/**
+ * The 8 groups of an IPv6 address, lowercase without leading zeros, or null
+ * when `addr` is not a plain (non-dotted) IPv6 address.
+ */
+export function expandIpv6(addr: string): string[] | null {
   if (!isIPv6(addr) || addr.includes('.')) return null;
+  const compressed = addr.includes('::');
   const [head = '', tail = ''] = addr.split('::');
   const h = head ? head.split(':') : [];
-  const t = addr.includes('::') ? (tail ? tail.split(':') : []) : [];
-  const groups = addr.includes('::')
-    ? [...h, ...Array<string>(8 - h.length - t.length).fill('0'), ...t]
-    : h;
+  const t = compressed && tail ? tail.split(':') : [];
+  const groups = compressed ? [...h, ...Array<string>(8 - h.length - t.length).fill('0'), ...t] : h;
   if (groups.length !== 8) return null;
-  const first = groups.slice(0, 4).map((g) => Number.parseInt(g, 16).toString(16));
-  return `${first.join(':')}::/64`;
+  return groups.map((g) => Number.parseInt(g, 16).toString(16));
+}
+
+/** `2001:db8:1:2:aaaa::1` -> `2001:db8:1:2::/64`; null for anything not IPv6. */
+export function ipv6Prefix64(addr: string): string | null {
+  const groups = expandIpv6(addr);
+  return groups ? `${groups.slice(0, 4).join(':')}::/64` : null;
+}
+
+/**
+ * A comparison key for a CIDR: an IPv6 one is expanded, so `2001:db8:1::/64`
+ * (as a cloud API may echo it back) and `2001:db8:1:0::/64` (as we wrote it)
+ * compare equal. Anything else is trimmed and lowercased.
+ */
+export function cidrKey(cidr: string): string {
+  const [addr = '', len] = cidr.trim().toLowerCase().split('/');
+  const groups = expandIpv6(addr);
+  if (!groups) return cidr.trim().toLowerCase();
+  return `${groups.join(':')}/${len ?? '128'}`;
 }
 
 async function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
