@@ -141,6 +141,8 @@ Before AgentBox creates any billable resource (firewall, SSH key, server), it va
 
 Each box gets its own Hetzner Cloud Firewall with a single rule: inbound TCP port 22 from your host's egress IP only. All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed.
 
+AgentBox connects to the box over its public IPv4, so the rule admits your host's **IPv4** egress address, detected over IPv4 even on a dual-stack (IPv6-capable) network. If no IPv4 egress can be detected (an IPv6-only network, or every probe blocked), the command fails with a message listing what each probe returned. To supply the address yourself, set `AGENTBOX_HETZNER_FIREWALL_SOURCE=<cidr>` (or use `--inbound open`) on `create`, and pass `--source <cidr>` to `agentbox hetzner firewall sync`.
+
 If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox hetzner firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
 
 ```bash

@@ -44,7 +44,12 @@ import {
   type HetznerServer,
   type HetznerServerStatus,
 } from './client.js';
-import { detectEgressIp } from './egress-ip.js';
+import {
+  CREATE_EGRESS_HINT,
+  INBOUND_EGRESS_HINT,
+  REPAIR_EGRESS_HINT,
+  detectEgressCidr,
+} from './egress-ip.js';
 import {
   createPerBoxFirewall,
   deletePerBoxFirewall,
@@ -303,7 +308,7 @@ async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressSt
   // a stale value could read the new IP as "unchanged" and skip the heal — the
   // very mismatch we exist to catch. The poller already de-dupes its recover
   // calls and `recover --all` is sequential, so fresh probing here won't storm.
-  const currentEgress = `${await detectEgressIp({})}/32`;
+  const currentEgress = await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT });
   return {
     firewallId,
     allowedSources,
@@ -424,7 +429,7 @@ export const hetznerBackend: CloudBackend = {
         ? null
         : egressOverride
           ? normalizeSourceCidr(egressOverride)
-          : `${await detectEgressIp({ onLog })}/32`;
+          : await detectEgressCidr({ onLog, overrideHint: CREATE_EGRESS_HINT });
     const sources = resolveInboundSources(inboundPolicy, hostEgress);
     // Control-plane-topology creates: the control box locks the box to its own
     // egress IP; add the admin-supplied PC egress CIDR(s) so direct PC→box SSH
@@ -853,7 +858,8 @@ export const hetznerBackend: CloudBackend = {
     if (!Number.isFinite(firewallId)) {
       throw new Error(`hetzner: no per-box firewall recorded for server ${h.sandboxId}`);
     }
-    const hostEgress = policy.mode === 'open' ? null : `${await detectEgressIp({})}/32`;
+    const hostEgress =
+      policy.mode === 'open' ? null : await detectEgressCidr({ overrideHint: INBOUND_EGRESS_HINT });
     const sources = resolveInboundSources(policy, hostEgress);
     await syncFirewallSource(client(), firewallId, sources);
     return { sources };
