@@ -97,6 +97,8 @@ agentbox url 1
 
 Capture warm state to start future boxes fast with `agentbox checkpoint create <box> --set-default`. Checkpoint after your setup wizard runs to carry build caches into every new box. See [checkpoints-and-pausing](/docs/checkpoints-and-pausing).
 
+Orphaned processes are reaped. A box runs with `docker run --init`, so Docker's built-in init is the container's PID 1, and background jobs an agent leaves behind don't pile up as zombies. If your engine doesn't ship `docker-init`, the box starts without it and `create` prints a warning. In that case, set `"init": true` in the engine's `/etc/docker/daemon.json` to get the same effect.
+
 The bind-mounted host `.git/` means commits land on the host immediately; pushes go through the host relay, so no credentials live in the box (see [sync-and-git](/docs/sync-and-git)). Inspect a box's files on the host with `agentbox open` or `agentbox download`.
 
 ## Specs

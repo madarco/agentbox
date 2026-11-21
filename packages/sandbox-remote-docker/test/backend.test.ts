@@ -124,6 +124,18 @@ describe('buildRunArgv', () => {
     expect(argv[argv.indexOf('--memory') + 1]).toBe('8g');
   });
 
+  it('runs an init as PID 1 so orphaned processes get reaped', () => {
+    const argv = buildRunArgv(base);
+    expect(argv.indexOf('--init')).toBeGreaterThan(-1);
+    expect(argv.indexOf('--init')).toBeLessThan(argv.indexOf('agentbox/box:abc'));
+  });
+
+  it('drops --init only for the missing-docker-init fallback', () => {
+    const argv = buildRunArgv({ ...base, init: false });
+    expect(argv).not.toContain('--init');
+    expect(argv.slice(-3)).toEqual(['agentbox/box:abc', 'sleep', 'infinity']);
+  });
+
   it('ends with the image and a command that keeps the container alive', () => {
     const argv = buildRunArgv(base);
     expect(argv.slice(-3)).toEqual(['agentbox/box:abc', 'sleep', 'infinity']);

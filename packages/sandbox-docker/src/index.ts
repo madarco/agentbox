@@ -74,7 +74,13 @@ export {
   volumeSizeBytes,
 } from './stats.js';
 export { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
-export { execInBox, removeImage, type DockerExecResult } from './docker.js';
+export {
+  execInBox,
+  isMissingDockerInit,
+  MISSING_DOCKER_INIT_WARNING,
+  removeImage,
+  type DockerExecResult,
+} from './docker.js';
 export {
   detectGitRepos,
   GitWorktreeError,
