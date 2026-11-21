@@ -99,6 +99,7 @@ describe('buildRunArgv', () => {
     for (const flag of [
       '--cap-add=SYS_ADMIN',
       '--cap-add=NET_ADMIN',
+      '--cap-add=SYS_PTRACE',
       '--device=/dev/fuse',
       '--security-opt=apparmor:unconfined',
       '--security-opt=seccomp=unconfined',
