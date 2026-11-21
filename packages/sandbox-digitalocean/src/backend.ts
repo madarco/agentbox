@@ -45,7 +45,6 @@ import {
   deletePerBoxFirewall,
   DEVICE_TAG_PREFIX,
   findFirewallForDroplet,
-  normalizeSourceCidr,
   writeBoxFirewall,
   type BoxFirewallSsh,
 } from './firewall.js';
@@ -64,8 +63,11 @@ import { ensureDigitalOceanBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
 import {
   agentSetArg,
+  createTimeSelf,
   describeInbound,
   detectDeviceCidrs,
+  withInboundPolicy,
+  type DeviceAllowEntry,
   deviceEntryNeedsUpdate,
   isControlBoxProcess,
   localMachineKey,
@@ -494,19 +496,17 @@ export const digitaloceanBackend: CloudBackend = {
     const egressOverride =
       req.env?.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE ??
       process.env.AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE;
-    // This machine's own device entry (see device-allowlist.ts); `open` skips it.
+    // This machine's own device entry (see device-allowlist.ts), pinned when the
+    // source was set by hand; `open` skips it.
+    const self =
+      inboundPolicy.mode === 'open'
+        ? { entries: [], extraStatic: [] }
+        : await createTimeSelf(egressOverride, () =>
+            detectDeviceCidrs({ onLog, overrideHint: CREATE_EGRESS_HINT }),
+          );
     const firewallSsh: BoxFirewallSsh = {
-      staticSources: staticInboundSources(inboundPolicy),
-      entries:
-        inboundPolicy.mode === 'open'
-          ? []
-          : [
-              selfDeviceEntry(
-                egressOverride
-                  ? [normalizeSourceCidr(egressOverride)]
-                  : await detectDeviceCidrs({ onLog, overrideHint: CREATE_EGRESS_HINT }),
-              ),
-            ],
+      staticSources: [...staticInboundSources(inboundPolicy), ...self.extraStatic],
+      entries: self.entries,
     };
     progress(
       `firewall inbound: ${describeInbound(inboundPolicy)} -> ${boxFirewallSources(firewallSsh).join(', ')}`,
@@ -763,8 +763,8 @@ export const digitaloceanBackend: CloudBackend = {
 
   async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {
     // Apply an inbound-access policy to the box's firewall (`agentbox inbound`).
-    // Only the static part changes; device entries survive. `locked`/`whitelist`
-    // also refresh this machine's entry; `open` skips egress detection.
+    // `locked`/`whitelist` also refresh this machine's entry (unless pinned to a
+    // hand-set source); `open` skips egress detection.
     const c = client();
     const id = Number.parseInt(h.sandboxId, 10);
     const droplet = await getDropletStrict(id);
@@ -772,13 +772,16 @@ export const digitaloceanBackend: CloudBackend = {
     if (!fw) {
       throw new Error(`digitalocean: no per-box firewall found for droplet ${h.sandboxId}`);
     }
+    // The static part becomes exactly the policy's and every source no real
+    // machine owns (`legacy`, an old world-open CIDR) is dropped, so `inbound
+    // locked` really locks; other machines' entries survive.
     const current = decodeBoxFirewall(fw, droplet.tags ?? [], staticInboundSources(h.inbound));
-    let entries = current.entries;
-    if (policy.mode !== 'open') {
-      const cidrs = await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT });
-      entries = upsertDeviceEntry(entries, selfDeviceEntry(cidrs));
+    let self: DeviceAllowEntry | undefined;
+    const mine = current.entries.find((e) => e.key === localMachineKey());
+    if (policy.mode !== 'open' && !mine?.pinned) {
+      self = selfDeviceEntry(await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT }));
     }
-    const next: BoxFirewallSsh = { staticSources: staticInboundSources(policy), entries };
+    const next: BoxFirewallSsh = withInboundPolicy(current, staticInboundSources(policy), self);
     await writeBoxFirewall(c, fw, { id, tags: droplet.tags ?? [] }, next);
     return { sources: boxFirewallSources(next) };
   },

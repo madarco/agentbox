@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest';
 import {
   DEVICE_ALLOWLIST_CAP,
   allowedSourcesOf,
+  createTimeSelf,
   deviceEntryNeedsUpdate,
+  isOpenCidr,
+  normalizeDecoded,
+  withInboundPolicy,
   legacyEntryFor,
   localMachineKey,
   sanitizeDeviceKey,
@@ -145,5 +149,73 @@ describe('review fixes', () => {
     const k = localMachineKey(file);
     expect(k).toMatch(/^[0-9a-f]{12}$/);
     expect(localMachineKey(file)).toBe(k);
+  });
+});
+
+describe('second review fixes', () => {
+  const legacyOpen: DeviceAllowEntry = {
+    key: 'legacy',
+    cidrs: ['1.1.1.1/32', '0.0.0.0/0'],
+    seen: 0,
+  };
+
+  it('isOpenCidr recognizes both world-open forms', () => {
+    expect(isOpenCidr('0.0.0.0/0')).toBe(true);
+    expect(isOpenCidr('::/0')).toBe(true);
+    expect(isOpenCidr('0:0:0:0:0:0:0:0/0')).toBe(true);
+    expect(isOpenCidr('1.1.1.1/32')).toBe(false);
+  });
+
+  it('normalizeDecoded moves world-open CIDRs out of entries into the static part', () => {
+    const fw = normalizeDecoded({ staticSources: [], entries: [legacyOpen] });
+    expect(fw.staticSources).toEqual(['0.0.0.0/0']);
+    expect(fw.entries).toEqual([{ key: 'legacy', cidrs: ['1.1.1.1/32'], seen: 0 }]);
+    // and the old "skip repair on an open firewall" semantics hold
+    expect(deviceEntryNeedsUpdate(fw.entries, fw.staticSources, 'me', ['5.5.5.5/32'], false)).toBe(
+      false,
+    );
+  });
+
+  it('withInboundPolicy(locked) drops open sources and legacy, keeps other machines', () => {
+    const other: DeviceAllowEntry = { key: 'pc-b', cidrs: ['2.2.2.2/32'], seen: 5 };
+    const fw = normalizeDecoded({ staticSources: [], entries: [legacyOpen, other] });
+    const me: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 9 };
+    const locked = withInboundPolicy(fw, [], me);
+    expect(locked.staticSources).toEqual([]);
+    expect(allowedSourcesOf(locked.entries, locked.staticSources).sort()).toEqual([
+      '2.2.2.2/32',
+      '5.5.5.5/32',
+    ]);
+  });
+
+  it('a pinned entry is never rewritten by an automatic repair', () => {
+    const pinned: DeviceAllowEntry = { key: 'me', cidrs: ['10.8.0.1/32'], seen: 1, pinned: true };
+    expect(deviceEntryNeedsUpdate([pinned], [], 'me', ['5.5.5.5/32'], false)).toBe(false);
+  });
+
+  it('the hub flag is sticky: a non-hub writer neither counts it as a change nor clears it', () => {
+    const hubEntry: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 1, hub: true };
+    expect(deviceEntryNeedsUpdate([hubEntry], [], 'me', ['5.5.5.5/32'], false)).toBe(false);
+    const out = upsertDeviceEntry([hubEntry], { key: 'me', cidrs: ['6.6.6.6/32'], seen: 2 });
+    expect(out[0]?.hub).toBe(true);
+    const cleared = upsertDeviceEntry(
+      [hubEntry],
+      { key: 'me', cidrs: ['6.6.6.6/32'], seen: 2 },
+      10,
+      {
+        clearHub: true,
+      },
+    );
+    expect(cleared[0]?.hub).toBeUndefined();
+  });
+
+  it('createTimeSelf: a hand-set source is pinned; a world-open one is static, not a machine', async () => {
+    const detect = async () => ['9.9.9.9/32'];
+    const pinned = await createTimeSelf('10.8.0.1', detect, { key: 'k' });
+    expect(pinned.entries[0]).toMatchObject({ cidrs: ['10.8.0.1/32'], pinned: true });
+    const open = await createTimeSelf('0.0.0.0/0', detect, { key: 'k' });
+    expect(open).toEqual({ entries: [], extraStatic: ['0.0.0.0/0'] });
+    const detected = await createTimeSelf(undefined, detect, { key: 'k' });
+    expect(detected.entries[0]?.pinned).toBeUndefined();
   });
 });

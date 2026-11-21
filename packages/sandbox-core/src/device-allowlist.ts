@@ -35,8 +35,18 @@ export interface DeviceAllowEntry {
   cidrs: string[];
   /** When the owning machine last wrote the entry, epoch seconds. 0 = unknown. */
   seen: number;
-  /** Written by the control box: never evicted by the cap. */
+  /**
+   * Written by the control box: never evicted by the cap. Sticky: a non-hub
+   * writer on the same key (the CLI on a `hub expose` Mac) keeps it.
+   */
   hub?: boolean;
+  /**
+   * The CIDRs were set by hand (`AGENTBOX_<PROVIDER>_FIREWALL_SOURCE` at create,
+   * `firewall sync --source`), not detected — e.g. a split-tunnel VPN. Automatic
+   * repairs (the egress watcher, the connect-failure repair) leave a pinned
+   * entry alone; only `firewall sync` without `--source` re-detects it.
+   */
+  pinned?: boolean;
   /** Human label (the sanitized hostname) for `firewall show`; not identity. */
   label?: string;
 }
@@ -100,6 +110,74 @@ export function sanitizeDeviceKey(raw: string): string {
     .replace(/-+$/, '');
 }
 
+/**
+ * True for a world-open CIDR (`0.0.0.0/0`, `::/0`). Such a source is the
+ * `open` policy, never a machine: it must not land in a device or `legacy`
+ * entry, where `inbound locked` would not remove it.
+ */
+export function isOpenCidr(cidr: string): boolean {
+  const k = cidrKey(cidr);
+  return k === '0.0.0.0/0' || k === cidrKey('::/0');
+}
+
+/**
+ * Normalize a decoded firewall: open CIDRs are moved out of entries into the
+ * static part (whatever wrote them, e.g. the old `firewall sync --source
+ * 0.0.0.0/0` opt-in), and entries left with no CIDR are dropped. Providers run
+ * every decode through this.
+ */
+export function normalizeDecoded<
+  T extends { staticSources: string[]; entries: DeviceAllowEntry[] },
+>(fw: T): T {
+  const opened: string[] = [];
+  const entries: DeviceAllowEntry[] = [];
+  for (const e of fw.entries) {
+    const open = e.cidrs.filter(isOpenCidr);
+    opened.push(...open);
+    const rest = e.cidrs.filter((c) => !isOpenCidr(c));
+    if (rest.length > 0) entries.push(open.length > 0 ? { ...e, cidrs: rest } : e);
+  }
+  return { ...fw, staticSources: dedupe([...fw.staticSources, ...opened]), entries };
+}
+
+/**
+ * The rule set for a new inbound policy (`agentbox inbound`): the static part
+ * becomes exactly the policy's, and everything not owned by a real machine is
+ * dropped — `legacy` included, so a world-open or whitelisted address carried
+ * over from an old firewall cannot survive `inbound locked`. Device entries
+ * (other machines) are kept; `self`, when given, is upserted.
+ */
+export function withInboundPolicy<
+  T extends { staticSources: string[]; entries: DeviceAllowEntry[] },
+>(fw: T, policyStatic: readonly string[], self?: DeviceAllowEntry): T {
+  const kept = fw.entries.filter((e) => e.key !== LEGACY_DEVICE_KEY);
+  return {
+    ...fw,
+    staticSources: [...policyStatic],
+    entries: self ? upsertDeviceEntry(kept, self) : kept,
+  };
+}
+
+/**
+ * The create-time allowlist for this machine: with a hand-set source
+ * (`AGENTBOX_<PROVIDER>_FIREWALL_SOURCE`) a `pinned` entry — or, for a
+ * world-open source, no entry and the source as static (that is the `open`
+ * opt-in, not a machine); without one, a detected entry.
+ */
+export async function createTimeSelf(
+  override: string | undefined,
+  detect: () => Promise<string[]>,
+  opts: { key?: string } = {},
+): Promise<{ entries: DeviceAllowEntry[]; extraStatic: string[] }> {
+  const raw = override?.trim();
+  if (raw) {
+    const cidr = raw.includes('/') ? raw : raw.includes(':') ? `${raw}/128` : `${raw}/32`;
+    if (isOpenCidr(cidr)) return { entries: [], extraStatic: [cidr] };
+    return { entries: [selfDeviceEntry([cidr], { ...opts, pinned: true })], extraStatic: [] };
+  }
+  return { entries: [selfDeviceEntry(await detect(), opts)], extraStatic: [] };
+}
+
 /** True when this process is the control box (its resident create worker is on). */
 export function isControlBoxProcess(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.AGENTBOX_HUB_WORKER === 'on';
@@ -140,7 +218,7 @@ export function ipv4Cidrs(cidrs: readonly string[]): string[] {
 /** This machine's entry for the given egress CIDRs, stamped now. */
 export function selfDeviceEntry(
   cidrs: string[],
-  opts: { key?: string; nowSec?: number; hub?: boolean; label?: string } = {},
+  opts: { key?: string; nowSec?: number; hub?: boolean; label?: string; pinned?: boolean } = {},
 ): DeviceAllowEntry {
   const hub = opts.hub ?? isControlBoxProcess();
   return {
@@ -148,6 +226,7 @@ export function selfDeviceEntry(
     cidrs: dedupe(cidrs),
     seen: opts.nowSec ?? Math.floor(Date.now() / 1000),
     ...(hub ? { hub: true } : {}),
+    ...(opts.pinned ? { pinned: true } : {}),
     label: opts.label ?? localMachineLabel(),
   };
 }
@@ -155,15 +234,20 @@ export function selfDeviceEntry(
 /**
  * Put `self` into `entries`: its old entry (same key) is replaced, every other
  * key is kept as is, then the cap is applied. Eviction order: oldest `seen`
- * first, never `self` and never a `hub` entry. Returns a new array.
+ * first, never `self` and never a `hub` entry. A `hub` flag already on the old
+ * entry is kept (sticky; pass `clearHub` to drop it on purpose). Returns a new
+ * array.
  */
 export function upsertDeviceEntry(
   entries: readonly DeviceAllowEntry[],
   self: DeviceAllowEntry,
   cap: number = DEVICE_ALLOWLIST_CAP,
+  opts: { clearHub?: boolean } = {},
 ): DeviceAllowEntry[] {
+  const prev = entries.find((e) => e.key === self.key);
+  const mine = prev?.hub && !self.hub && !opts.clearHub ? { ...self, hub: true } : self;
   const others = entries.filter((e) => e.key !== self.key);
-  const out = [...others, self];
+  const out = [...others, mine];
   const evictable = others
     .filter((e) => !e.hub)
     .sort((a, b) => a.seen - b.seen || a.key.localeCompare(b.key));
@@ -176,11 +260,13 @@ export function upsertDeviceEntry(
 }
 
 /**
- * Whether this machine must (re)write its entry: it has none; its IPv4 set
- * differs; the probe found an IPv6 prefix the entry lacks; or its `hub` flag is
- * wrong. A probe that found NO IPv6 does not count as a change — the IPv6 probe
- * is best-effort, and a flaky miss must not rewrite every firewall. A firewall
- * open to the world never needs it.
+ * Whether an automatic repair must (re)write this machine's entry: it has none;
+ * its IPv4 set differs; the probe found an IPv6 prefix the entry lacks; or the
+ * control box finds its entry without the `hub` flag. A probe that found NO
+ * IPv6 does not count as a change — the IPv6 probe is best-effort, and a flaky
+ * miss must not rewrite every firewall. Never for a world-open firewall, and
+ * never for a `pinned` entry (a hand-set source the user chose over detection).
+ * A non-hub writer finding `hub` set is not a change: the flag is sticky.
  */
 export function deviceEntryNeedsUpdate(
   entries: readonly DeviceAllowEntry[],
@@ -189,10 +275,11 @@ export function deviceEntryNeedsUpdate(
   cidrs: readonly string[],
   hub: boolean = isControlBoxProcess(),
 ): boolean {
-  if (staticSources.includes('0.0.0.0/0')) return false;
+  if (staticSources.some(isOpenCidr)) return false;
   const mine = entries.find((e) => e.key === key);
   if (!mine) return true;
-  if (Boolean(mine.hub) !== hub) return true;
+  if (mine.pinned) return false;
+  if (hub && !mine.hub) return true;
   if (!sameSet(ipv4Cidrs(mine.cidrs), ipv4Cidrs(cidrs))) return true;
   const have = new Set(mine.cidrs.map(cidrKey));
   return cidrs.some((c) => c.includes(':') && !have.has(cidrKey(c)));

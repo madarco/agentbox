@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { upsertDeviceEntry, type DeviceAllowEntry } from '@agentbox/sandbox-core';
+import {
+  deviceEntryNeedsUpdate,
+  upsertDeviceEntry,
+  withInboundPolicy,
+  type DeviceAllowEntry,
+} from '@agentbox/sandbox-core';
 import type {
   DigitalOceanClient,
   DigitalOceanFirewall,
@@ -126,14 +131,8 @@ describe('per-device entries in droplet tags', () => {
     }
   });
 
-  it('refuses an entry it cannot represent, and keeps its addresses out of the rule', () => {
+  it('encodeDeviceTag refuses a CIDR it cannot represent', () => {
     expect(encodeDeviceTag(disc, { key: 'x', cidrs: ['not-an-ip'], seen: 1 })).toBeNull();
-    const enc = encodeBoxDevices(BOX_TAG, {
-      staticSources: [],
-      entries: [pcA, { key: 'x', cidrs: ['not-an-ip'], seen: 1 }],
-    });
-    expect(enc.ssh.entries).toEqual([pcA]);
-    expect(enc.tags).toHaveLength(1);
   });
 
   it('device tags differ per box (account-global tags must not be shared)', () => {
@@ -160,11 +159,74 @@ describe('per-device entries in droplet tags', () => {
     };
   }
 
-  it('decodes entries back and keeps unowned addresses static', () => {
+  it('decodes entries back; unowned policy addresses are static', () => {
     const { fw, dropletTags } = box({ staticSources: ['10.0.0.0/8'], entries: [pcA, v6] });
-    const back = decodeBoxFirewall(fw, dropletTags, []);
+    const back = decodeBoxFirewall(fw, dropletTags, ['10.0.0.0/8']);
     expect(back.staticSources).toEqual(['10.0.0.0/8']);
     expect(back.entries).toEqual(expect.arrayContaining([pcA, v6]));
+  });
+
+  it('a tag whose address is not in the rule does not count (no false "healed")', () => {
+    const { fw, dropletTags } = box({ staticSources: [], entries: [pcA] });
+    // updateFirewall failed after tagging: the tag says 9.9.9.9, the rule never got it
+    const ghost: DeviceAllowEntry = { key: 'me0000', cidrs: ['9.9.9.9/32'], seen: 5 };
+    const tags = [...dropletTags, encodeDeviceTag(disc, ghost) as string];
+    const back = decodeBoxFirewall(fw, tags, []);
+    expect(back.entries.map((e) => e.key)).toEqual(['a1b2c3']);
+    expect(
+      deviceEntryNeedsUpdate(back.entries, back.staticSources, 'me0000', ['9.9.9.9/32'], false),
+    ).toBe(true);
+  });
+
+  it('a rule address no tag owns (a lost race) is an evictable legacy entry, not a permanent static source', () => {
+    const { fw, dropletTags } = box({ staticSources: [], entries: [pcA] });
+    fw.inbound_rules = sshInboundRules(['1.1.1.1/32', '7.7.7.7/32']);
+    const back = decodeBoxFirewall(fw, dropletTags, []);
+    expect(back.staticSources).toEqual([]);
+    expect(back.entries).toContainEqual({ key: 'legacy', cidrs: ['7.7.7.7/32'], seen: 0 });
+  });
+
+  it('world-open addresses decode as static, and `inbound locked` removes them', () => {
+    const { fw, dropletTags } = box({ staticSources: [], entries: [pcA] });
+    fw.inbound_rules = sshInboundRules(['1.1.1.1/32', '0.0.0.0/0', '::/0']);
+    const back = decodeBoxFirewall(fw, [BOX_TAG], []);
+    expect(back.staticSources.sort()).toEqual(['0.0.0.0/0', '::/0']);
+    expect(back.entries.flatMap((e) => e.cidrs)).toEqual(['1.1.1.1/32']);
+    const locked = withInboundPolicy(back, []);
+    expect(boxFirewallSources(locked)).toEqual([]);
+    void dropletTags;
+  });
+
+  it('splits a big legacy entry across tags and loses no address', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `10.0.${String(i)}.1/32`);
+    const big: DeviceAllowEntry = { key: 'legacy', cidrs: many, seen: 0 };
+    const enc = encodeBoxDevices(BOX_TAG, { staticSources: [], entries: [big] });
+    expect(enc.tags.length).toBeGreaterThan(1);
+    for (const t of enc.tags) expect(t.length).toBeLessThanOrEqual(255);
+    const fw = box({ staticSources: [], entries: [] }).fw;
+    fw.inbound_rules = sshInboundRules(boxFirewallSources(enc.ssh));
+    const back = decodeBoxFirewall(fw, [BOX_TAG, ...enc.tags], []);
+    expect(back.entries).toHaveLength(1);
+    expect(back.entries[0]?.cidrs.sort()).toEqual([...many].sort());
+  });
+
+  it('keeps an address no tag can carry in the rule instead of deleting it', () => {
+    const enc = encodeBoxDevices(BOX_TAG, {
+      staticSources: [],
+      entries: [{ key: 'x', cidrs: ['1.1.1.1/32', 'not-an-ip'], seen: 1 }],
+    });
+    expect(boxFirewallSources(enc.ssh).sort()).toEqual(['1.1.1.1/32', 'not-an-ip']);
+  });
+
+  it('round-trips the pinned flag', () => {
+    const p: DeviceAllowEntry = {
+      key: 'e7e7e7',
+      cidrs: ['10.8.0.1/32'],
+      seen: 3,
+      pinned: true,
+      hub: true,
+    };
+    expect(decodeDeviceTag(encodeDeviceTag(disc, p) as string)).toEqual(p);
   });
 
   it("ignores another box's device tags on the same droplet tag list", () => {

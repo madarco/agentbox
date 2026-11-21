@@ -16,7 +16,13 @@
  * destroy cleanly removes everything we created.
  */
 
-import { allowedSourcesOf, legacyEntryFor, type DeviceAllowEntry } from '@agentbox/sandbox-core';
+import {
+  allowedSourcesOf,
+  cidrKey,
+  legacyEntryFor,
+  normalizeDecoded,
+  type DeviceAllowEntry,
+} from '@agentbox/sandbox-core';
 import {
   HetznerApiError,
   type HetznerClient,
@@ -27,7 +33,7 @@ import { withHetznerRetry } from './retry.js';
 
 const STATIC_RULE_DESCRIPTION = 'agentbox: SSH inbound';
 const DEVICE_RULE_RE =
-  /^agentbox-device key=([a-z0-9-]+)(?: host=([a-z0-9-]+))? seen=(\d+)( hub)?$/;
+  /^agentbox-device key=([a-z0-9-]+)(?: host=([a-z0-9-]+))? seen=(\d+)( hub)?( pinned)?$/;
 
 /**
  * A box firewall's SSH rules split into the static policy part (`open` /
@@ -43,7 +49,10 @@ export interface BoxFirewallSsh {
 /** The description that carries a device entry's metadata on its rule. */
 export function deviceRuleDescription(e: DeviceAllowEntry): string {
   const host = e.label ? ` host=${e.label}` : '';
-  return `agentbox-device key=${e.key}${host} seen=${String(e.seen)}${e.hub ? ' hub' : ''}`;
+  return (
+    `agentbox-device key=${e.key}${host} seen=${String(e.seen)}` +
+    `${e.hub ? ' hub' : ''}${e.pinned ? ' pinned' : ''}`
+  );
 }
 
 /**
@@ -68,6 +77,7 @@ export function decodeBoxFirewall(
         cidrs: r.source_ips ?? [],
         seen: Number.parseInt(m[3] as string, 10),
         ...(m[4] ? { hub: true } : {}),
+        ...(m[5] ? { pinned: true } : {}),
         ...(m[2] ? { label: m[2] } : {}),
       });
     } else {
@@ -75,14 +85,19 @@ export function decodeBoxFirewall(
     }
   }
   // Once any device rule exists the firewall is in the per-device format, and
-  // its unlabeled rule holds only policy sources — keep it whole, so a PC whose
-  // record lacks the whitelist doesn't demote it to `legacy`.
-  if (entries.length > 0) return { staticSources: [...new Set(unlabeled)], entries };
-  const policySet = new Set(policyStatic);
-  const staticSources = [...new Set(unlabeled.filter((s) => policySet.has(s)))];
+  // its unlabeled rule is the static rule we wrote — keep it whole, so a PC
+  // whose record lacks the whitelist doesn't demote it to `legacy`. On an old
+  // firewall, what isn't policy is the creator's egress (`legacy`).
+  // `normalizeDecoded` then moves any world-open CIDR out of every entry into
+  // the static part, where `inbound locked` removes it.
+  if (entries.length > 0) {
+    return normalizeDecoded({ staticSources: [...new Set(unlabeled)], entries });
+  }
+  const policySet = new Set(policyStatic.map(cidrKey));
+  const staticSources = [...new Set(unlabeled.filter((s) => policySet.has(cidrKey(s))))];
   const legacy = legacyEntryFor(unlabeled, policyStatic);
   if (legacy) entries.push(legacy);
-  return { staticSources, entries };
+  return normalizeDecoded({ staticSources, entries });
 }
 
 /** Every SSH source a firewall admits today (all inbound tcp/22 rules). */

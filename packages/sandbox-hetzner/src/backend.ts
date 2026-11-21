@@ -70,6 +70,8 @@ import { mintSshKey } from './ssh-key.js';
 import {
   ADMIN_DEVICE_KEY,
   agentSetArg,
+  createTimeSelf,
+  withInboundPolicy,
   describeInbound,
   detectDeviceCidrs,
   deviceEntryNeedsUpdate,
@@ -325,6 +327,20 @@ async function readBoxFirewall(
   };
 }
 
+/**
+ * This machine's entry for an `inbound` change: none for `open`, the existing
+ * one untouched when it is pinned to a hand-set source, else a fresh detect.
+ */
+async function inboundSelf(
+  entries: readonly DeviceAllowEntry[],
+  policy: InboundPolicy,
+): Promise<DeviceAllowEntry | undefined> {
+  if (policy.mode === 'open') return undefined;
+  const mine = entries.find((e) => e.key === localMachineKey());
+  if (mine?.pinned) return undefined;
+  return selfDeviceEntry(await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT }));
+}
+
 /** Pause before re-reading a firewall we just wrote (lets a racing write land). */
 const VERIFY_SETTLE_MS = 1_500;
 
@@ -478,13 +494,16 @@ export const hetznerBackend: CloudBackend = {
     const egressOverride =
       req.env?.AGENTBOX_HETZNER_FIREWALL_SOURCE ?? process.env.AGENTBOX_HETZNER_FIREWALL_SOURCE;
     const entries: DeviceAllowEntry[] = [];
+    const extraStatic: string[] = [];
     if (inboundPolicy.mode !== 'open') {
-      // This machine's own entry. On a control box it carries `hub`, so a PC
-      // adding itself later can never evict the hub's reach to its own box.
-      const cidrs = egressOverride
-        ? [normalizeSourceCidr(egressOverride)]
-        : await detectDeviceCidrs({ onLog, overrideHint: CREATE_EGRESS_HINT });
-      entries.push(selfDeviceEntry(cidrs));
+      // This machine's own entry (pinned when the source was set by hand). On a
+      // control box it carries `hub`, so a PC adding itself later can never
+      // evict the hub's reach to its own box.
+      const self = await createTimeSelf(egressOverride, () =>
+        detectDeviceCidrs({ onLog, overrideHint: CREATE_EGRESS_HINT }),
+      );
+      entries.push(...self.entries);
+      extraStatic.push(...self.extraStatic);
       // Control-plane-topology creates: the admin PC's CIDR(s) so direct PC→box
       // SSH works before that PC has written its own entry.
       const admin = (req.extraInboundCidrs ?? []).map(normalizeSourceCidr);
@@ -493,7 +512,7 @@ export const hetznerBackend: CloudBackend = {
       }
     }
     const firewallSsh: BoxFirewallSsh = {
-      staticSources: staticInboundSources(inboundPolicy),
+      staticSources: [...staticInboundSources(inboundPolicy), ...extraStatic],
       entries,
     };
     progress(
@@ -897,17 +916,18 @@ export const hetznerBackend: CloudBackend = {
 
   async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {
     // Apply an inbound-access policy to the box's firewall (`agentbox inbound`).
-    // Only the static part changes; device entries survive, so `open` and back
-    // to `locked` restores every machine. `locked`/`whitelist` also refresh this
-    // machine's entry; `open` skips egress detection.
+    // The static part becomes exactly the policy's and every source no real
+    // machine owns (`legacy`, a world-open CIDR an old firewall carried) is
+    // dropped, so `inbound locked` really locks; other machines' entries
+    // survive. `locked`/`whitelist` also refresh this machine's entry (unless
+    // it is pinned to a hand-set source); `open` skips egress detection.
     const fw = await readBoxFirewall(h.sandboxId, h.inbound);
     if (!fw) throw new Error(`hetzner: no per-box firewall found for server ${h.sandboxId}`);
-    let entries = fw.ssh.entries;
-    if (policy.mode !== 'open') {
-      const cidrs = await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT });
-      entries = upsertDeviceEntry(entries, selfDeviceEntry(cidrs));
-    }
-    const next: BoxFirewallSsh = { staticSources: staticInboundSources(policy), entries };
+    const next: BoxFirewallSsh = withInboundPolicy(
+      fw.ssh,
+      staticInboundSources(policy),
+      await inboundSelf(fw.ssh.entries, policy),
+    );
     await writeBoxFirewall(client(), fw.firewallId, next);
     return { sources: boxFirewallSources(next) };
   },

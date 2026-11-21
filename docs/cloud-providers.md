@@ -60,15 +60,32 @@ build images from a Dockerfile). Three things differ from Hetzner:
   (`AGENTBOX_HUB_WORKER=on`) is flagged `hub` and never evicted; a hub create
   also writes the admin PC CIDR as an `admin` entry. The entries live on the
   provider so another PC reads them: Hetzner as one tcp/22 rule per device
-  with `description: agentbox-device key=<k> host=<label> seen=<epoch>[ hub]`;
+  with `description: agentbox-device key=<k> host=<label> seen=<epoch>[ hub][ pinned]`;
   DigitalOcean (rules have no description, and a firewall takes at most 5
   tags) as one tcp/22 rule with the union plus **droplet** tags
-  `abdev:<disc>:<key>:<label>:<seen>:<h|n>:<hex cidrs>`, where `<disc>` is a
+  `abdev:<disc>:<key>:<label>:<seen>:<flags h|p|n>:<hex cidrs>`, where `<disc>` is a
   hash of the box tag so the account-global tag is unique to that box and safe
-  to delete on replace / destroy. An entry that can't be encoded is dropped
-  from the rule too, so no address is left without an owner. A box written
-  before this has its non-policy addresses read as one `legacy` entry
-  (`seen: 0`, first to be evicted). CIDRs compare by value (`cidrKey`), so an
+  to delete on replace / destroy. The rule is the truth and the tags only
+  say who owns what: an entry keeps only the CIDRs the rule really holds (a
+  tag can outlive its address after a failed `updateFirewall` or a racing
+  PC), and a rule address no tag owns that isn't policy becomes `legacy`,
+  never a permanent static source. A long entry is split across several tags
+  with the same key; a CIDR no tag can carry stays in the rule as static, so
+  no write ever drops an address silently. A box written before this has its
+  non-policy addresses read as one `legacy` entry (`seen: 0`, first to be
+  evicted). **World-open CIDRs (`0.0.0.0/0`, `::/0`) are never a machine**:
+  whatever wrote them (the old `firewall sync --source 0.0.0.0/0` opt-in), a
+  decode moves them to the static part, so an automatic repair still skips
+  such a firewall, and `inbound` (which rebuilds the static part from the
+  policy and drops every source no real machine owns, `legacy` included)
+  really locks it. `firewall sync --source` refuses a world-open CIDR; use
+  `agentbox inbound <box> open`. **Pinned entries:** a source set by hand
+  (`AGENTBOX_<PROVIDER>_FIREWALL_SOURCE` at create, `firewall sync --source`)
+  marks the entry `pinned` (a split-tunnel VPN, say); automatic repairs (the
+  watcher and the connect-failure repair) leave it alone, and only `firewall
+  sync` without `--source` re-detects and unpins it. **`hub` is sticky:** a
+  non-hub writer on the same key (the CLI on a `hub expose` Mac) keeps it, and
+  only the control box finding it missing counts as a change. CIDRs compare by value (`cidrKey`), so an
   API echoing `2001:db8:1::/64` matches the `2001:db8:1:0::/64` we wrote, and
   a probe that found no IPv6 is not a change (only the IPv4 set, a new IPv6
   prefix, or the `hub` flag trigger a rewrite). The update is read → write →
@@ -996,7 +1013,9 @@ hetzner-specific code (verified live in Phase-7 smoke).
 - `agentbox hetzner login --status` — masked token + source.
 - `agentbox hetzner firewall sync <box> [--source <cidr>]` —
   re-detects this machine's egress and adds or replaces its own device
-  entry via `setFirewallRules`, keeping every other machine's. The relay's
+  entry via `setFirewallRules`, keeping every other machine's. `--source`
+  pins the entry to that CIDR (automatic repairs then leave it alone) and
+  refuses a world-open CIDR. The relay's
   egress watcher normally does this on its own; this is the manual path.
 - `agentbox hetzner firewall show <box>` — prints current rules with their
   device labels, this machine's key, and the host's current egress IP, with

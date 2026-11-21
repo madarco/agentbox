@@ -35,6 +35,7 @@ import {
   cidrKey,
   expandIpv6,
   legacyEntryFor,
+  normalizeDecoded,
   type DeviceAllowEntry,
 } from '@agentbox/sandbox-core';
 import { withDigitalOceanRetry } from './retry.js';
@@ -107,31 +108,39 @@ function decodeCidr(enc: string): string | null {
   return `${groups.slice(0, n).join(':')}${n < 8 ? '::' : ''}/${len}`;
 }
 
+const TAG_MAX = 255;
+
+function tagPrefix(disc: string, e: DeviceAllowEntry): string {
+  const flags = `${e.hub ? 'h' : ''}${e.pinned ? 'p' : ''}` || 'n';
+  return `${DEVICE_TAG_PREFIX}${disc}:${e.key}:${e.label || '-'}:${String(e.seen)}:${flags}:`;
+}
+
 /**
- * `abdev:<disc>:<key>:<label|->:<seen>:<h|n>:<cidr>_<cidr>` — CIDRs
- * hex-encoded with a family digit and `p<prefix>`, because DO tags allow only
- * `[A-Za-z0-9_:-]`. Null when the entry can't be represented (a CIDR that
- * isn't IPv4/IPv6, or a tag over DO's 255-char limit).
+ * `abdev:<disc>:<key>:<label|->:<seen>:<flags>:<cidr>_<cidr>` — flags `h`
+ * (hub), `p` (pinned) or `n`; CIDRs hex-encoded with a family digit and
+ * `p<prefix>`, because DO tags allow only `[A-Za-z0-9_:-]`. Null when the
+ * entry doesn't fit one tag or has a CIDR that isn't IPv4/IPv6 —
+ * {@link encodeBoxDevices} splits or keeps those instead.
  */
 export function encodeDeviceTag(disc: string, e: DeviceAllowEntry): string | null {
   const cidrs = e.cidrs.map(encodeCidr);
   if (cidrs.length === 0 || cidrs.some((c) => c === null)) return null;
-  const tag =
-    `${DEVICE_TAG_PREFIX}${disc}:${e.key}:${e.label || '-'}:${String(e.seen)}:` +
-    `${e.hub ? 'h' : 'n'}:${cidrs.join('_')}`;
-  return tag.length <= 255 ? tag : null;
+  const tag = tagPrefix(disc, e) + cidrs.join('_');
+  return tag.length <= TAG_MAX ? tag : null;
 }
 
 export function decodeDeviceTag(tag: string): DeviceAllowEntry | null {
-  const m = /^abdev:[0-9a-f]{8}:([a-z0-9-]+):([a-z0-9-]+):(\d+):([hn]):([0-9a-fp_]+)$/.exec(tag);
+  const m = /^abdev:[0-9a-f]{8}:([a-z0-9-]+):([a-z0-9-]+):(\d+):([hpn]+):([0-9a-fp_]+)$/.exec(tag);
   if (!m) return null;
   const cidrs = (m[5] as string).split('_').map(decodeCidr);
   if (cidrs.some((c) => c === null)) return null;
+  const flags = m[4] as string;
   return {
     key: m[1] as string,
     cidrs: cidrs as string[],
     seen: Number.parseInt(m[3] as string, 10),
-    ...(m[4] === 'h' ? { hub: true } : {}),
+    ...(flags.includes('h') ? { hub: true } : {}),
+    ...(flags.includes('p') ? { pinned: true } : {}),
     ...(m[2] !== '-' ? { label: m[2] as string } : {}),
   };
 }
@@ -142,11 +151,19 @@ function ownDeviceTags(dropletTags: readonly string[], disc: string): string[] {
 }
 
 /**
- * Read a box back into static sources + device entries (from the droplet's
- * tags). SSH addresses no entry owns are static when they belong to the
- * policy; on a box written before device entries the rest (the creating host's
- * egress) becomes a `legacy` entry. Once any entry exists, every unowned
- * address is static, so a PC whose record lacks the whitelist doesn't demote it.
+ * Read a box back into static sources + device entries.
+ *
+ * The rule is the truth, the tags only say who owns what: an entry keeps only
+ * the CIDRs the SSH rule really holds, and one left with none is dropped. A
+ * tag can outlive its address (an `updateFirewall` that failed after tagging,
+ * or a racing PC writing the union from a stale read) — counting it would
+ * make that machine believe it is allowed while it is locked out, and every
+ * later repair a no-op.
+ *
+ * Rule CIDRs no entry owns: the policy's (and world-open ones, via
+ * `normalizeDecoded`) are static; anything else is a `legacy` entry —
+ * evictable, and dropped by `inbound` — never a permanent static source.
+ * Entries split across several tags (same key) are merged back.
  */
 export function decodeBoxFirewall(
   fw: Pick<DigitalOceanFirewall, 'tags' | 'id' | 'inbound_rules'>,
@@ -154,19 +171,35 @@ export function decodeBoxFirewall(
   policyStatic: readonly string[],
 ): BoxFirewallSsh {
   const disc = firewallDiscriminator(boxTagOf(fw));
-  const entries = ownDeviceTags(dropletTags, disc)
-    .map(decodeDeviceTag)
-    .filter((e): e is DeviceAllowEntry => e !== null);
   const sources = sshSourcesOf(fw.inbound_rules);
+  const inRule = new Set(sources.map(cidrKey));
+  const byKey = new Map<string, DeviceAllowEntry>();
+  for (const t of ownDeviceTags(dropletTags, disc)) {
+    const e = decodeDeviceTag(t);
+    if (!e) continue;
+    const prev = byKey.get(e.key);
+    byKey.set(e.key, prev ? { ...prev, cidrs: [...prev.cidrs, ...e.cidrs] } : e);
+  }
+  const entries: DeviceAllowEntry[] = [];
+  for (const e of byKey.values()) {
+    const live = e.cidrs.filter((c) => inRule.has(cidrKey(c)));
+    if (live.length > 0) entries.push({ ...e, cidrs: live });
+  }
   const owned = new Set(entries.flatMap((e) => e.cidrs).map(cidrKey));
   const unowned = sources.filter((s) => !owned.has(cidrKey(s)));
-  if (entries.length > 0) return { staticSources: unowned, entries };
   const policySet = new Set(policyStatic.map(cidrKey));
+  const staticSources = unowned.filter((s) => policySet.has(cidrKey(s)));
   const legacy = legacyEntryFor(unowned, policyStatic);
-  return {
-    staticSources: unowned.filter((s) => policySet.has(cidrKey(s))),
-    entries: legacy ? [legacy] : [],
-  };
+  if (legacy) {
+    const i = entries.findIndex((e) => e.key === legacy.key);
+    if (i >= 0) {
+      const merged = entries[i] as DeviceAllowEntry;
+      entries[i] = { ...merged, cidrs: [...merged.cidrs, ...legacy.cidrs] };
+    } else {
+      entries.push(legacy);
+    }
+  }
+  return normalizeDecoded({ staticSources, entries });
 }
 
 /** Every SSH source a firewall admits (all inbound tcp/22 rules). */
@@ -177,24 +210,45 @@ export function sshSourcesOf(rules: readonly DigitalOceanInboundRule[]): string[
 }
 
 /**
- * `ssh` restricted to entries a tag can carry, with their tags. An entry that
- * can't be encoded is dropped from the rule too: written without its tag, its
- * addresses would read back as unowned static sources that no cap ever evicts.
+ * `ssh` as droplet tags. An entry too long for one tag (a big `legacy` set) is
+ * split across several tags with the same key; a CIDR no tag can carry stays
+ * in the rule as a static source. Never removes an address: everything in
+ * `ssh` stays in the returned rule.
  */
 export function encodeBoxDevices(
   boxTag: string,
   ssh: BoxFirewallSsh,
 ): { ssh: BoxFirewallSsh; tags: string[] } {
   const disc = firewallDiscriminator(boxTag);
-  const kept: DeviceAllowEntry[] = [];
+  const entries: DeviceAllowEntry[] = [];
+  const extraStatic: string[] = [];
   const tags: string[] = [];
   for (const e of ssh.entries) {
-    const t = encodeDeviceTag(disc, e);
-    if (t === null) continue;
-    kept.push(e);
-    tags.push(t);
+    const prefix = tagPrefix(disc, e);
+    const kept: string[] = [];
+    let chunk: string[] = [];
+    const flush = () => {
+      if (chunk.length > 0) tags.push(prefix + chunk.join('_'));
+      chunk = [];
+    };
+    for (const c of e.cidrs) {
+      const enc = encodeCidr(c);
+      if (enc === null || prefix.length + enc.length > TAG_MAX) {
+        extraStatic.push(c);
+        continue;
+      }
+      const len = prefix.length + [...chunk, enc].join('_').length;
+      if (len > TAG_MAX) flush();
+      chunk.push(enc);
+      kept.push(c);
+    }
+    flush();
+    if (kept.length > 0) entries.push({ ...e, cidrs: kept });
   }
-  return { ssh: { staticSources: ssh.staticSources, entries: kept }, tags };
+  return {
+    ssh: { staticSources: [...ssh.staticSources, ...extraStatic], entries },
+    tags,
+  };
 }
 
 /** Flat SSH source list of a decoded firewall. */

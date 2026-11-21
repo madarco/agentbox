@@ -19,6 +19,7 @@ import { log } from '@clack/prompts';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
 import {
   detectDeviceCidrs,
+  isOpenCidr,
   localMachineKey,
   readState,
   resolveBoxRef,
@@ -115,7 +116,7 @@ const firewallSyncSub = new Command('sync')
   .argument('<box>', 'box name or id')
   .option(
     '--source <cidr>',
-    "use this CIDR as this machine's entry instead of the auto-detected egress (e.g. 1.2.3.4/32)",
+    "pin this machine's entry to this CIDR instead of the detected egress (e.g. a split-tunnel VPN); automatic repairs then leave it alone until a sync without --source",
   )
   .action(async (boxRef: string, opts: FirewallSyncOpts) => {
     try {
@@ -126,6 +127,11 @@ const firewallSyncSub = new Command('sync')
         throw new Error(
           `box '${boxRef}' has no DigitalOcean firewall attached (none matched the droplet's tags). ` +
             `This is unusual — the box may have been provisioned outside agentbox.`,
+        );
+      }
+      if (opts.source && isOpenCidr(normalizeSourceCidr(opts.source))) {
+        throw new Error(
+          `--source ${opts.source} would open SSH to the world; that is a policy, not a machine — run \`agentbox inbound ${boxRef} open\``,
         );
       }
       const cidrs = opts.source
@@ -142,7 +148,10 @@ const firewallSyncSub = new Command('sync')
       const key = localMachineKey();
       const next = {
         staticSources: current.staticSources,
-        entries: upsertDeviceEntry(current.entries, selfDeviceEntry(cidrs, { key })),
+        entries: upsertDeviceEntry(
+          current.entries,
+          selfDeviceEntry(cidrs, { key, pinned: Boolean(opts.source) }),
+        ),
       };
       process.stdout.write(
         `digitalocean: updating firewall ${firewall.id} for box '${box.name}': ${key} -> ${cidrs.join(', ')}\n`,

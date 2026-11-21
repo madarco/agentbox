@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { upsertDeviceEntry, type DeviceAllowEntry } from '@agentbox/sandbox-core';
+import {
+  deviceEntryNeedsUpdate,
+  upsertDeviceEntry,
+  withInboundPolicy,
+  type DeviceAllowEntry,
+} from '@agentbox/sandbox-core';
 import {
   boxFirewallRules,
   boxFirewallSources,
@@ -139,5 +144,66 @@ describe('per-device firewall rules', () => {
     await writeBoxFirewall(client, 7, next);
     const after = decodeBoxFirewall(written as never, []);
     expect(boxFirewallSources(after).sort()).toEqual(['1.1.1.1/32', '2.2.2.2/32']);
+  });
+});
+
+describe('second review: open sources, pinned entries', () => {
+  it('an old firewall opened with `firewall sync --source 0.0.0.0/0` decodes as open, not as a machine', () => {
+    const rules = [
+      {
+        direction: 'in' as const,
+        protocol: 'tcp' as const,
+        port: '22',
+        source_ips: ['0.0.0.0/0', '1.1.1.1/32'],
+        description: 'agentbox: SSH inbound',
+      },
+    ];
+    const fw = decodeBoxFirewall(rules, []);
+    expect(fw.staticSources).toEqual(['0.0.0.0/0']);
+    expect(fw.entries.flatMap((e) => e.cidrs)).not.toContain('0.0.0.0/0');
+    // the open firewall is still skipped by automatic repair, as before
+    expect(deviceEntryNeedsUpdate(fw.entries, fw.staticSources, 'me', ['5.5.5.5/32'], false)).toBe(
+      false,
+    );
+  });
+
+  it('`inbound locked` on that firewall ends locked: no open source, no legacy, self + other machines', () => {
+    const pcB: DeviceAllowEntry = { key: 'pc-b', cidrs: ['2.2.2.2/32'], seen: 5 };
+    const rules = [
+      {
+        direction: 'in' as const,
+        protocol: 'tcp' as const,
+        port: '22',
+        source_ips: ['0.0.0.0/0', '::/0'],
+        description: 'agentbox: SSH inbound',
+      },
+      ...boxFirewallRules({ staticSources: [], entries: [pcB] }),
+    ];
+    const me: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 9 };
+    const locked = withInboundPolicy(decodeBoxFirewall(rules, []), [], me);
+    const written = boxFirewallRules(locked);
+    expect(written.flatMap((r) => r.source_ips).sort()).toEqual(['2.2.2.2/32', '5.5.5.5/32']);
+  });
+
+  it('a device rule carrying 0.0.0.0/0 is moved to static too', () => {
+    const rules = boxFirewallRules({
+      staticSources: [],
+      entries: [{ key: 'me', cidrs: ['0.0.0.0/0'], seen: 1, pinned: true }],
+    });
+    const fw = decodeBoxFirewall(rules, []);
+    expect(fw).toEqual({ staticSources: ['0.0.0.0/0'], entries: [] });
+  });
+
+  it('round-trips the pinned and hub flags through the description', () => {
+    const e: DeviceAllowEntry = {
+      key: 'me',
+      cidrs: ['10.8.0.1/32'],
+      seen: 3,
+      hub: true,
+      pinned: true,
+      label: 'mac',
+    };
+    const fw = decodeBoxFirewall(boxFirewallRules({ staticSources: [], entries: [e] }), []);
+    expect(fw.entries).toEqual([e]);
   });
 });
