@@ -72,17 +72,21 @@ the answering hub cannot type). Branch on `error.code`, not on the status:
   "error": {
     "code": "wrong_host",
     "message": "manager 4f2a…c1 runs on marcos-mbp, not on control-box; resume it there",
-    "details": { "host": "marcos-mbp" }
+    "details": { "host": "marcos-mbp", "machineId": "6c2d0a5b-9775-4c07-966c-b27a17329025" }
   }
 }
 ```
 
-When `details.host` is your own hostname, retry the identical call against the
-hub on your machine (`agentbox hub target --json --local`). A refusal about a
-**workspace** rather than one manager — `managers/start`, `managers/sessions` —
-also carries `details.hosts`, every machine with a checkout of it, because a
-workspace mapped from several machines has no single right answer; retry when
-your hostname is in that list.
+A machine is identified by its **machine id** (`~/.agentbox/machine-id`, a UUID
+minted once); `details.host` is only its hostname, for display. When
+`details.machineId` is your own machine id, retry the identical call against the
+hub on your machine (`agentbox hub target --json --local`). A record from before
+machine ids carries no `machineId`; then compare `details.host` with your
+hostname. A refusal about a **workspace** rather than one manager —
+`managers/start`, `managers/sessions` — also carries `details.hosts` and
+`details.machineIds`, every machine with a checkout of it, because a workspace
+mapped from several machines has no single right answer; retry when your machine
+id is in that list.
 
 ## Endpoints
 
@@ -166,7 +170,9 @@ Checkpoints are **durable per-project assets** — a docker image or cloud snaps
 
 A workspace groups one or more projects, owning a task list and its manager sessions. It is
 **machine-independent**: `projects` are repos, and `hosts` maps every machine that has a checkout to
-its folders (`{ "<hostname>": { root, projectRoots, seenAt } }`), so a hub that never cloned a repo —
+its folders (`{ "<machine id>": { root, projectRoots, seenAt, label } }`, where `label` is that
+machine's hostname; an entry written before machine ids is keyed by the hostname and has no
+`label`), so a hub that never cloned a repo —
 a control box — still joins the boxes built from it to the right workspace. `root` on the payload is
 the _reading hub's_ own folder and is absent when it has none. You rarely register one by hand:
 detecting a manager session in a folder no workspace contains creates one there. Host state: a
@@ -228,11 +234,12 @@ version), so an embedding client needs nothing on its own PATH.
 
 **A manager runs on one machine; its record lives with the workspace.** With a control box configured
 those are different machines: the session, its tmux server and its transcript are on your PC, while
-the record, its notes and its timeline are on the box. `host` is the machine it runs on and
+the record, its notes and its timeline are on the box. `machineId` is the machine it runs on, `host`
+that machine's hostname (a display label; a hostname change does not move the session), and
 `hostIsHub` says whether the hub that answered IS that machine. Every process op — start, resume,
 attach, stop, sessions, message — only works there; anywhere else it answers `409` with code
-`wrong_host` and `details.host`, and the client retries against the hub on that machine (its own
-local hub, when `details.host` is its own hostname — `agentbox hub target --json --local` points at
+`wrong_host` and `details.host` / `details.machineId`, and the client retries against the hub on that
+machine (its own local hub, when `details.machineId` is its own machine id — `agentbox hub target --json --local` points at
 it). The PC hub keeps that record current by reporting to `POST /managers/{id}/heartbeat`, and tells
 it about a box it built for that manager with `POST /managers/{id}/attach-box`. Registering,
 reporting and attaching a box are the only manager writes a hub accepts from another host.
