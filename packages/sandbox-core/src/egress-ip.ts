@@ -16,6 +16,7 @@
 
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { isIPv6 } from 'node:net';
 
 const PROBES = [
   'https://api4.ipify.org',
@@ -111,11 +112,16 @@ export async function detectEgressCidr(opts: DetectEgressIpOptions = {}): Promis
  * undici's Agent, so this uses node:http(s) with `family: 4`, which makes the
  * DNS lookup return A records only.
  */
-export const getOverIpv4: EgressProbeGet = (url, timeoutMs) =>
-  new Promise<ProbeResponse>((resolve, reject) => {
+export const getOverIpv4: EgressProbeGet = (url, timeoutMs) => getOverFamily(url, timeoutMs, 4);
+
+/** GET over IPv6 only (AAAA records), for {@link detectEgressIpv6}. */
+export const getOverIpv6: EgressProbeGet = (url, timeoutMs) => getOverFamily(url, timeoutMs, 6);
+
+function getOverFamily(url: string, timeoutMs: number, family: 4 | 6): Promise<ProbeResponse> {
+  return new Promise<ProbeResponse>((resolve, reject) => {
     const target = new URL(url);
     const request = target.protocol === 'http:' ? httpRequest : httpsRequest;
-    const req = request(target, { method: 'GET', family: 4, timeout: timeoutMs }, (res) => {
+    const req = request(target, { method: 'GET', family, timeout: timeoutMs }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
@@ -129,6 +135,56 @@ export const getOverIpv4: EgressProbeGet = (url, timeoutMs) =>
     req.on('error', reject);
     req.end();
   });
+}
+
+const IPV6_PROBES = ['https://api6.ipify.org', 'https://ipv6.icanhazip.com'] as const;
+
+/**
+ * Best-effort IPv6 egress, as the host's `/64` prefix (`2001:db8:1:2::/64`), or
+ * null when the host has no IPv6 route or every probe failed. Never throws: the
+ * host reaches a VPS over its public IPv4, so the IPv4 entry is the one that
+ * keeps SSH working and IPv6 is only added alongside it.
+ *
+ * A `/64`, not a `/128`: privacy-extension addresses rotate inside the prefix
+ * (daily on macOS), so a `/128` would change the device's entry every day and
+ * the egress watcher would rewrite every firewall each time. The `/64` is the
+ * host's network, the same reach a NATed IPv4 `/32` already grants.
+ */
+export async function detectEgressIpv6(
+  opts: Pick<DetectEgressIpOptions, 'probes' | 'timeoutMs' | 'get' | 'onLog'> = {},
+): Promise<string | null> {
+  const probes = opts.probes ?? IPV6_PROBES;
+  const timeout = opts.timeoutMs ?? 2_000;
+  const get = opts.get ?? getOverIpv6;
+  for (const url of probes) {
+    try {
+      const res = await raceTimeout(get(url, timeout), timeout);
+      if (res.status < 200 || res.status >= 300) continue;
+      const prefix = ipv6Prefix64(res.body.trim());
+      if (prefix) {
+        opts.onLog?.(`egress-ip: detected IPv6 prefix ${prefix} via ${url}`);
+        return prefix;
+      }
+    } catch {
+      // no IPv6 route is the common case — try the next probe, then give up quietly
+    }
+  }
+  return null;
+}
+
+/** `2001:db8:1:2:aaaa::1` -> `2001:db8:1:2::/64`; null for anything not IPv6. */
+export function ipv6Prefix64(addr: string): string | null {
+  if (!isIPv6(addr) || addr.includes('.')) return null;
+  const [head = '', tail = ''] = addr.split('::');
+  const h = head ? head.split(':') : [];
+  const t = addr.includes('::') ? (tail ? tail.split(':') : []) : [];
+  const groups = addr.includes('::')
+    ? [...h, ...Array<string>(8 - h.length - t.length).fill('0'), ...t]
+    : h;
+  if (groups.length !== 8) return null;
+  const first = groups.slice(0, 4).map((g) => Number.parseInt(g, 16).toString(16));
+  return `${first.join(':')}::/64`;
+}
 
 async function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

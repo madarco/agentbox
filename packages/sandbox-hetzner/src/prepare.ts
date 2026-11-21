@@ -211,7 +211,8 @@ export async function prepareHetzner(
     progress(`creating firewall ${firewallName} (source ${source})`);
     const firewall = await createPerBoxFirewall(client, {
       name: firewallName,
-      sources: [source],
+      // A throwaway bake VM: one static source, no device entries.
+      ssh: { staticSources: [source], entries: [] },
       labels: { 'agentbox.role': 'prepare' },
     });
     firewallId = firewall.id;

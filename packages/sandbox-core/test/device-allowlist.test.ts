@@ -1,0 +1,107 @@
+import { describe, expect, it } from 'vitest';
+import {
+  DEVICE_ALLOWLIST_CAP,
+  allowedSourcesOf,
+  deviceEntryNeedsUpdate,
+  legacyEntryFor,
+  sanitizeDeviceKey,
+  selfDeviceEntry,
+  upsertDeviceEntry,
+  type DeviceAllowEntry,
+} from '../src/device-allowlist.js';
+import { ipv6Prefix64, detectEgressIpv6 } from '../src/egress-ip.js';
+
+const e = (key: string, seen: number, cidr = `10.0.0.${String(seen % 255)}/32`, hub = false) =>
+  ({ key, cidrs: [cidr], seen, ...(hub ? { hub: true } : {}) }) as DeviceAllowEntry;
+
+describe('upsertDeviceEntry', () => {
+  it('replaces only the same key, keeping every other machine', () => {
+    const out = upsertDeviceEntry([e('a', 1), e('b', 2)], e('b', 3, '9.9.9.9/32'));
+    expect(out.map((x) => [x.key, x.cidrs[0]])).toEqual([
+      ['a', '10.0.0.1/32'],
+      ['b', '9.9.9.9/32'],
+    ]);
+  });
+
+  it('caps the list by evicting the oldest non-hub entries, never self or hub', () => {
+    const start = [e('hub', 0, '1.1.1.1/32', true), e('legacy', 0), e('old', 5), e('new', 9)];
+    const out = upsertDeviceEntry(start, e('me', 10), 3);
+    expect(out.map((x) => x.key).sort()).toEqual(['hub', 'me', 'new']);
+  });
+
+  it('defaults to the documented cap', () => {
+    const many = Array.from({ length: 20 }, (_, i) => e(`k${String(i)}`, i + 1));
+    expect(upsertDeviceEntry(many, e('me', 100))).toHaveLength(DEVICE_ALLOWLIST_CAP);
+  });
+
+  it('keeps hub entries even past the cap when nothing else is evictable', () => {
+    const hubs = [e('h1', 1, '1.1.1.1/32', true), e('h2', 2, '2.2.2.2/32', true)];
+    expect(upsertDeviceEntry(hubs, e('me', 3), 2)).toHaveLength(3);
+  });
+});
+
+describe('deviceEntryNeedsUpdate', () => {
+  it('true when this machine has no entry or a different CIDR set', () => {
+    expect(deviceEntryNeedsUpdate([e('a', 1)], [], 'me', ['5.5.5.5/32'])).toBe(true);
+    expect(deviceEntryNeedsUpdate([e('me', 1, '4.4.4.4/32')], [], 'me', ['5.5.5.5/32'])).toBe(true);
+  });
+
+  it('false when the entry already matches (order-insensitive), or the firewall is open', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32', '2001:db8::/64'], seen: 1 };
+    expect(deviceEntryNeedsUpdate([mine], [], 'me', ['2001:db8::/64', '5.5.5.5/32'])).toBe(false);
+    expect(deviceEntryNeedsUpdate([], ['0.0.0.0/0', '::/0'], 'me', ['5.5.5.5/32'])).toBe(false);
+  });
+});
+
+describe('helpers', () => {
+  it('allowedSourcesOf unions static + entries, deduped', () => {
+    expect(
+      allowedSourcesOf([e('a', 1, '1.1.1.1/32'), e('b', 2, '1.1.1.1/32')], ['10.0.0.0/8']),
+    ).toEqual(['10.0.0.0/8', '1.1.1.1/32']);
+  });
+
+  it('legacyEntryFor attributes only unknown addresses', () => {
+    expect(legacyEntryFor(['1.1.1.1/32', '10.0.0.0/8'], ['10.0.0.0/8'])).toEqual({
+      key: 'legacy',
+      cidrs: ['1.1.1.1/32'],
+      seen: 0,
+    });
+    expect(legacyEntryFor(['10.0.0.0/8'], ['10.0.0.0/8'])).toBeNull();
+  });
+
+  it('sanitizeDeviceKey keeps keys DO-tag and description safe', () => {
+    expect(sanitizeDeviceKey('Marcos-MacBook-Pro.local')).toBe('marcos-macbook-pro');
+    expect(sanitizeDeviceKey('a b:c_d')).toBe('a-b-c-d');
+    expect(sanitizeDeviceKey('x'.repeat(50))).toHaveLength(32);
+  });
+
+  it('selfDeviceEntry marks the control box process as hub', () => {
+    expect(selfDeviceEntry(['1.1.1.1/32'], { key: 'k', nowSec: 5, hub: true })).toEqual({
+      key: 'k',
+      cidrs: ['1.1.1.1/32'],
+      seen: 5,
+      hub: true,
+    });
+    expect(
+      selfDeviceEntry(['1.1.1.1/32'], { key: 'k', nowSec: 5, hub: false }).hub,
+    ).toBeUndefined();
+  });
+});
+
+describe('IPv6 egress', () => {
+  it('ipv6Prefix64 reduces an address to its /64', () => {
+    expect(ipv6Prefix64('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64');
+    expect(ipv6Prefix64('2001:0db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipv6Prefix64('1.2.3.4')).toBeNull();
+    expect(ipv6Prefix64('nonsense')).toBeNull();
+  });
+
+  it('detectEgressIpv6 is best-effort: null instead of throwing when no probe answers', async () => {
+    const get = async () => {
+      throw new Error('ENETUNREACH');
+    };
+    expect(await detectEgressIpv6({ get, probes: ['https://x'] })).toBeNull();
+    const ok = async () => ({ status: 200, body: '2001:db8:1:2::5\n' });
+    expect(await detectEgressIpv6({ get: ok, probes: ['https://x'] })).toBe('2001:db8:1:2::/64');
+  });
+});

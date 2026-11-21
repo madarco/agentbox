@@ -5,8 +5,9 @@
  * Subcommands:
  *   - `login`              — interactive `HCLOUD_TOKEN` setup + persist.
  *   - `login --status`     — show the currently-configured token (masked).
- *   - `firewall sync <box>` — re-detect egress IP, update the box's
- *                            firewall rules (no VPS restart).
+ *   - `firewall sync <box>` — re-detect this machine's egress and add/replace
+ *                            its own entry in the box firewall (other
+ *                            machines' entries are kept; no VPS restart).
  *   - `firewall show <box>` — diagnostic: print the box's firewall.
  *
  * The firewall subcommands rely on `BoxRecord.cloud.hetzner.firewallId` /
@@ -18,7 +19,15 @@
 
 import { log } from '@clack/prompts';
 import { findProjectRoot } from '@agentbox/config';
-import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
+import {
+  detectDeviceCidrs,
+  localMachineKey,
+  readState,
+  resolveBoxRef,
+  selfDeviceEntry,
+  staticInboundSources,
+  upsertDeviceEntry,
+} from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { makeHetznerClient } from './client.js';
 import {
@@ -27,8 +36,13 @@ import {
   readHetznerCredStatus,
   secretsPath,
 } from './credentials.js';
-import { SYNC_EGRESS_HINT, detectEgressCidr, detectEgressIp } from './egress-ip.js';
-import { normalizeSourceCidr, syncFirewallSource } from './firewall.js';
+import { SYNC_EGRESS_HINT, detectEgressIp } from './egress-ip.js';
+import {
+  boxFirewallSources,
+  decodeBoxFirewall,
+  normalizeSourceCidr,
+  writeBoxFirewall,
+} from './firewall.js';
 import { readPreparedState } from './prepared-state.js';
 
 interface LoginOpts {
@@ -76,8 +90,7 @@ function printStatus(): void {
   const s = readHetznerCredStatus();
   if (s.source === 'none') {
     process.stdout.write(
-      'hetzner: not configured\n' +
-        '  run `agentbox hetzner login` to set up credentials\n',
+      'hetzner: not configured\n' + '  run `agentbox hetzner login` to set up credentials\n',
     );
     return;
   }
@@ -93,11 +106,13 @@ interface FirewallSyncOpts {
 }
 
 const firewallSyncSub = new Command('sync')
-  .description('Re-detect the host egress IP and update the box firewall (no reboot)')
+  .description(
+    "Re-detect this machine's egress IP and add it to the box firewall, keeping other machines' entries (no reboot)",
+  )
   .argument('<box>', 'box name or id')
   .option(
     '--source <cidr>',
-    'override the auto-detected egress IP (e.g. 1.2.3.4/32, or 0.0.0.0/0 for open opt-in)',
+    "use this CIDR as this machine's entry instead of the auto-detected egress (e.g. 1.2.3.4/32)",
   )
   .action(async (boxRef: string, opts: FirewallSyncOpts) => {
     try {
@@ -109,16 +124,29 @@ const firewallSyncSub = new Command('sync')
             `This is unusual — the box may have been provisioned outside agentbox.`,
         );
       }
-      const source = opts.source
-        ? normalizeSourceCidr(opts.source)
-        : await detectEgressCidr({
+      const cidrs = opts.source
+        ? [normalizeSourceCidr(opts.source)]
+        : await detectDeviceCidrs({
             onLog: (l) => process.stdout.write(`hetzner: ${l}\n`),
             overrideHint: SYNC_EGRESS_HINT,
           });
       const client = makeHetznerClient();
-      process.stdout.write(`hetzner: updating firewall ${String(firewallId)} for box '${box.name}' → source ${source}\n`);
-      await syncFirewallSource(client, firewallId, source);
-      process.stdout.write(`hetzner: firewall ${String(firewallId)} now allows SSH from ${source} only\n`);
+      const firewall = await client.getFirewall(firewallId);
+      if (!firewall)
+        throw new Error(`hetzner: firewall ${String(firewallId)} for box '${box.name}' is gone`);
+      const current = decodeBoxFirewall(firewall.rules, staticInboundSources(box.cloud?.inbound));
+      const key = localMachineKey();
+      const next = {
+        staticSources: current.staticSources,
+        entries: upsertDeviceEntry(current.entries, selfDeviceEntry(cidrs, { key })),
+      };
+      process.stdout.write(
+        `hetzner: updating firewall ${String(firewallId)} for box '${box.name}': ${key} -> ${cidrs.join(', ')}\n`,
+      );
+      await writeBoxFirewall(client, firewallId, next);
+      process.stdout.write(
+        `hetzner: firewall ${String(firewallId)} now allows SSH from ${boxFirewallSources(next).join(', ')}\n`,
+      );
     } catch (err) {
       reportError(err);
     }
@@ -132,12 +160,16 @@ const firewallShowSub = new Command('show')
       const { box, server } = await resolveHetznerBox(boxRef);
       const firewallId = parseFirewallIdFromServer(server.labels);
       if (firewallId === undefined) {
-        throw new Error(`box '${boxRef}' has no recorded firewall id (label agentbox.firewall missing)`);
+        throw new Error(
+          `box '${boxRef}' has no recorded firewall id (label agentbox.firewall missing)`,
+        );
       }
       const client = makeHetznerClient();
       const firewall = await client.getFirewall(firewallId);
       if (!firewall) {
-        process.stdout.write(`hetzner: firewall ${String(firewallId)} for box '${box.name}' is gone on Hetzner\n`);
+        process.stdout.write(
+          `hetzner: firewall ${String(firewallId)} for box '${box.name}' is gone on Hetzner\n`,
+        );
         return;
       }
       const lines: string[] = [
@@ -149,10 +181,12 @@ const firewallShowSub = new Command('show')
       for (const rule of firewall.rules) {
         const sources = rule.source_ips?.join(', ') ?? '—';
         const dests = rule.destination_ips?.join(', ') ?? '';
+        const label = rule.description ? `  [${rule.description}]` : '';
         lines.push(
-          `  ${rule.direction} ${rule.protocol}${rule.port ? `:${rule.port}` : ''} from=${sources}${dests ? ` to=${dests}` : ''}`,
+          `  ${rule.direction} ${rule.protocol}${rule.port ? `:${rule.port}` : ''} from=${sources}${dests ? ` to=${dests}` : ''}${label}`,
         );
       }
+      lines.push(`this machine: ${localMachineKey()}`);
       // Show the host's current egress IP for comparison — common diagnostic
       // when the user's laptop moved networks and ssh started timing out.
       try {
@@ -172,7 +206,9 @@ const firewallShowSub = new Command('show')
           );
         }
       } catch (egressErr) {
-        lines.push(`host egress IP: <detection failed: ${egressErr instanceof Error ? egressErr.message : String(egressErr)}>`);
+        lines.push(
+          `host egress IP: <detection failed: ${egressErr instanceof Error ? egressErr.message : String(egressErr)}>`,
+        );
       }
       process.stdout.write(lines.join('\n') + '\n');
     } catch (err) {
@@ -210,7 +246,9 @@ async function resolveHetznerBox(boxRef: string): Promise<{
   }
   const server = await makeHetznerClient().getServer(id);
   if (!server) {
-    throw new Error(`hetzner server ${String(id)} for box '${box.name}' is gone (already destroyed?)`);
+    throw new Error(
+      `hetzner server ${String(id)} for box '${box.name}' is gone (already destroyed?)`,
+    );
   }
   return { box, server };
 }

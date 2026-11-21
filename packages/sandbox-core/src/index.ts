@@ -79,17 +79,36 @@ export {
   normalizeInboundCidr,
   parseInboundSpec,
   resolveInboundSources,
+  staticInboundSources,
   describeInbound,
 } from './inbound.js';
 export {
   detectEgressIp,
   detectEgressCidr,
+  detectEgressIpv6,
   getOverIpv4,
+  getOverIpv6,
+  ipv6Prefix64,
   isIpv4,
   type DetectEgressIpOptions,
   type EgressProbeGet,
   type ProbeResponse,
 } from './egress-ip.js';
+export {
+  ADMIN_DEVICE_KEY,
+  DEVICE_ALLOWLIST_CAP,
+  LEGACY_DEVICE_KEY,
+  allowedSourcesOf,
+  detectDeviceCidrs,
+  deviceEntryNeedsUpdate,
+  isControlBoxProcess,
+  legacyEntryFor,
+  localMachineKey,
+  sanitizeDeviceKey,
+  selfDeviceEntry,
+  upsertDeviceEntry,
+  type DeviceAllowEntry,
+} from './device-allowlist.js';
 export {
   claudeSettingsPath,
   claudeSshEntryFor,

@@ -9,8 +9,11 @@ export interface FirewallRepairOptions {
 
 /**
  * Run a connection-ESTABLISHMENT attempt with one self-heal retry: if it throws
- * and `provider.repairReachability` reports it changed something (today: a
- * Hetzner host egress-IP change that locked the per-box firewall), retry once.
+ * and `provider.repairReachability` reports it changed something (today: this
+ * machine's egress was missing from a hetzner/digitalocean box's per-device
+ * firewall allowlist — a new IP, or a box first created from another PC — and
+ * its own entry was added), retry once. The relay's egress watcher does the
+ * same repair proactively on an IP change; this covers the gap before it runs.
  * When nothing changed (or repair is unsupported/disabled) the original error
  * is rethrown — a non-IP failure isn't masked.
  *

@@ -1,0 +1,180 @@
+/**
+ * `startEgressWatchLoop` — the relay-owned host egress-IP watcher.
+ *
+ * A hetzner/digitalocean box's firewall admits SSH only from the machines in
+ * its per-device allowlist. When this host's egress IP changes (a network
+ * move, a DHCP lease, a VPN), its entry goes stale and every connection
+ * establish to those boxes fails until something repairs it. The CLI repairs
+ * only at two establish sites (`recover`, the first attach connect), and the
+ * box→host direction (a box's `git push` riding the host ControlMaster) has no
+ * CLI wrapper at all. This loop closes the gap: it caches the last egress it
+ * saw, re-detects on start and on a slow tick, and on a change asks each
+ * running firewall-bearing box's backend to `repairReachability` once — which
+ * replaces only this machine's entry, never another machine's.
+ *
+ * Gated on the fleet: each tick first reads `state.json`, and with no running
+ * box on a firewall-bearing provider (a docker-only user, an idle laptop) it
+ * returns before any egress probe or provider API call.
+ */
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import type { BoxRecord, CloudBackend } from '@agentbox/core';
+import { STATE_DIR, detectDeviceCidrs, readState } from '@agentbox/sandbox-core';
+import { resolveCloudBackend } from './host-actions.js';
+
+/** Providers with a per-box firewall that pins SSH to host egress IPs. */
+export const FIREWALL_PROVIDERS: ReadonlySet<string> = new Set(['hetzner', 'digitalocean']);
+
+export const EGRESS_CACHE_FILE = join(STATE_DIR, 'egress-ip.json');
+
+const DEFAULT_INTERVAL_MS = 5 * 60_000;
+
+interface EgressCache {
+  cidrs: string[];
+  detectedAt: string;
+}
+
+export interface EgressWatchDeps {
+  log: (line: string) => void;
+  /** Injectable for tests; defaults to `readState().boxes`. */
+  listBoxes?: () => Promise<BoxRecord[]>;
+  /** Injectable for tests; defaults to the IPv4 (+ best-effort IPv6) detector. */
+  detect?: () => Promise<string[]>;
+  /** Injectable for tests; defaults to `resolveCloudBackend`. */
+  resolveBackend?: (name: string) => Promise<CloudBackend>;
+  /** Injectable for tests; default `~/.agentbox/egress-ip.json`. */
+  readCache?: () => Promise<string[] | null>;
+  writeCache?: (cidrs: string[]) => Promise<void>;
+  intervalMs?: number;
+}
+
+export interface EgressWatchHandle {
+  /** Run one tick now (tests; also what start does first). */
+  tick: () => Promise<void>;
+  /** Stop scheduling and await any in-flight tick. */
+  stop: () => Promise<void>;
+}
+
+/**
+ * Boxes whose firewall this host must keep itself in: on a firewall-bearing
+ * provider, believed running (records predating `lastState` count), and not
+ * `open` (already reachable from anywhere). Pure.
+ */
+export function selectFirewallBoxes(boxes: readonly BoxRecord[]): BoxRecord[] {
+  return boxes.filter(
+    (b) =>
+      FIREWALL_PROVIDERS.has(b.provider ?? '') &&
+      !!b.cloud?.sandboxId &&
+      (b.cloud.lastState === undefined || b.cloud.lastState === 'running') &&
+      b.cloud.inbound?.mode !== 'open',
+  );
+}
+
+function sameCidrs(a: readonly string[] | null, b: readonly string[]): boolean {
+  if (!a || a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((x) => s.has(x));
+}
+
+async function defaultReadCache(): Promise<string[] | null> {
+  try {
+    const raw = JSON.parse(await readFile(EGRESS_CACHE_FILE, 'utf8')) as Partial<EgressCache>;
+    return Array.isArray(raw.cidrs) ? raw.cidrs.filter((c) => typeof c === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+async function defaultWriteCache(cidrs: string[]): Promise<void> {
+  await mkdir(dirname(EGRESS_CACHE_FILE), { recursive: true });
+  const body: EgressCache = { cidrs, detectedAt: new Date().toISOString() };
+  await writeFile(EGRESS_CACHE_FILE, JSON.stringify(body, null, 2) + '\n', 'utf8');
+}
+
+export function startEgressWatchLoop(deps: EgressWatchDeps): EgressWatchHandle {
+  const { log } = deps;
+  const listBoxes = deps.listBoxes ?? (async () => (await readState()).boxes);
+  const detect = deps.detect ?? (() => detectDeviceCidrs());
+  const resolveBackend = deps.resolveBackend ?? resolveCloudBackend;
+  const readCache = deps.readCache ?? defaultReadCache;
+  const writeCache = deps.writeCache ?? defaultWriteCache;
+  const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
+
+  let ticking = false;
+  let stopped = false;
+  let inFlight: Promise<void> = Promise.resolve();
+  let lastProbeFailure: string | null = null;
+
+  async function tick(): Promise<void> {
+    if (ticking || stopped) return;
+    ticking = true;
+    try {
+      const boxes = selectFirewallBoxes(await listBoxes().catch(() => []));
+      if (boxes.length === 0) return; // the fleet gate: no probe, no API call
+
+      let cidrs: string[];
+      try {
+        cidrs = await detect();
+        lastProbeFailure = null;
+      } catch (err) {
+        // Offline / captive portal: say so once, not every tick.
+        const msg = err instanceof Error ? (err.message.split('\n')[0] ?? '') : String(err);
+        if (msg !== lastProbeFailure) log(`egress-watch: egress probe failed: ${msg}`);
+        lastProbeFailure = msg;
+        return;
+      }
+      const cached = await readCache();
+      if (sameCidrs(cached, cidrs)) return;
+
+      log(
+        `egress-watch: egress ${cached ? `changed ${cached.join(', ')} -> ` : 'is '}${cidrs.join(', ')}; ` +
+          `checking ${String(boxes.length)} box firewall(s)`,
+      );
+      let allOk = true;
+      const backends = new Map<string, CloudBackend | null>();
+      for (const box of boxes) {
+        const name = box.provider as string;
+        if (!backends.has(name)) {
+          backends.set(name, await resolveBackend(name).catch(() => null));
+        }
+        const backend = backends.get(name);
+        if (!backend?.repairReachability) continue;
+        try {
+          const r = await backend.repairReachability({
+            sandboxId: box.cloud?.sandboxId as string,
+            ...(box.cloud?.inbound ? { inbound: box.cloud.inbound } : {}),
+          });
+          if (r.changed) log(`egress-watch: ${box.name}: ${r.detail ?? 'firewall updated'}`);
+        } catch (err) {
+          allOk = false;
+          log(
+            `egress-watch: ${box.name}: repair failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      // Cache only a fully applied change, so a failed box is retried next tick.
+      if (allOk) await writeCache(cidrs).catch(() => undefined);
+    } finally {
+      ticking = false;
+    }
+  }
+
+  const run = (): void => {
+    inFlight = tick().catch((err: unknown) => {
+      log(`egress-watch: tick failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+  run();
+  const timer = setInterval(run, intervalMs);
+  timer.unref?.();
+
+  return {
+    tick,
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await inFlight;
+    },
+  };
+}

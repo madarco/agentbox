@@ -28,7 +28,151 @@ import {
   type DigitalOceanInboundRule,
   type DigitalOceanOutboundRule,
 } from './client.js';
+import { createHash } from 'node:crypto';
+import { isIPv4, isIPv6 } from 'node:net';
+import { allowedSourcesOf, legacyEntryFor, type DeviceAllowEntry } from '@agentbox/sandbox-core';
 import { withDigitalOceanRetry } from './retry.js';
+
+/**
+ * A box firewall's SSH allowlist: the static policy part (`open` / whitelist)
+ * plus one entry per machine. DigitalOcean firewall rules have no description,
+ * so the entries ride the firewall's own `tags` (see {@link encodeDeviceTag});
+ * every PC reading the firewall sees who owns which address. The SSH rule
+ * itself is the flat union.
+ */
+export interface BoxFirewallSsh {
+  staticSources: string[];
+  entries: DeviceAllowEntry[];
+}
+
+const DEVICE_TAG_PREFIX = 'abdev:';
+
+/**
+ * Short per-firewall discriminator for device tags, derived from the box's own
+ * tag. DO tags are account-global; without it, two boxes repaired by the same
+ * machine in the same second would share a tag, and deleting it on one box's
+ * destroy would strip the other box's metadata.
+ */
+export function firewallDiscriminator(boxTag: string): string {
+  return createHash('sha256').update(boxTag).digest('hex').slice(0, 8);
+}
+
+/** The box's own tag on a firewall (the non-device tag the droplet also carries). */
+export function boxTagOf(fw: Pick<DigitalOceanFirewall, 'tags'>): string | undefined {
+  return fw.tags.find((t) => !t.startsWith(DEVICE_TAG_PREFIX));
+}
+
+function encodeCidr(cidr: string): string | null {
+  const [addr = '', lenRaw] = cidr.split('/');
+  if (isIPv4(addr)) {
+    const len = lenRaw ?? '32';
+    const hex = addr
+      .split('.')
+      .map((o) => Number.parseInt(o, 10).toString(16).padStart(2, '0'))
+      .join('');
+    return `4${hex}p${len}`;
+  }
+  if (isIPv6(addr) && !addr.includes('.')) {
+    const len = Number.parseInt(lenRaw ?? '128', 10);
+    const [head = '', tail = ''] = addr.split('::');
+    const h = head ? head.split(':') : [];
+    const t = addr.includes('::') ? (tail ? tail.split(':') : []) : [];
+    const groups = addr.includes('::')
+      ? [...h, ...Array<string>(8 - h.length - t.length).fill('0'), ...t]
+      : h;
+    const full = groups.map((g) => g.padStart(4, '0')).join('');
+    return `6${full.slice(0, Math.max(1, Math.ceil(len / 4)))}p${String(len)}`;
+  }
+  return null;
+}
+
+function decodeCidr(enc: string): string | null {
+  const m = /^([46])([0-9a-f]+)p(\d{1,3})$/.exec(enc);
+  if (!m) return null;
+  const [, fam, hex = '', len = ''] = m;
+  if (fam === '4') {
+    if (hex.length !== 8) return null;
+    const octets = (hex.match(/../g) ?? []).map((x) => String(Number.parseInt(x, 16)));
+    return `${octets.join('.')}/${len}`;
+  }
+  const full = hex.padEnd(32, '0');
+  const groups = (full.match(/.{4}/g) ?? []).map((g) => Number.parseInt(g, 16).toString(16));
+  // Compress the trailing zero run (the usual shape of a prefix) for a stable form.
+  let end = groups.length;
+  while (end > 0 && groups[end - 1] === '0') end--;
+  const addr = end === groups.length ? groups.join(':') : `${groups.slice(0, end).join(':')}::`;
+  return `${addr}/${len}`;
+}
+
+/**
+ * `abdev:<disc>:<key>:<seen>:<h|n>:<cidr>_<cidr>` — CIDRs hex-encoded with a
+ * family digit and `p<prefix>` because DO tags allow only `[A-Za-z0-9_:-]`.
+ * Null when the entry can't be represented (a CIDR that isn't IPv4/IPv6, or a
+ * tag over DO's 255-char limit).
+ */
+export function encodeDeviceTag(disc: string, e: DeviceAllowEntry): string | null {
+  const cidrs = e.cidrs.map(encodeCidr);
+  if (cidrs.length === 0 || cidrs.some((c) => c === null)) return null;
+  const tag = `${DEVICE_TAG_PREFIX}${disc}:${e.key}:${String(e.seen)}:${e.hub ? 'h' : 'n'}:${cidrs.join('_')}`;
+  return tag.length <= 255 ? tag : null;
+}
+
+export function decodeDeviceTag(tag: string): DeviceAllowEntry | null {
+  const m = /^abdev:[0-9a-f]{8}:([a-z0-9-]+):(\d+):([hn]):([0-9a-fp_]+)$/.exec(tag);
+  if (!m) return null;
+  const cidrs = (m[4] as string).split('_').map(decodeCidr);
+  if (cidrs.some((c) => c === null)) return null;
+  return {
+    key: m[1] as string,
+    cidrs: cidrs as string[],
+    seen: Number.parseInt(m[2] as string, 10),
+    ...(m[3] === 'h' ? { hub: true } : {}),
+  };
+}
+
+/**
+ * Read a firewall back into static sources + device entries. SSH addresses no
+ * entry owns are static when they belong to the policy; on a firewall written
+ * before device entries the rest (the creating host's egress) becomes a
+ * `legacy` entry. Once any entry exists, every unowned address is static, so a
+ * PC whose record lacks the whitelist doesn't demote it.
+ */
+export function decodeBoxFirewall(
+  fw: Pick<DigitalOceanFirewall, 'tags' | 'inbound_rules'>,
+  policyStatic: readonly string[],
+): BoxFirewallSsh {
+  const entries = fw.tags
+    .map((t) => (t.startsWith(DEVICE_TAG_PREFIX) ? decodeDeviceTag(t) : null))
+    .filter((e): e is DeviceAllowEntry => e !== null);
+  const sources = sshSourcesOf(fw.inbound_rules);
+  const owned = new Set(entries.flatMap((e) => e.cidrs));
+  const unowned = sources.filter((s) => !owned.has(s));
+  if (entries.length > 0) return { staticSources: unowned, entries };
+  const policySet = new Set(policyStatic);
+  const legacy = legacyEntryFor(unowned, policyStatic);
+  return {
+    staticSources: unowned.filter((s) => policySet.has(s)),
+    entries: legacy ? [legacy] : [],
+  };
+}
+
+/** Every SSH source a firewall admits (all inbound tcp/22 rules). */
+export function sshSourcesOf(rules: readonly DigitalOceanInboundRule[]): string[] {
+  return [
+    ...new Set(rules.filter((r) => r.ports === '22').flatMap((r) => r.sources.addresses ?? [])),
+  ];
+}
+
+/** Flat SSH source list of a decoded firewall. */
+export function boxFirewallSources(fw: BoxFirewallSsh): string[] {
+  return allowedSourcesOf(fw.entries, fw.staticSources);
+}
+
+/** The device tags for `ssh` on the firewall whose box tag is `boxTag`. */
+export function deviceTagsFor(boxTag: string, ssh: BoxFirewallSsh): string[] {
+  const disc = firewallDiscriminator(boxTag);
+  return ssh.entries.map((e) => encodeDeviceTag(disc, e)).filter((t): t is string => t !== null);
+}
 
 /**
  * Build the SSH-only inbound rule for one or more source CIDRs. DigitalOcean's
@@ -98,8 +242,8 @@ export function allowAllOutboundRules(): DigitalOceanOutboundRule[] {
 export interface CreateFirewallOptions {
   /** Human-readable name (visible in the DigitalOcean dashboard). Must be unique-ish. */
   name: string;
-  /** Inbound source CIDRs (already normalized/resolved by the caller). */
-  sources: string[];
+  /** The SSH allowlist the firewall is born with (static policy + device entries). */
+  ssh: BoxFirewallSsh;
   /**
    * Per-box tag the firewall is bound to. The droplet is created with the
    * same tag so DigitalOcean auto-applies this firewall the moment the
@@ -121,15 +265,18 @@ export async function createPerBoxFirewall(
   // not exist yet — the tag must be created first. Create it before the
   // firewall so the tag-bound auto-apply still happens with no unprotected
   // window (the droplet is created with the same tag later).
-  await withDigitalOceanRetry(
-    { method: 'createTag', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
-    () => client.createTag(opts.tag),
-  );
+  const deviceTags = deviceTagsFor(opts.tag, opts.ssh);
+  for (const t of [opts.tag, ...deviceTags]) {
+    await withDigitalOceanRetry(
+      { method: 'createTag', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
+      () => client.createTag(t),
+    );
+  }
   const body: CreateFirewallRequest = {
     name: opts.name,
-    inbound_rules: sshInboundRules(opts.sources),
+    inbound_rules: sshInboundRules(boxFirewallSources(opts.ssh)),
     outbound_rules: allowAllOutboundRules(),
-    tags: [opts.tag],
+    tags: [opts.tag, ...deviceTags],
   };
   return withDigitalOceanRetry(
     { method: 'createFirewall', retryOnAmbiguous: false, attemptTimeoutMs: 60_000 },
@@ -138,27 +285,44 @@ export async function createPerBoxFirewall(
 }
 
 /**
- * Re-detect the egress IP and replace the firewall's inbound rule with the
- * new source (preserving its name, tags, droplet attachments, and the
- * allow-all outbound rules). Used by `agentbox digitalocean firewall sync
- * <box>` after the host laptop moves networks. Cheap — no droplet restart.
+ * Write `ssh` to a box firewall: the SSH rule becomes the flat union, the
+ * device tags are replaced (new ones created first — DO rejects a firewall
+ * naming a tag that doesn't exist — and the dropped ones deleted afterwards,
+ * best-effort; they are unique to this firewall). Name, droplet attachments,
+ * the box tag and the allow-all outbound rules are preserved. No restart.
  */
-export async function syncFirewallSource(
+export async function writeBoxFirewall(
   client: DigitalOceanClient,
   firewall: DigitalOceanFirewall,
-  sources: string | string[],
+  ssh: BoxFirewallSsh,
 ): Promise<void> {
+  const keep = firewall.tags.filter((t) => !t.startsWith(DEVICE_TAG_PREFIX));
+  const boxTag = keep[0] ?? firewall.id;
+  const deviceTags = deviceTagsFor(boxTag, ssh);
+  const before = new Set(firewall.tags);
+  for (const t of deviceTags) {
+    if (before.has(t)) continue;
+    await withDigitalOceanRetry(
+      { method: 'createTag', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
+      () => client.createTag(t),
+    );
+  }
   const body: CreateFirewallRequest = {
     name: firewall.name,
-    inbound_rules: sshInboundRules(sources),
+    inbound_rules: sshInboundRules(boxFirewallSources(ssh)),
     outbound_rules: allowAllOutboundRules(),
     droplet_ids: firewall.droplet_ids,
-    tags: firewall.tags,
+    tags: [...keep, ...deviceTags],
   };
   await withDigitalOceanRetry(
     { method: 'updateFirewall', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
     () => client.updateFirewall(firewall.id, body),
   );
+  const after = new Set(deviceTags);
+  for (const t of firewall.tags) {
+    if (!t.startsWith(DEVICE_TAG_PREFIX) || after.has(t)) continue;
+    await client.deleteTag(t).catch(() => undefined);
+  }
 }
 
 /**
@@ -176,7 +340,8 @@ export async function findFirewallForDroplet(
   return (
     all.find(
       (fw) =>
-        fw.droplet_ids.includes(dropletId) || fw.tags.some((t) => tagSet.has(t)),
+        fw.droplet_ids.includes(dropletId) ||
+        fw.tags.some((t) => !t.startsWith(DEVICE_TAG_PREFIX) && tagSet.has(t)),
     ) ?? null
   );
 }
@@ -216,7 +381,10 @@ export async function deletePerBoxFirewall(
       await cleanupTags();
       return;
     } catch (err) {
-      if (err instanceof DigitalOceanApiError && (err.statusCode === 404 || err.code === 'not_found')) {
+      if (
+        err instanceof DigitalOceanApiError &&
+        (err.statusCode === 404 || err.code === 'not_found')
+      ) {
         await cleanupTags();
         return;
       }

@@ -51,11 +51,15 @@ import {
   detectEgressCidr,
 } from './egress-ip.js';
 import {
+  boxFirewallSources,
   createPerBoxFirewall,
+  decodeBoxFirewall,
   deletePerBoxFirewall,
   firewallNeedsSync,
   normalizeSourceCidr,
-  syncFirewallSource,
+  sshSourcesOf,
+  writeBoxFirewall,
+  type BoxFirewallSsh,
 } from './firewall.js';
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
@@ -64,11 +68,18 @@ import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
 import {
+  ADMIN_DEVICE_KEY,
   agentSetArg,
   describeInbound,
+  detectDeviceCidrs,
+  deviceEntryNeedsUpdate,
+  localMachineKey,
   normalizeAgentSet,
   parseInboundSpec,
-  resolveInboundSources,
+  selfDeviceEntry,
+  staticInboundSources,
+  upsertDeviceEntry,
+  type DeviceAllowEntry,
 } from '@agentbox/sandbox-core';
 import type { InboundPolicy } from '@agentbox/core';
 import { waitForSsh, sshOptArgs, type SshTargetArgs } from './ssh-cli.js';
@@ -278,23 +289,24 @@ function buildSshTarget(state: PerBoxState, vpsIp: string, controlPath?: string)
 }
 
 /**
- * The per-box firewall's current SSH source vs the host's live egress IP. Best-
- * effort and called ONLY on a connection-failure path (the open-failed hint and
- * `recover`'s auto-sync), never on the happy path — `egressIpCached` keeps the
- * probe from storming across retries. Returns null when there's no firewall or
- * we can't determine the state.
+ * The per-box firewall as the per-device allowlist (static policy part + one
+ * entry per machine). Read on demand: on a connection failure, a repair, an
+ * inbound change — never on the happy path. Null when the server or its
+ * firewall is gone.
  */
-interface FirewallEgressStatus {
+interface BoxFirewallState {
   firewallId: number;
-  /** All CIDRs the firewall currently allows for inbound SSH (`source_ips`). */
+  ssh: BoxFirewallSsh;
+  /** Every SSH source the firewall admits right now. */
   allowedSources: string[];
-  /** The host's current egress IP as a `/32` CIDR. */
-  currentEgress: string;
   /** Friendly box ref for the `firewall sync` hint (the `agentbox.box` label). */
   boxRef: string;
 }
 
-async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressStatus | null> {
+async function readBoxFirewall(
+  sandboxId: string,
+  policy: InboundPolicy | undefined,
+): Promise<BoxFirewallState | null> {
   const id = Number.parseInt(sandboxId, 10);
   if (!Number.isFinite(id)) return null;
   const server = await client().getServer(id);
@@ -302,17 +314,11 @@ async function firewallEgressStatus(sandboxId: string): Promise<FirewallEgressSt
   const firewallId = Number.parseInt(server.labels['agentbox.firewall'] ?? '', 10);
   if (!Number.isFinite(firewallId)) return null;
   const firewall = await client().getFirewall(firewallId);
-  const sshRule = firewall?.rules.find((r) => r.direction === 'in' && r.port === '22');
-  const allowedSources = sshRule?.source_ips ?? [];
-  // A FRESH probe (not cached): this runs only on a connection-failure path, and
-  // a stale value could read the new IP as "unchanged" and skip the heal — the
-  // very mismatch we exist to catch. The poller already de-dupes its recover
-  // calls and `recover --all` is sequential, so fresh probing here won't storm.
-  const currentEgress = await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT });
+  if (!firewall) return null;
   return {
     firewallId,
-    allowedSources,
-    currentEgress,
+    ssh: decodeBoxFirewall(firewall.rules, staticInboundSources(policy)),
+    allowedSources: sshSourcesOf(firewall.rules),
     // `||`, not `??`: a name with nothing label-legal in it sanitizes to ''.
     boxRef: server.labels['agentbox.box'] || sandboxId,
   };
@@ -332,12 +338,17 @@ async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string
     // an opaque SSH connect timeout. Best-effort: detect the mismatch and enrich
     // the error with the fix. Never let the diagnostic mask the original error
     // on a match (box is just down) or a probe failure.
-    const s = await firewallEgressStatus(sandboxId).catch(() => null);
-    if (s && firewallNeedsSync(s.allowedSources, s.currentEgress)) {
+    // A FRESH probe, not a cached one: a stale value could read the new IP as
+    // "unchanged" and hide the very mismatch this diagnostic exists for.
+    const s = await readBoxFirewall(sandboxId, undefined).catch(() => null);
+    const currentEgress = s
+      ? await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT }).catch(() => null)
+      : null;
+    if (s && currentEgress && firewallNeedsSync(s.allowedSources, currentEgress)) {
       throw new Error(
         `${(err as Error).message}\n\n` +
           `hetzner: SSH is blocked by the box firewall — it allows ${s.allowedSources.join(', ') || '(no rule)'} ` +
-          `but your egress IP is now ${s.currentEgress}. Your IP changed; run:\n` +
+          `but your egress IP is now ${currentEgress}. Your IP changed; run:\n` +
           `  agentbox hetzner firewall sync ${s.boxRef}\n` +
           `(or \`agentbox recover ${s.boxRef}\`, which auto-syncs).`,
       );
@@ -424,27 +435,28 @@ export const hetznerBackend: CloudBackend = {
     const inboundPolicy = parseInboundSpec(req.inbound);
     const egressOverride =
       req.env?.AGENTBOX_HETZNER_FIREWALL_SOURCE ?? process.env.AGENTBOX_HETZNER_FIREWALL_SOURCE;
-    const hostEgress =
-      inboundPolicy.mode === 'open'
-        ? null
-        : egressOverride
-          ? normalizeSourceCidr(egressOverride)
-          : await detectEgressCidr({ onLog, overrideHint: CREATE_EGRESS_HINT });
-    const sources = resolveInboundSources(inboundPolicy, hostEgress);
-    // Control-plane-topology creates: the control box locks the box to its own
-    // egress IP; add the admin-supplied PC egress CIDR(s) so direct PC→box SSH
-    // still works. Skipped when `open` (already 0.0.0.0/0). Deduped.
-    if (
-      inboundPolicy.mode !== 'open' &&
-      req.extraInboundCidrs &&
-      req.extraInboundCidrs.length > 0
-    ) {
-      for (const cidr of req.extraInboundCidrs) {
-        const normalized = normalizeSourceCidr(cidr);
-        if (!sources.includes(normalized)) sources.push(normalized);
+    const entries: DeviceAllowEntry[] = [];
+    if (inboundPolicy.mode !== 'open') {
+      // This machine's own entry. On a control box it carries `hub`, so a PC
+      // adding itself later can never evict the hub's reach to its own box.
+      const cidrs = egressOverride
+        ? [normalizeSourceCidr(egressOverride)]
+        : await detectDeviceCidrs({ onLog, overrideHint: CREATE_EGRESS_HINT });
+      entries.push(selfDeviceEntry(cidrs));
+      // Control-plane-topology creates: the admin PC's CIDR(s) so direct PC→box
+      // SSH works before that PC has written its own entry.
+      const admin = (req.extraInboundCidrs ?? []).map(normalizeSourceCidr);
+      if (admin.length > 0) {
+        entries.push({ key: ADMIN_DEVICE_KEY, cidrs: admin, seen: entries[0]?.seen ?? 0 });
       }
     }
-    progress(`firewall inbound: ${describeInbound(inboundPolicy)} -> ${sources.join(', ')}`);
+    const firewallSsh: BoxFirewallSsh = {
+      staticSources: staticInboundSources(inboundPolicy),
+      entries,
+    };
+    progress(
+      `firewall inbound: ${describeInbound(inboundPolicy)} -> ${boxFirewallSources(firewallSsh).join(', ')}`,
+    );
 
     // 3. Mint per-box SSH key into a temp dir keyed by a fresh uuid; we
     // rename it to `~/.agentbox/hetzner/boxes/<sandboxId>/ssh/` once the
@@ -470,7 +482,7 @@ export const hetznerBackend: CloudBackend = {
       // 4. Firewall.
       const firewall = await createPerBoxFirewall(c, {
         name: resourceName,
-        sources,
+        ssh: firewallSsh,
         labels: {
           'agentbox.box': boxLabel,
           'agentbox.role': 'box',
@@ -828,41 +840,47 @@ export const hetznerBackend: CloudBackend = {
   },
 
   async repairReachability(h): Promise<{ changed: boolean; detail?: string }> {
-    // Re-sync the per-box firewall to the host's CURRENT egress IP, but only
-    // when it actually changed — the host laptop moved networks and the
-    // firewall is now blocking us. Called by the CLI ONLY on a connection-
-    // establishment failure (`recover`, the initial attach connect), never on a
-    // mid-session drop. A `0.0.0.0/0` firewall (explicit dynamic-IP opt-in) is
-    // already open, so it's a no-op.
+    // Make sure THIS machine's current egress is in the box firewall, adding or
+    // replacing only its own entry — every other machine's entry is carried
+    // over, so attaching from a second PC never locks the first one out.
+    // Called on a connection-establishment failure (`recover`, the initial
+    // attach connect) and by the relay's egress watcher on an IP change, never
+    // on a mid-session drop. An `open` box is already reachable: no-op.
     const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
     if (policy.mode === 'open') return { changed: false };
-    const s = await firewallEgressStatus(h.sandboxId).catch(() => null);
-    if (!s || !firewallNeedsSync(s.allowedSources, s.currentEgress)) return { changed: false };
-    // Merge the stored whitelist with the refreshed egress so a drift heal
-    // never narrows a whitelisted box down to just the host IP.
-    const sources = resolveInboundSources(policy, s.currentEgress);
-    await syncFirewallSource(client(), s.firewallId, sources);
+    const fw = await readBoxFirewall(h.sandboxId, policy).catch(() => null);
+    if (!fw) return { changed: false };
+    const cidrs = await detectDeviceCidrs({ overrideHint: REPAIR_EGRESS_HINT });
+    const key = localMachineKey();
+    if (!deviceEntryNeedsUpdate(fw.ssh.entries, fw.ssh.staticSources, key, cidrs)) {
+      return { changed: false };
+    }
+    const next: BoxFirewallSsh = {
+      staticSources: fw.ssh.staticSources,
+      entries: upsertDeviceEntry(fw.ssh.entries, selfDeviceEntry(cidrs, { key })),
+    };
+    await writeBoxFirewall(client(), fw.firewallId, next);
     return {
       changed: true,
-      detail: `firewall updated: SSH now allowed from ${sources.join(', ')} (was ${s.allowedSources.join(', ') || '(no rule)'})`,
+      detail: `firewall updated: SSH allowed from ${key} at ${cidrs.join(', ')} (${String(next.entries.length)} device entr${next.entries.length === 1 ? 'y' : 'ies'})`,
     };
   },
 
   async setInbound(h: CloudHandle, policy: InboundPolicy): Promise<{ sources: string[] }> {
     // Apply an inbound-access policy to the box's firewall (`agentbox inbound`).
-    // `locked`/`whitelist` re-detect the host egress; `open` skips it.
-    const id = Number.parseInt(h.sandboxId, 10);
-    const server = await client().getServer(id);
-    if (!server) throw new Error(`hetzner: server ${h.sandboxId} not found`);
-    const firewallId = Number.parseInt(server.labels['agentbox.firewall'] ?? '', 10);
-    if (!Number.isFinite(firewallId)) {
-      throw new Error(`hetzner: no per-box firewall recorded for server ${h.sandboxId}`);
+    // Only the static part changes; device entries survive, so `open` and back
+    // to `locked` restores every machine. `locked`/`whitelist` also refresh this
+    // machine's entry; `open` skips egress detection.
+    const fw = await readBoxFirewall(h.sandboxId, h.inbound);
+    if (!fw) throw new Error(`hetzner: no per-box firewall found for server ${h.sandboxId}`);
+    let entries = fw.ssh.entries;
+    if (policy.mode !== 'open') {
+      const cidrs = await detectDeviceCidrs({ overrideHint: INBOUND_EGRESS_HINT });
+      entries = upsertDeviceEntry(entries, selfDeviceEntry(cidrs));
     }
-    const hostEgress =
-      policy.mode === 'open' ? null : await detectEgressCidr({ overrideHint: INBOUND_EGRESS_HINT });
-    const sources = resolveInboundSources(policy, hostEgress);
-    await syncFirewallSource(client(), firewallId, sources);
-    return { sources };
+    const next: BoxFirewallSsh = { staticSources: staticInboundSources(policy), entries };
+    await writeBoxFirewall(client(), fw.firewallId, next);
+    return { sources: boxFirewallSources(next) };
   },
 
   async startInBoxPortless(h, opts): Promise<void> {

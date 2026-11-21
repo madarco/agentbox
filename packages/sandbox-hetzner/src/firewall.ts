@@ -16,27 +16,115 @@
  * destroy cleanly removes everything we created.
  */
 
-import { HetznerApiError, type HetznerClient, type HetznerFirewall, type HetznerFirewallRule } from './client.js';
+import { allowedSourcesOf, legacyEntryFor, type DeviceAllowEntry } from '@agentbox/sandbox-core';
+import {
+  HetznerApiError,
+  type HetznerClient,
+  type HetznerFirewall,
+  type HetznerFirewallRule,
+} from './client.js';
 import { withHetznerRetry } from './retry.js';
 
+const STATIC_RULE_DESCRIPTION = 'agentbox: SSH inbound';
+const DEVICE_RULE_RE = /^agentbox-device key=([a-z0-9-]+) seen=(\d+)( hub)?$/;
+
 /**
- * Build the SSH-only inbound rule for one or more source CIDRs. Hetzner's
- * `source_ips` is a list, so all allowed CIDRs ride a single tcp/22 rule (host
- * egress for `locked`, `0.0.0.0/0`+`::/0` for `open`, host egress + the
- * whitelist for `whitelist`). Outbound is left unrestricted (empty rules array
- * = "no inbound besides this one"). Accepts a bare string for back-compat.
+ * A box firewall's SSH rules split into the static policy part (`open` /
+ * whitelist CIDRs, the `agentbox: SSH inbound` rule) and the per-device
+ * entries (one rule each, metadata in the rule `description`, which every PC
+ * reading the firewall sees).
  */
-export function sshOnlyInboundRule(sources: string | string[]): HetznerFirewallRule[] {
-  const source_ips = Array.isArray(sources) ? sources : [sources];
+export interface BoxFirewallSsh {
+  staticSources: string[];
+  entries: DeviceAllowEntry[];
+}
+
+/** The description that carries a device entry's metadata on its rule. */
+export function deviceRuleDescription(e: DeviceAllowEntry): string {
+  return `agentbox-device key=${e.key} seen=${String(e.seen)}${e.hub ? ' hub' : ''}`;
+}
+
+/**
+ * Read a box firewall's inbound tcp/22 rules back into static sources + device
+ * entries. A rule with no device description is the static rule; on a firewall
+ * written before per-device entries that rule also holds the creating host's
+ * egress, so whatever in it is not part of `policyStatic` (the whitelist /
+ * open CIDRs the box record knows about) becomes a `legacy` entry.
+ */
+export function decodeBoxFirewall(
+  rules: readonly HetznerFirewallRule[],
+  policyStatic: readonly string[],
+): BoxFirewallSsh {
+  const entries: DeviceAllowEntry[] = [];
+  const unlabeled: string[] = [];
+  for (const r of rules) {
+    if (r.direction !== 'in' || r.port !== '22') continue;
+    const m = DEVICE_RULE_RE.exec(r.description ?? '');
+    if (m) {
+      entries.push({
+        key: m[1] as string,
+        cidrs: r.source_ips ?? [],
+        seen: Number.parseInt(m[2] as string, 10),
+        ...(m[3] ? { hub: true } : {}),
+      });
+    } else {
+      unlabeled.push(...(r.source_ips ?? []));
+    }
+  }
+  // Once any device rule exists the firewall is in the per-device format, and
+  // its unlabeled rule holds only policy sources — keep it whole, so a PC whose
+  // record lacks the whitelist doesn't demote it to `legacy`.
+  if (entries.length > 0) return { staticSources: [...new Set(unlabeled)], entries };
+  const policySet = new Set(policyStatic);
+  const staticSources = [...new Set(unlabeled.filter((s) => policySet.has(s)))];
+  const legacy = legacyEntryFor(unlabeled, policyStatic);
+  if (legacy) entries.push(legacy);
+  return { staticSources, entries };
+}
+
+/** Every SSH source a firewall admits today (all inbound tcp/22 rules). */
+export function sshSourcesOf(rules: readonly HetznerFirewallRule[]): string[] {
   return [
-    {
+    ...new Set(
+      rules
+        .filter((r) => r.direction === 'in' && r.port === '22')
+        .flatMap((r) => r.source_ips ?? []),
+    ),
+  ];
+}
+
+/**
+ * Build a box firewall's rule set: one static rule (only when it has sources)
+ * and one rule per device entry. Order is stable (static, then by key) so a
+ * re-apply of the same set is a no-op diff in the dashboard.
+ */
+export function boxFirewallRules(fw: BoxFirewallSsh): HetznerFirewallRule[] {
+  const rules: HetznerFirewallRule[] = [];
+  if (fw.staticSources.length > 0) {
+    rules.push({
       direction: 'in',
       protocol: 'tcp',
       port: '22',
-      source_ips,
-      description: 'agentbox: SSH inbound',
-    },
-  ];
+      source_ips: [...fw.staticSources],
+      description: STATIC_RULE_DESCRIPTION,
+    });
+  }
+  for (const e of [...fw.entries].sort((a, b) => a.key.localeCompare(b.key))) {
+    if (e.cidrs.length === 0) continue;
+    rules.push({
+      direction: 'in',
+      protocol: 'tcp',
+      port: '22',
+      source_ips: [...e.cidrs],
+      description: deviceRuleDescription(e),
+    });
+  }
+  return rules;
+}
+
+/** Flat SSH source list of a decoded firewall. */
+export function boxFirewallSources(fw: BoxFirewallSsh): string[] {
+  return allowedSourcesOf(fw.entries, fw.staticSources);
 }
 
 /**
@@ -74,8 +162,8 @@ export function controlPlaneInboundRules(hostCidr: string): HetznerFirewallRule[
 export interface CreateFirewallOptions {
   /** Human-readable name persisted with the firewall (visible in the Hetzner dashboard). */
   name: string;
-  /** Inbound source CIDRs (already normalized/resolved by the caller). */
-  sources: string[];
+  /** The SSH allowlist the firewall is born with (static policy + device entries). */
+  ssh: BoxFirewallSsh;
   /** Labels merged onto the firewall (we always add `agentbox.managed=true`). */
   labels?: Record<string, string>;
 }
@@ -98,7 +186,7 @@ export async function createPerBoxFirewall(
     () =>
       client.createFirewall({
         name: opts.name,
-        rules: sshOnlyInboundRule(opts.sources),
+        rules: boxFirewallRules(opts.ssh),
         labels: {
           'agentbox.managed': 'true',
           'agentbox.role': 'box',
@@ -109,22 +197,19 @@ export async function createPerBoxFirewall(
 }
 
 /**
- * Re-detect the egress IP and replace the firewall's rule set with the new
- * source. Used by `agentbox hetzner firewall sync <box>` after the host
- * laptop moves networks. Cheap operation — no VPS restart involved.
- *
- * Idempotent on the API: setting the same rules again is a no-op from the
- * user's point of view (the API still returns an action handle, but it
- * resolves instantly).
+ * Replace a box firewall's rules with `ssh` (static policy + device entries).
+ * Callers read the firewall, change only their own entry (or the static part),
+ * and write the whole set back — the Hetzner API has no per-rule update.
+ * No VPS restart involved; setting the same rules again is a no-op.
  */
-export async function syncFirewallSource(
+export async function writeBoxFirewall(
   client: HetznerClient,
   firewallId: number,
-  sources: string | string[],
+  ssh: BoxFirewallSsh,
 ): Promise<void> {
   await withHetznerRetry(
     { method: 'setFirewallRules', retryOnAmbiguous: true, attemptTimeoutMs: 60_000 },
-    () => client.setFirewallRules(firewallId, sshOnlyInboundRule(sources)),
+    () => client.setFirewallRules(firewallId, boxFirewallRules(ssh)),
   );
 }
 
@@ -160,9 +245,7 @@ export async function deletePerBoxFirewall(
       }
       const stillAttached =
         err instanceof HetznerApiError &&
-        (err.statusCode === 409 ||
-          err.code === 'conflict' ||
-          err.code === 'resource_in_use');
+        (err.statusCode === 409 || err.code === 'conflict' || err.code === 'resource_in_use');
       if (stillAttached && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, interval));
         interval = Math.min(interval * 2, 8_000);

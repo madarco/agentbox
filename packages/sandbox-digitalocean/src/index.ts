@@ -150,7 +150,15 @@ export {
   firewallNeedsSync,
   normalizeSourceCidr,
   sshInboundRules,
-  syncFirewallSource,
+  boxFirewallSources,
+  decodeBoxFirewall,
+  decodeDeviceTag,
+  deviceTagsFor,
+  encodeDeviceTag,
+  firewallDiscriminator,
+  sshSourcesOf,
+  writeBoxFirewall,
+  type BoxFirewallSsh,
   type CreateFirewallOptions,
 } from './firewall.js';
 export { withDigitalOceanRetry, isAttemptTimeout, isRetriable } from './retry.js';

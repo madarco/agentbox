@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { upsertDeviceEntry, type DeviceAllowEntry } from '@agentbox/sandbox-core';
+import type {
+  DigitalOceanClient,
+  DigitalOceanFirewall,
+  DigitalOceanInboundRule,
+} from '../src/client.js';
 import {
   allowAllOutboundRules,
+  boxFirewallSources,
   controlPlaneInboundRules,
+  decodeBoxFirewall,
+  decodeDeviceTag,
+  deviceTagsFor,
+  encodeDeviceTag,
+  firewallDiscriminator,
   firewallNeedsSync,
   normalizeSourceCidr,
   sshInboundRules,
+  writeBoxFirewall,
+  type BoxFirewallSsh,
 } from '../src/firewall.js';
 
 describe('normalizeSourceCidr', () => {
@@ -90,5 +104,89 @@ describe('firewallNeedsSync', () => {
   it('treats missing / empty sources as a mismatch worth syncing', () => {
     expect(firewallNeedsSync(undefined, '5.6.7.8/32')).toBe(true);
     expect(firewallNeedsSync([], '5.6.7.8/32')).toBe(true);
+  });
+});
+
+describe('per-device entries in firewall tags', () => {
+  const pcA: DeviceAllowEntry = { key: 'pc-a', cidrs: ['1.1.1.1/32'], seen: 100 };
+  const v6: DeviceAllowEntry = {
+    key: 'pc-b',
+    cidrs: ['2.2.2.2/32', '2001:db8:1:2::/64'],
+    seen: 200,
+    hub: true,
+  };
+
+  it('round-trips an entry through a DO-legal tag', () => {
+    for (const e of [pcA, v6]) {
+      const tag = encodeDeviceTag('0123abcd', e);
+      expect(tag).toMatch(/^[A-Za-z0-9_:-]{1,255}$/);
+      expect(decodeDeviceTag(tag as string)).toEqual(e);
+    }
+  });
+
+  it('refuses an entry it cannot represent rather than writing a bad tag', () => {
+    expect(encodeDeviceTag('0123abcd', { key: 'x', cidrs: ['not-an-ip'], seen: 1 })).toBeNull();
+  });
+
+  it('device tags differ per firewall (account-global tags must not be shared across boxes)', () => {
+    const ssh = { staticSources: [], entries: [pcA] };
+    expect(deviceTagsFor('agentbox-a-1', ssh)).not.toEqual(deviceTagsFor('agentbox-b-1', ssh));
+    expect(firewallDiscriminator('agentbox-a-1')).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  function fwWith(ssh: BoxFirewallSsh): DigitalOceanFirewall {
+    return {
+      id: 'fw-1',
+      name: 'agentbox-box',
+      status: 'succeeded',
+      inbound_rules: sshInboundRules(boxFirewallSources(ssh)),
+      outbound_rules: allowAllOutboundRules(),
+      droplet_ids: [42],
+      tags: ['agentbox-box-1', ...deviceTagsFor('agentbox-box-1', ssh)],
+    };
+  }
+
+  it('decodes entries back and keeps unowned addresses static', () => {
+    const fw = fwWith({ staticSources: ['10.0.0.0/8'], entries: [pcA, v6] });
+    const back = decodeBoxFirewall(fw, []);
+    expect(back.staticSources).toEqual(['10.0.0.0/8']);
+    expect(back.entries).toEqual(expect.arrayContaining([pcA, v6]));
+  });
+
+  it('reads a pre-device firewall: creator egress -> legacy entry, whitelist stays static', () => {
+    const fw: DigitalOceanFirewall = {
+      ...fwWith({ staticSources: ['1.1.1.1/32', '10.0.0.0/8'], entries: [] }),
+      tags: ['agentbox-box-1'],
+    };
+    const back = decodeBoxFirewall(fw, ['10.0.0.0/8']);
+    expect(back.staticSources).toEqual(['10.0.0.0/8']);
+    expect(back.entries).toEqual([{ key: 'legacy', cidrs: ['1.1.1.1/32'], seen: 0 }]);
+  });
+
+  it("a second PC's write keeps the first PC's address and drops only its own old tag", async () => {
+    const pcBOld: DeviceAllowEntry = { key: 'pc-b', cidrs: ['3.3.3.3/32'], seen: 150 };
+    const fw = fwWith({ staticSources: [], entries: [pcA, pcBOld] });
+    const created: string[] = [];
+    const deleted: string[] = [];
+    let body: { inbound_rules: DigitalOceanInboundRule[]; tags?: string[] } | undefined;
+    const client = {
+      createTag: async (t: string) => void created.push(t),
+      deleteTag: async (t: string) => void deleted.push(t),
+      updateFirewall: async (_id: string, b: typeof body) => {
+        body = b;
+        return fw;
+      },
+    } as unknown as DigitalOceanClient;
+    const current = decodeBoxFirewall(fw, []);
+    const pcBNew: DeviceAllowEntry = { key: 'pc-b', cidrs: ['4.4.4.4/32'], seen: 300 };
+    await writeBoxFirewall(client, fw, {
+      staticSources: current.staticSources,
+      entries: upsertDeviceEntry(current.entries, pcBNew),
+    });
+    expect(body?.inbound_rules[0]?.sources.addresses?.sort()).toEqual(['1.1.1.1/32', '4.4.4.4/32']);
+    expect(body?.tags).toContain('agentbox-box-1');
+    const disc = firewallDiscriminator('agentbox-box-1');
+    expect(created).toEqual([encodeDeviceTag(disc, pcBNew)]);
+    expect(deleted).toEqual([encodeDeviceTag(disc, pcBOld)]);
   });
 });
