@@ -2,13 +2,13 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getMachineId, thisMachine } from '@agentbox/config';
+import { getMachineId } from '@agentbox/config';
 import { ptyDir, writePtyMeta } from '@agentbox/sandbox-core';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addWorkspace,
   findWorkspaceContaining,
-  isManagerLocal,
+  ptySessionAnswersHere,
   listWorkspaces,
   managerStatus,
   ranElsewhere,
@@ -60,19 +60,21 @@ async function legacyRecord(host: string, root: string): Promise<WorkspaceRecord
 
 describe('workspace host maps adopt a hostname-keyed entry', () => {
   it("re-keys this machine's own legacy entry under its id on read, and writes it back", async () => {
-    const legacy = await legacyRecord(HERE, '/work/legacy');
+    const root = join(assertTempHome(), 'legacy');
+    await mkdir(join(root, 'local'), { recursive: true });
+    const legacy = await legacyRecord(HERE, root);
     const [read] = await listWorkspaces();
-    const me = thisMachine();
+    const me = { id: getMachineId(), label: HERE };
     expect(Object.keys(read!.hosts)).toEqual([me.id]);
-    expect(read!.hosts[me.id]).toMatchObject({ root: '/work/legacy', label: HERE });
+    expect(read!.hosts[me.id]).toMatchObject({ root, label: HERE });
     // Persisted: the next reader finds the id key on disk.
     const raw = JSON.parse(
-      await readFile(workspaceFile(workspaceDir(legacy.id, '/work/legacy')), 'utf8'),
+      await readFile(workspaceFile(workspaceDir(legacy.id, root)), 'utf8'),
     ) as WorkspaceRecord;
     expect(Object.keys(raw.hosts)).toEqual([me.id]);
     // And a hostname flip no longer loses the folder.
     expect(
-      findWorkspaceContaining([read!], '/work/legacy/local', { id: me.id, label: 'renamed' }),
+      findWorkspaceContaining([read!], join(root, 'local'), { id: me.id, label: 'renamed' }),
     ).not.toBeNull();
   });
 
@@ -102,6 +104,25 @@ describe('workspace host maps adopt a hostname-keyed entry', () => {
     expect(rec.projects.map((p) => p.id)).toEqual([oldProjectId]);
     expect(rec.hosts[PC]!.projectRoots[oldProjectId]).toBe('/home/dev/w/local');
     expect(rec.taskCounter).toBe(3);
+  });
+
+  it('does not adopt a legacy entry named like this machine whose folder is not here', async () => {
+    // A PC that happens to share the hub's hostname keeps its mapping.
+    await legacyRecord(HERE, '/nowhere/on/this/disk');
+    const [read] = await listWorkspaces();
+    expect(Object.keys(read!.hosts)).toEqual([HERE]);
+  });
+
+  it('keeps an id-keyed entry when a client with no id rescans it', async () => {
+    const legacy = await legacyRecord('desk.lan', '/home/dev/w');
+    await restampWorkspaceHost(legacy.id, { id: PC, label: 'desk.lan' });
+    // An older CLI on the same machine: only its hostname to offer.
+    const rec = await addWorkspace(
+      { host: 'desk.lan', root: '/home/dev/w', projects: [{ path: '/home/dev/w/local' }] },
+      noRegister,
+    );
+    expect(Object.keys(rec.hosts)).toEqual([PC]);
+    expect(rec.hosts[PC]?.label).toBe('desk.lan');
   });
 
   it("re-keys a PC's entry on its detect (restampWorkspaceHost)", async () => {
@@ -173,7 +194,7 @@ describe('manager locality', () => {
       ptyHostAlive: async (socket: string) => socket === '/tmp/abt-x.sock',
     };
     // No meta in this home: the socket proves nothing, and the record is elsewhere.
-    expect(await isManagerLocal(rec, probe)).toBe(false);
+    expect(await ptySessionAnswersHere(rec, probe)).toBe(false);
     await writePtyMeta({
       v: 1,
       managerId: rec.id,
@@ -191,7 +212,7 @@ describe('manager locality', () => {
       leaseGraceMs: 1000,
     });
     expect(runsOnThisMachine(rec, probe)).toBe(false);
-    expect(await isManagerLocal(rec, probe)).toBe(true);
+    expect(await ptySessionAnswersHere(rec, probe)).toBe(true);
     expect(await managerStatus(rec, probe)).toBe('running');
   });
 });

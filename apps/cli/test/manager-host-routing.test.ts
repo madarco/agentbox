@@ -72,6 +72,10 @@ describe('retryOnLocalHub', () => {
     // Every listed machine has an id and none is ours: a matching name is someone else's.
     const named = { host: 'desktop', hosts: ['desktop', 'laptop-2'], machineIds: [B, C] };
     expect(retryOnLocalHub(refusal('wrong_host', named), me)).toBe(false);
+    // Mixed: `machineIds` is index-aligned, null for an entry only its name identifies.
+    const mixed = { host: 'laptop-2', hosts: ['laptop-2', 'desk'], machineIds: [B, null] };
+    expect(retryOnLocalHub(refusal('wrong_host', mixed), me)).toBe(false);
+    expect(retryOnLocalHub(refusal('wrong_host', mixed), { id: C, label: 'desk' })).toBe(true);
   });
 
   it('does not retry a refusal about anything else', () => {

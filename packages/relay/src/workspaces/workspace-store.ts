@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  getMachineId,
   getMachineLabel,
   hashProjectPath,
   listProjectsConfigured,
@@ -13,6 +12,7 @@ import {
   sanitizeMnemonic,
   thisMachine,
   toMachineRef,
+  tryGetMachineId,
   withFileLock,
   type MachineRef,
   type ProjectEntry,
@@ -200,8 +200,10 @@ export function hostEntryOf<H>(hosts: Readonly<Record<string, H>>, host: HostArg
 
 /**
  * `hosts` with machine `me`'s legacy hostname-keyed entry moved under its id and
- * labelled, or `null` when there is nothing to move. Only an id-less entry is
- * moved: an entry keyed by some other machine's id is never touched.
+ * labelled (or its id entry relabelled after a hostname change), or `null` when
+ * there is nothing to change. An entry keyed by some other machine's id is never
+ * touched, and when `me` already has an id entry a legacy one beside it is left
+ * where it is rather than dropped: it may be another machine's that shares the name.
  */
 export function restampHosts(
   hosts: Readonly<Record<string, WorkspaceHost>>,
@@ -210,10 +212,14 @@ export function restampHosts(
   if (!me.id) return null;
   const legacy = hosts[me.label];
   const current = hosts[me.id];
-  if (!legacy && (!current || current.label === me.label)) return null;
+  if (current) {
+    if (current.label === me.label) return null;
+    return { ...hosts, [me.id]: { ...current, label: me.label } };
+  }
+  if (!legacy || legacy.label !== undefined) return null;
   const next = { ...hosts };
-  if (legacy && me.label !== me.id) delete next[me.label];
-  next[me.id] = { ...(current ?? legacy!), label: me.label };
+  delete next[me.label];
+  next[me.id] = { ...legacy, label: me.label };
   return next;
 }
 
@@ -348,9 +354,17 @@ async function parseRecord(
   // ids existed: adopt it under the id, so a later hostname flip cannot orphan it.
   const hosts = restampHosts(rec.hosts, host);
   if (!hosts) return rec;
+  // A legacy entry is only this machine's if its folder is on this disk: a PC
+  // that happens to share the hub's hostname must not lose its mapping to it.
+  const legacy = host.id && !rec.hosts[host.id] ? rec.hosts[host.label] : undefined;
+  if (legacy && !(await isDirectory(legacy.root))) return rec;
   const restamped = { ...rec, hosts };
   if (migrate) await persistRestamp(rec.id, host);
   return restamped;
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  return (await stat(path).catch(() => null))?.isDirectory() === true;
 }
 
 /** Write a re-stamped host mapping back, under the lock, re-reading first. Best-effort. */
@@ -561,8 +575,9 @@ export async function addWorkspace(
   deps: AddWorkspaceDeps = {},
 ): Promise<WorkspaceRecord> {
   const register = deps.register ?? ((p: string) => registerProject(p));
+  const localId = (deps.machineId ?? tryGetMachineId)();
   const local: MachineRef = {
-    id: (deps.machineId ?? getMachineId)(),
+    ...(localId ? { id: localId } : {}),
     label: (deps.hostname ?? getMachineLabel)(),
   };
   // A scan with no id is from a client that predates machine ids; when it names
@@ -635,17 +650,21 @@ async function addLocked(
         scan,
         prevKey === undefined ? undefined : current?.hosts[prevKey],
       );
-      const key = machineKeyFor(machine);
+      // An id-less scan that found an entry already re-keyed under an id (by its
+      // label) updates that entry in place: rewriting it under the bare
+      // hostname would undo the adoption.
+      const prevIsIdKeyed = prevKey !== undefined && current?.hosts[prevKey]?.label !== undefined;
+      const key = machine.id ? machine.id : prevIsIdKeyed ? prevKey : machine.label;
       const host: WorkspaceHost = {
         root,
         projectRoots,
         seenAt: now,
-        ...(machine.id ? { label: machine.label } : {}),
+        ...(key !== machine.label || machine.id ? { label: machine.label } : {}),
       };
       const hosts = { ...(current?.hosts ?? {}) };
       // The machine's hostname-keyed entry, from before it sent an id: replaced
       // by the id-keyed one, never kept beside it.
-      if (prevKey !== undefined && prevKey !== key) delete hosts[prevKey];
+      if (prevKey !== undefined && prevKey !== key && !prevIsIdKeyed) delete hosts[prevKey];
       hosts[key] = host;
       // A project this scan did not find is dropped, unless another machine
       // still maps it: that scan speaks only for its own host.

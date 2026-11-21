@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { getMachineId, getMachineLabel, type MachineRef } from '@agentbox/config';
+import { getMachineLabel, tryGetMachineId, type MachineRef } from '@agentbox/config';
 import { basename, dirname, join } from 'node:path';
 import { log } from '@agentbox/cli-kit';
 import { findWorkspaceContaining, sessionTurn } from '@agentbox/relay';
@@ -230,7 +230,7 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
   }
   const cwd = deps.cwd ?? process.cwd();
   const host = (deps.hostname ?? getMachineLabel)();
-  const machineId = (deps.machineId ?? getMachineId)();
+  const machineId = (deps.machineId ?? tryGetMachineId)();
   const hint = env['AGENTBOX_MANAGER']?.trim();
   const managerId = hint && MANAGER_ID_RE.test(hint) ? hint : undefined;
   const run = env['AGENTBOX_MANAGER_RUN']?.trim();
@@ -247,7 +247,7 @@ export function detectHostSession(deps: HostSessionDeps = {}): HostSessionHint |
       : undefined;
   const base = {
     host,
-    machineId,
+    ...(machineId ? { machineId } : {}),
     ...(managerId ? { managerId } : {}),
     ...(runId ? { runId } : {}),
     ...(livePane ? { tmuxPane: livePane } : {}),
@@ -338,10 +338,8 @@ export interface RegisteredManager {
  */
 /** The machine a hint was detected on. */
 function hintMachine(hint: Pick<HostSessionHint, 'host' | 'machineId'>): MachineRef {
-  return {
-    id: hint.machineId ?? getMachineId(),
-    label: hint.host || getMachineLabel(),
-  };
+  const id = hint.machineId ?? tryGetMachineId();
+  return { ...(id ? { id } : {}), label: hint.host || getMachineLabel() };
 }
 
 async function scanNeededFor(

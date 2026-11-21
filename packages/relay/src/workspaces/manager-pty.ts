@@ -7,7 +7,8 @@
  */
 import { spawn } from 'node:child_process';
 import { access, mkdir, open as openFile, rm } from 'node:fs/promises';
-import { getMachineId, getMachineLabel } from '@agentbox/config';
+import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
+import { optionalMachineId } from './manager.js';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -212,7 +213,7 @@ export async function startManagerPtySession(
     agent: rec.agent,
     kind: 'pty',
     host: (input.hostname ?? getMachineLabel)(),
-    machineId: (input.machineId ?? getMachineId)(),
+    ...optionalMachineId((input.machineId ?? tryGetMachineId)()),
     cwd: rec.cwd,
     pty: {
       pid: meta.pid,

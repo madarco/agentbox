@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * This machine's stable identity: a random UUID minted once into
@@ -49,10 +49,12 @@ function readId(file: string): string | undefined {
 /**
  * This machine's id, minting it on first use.
  *
- * The create is `wx` (O_EXCL), so two processes racing on a fresh home agree:
- * the loser's write fails with EEXIST and it reads the winner's id. A file that
- * exists but does not hold an id (truncated by a crash between create and
- * write) is the only case that is overwritten — nothing can be keyed on it yet.
+ * The id is written to a private temp file first and then hard-linked into
+ * place: `link` fails with EEXIST when the file is already there, so two
+ * processes racing on a fresh home agree on the winner's id, and nobody ever
+ * reads a half-written file. A file that exists but holds no id (hand-edited,
+ * or truncated by an older build) is replaced by rename, then re-read, so every
+ * racer caches whatever ended up on disk.
  */
 export function getMachineId(): string {
   const file = machineIdFile();
@@ -60,23 +62,36 @@ export function getMachineId(): string {
   if (cached) return cached;
   let id = readId(file);
   if (!id) {
-    mkdirSync(join(homedir(), '.agentbox'), { recursive: true });
-    const fresh = randomUUID();
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${String(process.pid)}.${randomUUID()}.tmp`;
+    writeFileSync(tmp, `${randomUUID()}\n`, { flag: 'wx', mode: 0o600 });
     try {
-      writeFileSync(file, `${fresh}\n`, { flag: 'wx', mode: 0o600 });
-      id = fresh;
+      linkSync(tmp, file);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      id = readId(file);
-      if (!id) {
-        writeFileSync(file, `${fresh}\n`, { mode: 0o600 });
-        chmodSync(file, 0o600);
-        id = fresh;
-      }
+      if (!readId(file)) renameSync(tmp, file);
+    } finally {
+      rmSync(tmp, { force: true });
     }
+    id = readId(file);
+    if (!id) throw new Error(`could not mint a machine id at ${file}`);
   }
   cache.set(file, id);
   return id;
+}
+
+/**
+ * {@link getMachineId}, or `undefined` when it cannot be read or minted (an
+ * unwritable or read-only `$HOME`). For the read paths that used to call
+ * `os.hostname()`, which never failed: they degrade to matching by hostname
+ * rather than refusing to serve.
+ */
+export function tryGetMachineId(): string | undefined {
+  try {
+    return getMachineId();
+  } catch {
+    return undefined;
+  }
 }
 
 /** The hostname, for display. Never compare it to decide identity — see {@link sameMachine}. */
@@ -84,9 +99,10 @@ export function getMachineLabel(): string {
   return hostname();
 }
 
-/** This machine as a {@link MachineRef}. */
-export function thisMachine(): Required<MachineRef> {
-  return { id: getMachineId(), label: getMachineLabel() };
+/** This machine as a {@link MachineRef}; `id` is absent only when it cannot be minted. */
+export function thisMachine(): MachineRef {
+  const id = tryGetMachineId();
+  return { ...(id ? { id } : {}), label: getMachineLabel() };
 }
 
 /** A bare string is a hostname: that is all a legacy caller or record ever held. */

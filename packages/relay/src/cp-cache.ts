@@ -32,8 +32,6 @@ export interface CpCacheMeta {
   size: number;
   /** Hostname of the machine it came from — an entry outlives the session that wrote it. */
   capturedOn?: string;
-  /** `getMachineId()` of that machine: `capturedOn` is only its label. */
-  capturedOnMachineId?: string;
 }
 
 /**
@@ -113,9 +111,6 @@ export function parseCpCacheMeta(raw: string): CpCacheMeta | null {
       capturedAt: parsed.capturedAt,
       size: typeof parsed.size === 'number' ? parsed.size : 0,
       ...(typeof parsed.capturedOn === 'string' ? { capturedOn: parsed.capturedOn } : {}),
-      ...(typeof parsed.capturedOnMachineId === 'string'
-        ? { capturedOnMachineId: parsed.capturedOnMachineId }
-        : {}),
     };
   } catch {
     return null;

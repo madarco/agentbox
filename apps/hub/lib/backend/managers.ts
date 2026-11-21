@@ -137,13 +137,19 @@ function wrongHost(
   ok: false;
   error: string;
   code: 'wrong_host';
-  details: { host: string; machineId?: string; hosts?: string[]; machineIds?: string[] };
+  details: {
+    host: string;
+    machineId?: string;
+    hosts?: string[];
+    machineIds?: (string | null)[];
+  };
 } {
   // `host`/`hosts` stay hostnames (what a client that predates machine ids
   // compares, and what a human reads); `machineId`/`machineIds` are what a
-  // current client matches on.
+  // current client matches on. `machineIds` is index-aligned with `hosts`, null
+  // for an entry from before machine ids, which only its hostname identifies.
   const many = hosts && hosts.length > 1 ? hosts : undefined;
-  const ids = many?.map((h) => h.id).filter((id): id is string => Boolean(id));
+  const ids = many?.map((h) => h.id ?? null);
   return {
     ok: false,
     error: message,
@@ -152,7 +158,7 @@ function wrongHost(
       host: host.label,
       ...(host.id ? { machineId: host.id } : {}),
       ...(many ? { hosts: many.map((h) => h.label) } : {}),
-      ...(ids && ids.length > 0 ? { machineIds: ids } : {}),
+      ...(ids?.some((id) => id !== null) ? { machineIds: ids } : {}),
     },
   };
 }
@@ -777,10 +783,9 @@ export function createManagerBackend(
     cwd: string,
   ): Promise<{ owner: ManagerRecord; session: string } | undefined> {
     const name = input.tmuxSession;
-    if (!name || !MANAGER_SESSION_RE.test(name)) return undefined;
-    if (input.host !== undefined && !sameMachine(detectMachineRecord(input), me())) {
-      return undefined;
-    }
+    // A detect that names no machine cannot vouch for a tmux session here.
+    if (!name || !MANAGER_SESSION_RE.test(name) || input.host === undefined) return undefined;
+    if (!sameMachine(detectMachineRecord(input), me())) return undefined;
     const found = (await listTmuxSessions(deps.managerExec)).find((t) => t.session === name);
     if (!found) return undefined;
     const path = await canonicalWorkspaceRoot(found.path).catch(() => found.path);
@@ -919,7 +924,12 @@ export function createManagerBackend(
       }
       // The caller's folder mapping may predate machine ids: adopt it under the id
       // it just sent, so its next hostname flip cannot orphan the workspace.
-      if (machine.id) await restampWorkspaceHost(ws.id, machine).catch(() => {});
+      // Only when the session runs inside that legacy folder: the detect then
+      // proves it is the machine the folder mapping names, not just its namesake.
+      const legacyRoot = machine.id ? ws.hosts[machine.label]?.root : undefined;
+      if (machine.id && legacyRoot && (cwd === legacyRoot || cwd.startsWith(`${legacyRoot}/`))) {
+        await restampWorkspaceHost(ws.id, machine).catch(() => {});
+      }
       // Only a pid from this machine can be stamped: elsewhere it names another process.
       const pidStartedAt =
         input.pid !== undefined && sameMachineRef(machine, me())

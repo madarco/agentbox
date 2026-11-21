@@ -42,7 +42,7 @@ import type {
 } from '../control-plane/hub-api-client.js';
 import type { AttachOpenIn } from '@agentbox/config';
 import { visibleAgentSpecs } from '@agentbox/agent-registry';
-import { ptyHostAlive, RESUMABLE_MANAGER_AGENTS } from '@agentbox/relay';
+import { ptySessionAnswersHere, RESUMABLE_MANAGER_AGENTS } from '@agentbox/relay';
 
 /**
  * Agents a manager can be. Registry-driven, so an agent added with
@@ -185,18 +185,6 @@ export function runsHere(
 }
 
 /**
- * A pty manager whose socket answers in this user's own `~/.agentbox/pty`. That
- * is proof the session runs here, whatever its recorded host says — the socket
- * is addressed by the manager id alone — so a hostname flip cannot lock a user
- * out of a session on their own machine.
- */
-async function ptyAnswersHere(m: Pick<HubApiManager, 'id' | 'kind'>): Promise<boolean> {
-  if (m.kind !== 'pty') return false;
-  const meta = await readPtyMeta(m.id);
-  return meta !== undefined && (await ptyHostAlive(meta.socket));
-}
-
-/**
  * Whether a refusal from one hub should be retried against this machine's own.
  *
  * `wrong_host` and `manager_unreachable` both carry the machine the manager runs
@@ -214,11 +202,11 @@ export function retryOnLocalHub(err: unknown, host: MachineRef | string = thisMa
   // `host` is only the first of them, so a two-PC workspace would otherwise
   // refuse the retry on whichever PC lost the coin toss.
   if (Array.isArray(details?.hosts)) {
-    const ids = Array.isArray(details.machineIds) ? details.machineIds : [];
+    // `machineIds` is index-aligned with `hosts`: null marks an entry from before
+    // machine ids, the only kind a hostname may still stand for.
+    const ids: unknown[] = Array.isArray(details.machineIds) ? details.machineIds : [];
     if (me.id && ids.includes(me.id)) return true;
-    // A hostname only stands for a machine on an entry from before machine ids;
-    // when every listed machine has an id, a matching name is someone else's.
-    return ids.length < details.hosts.length && details.hosts.includes(me.label);
+    return details.hosts.some((h, i) => h === me.label && (ids[i] ?? null) === null);
   }
   if (typeof details?.machineId === 'string' && me.id) return details.machineId === me.id;
   return typeof details?.host === 'string' && details.host === me.label;
@@ -340,7 +328,7 @@ async function attachToSession(
 ): Promise<boolean> {
   // A pty-hosted manager first: its socket and token are readable only here, on
   // the machine that runs it, which is also the only machine that could attach.
-  if ((runsHere(m) && (await readPtyMeta(m.id))) || (await ptyAnswersHere(m))) {
+  if ((runsHere(m) && (await readPtyMeta(m.id))) || (await ptySessionAnswersHere(m))) {
     return await attachToPtySession(m, openIn, opts);
   }
   if (!runsHere(m) && m.attachCommand) {

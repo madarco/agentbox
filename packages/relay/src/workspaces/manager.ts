@@ -14,8 +14,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
 import {
-  getMachineId,
   getMachineLabel,
+  tryGetMachineId,
   sameMachine,
   thisMachine,
   withFileLock,
@@ -543,7 +543,13 @@ export interface ManagerProbe {
 
 /** The machine a probe runs on: its id, labelled with its hostname. */
 export function probeMachine(probe: Pick<ManagerProbe, 'hostname' | 'machineId'> = {}): MachineRef {
-  return { id: (probe.machineId ?? getMachineId)(), label: (probe.hostname ?? getMachineLabel)() };
+  const id = (probe.machineId ?? tryGetMachineId)();
+  return { ...(id ? { id } : {}), label: (probe.hostname ?? getMachineLabel)() };
+}
+
+/** `{ machineId }` when there is one, for spreading into a record. */
+export function optionalMachineId(id: string | undefined): { machineId?: string } {
+  return id ? { machineId: id } : {};
 }
 
 /** Whether `rec` names this machine, by machine id — or, for a record that predates ids, by hostname. */
@@ -574,27 +580,22 @@ export async function ptySessionAnswersHere(
   return await (probe.ptyHostAlive ?? ptyHostAlive)(meta.socket);
 }
 
-/** {@link runsOnThisMachine}, or proven local by its pty socket (see {@link ptySessionAnswersHere}). */
-export async function isManagerLocal(
-  rec: Pick<ManagerRecord, 'id' | 'kind' | 'host' | 'machineId'>,
-  probe: ManagerProbe = {},
-): Promise<boolean> {
-  return runsOnThisMachine(rec, probe) || (await ptySessionAnswersHere(rec, probe));
-}
-
 /** Derived from the process, never from the record, and never writes. */
 export async function managerStatus(
   rec: ManagerRecord,
   probe: ManagerProbe = {},
 ): Promise<ManagerStatus> {
   const here = runsOnThisMachine(rec, probe);
-  if (rec.kind === 'pty' && (here || (await ptySessionAnswersHere(rec, probe)))) {
+  if (rec.kind === 'pty' && here) {
     // The socket IS the liveness: a host that answers is serving the session,
-    // and the pid guards against a meta file left by a crash.
-    if (!rec.pty) return 'stopped';
-    if (await (probe.ptyHostAlive ?? ptyHostAlive)(rec.pty.socket)) return 'running';
-    return 'stopped';
+    // and the pid guards against a meta file left by a crash. The meta's socket
+    // counts too: it is the live host's, whatever the record last recorded.
+    if (rec.pty && (await (probe.ptyHostAlive ?? ptyHostAlive)(rec.pty.socket))) return 'running';
+    return (await ptySessionAnswersHere(rec, probe)) ? 'running' : 'stopped';
   }
+  // Not stamped with this machine, but its host answers through this home's own
+  // pty meta: it runs here (a hostname flip, or a record from before machine ids).
+  if (rec.kind === 'pty' && (await ptySessionAnswersHere(rec, probe))) return 'running';
   if (rec.kind === 'tmux' && here) {
     const session = rec.tmuxSession ?? managerSessionName(rec.id);
     return (await tmuxSessionExists(session, probe.exec ?? defaultExec)) ? 'running' : 'stopped';
@@ -1137,7 +1138,7 @@ export async function startManagerTmuxSession(
     agent: rec.agent,
     kind: 'tmux',
     host: (input.hostname ?? getMachineLabel)(),
-    machineId: (input.machineId ?? getMachineId)(),
+    ...optionalMachineId((input.machineId ?? tryGetMachineId)()),
     cwd: rec.cwd,
     tmuxSession: session,
     argv: input.argv,

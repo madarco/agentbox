@@ -1137,7 +1137,7 @@ export interface ManagerWrongHost {
   ok: false;
   error: string;
   code: 'wrong_host';
-  details: { host: string; machineId?: string; hosts?: string[]; machineIds?: string[] };
+  details: { host: string; machineId?: string; hosts?: string[]; machineIds?: (string | null)[] };
 }
 
 /** The timeline domain slice (`lib/backend/timeline.ts`). */

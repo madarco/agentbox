@@ -154,5 +154,6 @@ export {
   sameMachineRef,
   thisMachine,
   toMachineRef,
+  tryGetMachineId,
   type MachineRef,
 } from './machine-id.js';

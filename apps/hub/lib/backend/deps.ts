@@ -7,7 +7,7 @@ import type { ManagerCarrier, ManagerExec, PushLineStat, SpawnPtyHost } from '@a
 // reading the box/provider code it does not touch.
 import type { HostArg, QueueJob, ReconcileContext } from '@agentbox/relay';
 import { hostname as osHostname } from 'node:os';
-import { getMachineId, type MachineRef } from '@agentbox/config';
+import { tryGetMachineId, type MachineRef } from '@agentbox/config';
 
 /** What the timeline needs to know about one box, read from the host's records. */
 export interface TimelineBoxFact {
@@ -137,5 +137,6 @@ export async function reconcileContext(deps: BackendDeps): Promise<ReconcileCont
  * a machine by id; the hostname only matches one written before ids existed.
  */
 export function hubMachine(deps: Pick<BackendDeps, 'hostname' | 'machineId'>): MachineRef {
-  return { id: (deps.machineId ?? getMachineId)(), label: (deps.hostname ?? osHostname)() };
+  const id = (deps.machineId ?? tryGetMachineId)();
+  return { ...(id ? { id } : {}), label: (deps.hostname ?? osHostname)() };
 }

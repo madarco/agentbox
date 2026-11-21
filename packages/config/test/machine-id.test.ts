@@ -11,6 +11,8 @@ import {
   machineKeyIn,
   sameMachine,
   sameMachineRef,
+  thisMachine,
+  tryGetMachineId,
 } from '../src/machine-id.js';
 
 const A = '11111111-2222-4333-8444-555555555555';
@@ -53,6 +55,17 @@ describe('getMachineId', () => {
     const id = getMachineId();
     expect(isMachineId(id)).toBe(true);
     expect(readFileSync(machineIdFile(), 'utf8').trim()).toBe(id);
+  });
+
+  it('degrades to no id (hostname matching) when the home cannot hold one', () => {
+    const home = freshHome();
+    // A HOME that is a file: ~/.agentbox cannot be created under it.
+    const file = join(home, 'not-a-dir');
+    writeFileSync(file, '');
+    process.env['HOME'] = file;
+    expect(tryGetMachineId()).toBeUndefined();
+    expect(thisMachine()).toEqual({ label: hostname() });
+    expect(() => getMachineId()).toThrow();
   });
 
   it('labels the machine with its hostname', () => {

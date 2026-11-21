@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { hashProjectPath, thisMachine } from '@agentbox/config';
+import { getMachineId, hashProjectPath } from '@agentbox/config';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addWorkspace,
@@ -31,7 +31,7 @@ const noRegister = { register: async () => {} };
 
 const HERE = hostname();
 /** Where this machine's folders are keyed: its machine id, not its hostname. */
-const ME = thisMachine();
+const ME = { id: getMachineId(), label: HERE };
 
 // The temp HOME is per FILE, so the registry carries over between tests here.
 beforeEach(async () => {
