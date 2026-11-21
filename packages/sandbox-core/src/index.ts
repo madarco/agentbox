@@ -82,6 +82,15 @@ export {
   describeInbound,
 } from './inbound.js';
 export {
+  detectEgressIp,
+  detectEgressCidr,
+  getOverIpv4,
+  isIpv4,
+  type DetectEgressIpOptions,
+  type EgressProbeGet,
+  type ProbeResponse,
+} from './egress-ip.js';
+export {
   claudeSettingsPath,
   claudeSshEntryFor,
   pruneOrphanClaudeSshConfigs,

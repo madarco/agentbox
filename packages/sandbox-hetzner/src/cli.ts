@@ -27,7 +27,7 @@ import {
   readHetznerCredStatus,
   secretsPath,
 } from './credentials.js';
-import { detectEgressIp } from './egress-ip.js';
+import { SYNC_EGRESS_HINT, detectEgressCidr, detectEgressIp } from './egress-ip.js';
 import { normalizeSourceCidr, syncFirewallSource } from './firewall.js';
 import { readPreparedState } from './prepared-state.js';
 
@@ -111,7 +111,10 @@ const firewallSyncSub = new Command('sync')
       }
       const source = opts.source
         ? normalizeSourceCidr(opts.source)
-        : `${await detectEgressIp({ onLog: (l) => process.stdout.write(`hetzner: ${l}\n`) })}/32`;
+        : await detectEgressCidr({
+            onLog: (l) => process.stdout.write(`hetzner: ${l}\n`),
+            overrideHint: SYNC_EGRESS_HINT,
+          });
       const client = makeHetznerClient();
       process.stdout.write(`hetzner: updating firewall ${String(firewallId)} for box '${box.name}' → source ${source}\n`);
       await syncFirewallSource(client, firewallId, source);

@@ -43,7 +43,7 @@ import {
 import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { ensureDigitalOceanCredentials } from './credentials.js';
-import { detectEgressIp } from './egress-ip.js';
+import { detectEgressCidr } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';
 import { resolveProjectChoice, validateSizeChoice } from './preflight.js';
 import { makeDigitalOceanClient, type DigitalOceanClient } from './client.js';
@@ -96,7 +96,7 @@ export interface PrepareDigitalOceanOptions {
   agents?: string[];
   /**
    * Override the firewall source CIDR. Defaults to auto-detected egress IP
-   * via `detectEgressIp()` (with `/32` appended). Pass `'0.0.0.0/0'` for the
+   * via `detectEgressCidr()` (the IPv4 egress as `/32`). Pass `'0.0.0.0/0'` for the
    * explicit-open opt-in. A bare IP gets `/32` appended automatically.
    */
   firewallSource?: string;
@@ -214,7 +214,7 @@ export async function prepareDigitalOcean(
     progress('detecting host egress IP');
     const source = opts.firewallSource
       ? normalizeSourceCidr(opts.firewallSource)
-      : `${await detectEgressIp({ onLog: log })}/32`;
+      : await detectEgressCidr({ onLog: log });
 
     // 2. Create per-prepare firewall, bound to a unique tag.
     const firewallName = `agentbox-prepare-${stamp}`;

@@ -47,7 +47,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
 import { ensureHetznerCredentials } from './credentials.js';
-import { detectEgressIp } from './egress-ip.js';
+import { detectEgressCidr } from './egress-ip.js';
 import { createPerBoxFirewall, deletePerBoxFirewall, normalizeSourceCidr } from './firewall.js';
 import { makeHetznerClient } from './client.js';
 import { generateDerivedPrepareCloudInit, generatePrepareCloudInit } from './cloud-init.js';
@@ -83,7 +83,7 @@ export interface PrepareHetznerOptions {
   serverType?: string;
   /**
    * Override the firewall source CIDR. Defaults to auto-detected egress IP
-   * via `detectEgressIp()` (with `/32` appended). Pass `'0.0.0.0/0'` for
+   * via `detectEgressCidr()` (the IPv4 egress as `/32`). Pass `'0.0.0.0/0'` for
    * the explicit-open opt-in. Passing a bare IP appends `/32` automatically.
    */
   firewallSource?: string;
@@ -203,7 +203,7 @@ export async function prepareHetzner(
     progress('detecting host egress IP');
     const source = opts.firewallSource
       ? normalizeSourceCidr(opts.firewallSource)
-      : `${await detectEgressIp({ onLog: log })}/32`;
+      : await detectEgressCidr({ onLog: log });
 
     // 2. Create per-prepare firewall.
     const stamp = Date.now().toString(36);

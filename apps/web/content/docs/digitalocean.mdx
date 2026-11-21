@@ -167,6 +167,8 @@ The temporary Droplet that `agentbox prepare` bakes the base snapshot on is plac
 
 Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IP only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed inbound.
 
+AgentBox connects to the box over its public IPv4, so the rule admits your host's **IPv4** egress address, detected over IPv4 even on a dual-stack (IPv6-capable) network. If no IPv4 egress can be detected (an IPv6-only network, or every probe blocked), the command fails with a message listing what each probe returned. To supply the address yourself, set `AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE=<cidr>` (or use `--inbound open`) on `create`, and pass `--source <cidr>` to `agentbox digitalocean firewall sync`.
+
 If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox digitalocean firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
 
 ```bash
