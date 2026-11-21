@@ -12,7 +12,7 @@ import {
   createDockerSyncTransport,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { agentPushExcludes } from '@agentbox/core';
+import { agentPushExcludes, DOCKER_HOST_ALIAS, type LoopbackEndpoint } from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
   sanitizeCodexConfigForBox,
@@ -203,6 +203,8 @@ export interface EnsureCodexVolumeResult {
   created: boolean;
   /** True when the rsync helper ran (syncFromHost was true AND host ~/.codex existed). */
   synced: boolean;
+  /** Host-loopback model endpoints rewritten to `host.docker.internal` (#403). */
+  loopbackEndpoints: LoopbackEndpoint[];
 }
 
 /**
@@ -311,8 +313,8 @@ export async function ensureCodexVolume(
         skillsPurge +
         ' && chown -R 1000:1000 /dst',
     ]);
-    await reconcileVolumeCodexConfig(spec.volume, opts.image);
-    return { created, synced: true };
+    const { loopbackEndpoints } = await reconcileVolumeCodexConfig(spec.volume, opts.image);
+    return { created, synced: true, loopbackEndpoints };
   }
 
   // No host ~/.codex to sync — still make the (possibly freshly created,
@@ -339,7 +341,7 @@ export async function ensureCodexVolume(
   if (!(await pathExists(join(hostCodex, 'config.toml')))) {
     await reconcileVolumeCodexConfig(spec.volume, opts.image);
   }
-  return { created, synced: false };
+  return { created, synced: false, loopbackEndpoints: [] };
 }
 
 /**
@@ -413,7 +415,7 @@ export function buildCodexOrphanPurgeScript(keptMarketplaces: string[]): string 
 async function reconcileVolumeCodexConfig(
   volume: string,
   image: string,
-): Promise<{ reconciled: boolean }> {
+): Promise<{ reconciled: boolean; loopbackEndpoints: LoopbackEndpoint[] }> {
   try {
     // Read the box's current config first — the merge input, and the fallback
     // decider when the host config doesn't parse.
@@ -429,27 +431,34 @@ async function reconcileVolumeCodexConfig(
     // whatever the box has, so a Codex user without a host config.toml doesn't
     // hit the "trust this folder?" prompt and box-side state still survives.
     let base: string;
+    let loopbackEndpoints: LoopbackEndpoint[] = [];
     if (!(await pathExists(hostConfig))) {
       base = MINIMAL_TRUSTED_CODEX_CONFIG;
     } else {
       const hostText = await readFile(hostConfig, 'utf8');
       try {
-        base = sanitizeCodexConfigForBox(hostText).text;
+        // Host-originated loopback endpoints become host.docker.internal here,
+        // BEFORE the merge, so box-only providers are never rewritten (#403).
+        const sanitized = sanitizeCodexConfigForBox(hostText, homedir(), {
+          loopbackHost: DOCKER_HOST_ALIAS,
+        });
+        base = sanitized.text;
+        loopbackEndpoints = sanitized.loopbackEndpoints;
       } catch {
         // Host TOML doesn't parse. An existing box config is more trustworthy
         // than the raw host text — keep it (and skip the purge: keep-set
         // unknown). With an empty volume, seed the raw host text verbatim.
-        if (boxText !== null) return { reconciled: false };
+        if (boxText !== null) return { reconciled: false, loopbackEndpoints: [] };
         await writeVolumeCodexConfig(volume, image, hostText, null);
-        return { reconciled: true };
+        return { reconciled: true, loopbackEndpoints: [] };
       }
     }
 
     const merged = mergeCodexConfigForBox(base, boxText);
     await writeVolumeCodexConfig(volume, image, merged.text, merged.marketplaces);
-    return { reconciled: true };
+    return { reconciled: true, loopbackEndpoints };
   } catch {
-    return { reconciled: false };
+    return { reconciled: false, loopbackEndpoints: [] };
   }
 }
 

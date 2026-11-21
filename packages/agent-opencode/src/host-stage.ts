@@ -16,6 +16,7 @@
  */
 
 import { homedir } from 'node:os';
+import { formatLoopbackUnreachable, providerWarning, scanLoopbackJsonFiles } from '@agentbox/core';
 import { join } from 'node:path';
 import {
   emptyResult,
@@ -24,6 +25,7 @@ import {
   stageSingleFileTarball,
   type StageResult,
 } from '@agentbox/sandbox-core';
+import { opencodeEndpointFiles } from './endpoints.js';
 
 export interface StageOpencodeOptions {
   hostHome?: string;
@@ -43,7 +45,16 @@ export interface StageOpencodeOptions {
 export async function stageOpencodeStaticForUpload(
   opts: StageOpencodeOptions = {},
 ): Promise<StageResult> {
-  return stageAgentStaticForUpload('opencode', opts);
+  const staged = await stageAgentStaticForUpload('opencode', opts);
+  // Reported, never rewritten: a cloud box has no route back to this machine (#403).
+  const endpoints = await scanLoopbackJsonFiles(opencodeEndpointFiles(opts.hostHome ?? homedir()));
+  return {
+    ...staged,
+    warnings: [
+      ...staged.warnings,
+      ...endpoints.map((e) => providerWarning(formatLoopbackUnreachable('opencode', e))),
+    ],
+  };
 }
 
 /**

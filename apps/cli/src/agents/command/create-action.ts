@@ -1034,6 +1034,9 @@ export async function runAgentCreate(
         ? `  ·  n ${String(result.record.projectIndex)}`
         : '';
     s.stop(`box ready${nSuffix}`);
+    // Same as the hub path above: a providerWarning (e.g. a host-loopback model
+    // endpoint the volume sync rewrote) only flashed past inside the spinner.
+    for (const w of cmdLog.warnings()) log.warn(w);
     if (createResyncWarning && seedOwnsFirstTurn) log.warn(createResyncWarning);
     // Anything a hook wanted to print: deferred until now, because a `log.*`
     // while the spinner is live fights it for the same line.

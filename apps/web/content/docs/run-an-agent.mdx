@@ -189,6 +189,37 @@ Say yes to that prompt only when you see it — signing in when you did not need
   automatically. See [configuration](/docs/configuration) and [sync and git](/docs/sync-and-git).
 </Callout>
 
+## Model gateways on your machine
+
+If your agent config points at a model gateway on your own machine (LiteLLM, Ollama, LM Studio, a
+local proxy) through `http://127.0.0.1:<port>` or `http://localhost:<port>`, that address means the
+box itself once it is inside a box. AgentBox handles these endpoints when it syncs your config:
+
+| Agent    | Where the endpoint lives                                                      |
+| -------- | ----------------------------------------------------------------------------- |
+| Codex    | `~/.codex/config.toml`: `model_providers.<id>.base_url`                       |
+| Claude   | `~/.claude/settings.json`: `env.*_BASE_URL` (e.g. `ANTHROPIC_BASE_URL`)       |
+| OpenCode | `~/.config/opencode/opencode.json(c)`: `provider.<id>.options.baseURL`        |
+| Pi       | `~/.pi/agent/models.json`: `providers.<id>.baseUrl` (and per-model `baseUrl`) |
+
+- **Local Docker** rewrites the host part to `host.docker.internal` in the box's copy (port and
+  path unchanged) and prints one line per rewrite. Only endpoints from your host config are
+  rewritten; config you change inside the box is left alone, so a box-local service stays reachable.
+  Your host files are never modified.
+- **Linux Docker engine**: there `host.docker.internal` is the docker bridge address (usually
+  `172.17.0.1`), so a gateway listening on `127.0.0.1` only still refuses the box. AgentBox probes
+  the bridge address on create and on `<agent> start`. If nothing answers, it warns you to bind the
+  gateway to `0.0.0.0` or the bridge address (for Ollama: `OLLAMA_HOST=0.0.0.0`). Docker Desktop and
+  OrbStack forward to your machine's loopback, so no change is needed there.
+- **Cloud providers** never rewrite: a cloud box has no route back to your machine. The bake
+  (`agentbox prepare`) warns once for each loopback endpoint; point it at an address the box can reach
+  (a public URL or a tunnel).
+- **Remote Docker** boxes do not receive your host agent config, so these endpoints never reach
+  them.
+
+Provider URLs set as host environment variables (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`) are not
+forwarded into boxes at all; set them in the agent's config file instead.
+
 ## Add an agent AgentBox does not ship
 
 The four built-ins are not the whole list. An agent can also arrive as an npm

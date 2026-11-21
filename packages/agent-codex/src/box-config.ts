@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { parse, stringify } from 'smol-toml';
+import { findLoopbackEndpoints, type LoopbackEndpoint } from '@agentbox/core';
 
 /**
  * Sanitize the host's `~/.codex/config.toml` before it is seeded into a box.
@@ -60,7 +61,25 @@ export interface SanitizeCodexConfigResult {
    * config's set instead — see {@link mergeCodexConfigForBox}).
    */
   keptMarketplaces: string[];
+  /**
+   * `model_providers.<name>.base_url` values whose host is loopback (#403).
+   * Rewritten to `loopbackHost` when one was given; reported either way so the
+   * caller can say so (a cloud box cannot reach them at all).
+   */
+  loopbackEndpoints: LoopbackEndpoint[];
 }
+
+export interface SanitizeCodexConfigOptions {
+  /**
+   * Hostname that reaches the host from inside the box (`host.docker.internal`
+   * on local docker). A loopback `base_url` in the HOST config means the host
+   * by construction, so it is rewritten; unset = report only.
+   */
+  loopbackHost?: string;
+}
+
+/** Where codex keeps model endpoints in `config.toml`. */
+export const CODEX_ENDPOINT_PATHS = [['model_providers', '*', 'base_url']] as const;
 
 /**
  * Parse → mutate → re-serialize the codex `config.toml`, dropping entries that
@@ -74,9 +93,17 @@ export interface SanitizeCodexConfigResult {
 export function sanitizeCodexConfigForBox(
   tomlText: string,
   hostHome: string = homedir(),
+  opts: SanitizeCodexConfigOptions = {},
 ): SanitizeCodexConfigResult {
   const cfg = parse(tomlText) as Record<string, unknown>;
   let changed = false;
+
+  const loopbackEndpoints = findLoopbackEndpoints(cfg, {
+    paths: CODEX_ENDPOINT_PATHS,
+    source: '~/.codex/config.toml',
+    rewriteHost: opts.loopbackHost,
+  });
+  if (loopbackEndpoints.some((e) => e.rewrittenTo !== undefined)) changed = true;
 
   // mcp_servers: drop servers whose `command` is a host-only path.
   if (isRecord(cfg['mcp_servers'])) {
@@ -140,7 +167,12 @@ export function sanitizeCodexConfigForBox(
   }
 
   const keptMarketplaces = isRecord(cfg['marketplaces']) ? Object.keys(cfg['marketplaces']) : [];
-  return { text: changed ? stringify(cfg) : tomlText, changed, keptMarketplaces };
+  return {
+    text: changed ? stringify(cfg) : tomlText,
+    changed,
+    keptMarketplaces,
+    loopbackEndpoints,
+  };
 }
 
 export interface MergeCodexConfigResult {

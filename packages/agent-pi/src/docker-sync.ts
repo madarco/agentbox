@@ -8,6 +8,7 @@
  * restated; that is what keeps this in step with the cloud stager.
  */
 
+import type { LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -21,7 +22,9 @@ import {
   createDockerSyncTransport,
   ensureVolume,
   volumeExists,
+  stageLoopbackOverlay,
 } from '@agentbox/sandbox-docker';
+import { piEndpointFiles } from './endpoints.js';
 import { AgentInstallError, ensureAgentInstalled, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { stagePiStaticForUpload } from './host-stage.js';
 
@@ -93,6 +96,8 @@ export interface EnsurePiVolumeResult {
   synced: boolean;
   /** Non-fatal staging messages (a skipped broken symlink); the create log prints them. */
   notes: string[];
+  /** Host-loopback `models.json` `baseUrl` values rewritten to `host.docker.internal` (#403). */
+  loopbackEndpoints: LoopbackEndpoint[];
 }
 
 /**
@@ -111,8 +116,11 @@ export interface EnsurePiVolumeResult {
  * Additive (no `--delete`): host files win on overlap, box-only files (an
  * `auth.json` written by an in-box `/login`) are kept. The excludes were
  * already applied host-side by the stager.
+ *
+ * `withOverlay`: lay the rewritten endpoint files mounted at `/src-endpoints`
+ * over the result, so a host-loopback `baseUrl` reaches the host (#403).
  */
-export function buildPiVolumeSyncScript(): string {
+export function buildPiVolumeSyncScript(withOverlay = false): string {
   const chown = `chown -R ${CONTAINER_USER}:${CONTAINER_USER} /dst`;
   return [
     'set -e',
@@ -120,6 +128,7 @@ export function buildPiVolumeSyncScript(): string {
     'tar -xzf - -C "$s" --no-same-owner',
     'rsync -a "$s"/ /dst/',
     'rm -rf "$s"',
+    ...(withOverlay ? ['cp -R /src-endpoints/. /dst/'] : []),
     chown,
   ].join('; ');
 }
@@ -153,6 +162,9 @@ export async function ensurePiVolume(
       target: 'volume',
       ...(opts.hostHome ? { hostHome: opts.hostHome } : {}),
     });
+    // A loopback `baseUrl` in the host's models.json is rewritten into an
+    // overlay laid over the synced copy, so the box reaches the host (#403).
+    const overlay = await stageLoopbackOverlay(piEndpointFiles(opts.hostHome));
     try {
       if (staged.tarballPath) {
         await execa(
@@ -165,16 +177,23 @@ export async function ensurePiVolume(
             '0',
             '-v',
             `${spec.volume}:/dst`,
+            ...(overlay.dir ? ['-v', `${overlay.dir}:/src-endpoints:ro`] : []),
             opts.image,
             'sh',
             '-c',
-            buildPiVolumeSyncScript(),
+            buildPiVolumeSyncScript(Boolean(overlay.dir)),
           ],
           { inputFile: staged.tarballPath },
         );
-        return { created, synced: true, notes: staged.warnings };
+        return {
+          created,
+          synced: true,
+          notes: staged.warnings,
+          loopbackEndpoints: overlay.endpoints,
+        };
       }
     } finally {
+      await overlay.cleanup();
       await staged.cleanup();
     }
   }
@@ -184,7 +203,7 @@ export async function ensurePiVolume(
     ['run', '--rm', '--user', '0', '-v', `${spec.volume}:/dst`, opts.image, 'sh', '-c', chown],
     { reject: false },
   );
-  return { created, synced: false, notes: [] };
+  return { created, synced: false, notes: [], loopbackEndpoints: [] };
 }
 
 export interface PiMountResult {

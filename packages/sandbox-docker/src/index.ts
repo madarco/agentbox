@@ -25,6 +25,14 @@ export {
 } from './sync/agents/shared.js';
 
 export { dockerProvider, type DockerCreateOptions } from './docker-provider.js';
+export {
+  localBridgeGateway,
+  loopbackEndpointNotes,
+  stageLoopbackOverlay,
+  tcpReachable,
+  type EndpointConfigFile,
+  type LoopbackOverlay,
+} from './host-endpoints.js';
 export { providerModule, dockerChecks } from './provider-module.js';
 export { downloadFromBox, uploadToBox, type BoxCpResult } from './box-cp.js';
 export {

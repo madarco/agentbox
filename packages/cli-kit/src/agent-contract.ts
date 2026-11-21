@@ -112,6 +112,11 @@ export interface AgentRuntime {
   }): Promise<void>;
   sessionInfo(container: string, sessionName: string): Promise<{ running: boolean }>;
   ensureInstalled(container: string, o: { onProgress: (line: string) => void }): Promise<unknown>;
+  /**
+   * Seed the box volume from the host config. A result carrying
+   * `loopbackEndpoints` (host-loopback model endpoints rewritten to
+   * `host.docker.internal`, #403) is reported by `<agent> start`.
+   */
   ensureVolume(
     target: { volume: string },
     o: { syncFromHost: boolean; image: string; hostWorkspace?: string },

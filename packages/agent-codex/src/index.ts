@@ -13,6 +13,7 @@
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import {
   extractCodexCredentials,
+  loopbackEndpointNotes,
   registerAgentSyncModule,
   type AgentSyncModule,
 } from '@agentbox/sandbox-docker';
@@ -32,7 +33,14 @@ export const codexSyncModule: AgentSyncModule = {
   id: 'codex',
   resolveVolume: (opts) => resolveCodexVolume(opts),
   buildMounts: (spec, env) => buildCodexMounts(spec, env),
-  ensureVolume: async (spec, opts) => ensureCodexVolume(spec, opts),
+  ensureVolume: async (spec, opts) => {
+    const r = await ensureCodexVolume(spec, opts);
+    return {
+      created: r.created,
+      synced: r.synced,
+      notes: await loopbackEndpointNotes('codex', r.loopbackEndpoints),
+    };
+  },
   sessionInfo: (container) => codexSessionInfo(container),
   // The AGENTS.override.md box-facts fold. It used to be called by name from
   // `docker-sync.ts`; it is Codex's own post-sync step now.

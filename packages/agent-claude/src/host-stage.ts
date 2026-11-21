@@ -1,4 +1,10 @@
-import { agentPushExcludes, requireAgentCredential } from '@agentbox/core';
+import {
+  agentPushExcludes,
+  findLoopbackEndpoints,
+  formatLoopbackUnreachable,
+  providerWarning,
+  requireAgentCredential,
+} from '@agentbox/core';
 /**
  * Claude's host-side staging — the part that is more than a copy.
  *
@@ -32,6 +38,7 @@ import {
 } from '@agentbox/sandbox-core';
 import {
   addProjectAlias,
+  claudeSettingsEndpointPaths,
   filterHostHooks,
   setInstallMethodNative,
   trustWorkspace,
@@ -203,10 +210,19 @@ export async function stageClaudeStaticForUpload(
     ]);
 
     // settings.json: filter host-path hooks; rewrite in place when changed.
+    // A loopback `env.*_BASE_URL` is reported, not rewritten: a cloud box has
+    // no route back to this machine (#403).
     const settingsPath = join(stageDir, 'settings.json');
+    const warnings: string[] = [];
     if (await pathExists(settingsPath)) {
       try {
-        const parsed = JSON.parse(await readFile(settingsPath, 'utf8'));
+        const parsed: unknown = JSON.parse(await readFile(settingsPath, 'utf8'));
+        for (const e of findLoopbackEndpoints(parsed, {
+          paths: claudeSettingsEndpointPaths(parsed),
+          source: '~/.claude/settings.json',
+        })) {
+          warnings.push(providerWarning(formatLoopbackUnreachable('claude', e)));
+        }
         const filtered = filterHostHooks(parsed, hostHome);
         if (filtered.removedCommands.length > 0) {
           await writeFile(settingsPath, JSON.stringify(filtered.data, null, 2));
@@ -254,7 +270,7 @@ export async function stageClaudeStaticForUpload(
     return {
       tarballPath,
       cleanup: makeCleanup([stageDir, tarballPath]),
-      warnings: [],
+      warnings,
     };
   } catch (err) {
     await rm(stageDir, { recursive: true, force: true });
