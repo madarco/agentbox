@@ -19,9 +19,11 @@ import { agentIds } from '@agentbox/sandbox-core';
 /**
  * Top-level custody scopes. Anything else is rejected by {@link normalizeCustodyPath}.
  * `prepared` holds each provider's bake record (`<provider>-prepared.json`), so a
- * base baked on either side is visible to both.
+ * base baked on either side is visible to both. `skills` is the hub's skills
+ * library (`skills/<name>/meta.json` + one tarball per version, and the
+ * `skills/.seeded` marker); see docs/hub-skills-plan.md.
  */
-export const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared'] as const;
+export const CUSTODY_SCOPES = ['agents', 'projects', 'boxes', 'prepared', 'skills'] as const;
 export type CustodyScope = (typeof CUSTODY_SCOPES)[number];
 
 /** Metadata for one stored entry. `sha256` is the ONLY change signal (never `updatedAt`). */

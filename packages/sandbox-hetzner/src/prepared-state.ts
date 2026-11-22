@@ -73,6 +73,12 @@ export interface PreparedBaseSnapshot {
    * manifests existed simply lack it.
    */
   files?: FileManifest;
+  /**
+   * The skills the bake staged and the machine it ran on (`bakeSkillsStamp`).
+   * Not part of `contextSha256`; see sandbox-core's `skills/digest.ts`.
+   */
+  skillsDigest?: string;
+  skillsHost?: string;
   /** CLI version that produced this snapshot (informational). */
   cliVersion?: string;
   /** Git short SHA of the CLI build (informational). */

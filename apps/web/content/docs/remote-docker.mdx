@@ -178,6 +178,15 @@ then keeps making the same kind of box, on a machine that stays on. Pin somethin
 `agentbox config set box.provider <name>`, and `agentbox hub destroy` puts it
 back to `docker`.
 
+**From another computer.** A `docker:hub` box shows in `agentbox ls` on every
+enrolled computer with its real provider and state, and the hub-side actions work
+from all of them (the web UI, the tray, start/stop, `agentbox git …`). Attaching,
+shells and `cp` talk to the box **directly**, through the control box's SSH, and
+that access belongs to the computer that deployed the control box alone (it is
+root on the control box, firewalled to that computer). So from any other computer
+those commands stop with a message saying so. For boxes you want to drive from
+several computers, use a cloud provider.
+
 ## Good to know
 
 - **Boxes are unlimited by default.** The remote engine is _your_ machine, so a box isn't capped at some cloud default. Cap it if you want to: `--size 4-8` gives it 4 CPUs and 8 GB (`--cpus` / `--memory` on the container).

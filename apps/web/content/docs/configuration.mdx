@@ -391,6 +391,16 @@ Whether a granted tool prompts on every call is controlled by `box.autoApproveSa
 
 `agentbox doctor` reports one row per granted tool in a `tools:` group, probing whether the host binary actually resolves.
 
+## skills
+
+The hub's [skills library](/docs/skills#your-skills-library-on-the-hub).
+
+| Key                    | Type | Default            | Meaning                                                                                                                 |
+| ---------------------- | ---- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `skills.maxSkillBytes` | int  | `52428800` (50 MB) | largest skill (total bytes of its files) `agentbox skills` and the automatic first seed upload; a bigger one is skipped |
+
+The hub's own limit is its custody blob cap (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, 100 MiB).
+
 ## queue & autopause
 
 `queue.*` schedules background `-i` jobs; `autopause.*` pauses idle boxes.
@@ -455,6 +465,17 @@ The remaining infrastructure knobs — mostly advanced.
 | `update.registry`                      | string                                          | `https://registry.npmjs.org` | npm registry [provider-plugin](/docs/build-a-provider) updates are resolved against, for `agentbox self-update` and `agentbox plugin update`. Point it at a mirror or a private registry when your plugins are not on the public one                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 See [web apps and tunnels](/docs/web-apps-and-tunnels), [local Docker](/docs/local-docker), [sync and git](/docs/sync-and-git), and [browser and screen](/docs/browser-and-screen).
+
+## history — session history
+
+The hub keeps the agent transcripts of your boxes: every claude session a box runs is shipped to the hub as it happens, attributed to its box, and kept after the box is destroyed. Today that covers claude in boxes on every provider; other agents and host sessions come later.
+
+| Key                     | Type | Default | Meaning                                                                                                                                                                                                                           |
+| ----------------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `history.capture`       | bool | `true`  | ship this project's box transcripts to the hub. Set `false` in a project's config (`agentbox config set history.capture false` inside the project) to keep its sessions out of the hub: the relay drops them at the host boundary |
+| `history.retentionDays` | int  | `90`    | days the hub keeps a session after its last activity. Read by the hub on its own machine (on a control box, set it there); an hourly sweep deletes older sessions                                                                 |
+
+Known secret values (the hub token, your provider keys in `secrets.env`, agent logins, box relay tokens) and well-known token formats are masked before a transcript leaves your machine. Redaction keeps the byte length, so a masked value shows up as `[REDACTED:<kind>]****`.
 
 ## Where the files live
 

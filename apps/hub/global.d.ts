@@ -1,6 +1,7 @@
 import type { Store } from '@agentbox/relay';
 import type { HubBackend } from './lib/boxes/backend-types';
 import type { DeviceService } from './lib/backend/devices';
+import type { HistoryService } from './lib/backend/history';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -14,6 +15,11 @@ declare global {
   // without it. Never constructed inside Next: the repo is `node:sqlite`.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_DEVICES: DeviceService | undefined;
+
+  // Session history ingest (docs/agent-history-plan.md). Built by the custom
+  // server on `node:sqlite`; the /api/v1/history routes reach it through here.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_HISTORY: HistoryService | undefined;
 
   // Host-facing backend (box list + lifecycle). Set by the custom server; Next's
   // source.ts / actions.ts reach the Node/docker toolchain only through this, so

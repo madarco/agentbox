@@ -64,6 +64,8 @@ export const HELP_GROUPS: HelpGroup[] = [
       'config',
       'relay',
       'hub',
+      'skills',
+      'sessions',
     ],
   },
 ];
@@ -74,6 +76,7 @@ export const HELP_GROUPS: HelpGroup[] = [
 // live description would wrap need an entry; buildGroupedHelp falls back to
 // the live description and clips as a safety net either way.
 export const SHORT_DESCRIPTIONS: Record<string, string> = {
+  sessions: 'Agent sessions the hub recorded: list, show, search, download',
   workspace: 'Register a folder grouping several projects, with its own task list',
   tasks: 'Units of work in a workspace, assigned to boxes (not agentbox.yaml tasks)',
   manager: 'Agent sessions that create and watch boxes: detected, or run by the hub',

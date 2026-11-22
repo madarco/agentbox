@@ -7,8 +7,10 @@ AgentBox ships a handful of Claude Code skills (mirrored as Codex prompts and Op
 
 <Callout title="NOTE">
   These are the AgentBox-provided skills, not the same thing as your own `~/.claude` skills — though
-  those flow into every box too (see [Keeping boxes in sync](#keeping-boxes-in-sync)). For the agent
-  session itself, see [Run an agent](/docs/run-an-agent).
+  those flow into every box too (see [Keeping boxes in sync](#keeping-boxes-in-sync)), and the hub
+  keeps a library of them across your PCs (see [Your skills library on the
+  hub](#your-skills-library-on-the-hub)). For the agent session itself, see [Run an
+  agent](/docs/run-an-agent).
 </Callout>
 
 ## Install the skills
@@ -65,8 +67,51 @@ Your host `~/.claude` is the source of truth. Every `agentbox create` / `agentbo
   use `agentbox claude start` (or a fresh `agentbox claude`) so the box picks it up.
 </Callout>
 
+## Your skills library on the hub
+
+The hub keeps a library of your own skills, so the same set is available from every PC that uses it, local hub or [deployed control box](/docs/deployed-hub) alike. Skills are stored in the hub's custody (the `skills` scope), one tarball per version, identified by a hash of the skill's files.
+
+**First time: automatic.** The first time a hub has never held a skill, AgentBox seeds it from the PC you are on: at the end of `agentbox hub setup` / `hub deploy`, or on your first `agentbox create` / `agentbox claude` against that hub. It uploads every skill in `~/.agents/skills` and the agents' own skill folders (`~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`, `~/.pi/agent/skills`, `~/.openclaw/skills`), one copy per name, and prints one summary line. It never seeds AgentBox's own skills (`agentbox`, `agentbox-*`) or Claude Code's claude.ai-synced skills (`~/.claude/skills/synced/`).
+
+**After that: explicit.** The automatic seed runs once per hub, even if you later discard every skill. New skills reach the hub only when you upload them.
+
+```bash
+agentbox skills                          # interactive: local vs hub side by side, then upload / download / discard
+agentbox skills --list                   # the same table, non-interactive (--json for scripts)
+agentbox skills --upload unslop,daytona  # upload these local skills
+agentbox skills --upload-all             # every local skill the hub lacks or has differently
+agentbox skills --download-all           # bring this PC in line with the hub
+agentbox skills --download inngest       # into ~/.agents/skills/inngest (+ a ~/.claude/skills link)
+agentbox skills --discard old-skill --yes
+```
+
+The table compares each skill by content: `same`, `differs` (with which side changed last), `local only`, or `hub only`, with the size, the PC it came from, and when it was updated.
+
+- **Download** writes to `~/.agents/skills/<name>`, which Codex, OpenCode, Pi and OpenClaw read, and links `~/.claude/skills/<name>` to it for Claude Code. A local copy with different content is replaced only after you confirm (or with `--yes`). The downloaded files are checked against the version hash before anything is written.
+- **Discard** deletes the skill and every stored version from the hub. It asks first; off a terminal it needs `--yes`.
+- **Upload** keeps the hub's older versions (the newest 5 per skill).
+
+<Callout type="warn" title="SECRET SCAN">
+  Before a skill leaves your PC it is scanned for credentials: private keys, cloud and LLM API keys,
+  tokens, `KEY=value` / `key: value` lines naming a secret, passwords inside URLs, and files whose
+  name says they hold credentials (`.env*`, `*.pem`, `*.key`, `id_*` private keys, `.netrc`,
+  `.npmrc`, `.pypirc`, `credentials*.json`; `.env.example`-style templates excepted). Documentation
+  placeholders such as `YOUR_API_KEY`, git hashes and test fixtures are ignored. A flagged skill is
+  skipped by the automatic seed and named in its summary; upload it from `agentbox skills` after
+  reviewing the finding, or with `--allow-findings`. Findings name the file and line, never the
+  value.
+</Callout>
+
+A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. Boxes don't read the library yet; until they do, they keep receiving skills the way described above.
+
+**In the hub web UI**, the **Skills** page lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and discards a skill after a confirm. Uploading and downloading stay with `agentbox skills` on a PC, since they read and write that PC's folders.
+
+### Cloud bases go stale when your skills change
+
+A cloud base (Hetzner, DigitalOcean, Daytona, Vercel, E2B) is baked with the skills on the machine that baked it, and the bake now records a digest of those skills (the ones the library would hold: valid, no secret-scan finding). When your skills change, that machine reports the base **stale** ("host skills changed since this base was baked"): `agentbox prepare --provider <id>` re-bakes instead of skipping, and the hub's **System** page shows the base as stale. If you have no skills, or the base was baked before this existed or on another machine, nothing changes. Docker and remote-docker boxes are unaffected; they receive skills when each box is created.
+
 ## Next steps
 
 - [Run an agent](/docs/run-an-agent) — launch and fork agent sessions, with the full `agentbox fork` reference.
 - [Services & tasks](/docs/services-and-tasks) — the `agentbox.yaml` that `agentbox-setup` writes.
-- [CLI commands](/docs/cli) — `agentbox install` and every other command.
+- [CLI commands](/docs/cli) — `agentbox install`, `agentbox skills` and every other command.

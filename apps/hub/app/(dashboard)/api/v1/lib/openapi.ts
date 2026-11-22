@@ -186,9 +186,19 @@ export function buildOpenApi(): Record<string, unknown> {
         description: 'What the control box holds in custody (metadata only — never values).',
       },
       {
+        name: 'Skills',
+        description:
+          'The skills library: skills seeded from a PC or uploaded with `agentbox skills`, stored in the custody `skills` scope, one tarball per version.',
+      },
+      {
         name: 'Checkouts',
         description:
           'Which machine has which repo checked out where, keyed by machine id and repo key.',
+      },
+      {
+        name: 'History',
+        description:
+          'Agent session history: transcript ingest from the edges, and the sessions, transcripts and search read from it.',
       },
       {
         name: 'Workspaces',
@@ -1086,6 +1096,415 @@ export function buildOpenApi(): Record<string, unknown> {
                       },
                     },
                     required: ['checkouts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions': {
+        get: {
+          tags: ['History'],
+          summary: 'List recorded sessions',
+          description:
+            'Agent sessions the hub recorded, newest activity first. Filters are ANDed. `q` is plain words that must all appear in one turn (never query syntax).',
+          parameters: [
+            {
+              name: 'agent',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this agent (e.g. `claude`).',
+            },
+            {
+              name: 'box',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this box: its id or name.',
+            },
+            {
+              name: 'project',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "Substring of the project's repo URL.",
+            },
+            {
+              name: 'host',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only sessions shipped by this machine id.',
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Last activity at or after this ISO-8601 time.',
+            },
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Words that must all appear in one of the session turns.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 50, max 500.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Sessions',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      sessions: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            key: { type: 'string' },
+                            agent: { type: 'string' },
+                            boxId: { type: 'string', nullable: true },
+                            boxName: { type: 'string', nullable: true },
+                            provider: { type: 'string', nullable: true },
+                            hostId: { type: 'string', nullable: true },
+                            projectRepoUrl: { type: 'string', nullable: true },
+                            parentSessionId: { type: 'string', nullable: true },
+                            title: { type: 'string', nullable: true },
+                            firstTs: { type: 'string', nullable: true },
+                            lastTs: { type: 'string', nullable: true },
+                            turns: { type: 'integer' },
+                            inputTokens: { type: 'integer' },
+                            outputTokens: { type: 'integer' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                            updatedAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                    required: ['sessions'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}': {
+        get: {
+          tags: ['History'],
+          summary: 'One session, condensed',
+          description:
+            'The session row, its files (the main transcript plus one per subagent, with byte sizes), the turn count, tool-name counts, and the first user prompt and last assistant reply. 409 with `details.candidates` when a prefix is ambiguous.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The session',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      session: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          key: { type: 'string' },
+                          agent: { type: 'string' },
+                          boxId: { type: 'string', nullable: true },
+                          boxName: { type: 'string', nullable: true },
+                          provider: { type: 'string', nullable: true },
+                          hostId: { type: 'string', nullable: true },
+                          projectRepoUrl: { type: 'string', nullable: true },
+                          parentSessionId: { type: 'string', nullable: true },
+                          title: { type: 'string', nullable: true },
+                          firstTs: { type: 'string', nullable: true },
+                          lastTs: { type: 'string', nullable: true },
+                          turns: { type: 'integer' },
+                          inputTokens: { type: 'integer' },
+                          outputTokens: { type: 'integer' },
+                          createdAt: { type: 'string', format: 'date-time' },
+                          updatedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                      files: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            child: { type: 'boolean' },
+                            bytes: { type: 'integer' },
+                          },
+                        },
+                      },
+                      turns: { type: 'integer' },
+                      tools: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { name: { type: 'string' }, count: { type: 'integer' } },
+                        },
+                      },
+                      firstPrompt: { type: 'string', nullable: true },
+                      lastReply: { type: 'string', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/turns': {
+        get: {
+          tags: ['History'],
+          summary: "A session's transcript rows",
+          description:
+            'Turn and tool rows in session order (subagent rows interleaved by time), `from` to `to` inclusive, at most 1000 per call.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'First row index (default 0).',
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Last row index, inclusive (default from+199).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Rows',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      turns: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            index: { type: 'integer' },
+                            kind: { type: 'string', enum: ['turn', 'tool'] },
+                            role: { type: 'string', nullable: true },
+                            name: { type: 'string', nullable: true },
+                            text: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            path: { type: 'string' },
+                            at: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/raw': {
+        get: {
+          tags: ['History'],
+          summary: 'Download one transcript file',
+          description:
+            'One file of the session, streamed and byte-identical to what the edge shipped (secrets masked at the edge, length kept). Default: the main transcript; `path` picks one of the detail route `files`. The `x-agentbox-history-path` header names the file.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'path',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "A file path from the session's `files` list.",
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The file bytes',
+              content: { 'application/x-ndjson': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/search': {
+        get: {
+          tags: ['History'],
+          summary: 'Full-text search over turns',
+          description:
+            'Turns containing all the words in `q`, best first, each with a snippet (matches in [brackets]) and its session.',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Plain words; no query syntax.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 20, max 200.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Hits',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      hits: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            session: { type: 'object' },
+                            role: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            snippet: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/chunks': {
+        post: {
+          tags: ['History'],
+          summary: 'Ingest one transcript frame',
+          description:
+            "One slice of an agent transcript file, shipped by a relay or an in-box shipper. Accepted only at the offset the hub holds for `(origin.boxId, agent, path)`, with `sha256Prefix` equal to the hash it recorded; otherwise the answer is `ok: false, code: offset_mismatch` carrying the hub's `offset` and `sha256`, and the shipper resumes from there (or re-ships from 0 with `reset: true` when its file was rewritten). `data` is base64 of bytes already redacted at the edge; hashes cover the raw file. The hub's own relay calls the same ingest in-process. Always 200 for a well-formed frame, whatever the outcome.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    origin: {
+                      type: 'object',
+                      properties: {
+                        boxId: { type: 'string' },
+                        boxName: { type: 'string' },
+                        provider: { type: 'string' },
+                        hostId: { type: 'string' },
+                        projectRepoUrl: { type: 'string' },
+                      },
+                      required: ['boxId'],
+                    },
+                    agent: { type: 'string', description: 'Agent id, e.g. `claude`.' },
+                    path: {
+                      type: 'string',
+                      description:
+                        'Relative to the agent config dir, e.g. `projects/-workspace/<sessionId>.jsonl`. No empty or `..` segments.',
+                    },
+                    offset: { type: 'integer', minimum: 0 },
+                    sha256Prefix: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset); empty at 0.',
+                    },
+                    sha256: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset + length).',
+                    },
+                    data: {
+                      type: 'string',
+                      format: 'byte',
+                      description: 'base64, at most 8 MiB decoded.',
+                    },
+                    reset: {
+                      type: 'boolean',
+                      description: 'The file was rewritten: start a new generation at 0.',
+                    },
+                  },
+                  required: ['origin', 'agent', 'path', 'offset', 'sha256Prefix', 'sha256', 'data'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The ingest result',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean' },
+                      offset: { type: 'integer' },
+                      sha256: { type: 'string' },
+                      code: {
+                        type: 'string',
+                        enum: ['offset_mismatch', 'disabled', 'invalid', 'unavailable'],
+                      },
+                      message: { type: 'string' },
+                    },
+                    required: ['ok'],
                   },
                 },
               },
@@ -3860,7 +4279,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Custody'],
           summary: 'List the custody manifest (metadata only)',
           description:
-            'What the hub holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.',
+            'What the hub holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes` | `skills`) or a `scope/subject`.',
           parameters: [
             {
               name: 'prefix',
@@ -3998,6 +4417,121 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/skills': {
+        get: {
+          tags: ['Skills'],
+          summary: 'List the skills library',
+          description:
+            'One row per stored skill (description, current version = tree hash, size, file count, source PC, updated, version count). `seeded` is true once any skill was ever imported and stays true after the last one is discarded, so the automatic first seed from a PC runs only once per hub. Backs `agentbox skills --list`.',
+          responses: {
+            '200': {
+              description: 'The library',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillsListing' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,63}$' },
+            description: 'Skill name (the Agent Skills `name`). `agentbox-*` is reserved.',
+          },
+        ],
+        put: {
+          tags: ['Skills'],
+          summary: 'Store a version of a skill',
+          description:
+            'Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). The version becomes current; the newest 5 are kept. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.',
+          parameters: [
+            {
+              name: 'X-AgentBox-Skill-Meta',
+              in: 'header',
+              required: true,
+              schema: { type: 'string' },
+              description: 'base64-encoded JSON metadata (see description)',
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Stored',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillImport' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Skills'],
+          summary: 'Discard a skill',
+          description:
+            'Deletes the skill and every stored version. The library stays marked seeded. Backs `agentbox skills --discard`.',
+          responses: {
+            '200': {
+              description: 'Discarded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { name: { type: 'string' }, removed: { type: 'integer' } },
+                    required: ['name', 'removed'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/tarball': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+          {
+            name: 'version',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Tree hash of a stored version (default: current)',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Download a version of a skill',
+          description:
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. Normal API gate (skills are not credentials). Backs `agentbox skills --download`.',
+          responses: {
+            '200': {
+              description: 'The tarball',
+              content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/system': {
         get: {
           tags: ['System'],
@@ -4108,6 +4642,49 @@ export function buildOpenApi(): Record<string, unknown> {
               required: ['data'],
             },
           ],
+        },
+        SkillSummary: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            current: { type: 'string', description: 'Tree hash of the current version' },
+            size: { type: 'integer', description: 'Unpacked bytes' },
+            files: { type: 'integer' },
+            tarballBytes: { type: 'integer' },
+            updatedAt: { type: 'string' },
+            source: {
+              type: 'object',
+              properties: {
+                host: { type: 'string' },
+                machineId: { type: 'string' },
+                path: { type: 'string' },
+              },
+            },
+            versions: { type: 'integer', description: 'Stored versions (max 5)' },
+          },
+          required: ['name', 'description', 'current', 'size', 'files', 'updatedAt', 'versions'],
+        },
+        SkillsListing: {
+          type: 'object',
+          properties: {
+            seeded: { type: 'boolean' },
+            skills: { type: 'array', items: { $ref: '#/components/schemas/SkillSummary' } },
+          },
+          required: ['seeded', 'skills'],
+        },
+        SkillImport: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            version: { type: 'string' },
+            changed: {
+              type: 'boolean',
+              description: 'false when this version was already current',
+            },
+            skill: { $ref: '#/components/schemas/SkillSummary' },
+          },
+          required: ['name', 'version', 'changed', 'skill'],
         },
         Custody: {
           type: 'object',

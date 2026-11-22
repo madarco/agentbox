@@ -335,6 +335,12 @@ export interface UserConfig {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
   };
+  history?: {
+    /** Ship this project's box agent transcripts to the hub (default true). */
+    capture?: boolean;
+    /** Days the hub keeps a session's transcript after its last activity (default 90). */
+    retentionDays?: number;
+  };
   update?: {
     /**
      * Daily background check for a newer published CLI (npm registry) and
@@ -363,6 +369,13 @@ export interface UserConfig {
     request?: {
       enabled?: boolean;
     };
+  };
+  skills?: {
+    /**
+     * Largest skill (total bytes of its files) `agentbox skills` and the
+     * automatic first seed will upload to the hub's library.
+     */
+    maxSkillBytes?: number;
   };
 }
 
@@ -523,6 +536,10 @@ export interface EffectiveConfig {
     pruneProjectConfigs: boolean;
     pruneProjectConfigsEvery: number;
   };
+  history: {
+    capture: boolean;
+    retentionDays: number;
+  };
   update: {
     check: boolean;
     channel: 'auto' | 'stable' | 'nightly';
@@ -535,6 +552,9 @@ export interface EffectiveConfig {
     request: {
       enabled: boolean;
     };
+  };
+  skills: {
+    maxSkillBytes: number;
   };
 }
 
@@ -722,6 +742,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     pruneProjectConfigs: true,
     pruneProjectConfigsEvery: 50,
   },
+  history: {
+    capture: true,
+    retentionDays: 90,
+  },
   update: {
     check: true,
     channel: 'auto',
@@ -730,6 +754,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   tools: {
     gh: { enabled: true },
     request: { enabled: true },
+  },
+  skills: {
+    // 50 MB: the largest real skill measured in Phase 0 is 23 MB.
+    maxSkillBytes: 50 * 1024 * 1024,
   },
 };
 
@@ -1419,6 +1447,18 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
   },
   {
+    key: 'history.capture',
+    type: 'bool',
+    description:
+      "Ship the agent transcripts of this project's boxes to the hub's session history (default true). Set false in a project's config to keep that project's sessions out of the hub; the relay drops its boxes' transcripts at the host boundary.",
+  },
+  {
+    key: 'history.retentionDays',
+    type: 'int',
+    description:
+      "How many days the hub keeps a box session's transcript after the session's last activity (default 90). Read by the hub on its own machine; older sessions are deleted by the hub's hourly sweep.",
+  },
+  {
     key: 'update.check',
     type: 'bool',
     description:
@@ -1448,6 +1488,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       'Whether a box may ask the host for access to a new host CLI (`agentbox-ctl tool request <bin>`). True (default) raises a host approval prompt naming the box, the binary and the reason; false refuses the request outright so boxes can only use tools already granted.',
+  },
+  {
+    key: 'skills.maxSkillBytes',
+    type: 'int',
+    description:
+      "Largest skill (total bytes of its files, default 52428800 = 50 MB) that `agentbox skills` and the automatic first seed upload to the hub's skills library. A bigger skill is listed and skipped. The hub's own bound is its custody blob cap (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB).",
   },
 ];
 

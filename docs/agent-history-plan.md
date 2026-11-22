@@ -1,6 +1,7 @@
 # Agent history — sessions, memory and usage in the hub
 
-**Status:** plan, nothing implemented. Phase 0 (measurement) is done — see
+**Status:** Phase 1 done (store, archive, ingest for claude in boxes);
+Phases 2-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -230,11 +231,103 @@ boxes; session → box binding; final flush on destroy; redaction at the edge.
 **Done:** a claude turn in a docker box and in one cloud box appears in the
 store with correct box attribution; destroy leaves the session intact.
 
+#### Phase 1 implementation (2026-11-22, done)
+
+Decisions 3 and 4 below are taken as accepted: capture is on by default with a
+per-project opt-out (`history.capture`), retention 90 days (`history.retentionDays`).
+
+- **Shared pieces in `@agentbox/core` (`src/history/`)**, pure and loaded by the
+  hub, the relay and ctl alike: the `history` spec types, the
+  `AgentHistoryModule` registry, the wire frame, the redactor, the 4 KB string
+  extractor and the shipper engine. The engine takes a `FileSource` (list, size,
+  read at an offset) and a sink, so the relay (docker) and ctl (every other
+  provider) run the same code over different file access.
+- **Binding log.** `--capture-session` also appends
+  `{ts, agent, sessionId, transcriptPath}` to
+  `~/.local/state/agentbox/history-bindings.jsonl` on the box's writable layer.
+  `--clear-session` never touches it. Each line carries the writing box's
+  `boxId` (env, else `/etc/agentbox/box.env`): a checkpoint copies the log into
+  new boxes, so shippers skip other boxes' lines, and the checkpoint cleanup
+  deletes the log. On docker, the relay reads the log and every file size in
+  one `docker exec` per box per pass, and reads only files that grew. The engine ships exactly the sessions
+  in that log: `<root>/<sessionId>.jsonl` and its `<sessionId>/subagents/*.jsonl`
+  children, as the spec's `sessionFiles` declare. On a shared docker volume that
+  is the only safe attribution; the single-slot pointer is not read.
+- **Offsets and hashes.** A frame is `{origin, agent, path, offset, sha256Prefix,
+  sha256, data}`, where the hashes cover the raw file bytes and `path` is
+  relative to the agent's config dir. The hub accepts a frame only at its
+  recorded offset with a matching prefix hash. Otherwise it answers with what it
+  holds, and the engine either fast-forwards (the prefix verifies) or re-ships
+  from 0 as a new generation. That makes the hub the durable cursor, so
+  neither edge persists one.
+- **Redaction is length-preserving** (`[REDACTED:kind]` padded with `*`), so
+  file offsets stay the same raw and redacted. It runs on whole lines. ctl
+  redacts with what the box knows (relay token, agent credential values,
+  secret-named env values) plus the curated format list. The host relay
+  redacts every frame again with the host's exact secret values
+  (`secrets.env`, hub token, admin token, credential backups) before the sink.
+- **Transport.** Docker: the relay's `DockerHistoryShipper` reads the box with
+  `docker exec` (offset reads), every 30 s, and hands frames to the in-process
+  sink. Other providers: ctl's shipper sends `history.chunk` RPCs (frames ≤
+  512 KB, under the 1 MiB `/rpc` cap) over the existing relay channel. The
+  same method is handled in `server.ts` `/rpc` and in `executeCloudAction`.
+  `history.config` returns whether the box is captured (project opt-out,
+  read host-side from the box's project config) and the agents' `history`
+  specs. A docker box gets `enabled: false` there, because the relay ships it.
+- **Hub store** (`apps/hub/lib/backend/history.ts` service +
+  `HistoryRepo` seam, `apps/hub/lib/history-sqlite.ts` on `node:sqlite` in
+  `~/.agentbox/hub/history.db`, raw archive on the filesystem under
+  `~/.agentbox/hub/history/`). Each frame is stored as an unsealed chunk.
+  Unsealed runs are sealed into one zstd object once they reach 2 MB, or when
+  the file has been idle for 5 min. Sealing moves strings of 4 KB or more into
+  `history_blobs` and leaves a marker in their place, and a read reassembles the
+  bytes exactly. The claude module parses frames into `history_turns` (FTS5),
+  `history_usage` (deduped by message id) and session meta.
+- **Endpoint.** `POST /api/v1/history/chunks` (Bearer-gated like the rest of
+  `/api/v1`). It is the same `ingest()` the relay calls in-process.
+- **Final flush on destroy.** Before `provider.destroy`, the hub backend flushes:
+  docker through the relay shipper, other providers with
+  `agentbox-ctl history flush` over `provider.exec`. It is time-boxed and only
+  warns on failure.
+- **Retention.** An hourly sweep in the history service deletes sessions idle
+  past `history.retentionDays` and garbage-collects unreferenced blobs.
+
 ### Phase 2 — read API + CLI
 
 `/api/v1/history/*`, `agentbox sessions ls|show|download|search`.
 
 **Done:** download a destroyed box's session and diff it against the original.
+
+#### Phase 2 implementation plan (2026-11-22)
+
+- **Service and repo** (`apps/hub/lib/backend/history.ts` + `HistoryRepo`): add
+  read methods behind the same seam: filtered session listing, resolving a
+  session reference (`<agent>:<id>`, the bare id, or an id prefix of at least 8
+  characters), the files of a session, paged turns, FTS search, and a raw
+  stream per file. Raw reassembly is streamed chunk by chunk, with large strings
+  restored from `history_blobs`, so a 387 MB transcript never sits in memory.
+- **Routes** (all `GET`, behind the `/api/v1` Bearer gate):
+  - `/history/sessions?agent&box&project&host&since&q&limit`: newest activity
+    first. `box` matches a box id or name, `project` a repo URL substring, and
+    `q` is full-text over turns.
+  - `/history/sessions/{ref}`: condensed. The session row, its files (path,
+    child flag, bytes), tool-name counts, and the first user prompt and last
+    assistant reply.
+  - `/history/sessions/{ref}/turns?from&to`: paged turn and tool rows.
+  - `/history/sessions/{ref}/raw?path=`: one file, byte for byte (default: the
+    session's main file).
+  - `/history/search?q&limit`: matching turns with a snippet and their session.
+  - FTS input is quoted token by token, so user text never reaches FTS5 syntax.
+- **CLI** `agentbox sessions ls|show|search|download` over the hub client
+  (`withHubClient`; `--local` prefers this machine's hub, see the backlog for
+  split stores). `download` writes every file of the session under
+  `<dir>/<sessionId>/` at its agent-relative path, so a diff against the box's
+  `~/.claude/projects/-workspace/` is a plain `diff -r`. `--json` everywhere.
+- **Docs and contract**: an OpenAPI entry per route, the CLI reference page, and
+  the `/api/v1` additions listed for the tray.
+- **Done**: download a destroyed docker box's session and compare it with the
+  original on the shared volume. Byte-identical except at redactions, which keep
+  the length.
 
 ### Phase 3 — other agents
 

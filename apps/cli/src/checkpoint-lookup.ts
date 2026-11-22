@@ -24,6 +24,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   baseFreshnessFromFingerprints,
+  withSkillsFreshness,
   currentCloudBaseFingerprint,
   probeCloudCheckpoint,
   resolveCloudCheckpoint,
@@ -248,5 +249,5 @@ export async function evaluateBaseFreshness(provider: ProviderName): Promise<Bas
   const stored = currentCloudBaseFingerprint(provider);
   if (!stored) return { state: 'unprepared' };
   const current = await currentCloudBaseFingerprintLive(provider).catch(() => undefined);
-  return baseFreshnessFromFingerprints(stored, current);
+  return withSkillsFreshness(provider, baseFreshnessFromFingerprints(stored, current));
 }

@@ -201,6 +201,35 @@ The `agent` group is a scripting surface for the agent's live state: `agent stat
 
 See [Services & tasks](/docs/services-and-tasks) and [Background & parallel](/docs/background-and-parallel).
 
+## Session history
+
+```bash
+# Recorded agent sessions, newest activity first
+agentbox sessions ls
+agentbox sessions ls --box auth-work --since 2026-11-01 -q "migration"
+
+# One session: box, files, tools and a condensed transcript
+agentbox sessions show 3e383de9
+agentbox sessions show 3e383de9 --all
+
+# Full-text search across every recorded turn
+agentbox sessions search flaky test retry
+
+# Download the transcript files byte for byte (main + subagents)
+agentbox sessions download 3e383de9 -o ./transcripts
+```
+
+The hub records the transcript of every claude session your boxes run, attributed to its box, and keeps it after the box is destroyed (see [`history.*`](/docs/configuration#history--session-history) for the opt-out and retention). `sessions` reads that record through the hub's [`/api/v1/history`](/docs/api#history) routes. A session is named by its id, by an id prefix of at least 8 characters, or by `<agent>:<id>`. `show` prints the box, the files (the main transcript plus one per subagent), tool counts and the first 40 transcript rows (`--turns <n>`, or `--all`). `download` writes each file to `<dir>/<sessionId>/<path>`, where `path` is the agent-relative path (`projects/-workspace/<id>.jsonl`, `projects/-workspace/<id>/subagents/…`), so a `diff -r` against the box's `~/.claude/` lines up. The bytes are what the box shipped: known secrets were masked before they left the machine, with the length kept. Reads go to the configured hub (a [control box](/docs/deployed-hub) when one is set); `--local` reads this machine's hub instead.
+
+| Command             | Useful flags                                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessions ls`       | `--agent <id>`, `--box <ref>`, `--project <text>`, `--host <machineId>`, `--since <iso>`, `-q, --query <words>`, `-n, --limit <n>`, `--json` |
+| `sessions show`     | `--turns <n>`, `--all`, `--json`                                                                                                             |
+| `sessions search`   | `-n, --limit <n>`, `--json`                                                                                                                  |
+| `sessions download` | `-o, --out <dir>`, `--json`                                                                                                                  |
+
+All four take `--local`.
+
 ## Lifecycle
 
 ```bash
@@ -621,6 +650,13 @@ agentbox queue list                   # your local background -i queue (a contro
 agentbox queue show <id>
 agentbox queue cancel <id>
 agentbox queue clear --all
+
+# Skills library on the hub (see Skills)
+agentbox skills                        # local vs hub, then upload / download / discard
+agentbox skills --list [--json]
+agentbox skills --upload <names> | --upload-all [--allow-findings]
+agentbox skills --download <names> | --download-all [--yes]
+agentbox skills --discard <names> --yes
 
 # Host relay process
 agentbox relay status

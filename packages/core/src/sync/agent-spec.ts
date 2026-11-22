@@ -1,3 +1,4 @@
+import type { AgentHistorySpec } from '../history/types.js';
 /**
  * `AgentSyncSpec` — the single source of truth for every per-agent datum the
  * sync layer needs: paths, credential locations, forwarded env keys, install
@@ -835,6 +836,12 @@ export interface AgentSyncSpec {
    * login account's secret IS that file.
    */
   accountKinds?: readonly LlmAccountKind[];
+  /**
+   * Where this agent's transcripts live, for the hub's session history. Data
+   * only; the parser is the agent module's `AgentHistoryModule`. Absent means
+   * the agent's sessions are not captured.
+   */
+  history?: AgentHistorySpec;
   /**
    * The env var each pasted account kind authenticates through (`api-key` →
    * `ANTHROPIC_API_KEY`). A box on a named account gets that account's value

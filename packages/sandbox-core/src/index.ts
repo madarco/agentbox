@@ -390,6 +390,27 @@ export type {
   PastedAccountSecret,
   WriteAccountSecretResult,
 } from './llm-accounts.js';
+// The skills library's PC-side modules (discovery, normalization, secret scan)
+// and the skills digest cloud bases fold into their fingerprint.
+export { LOCAL_SKILL_DIRS, discoverLocalSkills, readLocalSkill } from './skills/discover.js';
+export type { LocalSkill } from './skills/discover.js';
+export { parseSkillFrontmatter } from './skills/frontmatter.js';
+export type { SkillFrontmatter } from './skills/frontmatter.js';
+export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.js';
+export type { SecretFinding } from './skills/scan.js';
+export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
+export type { SkillFile, SkillTree } from './skills/tree.js';
+export {
+  authoredTreeHash,
+  bakeSkillsStamp,
+  isLibraryEligible,
+  localSkillsDigest,
+  resetSkillsDigestMemo,
+  skillsDigest,
+  skillsMatchForSkip,
+  skillsStaleness,
+} from './skills/digest.js';
+export type { SkillsStamp } from './skills/digest.js';
 export {
   accountEnvPolicy,
   applyAccountEnv,

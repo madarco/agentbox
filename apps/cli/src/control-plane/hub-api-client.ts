@@ -711,6 +711,35 @@ export interface HubApiTaskFilter {
   managerId?: string;
 }
 
+/** One row of `GET /api/v1/skills` (mirrors the hub's `SkillSummary`). */
+export interface HubApiSkill {
+  name: string;
+  description: string;
+  /** Tree hash of the current version. */
+  current: string;
+  size: number;
+  files: number;
+  tarballBytes: number;
+  updatedAt: string;
+  source: { host?: string; machineId?: string; path?: string };
+  versions: number;
+}
+
+export interface HubApiSkillsListing {
+  /** True once any skill was ever imported, even if all were since discarded. */
+  seeded: boolean;
+  skills: HubApiSkill[];
+}
+
+/** What `PUT /api/v1/skills/{name}` is told about the tarball it receives. */
+export interface HubApiSkillUploadMeta {
+  sha256: string;
+  description: string;
+  size: number;
+  files: number;
+  source?: { host?: string; machineId?: string; path?: string };
+}
+
 export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
 
 export interface HubApiTarget {
@@ -728,6 +757,71 @@ export interface HubApiTarget {
    * session header, which is what gives it a meaning.
    */
   sessionTurn?: string | null;
+}
+
+// ── session history (/api/v1/history) ──
+
+export interface HubApiHistorySession {
+  id: string;
+  key: string;
+  agent: string;
+  boxId: string | null;
+  boxName: string | null;
+  provider: string | null;
+  hostId: string | null;
+  projectRepoUrl: string | null;
+  parentSessionId: string | null;
+  title: string | null;
+  firstTs: string | null;
+  lastTs: string | null;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HubApiHistoryDetail {
+  session: HubApiHistorySession;
+  files: Array<{ path: string; child: boolean; bytes: number }>;
+  turns: number;
+  tools: Array<{ name: string; count: number }>;
+  firstPrompt: string | null;
+  lastReply: string | null;
+}
+
+export interface HubApiHistoryTurn {
+  index: number;
+  kind: 'turn' | 'tool';
+  role: 'user' | 'assistant' | null;
+  name: string | null;
+  text: string | null;
+  ts: string | null;
+  path: string;
+  at: number;
+}
+
+export interface HubApiHistoryHit {
+  session: {
+    id?: string;
+    key?: string;
+    agent?: string;
+    boxName?: string | null;
+    title?: string | null;
+  };
+  role: 'user' | 'assistant' | null;
+  ts: string | null;
+  snippet: string;
+}
+
+export interface HubApiHistoryFilter {
+  agent?: string;
+  box?: string;
+  project?: string;
+  host?: string;
+  since?: string;
+  q?: string;
+  limit?: number;
 }
 
 /** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
@@ -1158,6 +1252,113 @@ export class HubApiClient {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/rename`, {
       displayName,
     });
+  }
+
+  // ── skills library (custody `skills` scope) ──
+
+  listSkills(): Promise<HubApiSkillsListing> {
+    return this.request<HubApiSkillsListing>('GET', '/skills');
+  }
+
+  /** Store one version of a skill: a gzip tarball body, metadata in a header. */
+  async uploadSkill(
+    name: string,
+    tarball: Buffer,
+    meta: HubApiSkillUploadMeta,
+  ): Promise<{ name: string; version: string; changed: boolean; skill: HubApiSkill }> {
+    const res = await this.fetchImpl(`${this.base}/api/v1/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        'Content-Type': 'application/gzip',
+        'X-AgentBox-Skill-Meta': Buffer.from(JSON.stringify(meta), 'utf8').toString('base64'),
+      },
+      body: new Uint8Array(tarball),
+    });
+    return this.parseRaw(res);
+  }
+
+  /** Fetch a version's tarball (default: current) and the tree hash the hub says it is. */
+  async downloadSkill(name: string, version?: string): Promise<{ version: string; data: Buffer }> {
+    const q = version ? `?version=${encodeURIComponent(version)}` : '';
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/tarball${q}`,
+      { headers: { Authorization: `Bearer ${this.token}` } },
+    );
+    if (!res.ok) await this.parseRaw(res);
+    return {
+      version: res.headers.get('x-agentbox-skill-version') ?? '',
+      data: Buffer.from(await res.arrayBuffer()),
+    };
+  }
+
+  discardSkill(name: string): Promise<{ name: string; removed: number }> {
+    return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  // ── session history ──
+
+  async listHistorySessions(f: HubApiHistoryFilter = {}): Promise<HubApiHistorySession[]> {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '') q.set(k, String(v));
+    const qs = q.toString();
+    return (
+      await this.request<{ sessions: HubApiHistorySession[] }>(
+        'GET',
+        `/history/sessions${qs ? `?${qs}` : ''}`,
+      )
+    ).sessions;
+  }
+
+  historySession(ref: string): Promise<HubApiHistoryDetail> {
+    return this.request<HubApiHistoryDetail>('GET', `/history/sessions/${encodeURIComponent(ref)}`);
+  }
+
+  async historyTurns(ref: string, from: number, to: number): Promise<HubApiHistoryTurn[]> {
+    return (
+      await this.request<{ turns: HubApiHistoryTurn[] }>(
+        'GET',
+        `/history/sessions/${encodeURIComponent(ref)}/turns?from=${String(from)}&to=${String(to)}`,
+      )
+    ).turns;
+  }
+
+  async searchHistory(q: string, limit: number): Promise<HubApiHistoryHit[]> {
+    const qs = new URLSearchParams({ q, limit: String(limit) }).toString();
+    return (await this.request<{ hits: HubApiHistoryHit[] }>('GET', `/history/search?${qs}`)).hits;
+  }
+
+  /** One transcript file of a session, as a byte stream (the caller writes it). */
+  async historyRaw(ref: string, path?: string): Promise<ReadableStream<Uint8Array>> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/history/sessions/${encodeURIComponent(ref)}/raw${qs}`,
+      { headers: { Authorization: `Bearer ${this.token}` } },
+    );
+    if (!res.ok) await this.parseRaw(res);
+    if (!res.body) throw new HubApiError('the hub sent an empty body', 'internal', res.status);
+    return res.body;
+  }
+
+  /** Envelope handling for the raw (non-JSON-body) calls above. */
+  private async parseRaw<T>(res: Response): Promise<T> {
+    const text = await res.text();
+    let parsed: unknown;
+    try {
+      parsed = text.length > 0 ? JSON.parse(text) : {};
+    } catch {
+      throw new HubApiError(`unexpected non-JSON response (${res.status})`, 'internal', res.status);
+    }
+    if (!res.ok) {
+      const err = (parsed as ApiErrorBody).error;
+      throw new HubApiError(
+        err?.message ?? `request failed: ${res.status}`,
+        err?.code ?? 'internal',
+        res.status,
+        err?.details,
+      );
+    }
+    return parsed as T;
   }
 
   // ── workspace upload / clone (host <-> live box) ──

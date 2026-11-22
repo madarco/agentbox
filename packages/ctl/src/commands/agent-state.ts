@@ -1,6 +1,10 @@
 import { Command } from 'commander';
 import { agentState } from '../client.js';
-import { clearAgentSessionPointer, recordAgentSessionId } from '../session-pointer.js';
+import {
+  appendHistoryBinding,
+  clearAgentSessionPointer,
+  recordAgentSessionId,
+} from '../session-pointer.js';
 import {
   AGENT_ACTIVITY_STATES,
   DEFAULT_SOCKET_PATH,
@@ -116,6 +120,13 @@ export async function reportAgentState(
     const raw = opts.payloadStdin || opts.captureSession ? await readStdinJson() : null;
     if (opts.captureSession && typeof raw?.session_id === 'string') {
       recordAgentSessionId(agent, raw.session_id);
+      // The history binding is appended, never cleared (`--clear-session` only
+      // drops the resume pointer above).
+      appendHistoryBinding(
+        agent,
+        raw.session_id,
+        typeof raw.transcript_path === 'string' ? raw.transcript_path : undefined,
+      );
     }
     const extracted = opts.payloadStdin ? extractPayload(typedState, raw) : undefined;
     const payload: {
@@ -144,6 +155,7 @@ interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Agents pass the active session id on every hook's stdin JSON. */
   session_id?: string;
+  transcript_path?: string;
 }
 
 /**
