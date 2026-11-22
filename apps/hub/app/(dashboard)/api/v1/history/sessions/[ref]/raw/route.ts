@@ -20,7 +20,8 @@ export async function GET(
   const file = await history.sessionFile(key, path || undefined);
   if (!file)
     return fail('not_found', path ? `the session has no file ${path}` : 'the session has no files');
-  const iter = history.rawStream(file.id);
+  // One fixed length for the header and the body: the file may still grow.
+  const iter = history.rawStream(file.id, file.offset);
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {

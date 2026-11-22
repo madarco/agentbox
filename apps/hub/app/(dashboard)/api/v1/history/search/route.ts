@@ -13,8 +13,8 @@ export async function GET(req: Request): Promise<Response> {
   const p = new URL(req.url).searchParams;
   const q = p.get('q')?.trim() ?? '';
   if (!q) return fail('invalid_request', 'q is required');
-  const limit = intParam(p.get('limit'), 20);
-  if (limit === null) return fail('invalid_request', 'limit must be a non-negative integer');
+  const limit = intParam(p.get('limit'), 20, 1);
+  if (limit === null) return fail('invalid_request', 'limit must be a positive integer');
   const hits = await history.search(q, limit);
   const sessions = new Map<string, Record<string, unknown>>();
   for (const h of hits) {

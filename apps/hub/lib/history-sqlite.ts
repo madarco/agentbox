@@ -507,8 +507,10 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         args.push(f.host);
       }
       if (f.sinceMs !== undefined) {
-        where.push('updated_at >= ?');
-        args.push(f.sinceMs);
+        // Activity is the transcript's own last timestamp; ingest time only
+        // stands in for a session whose records carry none.
+        where.push('(last_ts >= ? OR (last_ts IS NULL AND updated_at >= ?))');
+        args.push(new Date(f.sinceMs).toISOString(), f.sinceMs);
       }
       if (f.q) {
         if (fts) {
@@ -523,7 +525,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         }
       }
       const sql = `SELECT * FROM history_sessions ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-        ORDER BY updated_at DESC LIMIT ?`;
+        ORDER BY COALESCE(last_ts, '') DESC, updated_at DESC LIMIT ?`;
       return (db.prepare(sql).all(...args, f.limit ?? 50) as Row[]).map(toSession);
     },
 
@@ -563,10 +565,16 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       // position, so a subagent's turns interleave with the parent's.
       const rows = db
         .prepare(
-          `SELECT t.kind, t.role, t.name, t.text, t.ts, t.at, f.path FROM history_turns t
-             JOIN history_files f ON f.id = t.file_id
-           WHERE t.session_key = ?
-           ORDER BY COALESCE(t.ts, ''), t.file_id, t.at, t.seq LIMIT ? OFFSET ?`,
+          // A row without a timestamp takes the last one before it in its own
+          // file (ISO strings order correctly under MAX), so it stays where it
+          // was written instead of sorting ahead of everything.
+          `SELECT * FROM (
+             SELECT t.kind, t.role, t.name, t.text, t.ts, t.at, t.seq, t.file_id, f.path,
+               MAX(t.ts) OVER (PARTITION BY t.file_id ORDER BY t.at, t.seq
+                               ROWS UNBOUNDED PRECEDING) AS order_ts
+             FROM history_turns t JOIN history_files f ON f.id = t.file_id
+             WHERE t.session_key = ?)
+           ORDER BY COALESCE(order_ts, ''), file_id, at, seq LIMIT ? OFFSET ?`,
         )
         .all(key, limit, from) as Row[];
       return rows.map(

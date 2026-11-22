@@ -80,7 +80,7 @@ export interface HistorySessionFilter {
   project?: string;
   /** The PC (machine id) that shipped it. */
   host?: string;
-  /** Last activity at or after this epoch-ms. */
+  /** Last activity (the transcript's own last timestamp) at or after this epoch-ms. */
   sinceMs?: number;
   /**
    * Full-text over the session's turns. Plain words at the service; the
@@ -219,7 +219,8 @@ export interface HistoryService extends HistoryIngestSink {
   /** Reassemble a file's current generation byte for byte. */
   readRaw(fileId: number): Promise<Buffer>;
   /** The same bytes, chunk by chunk, for a streamed download. */
-  rawStream(fileId: number): AsyncGenerator<Buffer>;
+  /** The same bytes, chunk by chunk, up to `endOffset` (default: what is ingested now). */
+  rawStream(fileId: number, endOffset?: number): AsyncGenerator<Buffer>;
   listSessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
   resolveSession(ref: string): Promise<ResolvedSession>;
   sessionDetail(key: string): Promise<HistorySessionDetail | null>;
@@ -446,34 +447,45 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return Buffer.concat(parts);
     },
 
-    async *rawStream(fileId) {
+    async *rawStream(fileId, endOffset) {
       const file = await repo.getFileById(fileId);
       if (!file) throw new Error(`history file ${String(fileId)} not found`);
-      // Walk by byte position, not by a chunk list taken once: a seal running
-      // meanwhile replaces small chunks with one big one and deletes the old
-      // objects, so a missing object means "re-list and find my position".
+      // A fixed end: a file still being appended to would otherwise stream
+      // past the length the caller announced (content-length).
+      const end = Math.min(endOffset ?? file.offset, file.offset);
+      let chunks = await repo.listChunks(fileId, file.generation);
       let pos = 0;
       let retries = 0;
-      for (;;) {
-        const chunks = await repo.listChunks(fileId, file.generation);
+      while (pos < end) {
         const c = chunks.find((x) => x.start <= pos && pos < x.end);
-        if (!c) return;
-        let bytes: Buffer;
-        try {
-          bytes = await restoreChunk(c);
-        } catch (e) {
-          if (++retries > 3) throw e;
+        let bytes: Buffer | null = null;
+        if (c) {
+          try {
+            bytes = await restoreChunk(c);
+          } catch (e) {
+            // A seal replaced it meanwhile (small chunks merged, objects
+            // deleted): re-list and find this position again.
+            if (++retries > 3) throw e;
+          }
+        } else if (++retries > 3) {
+          throw new Error(`history file ${String(fileId)} has no chunk at byte ${String(pos)}`);
+        }
+        if (!c || !bytes) {
+          chunks = await repo.listChunks(fileId, file.generation);
           continue;
         }
         retries = 0;
-        yield pos === c.start ? bytes : bytes.subarray(pos - c.start);
-        pos = c.end;
+        const stop = Math.min(c.end, end);
+        yield bytes.subarray(pos - c.start, stop - c.start);
+        pos = stop;
       }
     },
 
     listSessions(filter) {
       const { q, ...rest } = filter;
       const fts = q ? ftsQuery(q) : null;
+      // A query with no words matches nothing (as `search` does), not everything.
+      if (q && !fts) return Promise.resolve([]);
       return repo.querySessions({
         ...rest,
         ...(fts ? { q: fts } : {}),

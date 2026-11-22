@@ -338,13 +338,18 @@ describe('history reads (Phase 2)', () => {
     expect((await svc.listSessions({ box: 'box1' })).map((s) => s.sessionId)).toEqual([S]);
     expect((await svc.listSessions({ box: 'smoke' })).length).toBe(2); // the box name
     expect(await svc.listSessions({ agent: 'codex' })).toEqual([]);
-    expect((await svc.listSessions({ sinceMs: 1_000_500 })).map((s) => s.sessionId)).toEqual([T]);
+    // `since` is activity (the transcript's own timestamps), not ingest time.
+    expect(
+      (await svc.listSessions({ sinceMs: Date.parse('2026-11-22T10:30:00Z') })).map(
+        (s) => s.sessionId,
+      ),
+    ).toEqual([T]);
     expect((await svc.listSessions({ q: 'flaky retry' })).map((s) => s.sessionId)).toEqual([S]);
     // FTS syntax in user input is quoted away, never an error.
     expect(await svc.listSessions({ q: 'flaky"' })).toHaveLength(1);
     // Operators become plain words that must also match: no error, no hits.
     expect(await svc.listSessions({ q: '"flaky OR NEAR(' })).toEqual([]);
-    expect(await svc.listSessions({ q: '***' })).toHaveLength(2); // no words: no filter
+    expect(await svc.listSessions({ q: '***' })).toEqual([]); // no words: no match, like search
   });
 
   it('resolves a session by key, id or a unique 8+ char prefix', async () => {
@@ -430,5 +435,42 @@ describe('history reads (Phase 2)', () => {
     expect(hits[0]!.snippet).toContain('[flaky]');
     expect(await svc.search('"unbalanced', 10)).toEqual([]);
     expect(await svc.search('   ', 10)).toEqual([]);
+  });
+
+  it('stops a download at the length taken when it started, while the file keeps growing', async () => {
+    const { svc, repo } = await service();
+    const edge = new Edge(svc);
+    await edge.append(line({ a: 1 }));
+    await edge.append(line({ b: 2 }));
+    const file = (await repo.getFile('box:box1', 'claude', PATH))!;
+    const snapshot = Buffer.from(edge.bytes);
+    const it = svc.rawStream(file.id, file.offset);
+    const parts: Buffer[] = [(await it.next()).value as Buffer];
+    await edge.append(line({ c: 3 })); // ingested mid-download
+    for (;;) {
+      const n = await it.next();
+      if (n.done) break;
+      parts.push(n.value);
+    }
+    expect(Buffer.concat(parts).equals(snapshot)).toBe(true);
+  });
+
+  it('keeps a row without a timestamp where it was written', async () => {
+    const { svc } = await service();
+    const edge = new Edge(svc);
+    await edge.append(
+      line({ type: 'user', timestamp: '2026-11-22T10:00:00Z', message: { content: 'first' } }),
+    );
+    await edge.append(
+      line({
+        type: 'assistant',
+        message: { id: 'm', content: [{ type: 'tool_use', name: 'Read' }] },
+      }),
+    );
+    await edge.append(
+      line({ type: 'user', timestamp: '2026-11-22T10:00:05Z', message: { content: 'second' } }),
+    );
+    const rows = await svc.sessionTurns(`claude:${S}`, 0, 10);
+    expect(rows.map((r) => r.text ?? r.name)).toEqual(['first', 'reply', 'Read', 'second']);
   });
 });

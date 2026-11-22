@@ -759,7 +759,6 @@ export interface HubApiTarget {
   sessionTurn?: string | null;
 }
 
-/** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 // ── session history (/api/v1/history) ──
 
 export interface HubApiHistorySession {
@@ -825,6 +824,7 @@ export interface HubApiHistoryFilter {
   limit?: number;
 }
 
+/** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 export class HubApiError extends Error {
   constructor(
     message: string,

@@ -37,7 +37,9 @@ export async function resolveOrFail(
   history: HistoryService,
   ref: string,
 ): Promise<string | Response> {
-  const r = await history.resolveSession(decodeURIComponent(ref));
+  // Next has already decoded the path param; decoding again would turn a
+  // literal `%41` into `A`, or throw on a lone `%`.
+  const r = await history.resolveSession(ref);
   if (r.ok) return r.key;
   return r.code === 'ambiguous'
     ? fail('conflict', `session reference "${ref}" matches several sessions`, {
@@ -46,8 +48,8 @@ export async function resolveOrFail(
     : fail('not_found', `no session matches "${ref}"`);
 }
 
-export function intParam(raw: string | null, fallback: number): number | null {
+export function intParam(raw: string | null, fallback: number, min = 0): number | null {
   if (raw === null || raw === '') return fallback;
   const n = Number(raw);
-  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+  return Number.isSafeInteger(n) && n >= min ? n : null;
 }

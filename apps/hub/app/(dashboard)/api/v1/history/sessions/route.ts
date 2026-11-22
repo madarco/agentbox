@@ -11,8 +11,8 @@ export async function GET(req: Request): Promise<Response> {
   const history = historyOrFail();
   if (history instanceof Response) return history;
   const p = new URL(req.url).searchParams;
-  const limit = intParam(p.get('limit'), 50);
-  if (limit === null) return fail('invalid_request', 'limit must be a non-negative integer');
+  const limit = intParam(p.get('limit'), 50, 1);
+  if (limit === null) return fail('invalid_request', 'limit must be a positive integer');
   const since = p.get('since');
   const sinceMs = since ? Date.parse(since) : undefined;
   if (sinceMs !== undefined && Number.isNaN(sinceMs)) {

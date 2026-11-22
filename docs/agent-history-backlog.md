@@ -111,3 +111,11 @@ teardown, and the private-key rule kept inside one line. Still open:
 - **Generations.** Reads serve a file's current generation only. Older
   generations (a rewritten file) stay in the archive until retention, with no
   route to them.
+- **Non-FTS fallback** (review of the Phase 2 diff). On a sqlite without FTS5,
+  `q` / `search` become one contiguous `LIKE '%w1 w2%'` (a phrase, not "all
+  words") with `%`/`_` unescaped. Node's `node:sqlite` ships FTS5, so this
+  path is untested in practice; make it a per-word `LIKE ... ESCAPE` AND.
+- **Search N+1.** `GET /history/search` loads each hit's session with its own
+  `getSession` round trip and returns a subset of the session shape (no
+  `key`). Batch-load, or JOIN in `repo.search`, and reuse `sessionJson`;
+  this matters once the postgres repo lands.
