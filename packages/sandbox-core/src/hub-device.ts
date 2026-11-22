@@ -89,7 +89,7 @@ export function deviceTokenFor(hubUrl: string, home: string = homedir()): string
 
 /**
  * Put the device token into `env` as the hub credential, for the hub at
- * `hubUrl` (or, with no URL to check against, whatever hub issued it).
+ * `hubUrl` only (no URL, no token).
  *
  * It fills `AGENTBOX_HUB_API_KEY` (the `/api/v1` Bearer) and
  * `AGENTBOX_RELAY_ADMIN_TOKEN` (the `/admin/*` Bearer the host-reach poller,
@@ -103,12 +103,11 @@ export function deviceTokenFor(hubUrl: string, home: string = homedir()): string
  */
 export function applyDeviceCredentialEnv(
   env: NodeJS.ProcessEnv,
-  hubUrl: string | undefined,
+  hubUrl: string,
   home: string = homedir(),
 ): DeviceCredential | null {
   const cred = readDeviceCredential(home);
-  if (!cred) return null;
-  if (hubUrl && cred.hubUrl !== normalizeHubUrl(hubUrl)) return null;
+  if (!cred || !hubUrl || cred.hubUrl !== normalizeHubUrl(hubUrl)) return null;
   if (!env.AGENTBOX_HUB_API_KEY) env.AGENTBOX_HUB_API_KEY = cred.token;
   if (!env.AGENTBOX_RELAY_ADMIN_TOKEN) env.AGENTBOX_RELAY_ADMIN_TOKEN = cred.token;
   return cred;

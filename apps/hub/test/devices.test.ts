@@ -9,7 +9,7 @@ import {
   normalizeUserCode,
 } from '../lib/backend/devices';
 import { openSqliteDeviceRepo } from '../lib/devices-sqlite';
-import { canApproveDevices, parseActor } from '../lib/request-actor';
+import { canApproveDevices, canManageDevice, parseActor } from '../lib/request-actor';
 
 const ID = '0123456789abcdef0123456789abcdef';
 
@@ -186,5 +186,55 @@ describe('request actor', () => {
     expect(canApproveDevices({ kind: 'hub-token' })).toBe(false);
     expect(canApproveDevices({ kind: 'session' })).toBe(true);
     expect(canApproveDevices({ kind: 'api-key' })).toBe(true);
+  });
+});
+
+describe('review fixes', () => {
+  it('a device may revoke or rename only itself; the owner any', () => {
+    const other = 'ffffffffffffffffffffffffffffffff';
+    expect(canManageDevice({ kind: 'device', deviceId: ID }, ID)).toBe(true);
+    expect(canManageDevice({ kind: 'device', deviceId: ID }, other)).toBe(false);
+    expect(canManageDevice({ kind: 'session' }, other)).toBe(true);
+    expect(canManageDevice({ kind: 'api-key' }, other)).toBe(true);
+    expect(canManageDevice({ kind: 'anonymous' }, other)).toBe(false);
+  });
+
+  it('a re-login with the current token is proven; a bare claim to the id is not', () => {
+    const { svc } = setup();
+    const token = enroll(svc);
+    svc.startCode({ deviceId: ID, label: 'pc-a', currentToken: token });
+    expect(svc.listPending()[0]).toMatchObject({ reenroll: true, proven: true });
+    svc.startCode({ deviceId: ID, label: 'pc-a', currentToken: 'abdev_forged' });
+    // The second code superseded the first for the same machine.
+    expect(svc.listPending()).toHaveLength(1);
+    expect(svc.listPending()[0]).toMatchObject({ reenroll: true, proven: false });
+  });
+
+  it('approving closes the old token streams even if the device enrolled after the code opened', () => {
+    const { svc, repo } = setup();
+    const c = svc.startCode({ deviceId: ID, label: 'a' });
+    if (!c.ok) throw new Error('start');
+    // Enrolled behind the code's back (the code still says reenroll=false).
+    repo.enroll({ id: ID, label: 'a', tokenHash: hashDeviceToken('abdev_old'), now: 1 });
+    const seen: string[] = [];
+    svc.onRevoked((id) => seen.push(id));
+    svc.approve(c.userCode);
+    expect(seen).toEqual([ID]);
+    expect(svc.verifyToken('abdev_old')).toBeNull();
+  });
+
+  it('denied codes do not hold the cap', () => {
+    const { svc } = setup();
+    const codes: string[] = [];
+    for (let i = 0; i < MAX_PENDING; i++) {
+      const r = svc.startCode({
+        deviceId: `${ID.slice(0, 30)}${String(i).padStart(2, '0')}`,
+        label: 'x',
+      });
+      if (r.ok) codes.push(r.userCode);
+    }
+    expect(svc.startCode({ deviceId: ID, label: 'x' }).ok).toBe(false);
+    svc.deny(codes[0]!);
+    expect(svc.startCode({ deviceId: ID, label: 'x' }).ok).toBe(true);
   });
 });

@@ -34,11 +34,11 @@ export const CONTROL_PLANE_ENV_PATH = join(
  */
 export function loadControlPlaneEnv(path: string = CONTROL_PLANE_ENV_PATH): void {
   // An enrolled PC (`agentbox hub login`) presents its own token first; the file
-  // below then only fills what is still unset. The URL check is against the
-  // control box already exported for this process, when there is one.
-  if (path === CONTROL_PLANE_ENV_PATH) {
-    applyDeviceCredentialEnv(process.env, process.env.AGENTBOX_CONTROL_PLANE_URL);
-  }
+  // below then only fills what is still unset. Only for the hub this process is
+  // configured for (exported at CLI startup) — with no hub to check against, a
+  // device token is never applied, so it cannot reach a hub that did not issue it.
+  const hubUrl = process.env.AGENTBOX_CONTROL_PLANE_URL;
+  if (path === CONTROL_PLANE_ENV_PATH && hubUrl) applyDeviceCredentialEnv(process.env, hubUrl);
   if (!existsSync(path)) return;
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());

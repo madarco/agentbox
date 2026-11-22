@@ -16,6 +16,7 @@ import { getMachineId, getMachineLabel, loadEffectiveConfig } from '@agentbox/co
 import {
   applyDeviceCredentialEnv,
   deviceCredentialPath,
+  deviceTokenFor,
   normalizeHubUrl,
   readDeviceCredential,
   removeDeviceCredential,
@@ -99,7 +100,12 @@ const loginSub = new Command('login')
         verificationPath: string;
         expiresIn: number;
         interval: number;
-      }>(`${url}/api/v1/devices/code`, { method: 'POST', body: { deviceId, label } });
+      }>(`${url}/api/v1/devices/code`, {
+        method: 'POST',
+        // A re-login presents the current token, so the owner sees the code really
+        // comes from the enrolled computer rather than from someone claiming its id.
+        body: { deviceId, label, currentToken: deviceTokenFor(url) || undefined },
+      });
       if (started.status === 503) {
         log.error(
           `${url} does not enroll devices. A local hub needs no login; a deployed or exposed hub ` +
@@ -154,6 +160,9 @@ const loginSub = new Command('login')
           return;
         }
         if (code === 'authorization_pending') continue;
+        // A proxy 502, a 429 or any answer without an enrollment verdict is not
+        // the end of the code; keep polling until it expires.
+        if (code !== 'access_denied' && code !== 'expired_token') continue;
         s.stop(code === 'access_denied' ? 'denied' : 'expired');
         log.error(
           code === 'access_denied'

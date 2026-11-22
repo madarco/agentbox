@@ -29,6 +29,7 @@ interface Pending {
   label: string;
   expiresAt: string;
   reenroll: boolean;
+  proven: boolean;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -168,8 +169,14 @@ export default function DevicesPage() {
                       title={p.deviceId}
                     >
                       {p.deviceId}
-                      {p.reenroll ? ' · already enrolled: approving replaces its token' : ''}
+                      {p.reenroll && p.proven ? ' · re-login from this enrolled computer' : ''}
                     </div>
+                    {p.reenroll && !p.proven ? (
+                      <div className="mt-0.5 text-[12px] text-red-400">
+                        Claims an enrolled computer&apos;s id without its token. Approving replaces
+                        that computer&apos;s token: approve only if you just ran `hub login` there.
+                      </div>
+                    ) : null}
                   </div>
                   <Button
                     size="sm"

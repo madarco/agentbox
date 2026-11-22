@@ -228,7 +228,26 @@ export class HostReachQueue {
    */
   /** Record which device a poller runs on (see {@link pollerDevice}). */
   identify(pollerId: string, deviceId: string): void {
-    if (deviceId) this.pollerDevice.set(pollerId, deviceId);
+    if (!deviceId) return;
+    // The sweep only runs while actions are parked; an idle queue prunes here.
+    if (!this.pollerDevice.has(pollerId)) this.prunePollers();
+    this.pollerDevice.set(pollerId, deviceId);
+  }
+
+  /**
+   * Forget pollers gone for well past the grace window. Every relay restart is a
+   * new pollerId, so without this a long-lived control box would keep them all.
+   * Pollers that still own an action are kept (the went-away sweep needs them).
+   */
+  private prunePollers(): void {
+    const cutoff = this.now() - Math.max(this.reachTimeoutMs, this.graceMs) * 2;
+    const owners = new Set<string>();
+    for (const p of this.map.values()) if (p.deliveredTo !== undefined) owners.add(p.deliveredTo);
+    for (const [pollerId, seen] of this.pollerSeen) {
+      if (seen >= cutoff || owners.has(pollerId)) continue;
+      this.pollerSeen.delete(pollerId);
+      this.pollerDevice.delete(pollerId);
+    }
   }
 
   /** The devices with a poller present within the reachability window. */
@@ -454,6 +473,7 @@ export class HostReachQueue {
    * blocked forever on an RPC nobody will ever answer.
    */
   private sweep(): void {
+    this.prunePollers();
     if (this.map.size === 0) {
       if (this.sweepTimer) {
         clearInterval(this.sweepTimer);

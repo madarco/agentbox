@@ -35,10 +35,21 @@ export function requestActor(req: Request): RequestActor {
 /**
  * Whether the caller may enroll a new device. Not a device: a stolen laptop must
  * not be able to mint itself a spare token before it is revoked. The owner's
- * browser session, the operator's API key, and a hub with auth off may.
+ * browser session and the operator's API key may. (No devices exist on a hub
+ * without the password profile, so other actors never reach this.)
  */
 export function canApproveDevices(actor: RequestActor): boolean {
-  return actor.kind === 'session' || actor.kind === 'api-key' || actor.kind === 'open';
+  return actor.kind === 'session' || actor.kind === 'api-key';
+}
+
+/**
+ * Whether the caller may revoke or rename device `id`: the owner may touch any
+ * device; a device only itself (`agentbox hub logout`). A stolen laptop must not
+ * be able to lock the owner's other computers out.
+ */
+export function canManageDevice(actor: RequestActor, id: string): boolean {
+  if (canApproveDevices(actor)) return true;
+  return actor.kind === 'device' && actor.deviceId === id;
 }
 
 /**

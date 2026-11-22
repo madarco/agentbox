@@ -40,6 +40,12 @@ export interface PendingCode {
   expiresAt: number;
   /** True when approving would replace the token of an already-enrolled device. */
   reenroll: boolean;
+  /**
+   * The request carried that device's current token, so it comes from the
+   * enrolled computer itself. A re-enroll without it is only a claim to the id —
+   * the page warns the owner before they hand that computer's identity away.
+   */
+  proven: boolean;
 }
 
 export type ClaimResult =
@@ -57,7 +63,7 @@ export type StartCodeResult =
   | { ok: false; code: 'invalid_request' | 'rate_limited'; message: string };
 
 export interface DeviceService {
-  startCode(input: { deviceId: unknown; label: unknown }): StartCodeResult;
+  startCode(input: { deviceId: unknown; label: unknown; currentToken?: unknown }): StartCodeResult;
   claim(deviceCode: string): ClaimResult;
   listPending(): PendingCode[];
   approve(userCode: string): { ok: true; device: DeviceRecord } | { ok: false; error: string };
@@ -126,6 +132,13 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
     const t = now();
     for (const [k, e] of pending) if (e.expiresAt <= t) pending.delete(k);
   };
+  const proven = (deviceId: string, currentToken: unknown): boolean => {
+    if (typeof currentToken !== 'string' || !currentToken.startsWith(DEVICE_TOKEN_PREFIX)) {
+      return false;
+    }
+    const d = repo.findByTokenHash(hashDeviceToken(currentToken));
+    return d !== null && d.revokedAt === null && d.id === deviceId;
+  };
   const byUserCode = (userCode: string): PendingEntry | undefined => {
     const want = normalizeUserCode(userCode);
     for (const e of pending.values()) if (e.userCode === want) return e;
@@ -140,7 +153,15 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       }
       const label = cleanLabel(input.label) ?? deviceId.slice(0, 8);
       sweep();
-      if (pending.size >= MAX_PENDING) {
+      // A new code for the same machine supersedes its older waiting one, so a PC
+      // re-running `hub login` never uses up the cap.
+      for (const [k, e] of pending) {
+        if (e.state === 'pending' && e.deviceId === deviceId) pending.delete(k);
+      }
+      // Only codes still waiting count: denied and approved-unclaimed ones sit
+      // in the map until their poll or expiry, but must not block new logins.
+      const waiting = [...pending.values()].filter((e) => e.state === 'pending').length;
+      if (waiting >= MAX_PENDING) {
         return {
           ok: false,
           code: 'rate_limited',
@@ -159,6 +180,7 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
         createdAt: t,
         expiresAt: t + CODE_TTL_MS,
         reenroll: repo.get(deviceId) !== null,
+        proven: proven(deviceId, input.currentToken),
         state: 'pending',
       });
       return {
@@ -184,12 +206,13 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       sweep();
       return [...pending.values()]
         .filter((e) => e.state === 'pending')
-        .map(({ userCode, deviceId, label, createdAt, expiresAt }) => ({
+        .map(({ userCode, deviceId, label, createdAt, expiresAt, proven: p }) => ({
           userCode,
           deviceId,
           label,
           createdAt,
           expiresAt,
+          proven: p,
           // Recomputed: the device may have been enrolled since the code was opened.
           reenroll: repo.get(deviceId) !== null,
         }));
@@ -200,6 +223,8 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       const e = byUserCode(userCode);
       if (!e || e.state !== 'pending') return { ok: false, error: 'no pending code matches' };
       const token = DEVICE_TOKEN_PREFIX + randomBytes(32).toString('base64url');
+      // Read now, not at code time: the device may have been enrolled since.
+      const wasEnrolled = repo.get(e.deviceId) !== null;
       const device = repo.enroll({
         id: e.deviceId,
         label: e.label,
@@ -208,7 +233,7 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       });
       // A re-enrolled device's old token stopped matching the moment its hash was
       // replaced; anything still streaming on it must be closed like a revocation.
-      if (e.reenroll) for (const l of listeners) l(device.id);
+      if (wasEnrolled) for (const l of listeners) l(device.id);
       e.state = { approved: { token, device } };
       return { ok: true, device };
     },

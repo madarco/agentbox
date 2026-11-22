@@ -110,3 +110,22 @@ describe('device tokens on the relay admin surface', () => {
     expect((await get(`${base}/admin/custody`, DEVICE)).status).toBe(503);
   });
 });
+
+describe('HostReachQueue poller bookkeeping', () => {
+  it('forgets pollers long gone, keeps recent ones', async () => {
+    const { HostReachQueue } = await import('../src/host-reach.js');
+    let t = 0;
+    const q = new HostReachQueue({ reachTimeoutMs: 1000, now: () => t });
+    q.identify('old', 'dev-old-1234');
+    q.touch('old');
+    t = 10_000;
+    q.identify('new', 'dev-new-1234');
+    q.touch('new');
+    expect(q.devicesPresent()).toEqual(['dev-new-1234']);
+    // `old` was pruned, not merely absent from the window.
+    t = 10_500;
+    q.touch('old');
+    expect(q.devicesPresent()).toEqual(['dev-new-1234']);
+    q.stop();
+  });
+});

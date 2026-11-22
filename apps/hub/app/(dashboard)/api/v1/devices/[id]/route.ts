@@ -1,4 +1,5 @@
 // PATCH /api/v1/devices/:id — {label}: rename an enrolled device.
+import { canManageDevice, requestActor } from '@/lib/request-actor';
 import { fail, ok } from '../../lib/envelope';
 import { devicesOrFail, jsonBody } from '../_service';
 
@@ -12,6 +13,12 @@ export async function PATCH(
   const devices = devicesOrFail();
   if (devices instanceof Response) return devices;
   const { id } = await ctx.params;
+  if (!canManageDevice(requestActor(req), id)) {
+    return fail(
+      'forbidden',
+      'a device can only rename itself; the hub owner can rename any device',
+    );
+  }
   const body = await jsonBody(req);
   const res = devices.rename(id, body?.label);
   if (!res.ok) {

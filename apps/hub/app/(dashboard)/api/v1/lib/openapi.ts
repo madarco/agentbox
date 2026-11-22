@@ -3025,6 +3025,11 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     deviceId: { type: 'string', description: "The PC's machine id" },
                     label: { type: 'string', description: 'Display name, usually the hostname' },
+                    currentToken: {
+                      type: 'string',
+                      description:
+                        "A re-login's current device token: marks the code `proven` (it comes from that computer)",
+                    },
                   },
                   required: ['deviceId'],
                 },
@@ -3128,6 +3133,10 @@ export function buildOpenApi(): Record<string, unknown> {
                               type: 'boolean',
                               description: 'Approving replaces the token of an enrolled device',
                             },
+                            proven: {
+                              type: 'boolean',
+                              description: "The request carried that device's current token",
+                            },
                           },
                           required: [
                             'userCode',
@@ -3136,6 +3145,7 @@ export function buildOpenApi(): Record<string, unknown> {
                             'createdAt',
                             'expiresAt',
                             'reenroll',
+                            'proven',
                           ],
                         },
                       },
@@ -3220,6 +3230,7 @@ export function buildOpenApi(): Record<string, unknown> {
         patch: {
           tags: ['Devices'],
           summary: 'Rename a device',
+          description: 'The owner may rename any device; a device token only itself.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
@@ -3247,7 +3258,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Revoke a device',
           description:
-            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. A device may revoke itself.",
+            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. The owner may revoke any device; a device token may revoke only itself (403 otherwise).",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Revoked' },
