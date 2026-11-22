@@ -121,7 +121,10 @@ describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
     expect(rec.accounts).toEqual({ claude: 'work' });
   });
   it('a box with no named account records none', () => {
-    const rec = registrationToBoxRecord(reg(), { controlPlaneUrl: 'https://hub.example', freshToken });
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
     expect(rec.accounts).toBeUndefined();
   });
 });

@@ -4416,7 +4416,7 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'object',
               additionalProperties: { type: 'string' },
               description:
-                "Named LLM account per agent, e.g. `{ \"claude\": \"work\" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Raw ids only; labels and kinds come with a later accounts endpoint.",
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Raw ids only; labels and kinds come with a later accounts endpoint.',
             },
             persistent: {
               type: 'boolean',
@@ -5365,7 +5365,7 @@ export function buildOpenApi(): Record<string, unknown> {
                   type: 'object',
                   additionalProperties: { type: 'string' },
                   description:
-                    "Named LLM account per agent (`{ \"claude\": \"work\" }`), the API twin of `--account`. Resolved against THIS hub machine's account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender's account must be a login.",
+                    'Named LLM account per agent (`{ "claude": "work" }`), the API twin of `--account`. Resolved against THIS hub machine\'s account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender\'s account must be a login.',
                 },
               },
             },
