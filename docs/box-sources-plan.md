@@ -1,7 +1,7 @@
 # Box sources: carry + repos, several repos per box — plan
 
-Status: **proposed** (2026-11-21). Design only; no product code ships with this doc. Multi-PC
-Phase 3. Phase 1 below is the single-repo shortcut multi-PC Phase 4 (route box→host requests to the
+Status: **accepted** (2026-11-21; the open questions are settled in §8 Decisions, deferred work in
+§9 Backlog). Design only; no product code ships with this doc. Multi-PC Phase 3. Phase 1 below is the single-repo shortcut multi-PC Phase 4 (route box→host requests to the
 right PC) needs; multi-repo comes after it.
 
 Related: [`workspaces-remote-hub-plan.md`](./workspaces-remote-hub-plan.md) (repo-URL workspace
@@ -10,7 +10,8 @@ records and per-host folder maps), [`plans/box-cp-host-reach-plan.md`](./plans/b
 [`cloud-create-flow.md`](./cloud-create-flow.md), [`sync-architecture.md`](./sync-architecture.md).
 
 Legend: **[measured]** = checked by running something in this session (the spike is recorded inline);
-**[code]** = read from the code at the cited line on `nightly` (`f24b57c0`); unmarked = design.
+**[code]** = read from the code at the cited line on `nightly` (`40bac36e`, which includes the
+machine id from #418); unmarked = design.
 
 ## Decision being designed (owner, 2026-11-21)
 
@@ -85,11 +86,11 @@ There is no declared list of what goes in a box. A create takes **one host folde
 | Key | Derived from | Where | Scope |
 |---|---|---|---|
 | `hashProjectPath(abs)` | sha1 of an absolute path (`packages/config/src/paths.ts:79`) | project registry dirs, project config (`packages/config/src/load.ts:143`), docker checkpoint tags (`packages/sandbox-docker/src/checkpoint.ts:38`), cloud snapshot names (`packages/sandbox-cloud/src/checkpoint.ts:102`), remote-docker checkpoints (`packages/sandbox-remote-docker/src/index.ts:46`), `projectId` on a local create (`apps/cli/src/commands/create.ts:931`), timeline facts (`apps/hub/lib/backend/box-facts.ts:49`) | one folder on one machine |
-| `repoProjectKey(url)` = `hashProjectPath(normalizeRepoUrl(url))` | origin URL (`packages/relay/src/workspaces/workspace-store.ts:157`) | workspace project ids, hub project cards for hub-built boxes (`apps/hub/lib/boxes/project-key.ts`) | machine-independent |
+| `repoProjectKey(url)` = `hashProjectPath(normalizeRepoUrl(url))` | origin URL (`packages/relay/src/workspaces/workspace-store.ts:163`) | workspace project ids, hub project cards for hub-built boxes (`apps/hub/lib/boxes/project-key.ts`) | machine-independent |
 | `owner__repo` slug | origin URL (`project-slug.ts:57`) | custody `projects/<slug>/` (seed, secrets, cp cache: `packages/relay/src/cp-cache.ts:42`) | machine-independent, but lossy (below) |
 | `BoxRegistration.originUrl` | `git remote get-url origin` of the **first** worktree | relay/hub registration (`packages/relay/src/types.ts:107`), lease target, PR lookups | one repo |
-| workspace `hosts[hostname].projectRoots[projectId]` | CLI folder scan | workspace record (`packages/relay/src/workspaces/types.ts:27-33`) | per machine, keyed by **hostname** |
-| cp cache entry | `projects/<slug>/cp/<sha256("rel:"+path or "abs:"+path)>` + `capturedOn: hostname()` (`cp-cache.ts:62`, `cp-cache-capture.ts:80`) | custody | per repo slug |
+| workspace `hosts[<machine key>].projectRoots[projectId]` | CLI folder scan | workspace record (`packages/relay/src/workspaces/types.ts`, `WorkspaceHost`) | per machine, keyed by `getMachineId()` since #418 (a pre-id entry keeps its hostname key until that machine adopts it) |
+| cp cache entry | `projects/<slug>/cp/<sha256("rel:"+path or "abs:"+path)>` + `capturedOn: getMachineLabel()` (`cp-cache.ts:62`, `cp-cache-capture.ts`) | custody | per repo slug; the capturing machine is recorded by hostname label only |
 
 `registrationProjectKey` (`apps/hub/lib/boxes/project-key.ts`) shows the current rule: a box groups
 by its **host folder** when it has a real one, else by its repo. So two PCs with the same repo at
@@ -143,7 +144,7 @@ which is wrong on a case-sensitive filesystem.
 | A17 | cp: `boxWorkspacePath(boxId)` (`host-actions.ts:891`) resolves relative paths against the one folder; cache prefix is one slug (`cp-cache.ts:42`) | one host folder answers every relative path |
 | A18 | custody seed `projects/<slug>/seed/` (`custody-seed.ts`) | carry + untracked + env belong to one repo |
 | A19 | `hasGit` = "any worktree" (`hub-backend.ts:577`, `:528` probe of the project root) | git-ness of a box is one fact |
-| A20 | workspace `hosts[hostname()]` and `capturedOn: hostname()` | hostname as machine identity (multi-PC Phase 1a replaces it) |
+| A20 | `capturedOn: getMachineLabel()` (`cp-cache-capture.ts`) | the cp cache names its source machine by hostname only. Multi-PC Phase 1a (#418) moved manager records, workspace `hosts` and timeline rows to the machine id; this one is left for Phase 1 here |
 
 ---
 
@@ -176,7 +177,7 @@ export interface RepoSource {
   base?: string;
   /** Where the bytes came from at create time. */
   seededFrom:
-    | { kind: 'machine'; machineId: string; folder: string }   // PC-driven create
+    | { kind: 'machine'; machineId: string; label: string; folder: string }   // PC-driven create
     | { kind: 'clone' }                                          // hub worker / in-box clone
     | { kind: 'checkpoint'; ref: string };
   /** Docker only: the per-box git worktree registration path. */
@@ -186,7 +187,9 @@ export interface RepoSource {
 export interface CarrySource {
   src: string;                  // as written in agentbox.yaml (`~/x`, `./y`)
   dest: string;                 // box path
-  from: { kind: 'machine'; machineId: string; absSrc: string } | { kind: 'custody'; key: string };
+  from:
+    | { kind: 'machine'; machineId: string; label: string; absSrc: string }
+    | { kind: 'custody'; key: string };
   bytes: number;
   hash?: string;                // content hash, for the on-start resync (today's carry.entries[].hash)
 }
@@ -281,7 +284,7 @@ Rules:
 1. Trim; strip the scheme, any `user[:pass]@`, a trailing `/`, and a trailing `.git`.
 2. scp form `host:path` → `host/path`.
 3. **Drop the port.** The same repo over ssh:22 and https:443 is one repo. Self-hosted forges on
-   non-standard ssh ports are the case to watch (open question 4).
+   non-standard ssh ports are the case to watch (Decision 4).
 4. **Expand `~/.ssh/config` host aliases via `ssh -G`** (reuse `expandSshHost`) **for non-http(s)
    URLs only**, the same `aliasable` rule `packages/relay/src/git-pat.ts:107` already applies. This
    has to happen **on the machine whose `~/.ssh/config` it is**: the CLI computes the key and sends
@@ -325,16 +328,21 @@ repo-less hub create. That stays as it is: service-agent creates go through thei
 ## 4. Per-machine mapping: the checkouts registry
 
 "Machine M has repo R at folder F" becomes a hub-level fact, independent of workspaces, keyed on the
-multi-PC Phase 1a machine id (`getMachineId()`, `~/.agentbox/machine-id`, landing on
-`feat/machine-id`; not on `nightly` yet [code: no match for `machine-id` in `packages/` or `apps/`]).
+machine id that multi-PC Phase 1a landed in #418 [code]: `getMachineId()` in
+`packages/config/src/machine-id.ts`, a random UUID minted once into `~/.agentbox/machine-id`. The
+same module provides `tryGetMachineId()` (undefined on an unwritable `$HOME`), `getMachineLabel()`
+(the hostname, display only), `thisMachine(): MachineRef` (`{ id?, label }`), `sameMachine(rec, me)`
+(the id decides when both sides have one; the hostname is only the legacy fallback) and
+`machineKeyFor`/`machineKeyIn` for `hosts`-style maps. The checkouts registry uses these as they are
+and adds no identity of its own.
 
 ```ts
 // packages/relay/src/checkouts/types.ts (new); store file ~/.agentbox/hub/checkouts.json
 export interface CheckoutRecord {
   repoKey: string;
-  machineId: string;
+  machineId: string;     // getMachineId() of the reporter; required (below)
   folder: string;        // absolute, realpath'd, on that machine
-  label: string;         // hostname at last report, display only
+  label: string;         // getMachineLabel() at last report, display only
   seenAt: string;        // last report
   head?: string;         // branch checked out, informational
 }
@@ -345,10 +353,14 @@ export interface CheckoutRecord {
   `seededFrom.machine`), `workspace add`/rescan (the scan in `workspace.ts` already reads every
   project's origin), and project registration (`registerProject`). It is idempotent, and the last
   report per `(repoKey, machineId, folder)` wins. A folder that no longer exists is removed by the
-  next report from that machine. It is never inferred on the hub, which cannot stat a PC.
-- **Workspaces**: `WorkspaceRecord.hosts[*].projectRoots` stays as it is (re-keyed to the machine id
-  by Phase 1a). The workspace scan is simply one more writer of checkouts. Merging the two stores is
-  deliberately not part of this plan.
+  next report from that machine. It is never inferred on the hub, which cannot stat a PC. **A report
+  with no machine id is refused** (`tryGetMachineId()` returned undefined, or the client predates
+  #418). Unlike a workspace `hosts` entry there is no hostname-keyed legacy data to adopt, and a
+  hostname alone vouches for nothing, which is the rule `machineKeyIn` already follows.
+- **Workspaces** (Decision 5): `WorkspaceRecord.hosts[*].projectRoots` stays as it is, already keyed
+  by machine id since #418, and the two stores live **side by side**. The workspace scan is simply
+  one more writer of checkouts. Folding the workspace host maps into the registry is backlog item B1
+  (§9).
 - **Reader for multi-PC Phase 4**, pure, in `packages/relay/src/checkouts/resolve.ts` (new):
 
   ```ts
@@ -376,7 +388,9 @@ export interface CheckoutRecord {
 - **cp cache key per repo**: `projects/<slug(repoKey)>/cp/<sha256("rel:" + relPath)>`, so two
   machines with the repo at different folders read and write the same entry. Absolute and
   outside-repo paths stay box-scoped (`boxes/<id>/cp/…`, today's no-slug fallback, `cp-cache.ts:44`).
-  `capturedOn` records the machine id plus the hostname label.
+  The entry's metadata gains `capturedOnMachineId` (`getMachineId()`) beside today's
+  `capturedOn` label. #418 left it out because nothing read it then; `hostCandidatesFor` does, to
+  tell a cache entry from the origin machine apart from one written by another machine with the repo.
 
 ---
 
@@ -384,12 +398,12 @@ export interface CheckoutRecord {
 
 | Concern | v1 behaviour |
 |---|---|
-| **Branch naming** | `agentbox/<box>` in **every** repo of a new box (what cloud already does). Same name across repos makes a multi-repo change one branch name to land and review. Docker's `--<sub>` suffix (`create.ts:632`) is kept on existing records (the branch is recorded) and dropped for new boxes. `pickFreshBranch` bumps per repo, so `-2` may differ between repos; the record holds each one. (Open question 2.) |
-| **docker** | Already loops N repos with a bind-mounted `.git` each (§1.1). Generalisation: each `RepoSource` resolves its **own** `hostMainRepo` through this machine's checkouts (or the folder given to `--repo`) instead of all being subdirs of one folder. Container path is `/workspace/<path>`. Mount stays `<hostMainRepo>/.git:<hostMainRepo>/.git`, so two repos from unrelated folders mount side by side unchanged. **A repo with no checkout on this machine is refused** for docker in v1 ("docker boxes need a local checkout of `<repoKey>`; clone it or use a cloud provider"). A managed mirror under `~/.agentbox/repos/` is backlog. |
+| **Branch naming** | `agentbox/<box>` in **every** repo of a new box (what cloud already does). Same name across repos makes a multi-repo change one branch name to land and review. Docker's `--<sub>` suffix (`create.ts:632`) is kept on existing records (the branch is recorded) and dropped for new boxes. `pickFreshBranch` bumps per repo, so `-2` may differ between repos; the record holds each one. (Decision 2.) |
+| **docker** | Already loops N repos with a bind-mounted `.git` each (§1.1). Generalisation: each `RepoSource` resolves its **own** `hostMainRepo` through this machine's checkouts (or the folder given to `--repo`) instead of all being subdirs of one folder. Container path is `/workspace/<path>`. Mount stays `<hostMainRepo>/.git:<hostMainRepo>/.git`, so two repos from unrelated folders mount side by side unchanged. **A repo with no checkout on this machine is refused** for docker in v1 ("docker boxes need a local checkout of `<repoKey>`; clone it or use a cloud provider"). A managed mirror under `~/.agentbox/repos/` is backlog item B3 (Decision 3). |
 | **clouds + remote-docker** | `seedCloudWorkspace` takes `RepoSource[]` (each with its host folder) instead of discovering, which removes A3: no-root layouts get git too. The per-repo clone/stash/untracked/extract is unchanged. Record the sources (removes A4: resync reads `sources`, not `detectGitRepos`, so it also works from a machine with a different checkout layout). |
 | **hub / in-box clone** | `inBoxClone` and `CreateJobRequest` carry `repos: [{ url, path, base? }]`; the worker clones each into `<job>/<path>` (each with its own leased token: a GitHub App installation covers several repos of one owner, other owners need separate leases) and overlays each repo's custody seed. LFS handling per repo, unchanged. |
 | **push / fetch through the relay** | Everything resolves the repo by `containerPath` with `resolveWorktree`'s longest-prefix rule, generalised to `sources.repos`. Cloud `runGitRpc` must use that repo's host folder (from checkouts on this machine) or its own `url` for the checkout-less path, which also fixes A10 for today's nested repos. The push gate's sanctioned-branch rule is per repo. |
-| **checkpoints / restore** | Docker: the image carries all of `/workspace`. Restore already regenerates one worktree per recorded repo (`create.ts:559-584`), and keeps doing so from `sources`. Cloud: the overlay re-seed runs per repo. **Checkpoint names stay keyed by `hashProjectPath(projectRoot)` in v1** (A16): moving them to the primary repo key is what makes a checkpoint usable from another PC, and that is a separate change (backlog item, open question 6). |
+| **checkpoints / restore** | Docker: the image carries all of `/workspace`. Restore already regenerates one worktree per recorded repo (`create.ts:559-584`), and keeps doing so from `sources`. Cloud: the overlay re-seed runs per repo. **Checkpoint names stay keyed by `hashProjectPath(projectRoot)` in v1** (A16): moving them to the primary repo key is what makes a checkpoint usable from another PC, and that is a separate change: backlog item B2, not multi-PC Stage 1 (Decision 6). |
 | **`agentbox git pull/push/checkout/branch`** | `--repo <path>` on every subcommand, plus `repo` in the API body. Default is the primary repo. No root and several repos → refuse, listing paths. `git pr create` injects the selected repo's branch (A12). `--all` for `push`/`pull` is a later nicety, not v1. |
 | **in-box `agentbox-ctl git`** | Already sends `params.path = cwd`, so it already picks the right repo once the relay resolves by prefix. No ctl change beyond what the relay does. |
 | **timeline / PR sync** | `TimelineBoxFact.branches` becomes per repo (`{ repoKey, branches }[]`). `github-prs.ts` matches a PR to a box by `(repoKey, head branch)`, which is already how it lists PRs per project. `Box.pr` stays the primary repo's PR. `sources.repos[].pr` carries the rest. Lanes stay `box:<id>`, so one lane per box, with PR rows per repo. |
@@ -425,8 +439,9 @@ per-repo.
   (the host resolver only reads keys it knows), and an older in-box ctl parses the file with a
   non-fatal unknown-key warning (`packages/ctl/src/config.ts:680`) [code]. Adding `repos` to
   `TOP_LEVEL_KEYS` silences that warning for new boxes.
-- **Workspace `hosts` / hostname keys**: Phase 1a's adoption ("match the id or the current
-  hostname, re-stamp") covers them. The checkouts registry starts empty and fills from the first
+- **Workspace `hosts` / hostname keys**: already handled by #418 (an entry keyed by hostname is
+  adopted under the machine id the next time that machine reads or rescans it, and only when its
+  folder exists there). Nothing in this plan touches it. The checkouts registry starts empty and fills from the first
   report. Until a machine reports, Phase 4 treats it as "origin only, then cache", which is today's
   behaviour.
 
@@ -439,13 +454,15 @@ smoke, `/code-review medium`, update `apps/web/content/docs/` in the same change
 
 ### Phase 1: repo key + checkouts registry (single repo; unblocks multi-PC Phase 4)
 
-Depends on multi-PC Phase 1a (`getMachineId()`).
+Builds on multi-PC Phase 1a, landed in #418 (`getMachineId()` / `thisMachine()` in
+`@agentbox/config`).
 
 - `repoKey()` (§3.1) with ssh-alias expansion at the CLI edge; delete `normalizeOriginUrl`; route
   `repoProjectKey`, `workspaceProjectId` and `hub-adopt` matching through it.
 - Custody slug from the key, with dual read (§6).
-- Stamp `originMachineId` and the primary `repoKey` on the registration and the `BoxRecord` at create
-  (all providers: they share `registerBoxWithRelay`).
+- Stamp `originMachineId` (`getMachineId()`) plus its label and the primary `repoKey` on the
+  registration and the `BoxRecord` at create (all providers: they share `registerBoxWithRelay`).
+- `capturedOnMachineId` on cp cache entries (§4).
 - Checkouts store + `PUT/GET /api/v1/checkouts` + `openapi.ts`, with the CLI reporting on create,
   `workspace add` and project register.
 - `hostCandidatesFor()` pure + unit tests (origin online, origin offline + other machine with the
@@ -520,7 +537,7 @@ not re-copied from PC B's home, and the log says so.
 
 ---
 
-## 8. Riskiest assumptions and open questions
+## 8. Riskiest assumptions and decisions
 
 ### Riskiest assumptions
 
@@ -538,21 +555,28 @@ not re-copied from PC B's home, and the log says so.
 5. **Same branch name across repos** does not collide with anything (each repo has its own refs).
    The risk is human: `-2` bumps can make the names differ per repo.
 
-### Open questions for the owner
+### Decisions (owner, 2026-11-21, on PR #419)
 
-1. **Where does a multi-repo box's `agentbox.yaml` come from?** Proposed: the primary repo's only;
-   nested repos' yamls are ignored (services/tasks of a second repo do not run). Alternative: merge
-   them under the repo's path.
-2. **Branch naming for new boxes**: `agentbox/<box>` in every repo (proposed, matches cloud), or keep
-   docker's `agentbox/<box>--<sub>` and make cloud match it?
-3. **Docker and a repo with no local checkout**: refuse in v1 (proposed), or auto-clone into a managed
-   mirror under `~/.agentbox/repos/`?
-4. **Ports in the key**: drop them (proposed; one repo over ssh:22 and https:443). That merges two
-   different repos only if a single host serves different repos on different ports, which is believed
-   to never happen.
-5. **Checkouts registry vs workspace `hosts`**: keep both, with the workspace scan feeding checkouts
-   (proposed), or fold workspace host maps into the registry later?
-6. **Checkpoints across PCs**: re-key checkpoint names by the primary repo key so PC B can restore
-   PC A's checkpoint. Is that in scope for multi-PC Stage 1, or backlog?
-7. **Repo-less boxes from the hub**: should `POST /boxes` accept `sources: { repos: [], carry }` (a
-   carry-only box, e.g. a data-analysis box), or keep refusing a box with no repo?
+1. **`agentbox.yaml` of a multi-repo box**: the primary repo's only. Other repos' yamls are ignored,
+   so services/tasks declared in a second repo do not run.
+2. **Branch naming for new boxes**: `agentbox/<box>` in every repo, as cloud already does. Docker's
+   `agentbox/<box>--<sub>` survives only on existing records.
+3. **Docker and a repo with no local checkout**: refused in v1 with a clear error. A managed mirror
+   under `~/.agentbox/repos/` is backlog item B3.
+4. **Ports in the repo key**: dropped, so one repo over ssh:22 and https:443 is one key.
+5. **Checkouts registry vs workspace `hosts`**: both kept, side by side, with the workspace scan
+   feeding checkouts. Folding them together is backlog item B1.
+6. **Checkpoints across PCs**: not in multi-PC Stage 1. Re-keying checkpoint names by the primary
+   repo key is backlog item B2; v1 keeps `hashProjectPath(projectRoot)`.
+7. **Repo-less boxes from the hub**: `POST /boxes` keeps refusing a box with no repo (§3.3);
+   service-agent creates keep their own route. A carry-only hub box is backlog item B4.
+
+## 9. Backlog (deferred by the decisions above)
+
+| # | Item | Why deferred | Touches |
+|---|---|---|---|
+| B1 | Fold `WorkspaceRecord.hosts[*].projectRoots` into the checkouts registry, so one store answers "where is repo R on machine M" and the workspace keeps only its project list | Decision 5: two stores side by side are fine while the registry proves itself; folding means migrating workspace records again right after #418 re-keyed them | `packages/relay/src/workspaces/types.ts` (`WorkspaceHost`), `workspace-store.ts` (`workspaceForBox`, `findWorkspaceContaining`), the CLI scan in `apps/cli/src/commands/workspace.ts` |
+| B2 | Re-key checkpoint names by the primary `repoKey` instead of `hashProjectPath(projectRoot)`, so PC B can list and restore PC A's checkpoints | Decision 6: not needed for multi-PC Stage 1, where teleport means re-attach | `packages/sandbox-docker/src/checkpoint.ts:38`, `packages/sandbox-cloud/src/checkpoint.ts:102`, `packages/sandbox-remote-docker/src/index.ts:46`, `box.defaultCheckpoint*` lookups |
+| B3 | Managed mirror under `~/.agentbox/repos/<repoKey>` so a docker box can include a repo the PC has never cloned | Decision 3: refuse first, add the mirror once multi-repo docker works with real checkouts | `packages/sandbox-docker/src/create.ts` (repo resolution), checkouts registry (the mirror reports as a checkout) |
+| B4 | Carry-only boxes from the hub (`sources: { repos: [], carry }`) | Decision 7 | `parseCreateBox`, `create-worker.ts`, custody carry scope for a box with no repo |
+| B5 | `agentbox git push|pull --all` across a multi-repo box | Not needed for v1 (§5) | `apps/cli/src/commands/git.ts`, the git route |
