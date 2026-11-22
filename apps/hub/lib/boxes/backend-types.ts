@@ -545,7 +545,7 @@ export type BoxLogAttachSpec =
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend
-  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend {
+  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend, AccountBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
@@ -1454,4 +1454,48 @@ export interface WorkspaceBackend {
     byBox: Map<string, BoxTaskSummary>;
     byJob: Map<string, BoxTaskSummary>;
   }>;
+}
+
+// Named LLM accounts (docs/llm-accounts-plan.md, Phase 5): `/api/v1/accounts`.
+// The accounts of the machine whose store this hub owns. Never a secret.
+/** One account as the API shows it. */
+export interface AccountView {
+  agent: string;
+  id: string;
+  label?: string;
+  kind: AccountKind;
+  identity?: AccountIdentity;
+  /** Whether a secret is stored for it (a login whose capture failed has none). */
+  hasSecret: boolean;
+  /** Names of the boxes that record this account (running it, or borrowing it). */
+  boxes: string[];
+}
+
+/** An agent that can hold named accounts, and which kinds. */
+export interface AccountAgentView {
+  id: string;
+  kinds: readonly AccountKind[];
+}
+
+export type AccountResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: 'invalid_request' | 'not_found' | 'conflict'; error: string };
+
+export interface AccountBackend {
+  listAccounts(): Promise<{ accounts: AccountView[]; agents: AccountAgentView[] }>;
+  /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
+  addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
+  labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
+  removeAccount(
+    agent: string,
+    id: string,
+  ): Promise<AccountResult<{ volumeRemoved: boolean; volumeError?: string }>>;
+}
+
+export type AccountKind = 'login' | 'setup-token' | 'api-key';
+
+export interface AccountIdentity {
+  email?: string;
+  org?: string;
+  plan?: string;
 }

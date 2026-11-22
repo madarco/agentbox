@@ -16,7 +16,7 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { parseProviderSpec } from '@agentbox/config';
+import { parseProviderSpec, tryGetMachineId } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -90,8 +90,10 @@ export async function seedHostBackupsFromCustody(
   log: (l: string) => void,
   /** Override the account secrets' root (tests); default `~/.agentbox`. */
   stateDir: string = STATE_DIR,
+  /** This hub's machine id (tests); default: the machine-id file. */
+  machine: string | undefined = tryGetMachineId(),
 ): Promise<void> {
-  await seedAccountSecretsFromCustody(custody, log, stateDir);
+  await seedAccountSecretsFromCustody(custody, log, stateDir, machine);
   for (const spec of AGENT_SYNC_SPECS) {
     // Nothing was ever uploaded for an agent that declares no credential.
     if (!spec.credential) continue;
@@ -134,21 +136,27 @@ async function seedAccountSecretsFromCustody(
   custody: Pick<FsCustodyStore, 'get' | 'list'>,
   log: (l: string) => void,
   stateDir: string,
+  machine: string | undefined,
 ): Promise<void> {
   for (const spec of AGENT_SYNC_SPECS) {
     const cred = spec.credential;
     if (!cred) continue;
+    // Only THIS machine's accounts: the store is per machine, and another PC's
+    // `work` is not this one's (Phase 5 custody design).
+    if (!machine) continue;
     let entries: { path: string }[];
     try {
-      entries = await custody.list(`agents/${spec.id}/${ACCOUNTS_CUSTODY_SEGMENT}`);
+      entries = await custody.list(`agents/${spec.id}/${ACCOUNTS_CUSTODY_SEGMENT}/${machine}`);
     } catch {
       continue;
     }
     for (const entry of entries) {
       const parts = entry.path.split('/');
-      // agents / <agent> / accounts / <id> / <file>
-      const id = parts[3];
-      if (parts.length !== 5 || parts[4] !== cred.boxRelPath || !id) continue;
+      // agents / <agent> / accounts / <machine> / <id> / <file>
+      const id = parts[4];
+      if (parts.length !== 6 || parts[3] !== machine || parts[5] !== cred.boxRelPath || !id) {
+        continue;
+      }
       if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;
       const label = `${spec.id} account '${id}'`;
       try {

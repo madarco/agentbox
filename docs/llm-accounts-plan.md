@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-4 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-5 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -734,6 +734,50 @@ box, so old images route correctly.
 5. **Settings propagate** (`agentbox download <agent>`'s push to other boxes)
    stays within the source box's account: a pulled item set can carry the
    agent's login (codex's `auth.json`), which must never cross accounts.
+
+## Phase 5 as built (surfaces)
+
+**Where accounts live.** An account is a fact about ONE machine: its logins
+are interactive and land in that machine's store (`~/.agentbox/accounts.json`
++ `credentials/`). The hub that serves `/api/v1/accounts` is therefore the
+hub of the machine that owns the store — the laptop hub, or an exposed one.
+A remote control box lists its own store (empty unless someone signed in on
+it) and still refuses a named create (it cannot use a PC's account; see the
+custody design below).
+
+1. **`/api/v1/accounts`** (backend slice `apps/hub/lib/backend/accounts.ts`):
+   `GET` → `{ accounts: [{agent, id, label?, kind, identity?, hasSecret,
+   boxes: string[]}], agents: [{id, name, kinds}] }` (no secrets, ever);
+   `POST` `{agent, id, kind: 'api-key'|'setup-token', token, label?}` for the
+   pasteable kinds (a `login` is interactive: `agentbox <agent> login
+   --account`); `PATCH /accounts/{agent}/{id}` `{label}`; `DELETE
+   /accounts/{agent}/{id}` (409 while a box records it; removes the secret and
+   the docker volume).
+2. **`Box.accountsInfo`**: `[{agent, account, label?, kind?}]` next to the raw
+   `Box.accounts` map (#437), resolved from the hub machine's store. Both
+   optional, so a shipped tray keeps decoding.
+3. **CLI through the hub**: `agentbox accounts` list / label / rm call the
+   LOCAL hub's `/api/v1/accounts` (the machine's own store, even when a remote
+   control box is configured); `agentbox list` shows the account in the AGENT
+   cell (`claude:working@work`); `agentbox status` gets an ACCOUNTS section.
+   Logins stay CLI-local (interactive container on this machine).
+4. **Web** (pure REST client, client-side fetch): Settings → Model accounts
+   (list, add a key / setup token, relabel, remove); an account picker per
+   agent in the create modal (sends `opts.accounts`); the account in the box
+   table and detail page. The page is its own sidebar entry (**Accounts**,
+   next to Devices) rather than a Settings section: Settings is one page.
+5. **Custody design (the #442 must-design item).**
+   - Named-account custody objects are keyed by the ORIGIN MACHINE:
+     `agents/<agent>/accounts/<machineId>/<id>/<file>`. Two PCs' `claude/work`
+     never collide. The relay mirrors a box's named refresh under the box's
+     registration `originMachineId` (else the hub's own machine).
+   - Pasted secrets (API keys, setup tokens) are NOT pushed: nothing on a hub
+     reads them, and they never refresh. Only named logins travel.
+   - A hub seeds named accounts from custody only for its OWN machine id —
+     its store is per machine. Making a PC's named account usable by a remote
+     control box needs that box to keep a per-machine account list (rows
+     travel next to the secret, a create resolves accounts against the
+     REQUESTER's machine); that is the next step after this phase, not in it.
 
 ## Backlog (not in these phases)
 

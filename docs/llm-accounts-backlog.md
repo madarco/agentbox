@@ -202,7 +202,7 @@ Done in #442: `agentbox accounts rm` refuses while a box records the account
 (running or borrowing it), and the propagate planner skips a named docker box
 with no recorded volume instead of falling back to the shared default volume.
 
-- **PHASE 5 MUST DESIGN: named custody objects are keyed by account name only.**
+- ~~PHASE 5 MUST DESIGN: named custody objects are keyed by account name only~~ — designed and built in Phase 5: named logins are keyed by machine (`agents/<a>/accounts/<machine>/<id>/<file>`), pasted secrets no longer travel, a hub seeds only its own machine's. Original note:
   Account ids are local to each PC: PC A's `claude/work` and PC B's
   `claude/work` (a different subscription) both push to
   `agents/claude/accounts/work/.credentials.json`, and the push is hash-only,
@@ -221,3 +221,60 @@ with no recorded volume instead of falling back to the shared default volume.
   `agents/<agent>/`): a PC with only a named claude account shows Claude as
   logged in, but a hub create gets no default login. Count only
   `agents/<a>/<boxRelPath>`, and list accounts separately.
+
+## From Phase 5 (surfaces)
+
+- **A remote control box cannot run a PC's named account yet.** The custody
+  objects are now keyed by machine, but the control box has no per-machine
+  account list: a create there still resolves `--account` against the control
+  box's own store and refuses. Next step: rows travel next to the secret
+  (`agents/<a>/accounts/<machine>/<id>/account.json`), the control box keeps a
+  per-machine account view, and a create resolves accounts against the
+  REQUESTER's machine (`requester.machineId`) and seeds that machine's secret.
+- **Old flat custody objects** (`agents/<a>/accounts/<id>/<file>`, pushed by a
+  Phase 4 CLI) are left in place and never read again; a one-time cleanup can
+  delete them.
+- **`accounts rm` still leaves the machine's custody objects** on a control box.
+  Add the delete with the per-machine account view above.
+- **The tray** (`../agentbox-tray`) does not show accounts yet (Phase 6):
+  `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
+- **No docs figure for the Accounts page** yet; capture one per
+  `apps/web/images.md` with the next screenshot round.
+- **`agentbox status` reads the account store locally** for its ACCOUNTS
+  labels instead of the hub's `Box.accountsInfo`; same data, two lookups
+  (Phase 5 review). Switch it when `status` moves behind the hub.
+- **`GET /api/v1/accounts` reads each secret sequentially** to set
+  `hasSecret`, and the list and single-account views build the shape twice.
+  Small; `Promise.all` over one `view()` when it matters.
+
+## From the #444 review
+
+Fixed in #444: the `POST` / `PATCH` / `DELETE /api/v1/accounts…` routes now
+answer a store failure (a corrupt `accounts.json`) with the error envelope
+naming the file, like `GET`, instead of a bare 500.
+
+- **(a) The in-use list shows a docker box twice**: `hub-backend.ts` (~2162)
+  feeds the accounts slice `state.json` boxes AND relay registrations, so a
+  docker box present in both is named twice in `boxes`. Dedupe by box id.
+- **(b) MUST FIX before "accounts resolve against the requester's machine":**
+  `credentials-fanout.ts` (~251) files a hub-side box's refreshed account login
+  under the box's ORIGIN machine id, although the account itself came from the
+  hub's own store — so it lands in PC B's custody slot. Key it by the hub's own
+  machine id (or drop the update) until per-machine account lists exist. Same
+  root cause: the hub accepts a remote PC's `--account` against its OWN store
+  (the Phase 3 resolution), which only works because a remote hub has no rows.
+- **(c) API labels have no length or control-character limit**, and the CLI
+  prints them raw (`agentbox accounts`, `status`). Cap the length and strip
+  control characters at the API boundary.
+- **(d) All of `/api/v1`**: a page on another `localhost` port can send a
+  `text/plain`, cookie-authenticated `POST` (a "simple" request: no CORS
+  preflight), because the gate checks neither `Content-Type` nor `Origin`.
+  Require `application/json` or a same-origin `Origin` on writes.
+- **(e) Stale text**: comments in `hub-worker.ts` (~127-133, the account seed),
+  `apps/hub/lib/backend/accounts.ts` (lines 1-5, still "a remote control box
+  has no account store yet (Phase 5)"), the `apps/cli/src/commands/accounts.ts`
+  header; and the plan says `GET /accounts` returns `agents [{id, name,
+  kinds}]` while the code returns `{id, kinds}`.
+- **(f) `custody-client.ts` (~311) reads the machine id before the account
+  loop**, so a failure reading it also skips the DEFAULT-login push. Read it
+  lazily inside the loop (or catch it), so the default push never depends on it.

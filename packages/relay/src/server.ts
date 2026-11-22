@@ -552,6 +552,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           // The registration first: it exists before the box's first credential
           // post (state.json is written later on a cloud create), and it is the
           // only record a Store-only box has. Then the PC's own record.
+          originMachineFor: async (boxId) =>
+            (await store.getBox(boxId).catch(() => undefined))?.originMachineId,
           boxAccountFor: async (boxId, agent) =>
             namedAccounts((await store.getBox(boxId).catch(() => undefined))?.accounts)?.[agent] ??
             (await stateBoxAccount(boxId, agent)),
