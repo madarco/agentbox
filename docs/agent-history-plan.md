@@ -1,7 +1,7 @@
 # Agent history — sessions, memory and usage in the hub
 
-**Status:** Phase 1 done (store, archive, ingest for claude in boxes);
-Phases 2-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+**Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
+in boxes); Phase 4 (memory, claude) implemented; Phases 3, 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -344,7 +344,7 @@ memory` commands; extended to every agent that declares memory.
 **Done:** memory written in box A is present in a fresh box B on another
 provider, and `memory pull` lands it on the host.
 
-#### Phase 4 implementation plan (2026-11-22, claude first)
+#### Phase 4 implementation plan (2026-11-22, claude first, implemented)
 
 **The Phase 0 problem.** On docker, claude's memory dir
 `~/.claude/projects/-workspace/memory` sits on the config volume every docker

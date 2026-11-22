@@ -1433,6 +1433,280 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/history/memory': {
+        get: {
+          tags: ['History'],
+          summary: 'Live memory files of a repo',
+          description:
+            "The latest version of every memory file the hub holds for one repo's agent; tombstoned (deleted) paths are left out. Boxes seed from this set and ship each change back as a new version (per-file last-writer-wins, every version kept).",
+          parameters: [
+            {
+              name: 'repo',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description:
+                'A git remote URL in any spelling (ssh, https, scp form) or its repo key (`github.com/owner/repo`, `local:<machine>:<path>`).',
+            },
+            {
+              name: 'agent',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Default `claude`.',
+            },
+            {
+              name: 'scope',
+              in: 'query',
+              schema: { type: 'string', enum: ['project', 'global'] },
+              description: 'Default `project`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      files: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            version: { type: 'integer' },
+                            sha256: { type: 'string' },
+                            size: { type: 'integer' },
+                            deleted: { type: 'boolean' },
+                            updatedAt: { type: 'string' },
+                            origin: {
+                              type: 'object',
+                              properties: {
+                                boxId: { type: 'string', nullable: true },
+                                boxName: { type: 'string', nullable: true },
+                                provider: { type: 'string', nullable: true },
+                                hostId: { type: 'string', nullable: true },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/memory/repos': {
+        get: {
+          tags: ['History'],
+          summary: 'Repos with memory',
+          description: 'Every (repo, agent, scope) the hub holds memory for, newest write first.',
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      sets: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            repoKey: { type: 'string' },
+                            agent: { type: 'string' },
+                            scope: { type: 'string' },
+                            files: { type: 'integer' },
+                            versions: { type: 'integer' },
+                            updatedAt: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/memory/versions': {
+        get: {
+          tags: ['History'],
+          summary: 'Every version of a memory file',
+          description:
+            'Oldest first, tombstones included, each with the box (or host import) that wrote it.',
+          parameters: [
+            ...[
+              {
+                name: 'repo',
+                in: 'query',
+                required: true,
+                schema: { type: 'string' },
+                description:
+                  'A git remote URL in any spelling (ssh, https, scp form) or its repo key (`github.com/owner/repo`, `local:<machine>:<path>`).',
+              },
+              {
+                name: 'agent',
+                in: 'query',
+                schema: { type: 'string' },
+                description: 'Default `claude`.',
+              },
+              {
+                name: 'scope',
+                in: 'query',
+                schema: { type: 'string', enum: ['project', 'global'] },
+                description: 'Default `project`.',
+              },
+            ],
+            {
+              name: 'path',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Memory file path relative to the agent memory dir (e.g. `MEMORY.md`).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      versions: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            version: { type: 'integer' },
+                            sha256: { type: 'string' },
+                            size: { type: 'integer' },
+                            deleted: { type: 'boolean' },
+                            updatedAt: { type: 'string' },
+                            origin: {
+                              type: 'object',
+                              properties: {
+                                boxId: { type: 'string', nullable: true },
+                                boxName: { type: 'string', nullable: true },
+                                provider: { type: 'string', nullable: true },
+                                hostId: { type: 'string', nullable: true },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/memory/file': {
+        get: {
+          tags: ['History'],
+          summary: 'One version of a memory file',
+          description:
+            'Default: the latest. `content` is base64 of the stored bytes (redacted at the edge).',
+          parameters: [
+            ...[
+              {
+                name: 'repo',
+                in: 'query',
+                required: true,
+                schema: { type: 'string' },
+                description:
+                  'A git remote URL in any spelling (ssh, https, scp form) or its repo key (`github.com/owner/repo`, `local:<machine>:<path>`).',
+              },
+              {
+                name: 'agent',
+                in: 'query',
+                schema: { type: 'string' },
+                description: 'Default `claude`.',
+              },
+              {
+                name: 'scope',
+                in: 'query',
+                schema: { type: 'string', enum: ['project', 'global'] },
+                description: 'Default `project`.',
+              },
+            ],
+            {
+              name: 'path',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Memory file path relative to the agent memory dir (e.g. `MEMORY.md`).',
+            },
+            {
+              name: 'version',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default: the latest live version.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      file: {
+                        type: 'object',
+                        properties: {
+                          path: { type: 'string' },
+                          version: { type: 'integer' },
+                          sha256: { type: 'string' },
+                          size: { type: 'integer' },
+                          deleted: { type: 'boolean' },
+                          updatedAt: { type: 'string' },
+                          origin: {
+                            type: 'object',
+                            properties: {
+                              boxId: { type: 'string', nullable: true },
+                              boxName: { type: 'string', nullable: true },
+                              provider: { type: 'string', nullable: true },
+                              hostId: { type: 'string', nullable: true },
+                            },
+                          },
+                        },
+                      },
+                      content: { type: 'string', description: 'base64' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/history/chunks': {
         post: {
           tags: ['History'],

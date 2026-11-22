@@ -759,6 +759,35 @@ export interface HubApiTarget {
   sessionTurn?: string | null;
 }
 
+// ── agent memory (/api/v1/history/memory) ──
+
+export interface HubApiMemoryKey {
+  repoKey: string;
+  agent: string;
+  scope: 'project' | 'global';
+}
+
+export interface HubApiMemoryFile {
+  path: string;
+  version: number;
+  sha256: string;
+  size: number;
+  deleted: boolean;
+  updatedAt: string;
+  origin: {
+    boxId: string | null;
+    boxName: string | null;
+    provider: string | null;
+    hostId: string | null;
+  };
+}
+
+export interface HubApiMemoryQuery {
+  repo: string;
+  agent?: string;
+  scope?: 'project' | 'global';
+}
+
 // ── session history (/api/v1/history) ──
 
 export interface HubApiHistorySession {
@@ -1294,6 +1323,50 @@ export class HubApiClient {
 
   discardSkill(name: string): Promise<{ name: string; removed: number }> {
     return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  // ── agent memory ──
+
+  private memoryQs(q: HubApiMemoryQuery, extra: Record<string, string> = {}): string {
+    const p = new URLSearchParams({ repo: q.repo, ...extra });
+    if (q.agent) p.set('agent', q.agent);
+    if (q.scope) p.set('scope', q.scope);
+    return p.toString();
+  }
+
+  async memorySets(): Promise<
+    Array<HubApiMemoryKey & { files: number; versions: number; updatedAt: string }>
+  > {
+    return (
+      await this.request<{
+        sets: Array<HubApiMemoryKey & { files: number; versions: number; updatedAt: string }>;
+      }>('GET', '/history/memory/repos')
+    ).sets;
+  }
+
+  memoryFiles(q: HubApiMemoryQuery): Promise<HubApiMemoryKey & { files: HubApiMemoryFile[] }> {
+    return this.request('GET', `/history/memory?${this.memoryQs(q)}`);
+  }
+
+  async memoryVersions(q: HubApiMemoryQuery, path: string): Promise<HubApiMemoryFile[]> {
+    return (
+      await this.request<{ versions: HubApiMemoryFile[] }>(
+        'GET',
+        `/history/memory/versions?${this.memoryQs(q, { path })}`,
+      )
+    ).versions;
+  }
+
+  async memoryFile(
+    q: HubApiMemoryQuery,
+    path: string,
+    version?: number,
+  ): Promise<{ file: HubApiMemoryFile; bytes: Buffer }> {
+    const r = await this.request<{ file: HubApiMemoryFile; content: string }>(
+      'GET',
+      `/history/memory/file?${this.memoryQs(q, { path, ...(version ? { version: String(version) } : {}) })}`,
+    );
+    return { file: r.file, bytes: Buffer.from(r.content, 'base64') };
   }
 
   // ── session history ──

@@ -150,3 +150,38 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
     `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
     message.
   - Revisit both when codex, pi and opencode ids arrive.
+
+## Phase 4 (memory in the hub)
+
+- **Boxes from older images or snapshots.** Memory sync needs the managed
+  settings key (`autoMemoryDirectory`) and the ctl `MemoryLoop`, both baked in.
+  An older docker box keeps writing to the shared `-workspace/memory`, which is
+  no longer seeded, and nothing ships it. Cloud bases must be re-prepared.
+- **No offline host fallback on cloud.** The create used to push the host copy
+  straight into the box. Now it arrives via `history.memory.seed`, so a cloud
+  box whose relay never answers at boot has no memory until it does. ctl
+  retries every 5 s. Restoring a create-time push would race the hub seed
+  (see the plan), so it needs a "seeded" handshake first.
+- **No sync down into a running box.** A box seeds once. Another box's newer
+  version reaches it only on the next box, and a later local edit overwrites
+  the newer version (last writer wins, so the older edit is kept as a version
+  and is reversible). A pull on each pass, for files unchanged locally, would
+  fix it.
+- **Paused docker box at destroy.** The in-box flush needs a running box, so
+  up to 15 s of memory writes made just before a pause are lost if the box is
+  then destroyed without being resumed. The transcript flush covers paused
+  boxes with a helper container; memory could do the same.
+- **Repo key of a remote-hub box.** The relay keys by the registration's
+  `originUrl`, falling back to `local:<machine>:<projectRoot>`. A box with no
+  origin whose project folder the hub machine does not know gets no key, so
+  write-back is off for it.
+- **`memory pull` writes files that differ without asking.** `--dry-run`
+  previews the change. A local edit the hub never saw is overwritten (backed
+  by nothing). Consider writing `<file>.local` or refusing without `--force`
+  when the local file is newer than the hub's version.
+- **Only claude.** codex memory exists but was empty in Phase 0, openclaw's
+  lives in the workspace repo, and pi and opencode have none. Each needs a
+  `history.memory` block and (codex) a per-box location.
+- **Live check covered docker only.** The "fresh box B on another provider"
+  leg of the plan's Done is unit-tested (`MemoryRelay` and `MemorySync` are
+  provider-agnostic), not run live: e2b was off-limits this phase.

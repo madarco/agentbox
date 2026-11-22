@@ -7,19 +7,6 @@
  * its existing importers, so nothing else moves.
  */
 
-import { readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Claude Code keys per-project state (memory, sessions, history) under
  * `~/.claude/projects/<encoded>/`, where `<encoded>` is the project's absolute
