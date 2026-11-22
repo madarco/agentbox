@@ -44,8 +44,28 @@ describe('accountKindsProblem', () => {
     );
   });
 
-  it('refuses a credential file named like the accounts custody segment', () => {
-    const credential = { ...exampleSpec.credential!, boxAbsPath: '/home/vscode/.x/accounts' };
-    expect(agentSpecProblem({ ...exampleSpec, credential })).toMatch(/reserved for named accounts/);
+  it('validates credential.boxRelPath, the field custody keys by (review #5)', () => {
+    const withRel = (boxRelPath: string) =>
+      agentSpecProblem({ ...exampleSpec, credential: { ...exampleSpec.credential!, boxRelPath } });
+    expect(withRel('auth.json')).toBeNull();
+    expect(withRel('sub/auth.json')).toBeNull();
+    expect(withRel('accounts/work')).toMatch(/reserved for named accounts/);
+    expect(withRel('accounts')).toMatch(/reserved for named accounts/);
+    for (const bad of ['', '/abs/auth.json', '../auth.json', 'a/../b', 'a//b', './auth.json']) {
+      expect(withRel(bad), bad).toMatch(/relative path/);
+    }
+  });
+
+  it('refuses a path-unsafe agent id (review #6)', () => {
+    expect(agentSpecProblem({ ...exampleSpec, id: '../../x' })).toMatch(/agent id/);
+    expect(agentSpecProblem({ ...exampleSpec, id: 'My Agent' })).toMatch(/agent id/);
+  });
+
+  it('refuses the account infix in dockerVolume and cloudSubpath (review #8)', () => {
+    expect(agentSpecProblem({ ...exampleSpec, dockerVolume: 'agentbox-x-acct-y' })).toMatch(
+      /dockerVolume/,
+    );
+    const credential = { ...exampleSpec.credential!, cloudSubpath: 'claude-acct-work/' };
+    expect(agentSpecProblem({ ...exampleSpec, credential })).toMatch(/cloudSubpath/);
   });
 });

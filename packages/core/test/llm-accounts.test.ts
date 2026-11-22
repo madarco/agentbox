@@ -7,6 +7,7 @@ import {
   accountKindProblem,
   accountSecretPath,
   agentAccountKinds,
+  agentIdProblem,
   DEFAULT_ACCOUNT_ID,
   findAccount,
   migrateAccountsFile,
@@ -101,6 +102,11 @@ describe('per-account names', () => {
     );
   });
 
+  it('never builds a secret path from an unsafe agent or account id (review #6)', () => {
+    expect(() => accountSecretPath(spec({ id: '../../x' }), 'work', '/s')).toThrow(/agent id/);
+    expect(() => accountSecretPath(spec(), '../x', '/s')).toThrow(/lowercase/);
+  });
+
   it('default has no secret path for an agent without a credential', () => {
     expect(accountSecretPath(spec({ credential: undefined }), 'default', '/s')).toBeUndefined();
   });
@@ -136,7 +142,9 @@ describe('migrateAccountsFile', () => {
         { agent: 'gone', id: 'work', kind: 'login', createdAt: 'x' },
       ],
     };
-    const out = migrateAccountsFile(raw, legacy, (a) => a.agent === 'claude' && a.kind === 'login');
+    const out = migrateAccountsFile(raw, legacy, {
+      accept: (a) => a.agent === 'claude' && a.kind === 'login',
+    });
     expect(out.accounts).toEqual([
       { agent: 'claude', id: 'default', kind: 'login', createdAt: '2026-01-01T00:00:00.000Z' },
     ]);
@@ -202,5 +210,32 @@ describe('migrateAccountsFile', () => {
     expect(migrateAccountsFile(once, legacy)).toEqual(once);
     expect(findAccount(once, 'claude', 'default')?.kind).toBe('login');
     expect(findAccount(once, 'codex', 'default')).toBeUndefined();
+  });
+});
+
+describe('agentIdProblem', () => {
+  it.each(['claude', 'codex', 'opencode', 'pi', 'openclaw', 'example', 'my_agent-2'])(
+    'accepts %s',
+    (id) => expect(agentIdProblem(id)).toBeNull(),
+  );
+  it.each(['', '../x', 'a/b', 'A', '-a', '.x', 'x'.repeat(65)])('rejects %j', (id) =>
+    expect(agentIdProblem(id)).toMatch(/agent id/),
+  );
+});
+
+describe('migrateAccountsFile canonicalAgent (review #8)', () => {
+  it('canonicalizes before de-duplicating', () => {
+    const raw = {
+      accounts: [
+        { agent: 'claude-code', id: 'work', kind: 'login', label: 'A', createdAt: 't' },
+        { agent: 'claude', id: 'work', kind: 'login', label: 'B', createdAt: 't' },
+      ],
+    };
+    const out = migrateAccountsFile(raw, [], {
+      canonicalAgent: (a) => (a === 'claude-code' ? 'claude' : a),
+    });
+    expect(out.accounts).toEqual([
+      { agent: 'claude', id: 'work', kind: 'login', label: 'A', createdAt: 't' },
+    ]);
   });
 });

@@ -571,16 +571,31 @@ confirm on the key's account that usage appeared for 10:27–10:30Z on
   are validated at `agent add` (`accountKindsProblem`: known kinds, no
   duplicates, `login` needs a `credential`).
 - **`@agentbox/sandbox-core`** (`packages/sandbox-core/src/llm-accounts.ts`):
-  `readAccounts` (never writes; a legacy backup counts as `default` only when it
-  passes the spec's `realShape`; `default` is listed iff that holds, a stored
-  `default` row only adds its label; stored rows the write rules refuse are
-  dropped; a corrupt index reads as empty so the defaults still show), locked
-  `mutateAccounts` (persists the migrated `default` on first mutation),
-  `upsertAccount` (refuses what `accountProblem` refuses; resolves aliases to
-  the canonical id), `removeAccount` (row + secret file under one lock; `default`
-  refused, that is a logout), `writeAccountSecret`/`readAccountSecret` (0600 in
-  a 0700 dir), and the `{kind, token}` codec for pasted kinds. Nothing calls it
-  yet; Phase 2 does.
+  - `readAccounts` never writes. A legacy backup counts as `default` only when
+    it passes the spec's `realShape`; `default` is listed iff that holds, and a
+    stored `default` row only adds its label. Rows the write rules refuse, and
+    an untrustworthy file, are left out of the view, so the defaults still show.
+  - Mutations (`upsertAccount`, `removeAccount`) never write the view back.
+    They edit the file's raw rows under the lock, replace or delete only their
+    own `(agent, id)` (alias spellings included), and pass every other row
+    through verbatim — a long-lived hub that has not loaded a plugin agent, or
+    an older CLI that does not know a kind, cannot delete them. The first
+    mutation adds the legacy `default`s to the file. A corrupt, wrong-shape or
+    future-version file makes mutations throw `AccountsFileError` instead of
+    rewriting it.
+  - Specs default to the live registry (`allAgentSpecs()`), not a module-load
+    snapshot.
+  - `writeAccountSecret` writes NAMED accounts only (the `default` file keeps
+    its existing guarded writer, `writeCredentialBackup`), needs the row first,
+    and runs under the accounts lock. A `login` secret must pass `realShape`
+    and the freshness rule (`written: false` for an older blob); a pasted secret
+    must be the `{kind, token}` encoding of the row's kind. Files are 0600, and
+    `credentials/` and `credentials/<agent>/` are tightened to 0700 even when
+    they already exist.
+  - `agent add` refuses a path-unsafe plugin id, a `credential.boxRelPath` that
+    is absolute, traverses, or starts with `accounts/`, and a `dockerVolume` /
+    `cloudSubpath` containing `-acct-`.
+  - Nothing calls the store yet; Phase 2 does.
 - **Where it differs from the plan above:** reads do not write (the plan said
   "migrated in place on first read"), the `-acct-` docker volume infix, the
   sibling Daytona subpath, the `accounts/` custody segment, and `default`

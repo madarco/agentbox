@@ -1,9 +1,19 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentSyncSpec, LlmAccount } from '@agentbox/core';
 import {
+  AccountsFileError,
   accountProblem,
   decodePastedSecret,
   encodePastedSecret,
@@ -177,10 +187,14 @@ describe('upsert / remove / secrets', () => {
   });
 
   it('named secrets live under credentials/<agent>/<id>.json at 0600', async () => {
+    await upsertAccount(acct(), opts);
     const secret = encodePastedSecret({ kind: 'setup-token', token: 'tok' });
-    const path = await writeAccountSecret('claude', 'work', secret, opts);
-    expect(path).toBe(join(dir, 'credentials', 'claude', 'work.json'));
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const res = await writeAccountSecret('claude', 'work', secret, opts);
+    expect(res).toMatchObject({
+      written: true,
+      path: join(dir, 'credentials', 'claude', 'work.json'),
+    });
+    expect(statSync(res.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(dir, 'credentials', 'claude')).mode & 0o777).toBe(0o700);
     expect(decodePastedSecret((await readAccountSecret('claude', 'work', opts))!)).toEqual({
       kind: 'setup-token',
@@ -203,7 +217,12 @@ describe('upsert / remove / secrets', () => {
 
   it('remove drops the row and the secret, and refuses default', async () => {
     await upsertAccount(acct(), opts);
-    const path = await writeAccountSecret('claude', 'work', 'x', opts);
+    const { path } = await writeAccountSecret(
+      'claude',
+      'work',
+      encodePastedSecret({ kind: 'setup-token', token: 't' }),
+      opts,
+    );
     expect(await removeAccount('claude', 'work', opts)).toBe(true);
     expect(existsSync(path)).toBe(false);
     expect((await readAccounts(opts)).accounts).toEqual([]);
@@ -217,6 +236,162 @@ describe('upsert / remove / secrets', () => {
       /lowercase/,
     );
     expect(existsSync(claudeBackup)).toBe(true);
+  });
+});
+
+const claudeLogin = (expiresAt: number): string =>
+  JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt } });
+
+describe('writeAccountSecret guards (review #3)', () => {
+  // The freshness rule rides the spec: give the test claude spec claude's real one.
+  const withFreshness = (d: string): AgentSyncSpec[] => {
+    const specs = specsFor(d);
+    specs[0] = {
+      ...specs[0]!,
+      credential: {
+        ...specs[0]!.credential!,
+        freshness: { jsonPath: ['claudeAiOauth', 'expiresAt'] },
+      },
+    };
+    return specs;
+  };
+
+  it('refuses the default account: the legacy backup has its own guarded writer', async () => {
+    writeFileSync(claudeBackup, claudeLogin(200));
+    await expect(writeAccountSecret('claude', 'default', claudeLogin(100), opts)).rejects.toThrow(
+      /writeCredentialBackup/,
+    );
+    expect(readFileSync(claudeBackup, 'utf8')).toBe(claudeLogin(200));
+  });
+
+  it('refuses a secret for an account with no row', async () => {
+    await expect(
+      writeAccountSecret(
+        'claude',
+        'work',
+        encodePastedSecret({ kind: 'api-key', token: 'k' }),
+        opts,
+      ),
+    ).rejects.toThrow(/add it first/);
+  });
+
+  it('a login account takes only a real, strictly newer credential', async () => {
+    const o = { ...opts, specs: withFreshness(dir) };
+    await upsertAccount(acct({ kind: 'login' }), o);
+    expect((await writeAccountSecret('claude', 'work', claudeLogin(200), o)).written).toBe(true);
+    const older = await writeAccountSecret('claude', 'work', claudeLogin(100), o);
+    expect(older).toMatchObject({ written: false, reason: 'not newer than backup' });
+    expect(await readAccountSecret('claude', 'work', o)).toBe(claudeLogin(200));
+    await expect(
+      writeAccountSecret(
+        'claude',
+        'work',
+        encodePastedSecret({ kind: 'setup-token', token: 't' }),
+        o,
+      ),
+    ).rejects.toThrow(/not a usable/);
+    expect((await writeAccountSecret('claude', 'work', claudeLogin(300), o)).written).toBe(true);
+  });
+
+  it("a pasted account takes only its own kind's encoding", async () => {
+    await upsertAccount(acct({ kind: 'setup-token' }), opts);
+    await expect(writeAccountSecret('claude', 'work', claudeLogin(1), opts)).rejects.toThrow(
+      /encoded setup-token/,
+    );
+    await expect(
+      writeAccountSecret(
+        'claude',
+        'work',
+        encodePastedSecret({ kind: 'api-key', token: 'k' }),
+        opts,
+      ),
+    ).rejects.toThrow(/encoded setup-token/);
+  });
+
+  it('tightens an existing loose credentials dir (review #7)', async () => {
+    mkdirSync(join(dir, 'credentials', 'claude'), { recursive: true, mode: 0o755 });
+    chmodSync(join(dir, 'credentials'), 0o755);
+    chmodSync(join(dir, 'credentials', 'claude'), 0o755);
+    await upsertAccount(acct(), opts);
+    await writeAccountSecret(
+      'claude',
+      'work',
+      encodePastedSecret({ kind: 'setup-token', token: 't' }),
+      opts,
+    );
+    expect(statSync(join(dir, 'credentials')).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dir, 'credentials', 'claude')).mode & 0o777).toBe(0o700);
+  });
+});
+
+describe('writes never round-trip the view (review #1)', () => {
+  it('a process that cannot validate a row passes it through untouched', async () => {
+    // A newer process (or one that loaded agent `foo`) wrote these.
+    const foreign = [
+      { agent: 'foo', id: 'work', kind: 'login', createdAt: 't' },
+      { agent: 'claude', id: 'later', kind: 'oauth-v2', createdAt: 't', extra: 1 },
+    ];
+    writeFileSync(opts.path!, JSON.stringify({ version: 1, accounts: foreign }));
+    await upsertAccount(acct(), opts);
+    await removeAccount('claude', 'work', opts);
+    await upsertAccount(acct({ agent: 'codex', kind: 'api-key' }), opts);
+    const onDisk = JSON.parse(readFileSync(opts.path!, 'utf8')) as { accounts: unknown[] };
+    expect(onDisk.accounts).toEqual([
+      ...foreign,
+      expect.objectContaining({ agent: 'codex', id: 'work' }),
+    ]);
+    // ...while the read view leaves them out.
+    expect((await readAccounts(opts)).accounts.map((a) => `${a.agent}/${a.id}`)).toEqual([
+      'codex/work',
+    ]);
+  });
+
+  it('defaults to the live registry, not a module-load snapshot', async () => {
+    // No `specs` passed: the built-in registry answers. Paths stay in the temp dir.
+    const live = { path: opts.path, stateDir: dir };
+    await upsertAccount(acct(), live);
+    // (The real host's legacy logins may show up as `default` too; reads only.)
+    expect((await readAccounts(live)).accounts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ agent: 'claude', id: 'work' })]),
+    );
+  });
+});
+
+describe('an untrustworthy accounts.json (review #2)', () => {
+  it.each([
+    ['corrupt JSON', '{not json'],
+    ['an array', '[]'],
+    ['null', 'null'],
+    ['a future version', JSON.stringify({ version: 2, accounts: [] })],
+  ])('reads leniently but mutations refuse: %s', async (_name, text) => {
+    writeFileSync(claudeBackup, REAL_CLAUDE);
+    writeFileSync(opts.path!, text);
+    expect((await readAccounts(opts)).accounts.map((a) => a.id)).toEqual(['default']);
+    await expect(upsertAccount(acct(), opts)).rejects.toThrow(AccountsFileError);
+    await expect(removeAccount('claude', 'work', opts)).rejects.toThrow(/Refusing to rewrite/);
+    expect(readFileSync(opts.path!, 'utf8')).toBe(text);
+  });
+});
+
+describe('alias rows (review #8)', () => {
+  it('an alias row and its canonical row are one account', async () => {
+    writeFileSync(
+      opts.path!,
+      JSON.stringify({
+        version: 1,
+        accounts: [
+          { agent: 'claude-code', id: 'work', kind: 'setup-token', label: 'A', createdAt: 't' },
+          { agent: 'claude', id: 'work', kind: 'setup-token', label: 'B', createdAt: 't' },
+        ],
+      }),
+    );
+    expect((await readAccounts(opts)).accounts).toEqual([
+      expect.objectContaining({ agent: 'claude', id: 'work', label: 'A' }),
+    ]);
+    // An upsert replaces both spellings.
+    await upsertAccount(acct({ label: 'C' }), opts);
+    const onDisk = JSON.parse(readFileSync(opts.path!, 'utf8')) as { accounts: LlmAccount[] };
+    expect(onDisk.accounts).toEqual([expect.objectContaining({ agent: 'claude', label: 'C' })]);
   });
 });
 

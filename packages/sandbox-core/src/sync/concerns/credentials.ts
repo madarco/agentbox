@@ -246,9 +246,24 @@ export function shouldAcceptCredentialUpdate(
   incoming: string,
   existing: string | null,
 ): { accept: boolean; reason: string } {
+  return shouldAcceptCredentialBlob(
+    resolveAgentSpec(agent).credential?.freshness?.jsonPath,
+    incoming,
+    existing,
+  );
+}
+
+/**
+ * {@link shouldAcceptCredentialUpdate} for a caller that already holds the
+ * spec's `credential.freshness.jsonPath` (or a spec the global registry lacks).
+ */
+export function shouldAcceptCredentialBlob(
+  path: readonly string[] | undefined,
+  incoming: string,
+  existing: string | null,
+): { accept: boolean; reason: string } {
   if (existing === null) return { accept: true, reason: 'no existing backup' };
   if (existing === incoming) return { accept: false, reason: 'unchanged' };
-  const path = resolveAgentSpec(agent).credential?.freshness?.jsonPath;
   if (path) {
     const field = path.join('.');
     const incomingExp = jsonNumberAt(incoming, path);

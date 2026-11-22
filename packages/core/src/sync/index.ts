@@ -84,8 +84,10 @@ export type {
   LlmAccount,
   LlmAccountIdentity,
   LlmAccountKind,
+  MigrateAccountsOptions,
 } from './llm-accounts.js';
 export {
+  ACCOUNT_NAME_INFIX,
   ACCOUNTS_CUSTODY_SEGMENT,
   DEFAULT_ACCOUNT_ID,
   LLM_ACCOUNT_KINDS,
@@ -96,6 +98,7 @@ export {
   accountKindProblem,
   accountSecretPath,
   agentAccountKinds,
+  agentIdProblem,
   findAccount,
   isDefaultAccount,
   migrateAccountsFile,

@@ -70,6 +70,20 @@ export interface AccountsFile {
  */
 const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
+/**
+ * Agent ids are spliced into host paths (`credentials/<agent>/`), custody paths
+ * and volume names too. Built-ins all fit; a plugin id is checked at `agent add`.
+ */
+const AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Why `id` is not a path-safe agent id, or null when it is. */
+export function agentIdProblem(id: string): string | null {
+  if (!AGENT_ID_RE.test(id)) {
+    return `agent id '${id}' must be 1-64 lowercase letters, digits, '-' or '_', starting with a letter or digit`;
+  }
+  return null;
+}
+
 /** Why `id` is not a usable account id, or null when it is. */
 export function accountIdProblem(id: string): string | null {
   if (!ACCOUNT_ID_RE.test(id)) {
@@ -117,6 +131,9 @@ export function accountSecretPath(
   stateDir: string,
 ): string | undefined {
   if (isDefaultAccount(account)) return spec.credential?.hostBackup;
+  // Both segments are joined into a host path: refuse rather than traverse.
+  const problem = agentIdProblem(spec.id) ?? accountIdProblem(account);
+  if (problem) throw new Error(problem);
   return join(stateDir, 'credentials', spec.id, `${account}.json`);
 }
 
@@ -141,6 +158,13 @@ export function accountCustodyPath(agent: string, account: string, file: string)
 }
 
 /**
+ * Joins a base docker volume / cloud subpath to a named account. `agent add`
+ * refuses a base that already contains it, so one agent's account name can
+ * never equal another agent's base or account name.
+ */
+export const ACCOUNT_NAME_INFIX = '-acct-';
+
+/**
  * The per-account docker config volume.
  *
  * `default` is the shared volume boxes mount today. A named account gets
@@ -150,7 +174,7 @@ export function accountCustodyPath(agent: string, account: string, file: string)
  * isolated volume to an account.
  */
 export function accountConfigVolume(baseVolume: string, account: string): string {
-  return isDefaultAccount(account) ? baseVolume : `${baseVolume}-acct-${account}`;
+  return isDefaultAccount(account) ? baseVolume : `${baseVolume}${ACCOUNT_NAME_INFIX}${account}`;
 }
 
 /**
@@ -162,7 +186,7 @@ export function accountConfigVolume(baseVolume: string, account: string): string
  */
 export function accountCloudSubpath(baseSubpath: string, account: string): string {
   if (isDefaultAccount(account)) return baseSubpath;
-  return `${baseSubpath.replace(/\/+$/, '')}-acct-${account}/`;
+  return `${baseSubpath.replace(/\/+$/, '')}${ACCOUNT_NAME_INFIX}${account}/`;
 }
 
 /** A legacy single-slot login found on the host, offered to the migration. */
@@ -207,9 +231,11 @@ function parseAccount(raw: unknown): LlmAccount | null {
  * Normalize a parsed `accounts.json` (or its absence) and fold in the legacy
  * single-slot logins.
  *
- * - Malformed rows, and rows `accept` refuses (the store passes the same rule
- *   writes go through), are dropped rather than failing the read: one bad row
- *   must not hide every other account. A duplicate `(agent, id)` keeps the first.
+ * - Malformed rows, and rows `accept` refuses, are dropped from this VIEW
+ *   rather than failing the read: one bad row must not hide every other
+ *   account. A duplicate `(agent, id)` keeps the first. This is a read view
+ *   only — the store never writes it back, so a row this process cannot
+ *   validate (a newer kind, a plugin it has not loaded) survives on disk.
  * - `default` is listed iff its legacy login is real (`legacy` names it). A
  *   stored `default` row only contributes its metadata (a label); a logout
  *   hides it, and a `default` with no row yet is synthesized as a `login` —
@@ -217,11 +243,23 @@ function parseAccount(raw: unknown): LlmAccount | null {
  *
  * Pure and idempotent: feeding the output back in returns an equal value.
  */
+export interface MigrateAccountsOptions {
+  /** Keep a parsed row? The store passes the same rule writes go through. */
+  accept?: (account: LlmAccount) => boolean;
+  /**
+   * Map an agent alias to its canonical id, applied BEFORE de-duplication so
+   * `claude-code/work` and `claude/work` are one account.
+   */
+  canonicalAgent?: (agent: string) => string;
+}
+
 export function migrateAccountsFile(
   raw: unknown,
   legacy: readonly LegacyAccountSlot[],
-  accept: (account: LlmAccount) => boolean = () => true,
+  opts: MigrateAccountsOptions = {},
 ): AccountsFile {
+  const accept = opts.accept ?? (() => true);
+  const canonical = opts.canonicalAgent ?? ((a: string) => a);
   const rows =
     raw !== null && typeof raw === 'object' && Array.isArray((raw as AccountsFile).accounts)
       ? (raw as AccountsFile).accounts
@@ -231,7 +269,8 @@ export function migrateAccountsFile(
   const key = (agent: string, id: string): string => `${agent}\u0000${id}`;
   const hasLegacy = new Set(legacy.map((l) => l.agent));
   for (const row of rows as unknown[]) {
-    const account = parseAccount(row);
+    const parsed = parseAccount(row);
+    const account = parsed ? { ...parsed, agent: canonical(parsed.agent) } : null;
     if (!account || seen.has(key(account.agent, account.id)) || !accept(account)) continue;
     if (isDefaultAccount(account.id) && !hasLegacy.has(account.agent)) continue;
     seen.add(key(account.agent, account.id));

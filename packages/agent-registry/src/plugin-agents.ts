@@ -24,7 +24,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { AGENTS_FILE } from '@agentbox/config';
-import { ACCOUNTS_CUSTODY_SEGMENT, LLM_ACCOUNT_KINDS, type AgentSyncSpec } from '@agentbox/core';
+import {
+  ACCOUNT_NAME_INFIX,
+  ACCOUNTS_CUSTODY_SEGMENT,
+  LLM_ACCOUNT_KINDS,
+  agentIdProblem,
+  type AgentSyncSpec,
+} from '@agentbox/core';
 
 /**
  * Re-exported, not declared: the path also has to be reachable from
@@ -141,10 +147,26 @@ function credentialProblem(raw: unknown): string | null {
   if (typeof cred.boxAbsPath !== 'string' || !cred.boxAbsPath.startsWith('/')) {
     return '`credential.boxAbsPath` must be an absolute in-box path';
   }
-  // Named LLM accounts nest in custody under `agents/<id>/accounts/`; a default
-  // credential FILE of that name would have to be a file and a directory at once.
-  if (cred.boxAbsPath.split('/').pop() === ACCOUNTS_CUSTODY_SEGMENT) {
-    return `\`credential.boxAbsPath\` must not be named '${ACCOUNTS_CUSTODY_SEGMENT}' (reserved for named accounts)`;
+  // Custody keys the credential by `agents/<id>/<boxRelPath>`, and named LLM
+  // accounts nest under `agents/<id>/accounts/`. So the relative path must stay
+  // inside the agent's dir and must not start in the accounts segment, or the
+  // default credential would collide with (or BE) a named account's.
+  const rel = cred.boxRelPath;
+  if (
+    typeof rel !== 'string' ||
+    rel.length === 0 ||
+    rel.startsWith('/') ||
+    rel.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')
+  ) {
+    return '`credential.boxRelPath` must be a relative path with no empty, `.` or `..` segments';
+  }
+  if (rel.split('/')[0] === ACCOUNTS_CUSTODY_SEGMENT) {
+    return `\`credential.boxRelPath\` must not start with '${ACCOUNTS_CUSTODY_SEGMENT}/' (reserved for named accounts)`;
+  }
+  // A named account's cloud subpath is `<base>-acct-<id>/`; a base already
+  // carrying the infix could be another agent's account subpath.
+  if (typeof cred.cloudSubpath === 'string' && cred.cloudSubpath.includes(ACCOUNT_NAME_INFIX)) {
+    return `\`credential.cloudSubpath\` must not contain '${ACCOUNT_NAME_INFIX}' (reserved for named accounts)`;
   }
   // The credential fan-out WRITES here when a box logs in. An empty or relative
   // path drops a temp file in whatever directory the CLI was run from and loses
@@ -283,6 +305,14 @@ export function agentSpecProblem(raw: unknown): string | null {
   const missing = REQUIRED_SPEC_FIELDS.filter((f) => spec[f] === undefined);
   if (missing.length > 0) return `missing required field(s): ${missing.join(', ')}`;
   if (typeof spec.id !== 'string' || spec.id.length === 0) return '`id` must be a non-empty string';
+  // The id is spliced into host paths (`~/.agentbox/credentials/<id>/`), custody
+  // paths and volume names, so it has to be path-safe.
+  const idProblem = agentIdProblem(spec.id);
+  if (idProblem) return idProblem;
+  // Same reason as `cloudSubpath`: a named account's volume is `<base>-acct-<id>`.
+  if (typeof spec.dockerVolume === 'string' && spec.dockerVolume.includes(ACCOUNT_NAME_INFIX)) {
+    return `\`dockerVolume\` must not contain '${ACCOUNT_NAME_INFIX}' (reserved for named accounts)`;
+  }
   if (!Array.isArray(spec.aliases)) return '`aliases` must be an array';
   const shape =
     installProblem(spec.install) ??

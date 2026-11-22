@@ -21,12 +21,21 @@ Newest phase last.
   object.** `removeAccount` drops the row and the host secret only; Phase 2
   (`agentbox accounts rm`) must also drop `<volume>-acct-<id>` and refuse while
   a box records the account.
-- **Rows of an uninstalled plugin agent are dropped** by the next mutation
-  (reads refuse unknown agents), and their secret files stay behind under
-  `~/.agentbox/credentials/<agent>/`. `agent rm` should clean both, or warn.
-- **A secret written before its row** can still be deleted by a concurrent
-  `removeAccount` of the same id. Phase 2 login flows must upsert the row first,
-  then write the secret.
+- **Rows of an uninstalled plugin agent** are hidden from reads but kept on
+  disk (mutations pass rows they cannot validate through), along with their
+  secret files under `~/.agentbox/credentials/<agent>/`. `agent rm` should
+  offer to clean both.
+- **Phase 3: `prune --all` would reap per-account docker volumes.**
+  `packages/sandbox-docker/src/lifecycle.ts` (~895-925) builds `expectedVolumes`
+  from each spec's base `dockerVolume` plus surviving boxes' volumes, and
+  `agentbox-claude-config-acct-work` matches the `agentbox-` prefix. When Phase 3
+  creates those volumes, add `accountConfigVolume(spec.dockerVolume, a.id)` for
+  every `readAccounts()` row to the expected set.
+- **A corrupt `accounts.json` blocks mutations** (`AccountsFileError`) until the
+  user fixes or moves it; reads still show the `default`s. Phase 2's
+  `agentbox accounts` should print the error's path and suggest
+  `mv accounts.json accounts.json.bak`. Rebuilding rows from the files under
+  `credentials/<agent>/` is possible, but the kind/label metadata is lost.
 - **Plan's open Phase 0 items** (second OAuth login, codex symlink-on-refresh,
   revocation timing) are unchanged and still gate the docker storage choice for
   codex.
