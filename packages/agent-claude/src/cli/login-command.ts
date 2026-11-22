@@ -19,6 +19,12 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { accountConfigVolume } from '@agentbox/core';
+import {
+  ensureClaudeVolume,
+  resetVolumeAccountState,
+  SHARED_CLAUDE_VOLUME,
+} from '../docker-sync.js';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginHost } from '@agentbox/cli-kit';
@@ -27,7 +33,10 @@ import {
   cleanupStaleSessions,
   findLiveSession,
   findPendingSession,
+  describeSessionAccount,
+  readLoginRequest,
   readLoginState,
+  sessionAccountMismatch,
   selectLoginMode,
   writeLoginCode,
   writeLoginRequest,
@@ -38,11 +47,15 @@ import { imageProgress } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';
 import { signInToClaude } from './runtime.js';
 
-function printAwaitingCode(st: LoginState): void {
+function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): void {
   const url = st.url ?? '';
-  log.info('To finish signing in, open this URL in a browser and approve access:');
+  log.info(
+    `To finish signing in ${describeSessionAccount(account)}, open this URL in a browser and approve access:`,
+  );
   process.stdout.write(`\n  ${url}\n\n`);
-  log.info('Then run:  agentbox claude login --code <CODE>');
+  log.info(
+    `Then run:  agentbox claude login --code <CODE>${account ? ` --account ${account.id}` : ''}`,
+  );
   // Stable, greppable marker so an orchestrating agent can grab the URL
   // deterministically regardless of how the prose above is worded.
   process.stdout.write(`AGENTBOX_LOGIN_URL=${url}\n`);
@@ -54,7 +67,7 @@ function printAwaitingCode(st: LoginState): void {
  * the `--code` follow-up, and return while the worker keeps waiting. A second
  * `agentbox claude login --code <CODE>` ({@link deliverLoginCode}) finishes it.
  */
-async function startHeadlessLogin(args: string[]): Promise<void> {
+async function startHeadlessLogin(args: string[], account?: LoginAccount): Promise<void> {
   // node-pty drives the login; without the prebuild there is no headless path.
   if (!(await loadPtyBackend())) {
     log.error(
@@ -68,9 +81,17 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
   // `--headless` can't slip through and spawn a duplicate worker.
   const existing = findLiveSession();
   if (existing) {
+    // Never hand out another account's session: its URL signs in whatever the
+    // browser approves, and its worker stores it as THAT session's account.
+    const pendingAccount = readLoginRequest(existing.id)?.account;
+    const mismatch = sessionAccountMismatch(pendingAccount, account);
+    if (mismatch) {
+      log.error(mismatch);
+      process.exit(1);
+    }
     if (existing.state.phase === 'awaiting-code' && existing.state.url) {
       log.info('A login is already pending; finish it (or wait for it to expire):');
-      printAwaitingCode(existing.state);
+      printAwaitingCode(existing.state, pendingAccount);
     } else {
       log.info(
         'A login is already in progress; wait for it to print its URL, then finish with `agentbox claude login --code <CODE>`.',
@@ -89,6 +110,10 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     agents: ['claude'],
     onProgress: imageProgress(s),
   });
+  if (account) {
+    s.message(`preparing the '${account.id}' account's config`);
+    await prepareAccountVolume(account, image);
+  }
   s.stop('image ready');
 
   const id = randomUUID().slice(0, 8);
@@ -97,6 +122,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     extraArgs: args,
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
+    ...(account ? { account } : {}),
   });
 
   // This foreground process IS the CLI entry, so argv[1] is the right script to
@@ -126,7 +152,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
   for (;;) {
     const st = readLoginState(id);
     if (st?.phase === 'awaiting-code' && st.url) {
-      printAwaitingCode(st);
+      printAwaitingCode(st, account);
       return;
     }
     if (st?.phase === 'error') {
@@ -144,7 +170,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
 }
 
 /** Deliver an OAuth code to the pending headless login session and report the outcome. */
-async function deliverLoginCode(code: string): Promise<void> {
+async function deliverLoginCode(code: string, account: LoginAccount | undefined): Promise<void> {
   cleanupStaleSessions();
   const pending = findPendingSession();
   if (!pending) {
@@ -154,6 +180,11 @@ async function deliverLoginCode(code: string): Promise<void> {
     process.exit(1);
   }
   const { id } = pending;
+  const mismatch = sessionAccountMismatch(readLoginRequest(id)?.account, account);
+  if (mismatch) {
+    log.error(mismatch);
+    process.exit(1);
+  }
   const submittedAt = Date.now();
   writeLoginCode(id, code);
 
@@ -164,7 +195,12 @@ async function deliverLoginCode(code: string): Promise<void> {
     const st = readLoginState(id);
     if (st?.phase === 'done') {
       s.stop(st.warmed ? 'credentials ready' : 'signed in (credential check incomplete)');
-      outro('signed in — credentials saved for future boxes');
+      const account = readLoginRequest(id)?.account;
+      outro(
+        account
+          ? `signed in as account '${account.id}' — saved for boxes that select it`
+          : 'signed in — credentials saved for future boxes',
+      );
       return;
     }
     if (st?.phase === 'error') {
@@ -190,6 +226,28 @@ async function deliverLoginCode(code: string): Promise<void> {
   }
 }
 
+/** A named LLM account to sign in, resolved by the shared login wiring. */
+export interface LoginAccount {
+  id: string;
+  label?: string;
+}
+
+/** A named account's own config volume (llm-accounts Phase 0: one per account). */
+export function claudeAccountVolume(account: LoginAccount): string {
+  return accountConfigVolume(SHARED_CLAUDE_VOLUME, account.id);
+}
+
+/**
+ * Seed a named account's volume from the host's config, minus the host's
+ * identity (its login file and cached profile) — see `ensureClaudeVolume`.
+ */
+async function prepareAccountVolume(account: LoginAccount, image: string): Promise<void> {
+  const volume = claudeAccountVolume(account);
+  await ensureClaudeVolume({ volume }, { syncFromHost: true, image, account: account.id });
+  // A re-login of this account must not inherit the previous login's profile.
+  await resetVolumeAccountState(volume, image);
+}
+
 /** Declared BEFORE the factory's `--interactive`, which is the order help prints. */
 export function addClaudeLoginOptions(cmd: Command): void {
   cmd
@@ -205,7 +263,13 @@ export async function runClaudeLoginCommand(
   rawOpts: Record<string, unknown>,
   host: AgentLoginHost,
 ): Promise<void> {
-  const opts = rawOpts as { headless?: boolean; code?: string; interactive?: boolean };
+  const opts = rawOpts as {
+    headless?: boolean;
+    code?: string;
+    interactive?: boolean;
+    loginAccount?: LoginAccount;
+  };
+  const account = opts.loginAccount;
   const mode = selectLoginMode({
     isTTY: !!process.stdin.isTTY,
     headless: !!opts.headless,
@@ -215,14 +279,16 @@ export async function runClaudeLoginCommand(
   });
   try {
     if (mode === 'code') {
-      await deliverLoginCode(opts.code as string);
+      await deliverLoginCode(opts.code as string, account);
       return;
     }
     if (mode === 'headless') {
-      await startHeadlessLogin(args);
+      await startHeadlessLogin(args, account);
       return;
     }
-    intro('Signing in to Claude...');
+    intro(
+      account ? `Signing in to Claude as account '${account.id}'...` : 'Signing in to Claude...',
+    );
     const cfg = await loadEffectiveConfig(process.cwd());
     const baseImage = cfg.effective.box.image;
 
@@ -233,12 +299,21 @@ export async function runClaudeLoginCommand(
       agents: ['claude'],
       onProgress: imageProgress(s),
     });
+    if (account) {
+      s.message(`preparing the '${account.id}' account's config`);
+      await prepareAccountVolume(account, image);
+    }
     s.stop('image ready');
 
     // Throwaway `docker run` against the shared volume — the written credentials
     // persist there and `syncClaudeCredentials` mirrors them to the host backup,
-    // so every later box (shared or isolate) is seeded.
-    const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
+    // so every later box (shared or isolate) is seeded. A named account signs
+    // in against its own volume instead and is captured into the account store.
+    const volume = account ? claudeAccountVolume(account) : undefined;
+    const res = await signInToClaude(image, args, {
+      passthrough: mode === 'interactive',
+      ...(volume ? { volume } : {}),
+    });
     if (res.cancelled) {
       outro('sign-in cancelled');
       process.exit(1);
@@ -251,6 +326,10 @@ export async function runClaudeLoginCommand(
         log.info("Try `agentbox claude login --interactive` to use claude's own login TUI.");
       }
       process.exit(1);
+    }
+    if (account && volume) {
+      await host.captureAccountLogin({ account, volume, image });
+      return;
     }
     outro('signed in — credentials saved for future boxes');
     // A fresh login is exactly when the control box's copy goes stale — push the

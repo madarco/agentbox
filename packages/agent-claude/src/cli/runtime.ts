@@ -30,6 +30,7 @@ import {
 } from '../docker-sync.js';
 import { confirm, log, spinner } from '@agentbox/cli-kit';
 import { resolveClaudeAuth } from './auth.js';
+import { claudeAccountIdentity } from './account-identity.js';
 import { claudeLoginBinding } from './login-binding.js';
 import { claudeCredStatus } from './host-creds.js';
 import { resolveClaudeCredHealth } from './cred-health.js';
@@ -50,9 +51,13 @@ import type { AgentRuntime, SignInResult } from '@agentbox/cli-kit';
  * This is the legacy passthrough: it hands the terminal to claude's own TUI. See
  * {@link signInToClaude} for why that is no longer the default.
  */
-async function runClaudeLoginContainer(image: string, extraArgs: string[]): Promise<number> {
+async function runClaudeLoginContainer(
+  image: string,
+  extraArgs: string[],
+  volume: string = SHARED_CLAUDE_VOLUME,
+): Promise<number> {
   const { exitCode } = runInteractiveClaudeLogin(
-    buildClaudeLoginRunArgv({ volume: SHARED_CLAUDE_VOLUME, image, extraArgs }),
+    buildClaudeLoginRunArgv({ volume, image, extraArgs }),
   );
   if (exitCode === 0) {
     // Absorb the fresh-token first-request 400 in a throwaway container before
@@ -61,11 +66,15 @@ async function runClaudeLoginContainer(image: string, extraArgs: string[]): Prom
     // refreshes.
     const s = spinner();
     s.start('checking credentials');
-    const warm = await warmUpClaudeCredentials(SHARED_CLAUDE_VOLUME, image, {
+    const warm = await warmUpClaudeCredentials(volume, image, {
       onProgress: (line) => s.message(clampSpinnerLine(line)),
     });
     s.stop(warm.warmed ? 'credentials ready' : 'credentials check incomplete — continuing');
-    await syncClaudeCredentials({ volume: SHARED_CLAUDE_VOLUME }, { image, isolate: false });
+    // Only the shared volume mirrors to the legacy backup: that file IS the
+    // default account. A named account's volume is captured by the caller.
+    if (volume === SHARED_CLAUDE_VOLUME) {
+      await syncClaudeCredentials({ volume }, { image, isolate: false });
+    }
   }
   return exitCode;
 }
@@ -83,17 +92,17 @@ async function runClaudeLoginContainer(image: string, extraArgs: string[]): Prom
 export async function signInToClaude(
   image: string,
   extraArgs: string[],
-  opts: { passthrough?: boolean } = {},
+  opts: { passthrough?: boolean; volume?: string } = {},
 ): Promise<SignInResult> {
   const usePassthrough = opts.passthrough === true || !(await loadPtyBackend());
   if (usePassthrough) {
-    const exitCode = await runClaudeLoginContainer(image, extraArgs);
+    const exitCode = await runClaudeLoginContainer(image, extraArgs, opts.volume);
     return exitCode === 0
       ? { ok: true }
       : { ok: false, error: `\`claude auth login\` exited with code ${String(exitCode)}` };
   }
   const res = await runGuidedLogin('claude', (writeLog) =>
-    claudeLoginBinding({ image, extraArgs, writeLog }),
+    claudeLoginBinding({ image, extraArgs, writeLog, volume: opts.volume }),
   );
   return { ok: res.ok, error: res.error, cancelled: res.cancelled };
 }
@@ -152,6 +161,8 @@ export const claudeRuntime: AgentRuntime = {
     };
   },
   sharedVolume: SHARED_CLAUDE_VOLUME,
+  accountIdentity: claudeAccountIdentity,
+  supportsAccountLogin: true,
   SessionError: ClaudeSessionError,
 
   startSession: (o) =>
@@ -169,6 +180,7 @@ export const claudeRuntime: AgentRuntime = {
       syncFromHost: o.syncFromHost,
       image: o.image,
       ...(o.hostWorkspace === undefined ? {} : { hostWorkspace: o.hostWorkspace }),
+      ...(o.account === undefined ? {} : { account: o.account }),
     }),
   buildAttachArgv: (container, sessionName) => buildClaudeAttachArgv(container, sessionName),
 

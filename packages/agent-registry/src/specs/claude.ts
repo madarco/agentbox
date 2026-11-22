@@ -153,6 +153,10 @@ export const claudeSpec: AgentSyncSpec = {
     // blob is dead, not merely stale, and must never overwrite a newer one.
     freshness: { jsonPath: ['claudeAiOauth', 'expiresAt'] },
   },
+  // Named LLM accounts (docs/llm-accounts-plan.md). `setup-token` is the long-lived
+  // `claude setup-token` kind: it never refreshes, so it never revokes the other
+  // holders of the account the way a login refresh does.
+  accountKinds: ['login', 'setup-token', 'api-key'],
   forwardedEnvKeys: [
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',

@@ -18,6 +18,7 @@ import type { AgentHistorySpec } from '../history/types.js';
  */
 
 import type { AgentId } from './agent-kind.js';
+import type { LlmAccountKind } from './llm-accounts.js';
 
 /**
  * Canonical agent id. Re-exported from `@agentbox/core` rather than redeclared:
@@ -825,6 +826,16 @@ export interface AgentSyncSpec {
    * other box.
    */
   credential?: AgentCredential;
+  /**
+   * Which kinds of named LLM account this agent supports (`login`,
+   * `setup-token`, `api-key`) — see `llm-accounts.ts`.
+   *
+   * Absent or empty means no named accounts: the agent keeps its one `default`
+   * slot. Registry data rather than a list in shared code, so a plugin agent
+   * gets accounts by declaring them. `login` requires `credential`, because a
+   * login account's secret IS that file.
+   */
+  accountKinds?: readonly LlmAccountKind[];
   /**
    * Where this agent's transcripts live, for the hub's session history. Data
    * only; the parser is the agent module's `AgentHistoryModule`. Absent means

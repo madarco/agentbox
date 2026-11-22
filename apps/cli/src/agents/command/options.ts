@@ -8,6 +8,8 @@
  * reality is exact, flag for flag.
  */
 import { Command } from 'commander';
+import { agentAccountKinds, type LlmAccountKind } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { ATTACH_IN_HELP, INLINE_HELP, NO_ATTACH_HELP } from '../../commands/_attach-in.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 import { modelAuthHelp } from '../../lib/model-auth-gate.js';
@@ -289,5 +291,33 @@ export function buildLoginSubcommand(a: AgentCliSpec): Command {
   // (claude's headless print-URL / `--code` pair) declares those flags first,
   // which is the order `--help` has always printed them in.
   a.runtime.loginCommand?.options?.(cmd);
-  return cmd.option('--interactive', a.text.loginInteractiveHelp);
+  cmd.option('--interactive', a.text.loginInteractiveHelp);
+  addAccountLoginOptions(cmd, agentAccountKinds(resolveAgentSpec(a.id)));
+  return cmd;
+}
+
+/**
+ * The named-account flags (llm-accounts Phase 2), only for an agent whose row
+ * declares `accountKinds`, and only the kinds it declares.
+ */
+export function addAccountLoginOptions(cmd: Command, kinds: readonly LlmAccountKind[]): void {
+  if (kinds.length === 0) return;
+  cmd
+    .option(
+      '--account <name>',
+      'sign in a named account (lowercase letters, digits, dashes) instead of the default one',
+    )
+    .option('--label <text>', 'display label for the named account');
+  if (kinds.includes('api-key')) {
+    cmd.option(
+      '--api-key',
+      'store an API key as the named account (read from a hidden prompt, or stdin)',
+    );
+  }
+  if (kinds.includes('setup-token')) {
+    cmd.option(
+      '--setup-token',
+      'store a long-lived setup token as the named account (read from a hidden prompt, or stdin); the right kind for an account many boxes share',
+    );
+  }
 }

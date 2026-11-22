@@ -423,3 +423,11 @@ export {
   openAgentConfigTarget,
   type AgentConfigTarget,
 } from './sync/agents/config-target.js';
+export {
+  captureVolumeLogin,
+  dockerVolumeFileReader,
+  type AccountIdentityReader,
+  type CaptureVolumeLoginOptions,
+  type CaptureVolumeLoginResult,
+  type VolumeFileReader,
+} from './sync/account-login.js';

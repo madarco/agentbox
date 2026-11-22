@@ -6,7 +6,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
 import { agentSettingsFor } from '@agentbox/config';
 import type { AgentSettings, LoopbackEndpoint } from '@agentbox/core';
-import { DOCKER_HOST_ALIAS, findLoopbackEndpoints, LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
+import {
+  DOCKER_HOST_ALIAS,
+  findLoopbackEndpoints,
+  LIVE_DATABASE_EXCLUDES,
+  requireAgentCredential,
+} from '@agentbox/core';
 import {
   agentTuiEnv,
   ensureAgentInstalled,
@@ -17,7 +22,9 @@ import {
   addProjectAlias,
   claudeSettingsEndpointPaths,
   filterHostHooks,
+  accountStateJqDelete,
   setInstallMethodNative,
+  stripAccountState,
   trustWorkspace,
 } from './hooks-filter.js';
 import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
@@ -88,6 +95,12 @@ export interface EnsureClaudeVolumeOptions {
    * trust state, and history match what the host has for this project.
    */
   hostWorkspace?: string;
+  /**
+   * A NAMED LLM account's volume (docs/llm-accounts-plan.md). The host's
+   * `.credentials.json` is not copied (it is the owner's real login) and the
+   * `_claude.json` seed drops the host's account state (`stripAccountState`).
+   */
+  account?: string;
 }
 
 export interface EnsureClaudeVolumeResult {
@@ -243,6 +256,7 @@ export async function ensureClaudeVolume(
   let installMethodFixed = false;
   let aliasedProjectKey = false;
   let workspaceTrusted = false;
+  let accountStateStripped = false;
   let loopbackEndpoints: LoopbackEndpoint[] = [];
   try {
     const settingsResult = await maybeFilterTo(
@@ -268,9 +282,11 @@ export async function ensureClaudeVolume(
             ? { from: opts.hostWorkspace, to: CONTAINER_WORKSPACE }
             : undefined,
           trustWorkspacePath: CONTAINER_WORKSPACE,
+          stripAccountState: opts.account !== undefined,
         },
       );
       filteredHookCount += jsonResult.removedHooks;
+      accountStateStripped = jsonResult.accountStateStripped;
       installMethodFixed = jsonResult.installMethodFixed;
       aliasedProjectKey = jsonResult.aliasedProjectKey;
       workspaceTrusted = jsonResult.workspaceTrusted;
@@ -301,6 +317,7 @@ export async function ensureClaudeVolume(
       installMethodFixed ||
       aliasedProjectKey ||
       workspaceTrusted ||
+      accountStateStripped ||
       loopbackEndpoints.length > 0
     ) {
       args.push('-v', `${filterDir}:/src-filter:ro`);
@@ -332,6 +349,12 @@ export async function ensureClaudeVolume(
       ...LIVE_DATABASE_EXCLUDES.map((p) => `--exclude=${p}`),
     ];
     for (const rel of brokenSymlinks) rsyncExcludes.push(`--exclude=/${rel}`);
+    // The host's login belongs to the owner's default account, never a named one.
+    if (opts.account !== undefined) {
+      rsyncExcludes.push(
+        `--exclude=/${requireAgentCredential(resolveAgentSpec('claude')).boxRelPath}`,
+      );
+    }
     const rsyncFlags = `--copy-unsafe-links ${rsyncExcludes.join(' ')}`;
     // Rekey the host project's memory/ -> /dst/projects/-workspace/memory.
     // The key is [A-Za-z0-9-] only (encodeClaudeProjectsKey), so it's shell-safe
@@ -424,12 +447,15 @@ async function maybeFilterTo(
     trustWorkspacePath?: string;
     /** Rewrite host-loopback `env.*_BASE_URL` values to `host` (#403). */
     loopback?: { host: string; source: string };
+    /** Drop the host's account state (a named LLM account's volume). */
+    stripAccountState?: boolean;
   } = {},
 ): Promise<{
   removedHooks: number;
   installMethodFixed: boolean;
   aliasedProjectKey: boolean;
   workspaceTrusted: boolean;
+  accountStateStripped: boolean;
   loopbackEndpoints: LoopbackEndpoint[];
 }> {
   const zero = {
@@ -437,6 +463,7 @@ async function maybeFilterTo(
     installMethodFixed: false,
     aliasedProjectKey: false,
     workspaceTrusted: false,
+    accountStateStripped: false,
     loopbackEndpoints: [],
   };
   let parsed: unknown;
@@ -465,6 +492,12 @@ async function maybeFilterTo(
     working = r.data;
     trusted = r.trusted;
   }
+  let accountStateStripped = false;
+  if (opts.stripAccountState) {
+    const r = stripAccountState(working);
+    working = r.data;
+    accountStateStripped = r.stripped;
+  }
   const loopbackEndpoints = opts.loopback
     ? findLoopbackEndpoints(working, {
         paths: claudeSettingsEndpointPaths(working),
@@ -477,6 +510,7 @@ async function maybeFilterTo(
     !installFixed &&
     !aliased &&
     !trusted &&
+    !accountStateStripped &&
     loopbackEndpoints.length === 0
   ) {
     return zero;
@@ -487,6 +521,7 @@ async function maybeFilterTo(
     installMethodFixed: installFixed,
     aliasedProjectKey: aliased,
     workspaceTrusted: trusted,
+    accountStateStripped,
     loopbackEndpoints,
   };
 }
@@ -1342,4 +1377,28 @@ export async function claudeSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
+}
+
+/**
+ * Drop the account state from a volume's EXISTING `_claude.json` before a
+ * named account signs in again. The seed in {@link ensureClaudeVolume} is
+ * write-once, so without this a re-login keeps the previous login's cached
+ * profile, and a fresh `profileFetchedAt` keeps it on display (Phase 0, (a)).
+ */
+export async function resetVolumeAccountState(volume: string, image: string): Promise<void> {
+  const script =
+    'f=/dst/_claude.json; [ -f "$f" ] || exit 0; ' +
+    `jq '${accountStateJqDelete()}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f"`;
+  await execa('docker', [
+    'run',
+    '--rm',
+    '--user',
+    '0',
+    '-v',
+    `${volume}:/dst`,
+    image,
+    'sh',
+    '-c',
+    script,
+  ]);
 }
