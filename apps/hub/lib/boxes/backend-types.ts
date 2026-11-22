@@ -308,6 +308,10 @@ export interface CreateBoxInput {
   // `repoUrl`'s key as the sender computed it (ssh aliases expanded on its
   // machine). With repoUrl only; the hub uses it to find the seed the PC pushed.
   repoKey?: string;
+  // The PC that asked for the box (machine id, label, checkout folder), with
+  // repoUrl only: the box registers with it as its origin machine. The route
+  // replaces machineId with the caller's verified device id when it has one.
+  requester?: { machineId: string; label?: string; folder?: string };
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
   agent: AgentId | 'none';
   // Sandbox provider to create on. Defaults to 'docker'. A bare provider name

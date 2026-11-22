@@ -16,7 +16,7 @@
  */
 
 import { execa } from 'execa';
-import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import {
@@ -52,19 +52,13 @@ async function uploadOneToCloudBox(
   const srcBasename = hostBasename(srcAbs);
   const srcParent = hostDirname(srcAbs);
 
-  // Resolve `boxParent` + final filename per docker cp rules — see file
-  // header. We can't probe `test -d` cheaply, so the user opts into the
-  // dir-vs-file ambiguity with the trailing slash.
-  let boxParent: string;
-  let finalName: string;
-  if (boxDst.endsWith('/')) {
-    boxParent = boxDst.replace(/\/+$/, '') || '/';
-    finalName = srcBasename;
-  } else {
-    boxParent = posix.dirname(boxDst);
-    finalName = posix.basename(boxDst);
-  }
-  const finalPath = boxParent === '/' ? `/${finalName}` : `${boxParent}/${finalName}`;
+  // Where it lands, per docker cp rules (see file header). The box-side script
+  // also treats an EXISTING directory as one, trailing slash or not: `cp
+  // fromHost ./README.md .` from a subfolder used to read `.` as a target FILE
+  // path, unpack README.md over `/workspace/README.md`, move it into the
+  // subfolder and delete the original.
+  const trailing = boxDst.endsWith('/');
+  const dstNoSlash = boxDst.replace(/\/+$/, '') || '/';
 
   const stage = await mkdtemp(hostJoin(tmpdir(), 'agentbox-cp-up-'));
   const localTar = hostJoin(stage, 'payload.tar.gz');
@@ -77,19 +71,16 @@ async function uploadOneToCloudBox(
     });
     await backend.uploadFile(handle, localTar, REMOTE_UP_TAR);
 
-    // Sudo for the dir ops because `boxParent` may be outside the user's
+    // Sudo for the dir ops because the destination may be outside the user's
     // writable area (e.g. /etc/foo); devcontainers/base grants vscode
     // passwordless sudo and the SUDO=:'' fallback makes it a no-op when
     // sudo isn't available (test sandboxes).
-    const initialPath = boxParent === '/' ? `/${srcBasename}` : `${boxParent}/${srcBasename}`;
-    // Daytona's S3-backed FUSE volumes return ENOSYS for rename(2), so `mv`
-    // fails when the destination crosses the mount boundary. `cp -f` + `rm`
-    // works on every backend (and on the regular sandbox disk is no slower
-    // than mv for a single file).
-    const renameStep =
-      finalName !== srcBasename
-        ? `$SUDO cp -f ${quoteShellArg(initialPath)} ${quoteShellArg(finalPath)} && $SUDO rm -f ${quoteShellArg(initialPath)}`
-        : ': # no rename';
+    //
+    // The payload is unpacked into a PRIVATE staging dir and copied from
+    // there to the final path, so nothing beside the destination is ever
+    // overwritten or deleted. (`cp`, not `mv`: Daytona's S3-backed FUSE
+    // volumes return ENOSYS for rename(2) across the mount boundary.)
+    //
     // Parent-chain chown: `mkdir -p` ran as root (via $SUDO), so any new dirs
     // between $HOME and the landed path are root-owned. When the dest is under
     // the box home, walk back up to $HOME (exclusive) and chown each so the
@@ -98,41 +89,46 @@ async function uploadOneToCloudBox(
     // `state_*.sqlite` index in that subtree. System paths (/etc/*) and
     // /workspace keep their existing ownership. The whole script runs via
     // `bashScript()` (`bash -c '<body>'`), which protects `$(...)`/`while` from
-    // Vercel's outer `sudo -u vscode -H bash -lc` wrapping.
-    // Strictly *under* home (trailing segment) — never `=== BOX_HOME`, else
-    // `dirname` would be `/home` and the walk could reassign `/home` itself.
-    const underHome = finalPath.startsWith(BOX_HOME + '/');
-    const parentWalk = underHome
-      ? `parent=$(dirname ${quoteShellArg(finalPath)}); ` +
-        `while [ "$parent" != ${quoteShellArg(BOX_HOME)} ] && [ "$parent" != "/" ]; do ` +
-        `$SUDO chown "$(id -un):$(id -gn)" "$parent" || true; ` +
-        `parent=$(dirname "$parent"); ` +
-        `done`
-      : `: # dest outside ${BOX_HOME}; leave parent ownership untouched`;
+    // Vercel's outer `sudo -u vscode -H bash -lc` wrapping. Strictly *under*
+    // home — never `= $HOME`, else `dirname` would reach `/home` itself.
     const script = [
       `set -euo pipefail`,
       `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi`,
-      `$SUDO mkdir -p ${quoteShellArg(boxParent)}`,
+      `dst=${quoteShellArg(dstNoSlash)}`,
+      `base=${quoteShellArg(srcBasename)}`,
+      trailing
+        ? `parent="$dst"; final="\${dst%/}/$base"`
+        : `if [ -d "$dst" ]; then parent="$dst"; final="\${dst%/}/$base"; else parent=$(dirname "$dst"); final="$dst"; fi`,
+      `stage=$(mktemp -d /tmp/agentbox-cp-stage.XXXXXX)`,
+      `trap 'rm -rf "$stage"' EXIT`,
       // --no-same-permissions / --no-same-owner / -m: Daytona's S3-backed
       // FUSE volumes reject chmod/utime/chown; skipping them lets the extract
-      // complete on a mounted-volume destination. Harmless no-op on the
-      // sandbox's regular disk. Same flags as the credential-seed extract.
-      `$SUDO tar -xzf ${quoteShellArg(REMOTE_UP_TAR)} -C ${quoteShellArg(boxParent)} --no-same-permissions --no-same-owner -m`,
-      renameStep,
+      // complete on a mounted-volume destination.
+      `tar -xzf ${quoteShellArg(REMOTE_UP_TAR)} -C "$stage" --no-same-permissions --no-same-owner -m`,
+      `$SUDO mkdir -p "$parent"`,
+      `if [ -d "$stage/$base" ]; then $SUDO mkdir -p "$final" && $SUDO cp -a "$stage/$base/." "$final/"; else $SUDO cp -f "$stage/$base" "$final"; fi`,
       // chown the landed subtree, then the parent chain back up to $HOME.
       // Tolerate failure (chown bad on read-only / FUSE mounts).
-      `$SUDO chown -R "$(id -un):$(id -gn)" ${quoteShellArg(finalPath)} || true`,
-      parentWalk,
+      `$SUDO chown -R "$(id -un):$(id -gn)" "$final" || true`,
+      `case "$final" in ${quoteShellArg(BOX_HOME)}/*) ` +
+        `p=$(dirname "$final"); ` +
+        `while [ "$p" != ${quoteShellArg(BOX_HOME)} ] && [ "$p" != "/" ]; do ` +
+        `$SUDO chown "$(id -un):$(id -gn)" "$p" || true; p=$(dirname "$p"); done;; ` +
+        `esac`,
       `rm -f ${quoteShellArg(REMOTE_UP_TAR)}`,
+      `printf '%s\\n' "__AGENTBOX_CP_FINAL__=$final"`,
     ].join('\n');
     const r = await backend.exec(handle, bashScript(script));
     if (r.exitCode !== 0) {
       throw new Error(`cloud upload extract failed: ${r.stderr || r.stdout}`);
     }
+    const landed = /__AGENTBOX_CP_FINAL__=(.*)$/m.exec(r.stdout ?? '')?.[1]?.trim();
+    return {
+      finalPath: landed || (trailing ? posix.join(dstNoSlash, srcBasename) : dstNoSlash),
+    };
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
-  return { finalPath };
 }
 
 /**
@@ -166,11 +162,9 @@ export async function pullCloudDirContents(
     }
     await backend.downloadFile(handle, REMOTE_DOWN_TAR, localTar);
     await execa('tar', ['-xzf', localTar, '-C', dstAbs]);
-    await backend
-      .exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`)
-      .catch(() => {
-        /* best-effort */
-      });
+    await backend.exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`).catch(() => {
+      /* best-effort */
+    });
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -204,9 +198,7 @@ async function downloadOneFromCloudBox(
   const stage = await mkdtemp(hostJoin(tmpdir(), 'agentbox-cp-down-'));
   const localTar = hostJoin(stage, 'payload.tar.gz');
   try {
-    const excludeArgs = (exclude ?? [])
-      .map((p) => `--exclude=${quoteShellArg(p)}`)
-      .join(' ');
+    const excludeArgs = (exclude ?? []).map((p) => `--exclude=${quoteShellArg(p)}`).join(' ');
     const packScript = [
       `set -euo pipefail`,
       `cd ${quoteShellArg(srcParent)}`,
@@ -217,16 +209,17 @@ async function downloadOneFromCloudBox(
       throw new Error(`cloud download pack failed: ${r.stderr || r.stdout}`);
     }
     await backend.downloadFile(handle, REMOTE_DOWN_TAR, localTar);
-    await execa('tar', ['-xzf', localTar, '-C', hostParent]);
-    if (finalName !== srcBasename) {
-      renameSync(hostJoin(hostParent, srcBasename), finalPath);
-    }
+    // Unpacked into the private stage, then copied to the final path: an
+    // extract straight into `hostParent` would overwrite a file of the
+    // source's name there, and the rename to `finalPath` would then remove it.
+    const unpacked = hostJoin(stage, 'out');
+    mkdirSync(unpacked);
+    await execa('tar', ['-xzf', localTar, '-C', unpacked]);
+    cpSync(hostJoin(unpacked, srcBasename), finalPath, { recursive: true, force: true });
     // Best-effort cleanup; tolerate failure (sandbox may have ephemeral /tmp).
-    await backend
-      .exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`)
-      .catch(() => {
-        /* best-effort */
-      });
+    await backend.exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`).catch(() => {
+      /* best-effort */
+    });
   } finally {
     await rm(stage, { recursive: true, force: true });
   }

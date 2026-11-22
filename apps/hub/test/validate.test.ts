@@ -740,6 +740,34 @@ describe('parseCreateBox repoKey', () => {
   });
 });
 
+describe('parseCreateBox requester', () => {
+  const base = { repoUrl: 'https://github.com/acme/web', agent: 'claude', provider: 'hetzner' };
+  it('accepts the requesting PC with a repoUrl create', () => {
+    const r = parseCreateBox({
+      ...base,
+      requester: {
+        machineId: '0b9d6c3e-5f0a-4c1e-9d2b-7a8e6f4c3b21',
+        label: 'laptop',
+        folder: '/Users/a/web',
+      },
+    });
+    expect(r.ok && r.value.requester).toEqual({
+      machineId: '0b9d6c3e-5f0a-4c1e-9d2b-7a8e6f4c3b21',
+      label: 'laptop',
+      folder: '/Users/a/web',
+    });
+  });
+  it('refuses a malformed requester', () => {
+    expect(parseCreateBox({ ...base, requester: { machineId: 'laptop' } }).ok).toBe(false);
+    expect(
+      parseCreateBox({
+        ...base,
+        requester: { machineId: '0b9d6c3e-5f0a-4c1e-9d2b-7a8e6f4c3b21', folder: 'rel' },
+      }).ok,
+    ).toBe(false);
+  });
+});
+
 describe('parseCheckoutFilter', () => {
   it('passes repoKey and machineId through, and refuses junk', () => {
     expect(parseCheckoutFilter(new URLSearchParams('repoKey=github.com/acme/web')).ok).toBe(true);

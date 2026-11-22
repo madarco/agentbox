@@ -44,7 +44,10 @@ export { HostActionQueue } from './host-action-queue.js';
 export {
   HostReachQueue,
   DEFAULT_HOST_REACH_TIMEOUT_MS,
+  type HostReachCandidate,
   type HostReachOutcome,
+  type HostReachRoute,
+  type HostReachTried,
   type HostReachUnreachable,
 } from './host-reach.js';
 export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';

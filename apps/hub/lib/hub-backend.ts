@@ -383,6 +383,16 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
+/** The origin-machine fields of the Box payload, from a registration. */
+function originOfRegistration(
+  reg: { originMachineId?: string; originMachineLabel?: string } | undefined,
+): Pick<Box, 'originMachineId' | 'originMachineLabel'> {
+  return {
+    ...(reg?.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+    ...(reg?.originMachineLabel ? { originMachineLabel: reg.originMachineLabel } : {}),
+  };
+}
+
 function mapBox(
   b: ListedBox,
   regroup?: ProjectRegrouping,
@@ -597,6 +607,8 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     // drivable record for this box from the API alone (Step 4), minus secrets.
     sandboxId: reg.sandboxId,
     originUrl: reg.originUrl,
+    ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+    ...(reg.originMachineLabel ? { originMachineLabel: reg.originMachineLabel } : {}),
     publicHost: reg.publicHost,
     image: reg.image,
     webPort: reg.webPort,
@@ -2339,9 +2351,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       };
       const listedBoxes = await Promise.all(
         listed.map(async (b) =>
-          withTasks(
-            mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
-          ),
+          withTasks({
+            ...mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
+            ...originOfRegistration(regByBoxId.get(b.id)),
+          }),
         ),
       );
       return {

@@ -4,6 +4,7 @@ import {
   deriveRepoLabel,
   custodySlugCandidates,
   isEphemeralWorkerClone,
+  registrationOrigin,
   isHubWorkerClone,
   legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
@@ -208,6 +209,32 @@ describe('hub-worker clone recognition', () => {
     // A user whose checkout happens to live under a similarly-named parent must
     // not have their own folder mistaken for a throwaway clone.
     expect(isHubWorkerClone('/tmp/agentbox-hub-worker-abc/nested-real-repo')).toBe(false);
+  });
+});
+
+describe('registrationOrigin', () => {
+  it('records the requesting PC, not the worker, for a box built from a hub clone (sign-off of #426)', async () => {
+    const r = await registrationOrigin({
+      originUrl: 'https://github.com/acme/web.git',
+      folder: '/tmp/agentbox-hub-worker-job1',
+      repoKey: 'github.com/acme/web',
+      requester: { machineId: 'pc-a-id', label: 'laptop', folder: '/Users/a/web' },
+    });
+    expect(r).toEqual({
+      repoKey: 'github.com/acme/web',
+      originMachineId: 'pc-a-id',
+      originMachineLabel: 'laptop',
+      originFolder: '/Users/a/web',
+    });
+  });
+
+  it('records no origin for a worker clone when nobody asked (a web UI create)', async () => {
+    const r = await registrationOrigin({
+      originUrl: 'https://github.com/acme/web.git',
+      folder: '/tmp/agentbox-hub-worker-job1',
+    });
+    expect(r.originMachineId).toBeUndefined();
+    expect(r.originFolder).toBeUndefined();
   });
 });
 

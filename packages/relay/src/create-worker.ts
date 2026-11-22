@@ -68,6 +68,8 @@ export interface CreateBoxDeps {
     repoUrl: string;
     /** The requester's alias-expanded repo key (CreateJobRequest.repoKey). */
     repoKey?: string;
+    /** The PC the box is built for (CreateJobRequest.requester). */
+    requester?: { machineId: string; label?: string; folder?: string };
     provider: string;
     /**
      * Agent the box is being created for. Registered on the control plane so a
@@ -251,6 +253,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         name: request.name,
         repoUrl: request.repoUrl,
         ...(request.repoKey ? { repoKey: request.repoKey } : {}),
+        ...(request.requester ? { requester: request.requester } : {}),
         provider: request.provider,
         ...(carry ? { carry } : {}),
         // Carry the job's agent through to the box record + its plane

@@ -7,9 +7,16 @@ import type { BoxRegistration } from './types.js';
  * the first registration that named one.
  */
 export function mergeRegistrationOrigin(
-  body: { repoKey?: unknown; originMachineId?: unknown; originMachineLabel?: unknown },
-  existing: Pick<BoxRegistration, 'repoKey' | 'originMachineId' | 'originMachineLabel'> | undefined,
-): Pick<BoxRegistration, 'repoKey' | 'originMachineId' | 'originMachineLabel'> {
+  body: {
+    repoKey?: unknown;
+    originMachineId?: unknown;
+    originMachineLabel?: unknown;
+    originFolder?: unknown;
+  },
+  existing:
+    | Pick<BoxRegistration, 'repoKey' | 'originMachineId' | 'originMachineLabel' | 'originFolder'>
+    | undefined,
+): Pick<BoxRegistration, 'repoKey' | 'originMachineId' | 'originMachineLabel' | 'originFolder'> {
   const str = (v: unknown): string | undefined =>
     typeof v === 'string' && v.length > 0 ? v : undefined;
   const repoKey = str(body.repoKey) ?? existing?.repoKey;
@@ -20,9 +27,15 @@ export function mergeRegistrationOrigin(
     : originMachineId
       ? str(body.originMachineLabel)
       : undefined;
+  const originFolder = kept
+    ? existing.originFolder
+    : originMachineId
+      ? str(body.originFolder)
+      : undefined;
   return {
     ...(repoKey ? { repoKey } : {}),
     ...(originMachineId ? { originMachineId } : {}),
     ...(originMachineLabel ? { originMachineLabel } : {}),
+    ...(originFolder ? { originFolder } : {}),
   };
 }

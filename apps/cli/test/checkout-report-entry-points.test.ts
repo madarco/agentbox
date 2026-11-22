@@ -17,4 +17,11 @@ describe('checkouts are reported from every create entry point', () => {
       src('commands/workspace.ts').match(/reportCheckouts\(\s*client,\s*scan\.projects/g),
     ).toHaveLength(2);
   });
+
+  it('a hub-routed `agentbox create` writes the local record, like the agent path (re-check of #426)', () => {
+    // Without it the creating PC met its own box as a stranger: its first copy
+    // asked (default no) and then adopted the box.
+    expect(src('commands/create.ts')).toMatch(/adoptCreatedHubBox\(/);
+    expect(src('commands/_cloud-agent-via-hub.ts')).toMatch(/return adoptCreatedHubBox\(/);
+  });
 });

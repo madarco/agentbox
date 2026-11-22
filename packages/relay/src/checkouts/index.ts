@@ -15,3 +15,4 @@ export {
   type HostCandidate,
   type HostCandidatesResult,
 } from './resolve.js';
+export { hostReachRouteFor, type HostReachRouteResult } from './route.js';

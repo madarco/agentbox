@@ -1,4 +1,5 @@
-import { deviceTokenFor } from '@agentbox/sandbox-core';
+import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
+import { tryGetMachineId } from '@agentbox/config';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -6,9 +7,21 @@ import { startEgressWatchLoop } from './egress-watch.js';
 import { startPersistentBoxLoop } from './persistent-boxes.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
-import { HostReachPoller } from './host-reach-poller.js';
+import { HostReachPoller, type HostReachDecline } from './host-reach-poller.js';
+import { mirrorHostReachPrompts, type HostReachPromptClient } from './host-reach-prompts.js';
+import { existsSync, realpathSync } from 'node:fs';
+import { execa } from 'execa';
 import { drainCpOutbox } from './cp-outbox-drain.js';
-import { cacheCpSources, executeCloudAction, lookupCloudBoxOwner } from './host-actions.js';
+import {
+  boxWorkspacePath,
+  cacheCpSources,
+  executeCloudAction,
+  lookupCloudBoxOwner,
+  resolveHostPath,
+  type CloudBoxOwner,
+} from './host-actions.js';
+import { normalizeCpParams, type CpMethod } from './cp-rpc.js';
+import type { CpRpcParams } from './types.js';
 import type { HostAction, HostActionResult } from './types.js';
 
 // Re-exported here (not just from index.ts) so the two processes that own a
@@ -76,12 +89,13 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
           controlPlaneUrl,
           adminToken: hostReachToken,
           logger: log,
-          execute: (action) =>
+          execute: (action, hub) =>
             executeHostReachAction(action, {
               prompts: handle.prompts,
               subscribers: handle.subscribers,
               log,
               cache: { controlPlaneUrl, adminToken: hostReachToken },
+              hub,
             }),
           drainOutbox: () =>
             drainCpOutbox({
@@ -161,48 +175,215 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
  * Run one host-reach action on this machine, with this relay's own prompt
  * surfaces — so the confirm lands in the attach footer / local hub / tray of the
  * person whose files are about to move, and containment is judged against the
- * real project path rather than the control box's idea of one.
+ * real project path rather than the control box's idea of one. The confirm is
+ * also raised on the hub (`/api/v1/approvals`), so it can be answered from
+ * wherever the owner is looking (see host-reach-prompts.ts).
  *
- * Resolving the box locally is also the authorization step: this machine only
- * acts for boxes it already knows. An unknown box is DECLINED rather than
- * answered — see the note below.
+ * A ROUTED action (multi-PC Phase 4) names this machine's own checkout of the
+ * box's repo in `route.folder`; host paths resolve against it, never against the
+ * box record's workspace path (another machine's folder, or `/workspace` for a
+ * box adopted from the hub). The hub only routes to this machine because the
+ * checkouts registry says it has that repo, so a box this machine has no record
+ * of is adopted from the hub (`agentbox hub adopt`) rather than refused.
+ *
+ * An unrouted action (a box from before routing) is served only for a box this
+ * machine already knows, as before.
  */
-async function executeHostReachAction(
+export async function executeHostReachAction(
   action: HostAction,
   deps: {
     prompts: RelayServerHandle['prompts'];
     subscribers: RelayServerHandle['subscribers'];
     log: (line: string) => void;
     cache: { controlPlaneUrl: string; adminToken: string };
+    hub?: HostReachPromptClient;
+    /** Adopt a hub box into this machine's state (tests stub it). */
+    adopt?: (boxId: string, cwd: string) => Promise<{ ok: boolean; error?: string }>;
+    /** The repo key of a folder's origin, as this machine sees it (tests stub it). */
+    repoKeyOf?: (folder: string) => Promise<string | undefined>;
+    /** This machine's id (tests stub it). */
+    machineId?: () => string | undefined;
   },
-): Promise<HostActionResult | 'not-mine'> {
-  const owner = await lookupCloudBoxOwner(action.boxId);
-  // Not an answer, a refusal: another machine on this hub may hold the box, and
-  // answering "unknown box" here would settle its user's copy. The hub returns
-  // the action to the pool; if nobody claims it, its own timers report that.
-  if (!owner) {
-    deps.log(`host-reach: declining ${action.method} — box ${action.boxId} is not known here`);
-    return 'not-mine';
+): Promise<HostActionResult | HostReachDecline> {
+  const route = action.route;
+  const repoKeyOf = deps.repoKeyOf ?? defaultRepoKeyOf;
+  // A PC with its OWN record of the box, pointing at a real checkout of this
+  // repo, serves from that: it is the folder the box was seeded from (or the
+  // one this PC linked when it adopted it), which beats a registry row when
+  // this machine holds several checkouts of the repo.
+  const recordPath = route ? await boxWorkspacePath(action.boxId) : undefined;
+  const recordOk =
+    recordPath !== undefined &&
+    existsSync(recordPath) &&
+    (!route?.repoKey || (await repoKeyOf(recordPath)) === route.repoKey);
+  const folder = recordOk ? undefined : route?.folder;
+  if (folder !== undefined && !existsSync(folder)) {
+    return {
+      decline: `its checkout ${folder} is gone (run \`agentbox workspace rescan\` there to update the hub)`,
+    };
   }
-  const result = await executeCloudAction(action, {
-    backendName: owner.backendName,
-    boxId: action.boxId,
-    boxName: owner.name,
-    prompts: deps.prompts,
-    subscribers: deps.subscribers,
-    autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
-    boxAgents: owner.agents,
-    log: deps.log,
-  });
+  // The folder decides what counts as "contained in the project" (and so what
+  // auto-approves), so it is checked here rather than taken on the hub's word:
+  // it must be a checkout of the very repo the action is routed for.
+  if (folder !== undefined && route?.repoKey) {
+    const key = await repoKeyOf(folder);
+    if (key !== route.repoKey) {
+      return {
+        decline: `${folder} is not a checkout of ${route.repoKey} on this machine${key ? ` (its origin is ${key})` : ''}`,
+      };
+    }
+  }
+  // A PC serving only because it has the repo (not the box's origin) serves
+  // paths inside that checkout and nothing else: it must never read or write
+  // the rest of its own disk for someone else's box.
+  const servingFolder = folder ?? (recordOk ? recordPath : undefined);
+  if (route?.role === 'has-repo' && action.method.startsWith('cp.')) {
+    const outside = servingFolder ? cpPathsOutside(action, servingFolder) : ['(no checkout)'];
+    if (outside.length > 0) {
+      return { decline: `${outside.join(', ')} is outside its checkout of the repo` };
+    }
+  }
+  const owner: CloudBoxOwner | null = await lookupCloudBoxOwner(action.boxId);
+  // A box this machine has no record of, routed here because it has the repo:
+  // serve it with what the hub said about it, and adopt it (state.json record +
+  // SSH keys from custody) only once the copy is approved — a denied or failed
+  // copy leaves nothing behind.
+  // This PC is the box's ORIGIN (it was created from here, e.g. through the
+  // hub, and the record was never written): the box's own approval rules apply,
+  // exactly as if the record existed. A fallback PC that merely has the repo
+  // has no such standing, so it always asks.
+  const isOrigin =
+    route?.role === 'origin' &&
+    route.box?.originMachineId !== undefined &&
+    route.box.originMachineId === (deps.machineId ?? tryGetMachineId)();
+  const ephemeral =
+    !owner && route && folder && route.box?.backend
+      ? {
+          name: route.box.name,
+          backendName: route.box.backend,
+          autoApproveSafeHostActions: isOrigin ? route.box.autoApproveSafeHostActions : false,
+        }
+      : null;
+  if (!owner && !ephemeral) {
+    // Not an answer, a refusal: another machine on this hub may hold the box,
+    // and answering "unknown box" here would settle its user's copy. The hub
+    // returns the action to the pool; if nobody claims it, its timers report it.
+    deps.log(`host-reach: declining ${action.method} — box ${action.boxId} is not known here`);
+    if (!route) return 'not-mine';
+    return {
+      decline: folder
+        ? `box ${action.boxId} is not known here`
+        : `no record of box ${action.boxId} and no checkout of its repo here`,
+    };
+  }
+  const serve = (owner ?? ephemeral)!;
+  const adopt = deps.adopt ?? adoptFromHub;
+  const prepareBox = ephemeral
+    ? async (): Promise<string | null> => {
+        deps.log(`host-reach: adopting box ${action.boxId} from the hub to serve ${action.method}`);
+        const adopted = await adopt(action.boxId, folder!);
+        return adopted.ok
+          ? null
+          : `could not adopt box ${action.boxId} here: ${adopted.error ?? 'unknown error'}`;
+      }
+    : undefined;
+  const unmirror = deps.hub
+    ? mirrorHostReachPrompts({
+        prompts: deps.prompts,
+        subscribers: deps.subscribers,
+        boxId: action.boxId,
+        actionId: action.id,
+        client: deps.hub,
+        // The action's own confirm only: cp prompts carry its method, host-tool
+        // prompts a `tool …` command.
+        match: (ev) => {
+          const command = ev.context?.command ?? '';
+          return action.method.startsWith('tool.')
+            ? command.startsWith('tool')
+            : command === action.method;
+        },
+        log: deps.log,
+      })
+    : () => {};
+  let result: HostActionResult;
+  try {
+    result = await executeCloudAction(action, {
+      backendName: serve.backendName,
+      boxId: action.boxId,
+      boxName: serve.name,
+      ...(folder ? { hostFolder: folder } : {}),
+      ...(prepareBox ? { prepareBox } : {}),
+      prompts: deps.prompts,
+      subscribers: deps.subscribers,
+      autoApproveSafeHostActions: serve.autoApproveSafeHostActions,
+      ...(owner?.agents ? { boxAgents: owner.agents } : {}),
+      log: deps.log,
+    });
+  } finally {
+    unmirror();
+  }
   // File a copy with the control box so this same request answers when this
   // machine is offline. Strictly after the real copy succeeded, and awaited only
   // so the log lands in order — a failure here cannot change `result`.
   if (result.exitCode === 0 && action.method === 'cp.fromHost' && action.cachePrefix) {
-    await cacheCpSources(action, action.cachePrefix, {
-      controlPlaneUrl: deps.cache.controlPlaneUrl,
-      adminToken: deps.cache.adminToken,
-      logger: deps.log,
-    });
+    await cacheCpSources(
+      action,
+      action.cachePrefix,
+      {
+        controlPlaneUrl: deps.cache.controlPlaneUrl,
+        adminToken: deps.cache.adminToken,
+        logger: deps.log,
+      },
+      folder,
+    );
   }
   return result;
+}
+
+/**
+ * The host paths of a cp action that fall outside `folder` once resolved (and
+ * realpath'd where they exist, so a symlink out of the checkout counts as out).
+ */
+function cpPathsOutside(action: HostAction, folder: string): string[] {
+  let norm: { sources: string[]; dest: string };
+  try {
+    norm = normalizeCpParams(action.method as CpMethod, action.params as CpRpcParams | undefined);
+  } catch {
+    return [];
+  }
+  const hostPaths = action.method === 'cp.toHost' ? [norm.dest] : norm.sources;
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const root = real(folder);
+  return hostPaths.filter((p) => {
+    const abs = real(resolveHostPath(folder, p));
+    return abs !== root && !abs.startsWith(`${root.replace(/\/+$/, '')}/`);
+  });
+}
+
+async function defaultRepoKeyOf(folder: string): Promise<string | undefined> {
+  return (await checkoutEntriesFor([folder]))[0]?.repoKey;
+}
+
+/**
+ * `agentbox hub adopt <box>` with `cwd` = this machine's checkout, so the new
+ * record links to it. The CLI owns adoption (registration -> record, SSH keys
+ * from custody); the relay only shells it, as it does for `cp` itself.
+ */
+async function adoptFromHub(boxId: string, cwd: string): Promise<{ ok: boolean; error?: string }> {
+  const entry = process.env.AGENTBOX_CLI_ENTRY;
+  if (!entry) return { ok: false, error: 'AGENTBOX_CLI_ENTRY not set' };
+  const r = await execa(process.execPath, [entry, 'hub', 'adopt', boxId], {
+    cwd,
+    reject: false,
+    timeout: 120_000,
+  });
+  if (r.exitCode === 0) return { ok: true };
+  const why = (r.stderr || r.stdout || r.shortMessage || '').trim().split('\n').slice(-1)[0];
+  return { ok: false, error: why || `exit ${String(r.exitCode)}` };
 }

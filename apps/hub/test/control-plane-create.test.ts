@@ -28,6 +28,16 @@ describe('controlPlaneCreateRequest', () => {
     expect(m.ok && m.request.repoKey).toBe('github.com/acme/widgets');
   });
 
+  it('carries the requesting PC so the box records an origin machine', () => {
+    const requester = {
+      machineId: '0b9d6c3e-5f0a-4c1e-9d2b-7a8e6f4c3b21',
+      label: 'laptop',
+      folder: '/Users/a/w',
+    };
+    const m = controlPlaneCreateRequest({ provider: 'hetzner', requester }, REPO);
+    expect(m.ok && m.request.requester).toEqual(requester);
+  });
+
   it('carries name, base branch and seed prompt', () => {
     const m = controlPlaneCreateRequest(
       {

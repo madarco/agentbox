@@ -105,7 +105,7 @@ export function parseCreateBox(
 ): Parsed<CreateBoxInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { projectId, repoUrl, agent, provider, name, prompt, fromBranch, setupWizard } = body;
-  const { agentArgs, startAgent, foreground, opts, managerId, repoKey } = body;
+  const { agentArgs, startAgent, foreground, opts, managerId, repoKey, requester } = body;
   // Exactly one of projectId / repoUrl: projectId → a registered project on the
   // hub's machine (local file queue); repoUrl → the origin the control-plane
   // worker clones (no local checkout).
@@ -176,9 +176,12 @@ export function parseCreateBox(
   if (repoKey !== undefined && !isRepoKey(repoKey)) {
     return { ok: false, message: 'repoKey must be a repo key (host/path or local:…)' };
   }
+  const req = parseRequester(requester);
+  if (!req.ok) return req;
   return {
     ok: true,
     value: {
+      ...(req.value && hasRepo ? { requester: req.value } : {}),
       ...(mid.value ? { managerId: mid.value } : {}),
       // The repo key the sender computed with its own ssh aliases expanded. The
       // hub cannot recompute it, and the PC filed the seed under its slug.
@@ -1351,6 +1354,38 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
     });
   }
   return { ok: true, value: out };
+}
+
+/**
+ * `requester` on a create: the PC the box is built for. Shape only; the route
+ * replaces `machineId` with the caller's verified device when it has one.
+ */
+function parseRequester(
+  v: unknown,
+): Parsed<{ machineId: string; label?: string; folder?: string } | undefined> {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (!isObject(v)) return { ok: false, message: 'requester must be an object' };
+  const { machineId, label, folder } = v;
+  if (typeof machineId !== 'string' || !MACHINE_ID_RE.test(machineId)) {
+    return { ok: false, message: 'requester.machineId must be a machine id (a lowercase UUID)' };
+  }
+  if (label !== undefined && (typeof label !== 'string' || label.length > 255)) {
+    return { ok: false, message: 'requester.label must be a string (max 255)' };
+  }
+  if (
+    folder !== undefined &&
+    (typeof folder !== 'string' || !folder.startsWith('/') || folder.length > 4096)
+  ) {
+    return { ok: false, message: 'requester.folder must be an absolute path' };
+  }
+  return {
+    ok: true,
+    value: {
+      machineId,
+      ...(typeof label === 'string' && label ? { label } : {}),
+      ...(typeof folder === 'string' ? { folder } : {}),
+    },
+  };
 }
 
 /**

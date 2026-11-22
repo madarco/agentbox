@@ -36,6 +36,11 @@ export interface CpOutboxMeta {
   sources: string[];
   createdAt: string;
   size: number;
+  /**
+   * The machine this copy is for: the box's origin PC when it has one. Another
+   * PC that happens to know the box (it served it once) must not land it.
+   */
+  forMachineId?: string;
 }
 
 /** A parked item as the draining machine sees it. */
@@ -96,6 +101,8 @@ export interface ParkCpOutboxDeps {
   boxName: string;
   prefix: string;
   maxBytes: number;
+  /** See {@link CpOutboxMeta.forMachineId}. */
+  forMachineId?: string;
   log?: (line: string) => void;
 }
 
@@ -146,6 +153,7 @@ export async function parkCpOutbox(
       sources,
       createdAt: new Date().toISOString(),
       size: info.size,
+      ...(deps.forMachineId ? { forMachineId: deps.forMachineId } : {}),
     };
     await deps.custody.putStream(`${deps.prefix}/${id}.tar`, createReadStream(tarPath), {
       maxBytes: deps.maxBytes,

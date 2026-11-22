@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import { postRpcAndExit } from '../relay-rpc.js';
 
@@ -15,7 +17,7 @@ interface CpRpcParams {
   yes?: boolean;
 }
 
-interface CpCliOptions {
+export interface CpCliOptions {
   recursive: boolean;
   exclude: string[];
   defaultExcludes: boolean;
@@ -32,14 +34,51 @@ function collectExclude(val: string, acc: string[]): string[] {
  * the variadic to be the last argument, so the last path is the destination
  * and the rest are sources — needs at least one source plus the destination.
  */
-function buildCpParams(paths: string[], opts: CpCliOptions): CpRpcParams {
+function defaultIsDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function buildCpParams(
+  direction: 'toHost' | 'fromHost',
+  paths: string[],
+  opts: CpCliOptions,
+  cwd: string = process.cwd(),
+  deps: { isDirectory?: (path: string) => boolean } = {},
+): CpRpcParams {
   if (paths.length < 2) {
     throw new Error(
       'needs at least one source and a destination, e.g. `cp toHost /workspace/foo ./out/`.',
     );
   }
-  const sources = paths.slice(0, -1);
-  const dest = paths[paths.length - 1]!;
+  // The BOX-side paths are resolved here, against the cwd they were typed in:
+  // the host only ever sees the request, and a raw `.` there landed in the
+  // box user's home instead of where the agent was standing. Host-side paths
+  // stay as typed (a relative one resolves against the project on the host).
+  // A destination that is a DIRECTORY keeps (or gets) a trailing slash, the
+  // one signal the host-side copy reads as "into this directory": `.`, `..`,
+  // anything typed with a slash, or a directory that exists here. Without it
+  // `cp fromHost ./README.md .` from a subfolder was read as "the file named
+  // <subfolder>", which overwrote and then deleted /workspace/README.md.
+  const isDir = deps.isDirectory ?? defaultIsDirectory;
+  const boxPath = (p: string, asDest: boolean): string => {
+    const abs = resolve(cwd, p);
+    const dirLike =
+      p.endsWith('/') ||
+      p === '.' ||
+      p === '..' ||
+      p.endsWith('/.') ||
+      p.endsWith('/..') ||
+      (asDest && isDir(abs));
+    return dirLike && !abs.endsWith('/') ? `${abs}/` : abs;
+  };
+  const rawSources = paths.slice(0, -1);
+  const rawDest = paths[paths.length - 1]!;
+  const sources = direction === 'toHost' ? rawSources.map((p) => boxPath(p, false)) : rawSources;
+  const dest = direction === 'fromHost' ? boxPath(rawDest, true) : rawDest;
   const params: CpRpcParams = { sources, dest };
   if (opts.recursive === false) params.recursive = false;
   if (opts.exclude.length > 0) params.exclude = opts.exclude;
@@ -95,7 +134,7 @@ export const cpCommand = new Command('cp')
       .action(async (paths: string[], opts: CpCliOptions) => {
         let params: CpRpcParams;
         try {
-          params = buildCpParams(paths, opts);
+          params = buildCpParams('toHost', paths, opts);
         } catch (err) {
           process.stderr.write(
             `agentbox-ctl cp: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -131,7 +170,7 @@ export const cpCommand = new Command('cp')
       .action(async (paths: string[], opts: CpCliOptions) => {
         let params: CpRpcParams;
         try {
-          params = buildCpParams(paths, opts);
+          params = buildCpParams('fromHost', paths, opts);
         } catch (err) {
           process.stderr.write(
             `agentbox-ctl cp: ${err instanceof Error ? err.message : String(err)}\n`,

@@ -5,6 +5,7 @@
  */
 import { posix } from 'node:path';
 import { custodySlugForRepoKey, repoKey as repoKeyOf } from '@agentbox/config';
+import { isEphemeralWorkerClone } from '@agentbox/sandbox-core';
 import { cpCacheKey, cpCachePrefix, cpCachePrefixes } from '../cp-cache.js';
 import type { BoxRegistration } from '../types.js';
 import type { CheckoutRecord } from './types.js';
@@ -87,7 +88,9 @@ export function hostCandidatesFor(
 ): HostCandidatesResult {
   const raw = boxPath.trim();
   if (raw.length === 0) return { ok: false, error: 'empty path' };
-  const relative = !raw.startsWith('/');
+  // `~` and `~/…` name the host user's home: a host-absolute path, never a
+  // repo-relative one (every PC would expand it to its OWN home).
+  const relative = !raw.startsWith('/') && !raw.startsWith('~');
   const inBox = relative ? posix.join(BOX_WORKSPACE, raw) : posix.normalize(raw);
 
   // A relative path that climbs out of /workspace (`../x`) names something on
@@ -117,7 +120,10 @@ export function hostCandidatesFor(
     const theirs = repo?.repoKey
       ? checkouts.find((c) => c.machineId === origin && c.repoKey === repo.repoKey)
       : undefined;
-    const folder = theirs?.folder ?? repo?.originFolder;
+    // The folder the box was SEEDED from first: the origin may hold several
+    // checkouts of one repo (worktrees, a second clone), and the newest
+    // registry row is not necessarily the one this box came from.
+    const folder = repo?.originFolder ?? theirs?.folder;
     candidates.push({ machineId: origin, ...(folder ? { folder } : {}), reason: 'origin' });
   }
   if (repo?.repoKey) {
@@ -167,13 +173,26 @@ export function hostCandidatesFor(
 export function candidateBoxFromRegistration(
   reg: Pick<
     BoxRegistration,
-    'boxId' | 'repoKey' | 'originUrl' | 'projectSlug' | 'originMachineId' | 'worktrees'
+    | 'boxId'
+    | 'repoKey'
+    | 'originUrl'
+    | 'projectSlug'
+    | 'originMachineId'
+    | 'originFolder'
+    | 'worktrees'
   >,
 ): CandidateBox {
   const root = reg.worktrees?.find((w) => w.containerPath === BOX_WORKSPACE);
   // A registration from before the repo key existed: derive it (unexpanded)
   // from the origin, as the cp-cache prefix does.
   const key = reg.repoKey ?? repoKeyOf(reg.originUrl);
+  // The registered origin folder; else the worktree's host repo, unless that
+  // is a hub worker's throwaway clone (gone once the create returned).
+  const originFolder =
+    reg.originFolder ??
+    (root?.hostMainRepo && !isEphemeralWorkerClone(root.hostMainRepo)
+      ? root.hostMainRepo
+      : undefined);
   return {
     boxId: reg.boxId,
     cachePrefixes: cpCachePrefixes(reg),
@@ -182,7 +201,7 @@ export function candidateBoxFromRegistration(
       {
         path: BOX_WORKSPACE,
         ...(key ? { repoKey: key } : {}),
-        ...(root?.hostMainRepo ? { originFolder: root.hostMainRepo } : {}),
+        ...(originFolder ? { originFolder } : {}),
       },
     ],
   };

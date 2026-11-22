@@ -1038,12 +1038,13 @@ const workerSub = new Command('worker')
         },
         cloneRepo: (authedUrl, repoUrl, dest, branch) =>
           cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, (line) => log.info(line)),
-        createBox: async ({ workspacePath, name, repoKey, provider, agent, onLog }) => {
+        createBox: async ({ workspacePath, name, repoKey, requester, provider, agent, onLog }) => {
           const p = await providerForCreate({ flag: provider, config: cfg.effective });
           const created = await p.create({
             workspacePath,
             name,
             ...(repoKey ? { repoKey } : {}),
+            ...(requester ? { requester } : {}),
             projectRoot: workspacePath,
             // Registered on the plane so an adopting PC relaunches the right agent.
             // `isAgentKind` rather than three `===`: it is the leaf's own

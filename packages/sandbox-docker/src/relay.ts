@@ -692,6 +692,8 @@ export interface RegisterBoxArgs {
   workspacePath?: string;
   /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey). */
   repoKey?: string;
+  /** The PC the box is built for (CreateBoxRequest.requester). */
+  requester?: { machineId: string; label?: string; folder?: string };
   /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
@@ -714,6 +716,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
         originUrl: args.originUrl,
         folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
         repoKey: args.repoKey ?? null,
+        requester: args.requester ?? null,
       })
     : {};
   await adminPost('/admin/register-box', {

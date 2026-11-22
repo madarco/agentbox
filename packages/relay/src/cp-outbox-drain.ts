@@ -12,8 +12,14 @@ import { rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
+import { tryGetMachineId } from '@agentbox/config';
 import { boxWorkspacePath, lookupCloudBoxOwner } from './host-actions.js';
-import { landCpOutboxTar, stageOutboxTar, type CpOutboxItem } from './cp-outbox.js';
+import {
+  landCpOutboxTar,
+  stageOutboxTar,
+  type CpOutboxItem,
+  type CpOutboxMeta,
+} from './cp-outbox.js';
 import { describeCacheAge } from './cp-cache.js';
 import { resolveHostPath } from '@agentbox/core';
 
@@ -23,9 +29,16 @@ export interface CpOutboxDrainDeps {
   prompts: PendingPrompts;
   subscribers: PromptSubscribers;
   log: (line: string) => void;
+  /** This machine's id (defaults to `tryGetMachineId()`; tests pass one). */
+  machineId?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 300_000;
+
+/** Whether a parked copy is this machine's to land (see `CpOutboxMeta.forMachineId`). */
+export function outboxItemForMe(meta: CpOutboxMeta, me: string | undefined): boolean {
+  return !meta.forMachineId || meta.forMachineId === me;
+}
 
 /** Fetch, confirm and land every parked copy this machine can account for. */
 export async function drainCpOutbox(deps: CpOutboxDrainDeps): Promise<void> {
@@ -37,9 +50,12 @@ export async function drainCpOutbox(deps: CpOutboxDrainDeps): Promise<void> {
   if (items.length === 0) return;
   deps.log(`host-reach: ${String(items.length)} parked cop(y|ies) waiting for this machine`);
 
+  const me = deps.machineId ?? tryGetMachineId();
   for (const item of items) {
-    // Only land for boxes this machine actually knows: another machine's parked
-    // copy must stay parked for it, not be intercepted here.
+    // Only land copies meant for this machine (the box's origin PC), and only
+    // for boxes it knows: a PC that adopted the box to serve one copy must not
+    // intercept another machine's parked output.
+    if (!outboxItemForMe(item.meta, me)) continue;
     const owner = await lookupCloudBoxOwner(item.meta.boxId);
     if (!owner) continue;
     const workspacePath = await boxWorkspacePath(item.meta.boxId);

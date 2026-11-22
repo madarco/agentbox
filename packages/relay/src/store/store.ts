@@ -38,6 +38,13 @@ export interface CreateJobRequest {
    * slug and the box registers with it; the worker cannot recompute it.
    */
   repoKey?: string;
+  /**
+   * The PC that asked for the box (its machine id, label and checkout), so the
+   * box registers with that PC as its origin machine rather than none: the
+   * worker builds from a throwaway clone. The hub takes `machineId` from the
+   * caller's verified device token when there is one.
+   */
+  requester?: { machineId: string; label?: string; folder?: string };
   /** Cloud provider to create the box on (e.g. 'e2b', 'vercel', 'daytona', 'hetzner'). */
   provider: string;
   /** Base branch to fork the box's `agentbox/<name>` branch from (default: repo HEAD). */
