@@ -172,7 +172,9 @@ async function seedAccountSecretsFromCustody(
         await writeCredentialBackup(spec.id, incoming, { backupPath });
         log(`seeded ${label} credentials from custody (${verdict.reason})`);
       } catch (err) {
-        log(`seed ${label} from custody failed: ${err instanceof Error ? err.message : String(err)}`);
+        log(
+          `seed ${label} from custody failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
