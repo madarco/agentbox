@@ -95,6 +95,26 @@ ls ~/.agentbox/control-plane 2>/dev/null; ls ~/Library/LaunchAgents | grep -i ag
 
 After `hub unexpose` all four should be back where they started.
 
+### A second PC on the same machine (device enrollment)
+
+`agentbox hub login` needs two "computers". A scratch `$HOME` is enough — it gets its
+own machine id, and with its own `relay.port` its relay never fights the real one:
+
+```sh
+B=$(mktemp -d); mkdir -p "$B/.agentbox"
+printf 'schema: 1\nrelay:\n  port: 8899\n' > "$B/.agentbox/config.yaml"
+cp ~/.agentbox/setup-complete.json "$B/.agentbox/"          # skip the first-run wizard
+HOME=$B agentbox hub login http://127.0.0.1:8787 --no-browser   # prints XXXX-XXXX
+agentbox hub devices approve XXXX-XXXX                       # as the operator (API key)
+TOKEN=$(jq -r .token "$B/.agentbox/control-plane/device.json")
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/boxes
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8787/admin/hostreach/poll?wait=0&poller=t"
+agentbox hub devices revoke <id>                             # both curls now 401
+```
+
+The device is stored in `~/.agentbox/hub/devices.db` on the hub; pending codes are in
+memory only, so a hub restart drops them (`hub login` says to re-run).
+
 ---
 
 ## 2. Inside an agentbox

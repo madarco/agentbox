@@ -633,6 +633,22 @@ hub while its relay runs, so that is a missed-heartbeat window, not a per-copy t
 reaches your machine it can sit on your approval for as long as you like. `agentbox hub status` says
 when a control box is configured but this machine is not currently draining for it.
 
+## Using the hub from another computer
+
+The keys `hub setup` writes to `~/.agentbox/control-plane/control-plane.env` are the hub's own: whoever holds them is the hub. Keep them on the machine that deployed it. **Every other computer enrolls with its own token instead**:
+
+```bash
+agentbox hub login https://<your-hub-url>
+```
+
+It prints a link and a short code (`XXXX-XXXX`) and waits. Open the link — on that computer or any other — sign in as the owner, check the code matches, and click **Approve** on the hub's **Devices** page. The CLI receives a token for this computer only, saves it to `~/.agentbox/control-plane/device.json` (`0600`), points `relay.controlPlaneUrl` at the hub and restarts the local hub so its relay drains your `cp` and host-tool requests with it. From then on every command uses that token. It is never sent to a different hub.
+
+A device is identified by the computer's machine id, so renaming the computer changes nothing. From the operator's machine, `agentbox hub devices approve <code>` approves without a browser.
+
+**Losing a laptop is one revocation.** Click **Revoke** on the Devices page (or run `agentbox hub devices revoke <id>`): that computer's next request is refused, and any live stream it holds (live updates, an attach footer, host-reach) is closed at once. `agentbox hub logout` does the same for the computer you are on. Nothing else needs rotating.
+
+A device token can do what a computer needs — the API, the live-update stream, host-reach, reading box SSH keys from custody to attach — but it cannot approve another device, so a stolen one cannot mint itself a spare before you revoke it.
+
 ## The menu-bar app follows your config
 
 The macOS menu-bar app talks to the **same hub your CLI is configured for** — automatically. It
@@ -669,7 +685,7 @@ Custody also keeps itself current from the other direction: a Claude refresh **r
 
 - **Boxes never receive a git credential** — a box runs `git push`, the hub pulls the branch out as a git bundle and does the real push with its own token, which stays on the control box. A compromised box can't exfiltrate a token that was never there.
 - The token is repo-scoped, not branch-scoped, so the push gate **auto-approves only `agentbox/*` branches**; any other branch needs your approval.
-- The hub gates its admin and box-creation endpoints on a constant-time admin bearer, fail-closed, and the web UI on an email/password login — set at deploy time.
+- The hub gates its admin and box-creation endpoints on a constant-time admin bearer, fail-closed, and the web UI on an email/password login — set at deploy time. Other computers use per-device tokens from `agentbox hub login`, each revocable on its own.
 
 <Callout type="warn" title="SSH keys leave your PC when a control box is configured">
   For an SSH provider (hetzner / DigitalOcean), a box you create from your PC mints its private key
