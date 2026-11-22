@@ -1,8 +1,10 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done (2026-11-22)** — see [Phase 0 results](#phase-0-results).
+Status: **Phase 0 partly done, Phase 1 done (2026-11-22)** — see
+[Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
-(a)/(b) is blocked on account B. One phase per session.
+(a)/(b) is blocked on account B. One phase per session. Open items:
+[`llm-accounts-backlog.md`](./llm-accounts-backlog.md).
 
 ## Why
 
@@ -78,8 +80,9 @@ Which kinds an agent supports is **registry data** (`AgentSyncSpec.accountKinds`
 so plugin agents get accounts without shared code knowing their names
 (`apps/cli/test/no-agent-named-exports.test.ts` must not grow).
 
-`default` is today's slot, migrated in place on first read — no existing box,
-backup or custody object changes meaning.
+`default` is today's slot, folded in on every read (no write until the first
+mutation) — no existing box, backup or custody object changes meaning. `default`
+is always a `login`; a pasted kind needs a named account.
 
 ### Storage
 
@@ -101,6 +104,11 @@ backup or custody object changes meaning.
   instead (see [Phase 0 results](#phase-0-results)).
 - Cloud: staged from the account's file instead of the single backup. Daytona's
   per-org volume gets a subpath per account (`claude/<account>/`).
+- Account ids: 1-32 lowercase letters, digits, inner dashes (no `.`, which keeps
+  `agents/<agent>/<file>` and `agents/<agent>/<account>/<file>` apart).
+- Docker volume name for a named account: `<volume>-acct-<account>`, not
+  `<volume>-<account>` — `box.isolate<Agent>Config` already mints
+  `<volume>-<boxId>` and a box id is a valid slug.
 
 ### Selection
 
@@ -543,6 +551,31 @@ codex symlink-on-refresh check, and the throwaway-account revocation timing test
 above. Delete `/home/vscode/poc-account-b` afterwards. Also for the owner:
 confirm on the key's account that usage appeared for 10:27–10:30Z on
 2026-11-22, and only for the B turns.
+
+## Phase 1 as built
+
+- **`@agentbox/core`** (`packages/core/src/sync/llm-accounts.ts`): `LlmAccount`,
+  `LlmAccountKind`, `AccountsFile`, `DEFAULT_ACCOUNT_ID`, `accountIdProblem`,
+  `accountKindProblem`, and the one derivation of each per-account name:
+  `accountSecretPath`, `accountCustodyPath`, `accountConfigVolume`,
+  `accountCloudSubpath`. `migrateAccountsFile` is the pure normalize + `default`
+  fold (drops malformed rows, keeps the first of a duplicate, an existing
+  `default` row wins over the legacy slot).
+- **`AgentSyncSpec.accountKinds`**: claude `login, setup-token, api-key`; codex
+  `login, api-key`; every other built-in absent (only `default`). Plugin specs
+  are validated at `agent add` (`accountKindsProblem`: known kinds, no
+  duplicates, `login` needs a `credential`).
+- **`@agentbox/sandbox-core`** (`packages/sandbox-core/src/llm-accounts.ts`):
+  `readAccounts` (never writes; a legacy backup counts as `default` only when it
+  passes `isRealAgentCredential`, and a corrupt index reads as empty so the
+  defaults still show), locked `mutateAccounts` (persists the migrated
+  `default` on first mutation), `upsertAccount` (refuses what `accountProblem`
+  refuses), `removeAccount` (row + secret file; `default` refused, that is a
+  logout), `writeAccountSecret`/`readAccountSecret` (0600 in a 0700 dir), and
+  the `{kind, token}` codec for pasted kinds. Nothing calls it yet; Phase 2 does.
+- **Where it differs from the plan above:** reads do not write (the plan said
+  "migrated in place on first read"), the `-acct-` volume infix, and `default`
+  pinned to `login`.
 
 ## Backlog (not in these phases)
 
