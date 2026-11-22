@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { registrationToBoxRecord } from '../src/registration-to-record.js';
+import { buildAgentDescriptors } from '@agentbox/sandbox-core';
+import { primaryAgent } from '@agentbox/core';
+import {
+  recordAgents,
+  registrationAgents,
+  registrationToBoxRecord,
+} from '../src/registration-to-record.js';
 import type { BoxRegistration } from '../src/types.js';
 
 // A stable, non-random token so assertions are deterministic.
@@ -20,14 +26,19 @@ function reg(overrides: Partial<BoxRegistration> = {}): BoxRegistration {
     image: 'tmpl-xyz',
     webPort: 8080,
     originUrl: 'git@github.com:o/r.git',
-    worktrees: [{ containerPath: '/workspace', hostMainRepo: '/tmp/clone', branch: 'agentbox/brave-otter' }],
+    worktrees: [
+      { containerPath: '/workspace', hostMainRepo: '/tmp/clone', branch: 'agentbox/brave-otter' },
+    ],
     ...overrides,
   };
 }
 
 describe('registrationToBoxRecord', () => {
   it('rebuilds a drivable cloud record from an SDK-provider registration', () => {
-    const rec = registrationToBoxRecord(reg(), { controlPlaneUrl: 'https://hub.example', freshToken });
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
     expect(rec.id).toBe('box-1');
     expect(rec.name).toBe('brave-otter');
     expect(rec.provider).toBe('e2b');
@@ -103,5 +114,56 @@ describe('registrationToBoxRecord', () => {
     // No registration bridgeToken → freshToken fallback.
     expect(rec.cloud?.bridgeToken).toBe(TOKEN);
     expect(rec.lastAgent).toBeUndefined();
+  });
+});
+
+/**
+ * The decision path behind "an agentless hub box started from another PC runs
+ * the OpenClaw gateway" (#426 sign-off): hub registration -> PC B adopts it
+ * (`hub adopt`) -> PC B's start re-registers it with the record's agent ->
+ * the box's `agents.list` asks PC B's relay -> descriptors.
+ */
+describe('agents.list for a box adopted on another PC', () => {
+  /** PC B adopts the registration, then its start re-registers with `primaryAgent`. */
+  function servicesAfterAdoptAndStart(agent: string | undefined): string[] {
+    const rec = registrationToBoxRecord(reg({ agent }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const boxAgents = registrationAgents({ agent: primaryAgent(rec) });
+    expect(boxAgents).toEqual(recordAgents(rec));
+    return buildAgentDescriptors({ boxAgents })
+      .agents.filter((a) => a.service)
+      .map((a) => a.id);
+  }
+
+  it('starts no service agent in an agentless box', () => {
+    expect(servicesAfterAdoptAndStart(undefined)).toEqual([]);
+    expect(servicesAfterAdoptAndStart('none')).toEqual([]);
+  });
+
+  it('still starts the gateway of an adopted openclaw box', () => {
+    expect(servicesAfterAdoptAndStart('openclaw')).toEqual(['openclaw']);
+  });
+
+  it('a claude box gets no service agent either', () => {
+    expect(servicesAfterAdoptAndStart('claude')).toEqual([]);
+  });
+
+  it('a re-adopt keeps the agents a record already lists', () => {
+    const existing = registrationToBoxRecord(reg({ agent: 'claude' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const rec = registrationToBoxRecord(reg({ agent: 'codex' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+      existing: { ...existing, agents: ['claude', 'codex'] },
+    });
+    expect(rec.agents).toEqual(['claude', 'codex']);
+  });
+
+  it("treats 'none' as agentless in both helpers", () => {
+    expect(registrationAgents({ agent: 'none' })).toBeUndefined();
   });
 });

@@ -262,6 +262,9 @@ export async function executeHostReachAction(
           name: route.box.name,
           backendName: route.box.backend,
           autoApproveSafeHostActions: isOrigin ? route.box.autoApproveSafeHostActions : false,
+          // So `agents.list` answers for the box's own agent (a service agent's
+          // units go only to a box that names it).
+          ...(route.box.agent && route.box.agent !== 'none' ? { agents: [route.box.agent] } : {}),
         }
       : null;
   if (!owner && !ephemeral) {
@@ -316,7 +319,7 @@ export async function executeHostReachAction(
       prompts: deps.prompts,
       subscribers: deps.subscribers,
       autoApproveSafeHostActions: serve.autoApproveSafeHostActions,
-      ...(owner?.agents ? { boxAgents: owner.agents } : {}),
+      ...(serve.agents ? { boxAgents: serve.agents } : {}),
       log: deps.log,
     });
   } finally {

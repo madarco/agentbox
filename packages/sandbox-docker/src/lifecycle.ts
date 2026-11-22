@@ -8,6 +8,7 @@ import {
   BoxNotFoundError,
   buildNoVncUrl,
   normalizeAgentStatus,
+  primaryAgent,
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
@@ -547,7 +548,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         worktrees: box.gitWorktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-        agent: box.agents?.[0] ?? box.lastAgent,
+        agent: primaryAgent(box),
       });
     } catch {
       // best-effort

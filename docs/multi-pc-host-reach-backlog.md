@@ -59,3 +59,22 @@ for teams PCs must never hold it (device tokens only).
   machine that created the box).
 - Multi-repo boxes: `hostCandidatesFor` already picks a nested repo by path prefix,
   but registrations describe one root repo until box-sources Phase 2.
+
+## From the review of #429 (agentless box started OpenClaw), noted, not fixed
+
+- **`route.box.agent` is for future routed methods.** Host-reach routes only `cp.*`,
+  `tool.*` (and, with #432, `download.workspace`); none of them asks `agents.list`,
+  so passing the box's agent on a routed action changes nothing today. Kept so a
+  future routed method that does reach `agents.list` answers for the right agent.
+- **Tests do not drive the real start/resume paths.** The decision-path test calls
+  `primaryAgent` + `registrationAgents` directly; the server's register/replace
+  path, `cloud-provider` start/resume and the hub worker's create record are
+  covered by the unit tests of their pieces, not end to end.
+- **Provider SDK republish.** `createCloudProvider` is inlined into
+  `@madarco/agentbox-provider-sdk`: plugin providers get the control-plane resume
+  fix (`primaryAgent`) only after the SDK is rebuilt and republished (no
+  `SDK_API_VERSION` bump: not an API break). The owner publishes.
+- **A box running a TUI agent AND a service agent** (`['claude', 'openclaw']`):
+  a registration carries one agent, `primaryAgent` returns the first, so the
+  service agent gets no units. Not a regression (a claude box registered `claude`
+  before #429 too). Fix: carry the full list on the registration (`agents: string[]`).

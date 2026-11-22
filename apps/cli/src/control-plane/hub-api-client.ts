@@ -79,6 +79,8 @@ export interface HubApiBox {
   webPort?: number;
   previewUrls?: Record<number, string>;
   lastAgent?: AgentId;
+  /** Every agent the box was created for, service agents (openclaw) included. */
+  agents?: string[];
   /** Other agents' logins this box borrows as model auth. */
   borrowedCredentials?: string[];
   topology?: string;

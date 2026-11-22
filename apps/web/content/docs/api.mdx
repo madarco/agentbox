@@ -483,7 +483,9 @@ preview URLs expire. Gate the affordance on `vncEnabled` and fetch the URL from
 `GET /boxes/{id}/vnc` when the user clicks. Cloud boxes also carry the fields
 needed to reconstruct or adopt them from the payload alone (all `undefined` for
 docker/synthetic rows): `sandboxId`, `originUrl`, `publicHost`, `image`,
-`webPort`, `previewUrls`, `lastAgent`, and `topology`. A registered box also carries
+`webPort`, `previewUrls`, `lastAgent`, `agents`, and `topology`. `agents` lists every agent the box
+was created for, service agents such as `openclaw` included (`lastAgent` names only the last TUI
+agent that ran); `agentbox hub adopt` re-registers the box with it. A registered box also carries
 `originMachineId` and `originMachineLabel`: the computer it was created from (its machine id, which
 is its device id, and hostname), where host-reach copies go first. Both are absent for a box built
 on the hub with no requesting computer.

@@ -289,6 +289,7 @@ export interface HostAction {
       backend?: string;
       originMachineId?: string;
       autoApproveSafeHostActions?: boolean;
+      agent?: string;
     };
   };
 }

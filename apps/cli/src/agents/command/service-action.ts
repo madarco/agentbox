@@ -37,6 +37,7 @@ import {
   ensureAgentInstalled,
   readServiceUrlFields as readServiceUrlFieldsWith,
   readState,
+  recordAgentAdded,
   resolveBoxRef,
   serviceSignInUrl,
   type ServiceUrlFieldValue,
@@ -380,12 +381,22 @@ export async function runServiceAgent(
 
     if (existing) {
       box = existing;
+      // The box may not have been created for this agent (`agentbox create`,
+      // then `agentbox openclaw <it>`). Record it BEFORE the box is (re)started,
+      // so every re-registration names it: a service agent's units go only to a
+      // box whose registration names that agent, and an agentless one gets none.
+      const learned = !(box.agents ?? []).includes(spec.id);
+      if (learned) box = (await recordAgentAdded(box.id, spec.id).catch(() => undefined)) ?? box;
       const provider = await providerForBox(box);
       const state = await provider.probeState(box);
       if (state === 'paused') await provider.resume(box);
       else if (state === 'stopped') box = await provider.start(box);
       else if (state === 'missing') {
         throw new Error(`box ${box.name} has no sandbox left; destroy it and run this again`);
+      } else if (learned) {
+        // Already running: re-register with the new agent and relaunch the
+        // in-box daemons (no power cycle), so ctl asks `agents.list` again.
+        box = await provider.reconnect(box);
       }
       log.info(`using box ${box.name}`);
       // The box predates this agent, so the create-time skip never ran and it

@@ -65,14 +65,17 @@ describe('buildAgentDescriptors', () => {
     }
   });
 
-  it('keeps shipping every service agent when the box never said its agent', () => {
-    // A registration from an older host carries no `agent`; starving an openclaw
-    // box of its daemon is worse than an idle unit in an unagented box.
-    const legacy = buildAgentDescriptors();
+  it('ships no service agent to a box that never said its agent (an agentless box)', () => {
+    // An agentless hub box started from another PC used to receive openclaw's
+    // units here, start its gateway (~1 GB) and drop AGENTS.md / SOUL.md /
+    // IDENTITY.md / USER.md into /workspace (#426 sign-off).
+    const unsaid = buildAgentDescriptors();
     for (const spec of AGENT_SYNC_SPECS) {
-      if (!spec.service) continue;
-      expect(legacy.agents.find((a) => a.id === spec.id)?.service, spec.id).toBeDefined();
+      const got = unsaid.agents.find((a) => a.id === spec.id);
+      expect(got?.service, spec.id).toBeUndefined();
+      expect(got?.configRender, spec.id).toBeUndefined();
     }
+    expect(buildAgentDescriptors({ boxAgents: [] }).agents.every((a) => !a.service)).toBe(true);
   });
 
   it('ships the session name and activity sources for every agent', () => {

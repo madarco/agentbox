@@ -423,8 +423,13 @@ declares instead of the TUI machinery:
   The host hands them **only to a box that runs the agent** (the box
   registration's `agent`, set by every provider at create and re-register):
   every box asks `agents.list` at daemon start, and a claude box must not run
-  `openclaw onboard`. A registration with no `agent` (an older host) still
-  gets every service agent's units. A unit of the same name in
+  `openclaw onboard`. A registration with no `agent` gets **none**: it is an
+  agentless box (it used to get every service agent's units, which started
+  the openclaw gateway in an agentless box started from another PC). So every
+  re-registration of an existing box (start, resume, rehydrate) sends
+  `primaryAgent(record)`, adoption carries the registration's agent into the
+  record's `agents`, and the hub's Box payload exposes `agents` for `hub adopt`.
+  A unit of the same name in
   `/workspace/agentbox.yaml` **wins**.
 - **`service.urlFields`** — values `<agent> url` prints beside the URL, and
   which of them belong IN it: a daemon generates its own auth token inside the
