@@ -314,6 +314,7 @@ export {
   registrationOrigin,
   repoKeyAtEdge,
   type RegistrationOrigin,
+  type RequesterOrigin,
 } from './project-slug.js';
 
 // ── Create-time host-boundary gates ──

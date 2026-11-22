@@ -179,6 +179,8 @@ export interface HubApiCreateBoxInput {
   repoUrl?: string;
   /** `repoUrl`'s key with this machine's ssh aliases expanded (with repoUrl only). */
   repoKey?: string;
+  /** This PC, as the box's origin machine (with repoUrl only). */
+  requester?: { machineId: string; label?: string; folder?: string };
   agent: AgentId | 'none';
   provider?: string;
   name?: string;

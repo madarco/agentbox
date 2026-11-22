@@ -40,6 +40,7 @@ export function hostReachRouteFor(
     | 'projectSlug'
     | 'originMachineId'
     | 'originMachineLabel'
+    | 'originFolder'
     | 'worktrees'
   >,
   method: string,

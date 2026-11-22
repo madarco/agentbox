@@ -119,6 +119,12 @@ export interface CreateBoxRequest {
    */
   repoKey?: string;
   /**
+   * The PC this box is being built FOR, when the machine running the create
+   * (a control box's worker, building from a throwaway clone) is not it.
+   * Registered as the box's origin machine, so host-reach goes to that PC.
+   */
+  requester?: { machineId: string; label?: string; folder?: string };
+  /**
    * What to derive the default name from when `name` is absent and
    * `workspacePath` is not a meaningful identity — specifically a control box's
    * per-job clone (`/tmp/agentbox-hub-worker-<jobId>`), a directory deleted the

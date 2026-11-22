@@ -139,6 +139,12 @@ export interface BoxRegistration {
   originMachineId?: string;
   /** Hostname of the origin machine, display only. */
   originMachineLabel?: string;
+  /**
+   * The folder on the origin machine the box was seeded from (kept with
+   * `originMachineId`). The origin serves host paths from it; a worktree's
+   * `hostMainRepo` cannot say this for a hub-built box (it is the hub's clone).
+   */
+  originFolder?: string;
 }
 
 export interface BoxWorktree {
@@ -239,6 +245,8 @@ export interface RegisterBoxBody {
   originMachineId?: string;
   /** Origin machine hostname, display only. */
   originMachineLabel?: string;
+  /** Folder on the origin machine the box was seeded from. */
+  originFolder?: string;
 }
 
 /**

@@ -637,7 +637,9 @@ it.
 When more than one computer is enrolled ([`agentbox hub login`](#using-the-hub-from-another-computer)),
 the hub decides **which** computer serves a copy, in this order:
 
-1. **The computer the box was created from.** It has the files the box was seeded with.
+1. **The computer the box was created from.** It has the files the box was seeded with. A box the
+   control box builds at your laptop's request (`--via-hub`, the default for cloud creates) records
+   your laptop, and the folder you created it from, as that computer.
 2. **Any other connected computer that has the same repo checked out**, most recently seen first.
    Each computer reports its checkouts to the hub (on `create`, every agent command, `workspace
 add`/`rescan`), keyed by the repo, not the folder, so the same repo at a different path on each

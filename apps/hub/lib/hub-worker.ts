@@ -287,6 +287,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       name,
       repoUrl,
       repoKey,
+      requester,
       carry,
       provider,
       agent,
@@ -333,6 +334,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         // The requester's key, so the box registers under the scope its seed
         // and cp cache were filed in (this hub cannot expand the PC's aliases).
         ...(repoKey ? { repoKey } : {}),
+        ...(requester ? { requester } : {}),
         // Approved `carry:` entries, staged from custody beside the clone. The
         // provider's own applyCarry takes it from here — placeholder rendering
         // included, now with a real box context — so a hub-built box gets the

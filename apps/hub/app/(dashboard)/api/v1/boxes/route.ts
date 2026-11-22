@@ -6,6 +6,7 @@ import { backendOrNull, readState } from '../lib/backend';
 import { timelineMeta } from '../lib/actor';
 import { fail, failFromAction, ok } from '../lib/envelope';
 import { AGENTS, parseCreateBox, readJson } from '../lib/validate';
+import { DEVICE_ID_HEADER } from '@/lib/peer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,7 +50,15 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = parseCreateBox(parsedBody.value, allowedAgents);
   if (!parsed.ok) return fail('invalid_request', parsed.message, parsed.details);
 
-  const res = await backend.create(parsed.value, await timelineMeta(req, backend));
+  // The PC a box is built for is the caller. With a device token that is the
+  // verified device, whatever the body says; only an operator or loopback
+  // caller (who is the hub anyway) is taken at its word.
+  const device = (req.headers.get(DEVICE_ID_HEADER) ?? '').trim();
+  const input =
+    device && parsed.value.requester
+      ? { ...parsed.value, requester: { ...parsed.value.requester, machineId: device } }
+      : parsed.value;
+  const res = await backend.create(input, await timelineMeta(req, backend));
   if (!res.ok) return failFromAction(res.error);
   return ok({ jobId: res.jobId }, 202);
 }

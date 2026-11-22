@@ -51,6 +51,15 @@ export interface RegistrationOrigin {
   originMachineId?: string;
   /** That machine's hostname, display only. */
   originMachineLabel?: string;
+  /** The folder on that machine the box was seeded from. */
+  originFolder?: string;
+}
+
+/** The PC a box is being built FOR, when another machine (a hub worker) builds it. */
+export interface RequesterOrigin {
+  machineId: string;
+  label?: string;
+  folder?: string;
 }
 
 /**
@@ -64,14 +73,26 @@ export async function registrationOrigin(args: {
   folder?: string | null;
   /** A key the requesting machine computed (a worker building for a PC). */
   repoKey?: string | null;
+  /**
+   * The PC the box is built for, when this machine (a hub worker) only builds
+   * it from a throwaway clone: that PC, not this one, holds the checkout.
+   */
+  requester?: RequesterOrigin | null;
 }): Promise<RegistrationOrigin> {
   const out: RegistrationOrigin = {};
   const key = args.repoKey || (await repoKeyAtEdge(args.originUrl));
   if (key) out.repoKey = key;
+  if (args.requester?.machineId) {
+    out.originMachineId = args.requester.machineId;
+    if (args.requester.label) out.originMachineLabel = args.requester.label;
+    if (args.requester.folder) out.originFolder = args.requester.folder;
+    return out;
+  }
   const id = tryGetMachineId();
   if (id && args.folder && !isEphemeralWorkerClone(args.folder)) {
     out.originMachineId = id;
     out.originMachineLabel = getMachineLabel();
+    out.originFolder = args.folder;
   }
   return out;
 }

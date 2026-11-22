@@ -192,6 +192,13 @@ describe('makeControlPlaneCreateBox', () => {
     expect(created[0]?.repoKey).toBe('github.com/acme/widgets');
   });
 
+  it('hands the requesting PC to the provider as the box origin (sign-off of #426)', async () => {
+    const { deps, created } = harness();
+    const requester = { machineId: 'pc-a', label: 'laptop', folder: '/Users/a/widgets' };
+    await makeControlPlaneCreateBox(deps)({ ...request, requester }, 'job-12');
+    expect(created[0]?.requester).toEqual(requester);
+  });
+
   it('cleans up the per-job clone even when the create throws', async () => {
     const { deps, cleaned } = harness({
       createBox: () => Promise.reject(new Error('provider exploded')),

@@ -16,6 +16,8 @@ import {
 export interface ControlPlaneCreateInput {
   /** The sender's alias-expanded key of the repo (see CreateJobRequest.repoKey). */
   repoKey?: string;
+  /** The PC that asked (see CreateJobRequest.requester). */
+  requester?: { machineId: string; label?: string; folder?: string };
   provider?: string;
   agent?: string;
   name?: string;
@@ -192,6 +194,7 @@ export function controlPlaneCreateRequest(
     request: {
       repoUrl,
       ...(input.repoKey ? { repoKey: input.repoKey } : {}),
+      ...(input.requester ? { requester: input.requester } : {}),
       provider,
       ...(branch ? { branch } : {}),
       ...(name ? { name } : {}),

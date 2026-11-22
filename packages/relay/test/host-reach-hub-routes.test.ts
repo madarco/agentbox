@@ -147,6 +147,8 @@ describe('host-reach routing on the control box', () => {
     const answer = await rpc;
     expect(answer.status).toBe(500);
     expect(answer.body.stderr).toMatch(/Machines tried, in order:/);
+    // fromHost copies host -> box: the hint says so (it used to be reversed).
+    expect(answer.body.stderr).toContain('agentbox cp <src> cpbox:<dst>');
     expect(answer.body.stderr).toMatch(
       /laptop \(0b9d6c3e\): declined: its checkout \/Users\/a\/app is gone/,
     );

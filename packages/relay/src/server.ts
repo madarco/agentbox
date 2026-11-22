@@ -2921,7 +2921,10 @@ function cpUnreachableMessage(
     reason === 'declined'
       ? 'Fix what the machines reported below and retry, or run it on one directly:'
       : `Start AgentBox on that machine (\`agentbox relay start\`) and retry, or run it there directly:`,
-    `  agentbox cp ${boxName}:<src> <dst>`,
+    // Same direction as the box's own request: fromHost copies host -> box.
+    method === 'cp.fromHost'
+      ? `  agentbox cp <src> ${boxName}:<dst>`
+      : `  agentbox cp ${boxName}:<src> <dst>`,
     ...(opts.cacheMiss
       ? [
           'To make a file readable with that machine offline, upload it there once:',

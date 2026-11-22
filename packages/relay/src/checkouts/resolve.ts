@@ -5,6 +5,7 @@
  */
 import { posix } from 'node:path';
 import { custodySlugForRepoKey, repoKey as repoKeyOf } from '@agentbox/config';
+import { isEphemeralWorkerClone } from '@agentbox/sandbox-core';
 import { cpCacheKey, cpCachePrefix, cpCachePrefixes } from '../cp-cache.js';
 import type { BoxRegistration } from '../types.js';
 import type { CheckoutRecord } from './types.js';
@@ -172,13 +173,26 @@ export function hostCandidatesFor(
 export function candidateBoxFromRegistration(
   reg: Pick<
     BoxRegistration,
-    'boxId' | 'repoKey' | 'originUrl' | 'projectSlug' | 'originMachineId' | 'worktrees'
+    | 'boxId'
+    | 'repoKey'
+    | 'originUrl'
+    | 'projectSlug'
+    | 'originMachineId'
+    | 'originFolder'
+    | 'worktrees'
   >,
 ): CandidateBox {
   const root = reg.worktrees?.find((w) => w.containerPath === BOX_WORKSPACE);
   // A registration from before the repo key existed: derive it (unexpanded)
   // from the origin, as the cp-cache prefix does.
   const key = reg.repoKey ?? repoKeyOf(reg.originUrl);
+  // The registered origin folder; else the worktree's host repo, unless that
+  // is a hub worker's throwaway clone (gone once the create returned).
+  const originFolder =
+    reg.originFolder ??
+    (root?.hostMainRepo && !isEphemeralWorkerClone(root.hostMainRepo)
+      ? root.hostMainRepo
+      : undefined);
   return {
     boxId: reg.boxId,
     cachePrefixes: cpCachePrefixes(reg),
@@ -187,7 +201,7 @@ export function candidateBoxFromRegistration(
       {
         path: BOX_WORKSPACE,
         ...(key ? { repoKey: key } : {}),
-        ...(root?.hostMainRepo ? { originFolder: root.hostMainRepo } : {}),
+        ...(originFolder ? { originFolder } : {}),
       },
     ],
   };

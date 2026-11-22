@@ -17,8 +17,9 @@
  * prerequisite, matching the old flag. The DEFAULT path falls back to local (with
  * a surfaced reason) rather than failing.
  */
-import type { EffectiveConfig } from '@agentbox/config';
+import { getMachineLabel, tryGetMachineId, type EffectiveConfig } from '@agentbox/config';
 import { DEFAULT_ENV_PATTERNS, projectSlugAtEdge, repoKeyAtEdge } from '@agentbox/sandbox-core';
+import { realpath } from 'node:fs/promises';
 import {
   adminCustodySink,
   CarrySeedError,
@@ -188,13 +189,25 @@ export async function pushCreateSeed(args: {
 }
 
 /**
- * `{ repoKey }` for a hub create body: the key this machine computed for
- * `repoUrl` (its `~/.ssh/config` aliases expanded), which is the scope
- * {@link pushCreateSeed} filed the seed under. The control box cannot expand
- * this machine's aliases, so without it a hub worker looks for the seed under a
- * different slug.
+ * Who is asking, for a hub create body: `repoKey` (this machine's ssh aliases
+ * expanded; the scope {@link pushCreateSeed} filed the seed under, which the
+ * control box cannot compute) and `requester` (this machine's id, label and
+ * checkout), so the box registers with THIS PC as its origin machine and its
+ * host-reach copies come here first. The worker builds from a throwaway clone
+ * and would otherwise record no origin at all.
  */
-export async function repoKeyField(repoUrl: string): Promise<{ repoKey?: string }> {
+export async function hubCreateIdentity(
+  repoUrl: string,
+  projectRoot: string,
+): Promise<{
+  repoKey?: string;
+  requester?: { machineId: string; label: string; folder: string };
+}> {
   const repoKey = await repoKeyAtEdge(repoUrl);
-  return repoKey ? { repoKey } : {};
+  const machineId = tryGetMachineId();
+  const folder = await realpath(projectRoot).catch(() => projectRoot);
+  return {
+    ...(repoKey ? { repoKey } : {}),
+    ...(machineId ? { requester: { machineId, label: getMachineLabel(), folder } } : {}),
+  };
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { HostReachQueue, type HostReachRoute } from '../src/host-reach.js';
 import { hostReachRouteFor } from '../src/checkouts/route.js';
+import { candidateBoxFromRegistration } from '../src/checkouts/resolve.js';
+import { mergeRegistrationOrigin } from '../src/registration-origin.js';
 
 /**
  * Multi-PC Phase 4: a routed action goes to the box's origin PC first, then to
@@ -489,5 +491,44 @@ describe('review 426: a re-offer withdraws what the previous holder raised (7)',
     expect(reoffers).toEqual([[taken!.id, 'pa']]);
     q.resolve(again!.id, { exitCode: 0, stdout: '', stderr: '' }, 'pb');
     await pending;
+  });
+});
+
+describe('sign-off of #426: origin folder of a hub-built box', () => {
+  it('routes to the registered origin folder, never the worker clone', () => {
+    const KEY = 'github.com/acme/app';
+    const b = candidateBoxFromRegistration({
+      boxId: 'hb',
+      repoKey: KEY,
+      originMachineId: 'pc-a',
+      originFolder: '/Users/a/app',
+      worktrees: [
+        { containerPath: '/workspace', hostMainRepo: '/tmp/agentbox-hub-worker-j1', branch: 'b' },
+      ],
+    });
+    expect(b.repos[0]?.originFolder).toBe('/Users/a/app');
+    const noFolder = candidateBoxFromRegistration({
+      boxId: 'hb',
+      repoKey: KEY,
+      originMachineId: 'pc-a',
+      worktrees: [
+        { containerPath: '/workspace', hostMainRepo: '/tmp/agentbox-hub-worker-j1', branch: 'b' },
+      ],
+    });
+    expect(noFolder.repos[0]?.originFolder).toBeUndefined();
+  });
+
+  it('keeps the first origin folder across re-registers, with its machine', () => {
+    const first = mergeRegistrationOrigin(
+      { originMachineId: 'pc-a', originFolder: '/Users/a/app' },
+      undefined,
+    );
+    expect(first.originFolder).toBe('/Users/a/app');
+    expect(
+      mergeRegistrationOrigin({ originMachineId: 'pc-b', originFolder: '/b' }, first),
+    ).toMatchObject({
+      originMachineId: 'pc-a',
+      originFolder: '/Users/a/app',
+    });
   });
 });
