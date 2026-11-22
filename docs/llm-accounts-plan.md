@@ -1,7 +1,8 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **planned, not started.** One phase per session; Phase 0 is a live PoC and
-gates the rest.
+Status: **Phase 0 partly done (2026-11-22)** — see [Phase 0 results](#phase-0-results).
+Single-account facts are measured; the two-account half of (a)/(b) and every live
+codex turn are blocked on the owner. One phase per session.
 
 ## Why
 
@@ -94,8 +95,10 @@ backup or custody object changes meaning.
   mounted at `~/.agentbox-creds/<agent>/` — the same path the image's
   `postInstall` symlink and the cloud layout already use. Each container mounts
   its own account's volume at the same path, so one shared config volume serves
-  boxes on different accounts. Phase 0 verifies this is enough (see
-  `oauthAccount` below).
+  boxes on different accounts. **Superseded by Phase 0:** claude's refresh
+  replaces the symlink and a shared `_claude.json` mislabels the account, so
+  docker uses a per-account config volume plus a shared `projects/` volume
+  instead (see [Phase 0 results](#phase-0-results)).
 - Cloud: staged from the account's file instead of the single backup. Daytona's
   per-org volume gets a subpath per account (`claude/<account>/`).
 
@@ -198,6 +201,224 @@ when `llm.proxy != off`.
 | 8 | The other proxy mode, if still wanted. | 7 |
 
 Phases 1–6 and 7 are independent; 7 can run in parallel with 1–6 after Phase 0.
+
+## Phase 0 results
+
+Run 2026-11-22 inside a docker box (Claude Code 2.1.323, codex-cli 0.171.0),
+with per-container tests in the box's own dockerd. Tags: **measured** = observed
+live in this run; **code** = read from source or docs, not observed;
+**blocked** = needs the owner (see the last subsection). Agent calls were kept to
+one short prompt each. No token values were printed; files were compared by
+hash, length and field name only.
+
+### Incident: one refresh logged out every other holder (measured)
+
+To check whether a refresh goes through the proxy, a test container ran Claude
+Code on a **copy** of the real login with `expiresAt` forced into the past. It
+refreshed through `platform.claude.com` at 09:49Z. **At that moment the login
+stopped working in all three of the owner's boxes at once**, although their
+access tokens were valid until 14:23Z. The owner renewed it with
+`agentbox claude login` at 09:52Z.
+
+What this shows: a Claude OAuth refresh does more than rotate the refresh token.
+It also **revokes the previous access token for every other holder, immediately**.
+The `freshness` comment on claude's credential spec says an older blob is "dead,
+not merely stale". That holds for the access token too, and it takes effect at
+refresh time, not at `expiresAt`.
+
+Consequences:
+
+- **Today's model already has this outage window.** Every box holding a copy of
+  one login (every cloud box, and every docker box with `isolateClaudeConfig`)
+  is logged out by whichever box refreshes first, until the fan-out delivers the
+  new blob. Per-account fan-out (Phase 4) does not fix that, it just keys it.
+- **Docker boxes should share one file per account, not one copy per box.**
+  Claude takes a lock in the config dir (`.oauth_refresh.lock`) before it
+  refreshes, so processes that share the directory see the new token at once
+  and refresh only once. That is the storage recommendation below.
+- **`setup-token` is the right kind for an account used by many boxes**: it is
+  long-lived, it never refreshes, so it never revokes anything. The CLI should
+  suggest it when one `login` account is about to be seeded into a second box.
+- **Refresh tests must never run against a login that other boxes hold.** The
+  replacement test, not run: log in a dedicated throwaway account B, put two
+  copies of it in two containers, force a refresh in one (`expiresAt` in the
+  past) and time when the other starts failing. Only account B is lost.
+
+### (a) Two claude logins, one config volume
+
+- **Read path works (measured).** A clean shared config dir, with
+  `~/.claude/.credentials.json` a symlink to a per-account dir mounted at
+  `~/.agentbox-creds/claude/` (the plan's proposed layout, and the cloud's), ran
+  a turn through the symlink.
+- **A refresh breaks the symlink layout (measured).** Claude writes the
+  refreshed credential by replacing the file: afterwards
+  `config/.credentials.json` was a **regular file** holding the rotated grant,
+  and the per-account file was untouched, so stale and now revoked. With a shared
+  config volume, the first refresh would put **every box on that volume onto
+  the account that refreshed**. The plan's "per-account creds volume behind the
+  postInstall symlink" therefore fails.
+  Bind-mounting the single file instead also fails: a rename onto a
+  bind-mount target returns `EBUSY` (code/kernel behaviour, not measured).
+- **`oauthAccount` (measured).** It is display-only and cached:
+  - absent → the first **turn** fetches the profile and writes it
+    (`claude auth status` alone does not; it reports `email: null`);
+  - present but belonging to another account, with a fresh `profileFetchedAt` →
+    the turn still runs on the token's account, and `claude auth status` reports
+    the **wrong** org name/email. It is not corrected until the cache ages out;
+  - `profileFetchedAt` set to 0 → refetched and corrected on the next turn.
+
+  So a shared `_claude.json` mislabels: two accounts keep overwriting each
+  other's label, and each box shows whichever account last refreshed the cache.
+  Some account-derived caches in the same file are keyed by id
+  (`groveConfigCache` by account, `passesEligibilityCache` by org); others are not
+  (`modelAccessCache`, `orgModelDefaultCache`, `additionalModelOptionsCache`,
+  `additionalModelCostsCache`, `cachedExtraUsageDisabledReason`) and would leak
+  model and extra-usage state across accounts.
+- **Usage lands on the token's account (code, not measured).** Inference
+  carries only `Authorization: Bearer <access token>` (measured in (d)), with
+  nothing from `oauthAccount` in the auth headers. Confirming which account is
+  billed needs account B (**blocked**).
+
+**Docker storage recommendation:** a **per-account config volume**
+`agentbox-claude-config-<account>` (`default` stays `agentbox-claude-config`)
+mounted at `~/.claude`. It holds `.credentials.json` and `_claude.json`, so the
+refresh lands in the account's one shared copy and `oauthAccount` is always right.
+Keep `--resume` working across accounts by mounting one shared
+`agentbox-claude-projects` volume over `~/.claude/projects` (transcripts are
+keyed by cwd, `-workspace`, the same for every box). Drop the
+`~/.agentbox-creds/claude` symlink idea for docker.
+
+### (b) Codex `auth.json`
+
+- **Blocked: the codex login carried into this box is dead.** Its access token
+  expired 2026-10-24 and the refresh is refused (`401`, "Your access token could
+  not be refreshed. Please log out and sign in again."). No live codex turn was
+  possible, so neither the swap nor billing could be measured.
+- Measured layout: in a docker box the volume holds `~/.codex/auth.json` as a
+  symlink to `~/.agentbox-creds/codex/auth.json`. Whether codex's refresh write
+  keeps that symlink (claude's does not) is **untested** and is the first check to
+  run once codex is logged in again. Codex has no `oauthAccount` equivalent in a
+  shared file: `auth.json` carries `account_id` itself.
+- Codex refreshes proactively once `last_refresh` is older than about 8 days
+  (observed: it refreshed on start with a 39-day-old `last_refresh`), so the
+  revocation risk above applies to codex copies too (assumed, not measured).
+
+### (c) CONNECT proxy
+
+Both agents honour `HTTPS_PROXY=http://user:token@host:port` and send
+`Proxy-Authorization` **preemptively** on every CONNECT (measured):
+
+- **claude:** turns work. The forced OAuth refresh went through the proxy
+  (`platform.claude.com`). A wrong token gives a clear
+  `API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL)`, exit 1, in
+  under 45 s. **A proxy that refuses the connection gives no error at all**:
+  claude kept retrying silently for over 100 s.
+- **codex:** reqwest routes through the proxy with auth, and so does the token
+  refresh (`POST auth.openai.com/oauth/token`).
+
+**Tool subprocesses inherit `HTTPS_PROXY` (measured).** Claude's Bash tool saw
+it. Codex's own `git ls-remote` of a plugin marketplace went to the proxy for
+`github.com`, sent no proxy auth, and failed (`Proxy CONNECT aborted`). With the
+hub proxy directly in the agent's env, every tool would send its traffic to the
+hub, and would also see the relay token in the URL. The split proxy is needed.
+
+**Hosts seen** (`AgentSyncSpec.llmHosts` input):
+
+| agent | host | what |
+|---|---|---|
+| claude | `api.anthropic.com` | inference + account/flag/profile calls |
+| claude | `platform.claude.com` | OAuth refresh |
+| claude | `mcp-proxy.anthropic.com` | claude.ai MCP connectors (account-driven, hit even with an empty config) |
+| claude | `http-intake.logs.us5.datadoghq.com` | telemetry, not an LLM host |
+| codex | `chatgpt.com` | ChatGPT backend + responses (WebSocket, with an HTTPS fallback) |
+| codex | `ab.chatgpt.com` | feature flags |
+| codex | `auth.openai.com` | OAuth refresh |
+| codex | `github.com` | plugin marketplace `git`, not an LLM host |
+
+Not seen in this run (no interactive login, no API-key mode): `claude.ai` and
+`console.anthropic.com` (login), `api.openai.com` (codex API-key mode). Add them
+from code. The host config also reached the user's own MCP servers; those are
+per-user, not registry data.
+
+Proposed `llmHosts`: claude `api.anthropic.com`, `platform.claude.com`,
+`mcp-proxy.anthropic.com`, `claude.ai`; codex `chatgpt.com`, `ab.chatgpt.com`,
+`auth.openai.com`, `api.openai.com`. Telemetry and `github.com` go direct through
+the split proxy.
+
+### (d) Reverse (base URL)
+
+- **claude, subscription OAuth via `ANTHROPIC_BASE_URL`: inference works
+  (measured).** `POST /v1/messages` reached the forwarder with
+  `Authorization: Bearer` (OAuth) and `anthropic-beta: oauth-2025-04-20,…`, and
+  returned 200. **Everything else bypassed it**: 8 other `api.anthropic.com`
+  calls in one `-p` turn, `mcp-proxy.anthropic.com`, telemetry, and OAuth
+  refreshes (`platform.claude.com`) all went direct.
+- **codex (measured with the dead login, so routing only):**
+  `OPENAI_BASE_URL` is **ignored** under ChatGPT auth; all traffic stayed on
+  `chatgpt.com`. `-c chatgpt_base_url=…` reroutes the ChatGPT backend side calls
+  (`/backend-api/wham/*`, `/ps/plugins/*`, `/ps/mcp`,
+  `/codex/analytics-events/*`), but some `chatgpt.com` calls stayed direct, and so
+  did the refresh. Whether the `/codex/responses` inference call follows it could
+  not be measured. A custom `model_providers.<id>` with `base_url` and
+  `requires_openai_auth = true` is the next candidate (**untested**).
+
+So reverse moves **inference only**. The account's identity, flag and refresh
+traffic still leaves from the box's IP, which defeats "every call from one
+address".
+
+### Recommendations
+
+- **Ship `forward` first (Phase 7).** It is the only mode that carries all of an
+  account's traffic, refreshes included, for both agents, and it needs no
+  per-agent base-URL knowledge. `reverse` stays Phase 8, documented as
+  "inference only" for hubs reachable only over an HTTPS tunnel.
+- **Docker storage:** a per-account config volume plus a shared
+  `projects/` volume, as above. Not a per-account creds volume behind a symlink.
+
+### Changes to Phases 1–8
+
+- **Storage** (Phase 2/3): replace the docker bullet with the per-account config
+  volume + shared `agentbox-claude-projects`. The host-side `~/.claude` → volume
+  sync then seeds the account's volume, and each account needs its own seed of
+  `_claude.json`.
+- **Cloud** (Phase 3/4): the cloud layout has the same symlink pivot, so after a
+  refresh the in-box credential is a regular file and the mounted creds path
+  (Daytona's volume subpath) is stale. Check that ctl's `CredentialsWatcher`
+  watches the agent's real path (`credential.boxAbsPath`) and not the mount
+  (code check, not done here).
+- **Fan-out** (Phase 4): add the revocation fact. Fan-out latency is an outage
+  window for every other holder of the login. Steer users to `setup-token` for
+  accounts shared by several cloud boxes, and consider one refresher per
+  account (the hub refreshes, boxes only consume) as a backlog item.
+- **Split proxy** (Phase 7): it holds the relay token itself, so the agent's env
+  carries only `HTTPS_PROXY=http://127.0.0.1:<port>` and no secret reaches tool
+  subprocesses. It must **always be listening** and answer `502`/`407` with a
+  reason when the hub is unreachable. A refused connection makes claude retry
+  silently for minutes, which is not the clear failure the fail-closed rule
+  requires.
+- **Reverse** (Phase 8): claude `ANTHROPIC_BASE_URL` only; codex needs the
+  custom-provider route verified first, since `OPENAI_BASE_URL` is ignored under
+  ChatGPT auth.
+
+### Still blocked on the owner
+
+1. **Re-login codex** (the carried login is dead): on the host,
+   `agentbox codex login`, then recreate or refresh the PoC box so the new
+   `auth.json` is carried in.
+2. **Account B for claude**, without touching account A. In this box (Linux, so
+   the credential is a file rather than the macOS Keychain), type in the session:
+   `! CLAUDE_CONFIG_DIR=/home/vscode/poc-account-b/claude claude auth login`.
+   The credential lands at `/home/vscode/poc-account-b/claude/.credentials.json`,
+   in the container layer, outside the shared `agentbox-claude-config` volume.
+3. **Account B for codex**:
+   `! CODEX_HOME=/home/vscode/poc-account-b/codex codex login --device-auth` →
+   `/home/vscode/poc-account-b/codex/auth.json`.
+
+With those in place, the remaining Phase 0 runs are: two containers on two
+per-account config volumes sharing `projects/` (both turns work, each
+`claude auth status` shows its own account, usage shows on B's account page), the
+codex symlink-on-refresh check, and the throwaway-account revocation timing test
+above. Delete `/home/vscode/poc-account-b` afterwards.
 
 ## Backlog (not in these phases)
 
