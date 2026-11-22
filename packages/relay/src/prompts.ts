@@ -52,8 +52,21 @@ export interface PendingApproval {
   createdAt: string;
 }
 
+/**
+ * Copies a prompt somewhere else people look (a PC relay mirrors a host-reach
+ * confirm into the hub's approvals). `answer` resolves the local entry; the
+ * returned promise settles with the local resolution, whoever answered.
+ */
+export type PromptMirror = (
+  ev: PromptAskEvent,
+  answer: (answer: 'y' | 'n', cancelled?: boolean) => void,
+  settled: Promise<PromptResolution>,
+) => void;
+
 export class PendingPrompts {
   private readonly entries = new Map<string, PendingPromptEntry>();
+  /** boxId → where that box's prompts are mirrored while a host-reach action runs. */
+  private readonly mirrors = new Map<string, PromptMirror>();
   private autoApprove: AutoApprovePolicy | null = null;
   private onChange: (() => void) | null = null;
 
@@ -95,7 +108,7 @@ export class PendingPrompts {
   }
 
   add(boxId: string, ev: PromptAskEvent): Promise<PromptResolution> {
-    return new Promise<PromptResolution>((resolve) => {
+    const settled = new Promise<PromptResolution>((resolve) => {
       this.entries.set(ev.id, {
         ev,
         boxId,
@@ -104,6 +117,19 @@ export class PendingPrompts {
       });
       this.onChange?.();
     });
+    this.mirrors.get(boxId)?.(ev, (answer, cancelled) => this.resolve(ev.id, answer, cancelled), settled);
+    return settled;
+  }
+
+  /**
+   * Mirror every prompt this box raises until the returned function is called
+   * (one host-reach action at a time per box: the poller runs them in order).
+   */
+  mirror(boxId: string, fn: PromptMirror): () => void {
+    this.mirrors.set(boxId, fn);
+    return () => {
+      if (this.mirrors.get(boxId) === fn) this.mirrors.delete(boxId);
+    };
   }
 
   /**

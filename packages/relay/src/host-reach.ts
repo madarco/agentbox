@@ -32,9 +32,44 @@ import type { HostAction, HostActionResult } from './types.js';
 /** Why a request could not be handed to a machine. Both are recoverable. */
 export type HostReachUnreachable = 'never-connected' | 'went-away';
 
+/** One machine a routed action was meant for, and why it did not answer. */
+export interface HostReachTried {
+  deviceId: string;
+  /** Display label of that machine, when the hub knows one. */
+  label?: string;
+  /**
+   * `declined`: it took the action and handed it back (no checkout, unknown box);
+   * `went-away`: it took it and stopped polling; `offline`: never connected
+   * while the action waited.
+   */
+  reason: 'declined' | 'went-away' | 'offline';
+  /** What the machine said when it declined. */
+  detail?: string;
+}
+
 export type HostReachOutcome =
   | { kind: 'result'; result: HostActionResult }
-  | { kind: 'unreachable'; reason: HostReachUnreachable };
+  | { kind: 'unreachable'; reason: HostReachUnreachable; tried?: HostReachTried[] };
+
+/**
+ * A machine allowed to serve a routed action, in the order to try
+ * (`hostCandidatesFor`): the box's origin PC, then other PCs with a checkout.
+ */
+export interface HostReachCandidate {
+  deviceId: string;
+  label?: string;
+  /** That machine's checkout of the box's repo, handed to it with the action. */
+  folder?: string;
+}
+
+/**
+ * Where an action may go (multi-PC Phase 4). Without one, any poller may take
+ * it (a box registered before origin machines and checkouts existed).
+ */
+export interface HostReachRoute {
+  candidates: HostReachCandidate[];
+  repoKey?: string;
+}
 
 /**
  * Default reachability window. A poller re-polls every long-poll cycle (~25s),
@@ -56,6 +91,8 @@ export interface HostReachQueueOptions {
   now?: () => number;
   /** Sweep interval for the went-away check. Tests pass a small value. */
   sweepIntervalMs?: number;
+  /** Called once an action is settled, however (result, unreachable, stop). */
+  onSettle?: (id: string) => void;
 }
 
 interface Pending {
@@ -75,6 +112,9 @@ interface Pending {
   declinedBy?: Set<string>;
   /** Grace timer, cleared on delivery and re-armed on a decline. */
   timer?: ReturnType<typeof setTimeout>;
+  /** Routed actions only: the candidates, and the devices already tried. */
+  route?: HostReachRoute;
+  tried?: Map<string, { reason: 'declined' | 'went-away'; detail?: string }>;
 }
 
 interface Waiter {
@@ -98,6 +138,7 @@ export class HostReachQueue {
   private readonly graceMs: number;
   private readonly now: () => number;
   private readonly sweepIntervalMs: number;
+  private readonly onSettle: ((id: string) => void) | undefined;
   private lastPollAtMs: number | null = null;
   /** pollerId → last poll time, so "did the owner of this copy go away?" is answerable. */
   private readonly pollerSeen = new Map<string, number>();
@@ -114,6 +155,7 @@ export class HostReachQueue {
     this.graceMs = opts.graceMs ?? this.reachTimeoutMs;
     this.now = opts.now ?? ((): number => Date.now());
     this.sweepIntervalMs = opts.sweepIntervalMs ?? 5_000;
+    this.onSettle = opts.onSettle;
   }
 
   /** Whether a machine has polled recently enough to be considered present. */
@@ -137,7 +179,7 @@ export class HostReachQueue {
     boxId: string,
     method: string,
     params: unknown,
-    opts: { cachePrefix?: string } = {},
+    opts: { cachePrefix?: string; route?: HostReachRoute } = {},
   ): Promise<HostReachOutcome> {
     const id = randomUUID();
     const action: HostAction = {
@@ -148,13 +190,21 @@ export class HostReachQueue {
       createdAt: new Date(this.now()).toISOString(),
       ...(opts.cachePrefix ? { cachePrefix: opts.cachePrefix } : {}),
     };
-    return new Promise<HostReachOutcome>((resolve) => {
+    return new Promise<HostReachOutcome>((done) => {
+      const resolve = (outcome: HostReachOutcome): void => {
+        done(outcome);
+        this.onSettle?.(id);
+      };
       const pending: Pending = { action, settle: resolve, delivered: false };
+      if (opts.route && opts.route.candidates.length > 0) {
+        pending.route = opts.route;
+        pending.tried = new Map();
+      }
       pending.timer = setTimeout(() => {
         // Still undelivered after the grace window: nobody is listening.
         if (this.map.get(id) === pending && !pending.delivered) {
           this.map.delete(id);
-          resolve({ kind: 'unreachable', reason: 'never-connected' });
+          resolve(this.unreachable(pending, 'never-connected'));
         }
       }, this.graceMs);
       // Node keeps the process alive for pending timers; a parked copy must not
@@ -232,11 +282,99 @@ export class HostReachQueue {
    * while this is only reported. Phase 4 routing must bind a pollerId to the
    * first verified device that used it before trusting the mapping.
    */
-  identify(pollerId: string, deviceId: string): void {
-    if (!deviceId) return;
+  identify(pollerId: string, deviceId: string): boolean {
+    if (!deviceId) return true;
+    const bound = this.pollerDevice.get(pollerId);
+    // Bound to the FIRST device that used it: poller ids are chosen by the
+    // client, and routing hands a device its own work, so a second device
+    // reusing an id must not inherit the first one's queue.
+    if (bound !== undefined) return bound === deviceId;
     // The sweep only runs while actions are parked; an idle queue prunes here.
-    if (!this.pollerDevice.has(pollerId)) this.prunePollers();
+    this.prunePollers();
     this.pollerDevice.set(pollerId, deviceId);
+    return true;
+  }
+
+  /** The device a poller is bound to (see {@link identify}). */
+  deviceOf(pollerId: string): string | undefined {
+    return this.pollerDevice.get(pollerId);
+  }
+
+  /** Who holds a parked action right now, for routes that act on its behalf. */
+  ownerOf(id: string): { boxId: string; pollerId?: string } | undefined {
+    const pending = this.map.get(id);
+    if (!pending) return undefined;
+    return {
+      boxId: pending.action.boxId,
+      ...(pending.deliveredTo !== undefined ? { pollerId: pending.deliveredTo } : {}),
+    };
+  }
+
+  /** Whether `deviceId` has a poller present within the reachability window. */
+  private devicePresent(deviceId: string): boolean {
+    const now = this.now();
+    for (const [pollerId, dev] of this.pollerDevice) {
+      if (dev !== deviceId) continue;
+      const seen = this.pollerSeen.get(pollerId);
+      if (seen !== undefined && now - seen <= this.reachTimeoutMs) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The device a routed action is offered to now: the first candidate not yet
+   * tried that has a poller present. Undefined when none is (the action waits
+   * out its grace window, or fails fast once every candidate is tried).
+   */
+  private currentTarget(pending: Pending): string | undefined {
+    for (const c of pending.route?.candidates ?? []) {
+      if (pending.tried?.has(c.deviceId)) continue;
+      if (this.devicePresent(c.deviceId)) return c.deviceId;
+    }
+    return undefined;
+  }
+
+  /** May `pollerId` take this action? The one eligibility rule every delivery path uses. */
+  private eligible(pending: Pending, pollerId: string | undefined): boolean {
+    if (pollerId !== undefined && pending.declinedBy?.has(pollerId)) return false;
+    if (!pending.route) return true;
+    // A routed action goes only to a verified device, and only to the current one.
+    const device = pollerId === undefined ? undefined : this.pollerDevice.get(pollerId);
+    return device !== undefined && device === this.currentTarget(pending);
+  }
+
+  /** The action as handed to `pollerId`: a routed one carries that machine's own checkout. */
+  private forPoller(pending: Pending, pollerId: string | undefined): HostAction {
+    if (!pending.route) return pending.action;
+    const device = pollerId === undefined ? undefined : this.pollerDevice.get(pollerId);
+    const mine = pending.route.candidates.find((c) => c.deviceId === device);
+    return {
+      ...pending.action,
+      route: {
+        ...(pending.route.repoKey ? { repoKey: pending.route.repoKey } : {}),
+        ...(mine?.folder ? { folder: mine.folder } : {}),
+      },
+    };
+  }
+
+  /** Every candidate is tried: nothing is left to wait for. */
+  private exhausted(pending: Pending): boolean {
+    const route = pending.route;
+    return route !== undefined && route.candidates.every((c) => pending.tried?.has(c.deviceId));
+  }
+
+  private unreachable(pending: Pending, reason: HostReachUnreachable): HostReachOutcome {
+    if (!pending.route) return { kind: 'unreachable', reason };
+    const tried: HostReachTried[] = pending.route.candidates.map((c) => {
+      const t = pending.tried?.get(c.deviceId);
+      return {
+        deviceId: c.deviceId,
+        ...(c.label ? { label: c.label } : {}),
+        reason: t?.reason ?? 'offline',
+        ...(t?.detail ? { detail: t.detail } : {}),
+      };
+    });
+    return { kind: 'unreachable', reason, tried };
   }
 
   /**
@@ -306,7 +444,7 @@ export class HostReachQueue {
    * else. Declining returns the action to the pool, and the grace/heartbeat
    * timers still bound the case where *nobody* claims it.
    */
-  decline(id: string, pollerId?: string): boolean {
+  decline(id: string, pollerId?: string, detail?: string): boolean {
     const pending = this.map.get(id);
     if (!pending) return false;
     if (
@@ -322,6 +460,19 @@ export class HostReachQueue {
     // decline, take again — a tight loop that also starves the fallback, since
     // the went-away sweep only looks at delivered work.
     if (pollerId !== undefined) (pending.declinedBy ??= new Set()).add(pollerId);
+    // A routed action moves on to the next machine: the one that declined has
+    // no checkout of this repo (or no record of the box), and asking it again
+    // would only get the same answer.
+    const device = pollerId === undefined ? undefined : this.pollerDevice.get(pollerId);
+    if (pending.route && device !== undefined) {
+      pending.tried?.set(device, { reason: 'declined', ...(detail ? { detail } : {}) });
+      if (this.exhausted(pending)) {
+        this.map.delete(id);
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.settle(this.unreachable(pending, 'never-connected'));
+        return true;
+      }
+    }
     // Delivery cleared the grace timer, so without re-arming it a declined
     // action could sit undelivered forever and the box would wait on a copy no
     // machine is ever going to make. Re-armed, an unclaimed decline falls
@@ -330,7 +481,7 @@ export class HostReachQueue {
     pending.timer = setTimeout(() => {
       if (this.map.get(id) === pending && !pending.delivered) {
         this.map.delete(id);
-        pending.settle({ kind: 'unreachable', reason: 'never-connected' });
+        pending.settle(this.unreachable(pending, 'never-connected'));
       }
     }, this.graceMs);
     pending.timer.unref?.();
@@ -399,7 +550,7 @@ export class HostReachQueue {
    */
   private offerToWaiter(pending: Pending): boolean {
     for (const sub of [...this.subscribers]) {
-      if (pending.declinedBy?.has(sub.pollerId)) continue;
+      if (!this.eligible(pending, sub.pollerId)) continue;
       pending.delivered = true;
       pending.deliveredTo = sub.pollerId;
       this.pollerSeen.set(sub.pollerId, this.now());
@@ -407,12 +558,12 @@ export class HostReachQueue {
         clearTimeout(pending.timer);
         pending.timer = undefined;
       }
-      sub.deliver([pending.action, ...this.takeUndelivered(sub.pollerId)]);
+      sub.deliver([this.forPoller(pending, sub.pollerId), ...this.takeUndelivered(sub.pollerId)]);
       return true;
     }
     for (const waiter of [...this.waiters]) {
       const pid = waiter.pollerId;
-      if (pid !== undefined && pending.declinedBy?.has(pid)) continue;
+      if (!this.eligible(pending, pid)) continue;
       pending.delivered = true;
       pending.deliveredTo = pid;
       // Handing work to a waiter IS contact with that machine: without this the
@@ -427,7 +578,7 @@ export class HostReachQueue {
       clearTimeout(waiter.timer);
       // Anything else that poller may take rides along, so it is not left
       // waiting a full cycle for work already queued.
-      waiter.resolve([pending.action, ...this.takeUndelivered(pid)]);
+      waiter.resolve([this.forPoller(pending, pid), ...this.takeUndelivered(pid)]);
       return true;
     }
     return false;
@@ -451,8 +602,10 @@ export class HostReachQueue {
         (ownerSeenAt === undefined || now - ownerSeenAt > this.reachTimeoutMs);
       const orphaned = pending.delivered && pollerId !== undefined && ownerGone;
       if (pending.delivered && !orphaned) continue;
-      // A machine that already refused this action does not get asked twice.
-      if (pollerId !== undefined && pending.declinedBy?.has(pollerId)) continue;
+      if (orphaned) this.noteOwnerGone(pending);
+      // A machine that already refused this action does not get asked twice,
+      // and a routed one goes only to its current target device.
+      if (!this.eligible(pending, pollerId)) continue;
       pending.delivered = true;
       pending.deliveredTo = pollerId;
       // Delivery ends the grace window: from here the wait is unbounded, and
@@ -461,9 +614,22 @@ export class HostReachQueue {
         clearTimeout(pending.timer);
         pending.timer = undefined;
       }
-      out.push(pending.action);
+      out.push(this.forPoller(pending, pollerId));
     }
     return out;
+  }
+
+  /**
+   * The poller that owned a routed action stopped polling. When its whole
+   * device is gone (not a relay restart on the same machine, which polls again
+   * under a new id), that device is tried and the action moves to the next one.
+   */
+  private noteOwnerGone(pending: Pending): void {
+    if (!pending.route || pending.deliveredTo === undefined) return;
+    const device = this.pollerDevice.get(pending.deliveredTo);
+    if (device !== undefined && !this.devicePresent(device)) {
+      pending.tried?.set(device, { reason: 'went-away' });
+    }
   }
 
   private ensureSweep(): void {
@@ -504,11 +670,12 @@ export class HostReachQueue {
       // stops at the first waiter to receive *anything*: with two orphans in
       // flight it can hand a waiter the other one and leave this one looking
       // unclaimed while an eligible machine is still listening.
+      this.noteOwnerGone(pending);
       pending.delivered = false;
       pending.deliveredTo = undefined;
-      if (this.offerToWaiter(pending)) continue;
+      if (!this.exhausted(pending) && this.offerToWaiter(pending)) continue;
       this.map.delete(id);
-      pending.settle({ kind: 'unreachable', reason: 'went-away' });
+      pending.settle(this.unreachable(pending, 'went-away'));
     }
   }
 }

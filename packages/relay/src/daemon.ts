@@ -6,7 +6,10 @@ import { startEgressWatchLoop } from './egress-watch.js';
 import { startPersistentBoxLoop } from './persistent-boxes.js';
 import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
-import { HostReachPoller } from './host-reach-poller.js';
+import { HostReachPoller, type HostReachDecline } from './host-reach-poller.js';
+import { mirrorHostReachPrompts, type HostReachPromptClient } from './host-reach-prompts.js';
+import { existsSync } from 'node:fs';
+import { execa } from 'execa';
 import { drainCpOutbox } from './cp-outbox-drain.js';
 import { cacheCpSources, executeCloudAction, lookupCloudBoxOwner } from './host-actions.js';
 import type { HostAction, HostActionResult } from './types.js';
@@ -76,12 +79,13 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
           controlPlaneUrl,
           adminToken: hostReachToken,
           logger: log,
-          execute: (action) =>
+          execute: (action, hub) =>
             executeHostReachAction(action, {
               prompts: handle.prompts,
               subscribers: handle.subscribers,
               log,
               cache: { controlPlaneUrl, adminToken: hostReachToken },
+              hub,
             }),
           drainOutbox: () =>
             drainCpOutbox({
@@ -161,48 +165,115 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
  * Run one host-reach action on this machine, with this relay's own prompt
  * surfaces — so the confirm lands in the attach footer / local hub / tray of the
  * person whose files are about to move, and containment is judged against the
- * real project path rather than the control box's idea of one.
+ * real project path rather than the control box's idea of one. The confirm is
+ * also raised on the hub (`/api/v1/approvals`), so it can be answered from
+ * wherever the owner is looking (see host-reach-prompts.ts).
  *
- * Resolving the box locally is also the authorization step: this machine only
- * acts for boxes it already knows. An unknown box is DECLINED rather than
- * answered — see the note below.
+ * A ROUTED action (multi-PC Phase 4) names this machine's own checkout of the
+ * box's repo in `route.folder`; host paths resolve against it, never against the
+ * box record's workspace path (another machine's folder, or `/workspace` for a
+ * box adopted from the hub). The hub only routes to this machine because the
+ * checkouts registry says it has that repo, so a box this machine has no record
+ * of is adopted from the hub (`agentbox hub adopt`) rather than refused.
+ *
+ * An unrouted action (a box from before routing) is served only for a box this
+ * machine already knows, as before.
  */
-async function executeHostReachAction(
+export async function executeHostReachAction(
   action: HostAction,
   deps: {
     prompts: RelayServerHandle['prompts'];
     subscribers: RelayServerHandle['subscribers'];
     log: (line: string) => void;
     cache: { controlPlaneUrl: string; adminToken: string };
+    hub?: HostReachPromptClient;
+    /** Adopt a hub box into this machine's state (tests stub it). */
+    adopt?: (boxId: string, cwd: string) => Promise<{ ok: boolean; error?: string }>;
   },
-): Promise<HostActionResult | 'not-mine'> {
-  const owner = await lookupCloudBoxOwner(action.boxId);
+): Promise<HostActionResult | HostReachDecline> {
+  const folder = action.route?.folder;
+  if (folder !== undefined && !existsSync(folder)) {
+    return {
+      decline: `its checkout ${folder} is gone (run \`agentbox workspace rescan\` there to update the hub)`,
+    };
+  }
+  let owner = await lookupCloudBoxOwner(action.boxId);
+  if (!owner && action.route) {
+    if (!folder) {
+      return { decline: `no record of box ${action.boxId} and no checkout of its repo here` };
+    }
+    deps.log(`host-reach: adopting box ${action.boxId} from the hub to serve ${action.method}`);
+    const adopted = await (deps.adopt ?? adoptFromHub)(action.boxId, folder);
+    if (!adopted.ok) {
+      return { decline: `could not adopt box ${action.boxId} here: ${adopted.error ?? 'unknown error'}` };
+    }
+    owner = await lookupCloudBoxOwner(action.boxId);
+  }
   // Not an answer, a refusal: another machine on this hub may hold the box, and
   // answering "unknown box" here would settle its user's copy. The hub returns
   // the action to the pool; if nobody claims it, its own timers report that.
   if (!owner) {
     deps.log(`host-reach: declining ${action.method} — box ${action.boxId} is not known here`);
-    return 'not-mine';
+    return action.route ? { decline: `box ${action.boxId} is not known here` } : 'not-mine';
   }
-  const result = await executeCloudAction(action, {
-    backendName: owner.backendName,
-    boxId: action.boxId,
-    boxName: owner.name,
-    prompts: deps.prompts,
-    subscribers: deps.subscribers,
-    autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
-    boxAgents: owner.agents,
-    log: deps.log,
-  });
+  const unmirror = deps.hub
+    ? mirrorHostReachPrompts({
+        prompts: deps.prompts,
+        subscribers: deps.subscribers,
+        boxId: action.boxId,
+        actionId: action.id,
+        client: deps.hub,
+        log: deps.log,
+      })
+    : () => {};
+  let result: HostActionResult;
+  try {
+    result = await executeCloudAction(action, {
+      backendName: owner.backendName,
+      boxId: action.boxId,
+      boxName: owner.name,
+      ...(folder ? { hostFolder: folder } : {}),
+      prompts: deps.prompts,
+      subscribers: deps.subscribers,
+      autoApproveSafeHostActions: owner.autoApproveSafeHostActions,
+      boxAgents: owner.agents,
+      log: deps.log,
+    });
+  } finally {
+    unmirror();
+  }
   // File a copy with the control box so this same request answers when this
   // machine is offline. Strictly after the real copy succeeded, and awaited only
   // so the log lands in order — a failure here cannot change `result`.
   if (result.exitCode === 0 && action.method === 'cp.fromHost' && action.cachePrefix) {
-    await cacheCpSources(action, action.cachePrefix, {
-      controlPlaneUrl: deps.cache.controlPlaneUrl,
-      adminToken: deps.cache.adminToken,
-      logger: deps.log,
-    });
+    await cacheCpSources(
+      action,
+      action.cachePrefix,
+      {
+        controlPlaneUrl: deps.cache.controlPlaneUrl,
+        adminToken: deps.cache.adminToken,
+        logger: deps.log,
+      },
+      folder,
+    );
   }
   return result;
+}
+
+/**
+ * `agentbox hub adopt <box>` with `cwd` = this machine's checkout, so the new
+ * record links to it. The CLI owns adoption (registration -> record, SSH keys
+ * from custody); the relay only shells it, as it does for `cp` itself.
+ */
+async function adoptFromHub(boxId: string, cwd: string): Promise<{ ok: boolean; error?: string }> {
+  const entry = process.env.AGENTBOX_CLI_ENTRY;
+  if (!entry) return { ok: false, error: 'AGENTBOX_CLI_ENTRY not set' };
+  const r = await execa(process.execPath, [entry, 'hub', 'adopt', boxId], {
+    cwd,
+    reject: false,
+    timeout: 120_000,
+  });
+  if (r.exitCode === 0) return { ok: true };
+  const why = (r.stderr || r.stdout || r.shortMessage || '').trim().split('\n').slice(-1)[0];
+  return { ok: false, error: why || `exit ${String(r.exitCode)}` };
 }

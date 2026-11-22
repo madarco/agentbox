@@ -18,7 +18,9 @@ import {
 import { canAutoApproveTransfer } from './safe-transfer.js';
 import { offerBrowserOpen } from './open-link.js';
 import { HostActionQueue } from './host-action-queue.js';
-import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
+import { HostReachQueue, type HostReachTried, type HostReachUnreachable } from './host-reach.js';
+import { hostReachRouteFor } from './checkouts/route.js';
+import { listCheckouts } from './checkouts/store.js';
 import { cpCachePrefixes } from './cp-cache.js';
 import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-cache-serve.js';
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
@@ -87,7 +89,14 @@ import {
   toolRequestsEnabled,
   type ToolRequestRpcParams,
 } from './host-tools.js';
-import { askPrompt, isPromptAnswerBody, PendingPrompts, PromptSubscribers } from './prompts.js';
+import {
+  askPrompt,
+  isPromptAnswerBody,
+  PendingPrompts,
+  PromptSubscribers,
+  type PromptResolution,
+} from './prompts.js';
+import { randomUUID } from 'node:crypto';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
@@ -99,6 +108,7 @@ import { buildCpArgv, cpFlags, normalizeCpParams, type CpMethod } from './cp-rpc
 import type {
   BoxRegistration,
   BoxWorktree,
+  PromptAskEvent,
   BridgeActionResultBody,
   BridgePollResponse,
   BrowserOpenRpcParams,
@@ -468,13 +478,27 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const hostActions = mode === 'box' ? new HostActionQueue() : null;
   // A control box brokers rather than executes: actions that need the user's own
   // files park here for that machine's relay to drain.
+  // Host-reach confirms a serving PC raised here (see host-reach-prompts.ts):
+  // hub prompt id → the action it belongs to, its poller, and the answer.
+  const reachPrompts = new Map<string, ReachPrompt>();
   const hostReach =
     opts.controlPlane === true
-      ? new HostReachQueue(
-          typeof opts.hostReachTimeoutMs === 'number' && opts.hostReachTimeoutMs > 0
+      ? new HostReachQueue({
+          ...(typeof opts.hostReachTimeoutMs === 'number' && opts.hostReachTimeoutMs > 0
             ? { reachTimeoutMs: opts.hostReachTimeoutMs }
-            : {},
-        )
+            : {}),
+          // An action that ended (answered, gone, timed out) takes its pending
+          // confirm out of the approvals list.
+          onSettle: (actionId) => {
+            for (const [id, p] of reachPrompts) {
+              if (p.actionId !== actionId) continue;
+              if (prompts.resolve(id, 'n', true)) {
+                subscribers.broadcast(p.boxId, 'prompt-resolved', { id });
+              }
+              reachPrompts.delete(id);
+            }
+          },
+        })
       : null;
   // Host-mode handler for refreshed agent credentials (newest-wins backup
   // write + debounced `agentbox credentials propagate` spawn). In box mode the
@@ -720,6 +744,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 401, { error: 'invalid admin token' });
         return;
       }
+      // A result, a decline or a prompt names the poller it comes from: it must
+      // be THIS caller's poller, or one device could settle (or refuse) another
+      // device's routed work by quoting its poller id.
+      const callerDevice = hostReachDeviceId(req, hostReachDevice);
+      const callerOwnsPoller = (poller: unknown): boolean => {
+        if (typeof poller !== 'string' || !callerDevice) return true;
+        const bound = hostReach.deviceOf(poller);
+        return bound === undefined || bound === callerDevice;
+      };
       if (route === 'GET /admin/hostreach/events') {
         // The preferred shape: the machine holds one connection instead of
         // re-asking every 25s, and its presence becomes the connection itself.
@@ -732,7 +765,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           return;
         }
         const streamDevice = hostReachDeviceId(req, hostReachDevice);
-        if (streamDevice) hostReach.identify(pollerId, streamDevice);
+        if (streamDevice && !hostReach.identify(pollerId, streamDevice)) {
+          send(res, 403, { error: 'this poller id belongs to another machine' });
+          return;
+        }
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
@@ -781,7 +817,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // work its predecessor accepted but never finished.
         const pollerId = url.searchParams.get('poller') ?? undefined;
         const pollDevice = hostReachDeviceId(req, hostReachDevice);
-        if (pollerId && pollDevice) hostReach.identify(pollerId, pollDevice);
+        if (pollerId && pollDevice && !hostReach.identify(pollerId, pollDevice)) {
+          send(res, 403, { error: 'this poller id belongs to another machine' });
+          return;
+        }
         const actions = await hostReach.poll(waitMs, pollerId);
         send(res, 200, { actions });
         return;
@@ -805,15 +844,105 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 204, null);
         return;
       }
+      // A serving PC raises its confirm here so it shows in /api/v1/approvals
+      // (web, tray, any CLI) and can be answered from wherever the owner is.
+      if (route === 'POST /admin/hostreach/prompt') {
+        const body = await readJsonBody<{ id?: string; poller?: string; prompt?: unknown }>(req);
+        const prompt = parseReachPrompt(body?.prompt);
+        if (!body || typeof body.id !== 'string' || typeof body.poller !== 'string' || !prompt) {
+          send(res, 400, { error: 'expected {id, poller, prompt: {message, detail?, ...}}' });
+          return;
+        }
+        const owner = hostReach.ownerOf(body.id);
+        if (!callerOwnsPoller(body.poller) || !owner || owner.pollerId !== body.poller) {
+          send(res, 404, { error: 'no parked action with that id for this machine' });
+          return;
+        }
+        const ev: PromptAskEvent = { id: randomUUID(), ...prompt };
+        const entry: ReachPrompt = {
+          actionId: body.id,
+          boxId: owner.boxId,
+          poller: body.poller,
+          waiters: new Set(),
+        };
+        reachPrompts.set(ev.id, entry);
+        const settle = (r: PromptResolution): void => {
+          entry.resolution = r;
+          for (const w of entry.waiters) w();
+          entry.waiters.clear();
+        };
+        if (prompts.consumeAutoApprove(owner.boxId, prompt)) {
+          settle({ answer: 'y' });
+        } else {
+          void prompts.add(owner.boxId, ev).then(settle);
+          subscribers.broadcast(owner.boxId, 'prompt-ask', ev);
+        }
+        send(res, 200, { id: ev.id });
+        return;
+      }
+      if (url.pathname.startsWith('/admin/hostreach/prompt/')) {
+        const rest = url.pathname.slice('/admin/hostreach/prompt/'.length);
+        const [promptId = '', verb] = rest.split('/');
+        const entry = reachPrompts.get(decodeURIComponent(promptId));
+        if (!entry || !callerOwnsPoller(entry.poller)) {
+          send(res, 404, { error: 'no such prompt' });
+          return;
+        }
+        if (req.method === 'POST' && verb === 'cancel') {
+          if (prompts.resolve(promptId, 'n', true)) {
+            subscribers.broadcast(entry.boxId, 'prompt-resolved', { id: promptId });
+          }
+          reachPrompts.delete(promptId);
+          send(res, 204, null);
+          return;
+        }
+        if (req.method === 'GET' && verb === undefined) {
+          const requested = Number.parseInt(url.searchParams.get('wait') ?? '', 10);
+          const waitMs = Number.isFinite(requested)
+            ? Math.min(Math.max(requested, 0), MAX_HOSTREACH_WAIT_MS)
+            : DEFAULT_HOSTREACH_WAIT_MS;
+          if (!entry.resolution) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => {
+                entry.waiters.delete(wake);
+                resolve();
+              }, waitMs);
+              const wake = (): void => {
+                clearTimeout(timer);
+                resolve();
+              };
+              entry.waiters.add(wake);
+            });
+          }
+          if (!entry.resolution) {
+            send(res, 200, { status: 'pending' });
+            return;
+          }
+          reachPrompts.delete(promptId);
+          send(res, 200, {
+            status: 'answered',
+            answer: entry.resolution.answer,
+            ...(entry.resolution.cancelled ? { cancelled: true } : {}),
+          });
+          return;
+        }
+        send(res, 404, { error: 'not found' });
+        return;
+      }
       if (route === 'POST /admin/hostreach/decline') {
-        const body = await readJsonBody<{ id?: string; poller?: string }>(req);
+        const body = await readJsonBody<{ id?: string; poller?: string; reason?: string }>(req);
         if (!body || typeof body.id !== 'string' || body.id.length === 0) {
           send(res, 400, { error: 'expected {id}' });
+          return;
+        }
+        if (!callerOwnsPoller(body.poller)) {
+          send(res, 403, { error: 'this poller id belongs to another machine' });
           return;
         }
         const ok = hostReach.decline(
           body.id,
           typeof body.poller === 'string' ? body.poller : undefined,
+          typeof body.reason === 'string' ? body.reason.slice(0, 300) : undefined,
         );
         send(
           res,
@@ -831,6 +960,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.exitCode !== 'number'
         ) {
           send(res, 400, { error: 'expected {id, exitCode, stdout, stderr}' });
+          return;
+        }
+        if (!callerOwnsPoller(body.poller)) {
+          send(res, 403, { error: 'this poller id belongs to another machine' });
           return;
         }
         const ok = hostReach.resolve(
@@ -1278,9 +1411,24 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // binaries under the user's tool name.
         // Captures write under the first prefix; a cached read tries them all.
         const cachePrefixes = cpCachePrefixes(reg);
+        // Which PCs may serve it (multi-PC Phase 4): the box's origin PC, then
+        // another PC with a checkout of the repo. A PC with a different
+        // checkout, or none, is never offered the action.
+        const routing = hostReachRouteFor(
+          reg,
+          body.method,
+          body.params,
+          await listCheckouts().catch(() => []),
+        );
+        if (routing.kind === 'refused') {
+          send(res, 500, { exitCode: 64, stdout: '', stderr: `${routing.error}\n` });
+          return;
+        }
         const outcome = await hostReach.request(reg.boxId, body.method, body.params, {
           cachePrefix: cachePrefixes[0]!,
+          ...(routing.kind === 'routed' ? { route: routing.route } : {}),
         });
+        const tried = outcome.kind === 'unreachable' ? describeTried(outcome.tried) : '';
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
@@ -1293,7 +1441,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 500, {
             exitCode: 69,
             stdout: '',
-            stderr: toolUnreachableMessage(reg.name, outcome.reason),
+            stderr: toolUnreachableMessage(reg.name, outcome.reason) + tried,
           });
           return;
         }
@@ -1333,9 +1481,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 500, {
           exitCode: 69,
           stdout: '',
-          stderr: cpUnreachableMessage(body.method as CpMethod, reg.name, outcome.reason, {
-            cacheMiss: body.method === 'cp.fromHost',
-          }),
+          stderr:
+            cpUnreachableMessage(body.method as CpMethod, reg.name, outcome.reason, {
+              cacheMiss: body.method === 'cp.fromHost',
+            }) + tried,
         });
         return;
       }
@@ -2708,6 +2857,26 @@ function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): 
   ].join('\n');
 }
 
+/**
+ * The machines a routed request was offered to and why none answered, so a
+ * box (and its user) sees "laptop declined: no checkout" rather than a bare
+ * "offline". Empty for an unrouted request.
+ */
+export function describeTried(tried: HostReachTried[] | undefined): string {
+  if (!tried || tried.length === 0) return '';
+  const lines = tried.map((t) => {
+    const who = t.label ? `${t.label} (${t.deviceId.slice(0, 8)})` : t.deviceId;
+    const why =
+      t.reason === 'declined'
+        ? `declined${t.detail ? `: ${t.detail}` : ''}`
+        : t.reason === 'went-away'
+          ? 'stopped responding'
+          : 'not connected';
+    return `  ${who}: ${why}`;
+  });
+  return ['Machines tried, in order:', ...lines, ''].join('\n');
+}
+
 function cpUnreachableMessage(
   method: CpMethod,
   boxName: string,
@@ -2973,3 +3142,47 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
 }
 
 export type { BoxRegistration, RelayEvent };
+
+/** A host-reach confirm a serving PC raised on this hub. */
+interface ReachPrompt {
+  actionId: string;
+  boxId: string;
+  poller: string;
+  resolution?: PromptResolution;
+  waiters: Set<() => void>;
+}
+
+/**
+ * The confirm a PC asks the hub to show. Only the fields a confirm card
+ * renders, bounded: it comes from another machine, and it is shown to the user
+ * as a question about their own files.
+ */
+function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.message !== 'string' || r.message.length === 0) return null;
+  const str = (v: unknown, max: number): string | undefined =>
+    typeof v === 'string' && v.length > 0 ? v.slice(0, max) : undefined;
+  const ctx = r.context && typeof r.context === 'object' ? (r.context as Record<string, unknown>) : undefined;
+  const command = str(ctx?.command, 200);
+  const cwd = str(ctx?.cwd, 4096);
+  const argv = Array.isArray(ctx?.argv)
+    ? (ctx.argv as unknown[]).filter((a): a is string => typeof a === 'string').slice(0, 64).map((a) => a.slice(0, 4096))
+    : undefined;
+  const detail = str(r.detail, 8000);
+  return {
+    kind: 'confirm',
+    message: r.message.slice(0, 2000),
+    ...(detail ? { detail } : {}),
+    defaultAnswer: r.defaultAnswer === 'y' ? 'y' : 'n',
+    ...(command || cwd || argv
+      ? {
+          context: {
+            ...(command ? { command } : {}),
+            ...(argv ? { argv } : {}),
+            ...(cwd ? { cwd } : {}),
+          },
+        }
+      : {}),
+  };
+}

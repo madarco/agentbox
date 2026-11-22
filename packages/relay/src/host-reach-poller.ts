@@ -29,6 +29,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { tryGetMachineId } from '@agentbox/config';
 import { SseFrameReader } from './sse-read.js';
 import type { HostAction, HostActionResult } from './types.js';
+import type { HostReachPromptClient } from './host-reach-prompts.js';
+
+/**
+ * Hand an action back unexecuted. `'not-mine'` (box unknown here) or a reason
+ * the hub reports to the box when no machine serves it ("no checkout here").
+ */
+export type HostReachDecline = 'not-mine' | { decline: string };
 
 export interface HostReachPollerDeps {
   /** Control box base URL (`relay.controlPlaneUrl`). */
@@ -46,7 +53,10 @@ export interface HostReachPollerDeps {
    * on failure (a rejection is caught and turned into a non-zero result), or the
    * box on the other end waits forever.
    */
-  execute: (action: HostAction) => Promise<HostActionResult | 'not-mine'>;
+  execute: (
+    action: HostAction,
+    hub: HostReachPromptClient,
+  ) => Promise<HostActionResult | HostReachDecline>;
   /**
    * Land any copies that were parked for this machine while it was offline.
    * Started (never awaited) on first contact and re-checked periodically; it
@@ -367,9 +377,9 @@ export class HostReachPoller {
 
   private async handle(base: string, action: HostAction): Promise<void> {
     this.log(`host-reach: executing ${action.method} for box ${action.boxId}`);
-    let result: HostActionResult | 'not-mine';
+    let result: HostActionResult | HostReachDecline;
     try {
-      result = await this.deps.execute(action);
+      result = await this.deps.execute(action, this.promptClient(base, action.id));
     } catch (err) {
       result = {
         exitCode: 1,
@@ -378,12 +388,14 @@ export class HostReachPoller {
       };
     }
     try {
-      if (result === 'not-mine') {
+      if (result === 'not-mine' || 'decline' in result) {
         // Hand it back rather than answering for a box this machine has never
-        // seen: on a hub with two machines the other one may own it.
+        // seen (or has no checkout of): the hub offers it to the next machine,
+        // and reports the reason if none serves it.
         await this.post(`${base}/admin/hostreach/decline`, {
           id: action.id,
           poller: this.pollerId,
+          ...(result !== 'not-mine' ? { reason: result.decline } : {}),
         });
         return;
       }
@@ -399,6 +411,42 @@ export class HostReachPoller {
         `host-reach: could not post the result for ${action.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  /** This poller's client for the hub's prompt routes, scoped to one action. */
+  private promptClient(base: string, actionId: string): HostReachPromptClient {
+    void actionId;
+    return {
+      raise: async (id, prompt) => {
+        const res = await this.post(`${base}/admin/hostreach/prompt`, {
+          id,
+          poller: this.pollerId,
+          prompt,
+        });
+        // An older hub has no route: the confirm stays local, as before.
+        if (res.status === 404 && !res.text.includes('parked action')) return null;
+        if (res.status < 200 || res.status >= 300) {
+          throw new Error(`prompt → ${String(res.status)}: ${res.text.slice(0, 200)}`);
+        }
+        const parsed = JSON.parse(res.text) as { id?: string };
+        return typeof parsed.id === 'string' ? parsed.id : null;
+      },
+      status: async (hubId, waitMs) => {
+        const res = await this.send(
+          `${base}/admin/hostreach/prompt/${encodeURIComponent(hubId)}?wait=${String(waitMs)}`,
+          'GET',
+          undefined,
+          waitMs + 15_000,
+        );
+        // Gone from the hub (it restarted): stop mirroring; the local confirm stands.
+        if (res.status === 404) return { status: 'gone' };
+        if (res.status < 200 || res.status >= 300) throw new Error(`prompt status → ${String(res.status)}`);
+        return JSON.parse(res.text) as Awaited<ReturnType<HostReachPromptClient['status']>>;
+      },
+      cancel: async (hubId) => {
+        await this.post(`${base}/admin/hostreach/prompt/${encodeURIComponent(hubId)}/cancel`, {});
+      },
+    };
   }
 
   private get(url: string): Promise<JsonResponse> {

@@ -265,6 +265,14 @@ export interface HostAction {
    * never be able to name a custody location.
    */
   cachePrefix?: string;
+  /**
+   * Host-reach only, set by the hub per delivery: the repo this action is about
+   * and the RECEIVING machine's own checkout of it (checkouts registry). The PC
+   * resolves host paths against `folder`, never against the box record's
+   * workspace path, which may be another machine's folder (or `/workspace`).
+   * Absent on an unrouted action (a box from before origin machines existed).
+   */
+  route?: { repoKey?: string; folder?: string };
 }
 
 export interface HostActionResult {

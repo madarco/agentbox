@@ -108,6 +108,14 @@ import type {
 export interface CloudActionExecutorDeps {
   /** From BoxRegistration.backend (e.g. 'daytona'). */
   backendName: string;
+  /**
+   * The host folder relative host paths resolve against, when it is not the
+   * box record's `workspacePath`: a host-reach action names THIS machine's own
+   * checkout of the box's repo (`HostAction.route.folder`, from the checkouts
+   * registry), which is the only correct base on a PC that did not create the
+   * box (its record may say `/workspace`, or another machine's path).
+   */
+  hostFolder?: string;
   /** From BoxRegistration.boxId. Used to look up the BoxRecord in ~/.agentbox/state.json. */
   boxId: string;
   /** Friendly box name — used in confirm-prompt messages. Falls back to boxId. */
@@ -622,7 +630,7 @@ async function runToolRpc(
   const params = (action.params ?? {}) as Record<string, unknown>;
   const containerPath = typeof params['path'] === 'string' ? params['path'] : '/workspace';
   const lookup = await lookupCloudBox(deps.boxId);
-  const cwd = lookup.workspacePath;
+  const cwd = deps.hostFolder ?? lookup.workspacePath;
 
   if (action.method === 'tool.list') {
     const grants = await loadGrantedTools(cwd);
@@ -824,10 +832,11 @@ export async function cacheCpSources(
   action: HostAction,
   prefix: string,
   deps: CpCacheCaptureDeps,
+  hostFolder?: string,
 ): Promise<void> {
   try {
     const { sources } = normalizeCpParams('cp.fromHost', action.params as CpRpcParams | undefined);
-    const workspacePath = await boxWorkspacePath(action.boxId);
+    const workspacePath = hostFolder ?? (await boxWorkspacePath(action.boxId));
     for (const src of sources) {
       // Tar the resolved file; key it by what the box asked for, which is the
       // only spelling the control box can reproduce when it later looks it up.
@@ -987,7 +996,20 @@ async function runCpRpc(
   // Resolve host paths against THIS box's workspace so a relative path doesn't
   // land under the relay daemon's CWD (which belongs to whichever project
   // started the relay), and so the consent prompt shows the real destination.
-  const lookup = await lookupCloudBox(deps.boxId);
+  const record = await lookupCloudBox(deps.boxId);
+  const lookup = { ...record, workspacePath: deps.hostFolder ?? record.workspacePath };
+  if (!lookup.workspacePath || !existsSync(lookup.workspacePath)) {
+    // Spawning with a cwd that does not exist fails as a bare ENOENT, which the
+    // box saw as an empty exit 1. Say what is missing instead.
+    return {
+      exitCode: 69,
+      stdout: '',
+      stderr:
+        `cp could not run on this machine: the project folder ${lookup.workspacePath || '(none)'} ` +
+        `does not exist here. Clone the repo on this machine (and run \`agentbox workspace add\` ` +
+        `so the hub knows where it is), or copy from the machine that has it.\n`,
+    };
+  }
   const boxName = deps.boxName ?? deps.boxId;
   const {
     argv: cpArgs,
@@ -1049,10 +1071,16 @@ async function runCpRpc(
     reject: false,
     cwd: lookup.workspacePath,
   });
+  const stderr = result.stderr ?? '';
   return {
     exitCode: result.exitCode ?? 1,
     stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    // A failure with nothing on stderr (a spawn error, a signal) still owes the
+    // box a reason.
+    stderr:
+      result.failed && stderr.trim().length === 0
+        ? `cp failed on this machine: ${result.shortMessage ?? result.message ?? 'unknown error'}\n`
+        : stderr,
   };
 }
 
