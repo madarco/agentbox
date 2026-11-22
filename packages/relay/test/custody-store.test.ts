@@ -128,6 +128,13 @@ describe('normalizeCustodyPath', () => {
     expect(normalizeCustodyPath('projects/o__r/seed/untracked.tar.gz')).toBe(
       'projects/o__r/seed/untracked.tar.gz',
     );
+    // The skills library: per-skill metadata, one tarball per version, and the
+    // once-seeded marker.
+    expect(normalizeCustodyPath('skills/unslop/meta.json')).toBe('skills/unslop/meta.json');
+    expect(normalizeCustodyPath(`skills/unslop/${'a'.repeat(64)}.tar.gz`)).toBe(
+      `skills/unslop/${'a'.repeat(64)}.tar.gz`,
+    );
+    expect(normalizeCustodyPath('skills/.seeded')).toBe('skills/.seeded');
   });
 
   it('rejects too-deep, empty-segment, and dotdot paths', () => {

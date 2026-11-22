@@ -69,6 +69,7 @@ import { installCommand, runInstallWizard } from './commands/install.js';
 import { pluginCommand } from './commands/plugin.js';
 import { doctorCommand } from './commands/doctor.js';
 import { toolsCommand } from './commands/tools.js';
+import { skillsCommand } from './commands/skills.js';
 import { isFirstRun } from './lib/first-run.js';
 import { printCliError } from './lib/print-cli-error.js';
 import { gitCommand } from './commands/git.js';
@@ -283,6 +284,7 @@ program.addCommand(appCommand);
 program.addCommand(pluginCommand);
 program.addCommand(doctorCommand);
 program.addCommand(toolsCommand);
+program.addCommand(skillsCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildCompactHelp(program));

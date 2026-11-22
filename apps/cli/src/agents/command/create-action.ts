@@ -88,6 +88,7 @@ import { detectHostSession, registerHostManager } from '../../lib/host-session.j
 import { workspaceHub } from '../../lib/workspace-ref.js';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { reportCheckoutInBackground } from '../../lib/checkouts-report.js';
+import { autoSeedSkills } from '../../lib/skills/auto-seed.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {
@@ -386,6 +387,9 @@ export async function runAgentCreate(
   // The checkouts registry, from the same place for the same reason: every
   // branch below is a create from this folder on this machine.
   reportCheckoutInBackground(projectRoot);
+  // The first create against a never-seeded skills library uploads this PC's
+  // skills; a no-op on every later create.
+  await autoSeedSkills({ announce: (line) => log.info(line) });
 
   const providerDefault = resolveDefaultCheckpoint(cfg, providerName);
   const checkpointRef =

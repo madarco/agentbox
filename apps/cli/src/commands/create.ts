@@ -50,6 +50,7 @@ import {
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { reportCheckoutInBackground } from '../lib/checkouts-report.js';
+import { autoSeedSkills } from '../lib/skills/auto-seed.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
 import {
@@ -578,6 +579,12 @@ export const createCommand = new Command('create')
     // (the checkouts registry another PC's box may be routed to later).
     // Bookkeeping: quiet, and never awaited on the create's critical path.
     reportCheckoutInBackground(projectRoot);
+    // The first create against a hub whose skills library was never seeded
+    // uploads this PC's skills (once per hub; quiet when there's nothing to do).
+    await autoSeedSkills({
+      announce: (line) => log.info(line),
+      debug: (line) => cmdLog.write(line),
+    });
     // `providerName` stays a bare name — it keys the per-provider config
     // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record; the
     // engine rides alongside it in `remoteHost`.
