@@ -235,6 +235,8 @@ export interface PropagateBoxLike {
   agents?: string[];
   /** Other agents' logins the box consumes as model auth (`borrowCredentials`). */
   borrowedCredentials?: string[];
+  /** Named LLM account per agent (`BoxRecord.accounts`); absent = `default`. */
+  accounts?: Record<string, string>;
 }
 
 export interface PropagatePlan<B extends PropagateBoxLike> {
@@ -295,6 +297,12 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   const cloudBoxes: B[] = [];
   const borrowingBoxes: B[] = [];
   for (const box of inScope) {
+    // This fan-out carries the DEFAULT account's login. A box on a named
+    // account for this agent (running it, or borrowing it as model auth) must
+    // never receive it: it would replace that account's login with the
+    // owner's. Per-account fan-out is Phase 4 of docs/llm-accounts-plan.md.
+    const account = box.accounts?.[opts.agent];
+    if (account !== undefined && account !== 'default') continue;
     // A box created for a specific agent set must not be handed another agent's
     // credential. This is the fan-out's own gate: it pushes STRAIGHT INTO a
     // cloud box, so without it a resume re-seeds every agent's token and

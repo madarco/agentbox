@@ -53,6 +53,8 @@ export interface CloudSyncOptions {
    * `ensureAgentVolumesForCloud(...).agents`. Omitted post-create.
    */
   agents?: CloudAgentKind[];
+  /** Named LLM account per agent (`BoxRecord.accounts`). */
+  accounts?: Readonly<Record<string, string>>;
 }
 
 export function makeCloudSync(
@@ -133,6 +135,7 @@ export function makeCloudSync(
           agents,
           hostWorkspace: ctx.hostWorkspace,
           onLog: ctx.onLog,
+          ...(opts.accounts ? { accounts: opts.accounts } : {}),
         });
       }
     },
@@ -141,7 +144,9 @@ export function makeCloudSync(
       // Capture the box's agent login(s) back to the host backups. Cloud-only
       // (the box has no shared host auth path); the CLI calls it on
       // `checkpoint create --set-default`.
-      return extractCloudAgentCredentials(backend, handle);
+      return extractCloudAgentCredentials(backend, handle, {
+        skip: namedAccountAgents(opts.accounts),
+      });
     },
 
     async seedGitIdentity(ctx: SyncContext): Promise<void> {
@@ -179,4 +184,11 @@ export function makeCloudSync(
       return uploadCarryPaths({ backend, handle, entries: rendered, onLog: ctx.onLog });
     },
   };
+}
+
+/** Agents running on a named account — never extracted over the default login. */
+export function namedAccountAgents(accounts: Readonly<Record<string, string>> | undefined): string[] {
+  return Object.entries(accounts ?? {})
+    .filter(([, id]) => id !== 'default')
+    .map(([agent]) => agent);
 }

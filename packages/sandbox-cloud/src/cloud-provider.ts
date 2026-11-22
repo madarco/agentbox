@@ -58,8 +58,9 @@ import {
   CarryCopyError,
   withPerBoxCarry,
   borrowedCredentialCarry,
+  agentIds,
 } from '@agentbox/sandbox-core';
-import { makeCloudSync } from './sync/cloud-sync.js';
+import { makeCloudSync, namedAccountAgents } from './sync/cloud-sync.js';
 import { createCloudSyncTransport } from './sync/sync-transport.js';
 import {
   buildTmuxConfigShellSnippet,
@@ -702,10 +703,14 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
+        // An agent on a named account is left out: reconcile is newest-wins
+        // against the DEFAULT login's backup, both directions.
+        const named = namedAccountAgents(box.accounts);
+        const agents = (box.agents ?? agentIds()).filter((a) => !named.includes(a));
         await reconcileAgentCredentials(backend, h, {
           onLog: () => {},
           // Absent on pre-selection boxes, which correctly means "all".
-          ...(box.agents ? { agents: box.agents } : {}),
+          ...(box.agents || named.length > 0 ? { agents } : {}),
         });
       }
     } catch {
@@ -857,6 +862,7 @@ export function createCloudProvider(
         // Daytona's linux-vm class accepts volume mounts and never honors them
         // (see ensureAgentVolumesForCloud) — take the per-create upload path.
         volumesUsable: cloudVolumesUsable(sandboxClass),
+        ...(req.accounts ? { accounts: req.accounts } : {}),
       });
 
       // Read the `expose:` service ports up front so port-capped backends
@@ -1049,7 +1055,10 @@ export function createCloudProvider(
           onLog: log,
         });
 
-        const sync = makeCloudSync(backend, handle, { agents: agentVolumes.agents });
+        const sync = makeCloudSync(backend, handle, {
+          agents: agentVolumes.agents,
+          ...(req.accounts ? { accounts: req.accounts } : {}),
+        });
         await sync.seedCredentials(syncCtx);
         await sync.seedAgentConfig(syncCtx);
         await sync.seedGitIdentity(syncCtx);
@@ -1440,6 +1449,13 @@ export function createCloudProvider(
           ...(req.agents ? { agents: req.agents } : {}),
           ...(req.borrowCredentials && req.borrowCredentials.length > 0
             ? { borrowedCredentials: [...req.borrowCredentials] }
+            : {}),
+          ...(namedAccountAgents(req.accounts).length > 0
+            ? {
+                accounts: Object.fromEntries(
+                  namedAccountAgents(req.accounts).map((a) => [a, req.accounts![a]!]),
+                ),
+              }
             : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
@@ -1944,7 +1960,10 @@ export function createCloudProvider(
         provider: 'cloud',
         hostWorkspace: box.workspacePath,
       });
-      return makeCloudSync(backend, handleFor(box)).extractCredentials(ctx);
+      // A box's named-account agents are skipped: their login is not the default's.
+      return makeCloudSync(backend, handleFor(box), {
+        ...(box.accounts ? { accounts: box.accounts } : {}),
+      }).extractCredentials(ctx);
     },
 
     // stats is provider-optional; cloud backends without a metrics API just
