@@ -51,13 +51,13 @@ export async function readSkillTree(
   const brokenLinks: string[] = [];
   let size = 0;
   let newestMtimeMs = 0;
-  // Real directories already entered, so a link cycle can't recurse forever.
-  const seen = new Set<string>();
-
-  async function walk(abs: string, rel: string): Promise<void> {
+  // The real directories on the CURRENT path only: a link back to an ancestor is
+  // a cycle and stops, while two links to the same shared directory are both
+  // walked, because the host agent reads the content under both names.
+  async function walk(abs: string, rel: string, ancestors: ReadonlySet<string>): Promise<void> {
     const real = await realpath(abs);
-    if (seen.has(real)) return;
-    seen.add(real);
+    if (ancestors.has(real)) return;
+    const chain = new Set(ancestors).add(real);
     const names = (await readdir(abs)).sort();
     for (const name of names) {
       if (SKIP_NAMES.has(name)) continue;
@@ -74,7 +74,7 @@ export async function readSkillTree(
         }
       }
       if (st.isDirectory()) {
-        await walk(childAbs, childRel);
+        await walk(childAbs, childRel, chain);
       } else if (st.isFile()) {
         size += st.size;
         if (opts.maxBytes !== undefined && size > opts.maxBytes) {
@@ -93,7 +93,7 @@ export async function readSkillTree(
     }
   }
 
-  await walk(root, '');
+  await walk(root, '', new Set());
   return { files, size, newestMtimeMs, brokenLinks };
 }
 

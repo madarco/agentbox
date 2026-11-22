@@ -181,6 +181,11 @@ async function doDownload(
       } else {
         const link = out.claudeLink ? ` (linked from ${out.claudeLink})` : '';
         log.success(`${out.name}: ${out.status} at ${out.dir}${link}`);
+        if (out.claudeKept) {
+          log.warn(
+            `${out.name}: Claude Code still reads its own different copy at ${out.claudeKept}; remove it to use the downloaded one`,
+          );
+        }
       }
     } catch (err) {
       log.error(`${r.name}: ${err instanceof Error ? err.message : String(err)}`);

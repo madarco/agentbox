@@ -8,7 +8,7 @@
  * dir is found too. `~/.agents/skills` comes first: it is the cross-agent
  * location, and on a typical Mac `~/.claude/skills/<x>` is a link into it.
  */
-import { stat, readdir, readFile } from 'node:fs/promises';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseSkillFrontmatter } from './frontmatter.js';
@@ -144,6 +144,16 @@ export async function discoverLocalSkills(
       if (!(await isDir(dir)) || !(await exists(join(dir, 'SKILL.md')))) continue;
       const first = byName.get(name);
       if (first) {
+        // The usual Mac layout links `~/.claude/skills/<x>` into `~/.agents/skills/<x>`:
+        // the same directory, so no need to read and scan it a second time.
+        const [a, b] = await Promise.all([
+          realpath(first.dir).catch(() => first.dir),
+          realpath(dir).catch(() => dir),
+        ]);
+        if (a === b) {
+          first.alsoAt.push({ dir, same: true });
+          continue;
+        }
         const other = await readLocalSkill(name, dir, opts);
         first.alsoAt.push({ dir, same: other.treeSha !== '' && other.treeSha === first.treeSha });
         continue;

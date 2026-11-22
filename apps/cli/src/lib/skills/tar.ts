@@ -126,9 +126,13 @@ function checksumOk(h: Buffer): boolean {
 export function readTar(gz: Buffer, opts: { maxBytes?: number } = {}): TarFile[] {
   let buf: Buffer;
   try {
+    // `maxBytes` caps the skill's CONTENT; the tar framing (a 512-byte header plus
+    // padding per file, more with pax records) comes on top and grows with the
+    // file count. The output cap is a decompression-bomb guard, not the content
+    // cap, so it leaves generous room; content is checked after parsing.
     buf = gunzipSync(
       gz,
-      opts.maxBytes !== undefined ? { maxOutputLength: opts.maxBytes + BLOCK * 64 } : {},
+      opts.maxBytes !== undefined ? { maxOutputLength: opts.maxBytes * 2 + 16 * 1024 * 1024 } : {},
     );
   } catch (err) {
     throw new SkillTarError(
@@ -137,6 +141,7 @@ export function readTar(gz: Buffer, opts: { maxBytes?: number } = {}): TarFile[]
   }
   const out: TarFile[] = [];
   let pendingPath: string | undefined;
+  let contentBytes = 0;
   let off = 0;
   while (off + BLOCK <= buf.length) {
     const h = buf.subarray(off, off + BLOCK);
@@ -171,6 +176,10 @@ export function readTar(gz: Buffer, opts: { maxBytes?: number } = {}): TarFile[]
     assertSafePath(path);
     const mode = (num(h, 100, 8) & 0o111) !== 0 ? 0o755 : 0o644;
     out.push({ path, mode, data: Buffer.from(data) });
+    contentBytes += size;
+    if (opts.maxBytes !== undefined && contentBytes > opts.maxBytes) {
+      throw new SkillTarError(`skill tarball holds more than ${String(opts.maxBytes)} bytes`);
+    }
   }
   return out;
 }

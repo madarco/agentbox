@@ -3,7 +3,7 @@
 Live backlog for [`hub-skills-plan.md`](./hub-skills-plan.md). Updated during
 each phase, not at the end.
 
-## Phase 1 — implementation plan (2026-11-22)
+## Phase 1 — implementation plan (2026-11-22, implemented)
 
 Scope: custody `skills` scope, normalization + tree hash, `/api/v1/skills`,
 PC-side secret scan, the automatic first seed, the `agentbox skills` TUI. No
@@ -57,3 +57,23 @@ delivery to boxes, no web page (Phase 1b).
   do today.
 - **Version retention is a constant (newest 5).** Promote to a config key only
   if someone asks.
+- **The hub trusts the uploader's tree hash.** `importSkill` stores the tarball
+  under the client-stated `sha256` and records its size and file count as
+  stated. Verification happens on download (the PC re-derives the hash and
+  refuses a mismatch), so a bad upload can't install the wrong files anywhere,
+  but it can overwrite another version's tarball and make that version
+  undownloadable. Verifying on the hub means parsing the tarball there (a
+  pure-JS reader like the CLI's, shared through a package the hub routes can
+  import). From the Phase 1 review; the uploader is an authenticated owner.
+- **`meta.json` is read-modify-write without a lock.** Two concurrent uploads of
+  the same skill can drop one version entry and orphan its tarball. Rare (one
+  owner, uploads are explicit, the seed runs once per hub); needs a per-skill
+  lock or compare-and-swap in custody. From the Phase 1 review.
+- **The generic custody PUT routes can write the `skills/` scope directly**
+  (`/api/v1/custody/{path}`, `/api/v1/custody/blob/{path}`), bypassing the
+  skills name/reserved-prefix checks, and could write `skills/.seeded`. Same
+  trust level as the skills routes (API key); refuse `skills/` there and point
+  at `/api/v1/skills` when it matters. From the Phase 1 review.
+- **The per-PC seeded memo keys hubs by URL.** A local hub that is wiped and
+  recreated at the same `http://127.0.0.1:8787` reads as already seeded here;
+  `agentbox skills --upload-all` covers it.

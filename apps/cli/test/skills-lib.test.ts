@@ -13,10 +13,10 @@ import { describe, expect, it, vi } from 'vitest';
 // The upload path reads (and may mint) ~/.agentbox/machine-id; never let it touch
 // the real home. Hoisted so it runs before any module computes a state dir.
 vi.hoisted(() => {
-  const { mkdtempSync: mk } = require('node:fs') as typeof import('node:fs');
-  const { tmpdir: td } = require('node:os') as typeof import('node:os');
-  const { join: j } = require('node:path') as typeof import('node:path');
-  process.env.HOME = mk(j(td(), 'skills-lib-home-'));
+  // A path is enough: everything under it is created on demand. No imports are
+  // available yet at hoist time, so build it from the environment directly.
+  const base = process.env.TMPDIR ?? '/tmp';
+  process.env.HOME = `${base}/skills-lib-home-${String(process.pid)}-${String(Date.now())}`;
 });
 
 import { parseSkillFrontmatter } from '../src/lib/skills/frontmatter.js';
@@ -31,6 +31,7 @@ import {
   uploadBlocker,
 } from '../src/lib/skills/sync.js';
 import type { HubApiClient, HubApiSkill } from '../src/control-plane/hub-api-client.js';
+import { rememberSeeded, seededHubs } from '../src/lib/skills/auto-seed.js';
 import { gzipSync } from 'node:zlib';
 
 function tmp(prefix: string): string {
@@ -140,6 +141,16 @@ describe('tree hash', () => {
     const hb = treeHash((await readSkillTree(b)).files);
     expect(ha).toBe(hb);
     expect(ha).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('keeps content reached through two links to one directory, and stops cycles', async () => {
+    const d = writeSkill(tmp('skshared-'), 'one', { 'shared/x.md': 'X' });
+    mkdirSync(join(d, 'templates'));
+    symlinkSync(join(d, 'shared'), join(d, 'templates', 'a'));
+    symlinkSync(join(d, 'shared'), join(d, 'templates', 'b'));
+    symlinkSync(d, join(d, 'shared', 'loop'));
+    const paths = (await readSkillTree(d)).files.map((f) => f.path).sort();
+    expect(paths).toEqual(['SKILL.md', 'shared/x.md', 'templates/a/x.md', 'templates/b/x.md']);
   });
 
   it('reports broken links and enforces the size cap', async () => {
@@ -333,7 +344,9 @@ describe('seed + download', () => {
     const got = await downloadHubSkill(client, 'shared', { home: pcB, maxBytes: 1 << 20 });
     expect(got).toMatchObject({ status: 'installed', dir: join(pcB, '.agents/skills/shared') });
     expect(readFileSync(join(pcB, '.agents/skills/shared/scripts/run.sh'), 'utf8')).toBe('echo hi');
-    expect(readlinkSync(join(pcB, '.claude/skills/shared'))).toBe('../../.agents/skills/shared');
+    expect(readlinkSync(join(pcB, '.claude/skills/shared'))).toBe(
+      join(pcB, '.agents/skills/shared'),
+    );
     const [a] = await discoverLocalSkills({ home: pcA });
     const [b] = await discoverLocalSkills({ home: pcB });
     expect(b!.treeSha).toBe(a!.treeSha);
@@ -363,6 +376,26 @@ describe('seed + download', () => {
     );
   });
 
+  it('never deletes a separate, different claude copy', async () => {
+    const pcA = tmp('skpca2-');
+    writeSkill(join(pcA, '.agents/skills'), 'shared');
+    const { client } = fakeClient();
+    await seedSkillsIfEmpty(client, { home: pcA, maxBytes: 1 << 20 });
+    const pcB = tmp('skpcb2-');
+    writeSkill(join(pcB, '.claude/skills'), 'shared', { 'mine.md': 'my edits' });
+    const got = await downloadHubSkill(
+      client,
+      'shared',
+      { home: pcB, maxBytes: 1 << 20 },
+      { overwrite: true },
+    );
+    expect(got).toMatchObject({
+      status: 'installed',
+      claudeKept: join(pcB, '.claude/skills/shared'),
+    });
+    expect(readFileSync(join(pcB, '.claude/skills/shared/mine.md'), 'utf8')).toBe('my edits');
+  });
+
   it('refuses a tarball whose files do not hash to the advertised version', async () => {
     const { client, store } = fakeClient();
     store.set('bad', {
@@ -373,5 +406,14 @@ describe('seed + download', () => {
     await expect(
       downloadHubSkill(client, 'bad', { home: tmp('skbad-'), maxBytes: 1 << 20 }),
     ).rejects.toThrow(/hash to/);
+  });
+});
+
+describe('seeded memo', () => {
+  it('remembers hubs by normalized url, in the isolated HOME', async () => {
+    expect(process.env.HOME).toContain('skills-lib-home-');
+    await rememberSeeded('http://127.0.0.1:8790/');
+    await rememberSeeded('https://hub.example.com');
+    expect(await seededHubs()).toEqual(['http://127.0.0.1:8790', 'https://hub.example.com']);
   });
 });

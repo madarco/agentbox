@@ -388,7 +388,7 @@ export async function runAgentCreate(
   // branch below is a create from this folder on this machine.
   reportCheckoutInBackground(projectRoot);
   // The first create against a never-seeded skills library uploads this PC's
-  // skills; a no-op on every later create.
+  // skills; after that a local memo makes it return without a network call.
   await autoSeedSkills({ announce: (line) => log.info(line) });
 
   const providerDefault = resolveDefaultCheckpoint(cfg, providerName);

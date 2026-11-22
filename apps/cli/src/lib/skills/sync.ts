@@ -154,6 +154,8 @@ export type DownloadOutcome =
       status: 'installed' | 'replaced' | 'unchanged';
       dir: string;
       claudeLink?: string;
+      /** A separate, different `~/.claude/skills/<name>` left in place (claude still reads it). */
+      claudeKept?: string;
     }
   | { name: string; status: 'skipped'; reason: string };
 
@@ -173,38 +175,46 @@ async function lstatOrNull(p: string): Promise<Awaited<ReturnType<typeof lstat>>
 /**
  * Point `~/.claude/skills/<name>` at the downloaded copy — claude is the one
  * measured agent that doesn't read `~/.agents/skills`. Only when claude is set up
- * here (`~/.claude` exists). A real directory there is replaced only with
- * `overwrite`, which the caller asked the user for.
+ * here (`~/.claude` exists).
+ *
+ * Never deletes a real directory: a separate claude copy with different content
+ * is the user's, and the download prompt only ever named `~/.agents/skills`. It is
+ * reported back (`kept`) so the caller can say claude still reads the old one.
+ * A stale symlink is re-pointed with `overwrite` (removing a link loses nothing).
+ * The link is absolute, so it resolves even when `~/.claude` is itself a link.
  */
 async function linkForClaude(
   home: string,
   name: string,
   target: string,
   overwrite: boolean,
-): Promise<string | undefined> {
+): Promise<{ link?: string; kept?: string }> {
   // `stat`, not `lstat`: a dotfile manager often makes `~/.claude` itself a link.
   const claudeHome = await stat(join(home, '.claude')).catch(() => null);
-  if (!claudeHome?.isDirectory()) return undefined;
+  if (!claudeHome?.isDirectory()) return {};
   const link = join(home, '.claude', 'skills', name);
-  const rel = join('..', '..', '.agents', 'skills', name);
   const st = await lstatOrNull(link);
   if (st?.isSymbolicLink()) {
-    if (resolve(dirname(link), await readlink(link)) === target) return link;
-    if (!overwrite) return undefined;
+    if (resolve(dirname(link), await readlink(link)) === target) return { link };
+    if (!overwrite) return { kept: link };
     await rm(link, { force: true });
   } else if (st) {
     const existing = await readSkillTree(link).catch(() => null);
-    const sameAsTarget =
+    const same =
       existing !== null &&
       treeHash(existing.files) === treeHash((await readSkillTree(target)).files);
-    // Already the same skill: claude reads it either way, so leave the user's layout be.
-    if (sameAsTarget) return link;
-    if (!overwrite) return undefined;
-    await rm(link, { recursive: true, force: true });
+    return same ? { link } : { kept: link };
   }
   await mkdir(dirname(link), { recursive: true });
-  await symlink(rel, link);
-  return link;
+  await symlink(target, link);
+  return { link };
+}
+
+function claudeFields(c: { link?: string; kept?: string }): {
+  claudeLink?: string;
+  claudeKept?: string;
+} {
+  return { ...(c.link ? { claudeLink: c.link } : {}), ...(c.kept ? { claudeKept: c.kept } : {}) };
 }
 
 /**
@@ -222,7 +232,10 @@ export async function downloadHubSkill(
   const got = await client.downloadSkill(name, opts.version);
   const files = readTar(got.data, { maxBytes: ctx.maxBytes });
   const sha = treeHash(files);
-  if (got.version && sha !== got.version) {
+  if (!/^[0-9a-f]{64}$/.test(got.version)) {
+    throw new Error(`skill '${name}': the hub did not name the version it sent`);
+  }
+  if (sha !== got.version) {
     throw new Error(
       `skill '${name}': downloaded files hash to ${sha.slice(0, 12)}, hub says ${got.version.slice(0, 12)}`,
     );
@@ -232,8 +245,8 @@ export async function downloadHubSkill(
   if (existing) {
     const local = await readSkillTree(target).catch(() => null);
     if (local && treeHash(local.files) === sha) {
-      const claudeLink = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
-      return { name, status: 'unchanged', dir: target, ...(claudeLink ? { claudeLink } : {}) };
+      const claude = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
+      return { name, status: 'unchanged', dir: target, ...claudeFields(claude) };
     }
     if (!opts.overwrite) {
       return { name, status: 'skipped', reason: `a different local copy exists at ${target}` };
@@ -267,11 +280,11 @@ export async function downloadHubSkill(
     throw err;
   }
   if (movedAside) await rm(old, { recursive: true, force: true });
-  const claudeLink = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
+  const claude = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
   return {
     name,
     status: existing ? 'replaced' : 'installed',
     dir: target,
-    ...(claudeLink ? { claudeLink } : {}),
+    ...claudeFields(claude),
   };
 }

@@ -580,7 +580,9 @@ export const createCommand = new Command('create')
     // Bookkeeping: quiet, and never awaited on the create's critical path.
     reportCheckoutInBackground(projectRoot);
     // The first create against a hub whose skills library was never seeded
-    // uploads this PC's skills (once per hub; quiet when there's nothing to do).
+    // uploads this PC's skills. Awaited, unlike the checkout report above: it
+    // costs a round trip only until this PC has seen the hub seeded (a local
+    // memo), after which it returns without touching the network.
     await autoSeedSkills({
       announce: (line) => log.info(line),
       debug: (line) => cmdLog.write(line),
