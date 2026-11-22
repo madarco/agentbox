@@ -1,6 +1,5 @@
 import { FsCustodyStore } from '@agentbox/relay/control-plane';
 import { readPreparedStateRaw, writePreparedStateRaw } from '@agentbox/sandbox-core';
-import { libraryBlocksAdoption } from './backend/skills';
 
 /**
  * Adopt a shared bake record from custody into this machine's prepared-state,
@@ -32,7 +31,7 @@ export async function hydratePreparedFromCustody(
     const found = await custody.get(`prepared/${providerName}.json`).catch(() => null);
     if (!found) return;
     const record = JSON.parse(found.data.toString('utf8')) as {
-      base?: { contextSha256?: string; skillsDigest?: string };
+      base?: { contextSha256?: string };
     };
     const stored = record.base?.contextSha256;
     if (!stored) return;
@@ -47,15 +46,6 @@ export async function hydratePreparedFromCustody(
     if (stored !== nativeFingerprint) {
       log(
         `prepared: the shared ${providerName} bake is from a different build context — ignoring it`,
-      );
-      return;
-    }
-    // Same context, but baked with skills the library doesn't hold (or lacks
-    // ones it does): booting it would hand boxes a different skill set than this
-    // hub keeps, so bake here instead.
-    if (await libraryBlocksAdoption(custody, record.base?.skillsDigest)) {
-      log(
-        `prepared: the shared ${providerName} bake carries different skills than this hub's library — ignoring it`,
       );
       return;
     }

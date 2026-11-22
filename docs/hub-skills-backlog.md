@@ -70,10 +70,12 @@ library.
    and the hub's provider freshness report such a base `stale` with that reason
    (`withSkillsFreshness`). A record from another machine, or from before this
    change, is never judged on skills — no one-time re-bake on upgrade.
-4. **Library gate on the control box.** `hydratePreparedFromCustody` declines a
-   shared bake whose `skillsDigest` differs from a seeded library
-   (`libraryBlocksAdoption`). A record without a digest, or an unseeded library,
-   adopts exactly as before.
+4. **Library gate on the control box: deferred to Phase 2.** Implemented, then
+   removed after the second review: declining a PC's shared bake makes the
+   control box bake from its own (empty) home, so its boxes got NO skills
+   instead of the PC's — a regression, since before this phase it adopted the
+   bake. The gate only helps once the control box can bake (or deliver) the
+   library's skills. The recorded `skillsDigest` is what it will compare.
 5. **Web.** `/skills` page in the hub (pure `/api/v1` client): name,
    description, size, files, source PC, updated, versions; discard with a
    confirm. Sidebar entry. The System page's "Skills · this control box" section
@@ -203,3 +205,25 @@ stamp records nothing). Still open:
 - **The hub's bake diff can't explain a skills-only stale verdict** — it diffs
   build-context files, so the System page shows the reason string but an empty
   file diff.
+
+## From the second Phase 1b `/code-review medium` (2026-11-22)
+
+Fixed in the PR: the library gate removed (finding 1, a regression — see plan
+item 4; that also removes findings 4 and 7); daytona's variant rebuild message
+named the base's context instead of the variant's (6); the bake stamp read the
+30 s freshness memo, so a record could carry an older digest than the skills it
+staged (8); the digest test leaked temp dirs (10). Still open:
+
+- **A control box's base never goes stale on library changes.** Its home has no
+  skills, so its records stamp `''` and compare against `''`. Becomes real once
+  the library is delivered to boxes (Phase 2), which is also when the control
+  box should judge staleness against the library.
+- **A PC that adopts a control box's shared bake is never judged on skills.**
+  The record carries the control box's `skillsHost`, so the PC never reports it
+  stale and boxes lack the PC's skills until a `--force` bake. Same as before
+  this phase (adoption ignored skills); resolved by Phase 2's delivery.
+- **Only the agentless `base` record is checked for skills staleness.** A
+  derived variant (e.g. claude) keeps its old digest and snapshot after the base
+  re-bakes, and skills deleted on the host survive in it (the tar overlay never
+  removes files). Check variant records too, and re-bake the variant a create
+  actually boots.

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { skillsDigest } from '@agentbox/sandbox-core';
 import {
   MAX_SKILL_VERSIONS,
   SEEDED_MARKER,
@@ -10,9 +9,7 @@ import {
   importSkill,
   listSkills,
   openSkillTarball,
-  libraryDigest,
   parseImportMeta,
-  libraryBlocksAdoption,
   skillNameProblem,
   type SkillsStore,
   type SkillsStoreEntry,
@@ -197,34 +194,5 @@ describe('skills library over custody', () => {
       importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('123456'), maxBytes: 3 }),
     ).rejects.toMatchObject({ name: 'CustodyTooLargeError' });
     expect(store.paths()).toEqual([]);
-  });
-});
-
-describe('skills digest + the control-box adoption gate', () => {
-  it('matches sandbox-core on the PC side exactly', () => {
-    const set = [
-      { name: 'zeta', sha: sha('1') },
-      { name: 'alpha', sha: sha('2') },
-    ];
-    expect(libraryDigest(set.map((e) => ({ name: e.name, current: e.sha })))).toBe(
-      skillsDigest(set.map((e) => ({ name: e.name, treeSha: e.sha }))),
-    );
-    expect(libraryDigest([])).toBe('');
-  });
-
-  it('declines a shared bake only when a seeded library differs from its skills', async () => {
-    const store = memStore();
-    // Not seeded, or a record from before skills were tracked: adopt as always.
-    expect(await libraryBlocksAdoption(store, 'f'.repeat(64))).toBe(false);
-    await importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('a') });
-    expect(await libraryBlocksAdoption(store, undefined)).toBe(false);
-    const lib = libraryDigest([{ name: 'one', current: sha('a') }]);
-    expect(await libraryBlocksAdoption(store, lib)).toBe(false);
-    expect(await libraryBlocksAdoption(store, 'f'.repeat(64))).toBe(true);
-    expect(await libraryBlocksAdoption(store, '')).toBe(true); // a PC with no skills
-    // Emptied library: only a skill-less bake matches.
-    await discardSkill(store, 'one');
-    expect(await libraryBlocksAdoption(store, '')).toBe(false);
-    expect(await libraryBlocksAdoption(store, lib)).toBe(true);
   });
 });

@@ -321,7 +321,10 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         `daytona size changed (was ${bakedSize ?? 'default'}, now ${sizeKey ?? 'default'}); ` +
           `rebuilding snapshot`,
       );
-    } else if (sameContext) {
+    } else if (
+      preparedEntryFor(prepared, variantKey)?.contextSha256 === fingerprint.contextSha256
+    ) {
+      // Same context for this variant: only its skills differ.
       log('your skills changed since the last bake; rebuilding snapshot');
     } else {
       log(

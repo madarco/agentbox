@@ -16,8 +16,6 @@
 // in-memory fake in tests and against `globalThis.__AGENTBOX_HUB_CUSTODY` in the
 // routes (which keeps @agentbox/relay out of Next's bundle).
 
-import { createHash } from 'node:crypto';
-
 export interface SkillsStoreEntry {
   path: string;
   size: number;
@@ -326,38 +324,4 @@ export async function discardSkill(store: SkillsStore, name: string): Promise<{ 
   let removed = 0;
   for (const e of entries) if (await store.delete(e.path)) removed++;
   return { removed };
-}
-
-/**
- * The library's skills digest: the same hash `@agentbox/sandbox-core`'s
- * `skillsDigest` computes on a PC (sorted `<name>:<treeSha>` lines, '' for none),
- * so a PC whose skills match the library produces the same value. A control box
- * compares it with a shared bake's `base.skillsDigest` before adopting it. Re-implemented
- * here because Next routes can't import sandbox-core (execa breaks the standalone
- * build); `test/skills-backend.test.ts` pins the two to the same output.
- */
-export function libraryDigest(skills: readonly { name: string; current: string }[]): string {
-  if (skills.length === 0) return '';
-  const lines = skills
-    .map((s) => `${s.name}:${s.current}\n`)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const h = createHash('sha256');
-  for (const l of lines) h.update(l);
-  return h.digest('hex');
-}
-
-/**
- * Whether a control box should decline a shared bake because the skills baked
- * into it differ from the library (docs/hub-skills-plan.md, Phase 1b). A record
- * from before skills were tracked (no digest), or a library never seeded, never
- * blocks: that is exactly how adoption behaved before this check existed.
- */
-export async function libraryBlocksAdoption(
-  store: SkillsStore,
-  recordDigest: string | undefined,
-): Promise<boolean> {
-  if (recordDigest === undefined) return false;
-  const listing = await listSkills(store);
-  if (!listing.seeded) return false;
-  return libraryDigest(listing.skills) !== recordDigest;
 }

@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The stamp reads this machine's id and skills from $HOME; never the real one.
 vi.hoisted(() => {
@@ -34,6 +34,7 @@ beforeEach(() => {
   resetSkillsDigestMemo();
 });
 afterEach(() => resetSkillsDigestMemo());
+afterAll(() => rmSync(home(), { recursive: true, force: true }));
 
 describe('skills digest', () => {
   it('is order-independent and empty for no skills', () => {
@@ -44,7 +45,7 @@ describe('skills digest', () => {
   });
 
   it('counts only the skills the seed would upload, and changes when one is added', async () => {
-    const h = join(tmpdir(), `skdg-${String(Date.now())}`);
+    const h = mkdtempSync(join(tmpdir(), 'skdg-'));
     mkdirSync(join(h, '.agents', 'skills', 'clean'), { recursive: true });
     writeFileSync(
       join(h, '.agents/skills/clean/SKILL.md'),
@@ -62,6 +63,7 @@ describe('skills digest', () => {
     expect(await localSkillsDigest({ home: h })).toBe(one);
     const [clean] = await discoverLocalSkills({ home: h });
     expect(one).toBe(skillsDigest([{ name: 'clean', treeSha: clean!.treeSha }]));
+    rmSync(h, { recursive: true, force: true });
   });
 
   it('is never folded into the build-context fingerprint (bake sharing compares that)', () => {

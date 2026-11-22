@@ -12,12 +12,11 @@
  * Deliberately NOT folded into `contextSha256`. That hash is the cross-machine
  * identity bake sharing compares (a PC adopting a control box's bake and the
  * reverse), and two machines' skills differ, so folding them in would stop every
- * share for anyone with skills. Instead:
- *   - the machine that baked judges staleness against its own skills
- *     ({@link skillsStaleness}), and `prepare` re-bakes on a change
- *     ({@link skillsMatchForSkip});
- *   - a control box declines a PC's shared bake whose digest differs from its
- *     library (the hub's custody hydration).
+ * share for anyone with skills. Instead the machine that baked judges staleness
+ * against its own skills ({@link skillsStaleness}), and `prepare` re-bakes on a
+ * change ({@link skillsMatchForSkip}). The recorded digest is also what a
+ * control box will compare with its library once it can bake with the library's
+ * skills (docs/hub-skills-backlog.md).
  */
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -83,6 +82,9 @@ export interface SkillsStamp {
  */
 export async function bakeSkillsStamp(): Promise<SkillsStamp | Record<string, never>> {
   try {
+    // A fresh read, not the freshness memo: the bake is about to stage these
+    // files, and a digest up to 30 s older would record skills it doesn't hold.
+    resetSkillsDigestMemo();
     const skillsDigest = await localSkillsDigest();
     const host = tryGetMachineId();
     return { skillsDigest, ...(host ? { skillsHost: host } : {}) };
