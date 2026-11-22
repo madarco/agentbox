@@ -300,13 +300,17 @@ export default function AccountsPage() {
                   className="min-w-[220px] flex-1 font-mono"
                   autoComplete="off"
                 />
-                <Button type="submit" size="sm" disabled={busy !== null || !id.trim() || !token.trim()}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={busy !== null || !id.trim() || !token.trim()}
+                >
                   <Icons.plus /> Add
                 </Button>
               </form>
               <div className="mt-3 text-[12px] text-muted-foreground">
-                A setup token never renews, so it is the right kind for an account several boxes
-                use at once. To add a <span className="font-mono">login</span>, run{' '}
+                A setup token never renews, so it is the right kind for an account several boxes use
+                at once. To add a <span className="font-mono">login</span>, run{' '}
                 <span className="font-mono">agentbox claude login --account &lt;name&gt;</span> on
                 this machine.
               </div>
