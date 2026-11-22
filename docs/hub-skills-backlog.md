@@ -318,3 +318,22 @@ fixed in the PR. Still open:
   plus `~/.agents`). Costs time on an explicit prepare only. Same item as the
   per-agent note above: digest only the dirs the variant stages.
 - **L5. Provider SDK not republished** — additive change; see the SDK note above.
+
+## From the Phase 2 `/code-review medium` (2026-11-22)
+
+Fixed in the PR: the control-box worker (`hub-worker.ts`) and the docker
+provider adapter (`DockerProvider.create`) dropped the skill selection; the
+daemon's sync had no `.catch` and the pass could throw (an unhandled rejection
+kills ctl) — the pass now never throws and the call is caught; the CLI surface
+fixture; skill names are validated at the flag (an invalid one used to vanish
+in the relay and leave a box with zero skills); a duplicated parse; a misplaced
+doc comment; stale flag names in comments. Still open:
+
+- **Each `skills.blob` chunk re-resolves the box's set** (lists the scope and
+  reads every selected skill's `meta.json`) to authorize one 512 KiB slice.
+  Fine for typical skills; a 50 MB skill is ~100 chunks. Authorize once per
+  download (e.g. a short-lived per-box resolved-set cache in the relay).
+- **No lock between the boot-time sync and `agentbox-ctl skills sync`.** Staging
+  dirs are now unique per pass, so neither clobbers the other's half-written
+  tree, but both rewrite `.manifest.json` and the last writer wins. Take a lock
+  file in the library dir.

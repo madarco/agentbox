@@ -106,7 +106,7 @@ export interface BoxRegistration {
    */
   autoApproveSafeHostActions?: boolean;
   /**
-   * Which of the hub's library skills this box gets (`--skill`, `--no-skill`,
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
    * `--no-skills` at create). Absent = every library skill. Resolved against the
    * library's current versions on each `skills.get`.
    */

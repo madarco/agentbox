@@ -193,11 +193,6 @@ export class FsCustodyStore implements CustodyStore {
     return { entry, data: createReadStream(join(this.root, rel)) };
   }
 
-  /**
-   * Metadata without holding the value. Digest still comes from the bytes (no
-   * sidecar to drift), but they are hashed in a streaming pass and discarded,
-   * so a 100 MiB entry costs a buffer's worth of memory rather than 100 MiB.
-   */
   async readRange(
     path: string,
     offset: number,
@@ -223,6 +218,11 @@ export class FsCustodyStore implements CustodyStore {
     }
   }
 
+  /**
+   * Metadata without holding the value. Digest still comes from the bytes (no
+   * sidecar to drift), but they are hashed in a streaming pass and discarded,
+   * so a 100 MiB entry costs a buffer's worth of memory rather than 100 MiB.
+   */
   private async readEntryMeta(rel: string): Promise<CustodyEntry | null> {
     const abs = join(this.root, rel);
     try {

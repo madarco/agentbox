@@ -298,9 +298,9 @@ export interface GitWorktreeRecord {
 export interface SkillSelection {
   /** `--no-skills`: none at all. */
   none?: boolean;
-  /** `--skill`: only these (names). */
+  /** `--skills`: only these (names). */
   include?: string[];
-  /** `--no-skill`: all but these (names). */
+  /** `--skip-skills`: all but these (names). */
   exclude?: string[];
 }
 
@@ -388,7 +388,7 @@ export interface BoxRecord {
    */
   autoApproveSafeHostActions?: boolean;
   /**
-   * Which of the hub's library skills this box gets (`--skill`, `--no-skill`,
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
    * `--no-skills` at create). Absent = every library skill. Forwarded to the
    * relay's registration, which resolves it on each `skills.get`.
    */

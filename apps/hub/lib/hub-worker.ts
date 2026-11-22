@@ -363,6 +363,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.withEnv !== undefined ? { withEnv: createOpts.withEnv } : {}),
         ...(createOpts?.vnc !== undefined ? { vnc: { enabled: createOpts.vnc } } : {}),
         ...(createOpts?.persistent !== undefined ? { persistent: createOpts.persistent } : {}),
+        // `--skills` / `--skip-skills` / `--no-skills`: portable, so it travelled
+        // here; without this the box registers with no selection and gets the
+        // whole library.
+        ...(createOpts?.skills ? { skills: createOpts.skills } : {}),
         ...(createOpts?.bundleDepth !== undefined ? { bundleDepth: createOpts.bundleDepth } : {}),
         ...(createOpts?.build ? { allowPull: false } : {}),
         ...(createOpts?.credentialSync !== undefined

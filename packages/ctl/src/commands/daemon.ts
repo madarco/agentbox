@@ -300,9 +300,16 @@ export const daemonCommand = new Command('daemon')
         void syncBoxSkills({
           linkDirs: watch.skillDirs,
           log: (m) => void process.stderr.write(`agentbox-ctl: ${m}\n`),
-        }).then((r) => {
-          if (r.library) process.stdout.write(`agentbox-ctl: ${describeSkillsSync(r)}\n`);
-        });
+        })
+          .then((r) => {
+            if (r.library) process.stdout.write(`agentbox-ctl: ${describeSkillsSync(r)}\n`);
+          })
+          .catch((err: unknown) => {
+            // An unhandled rejection would take the whole daemon down.
+            process.stderr.write(
+              `agentbox-ctl: skills sync failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+          });
         if (watch.units.length === 0 && watch.renders.length === 0) return;
         try {
           const diff = await sup.reload(await buildConfig());

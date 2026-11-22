@@ -276,7 +276,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
   const bc = optionalStringArray(v.borrowCredentials, 'opts.borrowCredentials');
   if (!bc.ok) return bc;
   if (bc.value !== undefined) out.borrowCredentials = bc.value;
-  // Library skill selection (`--skill`, `--no-skill`, `--no-skills`).
+  // Library skill selection (`--skills`, `--skip-skills`, `--no-skills`).
   if (v.skills !== undefined) {
     if (!isObject(v.skills)) return { ok: false, message: 'opts.skills must be a JSON object' };
     const sk = v.skills;

@@ -1889,6 +1889,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? Math.trunc(body.projectIndex)
           : undefined;
       const kind = body.kind === 'cloud' ? 'cloud' : 'docker';
+      const skillSelection = parseSkillSelection(body.skills);
       const reg: BoxRegistration = {
         boxId: body.boxId,
         token: body.token,
@@ -1927,7 +1928,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // Default on: only an explicit `false` disables the safe subset, so an
         // older wire body without the field stays relaxed.
         autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
-        ...(parseSkillSelection(body.skills) ? { skills: parseSkillSelection(body.skills)! } : {}),
+        ...(skillSelection ? { skills: skillSelection } : {}),
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl

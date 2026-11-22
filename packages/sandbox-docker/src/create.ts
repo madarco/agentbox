@@ -112,7 +112,7 @@ export interface CreateBoxOptions {
    */
   credentialSync?: boolean;
   /**
-   * Which of the hub's library skills this box gets (`--skill`, `--no-skill`,
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
    * `--no-skills`). Absent = all. Recorded on the box and its relay registration.
    */
   skills?: SkillSelection;

@@ -12,7 +12,7 @@ import {
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
-import { persistentRefusal } from '@agentbox/core';
+import { persistentRefusal, type SkillSelection } from '@agentbox/core';
 import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
@@ -298,7 +298,7 @@ async function runCreateViaHubApi(
     resolved: {
       ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
       ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
-      ...(skillSelectionFromFlags(opts) ? { skills: skillSelectionFromFlags(opts)! } : {}),
+      ...skillsOpt(opts),
     },
   });
   for (const w of warnings) log.warn(w);
@@ -999,7 +999,7 @@ export const createCommand = new Command('create')
           envFiles: wiz.envFilesToImport,
           vnc: cfg.effective.box.vnc,
           persistent: cfg.effective.box.persistent,
-          ...(skillSelectionFromFlags(opts) ? { skills: skillSelectionFromFlags(opts)! } : {}),
+          ...skillsOpt(opts),
           resync: opts.resync,
           sharedDockerCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
@@ -1149,3 +1149,9 @@ export const createCommand = new Command('create')
     }
     cmdLog.close();
   });
+
+/** `{ skills }` for a create request when a skill flag was given, else `{}`. */
+function skillsOpt(opts: CreateOptions): { skills?: SkillSelection } {
+  const skills = skillSelectionFromFlags(opts);
+  return skills ? { skills } : {};
+}

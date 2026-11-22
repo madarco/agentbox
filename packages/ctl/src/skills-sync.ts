@@ -132,18 +132,30 @@ async function install(root: string, name: string, version: string, gz: Buffer):
     throw new Error(`files hash to ${got.slice(0, 12)}, host named ${version.slice(0, 12)}`);
   }
   const target = join(root, name);
-  const staging = join(root, `.dl-${name}`);
-  const old = join(root, `.old-${name}`);
-  await rm(staging, { recursive: true, force: true });
-  for (const f of files) {
-    const p = join(staging, ...f.path.split('/'));
-    await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, f.data, { mode: f.mode });
+  // Unique per pass: a manual `skills sync` racing the daemon's boot pass must
+  // not clobber the other's half-written tree (the manifest race is in the
+  // backlog).
+  const tag = `${String(process.pid)}-${String(Date.now())}`;
+  const staging = join(root, `.dl-${name}-${tag}`);
+  const old = join(root, `.old-${name}-${tag}`);
+  let movedAside = false;
+  try {
+    for (const f of files) {
+      const p = join(staging, ...f.path.split('/'));
+      await mkdir(dirname(p), { recursive: true });
+      await writeFile(p, f.data, { mode: f.mode });
+    }
+    if (await exists(target)) {
+      await rename(target, old);
+      movedAside = true;
+    }
+    await rename(staging, target);
+  } catch (err) {
+    await rm(staging, { recursive: true, force: true });
+    if (movedAside && !(await exists(target))) await rename(old, target).catch(() => undefined);
+    throw err;
   }
-  await rm(old, { recursive: true, force: true });
-  if (await exists(target)) await rename(target, old);
-  await rename(staging, target);
-  await rm(old, { recursive: true, force: true });
+  if (movedAside) await rm(old, { recursive: true, force: true });
 }
 
 /** Make `dir` writable by this user, creating it with `sudo -n` when its parent is root-owned. */
@@ -188,7 +200,8 @@ async function isOurLink(link: string, root: string): Promise<boolean> {
 
 /**
  * One pass: fetch the set, install what changed, drop what left, relink. Never
- * throws; a box whose host has no library (or can't be reached) is left as it was.
+ * throws (errors land in `failed`); a box whose host has no library (or can't be
+ * reached) is left as it was.
  */
 export async function syncBoxSkills(opts: {
   linkDirs: readonly string[];
@@ -232,7 +245,23 @@ export async function syncBoxSkills(opts: {
     return out;
   }
   out.library = true;
+  try {
+    await applySet(root, set, opts, rpc, out);
+  } catch (err) {
+    // A filesystem error mid-pass (a root-owned ~/.local/share, a full disk) is
+    // reported, never thrown: the caller is the ctl daemon.
+    out.failed.push({ name: '*', reason: err instanceof Error ? err.message : String(err) });
+  }
+  return out;
+}
 
+async function applySet(
+  root: string,
+  set: { name: string; version: string }[],
+  opts: { linkDirs: readonly string[]; log: (msg: string) => void },
+  rpc: SkillsRpc,
+  out: SkillsSyncResult,
+): Promise<void> {
   await mkdir(root, { recursive: true });
   const manifest = await readManifest(root);
   const want = new Map(set.map((s) => [s.name, s.version]));
@@ -298,7 +327,6 @@ export async function syncBoxSkills(opts: {
   }
   manifest.links = [...links].sort();
   await writeFile(join(root, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + '\n');
-  return out;
 }
 
 export function describeSkillsSync(r: SkillsSyncResult): string {

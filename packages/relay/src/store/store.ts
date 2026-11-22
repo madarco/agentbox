@@ -141,7 +141,7 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
-  /** Library skill selection (`--skill`, `--no-skill`, `--no-skills`). Portable. */
+  /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). Portable. */
   skills?: SkillSelection;
   /**
    * VM size and location for a cloud box (`--size`/`--location`, or the
