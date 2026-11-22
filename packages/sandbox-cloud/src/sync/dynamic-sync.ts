@@ -1,10 +1,9 @@
 /**
- * Per-box, incremental seed of Claude Code's dynamic config (the global
- * `~/.claude/workflows/`) into a cloud sandbox. Project memory comes from the
- * hub instead (docs/agent-history-plan.md, Phase 4).
+ * Per-box, incremental seed of Claude Code's dynamic config (global
+ * `~/.claude/workflows/` + the project's `memory/`) into a cloud sandbox.
  *
  * The static config (plugins/skills/settings) is baked into the prepare-time
- * snapshot; workflows change between runs, so we ship them on every
+ * snapshot; workflows + memory change between runs, so we ship them on every
  * create — like credentials, but diffed per-file so re-creates carry only what
  * changed. The box records what it holds in a manifest at
  * {@link BOX_DYNAMIC_SYNC_MANIFEST}; because that file lives on the box
@@ -22,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   BOX_DYNAMIC_SYNC_MANIFEST,
+  BOX_MEMORY_DIR,
   BOX_WORKFLOWS_DIR,
   buildHostSyncManifest,
   computeSyncDelta,
@@ -31,6 +31,8 @@ import {
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
 
 export interface SeedDynamicConfigOptions {
+  /** Host-absolute workspace path (locates the project's memory dir). */
+  workspacePath: string;
   onLog?: (line: string) => void;
 }
 
@@ -43,7 +45,7 @@ const REMOTE_TAR = '/tmp/agentbox-dynsync.tar.gz';
 const BOX_STAGE = '/tmp/agentbox-dynsync-stage';
 
 /**
- * Diff the host's workflows against the box's manifest and upload only
+ * Diff the host's workflows + memory against the box's manifest and upload only
  * the delta. Best-effort: never throws into box creation. Runs on both fresh
  * and checkpoint boots — the manifest diff makes it a no-op when nothing
  * changed.
@@ -72,10 +74,10 @@ export async function seedDynamicConfig(
     }
 
     // 2. Hash the host sets, 3. diff.
-    const host = await buildHostSyncManifest();
+    const host = await buildHostSyncManifest(opts.workspacePath);
     const delta = computeSyncDelta(host, boxManifest);
     if (delta.uploads.length === 0 && delta.deletions.length === 0) {
-      log('claude workflows already up to date in box');
+      log('claude workflows + memory already up to date in box');
       return;
     }
     delta.nextManifest.syncedAt = new Date().toISOString();
@@ -87,7 +89,10 @@ export async function seedDynamicConfig(
     await writeFile(manifestTmp, JSON.stringify(delta.nextManifest, null, 2));
 
     try {
-      const steps: string[] = ['set -e', `mkdir -p /home/vscode/.agentbox ${BOX_WORKFLOWS_DIR}`];
+      const steps: string[] = [
+        'set -e',
+        `mkdir -p /home/vscode/.agentbox ${BOX_WORKFLOWS_DIR} ${BOX_MEMORY_DIR}`,
+      ];
       if (staged.tarballPath) {
         await backend.uploadFile(handle, staged.tarballPath, REMOTE_TAR);
         steps.push(
@@ -98,6 +103,7 @@ export async function seedDynamicConfig(
           // then propagate into the box user's home.
           `tar -xzf ${REMOTE_TAR} -C ${BOX_STAGE} --no-same-permissions --no-same-owner -m`,
           `if [ -d ${BOX_STAGE}/workflows ]; then cp -a ${BOX_STAGE}/workflows/. ${BOX_WORKFLOWS_DIR}/; fi`,
+          `if [ -d ${BOX_STAGE}/memory ]; then cp -a ${BOX_STAGE}/memory/. ${BOX_MEMORY_DIR}/; fi`,
           `rm -rf ${BOX_STAGE} ${REMOTE_TAR}`,
         );
       }
@@ -117,7 +123,7 @@ export async function seedDynamicConfig(
       //    state the box never reached.
       await backend.uploadFile(handle, manifestTmp, BOX_DYNAMIC_SYNC_MANIFEST);
       log(
-        `seeded claude workflows: ${String(delta.uploads.length)} file(s) updated, ` +
+        `seeded claude workflows + memory: ${String(delta.uploads.length)} file(s) updated, ` +
           `${String(delta.deletions.length)} removed`,
       );
     } finally {
@@ -126,7 +132,7 @@ export async function seedDynamicConfig(
     }
   } catch (err) {
     log(
-      `claude workflows seed skipped (non-fatal): ` +
+      `claude workflows + memory seed skipped (non-fatal): ` +
         `${err instanceof Error ? err.message : String(err)}`,
     );
   }

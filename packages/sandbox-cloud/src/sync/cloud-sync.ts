@@ -88,7 +88,7 @@ export function makeCloudSync(
       //     cloud twin of the docker volume seed, which used to be missing
       //     entirely;
       //   - overlay ~/.claude/_claude.json from the host's ~/.claude.json;
-      //   - seed the dynamic Claude config (workflows/; memory comes from the hub).
+      //   - seed the dynamic Claude config (workflows/ + this project's memory/).
       await ensureAgentHomeDirsOwned(backend, handle, { onLog: ctx.onLog });
       // Each agent's own post-seed step, in registration order. These were three
       // calls by name — codex's AGENTS.override fold, opencode's model state,
@@ -119,7 +119,10 @@ export function makeCloudSync(
           ...(opts.accounts ? { accounts: opts.accounts } : {}),
         });
       }
-      await seedDynamicConfig(backend, handle, { onLog: ctx.onLog });
+      await seedDynamicConfig(backend, handle, {
+        workspacePath: ctx.hostWorkspace,
+        onLog: ctx.onLog,
+      });
     },
 
     async seedCredentials(ctx: SyncContext): Promise<void> {

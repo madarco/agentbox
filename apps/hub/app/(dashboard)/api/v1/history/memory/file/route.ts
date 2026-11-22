@@ -16,7 +16,8 @@ export async function GET(req: Request): Promise<Response> {
   if (key instanceof Response) return key;
   const path = safeMemoryPath(p.get('path'));
   if (!path) return fail('invalid_request', 'path is required: a relative memory file path');
-  const version = p.get('version') === null ? undefined : intParam(p.get('version'), 0, 1);
+  const rawVersion = p.get('version');
+  const version = rawVersion ? intParam(rawVersion, 0, 1) : undefined;
   if (version === null) return fail('invalid_request', 'version must be a positive integer');
   const hit = await memory.file(key, path, version);
   if (!hit) {

@@ -107,9 +107,20 @@ export const relayMemoryRpc: MemoryRpc = {
 
 const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
-/** Regular files under `dir` (no symlinks followed) → sha256, plus their bytes. */
-export async function scanMemoryDir(dir: string): Promise<Map<string, Buffer>> {
+export interface MemoryScan {
+  /** Files read (within the size and count caps). */
+  files: Map<string, Buffer>;
+  /**
+   * Every regular file seen, read or not. Only a baseline path absent from
+   * this is a deletion: a file over the cap or briefly unreadable still exists.
+   */
+  present: Set<string>;
+}
+
+/** Regular files under `dir` (no symlinks followed). */
+export async function scanMemoryDir(dir: string): Promise<MemoryScan> {
   const out = new Map<string, Buffer>();
+  const present = new Set<string>();
   const walk = async (abs: string, rel: string): Promise<void> => {
     let names: string[];
     try {
@@ -118,20 +129,21 @@ export async function scanMemoryDir(dir: string): Promise<Map<string, Buffer>> {
       return;
     }
     for (const name of names) {
-      if (out.size >= MEMORY_MAX_FILES) return;
       const r = rel ? `${rel}/${name}` : name;
       const p = join(abs, name);
       const st = await lstat(p).catch(() => null);
       if (!st) continue;
       if (st.isDirectory()) await walk(p, r);
-      else if (st.isFile() && st.size <= MEMORY_FILE_MAX_BYTES && safeMemoryPath(r)) {
+      else if (st.isFile() && safeMemoryPath(r)) {
+        present.add(r);
+        if (st.size > MEMORY_FILE_MAX_BYTES || out.size >= MEMORY_MAX_FILES) continue;
         const bytes = await readFile(p).catch(() => null);
         if (bytes) out.set(r, bytes);
       }
     }
   };
   await walk(dir, '');
-  return out;
+  return { files: out, present };
 }
 
 /** ctl may run as root; the files belong to the box user (owner of the home dir). */
@@ -149,12 +161,18 @@ async function placeSet(dir: string, files: Array<{ path: string; bytes: Buffer 
   await mkdir(dir, { recursive: true });
   const owner = await ownerOf(dir);
   const keep = new Set(files.map((f) => f.path));
-  for (const path of (await scanMemoryDir(dir)).keys()) {
+  for (const path of (await scanMemoryDir(dir)).present) {
     if (!keep.has(path)) await rm(join(dir, path), { force: true });
   }
   for (const f of files) {
     const p = join(dir, f.path);
-    await mkdir(dirname(p), { recursive: true });
+    const made = await mkdir(dirname(p), { recursive: true });
+    // `made` is the first dir mkdir created: hand it and those below to the user.
+    if (owner && made) {
+      for (let d = dirname(p); d.length >= made.length; d = dirname(d)) {
+        await chown(d, owner.uid, owner.gid).catch(() => undefined);
+      }
+    }
     const tmp = `${p}.agentbox-tmp`;
     await writeFile(tmp, f.bytes);
     await rename(tmp, p);
@@ -177,6 +195,7 @@ export class MemorySync {
   private state: MemoryState | null = null;
   private writeBack = false;
   private disabledUntil = 0;
+  private unsupportedUntil = 0;
   private redactor: Redactor | null = null;
 
   constructor(
@@ -218,6 +237,11 @@ export class MemorySync {
     await rename(`${p}.tmp`, p);
   }
 
+  /** The relay does not know the memory methods: stop the quick seed retries. */
+  get backingOff(): boolean {
+    return this.now() < this.unsupportedUntil;
+  }
+
   /** True once this box has been seeded (state on disk). */
   get seeded(): boolean {
     return this.state !== null;
@@ -243,10 +267,12 @@ export class MemorySync {
     try {
       this.state ??= await this.loadState();
       if (!this.state) {
-        if (opts.noSeed) return stats;
+        if (opts.noSeed || this.now() < this.unsupportedUntil) return stats;
         const reply = await this.rpc.seed();
         if (typeof reply === 'string') {
           stats.errors.push(`seed: relay ${reply}`);
+          // An older relay will not learn the method in 5 s.
+          if (reply === 'unsupported') this.unsupportedUntil = this.now() + DISABLED_BACKOFF_MS;
           return stats;
         }
         const next: MemoryState = { version: 1, boxId: this.boxId(), agents: {} };
@@ -257,7 +283,7 @@ export class MemorySync {
             const local = await scanMemoryDir(a.boxDir);
             next.agents[a.agent] = {
               boxDir: a.boxDir,
-              files: Object.fromEntries([...local].map(([p, b]) => [p, sha(b)])),
+              files: Object.fromEntries([...local.files].map(([p, b]) => [p, sha(b)])),
             };
             continue;
           }
@@ -286,9 +312,12 @@ export class MemorySync {
       for (const [agent, a] of Object.entries(this.state.agents)) {
         const local = await scanMemoryDir(a.boxDir);
         const changes: Array<{ path: string; bytes: Buffer | null }> = [];
-        for (const [p, b] of local) if (a.files[p] !== sha(b)) changes.push({ path: p, bytes: b });
-        for (const p of Object.keys(a.files))
-          if (!local.has(p)) changes.push({ path: p, bytes: null });
+        for (const [p, b] of local.files) {
+          if (a.files[p] !== sha(b)) changes.push({ path: p, bytes: b });
+        }
+        for (const p of Object.keys(a.files)) {
+          if (!local.present.has(p)) changes.push({ path: p, bytes: null });
+        }
         for (const c of changes) {
           const r = await this.rpc.put({
             agent,
@@ -356,7 +385,8 @@ export class MemoryLoop {
     const stats = await this.sync.pass();
     if (stats.seeded.length > 0) this.opts.log?.(`memory: seeded ${stats.seeded.join(', ')}`);
     for (const e of stats.errors) this.opts.log?.(`memory: ${e}`);
-    this.schedule(this.sync.seeded ? (this.opts.intervalMs ?? 15_000) : 5_000);
+    const settled = this.sync.seeded || this.sync.backingOff;
+    this.schedule(settled ? (this.opts.intervalMs ?? 15_000) : 5_000);
     return stats;
   }
 }

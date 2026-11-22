@@ -148,4 +148,25 @@ describe('MemorySync', () => {
     await new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' }).pass({ noSeed: true });
     expect(f.seeds()).toBe(0);
   });
+
+  it('a file over the size cap is not shipped, and never shipped as deleted', async () => {
+    const f = fakeRpc(reply([{ path: 'MEMORY.md', content: b64('index'), sha256: 'x' }]));
+    const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' });
+    await s.pass();
+    await writeFile(join(memDir, 'MEMORY.md'), 'x'.repeat(300 * 1024));
+    expect((await s.pass()).shipped).toBe(0);
+    expect(f.puts).toEqual([]);
+  });
+
+  it('an older relay (unsupported) backs off instead of retrying every pass', async () => {
+    let t = 0;
+    const f = fakeRpc('unreachable');
+    (f.rpc as { seed: () => Promise<unknown> }).seed = async () => 'unsupported';
+    const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1', now: () => t });
+    expect((await s.pass()).errors[0]).toMatch(/unsupported/);
+    expect(s.backingOff).toBe(true);
+    expect((await s.pass()).errors).toEqual([]);
+    t += 11 * 60_000;
+    expect((await s.pass()).errors[0]).toMatch(/unsupported/);
+  });
 });

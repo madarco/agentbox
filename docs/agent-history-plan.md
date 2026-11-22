@@ -368,8 +368,10 @@ repo, wrote a file.
     new boxes, so a create deletes nothing another box wrote. Every file in
     the dir belongs to this box, and so to the box's repo.
   - The docker volume seed's `rm -rf` + recopy and the cloud dynamic seed's
-    memory set are removed. The host copy now reaches a box through the hub
-    (below).
+    memory set stay, but only for boxes from images and snapshots baked
+    before this change: they still read the old dir, and removing the seed
+    would silently cost them their memory. New boxes ignore that dir; the host
+    copy reaches them through the hub (below).
 - **Derivation was rejected:**
   - A `Write` gives the full content, but an `Edit` gives only an old/new
     pair. Replaying it needs the exact base, and redaction may have changed
@@ -428,8 +430,12 @@ repo, wrote a file.
 - **Flush on destroy.** `agentbox-ctl history flush` also runs a memory pass.
   The hub runs it for running boxes of every provider before the destroy,
   docker included. A paused docker box's last 15 s are not flushed (backlog).
-- **Checkpoints.** `agentbox-checkpoint-cleanup` deletes the memory state and
-  the per-box dir, so a box from a checkpoint seeds fresh for its own repo.
+- **Checkpoints.** `agentbox-checkpoint-cleanup` deletes ctl's memory state,
+  so a box from a checkpoint seeds fresh for its own repo. The seed replaces
+  the carried dir. The dir itself is not deleted, because the cleanup runs in
+  the live box and its ctl would ship every file as a deletion. The state
+  records its box id, so a state written between the cleanup and the commit
+  is not trusted either.
 - **API** (`/api/v1`, Bearer, read-only):
   - `GET /history/memory?repo&agent`: the latest version per path.
   - `GET /history/memory/versions?repo&agent&path`: every version.

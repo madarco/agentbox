@@ -155,8 +155,10 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 
 - **Boxes from older images or snapshots.** Memory sync needs the managed
   settings key (`autoMemoryDirectory`) and the ctl `MemoryLoop`, both baked in.
-  An older docker box keeps writing to the shared `-workspace/memory`, which is
-  no longer seeded, and nothing ships it. Cloud bases must be re-prepared.
+  An older box keeps the old behaviour: it is seeded from the host into
+  `-workspace/memory` at create (docker volume rekey, cloud dynamic seed), and
+  nothing ships its writes. Those two legacy seeds stay until old bakes are
+  gone; then delete them. Cloud bases must be re-prepared to get sync.
 - **No offline host fallback on cloud.** The create used to push the host copy
   straight into the box. Now it arrives via `history.memory.seed`, so a cloud
   box whose relay never answers at boot has no memory until it does. ctl
@@ -185,3 +187,14 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 - **Live check covered docker only.** The "fresh box B on another provider"
   leg of the plan's Done is unit-tested (`MemoryRelay` and `MemorySync` are
   provider-agnostic), not run live: e2b was off-limits this phase.
+- **From the Phase 4 review, not fixed:**
+  - *`local:` key spelling.* For a repo with no origin, the CLI keys by the
+    realpath of the git toplevel, while the relay uses the registration's
+    `hostMainRepo` as given. A symlinked path (macOS `/var`) or a linked
+    worktree names a different key, and `memory ls` finds nothing.
+  - *Version scan per put.* `append` loads a path's full version list to read
+    the last row. Add a `latestOf` repo method (`ORDER BY version DESC LIMIT 1`)
+    before memory files reach thousands of versions.
+  - *Two copies of claude's project-key rule.* `hostProjectKey('dashed-path')`
+    in core duplicates `encodeClaudeProjectsKey` in sandbox-core. Make
+    sandbox-core use the core helper.
