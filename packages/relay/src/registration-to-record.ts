@@ -144,6 +144,14 @@ export function registrationToBoxRecord(
     // box's live tokens (already injected in the running box).
     relayToken: existing?.relayToken ?? reg.token ?? freshToken(),
     lastAgent: normalizeRegistrationAgent(reg.agent) ?? existing?.lastAgent,
+    // The agent the box was created for, ANY agent (a service agent such as
+    // openclaw is not a `lastAgent`). Without it an adopted openclaw box looks
+    // agentless to this PC, and `agents.list` hands it no gateway unit.
+    ...(reg.agent && reg.agent !== 'none'
+      ? { agents: [reg.agent] }
+      : existing?.agents
+        ? { agents: existing.agents }
+        : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,
