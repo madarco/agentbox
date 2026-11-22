@@ -90,3 +90,32 @@ teardown, and the private-key rule kept inside one line. Still open:
     registration with no worktrees.
   - The REST route reads the whole body before checking its size.
   - A seal failure throws out of `sweep` and skips that hour's retention.
+
+## After Phase 1 merged (#435)
+
+- **Post-fix e2b live leg skipped.** #435 was merged with the docker live check
+  green after the review fixes. e2b is covered by unit tests plus the pre-fix
+  live run: the post-fix run was blocked by an expired Claude login on the test
+  machine. Next time a cloud box is at hand, check that a box-stamped binding
+  ships through the ctl loop (not only `history flush`), with ctl baked into
+  the snapshot.
+
+## Phase 2 (read API + CLI)
+
+- **Split stores.** With a control box configured, `agentbox sessions` reads the
+  configured hub, while this machine's docker boxes still ingest into the local
+  hub (see "Remote control box forwarding"). `--local` reads the local one.
+  There is no merged view until forwarding lands.
+- **`sessions resume <id>`** (plan, CLI section) is not in Phase 2's row; it
+  reuses fork's create + teleport path and is still open.
+- **Generations.** Reads serve a file's current generation only. Older
+  generations (a rewritten file) stay in the archive until retention, with no
+  route to them.
+- **Non-FTS fallback** (review of the Phase 2 diff). On a sqlite without FTS5,
+  `q` / `search` become one contiguous `LIKE '%w1 w2%'` (a phrase, not "all
+  words") with `%`/`_` unescaped. Node's `node:sqlite` ships FTS5, so this
+  path is untested in practice; make it a per-word `LIKE ... ESCAPE` AND.
+- **Search N+1.** `GET /history/search` loads each hit's session with its own
+  `getSession` round trip and returns a subset of the session shape (no
+  `key`). Batch-load, or JOIN in `repo.search`, and reuse `sessionJson`;
+  this matters once the postgres repo lands.
