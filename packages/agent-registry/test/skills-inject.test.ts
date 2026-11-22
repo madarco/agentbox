@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOX_SKILLS_LIBRARY_DIR, agentLaunchFlags, agentRunEnv } from '@agentbox/core';
+import { BOX_SKILLS_LIBRARY_DIR, agentLaunchFlags } from '@agentbox/core';
 import { BUILTIN_AGENT_SPECS } from '../src/index.js';
 import { OPENCLAW_CONFIG_MERGE_PROGRAM } from '../src/specs/openclaw.js';
 
@@ -16,22 +16,15 @@ describe('every built-in agent declares how the skills library reaches it', () =
       path: '/etc/claude-code/.claude/skills',
     });
     expect(spec('codex').skills?.inject).toEqual({ kind: 'dir', path: '/etc/codex/skills' });
-    expect(spec('opencode').skills?.inject.kind).toBe('env');
+    expect(spec('opencode').skills?.inject).toEqual({
+      kind: 'dir',
+      path: '/home/vscode/.opencode/skills',
+    });
     expect(spec('pi').skills?.inject.kind).toBe('flag');
     expect(spec('openclaw').skills?.inject).toEqual({
       kind: 'config',
       jsonPath: ['skills', 'load', 'extraDirs'],
     });
-  });
-
-  it("opencode's run env names the box-local library and keeps its declared env", () => {
-    const env = agentRunEnv(spec('opencode'));
-    expect(JSON.parse(env['OPENCODE_CONFIG_CONTENT']!)).toEqual({
-      skills: { paths: [BOX_SKILLS_LIBRARY_DIR] },
-    });
-    expect(env['OPENCODE_CONFIG_DIR']).toBe(spec('opencode').boxRunEnv['OPENCODE_CONFIG_DIR']);
-    // No env injection: the declared env, unchanged.
-    expect(agentRunEnv(spec('claude'))).toEqual(spec('claude').boxRunEnv);
   });
 
   it("pi's launch adds --skill <library> after its declared flags", () => {
@@ -41,6 +34,11 @@ describe('every built-in agent declares how the skills library reaches it', () =
       BOX_SKILLS_LIBRARY_DIR,
     ]);
     expect(agentLaunchFlags(spec('codex'))).toEqual(spec('codex').launchFlags);
+  });
+
+  it('a malformed plugin flag injection adds nothing instead of failing the launch', () => {
+    const bad = { launchFlags: ['-a'], skills: { dirs: [], inject: { kind: 'flag' } } };
+    expect(agentLaunchFlags(bad as never)).toEqual(['-a']);
   });
 
   it("openclaw's boot task merges the library dir next to AgentBox's own skills dir", () => {

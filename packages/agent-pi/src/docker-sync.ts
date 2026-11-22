@@ -8,7 +8,7 @@
  * restated; that is what keeps this in step with the cloud stager.
  */
 
-import { agentLaunchFlags, agentRunEnv } from '@agentbox/core';
+import { agentLaunchFlags } from '@agentbox/core';
 import type { LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
@@ -41,7 +41,7 @@ function hostPiDir(hostHome: string = homedir()): string {
   return join(hostHome, ...PI_SPEC.staticPaths[0]!.hostHomeRel);
 }
 /** `PI_SKIP_VERSION_CHECK` and friends, as declared. */
-const PI_BOX_RUN_ENV = agentRunEnv(PI_SPEC);
+const PI_BOX_RUN_ENV = PI_SPEC.boxRunEnv;
 
 /**
  * Provider API keys forwarded from the host's `process.env` into the box.

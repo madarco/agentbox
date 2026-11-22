@@ -141,15 +141,20 @@ can be unconditional. Same-name collisions between the carried `~/.agents`
 copy and the library copy: codex lists both (user + admin scope), opencode
 keeps the library copy, pi and openclaw keep the carried one.
 
-1. **`AgentSkillsSpec.inject` grows three shapes**: `env` (`name`, `value` with a
-   `{dir}` placeholder), `flag` (`argv` with `{dir}`), `config` (`jsonPath`, for an
-   agent whose own boot task merges it). `{dir}` is the canonical box path
+1. **`AgentSkillsSpec.inject` grows two shapes**: `flag` (`argv` with a `{dir}`
+   placeholder) and `config` (`jsonPath`, for an agent whose own boot task merges
+   it). An `env` shape was implemented and dropped after review, see 3. `{dir}` is the canonical box path
    `BOX_SKILLS_LIBRARY_DIR` (`/home/vscode/.local/share/agentbox/skills`), now a
    core constant ctl also uses.
 2. **codex**: `dir` → `/etc/codex/skills` (ctl links, like claude).
-3. **opencode**: `env` → `OPENCODE_CONFIG_CONTENT={"skills":{"paths":["{dir}"]}}`,
-   merged into the agent's run env by one helper (`agentRunEnv`) at the sites that
-   read `boxRunEnv` (docker container/tmux/exec env, cloud `buildCloudBoxRunEnv`).
+3. **opencode**: `dir` → `/home/vscode/.opencode/skills` (ctl links). First
+   built as `env` `OPENCODE_CONFIG_CONTENT={"skills":{"paths":["{dir}"]}}`; the
+   review then found two problems, both measured: a config layer REPLACES the
+   user's own `skills.paths` array (a regression for anyone who sets one), and the
+   Hetzner/DigitalOcean box.env keeps only `AGENTBOX_*` keys, so the env never
+   reached opencode there. opencode scans `~/.opencode/skills` regardless of
+   `OPENCODE_CONFIG_DIR`, the dir is unused in a box, and the user's
+   `skills.paths` keeps loading next to it.
 4. **pi**: `flag` → `--skill {dir}`, appended to the declared `launchFlags` by one
    helper (`agentLaunchFlags`) at the docker and cloud launch sites.
 5. **openclaw**: `config` → `skills.load.extraDirs`; its existing
@@ -418,3 +423,34 @@ elevated read, so a PC holding only the hub API key can list but not download
 - **L9. Claude's inject dir is in every box's descriptor whatever the box's
   agent** (not `runsHere`-gated), so a codex-only box still sudo-creates
   `/etc/claude-code/.claude/skills` and installs the set. Harmless.
+
+## From the Phase 3 `/code-review medium` (2026-11-22)
+
+Fixed in the PR: opencode's injection moved from `OPENCODE_CONFIG_CONTENT` to a
+`dir` link (it replaced the user's `skills.paths` and never reached opencode on
+Hetzner/DigitalOcean, see Phase 3 item 3); `agentLaunchFlags` ignores a malformed
+plugin `flag` injection instead of failing every launch.
+
+Later:
+
+- **Pre-existing: opencode's run env never reaches a Hetzner/DigitalOcean box.**
+  `cloudInitBoxEnv` keeps only `AGENTBOX_*` keys and the cloud launcher exports
+  only `agentTuiEnv`, so `OPENCODE_CONFIG_DIR` / `XDG_STATE_HOME` (and any other
+  `boxRunEnv`) are missing there. Not a skills issue any more, but the same gap.
+  Fix: export the agent's `boxRunEnv` on the launch command in
+  `buildCloudAttachInnerCommand`, like the docker path.
+- **`BOX_SKILLS_LIBRARY_DIR` is a fixed `/home/vscode/...` path** (it was
+  `homedir()` in Phase 2), because host-side `{dir}` expansion needs one known
+  path. On a provider whose execs run as root (islo), ctl writes it as root, and
+  a later ctl run as vscode can't update it. Fix with the islo provider work:
+  chown the tree to the box user, or have ctl always run as vscode.
+- **openclaw's `config` declaration is not read by anything generic**: the boot
+  script hardcodes `skills.load.extraDirs`. A plugin agent declaring `config`
+  gets nothing. Either read `jsonPath` in the task, or document `config` as
+  "the agent's own boot task does it".
+- **The openclaw merge passes the skill dirs as one `:`-joined argv.** Both are
+  constants without `:` today; pass them as separate args or JSON if either
+  becomes configurable.
+- **Duplicate names in pi and openclaw**: the carried `~/.agents` copy wins over
+  the library's, so a skill edited in the library isn't seen there while the
+  PC's old copy is carried. Same fix as the carry-exclusion item.

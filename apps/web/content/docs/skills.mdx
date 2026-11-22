@@ -114,7 +114,7 @@ A box created against a hub that holds a library pulls its skills when it starts
 | ----------- | ------------------------------------------------------------------------ |
 | Claude Code | linked into its managed skills folder, `/etc/claude-code/.claude/skills` |
 | Codex       | linked into `/etc/codex/skills` (Codex's admin scope)                    |
-| OpenCode    | `OPENCODE_CONFIG_CONTENT` adds the folder to its `skills.paths`          |
+| OpenCode    | linked into `~/.opencode/skills` (your own `skills.paths` still loads)   |
 | Pi          | launched with `--skill <folder>`                                         |
 | OpenClaw    | the folder is added to `skills.load.extraDirs` at boot (picked up live)  |
 

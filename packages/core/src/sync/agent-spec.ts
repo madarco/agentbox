@@ -775,14 +775,15 @@ export interface AgentSkillsSpec {
   dirs: readonly string[];
   /**
    * How the box's library ({@link BOX_SKILLS_LIBRARY_DIR}) reaches the agent,
-   * measured per agent in docs/hub-skills-plan.md (Phase 0). `{dir}` in a value
-   * or argv is replaced with that path. Every shape tolerates the dir not
+   * measured per agent in docs/hub-skills-plan.md (Phase 0 and Phase 3). `{dir}`
+   * in an argv is replaced with that path. Every shape tolerates the dir not
    * existing yet (no library, an older ctl), so the injection is unconditional.
    *
    * - `dir`: ctl symlinks each library skill into this absolute box-local
-   *   directory (created with `sudo -n` when root-owned). claude, codex.
-   * - `env`: an env var on the agent's processes, merged into its run env by
-   *   {@link agentRunEnv}. opencode (`OPENCODE_CONFIG_CONTENT`).
+   *   directory (created with `sudo -n` when root-owned). Additive to the
+   *   agent's other skill dirs, and applied on every provider by ctl itself.
+   *   claude, codex, opencode (`~/.opencode/skills`: an env/config-layer
+   *   injection would REPLACE a user's own `skills.paths`, measured).
    * - `flag`: argv appended to the agent's `launchFlags` by
    *   {@link agentLaunchFlags}. pi (`--skill {dir}`).
    * - `config`: a config array the agent's OWN boot task merges `{dir}` into
@@ -791,7 +792,6 @@ export interface AgentSkillsSpec {
    */
   inject:
     | { kind: 'dir'; path: string }
-    | { kind: 'env'; name: string; value: string }
     | { kind: 'flag'; argv: readonly string[] }
     | { kind: 'config'; jsonPath: readonly string[] };
 }
@@ -805,28 +805,17 @@ export const BOX_SKILLS_LIBRARY_DIR = '/home/vscode/.local/share/agentbox/skills
 const fillDir = (v: string): string => v.split('{dir}').join(BOX_SKILLS_LIBRARY_DIR);
 
 /**
- * The agent's run env: its declared `boxRunEnv` plus the library injection when
- * it is an `env` one. Every site that applies `boxRunEnv` to an agent's
- * processes reads this instead, so the two can't drift.
- */
-export function agentRunEnv(
-  spec: Pick<AgentSyncSpec, 'boxRunEnv' | 'skills'>,
-): Record<string, string> {
-  const inject = spec.skills?.inject;
-  return inject?.kind === 'env'
-    ? { ...spec.boxRunEnv, [inject.name]: fillDir(inject.value) }
-    : { ...spec.boxRunEnv };
-}
-
-/**
  * The argv prepended to every launch: the declared `launchFlags` plus the
  * library injection when it is a `flag` one.
  */
 export function agentLaunchFlags(spec: Pick<AgentSyncSpec, 'launchFlags' | 'skills'>): string[] {
   const inject = spec.skills?.inject;
+  // A plugin agent's spec is snapshotted without validating `skills`; a
+  // malformed one adds nothing rather than failing every launch.
+  const argv: unknown = inject?.kind === 'flag' ? inject.argv : undefined;
   return [
     ...(spec.launchFlags ?? []),
-    ...(inject?.kind === 'flag' ? inject.argv.map(fillDir) : []),
+    ...(Array.isArray(argv) ? argv.filter((a) => typeof a === 'string').map(fillDir) : []),
   ];
 }
 
