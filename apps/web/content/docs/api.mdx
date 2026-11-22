@@ -139,6 +139,23 @@ Checkpoints are **durable per-project assets** — a docker image or cloud snaps
 | `GET /checkpoints`            | List a project's checkpoints (`?project=<abs root>`) or every project's (`?global=1`): `{ projects: [{ segment, projectRoot?, label, items }] }`. Each item carries `isDefault` resolved server-side. Backs `agentbox checkpoint ls`/`ls -g`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `DELETE /checkpoints`         | Delete a checkpoint (`?project=<abs root>&ref=<name>`, optional `&provider=<p>`) from every store that had it, sweeping any dangling default pointer: `{ ok, removed, clearedKeys, warnedKeys }`. Backs `agentbox checkpoint rm`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
+### Accounts
+
+The named LLM accounts of the machine whose store this hub owns (see
+[several accounts per agent](/docs/run-an-agent#several-accounts-per-agent)).
+No route ever returns a secret.
+
+| Route                           | Purpose                                                                                                                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /accounts`                 | `{ accounts: [{ agent, id, label?, kind, identity?, hasSecret, boxes }], agents: [{ id, kinds }] }`. `boxes` names the boxes that record the account (running it, or borrowing it). A remote control box lists its own store.                    |
+| `POST /accounts`                | Add a pasteable account: `{ agent, id, kind: "api-key" \| "setup-token", token, label? }` → `{ account }`. A `login` is refused — it is interactive and runs on the machine (`agentbox <agent> login --account <id>`). `409` when the id exists. |
+| `PATCH /accounts/{agent}/{id}`  | `{ label: string \| null }` → `{ account }`.                                                                                                                                                                                                     |
+| `DELETE /accounts/{agent}/{id}` | Remove a named account, its stored secret and its docker config volume: `{ ok, volumeRemoved }`. `409` while a box records it; the `default` account cannot be removed.                                                                          |
+
+A box carries its accounts as `accounts` (`{ "claude": "work" }`, fixed at
+create) and `accountsInfo` (`[{ agent, account, label?, kind? }]`); create a
+box on one with `opts.accounts` on `POST /boxes`.
+
 ### Devices
 
 Computers enrolled on a deployed or exposed hub with `agentbox hub login`. A device's `id` is its machine id (`~/.agentbox/machine-id`). A local hub has no devices and answers `503`.

@@ -202,7 +202,7 @@ Done in #442: `agentbox accounts rm` refuses while a box records the account
 (running or borrowing it), and the propagate planner skips a named docker box
 with no recorded volume instead of falling back to the shared default volume.
 
-- **PHASE 5 MUST DESIGN: named custody objects are keyed by account name only.**
+- ~~PHASE 5 MUST DESIGN: named custody objects are keyed by account name only~~ — designed and built in Phase 5: named logins are keyed by machine (`agents/<a>/accounts/<machine>/<id>/<file>`), pasted secrets no longer travel, a hub seeds only its own machine's. Original note:
   Account ids are local to each PC: PC A's `claude/work` and PC B's
   `claude/work` (a different subscription) both push to
   `agents/claude/accounts/work/.credentials.json`, and the push is hash-only,
@@ -221,3 +221,22 @@ with no recorded volume instead of falling back to the shared default volume.
   `agents/<agent>/`): a PC with only a named claude account shows Claude as
   logged in, but a hub create gets no default login. Count only
   `agents/<a>/<boxRelPath>`, and list accounts separately.
+
+## From Phase 5 (surfaces)
+
+- **A remote control box cannot run a PC's named account yet.** The custody
+  objects are now keyed by machine, but the control box has no per-machine
+  account list: a create there still resolves `--account` against the control
+  box's own store and refuses. Next step: rows travel next to the secret
+  (`agents/<a>/accounts/<machine>/<id>/account.json`), the control box keeps a
+  per-machine account view, and a create resolves accounts against the
+  REQUESTER's machine (`requester.machineId`) and seeds that machine's secret.
+- **Old flat custody objects** (`agents/<a>/accounts/<id>/<file>`, pushed by a
+  Phase 4 CLI) are left in place and never read again; a one-time cleanup can
+  delete them.
+- **`accounts rm` still leaves the machine's custody objects** on a control box.
+  Add the delete with the per-machine account view above.
+- **The tray** (`../agentbox-tray`) does not show accounts yet (Phase 6):
+  `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
+- **No docs figure for the Accounts page** yet; capture one per
+  `apps/web/images.md` with the next screenshot round.

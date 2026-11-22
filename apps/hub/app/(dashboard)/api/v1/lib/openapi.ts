@@ -191,6 +191,11 @@ export function buildOpenApi(): Record<string, unknown> {
           'The skills library: skills seeded from a PC or uploaded with `agentbox skills`, stored in the custody `skills` scope, one tarball per version.',
       },
       {
+        name: 'Accounts',
+        description:
+          'Named LLM accounts (several logins, setup tokens or API keys per agent) of the machine whose store this hub owns. Never a secret.',
+      },
+      {
         name: 'Checkouts',
         description:
           'Which machine has which repo checked out where, keyed by machine id and repo key.',
@@ -982,6 +987,149 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+          },
+        },
+      },
+      '/accounts': {
+        get: {
+          tags: ['Accounts'],
+          summary: "List this machine's LLM accounts",
+          description:
+            'The named LLM accounts of the machine whose store this hub owns (`~/.agentbox/accounts.json`), plus the agents that can hold them. A remote control box lists its own store. Never a secret.',
+          responses: {
+            '200': {
+              description: 'Accounts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      accounts: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            agent: { type: 'string' },
+                            id: {
+                              type: 'string',
+                              description:
+                                '`default` or a named id (lowercase letters, digits, inner dashes).',
+                            },
+                            label: { type: 'string' },
+                            kind: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
+                            identity: {
+                              type: 'object',
+                              properties: {
+                                email: { type: 'string' },
+                                org: { type: 'string' },
+                                plan: { type: 'string' },
+                              },
+                              description: 'Read off the login. Display only.',
+                            },
+                            hasSecret: {
+                              type: 'boolean',
+                              description: 'Whether a secret is stored (it is never returned).',
+                            },
+                            boxes: {
+                              type: 'array',
+                              items: { type: 'string' },
+                              description:
+                                'Names of the boxes that record this account (running it, or borrowing it).',
+                            },
+                          },
+                          required: ['agent', 'id', 'kind', 'hasSecret', 'boxes'],
+                        },
+                      },
+                      agents: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            kinds: {
+                              type: 'array',
+                              items: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    required: ['accounts', 'agents'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+          },
+        },
+        post: {
+          tags: ['Accounts'],
+          summary: 'Add a setup token or API key account',
+          description:
+            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox <agent> login --account <id>`), so it is refused here. The token is never echoed back.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    agent: { type: 'string' },
+                    id: { type: 'string' },
+                    kind: { type: 'string', enum: ['api-key', 'setup-token'] },
+                    token: { type: 'string', writeOnly: true },
+                    label: { type: 'string' },
+                  },
+                  required: ['agent', 'id', 'kind', 'token'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'The stored account (no secret)' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '409': errorResponse,
+          },
+        },
+      },
+      '/accounts/{agent}/{id}': {
+        parameters: [
+          { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        patch: {
+          tags: ['Accounts'],
+          summary: "Set or clear an account's label",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { label: { type: 'string', nullable: true } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'The account' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Accounts'],
+          summary: 'Remove a named account',
+          description:
+            "Removes the stored secret and the account's docker config volume. Refused (409) while a box records the account; the `default` account cannot be removed.",
+          responses: {
+            '200': { description: '`{ ok: true, volumeRemoved }`' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -4993,7 +5141,22 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'object',
               additionalProperties: { type: 'string' },
               description:
-                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Raw ids only; labels and kinds come with a later accounts endpoint.',
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Labels and kinds are in `accountsInfo`.',
+            },
+            accountsInfo: {
+              type: 'array',
+              description:
+                "Label and kind for each entry of `accounts`, from the hub machine's account store. An account the store does not have keeps only its id.",
+              items: {
+                type: 'object',
+                properties: {
+                  agent: { type: 'string' },
+                  account: { type: 'string' },
+                  label: { type: 'string' },
+                  kind: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
+                },
+                required: ['agent', 'account'],
+              },
             },
             persistent: {
               type: 'boolean',

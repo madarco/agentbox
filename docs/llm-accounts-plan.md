@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-4 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-5 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -735,7 +735,7 @@ box, so old images route correctly.
    stays within the source box's account: a pulled item set can carry the
    agent's login (codex's `auth.json`), which must never cross accounts.
 
-## Phase 5 plan (surfaces)
+## Phase 5 as built (surfaces)
 
 **Where accounts live.** An account is a fact about ONE machine: its logins
 are interactive and land in that machine's store (`~/.agentbox/accounts.json`
@@ -764,7 +764,8 @@ custody design below).
 4. **Web** (pure REST client, client-side fetch): Settings → Model accounts
    (list, add a key / setup token, relabel, remove); an account picker per
    agent in the create modal (sends `opts.accounts`); the account in the box
-   table and detail page.
+   table and detail page. The page is its own sidebar entry (**Accounts**,
+   next to Devices) rather than a Settings section: Settings is one page.
 5. **Custody design (the #442 must-design item).**
    - Named-account custody objects are keyed by the ORIGIN MACHINE:
      `agents/<agent>/accounts/<machineId>/<id>/<file>`. Two PCs' `claude/work`
