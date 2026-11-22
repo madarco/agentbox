@@ -25,12 +25,7 @@ import {
   type UserConfig,
 } from '@agentbox/config';
 import { AGENTBOX_HUB_SSH_ALIAS } from '@agentbox/sandbox-core';
-import {
-  getHostAlias,
-  HUB_ENGINE_ALIAS,
-  removeHostAlias,
-  upsertHostAlias,
-} from '@agentbox/sandbox-remote-docker';
+import { getHostAlias, removeHostAlias, upsertHostAlias } from '@agentbox/sandbox-remote-docker';
 import { readDeployRecord } from './deploy-hetzner.js';
 import { controlBoxKnowsHost } from './remote-docker-share.js';
 import { controlBoxIsThisMachine } from './remote-hub.js';
@@ -40,7 +35,7 @@ import { controlBoxIsThisMachine } from './remote-hub.js';
  * points at: there is at most one control box per machine, and `docker:hub`
  * reading as "my hub's docker" is the whole point.
  */
-export const HUB_DOCKER_ALIAS = HUB_ENGINE_ALIAS;
+export const HUB_DOCKER_ALIAS = 'hub';
 
 /**
  * The spec written to make the hub's engine the default. `setConfigValue`

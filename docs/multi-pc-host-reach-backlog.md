@@ -62,11 +62,25 @@ for teams PCs must never hold it (device tokens only).
 
 ## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
 
-- **Direct attach / shell / `cp` from a computer that did not deploy the control box.**
-  They need SSH to the control box's engine, which is root on the control box. The PR
-  gives them a clear message instead; options (hub-relayed PTY, a per-box sshd, a
-  restricted forced-command key) are in the PR description. Hub-relayed attach is the
-  end goal and is out of scope.
+- **Direct attach / shell / `cp` from a computer that did not deploy the control box
+  (owner to pick).** Today (option D, shipped): those commands stop with a message
+  naming the reason; hub-side actions (start/stop, git, web UI, tray) work everywhere.
+  They need SSH to the control box's engine, which today is `ssh root@<control box>`
+  with the deploy key, firewalled to the deploying computer: root on the hub. Options:
+  - **A. Hub-relayed attach.** A WebSocket PTY through the hub API, device-token
+    authenticated; the hub `docker exec`s into its own container. No new SSH access.
+    Needs a PTY channel in the hub plus a client in the CLI and tray. The end goal (it
+    also fixes cloud attach behind NAT); `cp` would ride the same channel.
+  - **B. A restricted per-device SSH key on the control box**, with a forced command
+    that runs `docker exec`. Per-device key distribution, a forced-command parser,
+    per-device firewall entries. The docker group is root-equivalent, so any parser
+    hole is root on the hub. Not recommended.
+  - **C. An sshd inside each box container.** The box key from custody, a published
+    port, a per-device firewall rule; the cloud-box model, and remote-docker already
+    has the in-container sshd (`box-ssh.ts`, reached over a ProxyJump). Box-scoped,
+    not hub-scoped, but a port per box and firewall management per device.
+  - Recommendation: keep D until A exists; C if multi-PC docker:hub is needed sooner;
+    not B.
 - **A pre-existing `hub` alias that is not the control box.** `ensureHubDockerTarget`
   leaves a user's own `hub` alias alone (`hub -> me@nas`), so on the deploying computer
   direct actions on a docker:hub box dial that host instead and fail with "no such

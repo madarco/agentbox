@@ -107,7 +107,7 @@ export const providerModule: ProviderModule = {
 };
 
 export { remoteDockerBackend, BACKEND_NAME, listOnHost } from './backend.js';
-export { HUB_ENGINE_ALIAS, probeRemoteEngine } from './remote-docker.js';
+export { probeRemoteEngine } from './remote-docker.js';
 export { parseRemoteTarget, parseSandboxId } from './target.js';
 export { interactiveRegisterHost } from './host-setup.js';
 export {
