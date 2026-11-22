@@ -88,6 +88,30 @@ export function recordAgentSessionId(agent: string, id: string): void {
   writePointer(pointer.path, `${id}\n`);
 }
 
+/** Written per box at create (docker and every cloud provider). */
+export const BOX_ENV_FILE = '/etc/agentbox/box.env';
+
+/**
+ * This box's id: the process env, else `/etc/agentbox/box.env`. A hook runs
+ * under the agent, whose env is not guaranteed to carry it on every provider
+ * (a cloud tmux launch exports only a few keys), while box.env always does.
+ */
+export function currentBoxId(
+  env: NodeJS.ProcessEnv = process.env,
+  boxEnvFile: string = BOX_ENV_FILE,
+): string {
+  const fromEnv = env.AGENTBOX_BOX_ID?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const m = /^(?:export\s+)?AGENTBOX_BOX_ID=(['"]?)([^'"\n]+)\1\s*$/m.exec(
+      readFileSync(boxEnvFile, 'utf8'),
+    );
+    return m?.[2]?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
 /** Where the append-only binding log lives in this box. */
 export const HISTORY_BINDINGS_PATH = join(homedir(), HISTORY_BINDINGS_FILE);
 
@@ -105,13 +129,17 @@ export function appendHistoryBinding(
   id: string,
   transcriptPath?: string,
   path: string = HISTORY_BINDINGS_PATH,
+  boxId: string = currentBoxId(),
 ): void {
   if (!/^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$/.test(id)) return;
+  // Unattributable: a line without its box would be dropped by every shipper.
+  if (!boxId) return;
   try {
-    if (lastBindingKey(path) === `${agent}\0${id}`) return;
+    if (lastBindingKey(path) === `${boxId}\0${agent}\0${id}`) return;
     mkdirSync(dirname(path), { recursive: true });
     const line = JSON.stringify({
       ts: new Date().toISOString(),
+      boxId,
       agent,
       sessionId: id,
       ...(transcriptPath ? { transcriptPath } : {}),
@@ -131,8 +159,12 @@ function lastBindingKey(path: string): string | null {
   }
   const lines = text.trimEnd().split('\n');
   try {
-    const v = JSON.parse(lines[lines.length - 1] ?? '') as { agent?: string; sessionId?: string };
-    return `${v.agent ?? ''}\0${v.sessionId ?? ''}`;
+    const v = JSON.parse(lines[lines.length - 1] ?? '') as {
+      boxId?: string;
+      agent?: string;
+      sessionId?: string;
+    };
+    return `${v.boxId ?? ''}\0${v.agent ?? ''}\0${v.sessionId ?? ''}`;
   } catch {
     return null;
   }

@@ -26,19 +26,12 @@ bottom of each section.
   ship the same file under two origins, so the session's turns are counted
   twice (usage is deduped by message id) and `box_id` stays A. Fix: key turns
   by session + line hash, or let a binding transfer a file's ownership.
-- **Pass cost on long-lived boxes.** Every pass re-stats every bound session
-  (one `docker exec` per stat/ls on docker). Batch them into one script per box,
-  or skip sessions whose size did not change.
 - **Cloud final flush on a paused box** is skipped rather than resuming the box
   (resume bills and boots it). A turn cut off mid-pass before the pause is lost
   with the box.
 - **Prune.** `agentbox prune` removes orphans whose container is already gone,
   so nothing is flushed there. Shared-volume transcripts of those boxes stay
   unshipped (Phase 0: "an unbound session lingers forever").
-- **Hub restart re-verification.** After a hub or relay restart, the first frame
-  of every file gets `offset_mismatch`, and the edge re-hashes the file's
-  ingested prefix to fast-forward. That is one full read of each bound file,
-  387 MB worst case. A persisted edge cursor would avoid it.
 - **tool-results.** claude's `<id>/tool-results/*.txt|.jpg` spill files are not
   in the `history` block yet (96 MB on the measured Mac, mostly JPEG).
 - **`redaction_hint`.** Phase 0 proposed flagging shape-free leftovers (an
@@ -48,3 +41,52 @@ bottom of each section.
   takes `origin.boxId` from a hub-credential holder, like every other
   `/api/v1` write. With teams (Stage 2), a device token should only write the
   boxes of its own PC.
+
+## From the independent review of #435 (2026-11-22)
+
+Fixed in #435: B1 (bindings stamped with the box id, foreign lines skipped,
+log removed by the checkpoint cleanup), B2 (one batched scan exec per docker
+box per pass; only grown files are read), R1 (ctl backs off 10 min when the
+relay refuses `history.config`), flush helpers settled before the docker
+teardown, and the private-key rule kept inside one line. Still open:
+
+- **L1: destroy latency.** A paused docker box's final flush runs one helper
+  container per file read (the scan is already batched). A well-used cloud box
+  can reach the 90 s cap because a fresh shipper learns every file's cursor the
+  expensive way (L2). Consider a 20-30 s cap once L2 lands.
+- **L2: cursor probe.** A fresh shipper (ctl restart, `history flush`, hub or
+  relay restart) sends a full first frame per file (512 KB on ctl, 4 MB on the
+  relay) just to get `offset_mismatch`, then re-hashes the file's ingested
+  prefix to fast-forward. That is one full read per bound file, 387 MB worst
+  case. Fix: let `ingest` accept an empty-data probe that answers with the
+  hub's offset and hash, and persist an edge cursor so the re-hash is skipped.
+- **L4: parked frames while the host is offline.** `RpcTimeout` does not abort
+  the HTTP request, and the in-box relay's `HostActionQueue` expires entries
+  only in `drain()`. An overnight cloud box with the laptop asleep keeps about
+  10 MB/h of parked frames. Fix: abort on timeout, and skip passes while an RPC
+  is unanswered.
+- **L5: cross-box writes and validation.**
+  - The session key is global (`<agent>:<stem>`), so a malicious box can append
+    records to another box's session by naming its path.
+  - `chunk()` accepts docker boxes, whose transcripts are shipped host-side.
+  - `agent` and `path` are not checked against `shippedAgents()` and its
+    `sessionFiles` patterns. Unbound files (`sessionKey` null) are never
+    reached by retention.
+- **L6: docker box env not in the redactor.** Values in a docker box's env
+  (model-auth `env` source, `-e`) that match no known format reach the hub
+  unless they appear as `KEY=value`. Fix: feed `docker inspect` `.Config.Env`
+  through `secretValuesFromEnv` into that box's redactor.
+- **L7: frame-boundary misses.** A line over 512 KB is split mid-line on ctl,
+  so the relay's exact-value pass can miss a host secret straddling the cut. A
+  final partial line is redacted separately from its later completion.
+- **L8: stale docker registrations.** A container removed by hand makes
+  `docker inspect` fail and log on every pass. Skip a missing container and log
+  it once.
+- **L9: `projectKey` hard-coded to `-workspace`.** A claude session started from
+  another cwd resolves to a path that does not exist, so nothing ships. Prefer
+  the bound `transcriptPath` once it is checked to be under `configDir`.
+- **L10: minor.**
+  - `projectCaptureEnabled` reads state.json before its cache lookup for a
+    registration with no worktrees.
+  - The REST route reads the whole body before checking its size.
+  - A seal failure throws out of `sweep` and skips that hour's retention.

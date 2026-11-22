@@ -78,9 +78,10 @@ const FORMATS: FormatRule[] = [
     re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
   },
   {
-    // In a JSONL line the key's newlines are the two characters `\n`.
+    // In a JSONL line the key's newlines are the two characters `\n`, so the
+    // body never spans a real newline: crossing one would mask whole lines.
     kind: 'private-key',
-    re: /-----BEGIN ([A-Z ]{0,20})PRIVATE KEY-----([\s\S]{16,}?)-----END \1PRIVATE KEY-----/g,
+    re: /-----BEGIN ([A-Z ]{0,20})PRIVATE KEY-----([^\n]{16,}?)-----END \1PRIVATE KEY-----/g,
     group: 2,
   },
 ];

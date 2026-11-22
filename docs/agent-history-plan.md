@@ -245,7 +245,11 @@ per-project opt-out (`history.capture`), retention 90 days (`history.retentionDa
 - **Binding log.** `--capture-session` also appends
   `{ts, agent, sessionId, transcriptPath}` to
   `~/.local/state/agentbox/history-bindings.jsonl` on the box's writable layer.
-  `--clear-session` never touches it. The engine ships exactly the sessions
+  `--clear-session` never touches it. Each line carries the writing box's
+  `boxId` (env, else `/etc/agentbox/box.env`): a checkpoint copies the log into
+  new boxes, so shippers skip other boxes' lines, and the checkpoint cleanup
+  deletes the log. On docker, the relay reads the log and every file size in
+  one `docker exec` per box per pass, and reads only files that grew. The engine ships exactly the sessions
   in that log: `<root>/<sessionId>.jsonl` and its `<sessionId>/subagents/*.jsonl`
   children, as the spec's `sessionFiles` declare. On a shared docker volume that
   is the only safe attribution; the single-slot pointer is not read.

@@ -31,10 +31,12 @@ export {
 export {
   HistoryShipper,
   resolveSessionFiles,
+  resolveSessionFilesFromSizes,
+  transcriptRoots,
   type HistoryFileSource,
   type HistoryShipperOptions,
   type ShipStats,
   type ShippedAgent,
 } from './shipper.js';
-export { HISTORY_BINDINGS_FILE, parseBindingLog } from './bindings.js';
+export { HISTORY_BINDINGS_FILE, bindingsForBox, parseBindingLog } from './bindings.js';
 export { HISTORY_MAX_FRAME_BYTES, parseHistoryFrame } from './frame.js';

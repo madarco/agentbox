@@ -14,7 +14,12 @@ import {
 } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, findBox, readState } from '@agentbox/sandbox-core';
 import type { BoxRegistration } from '../types.js';
-import { dockerHistorySource, type DockerRunner } from './docker-source.js';
+import {
+  dockerHistorySource,
+  removeHistoryHelpers,
+  type DockerHistorySource,
+  type DockerRunner,
+} from './docker-source.js';
 import { collectHostSecrets } from './host-secrets.js';
 
 /**
@@ -113,12 +118,14 @@ export async function projectCaptureEnabled(reg: BoxRegistration): Promise<boole
 export class HistoryRelay {
   private readonly shippers = new Map<
     string,
-    { container: string; source: ReturnType<typeof dockerHistorySource>; shipper: HistoryShipper }
+    { container: string; source: DockerHistorySource; shipper: HistoryShipper }
   >();
   private redactor: Redactor = createRedactor();
   private redactorAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
+  /** Boxes being destroyed: never read again (see `settleBox`). */
+  private readonly settled = new Set<string>();
   private readonly captureEnabled: (reg: BoxRegistration) => Promise<boolean>;
 
   constructor(private readonly deps: HistoryRelayDeps) {
@@ -214,7 +221,28 @@ export class HistoryRelay {
     }
   }
 
+  /**
+   * Called by a destroy after the final flush (or its timeout), before the
+   * provider removes the box: aborts this box's in-flight docker calls and
+   * removes any flush helper still mounting its volumes. Never throws.
+   */
+  async settleBox(boxId: string): Promise<void> {
+    this.settled.add(boxId);
+    const entry = this.shippers.get(boxId);
+    this.shippers.delete(boxId);
+    const container =
+      entry?.container ??
+      (await this.deps.listBoxes().catch(() => [])).find((b) => b.boxId === boxId)?.containerName;
+    try {
+      if (entry) await entry.source.settle();
+      else if (container) await removeHistoryHelpers(container, this.deps.dockerRun);
+    } catch (e) {
+      this.deps.log(`history: settle ${boxId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   private async shipBox(reg: BoxRegistration, final: boolean): Promise<ShipStats | null> {
+    if (this.settled.has(reg.boxId)) return null;
     if (!(await this.captureEnabled(reg))) return null;
     await this.hostRedactor();
     const container = reg.containerName!;

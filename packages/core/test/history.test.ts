@@ -99,9 +99,9 @@ describe('large-string extraction', () => {
 describe('binding log', () => {
   it('keeps well-formed lines and drops torn ones', () => {
     const b = parseBindingLog(
-      '{"ts":"t","agent":"claude","sessionId":"aaaaaaaa-1"}\n{"agent":"claude","sess\n',
+      '{"ts":"t","boxId":"bx","agent":"claude","sessionId":"aaaaaaaa-1"}\n{"agent":"claude","sess\n',
     );
-    expect(b).toEqual([{ ts: 't', agent: 'claude', sessionId: 'aaaaaaaa-1' }]);
+    expect(b).toEqual([{ ts: 't', boxId: 'bx', agent: 'claude', sessionId: 'aaaaaaaa-1' }]);
   });
 });
 
@@ -175,7 +175,7 @@ const other = `${CFG}/projects/-workspace/bbbbbbbb-unbound.jsonl`;
 function setup(frameMax = 1024): { box: MemBox; hub: MemHub; shipper: HistoryShipper } {
   const box = new MemBox();
   const hub = new MemHub();
-  box.bindings = [{ ts: '', agent: 'claude', sessionId: sid }];
+  box.bindings = [{ ts: '', boxId: 'box1', agent: 'claude', sessionId: sid }];
   const shipper = new HistoryShipper({
     origin: { boxId: 'box1' },
     agents: [AGENT],
@@ -265,7 +265,7 @@ describe('HistoryShipper', () => {
 
   it('stops for good on disabled', async () => {
     const box = new MemBox();
-    box.bindings = [{ ts: '', agent: 'claude', sessionId: sid }];
+    box.bindings = [{ ts: '', boxId: 'b', agent: 'claude', sessionId: sid }];
     box.files.set(main, Buffer.from('{"a":1}\n'));
     const shipper = new HistoryShipper({
       origin: { boxId: 'b' },
@@ -277,5 +277,94 @@ describe('HistoryShipper', () => {
     });
     expect((await shipper.pass()).disabled).toBe(true);
     expect(shipper.isDisabled).toBe(true);
+  });
+});
+
+describe('checkpoint-carried bindings (review B1)', () => {
+  it("ships only this box's own binding lines, never foreign or unstamped ones", async () => {
+    const { box, hub, shipper } = setup();
+    const foreign = 'cccccccc-1111-2222-3333-444444444444';
+    const legacy = 'dddddddd-1111-2222-3333-444444444444';
+    box.bindings = [
+      { ts: '', boxId: 'source-box', agent: 'claude', sessionId: foreign },
+      { ts: '', agent: 'claude', sessionId: legacy },
+      { ts: '', boxId: 'box1', agent: 'claude', sessionId: sid },
+    ];
+    for (const id of [foreign, legacy, sid]) {
+      box.files.set(`${CFG}/projects/-workspace/${id}.jsonl`, Buffer.from('{"a":1}\n'));
+    }
+    await shipper.pass();
+    expect([...hub.files.keys()]).toEqual([`projects/-workspace/${sid}.jsonl`]);
+  });
+});
+
+describe('batched scan (review B2)', () => {
+  it('uses one scan per pass and reads only files that grew', async () => {
+    const { box, hub } = setup();
+    box.bindings = [{ ts: '', boxId: 'box1', agent: 'claude', sessionId: sid }];
+    box.files.set(main, Buffer.from('{"a":1}\n'));
+    box.files.set(sub, Buffer.from('{"s":1}\n'));
+    const calls: string[] = [];
+    const scanning: HistoryFileSource = {
+      readBindings: async () => {
+        calls.push('readBindings');
+        return box.bindings;
+      },
+      size: async (p) => {
+        calls.push('size');
+        return box.size(p);
+      },
+      list: async (d) => {
+        calls.push('list');
+        return box.list(d);
+      },
+      read: async (p, o, l) => {
+        calls.push(`read ${p.slice(p.lastIndexOf('/') + 1)}`);
+        return box.read(p, o, l);
+      },
+      scan: async (roots) => {
+        calls.push(`scan ${roots.join(',')}`);
+        return {
+          bindings: box.bindings,
+          sizes: new Map([...box.files].map(([k, v]) => [k, v.length])),
+        };
+      },
+    };
+    const shipper = new HistoryShipper({
+      origin: { boxId: 'box1' },
+      agents: [AGENT],
+      source: scanning,
+      sink: hub,
+      redactor: createRedactor(),
+      frameMax: 1024,
+    });
+    await shipper.pass();
+    expect(calls.filter((c) => !c.startsWith('read'))).toEqual([`scan ${CFG}/projects/-workspace`]);
+    expect(hub.files.size).toBe(2);
+    calls.length = 0;
+    await shipper.pass(); // idle: nothing grew
+    expect(calls).toEqual([`scan ${CFG}/projects/-workspace`]);
+    box.files.set(sub, Buffer.from('{"s":1}\n{"s":2}\n'));
+    calls.length = 0;
+    await shipper.pass();
+    expect(calls).toEqual([`scan ${CFG}/projects/-workspace`, 'read agent-1.jsonl']);
+  });
+});
+
+describe('private-key rule stays inside one line (review L3)', () => {
+  it('never masks across real newlines', () => {
+    const text =
+      '{"a":"-----BEGIN RSA PRIVATE KEY----- truncated"}\n{"keep":"this line survives"}\n{"b":"-----END RSA PRIVATE KEY-----"}\n';
+    const out = red(text);
+    expect(out).toBe(text);
+    expect(out.split('\n')).toHaveLength(4);
+  });
+
+  it('still masks a key escaped inside one JSONL line', () => {
+    const line =
+      '{"t":"-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----"}\n';
+    const out = red(line);
+    expect(out).not.toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASC');
+    expect(out.length).toBe(line.length);
   });
 });

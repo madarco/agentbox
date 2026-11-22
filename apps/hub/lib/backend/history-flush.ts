@@ -9,7 +9,11 @@ export const HISTORY_FLUSH_TIMEOUT_MS = 90_000;
 
 export interface HistoryFlushDeps {
   /** The relay's docker shipper, when this hub has history enabled. */
-  relayHistory?: { flushBox(boxId: string): Promise<unknown> };
+  relayHistory?: {
+    flushBox(boxId: string): Promise<unknown>;
+    /** Abort the box's docker reads and remove flush helpers holding its volumes. */
+    settleBox(boxId: string): Promise<void>;
+  };
   exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult>;
   /** The provider's cheap state probe: a cloud box is flushed only when running. */
   probeState(box: BoxRecord): Promise<string>;
@@ -50,4 +54,8 @@ export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): P
   } finally {
     clearTimeout(timer);
   }
+  // A timed-out docker flush is still running, and a helper container it
+  // started would make the provider's `docker volume rm` fail (silently,
+  // orphaning the volume). Stop it before the teardown starts.
+  if (isDocker) await deps.relayHistory.settleBox(box.id).catch(() => undefined);
 }

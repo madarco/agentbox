@@ -84,6 +84,12 @@ export interface HistoryConfigReply {
 /** A session → box binding, one line of the box's append-only binding log. */
 export interface HistoryBinding {
   ts: string;
+  /**
+   * The box that wrote the line. The log is on the box's writable layer, so a
+   * checkpoint carries it into every box made from it; shippers only ship
+   * lines whose `boxId` is their own box.
+   */
+  boxId?: string;
   agent: string;
   sessionId: string;
   transcriptPath?: string;

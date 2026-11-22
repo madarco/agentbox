@@ -21,13 +21,13 @@ import {
 } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
-import { HISTORY_BINDINGS_PATH } from './session-pointer.js';
+import { HISTORY_BINDINGS_PATH, currentBoxId } from './session-pointer.js';
 
 /** Raw frame cap: base64 of this plus the JSON envelope stays under the relay's 1 MiB `/rpc` cap. */
 export const CTL_FRAME_MAX = 512 * 1024;
 const RPC_TIMEOUT_MS = 60_000;
 
-class RpcTimeout extends Error {}
+export class RpcTimeout extends Error {}
 
 async function rpc(method: string, params: unknown): Promise<{ exitCode: number; stdout: string }> {
   let timer: NodeJS.Timeout | undefined;
@@ -41,22 +41,44 @@ async function rpc(method: string, params: unknown): Promise<{ exitCode: number;
   }
 }
 
-export async function fetchHistoryConfig(): Promise<HistoryConfigReply | null> {
+/**
+ * `history.config`, classified:
+ *  - `ok`: the relay answered.
+ *  - `unsupported`: it answered with something else (a relay predating history
+ *    returns 501 and records an `rpc-unknown` event per call), so do not ask
+ *    again for a while.
+ *  - `unreachable`: no answer at all (no relay env, transport error), so retry
+ *    on the next tick.
+ * A timeout throws `RpcTimeout`.
+ */
+export type HistoryConfigFetch =
+  | { kind: 'ok'; config: HistoryConfigReply }
+  | { kind: 'unsupported' }
+  | { kind: 'unreachable' };
+
+/** postRpcAwait's own codes for a missing relay env (65) and a transport failure (126). */
+const UNREACHABLE_EXIT = new Set([65, 126]);
+
+export async function fetchHistoryConfig(): Promise<HistoryConfigFetch> {
   const r = await rpc('history.config', {});
-  if (r.exitCode !== 0) return null;
+  if (UNREACHABLE_EXIT.has(r.exitCode)) return { kind: 'unreachable' };
+  if (r.exitCode !== 0) return { kind: 'unsupported' };
   try {
     const v = JSON.parse(r.stdout) as Partial<HistoryConfigReply>;
-    if (typeof v.enabled !== 'boolean') return null;
+    if (typeof v.enabled !== 'boolean') return { kind: 'unsupported' };
     return {
-      enabled: v.enabled,
-      ...(typeof v.reason === 'string' ? { reason: v.reason } : {}),
-      agents: Array.isArray(v.agents) ? v.agents : [],
-      credentialFiles: Array.isArray(v.credentialFiles)
-        ? v.credentialFiles.filter((p): p is string => typeof p === 'string')
-        : [],
+      kind: 'ok',
+      config: {
+        enabled: v.enabled,
+        ...(typeof v.reason === 'string' ? { reason: v.reason } : {}),
+        agents: Array.isArray(v.agents) ? v.agents : [],
+        credentialFiles: Array.isArray(v.credentialFiles)
+          ? v.credentialFiles.filter((p): p is string => typeof p === 'string')
+          : [],
+      },
     };
   } catch {
-    return null;
+    return { kind: 'unsupported' };
   }
 }
 
@@ -130,7 +152,10 @@ async function boxSecrets(credentialFiles: readonly string[]): Promise<string[]>
 export async function buildShipper(cfg: HistoryConfigReply): Promise<HistoryShipper> {
   return new HistoryShipper({
     // The relay replaces the box id from the box's own token; this is a hint.
-    origin: { boxId: process.env.AGENTBOX_BOX_ID ?? '' },
+    // Must equal the box id the capture hook stamps on binding lines: the
+    // shipper drops lines from other boxes (a checkpoint carries the log).
+    // The relay still replaces it from the box's own token.
+    origin: { boxId: currentBoxId() },
     agents: cfg.agents,
     source: localFileSource,
     sink: rpcHistorySink,
@@ -156,6 +181,9 @@ export class HistoryLoop {
     private readonly opts: {
       intervalMs?: number;
       log?: (line: string) => void;
+      /** Tests: the config RPC and the shipper factory. */
+      fetchConfig?: () => Promise<HistoryConfigFetch>;
+      makeShipper?: (cfg: HistoryConfigReply) => Promise<HistoryShipper>;
     } = {},
   ) {
     this.delayMs = opts.intervalMs ?? 30_000;
@@ -184,10 +212,14 @@ export class HistoryLoop {
       // enabled one, so it is asked again every 10 min rather than every tick.
       const stale = Date.now() - this.configAt > 10 * 60_000;
       if (stale || (this.shipper?.isDisabled ?? false)) {
-        const cfg = await fetchHistoryConfig();
-        // An unanswered fetch (hub not up yet) is retried next tick.
-        if (cfg) this.configAt = Date.now();
-        this.shipper = cfg?.enabled ? await buildShipper(cfg) : null;
+        const res = await (this.opts.fetchConfig ?? fetchHistoryConfig)();
+        // Only "no answer at all" is retried next tick; any answer, including
+        // an older relay's refusal, is remembered for the 10-minute window.
+        if (res.kind !== 'unreachable') this.configAt = Date.now();
+        this.shipper =
+          res.kind === 'ok' && res.config.enabled
+            ? await (this.opts.makeShipper ?? buildShipper)(res.config)
+            : null;
       }
       if (this.shipper) stats = await this.shipper.pass({ final });
       const timedOut = stats?.errors.some((e) => e.includes('timed out')) ?? false;

@@ -1,4 +1,5 @@
 import { createHash, type Hash } from 'node:crypto';
+import { bindingsForBox } from './bindings.js';
 import type { Redactor } from './redact.js';
 import type {
   AgentHistorySpec,
@@ -28,6 +29,13 @@ export interface HistoryFileSource {
   read(path: string, offset: number, length: number): Promise<Uint8Array>;
   /** Basenames in a directory, or null when absent. */
   list(dir: string): Promise<string[] | null>;
+  /**
+   * Optional: the binding log plus the size of every file under `roots`
+   * (absolute paths, a few levels deep), in ONE round trip. A source where each
+   * call costs a process (`docker exec`) implements it, so a pass over an idle
+   * box is one call instead of one per bound session and file.
+   */
+  scan?(roots: string[]): Promise<{ bindings: HistoryBinding[]; sizes: Map<string, number> }>;
 }
 
 export interface ShippedAgent {
@@ -81,6 +89,44 @@ function globToRegExp(glob: string): RegExp {
 
 function posixJoin(...parts: string[]): string {
   return parts.join('/').replace(/\/+/g, '/');
+}
+
+/** The absolute transcript roots of every shipped agent (what `scan` lists). */
+export function transcriptRoots(agents: ShippedAgent[]): string[] {
+  const out = new Set<string>();
+  for (const a of agents) {
+    for (const t of a.spec.transcripts) {
+      if (t.mode === 'append')
+        out.add(posixJoin(a.configDir, t.root.replace(/<projectKey>/g, a.projectKey)));
+    }
+  }
+  return [...out];
+}
+
+/** `resolveSessionFiles` against a `scan` result: no further source calls. */
+export function resolveSessionFilesFromSizes(
+  sizes: Map<string, number>,
+  agent: ShippedAgent,
+  sessionId: string,
+): Array<{ abs: string; rel: string }> {
+  if (!SESSION_ID.test(sessionId)) return [];
+  const out: Array<{ abs: string; rel: string }> = [];
+  const prefix = posixJoin(agent.configDir, '/');
+  for (const t of agent.spec.transcripts) {
+    if (t.mode !== 'append') continue;
+    const root = t.root.replace(/<projectKey>/g, agent.projectKey);
+    for (const pattern of t.sessionFiles) {
+      const re = globToRegExp(posixJoin(root, pattern.replace(/<sessionId>/g, sessionId)));
+      const hits: Array<{ abs: string; rel: string }> = [];
+      for (const abs of sizes.keys()) {
+        if (!abs.startsWith(prefix)) continue;
+        const rel = abs.slice(prefix.length);
+        if (re.test(rel)) hits.push({ abs, rel });
+      }
+      out.push(...hits.sort((a, b) => a.rel.localeCompare(b.rel)));
+    }
+  }
+  return out;
 }
 
 /** Absolute path → agent-relative path for every file a binding names. */
@@ -148,12 +194,22 @@ export class HistoryShipper {
     const stats: ShipStats = { files: 0, frames: 0, bytes: 0, redactions: 0, errors: [] };
     if (this.disabled) return { ...stats, disabled: true };
     let bindings: HistoryBinding[];
+    let sizes: Map<string, number> | null = null;
     try {
-      bindings = await this.opts.source.readBindings();
+      const { source } = this.opts;
+      if (source.scan) {
+        const r = await source.scan(transcriptRoots(this.opts.agents));
+        bindings = r.bindings;
+        sizes = r.sizes;
+      } else {
+        bindings = await source.readBindings();
+      }
     } catch (e) {
       stats.errors.push(`bindings: ${e instanceof Error ? e.message : String(e)}`);
       return stats;
     }
+    // Only this box's own lines: a checkpoint carries the source box's log.
+    bindings = bindingsForBox(bindings, this.opts.origin.boxId);
     const seen = new Set<string>();
     for (const b of bindings) {
       const agent = this.opts.agents.find((a) => a.agent === b.agent);
@@ -163,13 +219,15 @@ export class HistoryShipper {
       seen.add(key);
       let files: Array<{ abs: string; rel: string }>;
       try {
-        files = await resolveSessionFiles(this.opts.source, agent, b.sessionId);
+        files = sizes
+          ? resolveSessionFilesFromSizes(sizes, agent, b.sessionId)
+          : await resolveSessionFiles(this.opts.source, agent, b.sessionId);
       } catch (e) {
         stats.errors.push(`${b.sessionId}: ${e instanceof Error ? e.message : String(e)}`);
         continue;
       }
       for (const f of files) {
-        await this.shipFile(agent.agent, f.abs, f.rel, final, stats);
+        await this.shipFile(agent.agent, f.abs, f.rel, final, stats, sizes?.get(f.abs));
         if (this.disabled) return { ...stats, disabled: true };
       }
     }
@@ -182,11 +240,12 @@ export class HistoryShipper {
     rel: string,
     final: boolean,
     stats: ShipStats,
+    knownSize?: number,
   ): Promise<void> {
     const { source, redactor, frameMax } = this.opts;
     const readMax = this.opts.readMax ?? DEFAULT_READ_MAX;
     let budget = this.opts.passBudget ?? DEFAULT_PASS_BUDGET;
-    const size = await source.size(abs).catch(() => null);
+    const size = knownSize ?? (await source.size(abs).catch(() => null));
     if (size === null) return;
     const key = `${agent}\0${rel}`;
     let cur = this.cursors.get(key);

@@ -3,7 +3,9 @@ import type { HistoryBinding } from './types.js';
 /**
  * The append-only session → box binding log, relative to the box user's home.
  * On the box's own writable layer (never a shared volume), so it is per box and
- * dies with it. FROZEN: written by the ctl baked into a box, read by the host.
+ * dies with it, but a checkpoint (`docker commit`, a cloud snapshot) copies it
+ * into every box made from it, which is why each line names its box. FROZEN:
+ * written by the ctl baked into a box, read by the host.
  */
 export const HISTORY_BINDINGS_FILE = '.local/state/agentbox/history-bindings.jsonl';
 
@@ -17,6 +19,7 @@ export function parseBindingLog(text: string): HistoryBinding[] {
       if (typeof v.agent === 'string' && typeof v.sessionId === 'string') {
         out.push({
           ts: typeof v.ts === 'string' ? v.ts : '',
+          ...(typeof v.boxId === 'string' && v.boxId ? { boxId: v.boxId } : {}),
           agent: v.agent,
           sessionId: v.sessionId,
           ...(typeof v.transcriptPath === 'string' ? { transcriptPath: v.transcriptPath } : {}),
@@ -27,4 +30,10 @@ export function parseBindingLog(text: string): HistoryBinding[] {
     }
   }
   return out;
+}
+
+/** The lines this box wrote. A line with no box id is never trusted. */
+export function bindingsForBox(bindings: HistoryBinding[], boxId: string): HistoryBinding[] {
+  if (!boxId) return [];
+  return bindings.filter((b) => b.boxId === boxId);
 }
