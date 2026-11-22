@@ -73,6 +73,48 @@ describe('fetchBoxListing offline fallback', () => {
     expect(listing).toEqual({ boxes: [], stale: true, reason: 'no-token' });
   });
 
+  it('a 401 from a remote hub is "this computer was removed", not "unreachable"', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((_req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: { code: 'unauthorized', message: 'Missing or invalid credentials.' },
+        }),
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const url = `http://127.0.0.1:${String((server.address() as { port: number }).port)}`;
+    try {
+      // Even with a cache on disk: a revoked PC must not be shown old boxes as if
+      // the hub were merely down.
+      await writeCache(
+        [{ id: 'b1', name: 'api', provider: 'docker', status: 'running' }],
+        '2026-07-29T12:00:00.000Z',
+      );
+      state.probe = { mode: 'remote', url, token: 'abdev_revoked' };
+      state.target = { url, apiKey: 'abdev_revoked' };
+      const { fetchBoxListing } = await import('../src/control-plane/hub-list.js');
+      expect(await fetchBoxListing()).toEqual({
+        boxes: [],
+        stale: true,
+        reason: 'unauthorized',
+        hubUrl: url,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('the hint names the hub and the commands to run', async () => {
+    const { hubUnauthorizedHint } = await import('../src/control-plane/unauthorized-hint.js');
+    const hint = hubUnauthorizedHint('https://hub.example/', 'remote');
+    expect(hint).toContain('https://hub.example');
+    expect(hint).toContain('agentbox hub login https://hub.example');
+    expect(hint).toContain('agentbox hub logout');
+    expect(hubUnauthorizedHint(undefined, 'local')).toContain('agentbox hub restart');
+  });
+
   it('ignores a cache written in the old registration schema', async () => {
     // The API cache re-keys hub-boxes-cache.json onto `boxes`; a stale
     // `{ registrations }` file from a pre-upgrade CLI must not be misread.

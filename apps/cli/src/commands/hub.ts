@@ -22,8 +22,10 @@ import {
   probeControlPlaneStatus,
   localExposedLoopbackUrl,
 } from './control-plane.js';
+import { hubDeviceSubcommands } from './hub-devices.js';
 import { restoreTunnelIfExposed, stopTunnelIfExposed } from '../control-plane/expose.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
+import { hubBearerFor } from '@agentbox/sandbox-core';
 import { channelOfVersion } from '../lib/channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
@@ -126,7 +128,11 @@ export async function resolveHubTarget(
     return {
       mode: 'remote',
       url,
-      token: process.env.AGENTBOX_HUB_API_KEY ?? '',
+      // Per URL (`--url` can name a hub other than the configured one), with an
+      // explicitly exported key winning — see hubBearerFor.
+      token: hubBearerFor(url, 'api', {
+        configuredUrl: cfg.effective.relay.controlPlaneUrl ?? undefined,
+      }),
       onThisMachine: false,
     };
   }
@@ -392,7 +398,7 @@ const targetSub = new Command('target')
       const tokenNote = t.token
         ? 'present'
         : t.mode === 'remote'
-          ? '(none — set AGENTBOX_HUB_API_KEY, or run `agentbox hub setup`)'
+          ? '(none — run `agentbox hub login`, or set AGENTBOX_HUB_API_KEY)'
           : '(none — start the hub with `agentbox hub`)';
       process.stdout.write(
         [`hub: ${t.mode}`, `  url:   ${t.url}`, `  token: ${tokenNote}`].join('\n') + '\n',
@@ -652,3 +658,4 @@ export const hubCommand = new Command('hub')
 // credentials/secrets/project/custody/boxes/approvals) into the one `hub` group —
 // there is no separate `control-plane` command. All surfaced (not hidden).
 for (const sub of controlPlaneSubcommands) hubCommand.addCommand(sub);
+for (const sub of hubDeviceSubcommands) hubCommand.addCommand(sub);

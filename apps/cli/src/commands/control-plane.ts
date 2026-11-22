@@ -143,7 +143,7 @@ function repoSlugToUrl(spec: string): string {
 const DEFAULT_DEPLOY_REF = defaultDeployRef();
 
 /** Persist `relay.controlPlaneUrl` and report it. Shared by set-url + setup. */
-async function applyControlPlaneUrl(url: string): Promise<string> {
+export async function applyControlPlaneUrl(url: string): Promise<string> {
   const trimmed = url.replace(/\/$/, '');
   await setConfigValue('global', 'relay.controlPlaneUrl', trimmed, process.cwd());
   await reloadLocalHubForStore();
@@ -160,7 +160,7 @@ async function applyControlPlaneUrl(url: string): Promise<string> {
  * box, and every row it forwards is dropped. A hub that is not running needs
  * nothing — it reads the new value when it boots.
  */
-async function reloadLocalHubForStore(): Promise<void> {
+export async function reloadLocalHubForStore(): Promise<void> {
   const { getHubStatus, ensureHub, stopHub } = await import('@agentbox/sandbox-core');
   if (!(await getHubStatus()).running) return;
   const { rehydrateFromState } = await import('./relay.js');
@@ -1141,8 +1141,8 @@ export async function resolveCustodyTarget(
   if (!adminToken) {
     if (!opts.quiet)
       log.error(
-        'No admin token available. Set AGENTBOX_RELAY_ADMIN_TOKEN, or run this from the machine that\n' +
-          'ran `agentbox hub setup` (it writes the token to ~/.agentbox/control-plane).',
+        'No hub credential on this computer. Run `agentbox hub login` to enroll it, or set\n' +
+          'AGENTBOX_RELAY_ADMIN_TOKEN (the machine that ran `agentbox hub setup` has it).',
       );
     return null;
   }
@@ -1194,9 +1194,9 @@ export async function resolveCustodyApiTarget(
 ): Promise<CustodyApiTarget | null> {
   const { resolveHubTarget } = await import('./hub.js');
   const noCredentialError =
-    'A control box is configured but no custody credential is available. Set AGENTBOX_HUB_API_KEY\n' +
-    '(or AGENTBOX_RELAY_ADMIN_TOKEN), or run this from the machine that ran `agentbox hub setup`\n' +
-    '(it writes both to ~/.agentbox/control-plane) — custody / SSH-key pull needs one of them.';
+    'A control box is configured but this computer has no credential for it. Run\n' +
+    '`agentbox hub login` to enroll it (or set AGENTBOX_HUB_API_KEY / AGENTBOX_RELAY_ADMIN_TOKEN)\n' +
+    '— custody / SSH-key pull needs one.';
 
   // Remote control box (a configured plane, or a `hub expose`d loopback). The API
   // key drives `/api/v1`; the admin token is the byte-read elevation there and the
@@ -1331,8 +1331,8 @@ export async function resolveHubApiTarget(
     if (!opts.quiet)
       log.error(
         resolved.mode === 'remote'
-          ? 'No hub API key available. Set AGENTBOX_HUB_API_KEY, or run this from the machine that\n' +
-              'ran `agentbox hub setup` (it writes the key to ~/.agentbox/control-plane).'
+          ? 'No hub credential on this computer. Run `agentbox hub login` to enroll it, or set\n' +
+              'AGENTBOX_HUB_API_KEY (the machine that ran `agentbox hub setup` has it).'
           : 'The local hub reports no API token. Start it with `agentbox hub` and retry.',
       );
     return null;
@@ -2786,6 +2786,16 @@ export async function syncAgentCredentialsIfChanged(url?: string): Promise<void>
  * exposed hub (resolved to loopback by the custody target).
  */
 async function finalizeControlBoxState(url: string | undefined): Promise<void> {
+  // The shared keys in control-plane.env stay on this (the operator's) machine.
+  // Every other computer enrolls with its own revocable token instead.
+  const hubUrl =
+    url ??
+    (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl;
+  if (hubUrl) {
+    log.info(
+      `To use this hub from another computer, run \`agentbox hub login ${hubUrl}\` there and approve it on ${hubUrl.replace(/\/+$/, '')}/devices — don't copy ~/.agentbox/control-plane.`,
+    );
+  }
   await syncAgentCredentials(url, { announce: true });
   await syncBakesWithControlBox(url);
   // Re-register any remote-docker host this machine has shared before. A fresh

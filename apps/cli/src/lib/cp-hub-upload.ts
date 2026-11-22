@@ -31,7 +31,7 @@ export async function uploadToHubCache(hostSrcs: string[], projectRoot: string):
   }
   if (adminToken.length === 0) {
     throw new Error(
-      'no control-box admin token on this machine (run `agentbox hub setup`), so the upload cannot be authenticated.',
+      'no control-box credential on this machine (run `agentbox hub login`), so the upload cannot be authenticated.',
     );
   }
 

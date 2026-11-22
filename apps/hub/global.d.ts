@@ -1,5 +1,6 @@
 import type { Store } from '@agentbox/relay';
 import type { HubBackend } from './lib/boxes/backend-types';
+import type { DeviceService } from './lib/backend/devices';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -7,6 +8,12 @@ declare global {
   // approvals/prompts view in a later phase).
   // eslint-disable-next-line no-var
   var __AGENTBOX_BOX_SOURCE: Store | undefined;
+
+  // Enrolled devices + the enrollment codes (multi-PC Phase 1b). Set by the custom
+  // server on a password profile only; the `/api/v1/devices` routes answer 503
+  // without it. Never constructed inside Next: the repo is `node:sqlite`.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_DEVICES: DeviceService | undefined;
 
   // Host-facing backend (box list + lifecycle). Set by the custom server; Next's
   // source.ts / actions.ts reach the Node/docker toolchain only through this, so

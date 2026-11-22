@@ -103,12 +103,12 @@ export async function resolveCreateTarget(input: CreateTargetInput): Promise<Cre
     if (forceHub) {
       return {
         where: 'error',
-        message: 'no control-box admin token (run `agentbox hub setup`)',
+        message: 'no control-box credential (run `agentbox hub login`)',
       };
     }
     return {
       where: 'local',
-      fellBackReason: 'no control-box admin token (run `agentbox hub setup`)',
+      fellBackReason: 'no control-box credential (run `agentbox hub login`)',
     };
   }
   return { where: 'remote', repoUrl, custody };

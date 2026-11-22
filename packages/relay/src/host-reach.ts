@@ -101,6 +101,12 @@ export class HostReachQueue {
   private lastPollAtMs: number | null = null;
   /** pollerId → last poll time, so "did the owner of this copy go away?" is answerable. */
   private readonly pollerSeen = new Map<string, number>();
+  /**
+   * pollerId → the device (machine id) that poller runs on. The seam for routing
+   * an action to the PC a box came from (multi-PC Phase 4): today every eligible
+   * poller is offered every action, and this is only recorded and reported.
+   */
+  private readonly pollerDevice = new Map<string, string>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: HostReachQueueOptions = {}) {
@@ -220,6 +226,46 @@ export class HostReachQueue {
    * means. Presence is what decides whether a copy waits for that machine or
    * falls back, so a live-but-quiet stream must keep it fresh.
    */
+  /**
+   * Record which device a poller runs on (see {@link pollerDevice}). The
+   * pollerId is chosen by the client, so a later call can relabel it; harmless
+   * while this is only reported. Phase 4 routing must bind a pollerId to the
+   * first verified device that used it before trusting the mapping.
+   */
+  identify(pollerId: string, deviceId: string): void {
+    if (!deviceId) return;
+    // The sweep only runs while actions are parked; an idle queue prunes here.
+    if (!this.pollerDevice.has(pollerId)) this.prunePollers();
+    this.pollerDevice.set(pollerId, deviceId);
+  }
+
+  /**
+   * Forget pollers gone for well past the grace window. Every relay restart is a
+   * new pollerId, so without this a long-lived control box would keep them all.
+   * Pollers that still own an action are kept (the went-away sweep needs them).
+   */
+  private prunePollers(): void {
+    const cutoff = this.now() - Math.max(this.reachTimeoutMs, this.graceMs) * 2;
+    const owners = new Set<string>();
+    for (const p of this.map.values()) if (p.deliveredTo !== undefined) owners.add(p.deliveredTo);
+    for (const [pollerId, seen] of this.pollerSeen) {
+      if (seen >= cutoff || owners.has(pollerId)) continue;
+      this.pollerSeen.delete(pollerId);
+      this.pollerDevice.delete(pollerId);
+    }
+  }
+
+  /** The devices with a poller present within the reachability window. */
+  devicesPresent(): string[] {
+    const now = this.now();
+    const out = new Set<string>();
+    for (const [pollerId, deviceId] of this.pollerDevice) {
+      const seen = this.pollerSeen.get(pollerId);
+      if (seen !== undefined && now - seen <= this.reachTimeoutMs) out.add(deviceId);
+    }
+    return [...out];
+  }
+
   touch(pollerId: string): void {
     const now = this.now();
     this.lastPollAtMs = now;
@@ -432,6 +478,7 @@ export class HostReachQueue {
    * blocked forever on an RPC nobody will ever answer.
    */
   private sweep(): void {
+    this.prunePollers();
     if (this.map.size === 0) {
       if (this.sweepTimer) {
         clearInterval(this.sweepTimer);

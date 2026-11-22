@@ -427,7 +427,7 @@ const agentApprovalsCommand = new Command('approvals')
           if (source.unauthenticatedPlane !== undefined) {
             log.warn(
               `this box's approvals live on ${source.unauthenticatedPlane}, but no hub API key is available here — ` +
-                'set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to see them.',
+                'run `agentbox hub login` (or set AGENTBOX_HUB_API_KEY) to see them.',
             );
             process.exitCode = 1;
             return;
@@ -527,7 +527,7 @@ async function approveRelay(id: string, opts: ApproveOpts): Promise<void> {
       // A control box we can't ask is not evidence the prompt is gone.
       log.error(
         `not found on this host's hub, and the control box could not be asked (no API key).\n` +
-          'Set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`), or answer it with `agentbox hub approvals answer`.',
+          'Run `agentbox hub login` (or set AGENTBOX_HUB_API_KEY), or answer it with `agentbox hub approvals answer`.',
       );
       process.exit(1);
     }
@@ -942,7 +942,7 @@ function reportedUnauthenticatedPlane(source: BoxPromptSource): boolean {
   if (source.unauthenticatedPlane === undefined) return false;
   log.error(
     `this box's agent state lives on ${source.unauthenticatedPlane}, but no hub API key is ` +
-      'available here — set AGENTBOX_HUB_API_KEY (or run `agentbox hub setup`) to read it.',
+      'available here — run `agentbox hub login` (or set AGENTBOX_HUB_API_KEY) to read it.',
   );
   process.exitCode = 1;
   return true;

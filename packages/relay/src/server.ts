@@ -57,7 +57,7 @@ import { GitHubAppLeaser, loadGitHubAppConfig, type GitHubAppConfig } from './gi
 import { leaseTokenResult } from './lease.js';
 import { gateApproval, type GateDeps, type PromptMode } from './permission.js';
 import { resolveWorktree, hostRepoUnavailableReason } from './worktree.js';
-import { adminGateAllows, timingSafeEqualStr } from './admin-gate.js';
+import { adminGateAllows, timingSafeEqualStr, type RelayDeviceAuth } from './admin-gate.js';
 import {
   handleCustodyBlobRequest,
   handleCustodyRequest,
@@ -186,6 +186,14 @@ export interface RelayServerOptions {
    * loopback). Required for custody to serve; other admin routes are unaffected.
    */
   adminToken?: string;
+  /**
+   * Enrolled devices (the hub's password profile). A verified device token is
+   * accepted everywhere the shared admin token is — host-reach, custody, the
+   * store RPC, the create queue: in Stage 1 every device is the one owner's PC,
+   * and what the token buys over the shared secret is that it is per PC and
+   * revocable. Ignored when no admin token is configured.
+   */
+  deviceAuth?: RelayDeviceAuth;
   /**
    * True on a control box (the hub's password profile). Turns on the
    * `/admin/hostreach/*` surface and makes host actions that need the user's
@@ -351,6 +359,21 @@ async function readRawBody(
   });
 }
 
+/**
+ * Which device a host-reach poller runs on: the verified device of its token, or
+ * — for a caller holding the shared admin token, who is trusted anyway — the
+ * machine id it names in `X-Agentbox-Device`.
+ */
+function hostReachDeviceId(
+  req: IncomingMessage,
+  verified: { id: string } | null,
+): string | undefined {
+  if (verified) return verified.id;
+  const claimed = req.headers['x-agentbox-device'];
+  const v = typeof claimed === 'string' ? claimed.trim() : '';
+  return /^[A-Za-z0-9-]{8,64}$/.test(v) ? v : undefined;
+}
+
 function bearerToken(req: IncomingMessage): string {
   const raw = req.headers.authorization;
   if (typeof raw !== 'string') return '';
@@ -477,6 +500,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const leaser = githubAppConfig ? new GitHubAppLeaser(githubAppConfig) : null;
   const custody = opts.custody ?? null;
   const custodyAdminToken = opts.adminToken ?? '';
+  const deviceAuth = custodyAdminToken.length > 0 ? opts.deviceAuth : undefined;
+  /** The enrolled device this request's Bearer belongs to, if any. */
+  const deviceOf = (req: IncomingMessage): { id: string; label: string } | null => {
+    const b = bearerToken(req);
+    return b && deviceAuth ? deviceAuth.verify(b) : null;
+  };
+  /**
+   * The Bearer to hand an admin-gated dispatcher: a verified device token is
+   * swapped for the admin token, so the shared dispatchers (also mounted by the
+   * hosted plane, which has no devices) keep a single comparison.
+   */
+  const adminBearer = (req: IncomingMessage): string =>
+    deviceOf(req) ? custodyAdminToken : bearerToken(req);
   const custodyMaxBodyBytes =
     typeof opts.custodyMaxBodyBytes === 'number' && opts.custodyMaxBodyBytes > 0
       ? opts.custodyMaxBodyBytes
@@ -500,7 +536,32 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     return pollers;
   }
 
+  // Every response a device is holding open, by device id. Revocation destroys
+  // them all, whichever route served them — the relay's own streams and every
+  // Next route behind `uiHandler` alike — so a future streaming route cannot
+  // forget to honour it.
+  const openByDevice = new Map<string, Set<ServerResponse>>();
+  const trackDevice = (req: IncomingMessage, res: ServerResponse): void => {
+    const device = deviceOf(req);
+    if (!device) return;
+    let set = openByDevice.get(device.id);
+    if (!set) openByDevice.set(device.id, (set = new Set()));
+    set.add(res);
+    res.on('close', () => {
+      set.delete(res);
+      if (set.size === 0 && openByDevice.get(device.id) === set) openByDevice.delete(device.id);
+    });
+  };
+  deviceAuth?.onRevoked((id) => {
+    const set = openByDevice.get(id);
+    if (!set) return;
+    openByDevice.delete(id);
+    for (const res of set) res.destroy();
+    log(`devices: closed ${String(set.size)} open request(s) of revoked device ${id.slice(0, 8)}`);
+  });
+
   const server = createServer((req, res) => {
+    trackDevice(req, res);
     handle(req, res).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       log(`relay: handler error: ${msg}`);
@@ -616,7 +677,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         {
           method: req.method ?? 'GET',
           path: url.pathname,
-          bearer: bearerToken(req),
+          bearer: adminBearer(req),
           body: req.method === 'PUT' ? req : undefined,
           maxBytes: custodyMaxBlobBytes,
         },
@@ -654,7 +715,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 503, { error: 'host-reach not configured: admin token unset' });
         return;
       }
-      if (!timingSafeEqualStr(bearerToken(req) ?? '', custodyAdminToken)) {
+      const hostReachDevice = deviceOf(req);
+      if (!hostReachDevice && !timingSafeEqualStr(bearerToken(req), custodyAdminToken)) {
         send(res, 401, { error: 'invalid admin token' });
         return;
       }
@@ -669,6 +731,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 400, { error: 'missing poller query param' });
           return;
         }
+        const streamDevice = hostReachDeviceId(req, hostReachDevice);
+        if (streamDevice) hostReach.identify(pollerId, streamDevice);
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
@@ -716,6 +780,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // The polling process's identity, so a restarted relay is offered the
         // work its predecessor accepted but never finished.
         const pollerId = url.searchParams.get('poller') ?? undefined;
+        const pollDevice = hostReachDeviceId(req, hostReachDevice);
+        if (pollerId && pollDevice) hostReach.identify(pollerId, pollDevice);
         const actions = await hostReach.poll(waitMs, pollerId);
         send(res, 200, { actions });
         return;
@@ -804,7 +870,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           method: req.method ?? 'GET',
           path: url.pathname,
           query: url.searchParams,
-          bearer: bearerToken(req),
+          bearer: adminBearer(req),
           bodyText,
         },
         { custody, adminToken: custodyAdminToken, log },
@@ -826,7 +892,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         {
           method: req.method ?? 'GET',
           path: url.pathname,
-          bearer: bearerToken(req),
+          bearer: adminBearer(req),
           bodyText,
           query: url.searchParams,
         },
@@ -849,7 +915,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         {
           method: req.method ?? 'GET',
           path: url.pathname,
-          bearer: bearerToken(req),
+          bearer: adminBearer(req),
           bodyText,
         },
         { store, adminToken: custodyAdminToken, log },
@@ -874,7 +940,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       const loopback = isLoopbackAddress(req.socket.remoteAddress);
-      if (!adminGateAllows(loopback, bearerToken(req), custodyAdminToken)) {
+      if (!adminGateAllows(loopback, adminBearer(req), custodyAdminToken)) {
         send(res, 403, { error: 'admin endpoints are loopback-only' });
         return;
       }

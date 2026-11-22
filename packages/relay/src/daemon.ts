@@ -1,3 +1,4 @@
+import { deviceTokenFor } from '@agentbox/sandbox-core';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -60,10 +61,12 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
   const controlPlaneUrl = (opts.controlPlaneUrl ?? process.env.AGENTBOX_CONTROL_PLANE_URL ?? '')
     .trim()
     .replace(/\/+$/, '');
+  // The shared admin token, or this PC's own device token for exactly this hub
+  // (`agentbox hub login`), which the control box accepts on host-reach too.
   const hostReachToken = (
-    opts.hostReachAdminToken ??
-    process.env.AGENTBOX_RELAY_ADMIN_TOKEN ??
-    ''
+    opts.hostReachAdminToken ||
+    process.env.AGENTBOX_RELAY_ADMIN_TOKEN ||
+    (controlPlaneUrl ? deviceTokenFor(controlPlaneUrl) : '')
   ).trim();
   // Never on the control box itself: it is the one parking the actions, and a
   // poller there would race the PC for work it cannot do.
@@ -96,7 +99,7 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
     // falls back to the hub's cache (or fails) with nothing on this side saying why.
     log(
       'host-reach: a control box is configured but no admin token is available; ' +
-        'cp between a hub box and this machine will not reach it (re-run `agentbox hub setup`)',
+        'cp between a hub box and this machine will not reach it (run `agentbox hub login`)',
     );
   }
   const autopause = startAutopauseLoop({

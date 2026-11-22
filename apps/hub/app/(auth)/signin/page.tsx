@@ -7,17 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { signIn } from '@/lib/auth.client';
-
-// returnUrl is a path only (leading slash, no scheme/host) — never an open redirect.
-function safeReturnUrl(raw: string | null): string {
-  if (raw && raw.startsWith('/') && !raw.startsWith('//')) return raw;
-  return '/';
-}
+import { safeReturnPath } from '@/lib/session-gate';
 
 function SignInForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const returnUrl = safeReturnUrl(params.get('returnUrl'));
+  // A same-origin path + query only — never an open redirect (see safeReturnPath).
+  const returnUrl = safeReturnPath(params.get('returnUrl'));
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

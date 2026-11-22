@@ -26,14 +26,21 @@ import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
+import { tryGetMachineId } from '@agentbox/config';
 import { SseFrameReader } from './sse-read.js';
 import type { HostAction, HostActionResult } from './types.js';
 
 export interface HostReachPollerDeps {
   /** Control box base URL (`relay.controlPlaneUrl`). */
   controlPlaneUrl: string;
-  /** Admin bearer — the only credential `/admin/hostreach/*` accepts remotely. */
+  /** Admin bearer, or this PC's device token (`agentbox hub login`). */
   adminToken: string;
+  /**
+   * This machine's id, sent as `X-Agentbox-Device` so the control box knows which
+   * PC a poller is (a device token already says so; the shared admin token does
+   * not). Defaults to `tryGetMachineId()`.
+   */
+  deviceId?: string;
   /**
    * Execute one drained action on this machine. MUST resolve with a result even
    * on failure (a rejection is caught and turned into a non-zero result), or the
@@ -159,7 +166,7 @@ export class HostReachPoller {
         }
         if (res.status === 401 || res.status === 403) {
           this.log(
-            'host-reach: control box rejected the admin token — poller stopping (re-run `agentbox hub setup`)',
+            'host-reach: control box rejected the credential of this machine — poller stopping (revoked? run `agentbox hub login`)',
           );
           return;
         }
@@ -242,7 +249,7 @@ export class HostReachPoller {
           method: 'GET',
           path: `${url.pathname}${url.search}`,
           headers: {
-            Authorization: `Bearer ${this.deps.adminToken}`,
+            ...this.identityHeaders(),
             Accept: 'text/event-stream',
           },
         },
@@ -256,7 +263,7 @@ export class HostReachPoller {
           if (status === 401 || status === 403) {
             res.resume();
             this.log(
-              'host-reach: control box rejected the admin token — stopping (re-run `agentbox hub setup`)',
+              'host-reach: control box rejected the credential of this machine — stopping (revoked? run `agentbox hub login`)',
             );
             finish('fatal');
             return;
@@ -402,6 +409,14 @@ export class HostReachPoller {
     return this.send(url, 'POST', JSON.stringify(body), RESULT_TIMEOUT_MS);
   }
 
+  private identityHeaders(): Record<string, string> {
+    const deviceId = this.deps.deviceId ?? tryGetMachineId();
+    return {
+      Authorization: `Bearer ${this.deps.adminToken}`,
+      ...(deviceId ? { 'X-Agentbox-Device': deviceId } : {}),
+    };
+  }
+
   private send(
     rawUrl: string,
     method: string,
@@ -412,9 +427,7 @@ export class HostReachPoller {
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? httpsRequest : httpRequest;
     const port = url.port.length > 0 ? Number.parseInt(url.port, 10) : isHttps ? 443 : 80;
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.deps.adminToken}`,
-    };
+    const headers: Record<string, string> = this.identityHeaders();
     if (payload !== undefined) {
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = Buffer.byteLength(payload).toString();

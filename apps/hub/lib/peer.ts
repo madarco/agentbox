@@ -30,3 +30,31 @@ export function isLoopbackAddress(addr: string | undefined): boolean {
     addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.')
   );
 }
+
+/**
+ * Trusted header carrying a verified device id from server.ts to the gate and the
+ * routes. Same contract as {@link PEER_LOOPBACK_HEADER}: server.ts strips any
+ * client-supplied copy, verifies `Authorization: Bearer` against the devices
+ * table, and sets this only on a match. Only the embedded server can do that, so
+ * the gate ignores it on the vercel profile.
+ */
+export const DEVICE_ID_HEADER = 'x-agentbox-device-id';
+
+/**
+ * Trusted header carrying the request's source address, for display and
+ * per-source limits (device enrollment). server.ts strips any client copy and
+ * sets it from the socket peer — or, when that peer is loopback (Caddy, or a
+ * tunnel daemon, on the same host), from the last `X-Forwarded-For` entry,
+ * which is the one that proxy appended.
+ */
+export const SOURCE_IP_HEADER = 'x-agentbox-source-ip';
+
+/** See {@link SOURCE_IP_HEADER}. */
+export function sourceAddress(peer: string | undefined, forwardedFor: string | undefined): string {
+  const p = peer ?? '';
+  if (isLoopbackAddress(p) && forwardedFor) {
+    const last = forwardedFor.split(',').pop()?.trim() ?? '';
+    if (last) return last;
+  }
+  return p.startsWith('::ffff:') ? p.slice('::ffff:'.length) : p;
+}

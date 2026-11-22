@@ -45,6 +45,18 @@ export {
   scrubControlPlaneHubEnv,
 } from './hub-expose.js';
 export {
+  applyDeviceCredentialEnv,
+  deviceCredentialPath,
+  deviceTokenFor,
+  hubBearerFor,
+  isDeviceToken,
+  normalizeHubUrl,
+  readDeviceCredential,
+  removeDeviceCredential,
+  writeDeviceCredential,
+  type DeviceCredential,
+} from './hub-device.js';
+export {
   resolveCloudSshTarget,
   ensureCloudSshAlias,
   autoWriteSshConfig,

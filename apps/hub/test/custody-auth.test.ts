@@ -113,3 +113,52 @@ describe('custodyByteReadAuthorized (byte-read elevation)', () => {
     });
   });
 });
+
+describe('custodyByteReadAuthorized — device tokens', () => {
+  it('an enrolled device token is the elevated credential on a password hub', () => {
+    expect(
+      custodyByteReadAuthorized({
+        mode: 'password',
+        adminToken: 'admin',
+        providedToken: 'abdev_x',
+        isLoopback: false,
+        providedTokenIsDevice: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('but not on a locked hub, and an unverified token stays refused', () => {
+    expect(
+      custodyByteReadAuthorized({
+        mode: 'locked',
+        adminToken: 'admin',
+        providedToken: 'abdev_x',
+        isLoopback: false,
+        providedTokenIsDevice: true,
+      }),
+    ).toBe(false);
+    expect(
+      custodyByteReadAuthorized({
+        mode: 'password',
+        adminToken: 'admin',
+        providedToken: 'abdev_x',
+        isLoopback: false,
+        providedTokenIsDevice: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('custodyByteReadAuthorized — #7 no admin token, no elevated tier', () => {
+  it('a device token is refused when the hub has no admin token', () => {
+    expect(
+      custodyByteReadAuthorized({
+        mode: 'password',
+        adminToken: '',
+        providedToken: 'abdev_x',
+        isLoopback: false,
+        providedTokenIsDevice: true,
+      }),
+    ).toBe(false);
+  });
+});

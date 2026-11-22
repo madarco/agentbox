@@ -11,6 +11,7 @@
  * load it without importing a command.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { applyDeviceCredentialEnv } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,6 +33,12 @@ export const CONTROL_PLANE_ENV_PATH = join(
  * already makes an explicit env var win, so reading the file is always safe.
  */
 export function loadControlPlaneEnv(path: string = CONTROL_PLANE_ENV_PATH): void {
+  // An enrolled PC (`agentbox hub login`) presents its own token first; the file
+  // below then only fills what is still unset. Only for the hub this process is
+  // configured for (exported at CLI startup) — with no hub to check against, a
+  // device token is never applied, so it cannot reach a hub that did not issue it.
+  const hubUrl = process.env.AGENTBOX_CONTROL_PLANE_URL;
+  if (path === CONTROL_PLANE_ENV_PATH && hubUrl) applyDeviceCredentialEnv(process.env, hubUrl);
   if (!existsSync(path)) return;
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());

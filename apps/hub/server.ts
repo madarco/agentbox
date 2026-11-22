@@ -43,7 +43,14 @@ import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
 import { cloudBackendLoader } from './lib/provider-importers';
-import { PEER_LOOPBACK_HEADER, isLoopbackAddress } from './lib/peer';
+import {
+  DEVICE_ID_HEADER,
+  PEER_LOOPBACK_HEADER,
+  SOURCE_IP_HEADER,
+  isLoopbackAddress,
+  sourceAddress,
+} from './lib/peer';
+import { createDeviceService, type DeviceService } from './lib/backend/devices';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -86,6 +93,25 @@ async function resolveStore(storeDbPath: string): Promise<Store | undefined> {
   return store;
 }
 
+function bearerOf(header: string | undefined): string {
+  const m = header ? /^Bearer\s+(.+)$/i.exec(header) : null;
+  return m ? m[1]!.trim() : '';
+}
+
+/** The devices service in the relay's terms (it carries no hub types). */
+function relayDeviceAuth(devices: DeviceService): {
+  verify(token: string): { id: string; label: string } | null;
+  onRevoked(listener: (deviceId: string) => void): () => void;
+} {
+  return {
+    verify: (token) => {
+      const d = devices.verifyToken(token);
+      return d ? { id: d.id, label: d.label } : null;
+    },
+    onRevoked: (l) => devices.onRevoked(l),
+  };
+}
+
 /** Parse a positive-int env override; undefined (→ the relay's default) if unset or junk. */
 function positiveIntFromEnv(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
@@ -97,7 +123,7 @@ async function main(): Promise<void> {
   // localhost: provision the token gate secret and hand it to the middleware via
   // env (unless auth is explicitly off). Do this before Next starts so the mode
   // is settled for the first request.
-  const { authMode, STORE_DB_PATH } = await import('./lib/auth-config');
+  const { authMode, DEVICES_DB_PATH, STORE_DB_PATH } = await import('./lib/auth-config');
   if (process.env.AGENTBOX_HUB_PROFILE === 'localhost' && process.env.AGENTBOX_HUB_AUTH !== 'off') {
     const { ensureHubToken } = await import('./lib/hub-token');
     process.env.AGENTBOX_HUB_TOKEN = await ensureHubToken();
@@ -143,10 +169,16 @@ async function main(): Promise<void> {
   // tables — it fails closed, but a cold start would answer 401 to a legitimately
   // signed-in user until the seed finished.
   const bootMode = authMode();
+  let devices: DeviceService | undefined;
   if (bootMode === 'password') {
     const { ensureAuthReady } = await import('./lib/auth');
     await ensureAuthReady();
     process.stdout.write('agentbox-hub: auth ready\n');
+    // Enrolled PCs (`agentbox hub login`). Only a password profile has an owner to
+    // approve them; a local single-PC hub needs no enrollment at all.
+    const { openSqliteDeviceRepo } = await import('./lib/devices-sqlite');
+    devices = createDeviceService({ repo: await openSqliteDeviceRepo(DEVICES_DB_PATH) });
+    globalThis.__AGENTBOX_HUB_DEVICES = devices;
   } else if (bootMode === 'locked') {
     process.stdout.write(
       'agentbox-hub: WARNING — BETTER_AUTH_SECRET is not set, so nobody can sign in and every ' +
@@ -202,6 +234,8 @@ async function main(): Promise<void> {
     store,
     custody,
     adminToken,
+    // A device token is accepted wherever a PC used the shared admin token.
+    ...(devices ? { deviceAuth: relayDeviceAuth(devices) } : {}),
     // Custody carries project seed tars, which dwarf the relay's 1 MiB
     // control-plane body cap. Env-tunable so a control box with unusually large
     // untracked seeds can be raised without a rebuild (`relay.custodyMaxBodyBytes`
@@ -234,6 +268,17 @@ async function main(): Promise<void> {
       if (isLoopbackAddress(req.socket.remoteAddress)) {
         req.headers[PEER_LOOPBACK_HEADER] = '1';
       }
+      // Same strip-then-stamp for the device a Bearer belongs to: the gate
+      // (proxy.ts) cannot open the devices database, so it trusts this header.
+      delete req.headers[SOURCE_IP_HEADER];
+      const xff = req.headers['x-forwarded-for'];
+      req.headers[SOURCE_IP_HEADER] = sourceAddress(
+        req.socket.remoteAddress,
+        Array.isArray(xff) ? xff.join(',') : xff,
+      );
+      delete req.headers[DEVICE_ID_HEADER];
+      const device = devices?.verifyToken(bearerOf(req.headers.authorization));
+      if (device) req.headers[DEVICE_ID_HEADER] = device.id;
       void handle(req, res);
     },
   });

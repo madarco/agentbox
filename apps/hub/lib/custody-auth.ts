@@ -47,6 +47,12 @@ export function custodyByteReadAuthorized(args: {
   providedToken: string;
   /** Whether the request arrived over loopback (server.ts's trusted peer stamp). */
   isLoopback: boolean;
+  /**
+   * The provided token is an enrolled, unrevoked device's token. A PC attaches to
+   * its boxes directly with the SSH keys it reads from custody, so its own
+   * revocable token is the elevated credential there, in place of the shared one.
+   */
+  providedTokenIsDevice?: boolean;
 }): boolean {
   if (args.mode === 'off') return true;
   // `locked` is a misconfigured deployed hub (no signing secret). The gate 503s
@@ -54,7 +60,10 @@ export function custodyByteReadAuthorized(args: {
   if (args.mode === 'locked') return false;
   if (args.mode === 'token') return args.isLoopback;
   // password:
+  // No admin token means no elevated tier at all — the relay switches device
+  // auth off in that case too, so a device token must not be the exception.
   if (args.adminToken.length === 0) return false;
+  if (args.providedTokenIsDevice === true) return true;
   if (args.providedToken.length === 0) return false;
   return timingSafeEqualStr(args.providedToken, args.adminToken);
 }
