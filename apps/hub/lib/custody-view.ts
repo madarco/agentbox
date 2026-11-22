@@ -165,3 +165,25 @@ export function fmtBytes(n: number): string {
   const mb = kb / 1024;
   return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
+
+/** The skills library as the custody manifest shows it, for the System page. */
+export interface SkillsSummary {
+  /** Stored skills (one `skills/<name>/meta.json` each). */
+  count: number;
+  /** Bytes of every stored version's tarball. */
+  size: number;
+  /** Whether the library was ever seeded (`skills/.seeded`). */
+  seeded: boolean;
+}
+
+export function summarizeSkills(entries: CustodyEntry[]): SkillsSummary {
+  let count = 0;
+  let size = 0;
+  let seeded = false;
+  for (const e of entries) {
+    if (e.path === 'skills/.seeded') seeded = true;
+    else if (/^skills\/[^/]+\/meta\.json$/.test(e.path)) count++;
+    else if (/^skills\/[^/]+\/[^/]+\.tar\.gz$/.test(e.path)) size += e.size;
+  }
+  return { count, size, seeded };
+}

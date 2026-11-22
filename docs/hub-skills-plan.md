@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phase 1 implemented (see
-[`hub-skills-backlog.md`](./hub-skills-backlog.md) for what it left open);
-Phases 1b+ not started.
+from the PC) and adds the `agentbox skills` TUI. Phases 1 and 1b implemented
+(see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what they left
+open); Phases 2+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -633,6 +633,18 @@ control box stops adopting a PC bake whose skills differ from the library.
 
 **Done:** a skill discarded in the web UI is gone from `agentbox skills --list`;
 a cloud `prepare` reports stale after adding a host skill.
+
+**Status: implemented 2026-11-22**, live-checked on an isolated hub: a skill
+discarded in the web Skills page is gone from `agentbox skills --list`, and a
+cloud base stamped on that machine reads `stale` ("host skills changed since
+this base was baked") after a skill is added, and `fresh` again once it is
+removed. Deviations, both from the two code reviews: the skills digest is
+**recorded** on each bake (`base.skillsDigest` + `skillsHost`) rather than folded
+into the fingerprint, because that fingerprint is the cross-machine identity bake
+sharing compares; and the control box's library gate is **deferred to Phase 2**,
+because declining a PC bake today makes the control box bake from its empty home
+and hand boxes no skills at all. Details in
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 2 — delivery to boxes (claude, all providers)
 

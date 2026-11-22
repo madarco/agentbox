@@ -126,6 +126,7 @@ export {
   CLOUD_CHECKPOINTS_ROOT,
   CLOUD_SNAPSHOT_NAME_PREFIX,
   baseFreshnessFromFingerprints,
+  withSkillsFreshness,
   cloudSnapshotName,
   currentCloudBaseFingerprint,
   listAllCloudCheckpoints,

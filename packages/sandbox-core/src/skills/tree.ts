@@ -12,9 +12,12 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { TarFile } from './tar.js';
 
-export interface SkillFile extends TarFile {
+/** One normalized file of a skill: POSIX relative path, 0644/0755, bytes and their sha256. */
+export interface SkillFile {
+  path: string;
+  mode: number;
+  data: Buffer;
   sha256: string;
 }
 

@@ -19,7 +19,11 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { CloudBackend } from '@agentbox/core';
 import { hashProjectPath, projectDirSegment, sanitizeMnemonic } from '@agentbox/config';
-import { type PreparedProviderKind, readPreparedStateRaw } from '@agentbox/sandbox-core';
+import {
+  type PreparedProviderKind,
+  readPreparedStateRaw,
+  skillsStaleness,
+} from '@agentbox/sandbox-core';
 
 export const CLOUD_CHECKPOINTS_ROOT = join(homedir(), '.agentbox', 'cloud-checkpoints');
 
@@ -308,6 +312,28 @@ export function baseFreshnessFromFingerprints(
     };
   }
   return { state: 'fresh' };
+}
+
+/**
+ * Add the skills axis to a fingerprint verdict: a base this machine baked, whose
+ * skills have changed since, is `stale` too. Only a `fresh` verdict is
+ * re-examined (an unprepared/unknown/already-stale one already says what to do),
+ * and only for a record stamped on THIS machine — see `skillsStaleness`.
+ */
+export async function withSkillsFreshness(
+  provider: string,
+  status: BaseStatus,
+): Promise<BaseStatus> {
+  if (status.state !== 'fresh') return status;
+  try {
+    const raw = readPreparedStateRaw(provider as PreparedProviderKind) as {
+      base?: { skillsDigest?: string; skillsHost?: string };
+    } | null;
+    const reason = await skillsStaleness(raw?.base);
+    return reason ? { state: 'stale', reason } : status;
+  } catch {
+    return status;
+  }
 }
 
 export async function removeCloudCheckpointDir(

@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import {
   fmtBytes,
   summarizeAgentCredentials,
+  summarizeSkills,
   type AgentCredSummary,
   type CustodyEntry,
 } from '@/lib/custody-view';
@@ -396,9 +397,9 @@ function CarriedSection({
   }
 
   const agents = summarizeAgentCredentials(custody.entries);
-  // On a control box, only skills entries are meaningful — the box gets its
-  // logins from custody, not from this VPS's config/identity files.
-  const skills = hostCarried.filter((c) => c.kind === 'skills');
+  // On a control box the VPS's own home carries nothing meaningful: logins come
+  // from custody, and skills from the library (also in custody).
+  const library = summarizeSkills(custody.entries);
   return (
     <>
       <SectionLabel
@@ -419,7 +420,11 @@ function CarriedSection({
         <Link href="/custody" className="underline underline-offset-2 hover:text-foreground">
           custody
         </Link>
-        , plus the skills this control box carries.
+        , plus the{' '}
+        <Link href="/skills" className="underline underline-offset-2 hover:text-foreground">
+          skills library
+        </Link>
+        .
       </div>
 
       <div className="mb-2 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
@@ -445,19 +450,28 @@ function CarriedSection({
 
       <div className="mb-2 mt-6 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
         <Icons.book className="size-3.5" />
-        Skills · this control box
+        Skills · library
       </div>
-      {skills.length === 0 ? (
-        <EmptyBox>
-          <div>This control box carries no skills of its own.</div>
-        </EmptyBox>
-      ) : (
-        <Card className="divide-y divide-border/60 overflow-hidden">
-          {skills.map((c) => (
-            <CarriedRow key={`${c.agent}:${c.hostPath}`} c={c} />
-          ))}
-        </Card>
-      )}
+      <Card className="flex items-center gap-3 px-5 py-3">
+        <span className="text-[13px] font-medium">
+          {library.count} skill{library.count === 1 ? '' : 's'}
+        </span>
+        <span className="font-mono text-[11px] text-[#a4a9b0]">{fmtBytes(library.size)}</span>
+        <span className="text-[12px] text-muted-foreground">
+          {library.count > 0
+            ? "stored for your PCs; boxes don't read the library yet"
+            : library.seeded
+              ? 'emptied; upload from a PC with `agentbox skills`'
+              : 'seeded by the first PC that creates a box here'}
+        </span>
+        <Link
+          href="/skills"
+          className="ml-auto flex items-center gap-1 font-mono text-[11px] text-[#a4a9b0] hover:text-foreground"
+        >
+          Skills
+          <Icons.ext className="size-3" />
+        </Link>
+      </Card>
     </>
   );
 }

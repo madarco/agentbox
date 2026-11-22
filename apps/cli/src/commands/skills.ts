@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
-import { discoverLocalSkills, type LocalSkill } from '../lib/skills/discover.js';
+import { discoverLocalSkills, type LocalSkill } from '@agentbox/sandbox-core';
 import {
   compareSkills,
   downloadHubSkill,

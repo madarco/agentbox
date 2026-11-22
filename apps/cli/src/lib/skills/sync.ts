@@ -10,9 +10,13 @@ import { lstat, mkdir, readlink, rename, rm, stat, symlink, writeFile } from 'no
 import { dirname, join, resolve } from 'node:path';
 import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import type { HubApiClient, HubApiSkill } from '../../control-plane/hub-api-client.js';
-import { discoverLocalSkills, type LocalSkill } from './discover.js';
+import {
+  discoverLocalSkills,
+  readSkillTree,
+  treeHash,
+  type LocalSkill,
+} from '@agentbox/sandbox-core';
 import { readTar, writeTar } from './tar.js';
-import { readSkillTree, treeHash } from './tree.js';
 
 export interface SkillsContext {
   home: string;
