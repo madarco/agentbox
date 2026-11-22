@@ -210,7 +210,9 @@ From most explicit to the default:
 
 1. **API**: `POST /api/v1/boxes` gains `sources: { repos: [{ url, path?, base? }] }` as a third
    option next to `projectId` / `repoUrl`. `repoUrl` stays, as sugar for one repo at `path: ''`. The
-   either/or check becomes "exactly one of `projectId`, `repoUrl`, `sources`".
+   either/or check becomes "exactly one of `projectId`, `repoUrl`, `sources`". `sources` may have
+   `repos: []` with a non-empty `carry` (a repo-less, carry-only box, Decision 7 and §3.3); a
+   `sources` with neither repos nor carry is a `400`.
 2. **CLI**: `agentbox create --repo <url-or-folder>[:<path>][@<base>]`, repeatable. A folder
    argument is resolved on the PC (its origin plus this machine's folder); a URL means "clone it",
    i.e. a hub/clone create. Consistent with the config-key rule, a repeated flag rather than an env
@@ -320,8 +322,31 @@ carry. `hasGit` becomes exactly `sources.repos.length > 0`, still derived on rea
 for old boxes. Such a box has no project key. It groups under its folder on its own machine (today's
 `hashProjectPath(projectRoot)`) or, from another machine, under "no project". Its carry still
 resolves through `CarrySource.from`. Phase 4's lookup answers "the origin machine or the cache",
-never "any machine with the project". The API's "one of `projectId`/`repoUrl`" check already stops a
-repo-less hub create. That stays as it is: service-agent creates go through their own route.
+never "any machine with the project".
+
+**The hub accepts a repo-less, carry-only box** (Decision 7). Today the "one of
+`projectId`/`repoUrl`" check (`validate.ts:109-122`) refuses one, although service agents such as
+openclaw are already repo-less boxes. With `sources: { repos: [], carry: [...] }`:
+
+- **Carry custody scope.** A repo-less box has no project slug, so its carry cannot live under
+  `projects/<slug>/seed/`. The CLI uploads the approved entries before posting the create to a
+  box-scoped prefix, `boxes/<key>/carry/` (`carry.tar.gz` + `carry.json`, the same pair
+  `custody-seed.ts` writes per project). `<key>` is a client-minted id sent in the create body and
+  stamped on the registration. That is the same `boxes/<id>/…` fallback the cp cache already uses for
+  a box with no remote (`cp-cache.ts:44`). Each `CarrySource` records `from: { kind: 'custody',
+  key }`, so a later start or resync reads the same entry with the PC off.
+- **Workspace.** The worker skips the clone: the job dir is an empty folder with the staged carry
+  beside it (today's `<dest>.carry` sibling, `hub-worker.ts:202-205`), and `provider.create` seeds
+  it as a plain, non-git workspace (the existing tarball path). The result is an empty `/workspace`,
+  `hasGit: false`, no branch.
+- **`agentbox.yaml`.** It comes from carry, like any file: an entry with
+  `dest: /workspace/agentbox.yaml` is what ctl reads on boot, so a carry-only box can still declare
+  services and tasks. With no such entry the box runs no units, and its agent is what it is for.
+- **Payload and UI.** `projectId` is absent and the box groups under "no project". `hasGit: false`
+  already hides the git UI in the web UI and the tray (`docs/bot-lifecycle-ui-plan.md` Phase 2).
+- **Service agents.** Their create routing on a remote hub is a separate, known gap
+  (`docs/workspaces-remote-hub-backlog.md`). This path is what they would use, but moving them onto
+  it is out of scope here.
 
 ---
 
@@ -516,6 +541,25 @@ one remote-docker box against the Linux test VM's engine.
 the web UI / `POST /boxes` with two `sources.repos`, with the PC off. Push from each repo with
 `git.pushMode` as configured, and confirm on GitHub.
 
+### Phase 5b: hub-created repo-less (carry-only) boxes
+
+Depends on Phases 2 (`BoxSources`) and 3 (API `sources`), not on multi-repo seeding. It shares
+Phase 5's control box, so it runs right after it.
+
+- `parseCreateBox` accepts `sources` with `repos: []` and a non-empty `carry`; neither is a `400`.
+- CLI: upload approved carry to `boxes/<key>/carry/` in custody before posting (§3.3);
+  `agentbox create --via-hub` with no repo in the cwd (or `--no-repo`) takes this path instead of
+  refusing.
+- Worker: no clone, an empty job dir plus staged carry, and a plain (non-git) seed.
+  `CarrySource.from` is `custody`, so start/resync re-reads it with the PC off.
+- Docs: `api.mdx` (`sources` with `repos: []`), `deployed-hub.mdx`.
+
+**Verify**: on the **real Hetzner control box** from Phase 5, create a box from a folder with no git
+repo, carrying a data file and an `agentbox.yaml` that declares one service. With the PC off:
+the file is in the box, the service runs, `GET /boxes` shows `hasGit: false` and no `projectId`, and
+the web UI shows no git actions. Stop/start the box with the PC still off: the carry is re-read
+from custody (`ls`/`sha256sum` in the box, not the exit code).
+
 ### Phase 6: `git --repo`, timeline + PR per repo, tray
 
 - `--repo` on `agentbox git *` and `repo` in the git route body; per-repo timeline facts and PR
@@ -568,8 +612,10 @@ not re-copied from PC B's home, and the log says so.
    feeding checkouts. Folding them together is backlog item B1.
 6. **Checkpoints across PCs**: not in multi-PC Stage 1. Re-keying checkpoint names by the primary
    repo key is backlog item B2; v1 keeps `hashProjectPath(projectRoot)`.
-7. **Repo-less boxes from the hub**: `POST /boxes` keeps refusing a box with no repo (§3.3);
-   service-agent creates keep their own route. A carry-only hub box is backlog item B4.
+7. **Repo-less boxes from the hub**: **accepted**. `POST /boxes` takes `sources` with `repos: []`
+   and a non-empty `carry` (a carry-only box), carry going through a box-scoped custody prefix
+   (§3.3). Service agents such as openclaw are already repo-less, so this extends an existing shape
+   to the hub. Implemented in Phase 5b.
 
 ## 9. Backlog (deferred by the decisions above)
 
@@ -578,5 +624,5 @@ not re-copied from PC B's home, and the log says so.
 | B1 | Fold `WorkspaceRecord.hosts[*].projectRoots` into the checkouts registry, so one store answers "where is repo R on machine M" and the workspace keeps only its project list | Decision 5: two stores side by side are fine while the registry proves itself; folding means migrating workspace records again right after #418 re-keyed them | `packages/relay/src/workspaces/types.ts` (`WorkspaceHost`), `workspace-store.ts` (`workspaceForBox`, `findWorkspaceContaining`), the CLI scan in `apps/cli/src/commands/workspace.ts` |
 | B2 | Re-key checkpoint names by the primary `repoKey` instead of `hashProjectPath(projectRoot)`, so PC B can list and restore PC A's checkpoints | Decision 6: not needed for multi-PC Stage 1, where teleport means re-attach | `packages/sandbox-docker/src/checkpoint.ts:38`, `packages/sandbox-cloud/src/checkpoint.ts:102`, `packages/sandbox-remote-docker/src/index.ts:46`, `box.defaultCheckpoint*` lookups |
 | B3 | Managed mirror under `~/.agentbox/repos/<repoKey>` so a docker box can include a repo the PC has never cloned | Decision 3: refuse first, add the mirror once multi-repo docker works with real checkouts | `packages/sandbox-docker/src/create.ts` (repo resolution), checkouts registry (the mirror reports as a checkout) |
-| B4 | Carry-only boxes from the hub (`sources: { repos: [], carry }`) | Decision 7 | `parseCreateBox`, `create-worker.ts`, custody carry scope for a box with no repo |
+| B4 | ~~Carry-only boxes from the hub~~: moved into the plan as Phase 5b (Decision 7) | | |
 | B5 | `agentbox git push|pull --all` across a multi-repo box | Not needed for v1 (§5) | `apps/cli/src/commands/git.ts`, the git route |
