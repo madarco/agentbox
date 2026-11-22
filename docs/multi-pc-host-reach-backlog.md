@@ -59,3 +59,16 @@ for teams PCs must never hold it (device tokens only).
   machine that created the box).
 - Multi-repo boxes: `hostCandidatesFor` already picks a nested repo by path prefix,
   but registrations describe one root repo until box-sources Phase 2.
+
+## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
+
+- **Direct attach / shell / `cp` from a computer that did not deploy the control box.**
+  They need SSH to the control box's engine, which is root on the control box. The PR
+  gives them a clear message instead; options (hub-relayed PTY, a per-box sshd, a
+  restricted forced-command key) are in the PR description. Hub-relayed attach is the
+  end goal and is out of scope.
+- **A pre-existing `hub` alias that is not the control box.** `ensureHubDockerTarget`
+  leaves a user's own `hub` alias alone (`hub -> me@nas`), so on the deploying computer
+  direct actions on a docker:hub box dial that host instead and fail with "no such
+  container". Pre-existing; fix: register the control box's engine under a reserved
+  name, or have setup refuse/rename when `hub` is taken.

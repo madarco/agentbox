@@ -630,10 +630,11 @@ async function mutedDockerBoxes(
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   if (!cfg || !dockerProvidersHidden(cfg.effective))
     return { ids: new Set(), reason: null, hint: '' };
-  if (!listingOwnsLocalDocker(listing, remoteHubConfigured(cfg.effective))) {
-    return { ids: new Set(), reason: null, hint: '' };
-  }
-  const ids = new Set(boxes.filter((b) => isDockerProvider(b.provider)).map((b) => b.id));
+  const ownsLocal = listingOwnsLocalDocker(listing, remoteHubConfigured(cfg.effective));
+  const ids = new Set(
+    boxes.filter((b) => mutedUnderControlBox(b.provider, ownsLocal)).map((b) => b.id),
+  );
+  if (ids.size === 0) return { ids, reason: null, hint: '' };
   return {
     ids,
     reason: dockerHiddenReason(cfg.effective),
@@ -656,6 +657,17 @@ export function listingOwnsLocalDocker(
 ): boolean {
   if (listing.target) return listing.target.mode === 'local';
   return !controlBoxConfigured;
+}
+
+/**
+ * A box `ls` tags "inactive" under a control box. Plain `docker` is always a
+ * laptop-local engine, whoever lists it. A `remote-docker` box (docker:hub
+ * included) in the control box's listing runs on an engine the control box
+ * drives, so it is live; in this machine's own listing it is a leftover.
+ */
+export function mutedUnderControlBox(provider: string, listingOwnsLocal: boolean): boolean {
+  if (provider === 'docker') return true;
+  return listingOwnsLocal && isDockerProvider(provider);
 }
 
 /** Footer note when docker boxes are shown inactive, naming the reason + what to do. */

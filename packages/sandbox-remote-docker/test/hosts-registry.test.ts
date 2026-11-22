@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dialTarget } from '../src/remote-docker.js';
+import { dialTarget, unregisteredAliasHint } from '../src/remote-docker.js';
 import { parseRemoteTarget } from '../src/target.js';
 import {
   assertValidAlias,
@@ -171,15 +171,22 @@ describe('dialTarget', () => {
   });
 });
 
-describe('dialTarget on a docker:hub box from a computer that did not deploy the hub', () => {
-  it("says the engine is the control box's own, instead of handing ssh a bare `hub`", () => {
-    expect(() => dialTarget(parseRemoteTarget('hub'))).toThrow(
-      /control box's own docker engine \(docker:hub\)/,
-    );
+describe('unregisteredAliasHint: a box whose engine is registered on another computer', () => {
+  it("names the control box's own engine for an unregistered `hub`", () => {
+    expect(unregisteredAliasHint('hub')).toMatch(/control box's own docker engine \(docker:hub\)/);
   });
 
-  it('dials it where the `hub` engine IS registered (the deploying computer)', () => {
+  it('names a host shared from another computer for any other unregistered alias', () => {
+    expect(unregisteredAliasHint('nas')).toMatch(/not a docker host registered on this computer/);
+  });
+
+  it('says nothing for a registered alias or a raw destination', () => {
     upsertHostAlias('hub', 'agentbox-hub');
-    expect(dialTarget(parseRemoteTarget('hub')).target.host).toBe('agentbox-hub');
+    expect(unregisteredAliasHint('hub')).toBeUndefined();
+    expect(unregisteredAliasHint('me@10.0.0.9')).toBeUndefined();
+  });
+
+  it('dialTarget still passes an unregistered `hub` through (a `Host hub` in ~/.ssh/config)', () => {
+    expect(dialTarget(parseRemoteTarget('hub')).target.host).toBe('hub');
   });
 });

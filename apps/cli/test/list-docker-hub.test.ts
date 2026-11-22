@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { listingOwnsLocalDocker } from '../src/commands/list.js';
+import { listingOwnsLocalDocker, mutedUnderControlBox } from '../src/commands/list.js';
 
 /**
  * `ls` tags docker boxes "inactive" only when they are THIS machine's own
@@ -19,5 +19,19 @@ describe('listingOwnsLocalDocker', () => {
   it('a cached listing came from the control box when one is configured', () => {
     expect(listingOwnsLocalDocker({}, true)).toBe(false);
     expect(listingOwnsLocalDocker({}, false)).toBe(true);
+  });
+});
+
+describe('mutedUnderControlBox', () => {
+  it('plain docker is always a laptop-local engine, even in the control box listing', () => {
+    expect(mutedUnderControlBox('docker', false)).toBe(true);
+    expect(mutedUnderControlBox('docker', true)).toBe(true);
+  });
+  it('remote-docker (docker:hub) is live in the control box listing, a leftover in a local one', () => {
+    expect(mutedUnderControlBox('remote-docker', false)).toBe(false);
+    expect(mutedUnderControlBox('remote-docker', true)).toBe(true);
+  });
+  it('never mutes a cloud box', () => {
+    expect(mutedUnderControlBox('hetzner', true)).toBe(false);
   });
 });
