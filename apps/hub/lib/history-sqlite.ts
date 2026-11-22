@@ -3,7 +3,6 @@
 // transcript volume would bloat it. Imported only by server.ts, dynamically.
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { HistoryRecord } from '@agentbox/core';
 import type {
   HistoryChunkRow,
   HistoryFileRow,

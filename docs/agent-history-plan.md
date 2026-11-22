@@ -1,6 +1,7 @@
 # Agent history — sessions, memory and usage in the hub
 
-**Status:** Phase 1 in progress (feat/agent-history-p1). Phase 0 (measurement) is done — see
+**Status:** Phase 1 done (store, archive, ingest for claude in boxes);
+Phases 2-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -230,7 +231,7 @@ boxes; session → box binding; final flush on destroy; redaction at the edge.
 **Done:** a claude turn in a docker box and in one cloud box appears in the
 store with correct box attribution; destroy leaves the session intact.
 
-#### Phase 1 implementation plan (2026-11-22)
+#### Phase 1 implementation (2026-11-22, done)
 
 Decisions 3 and 4 below are taken as accepted: capture is on by default with a
 per-project opt-out (`history.capture`), retention 90 days (`history.retentionDays`).

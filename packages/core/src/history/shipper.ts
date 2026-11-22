@@ -183,7 +183,7 @@ export class HistoryShipper {
     final: boolean,
     stats: ShipStats,
   ): Promise<void> {
-    const { source, sink, redactor, frameMax } = this.opts;
+    const { source, redactor, frameMax } = this.opts;
     const readMax = this.opts.readMax ?? DEFAULT_READ_MAX;
     let budget = this.opts.passBudget ?? DEFAULT_PASS_BUDGET;
     const size = await source.size(abs).catch(() => null);
