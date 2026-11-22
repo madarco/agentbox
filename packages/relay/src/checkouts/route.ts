@@ -79,6 +79,17 @@ export function hostReachRouteFor(
   // Downloads too: a download WRITES the box into the project it was created
   // from, and on another PC's clone that would overwrite its working tree.
   const paths = requestPaths(method, params);
+  // A download for a box with no recorded origin has no right machine at all:
+  // any PC that merely knows the box (one that adopted it to serve a cp) would
+  // have its own clone overwritten. Refused, not handed to whoever polls.
+  if (method.startsWith('download.') && !reg.originMachineId) {
+    return {
+      kind: 'refused',
+      error:
+        'this box has no recorded computer it was created from, so its download has nowhere ' +
+        'safe to land; run `agentbox download <box>` on the computer you want it on',
+    };
+  }
   if (paths === undefined) return originOnly();
 
   // A host-absolute path (`/Users/me/x`, `~/x`, also `/workspace/x`, which the

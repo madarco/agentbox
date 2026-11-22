@@ -2882,16 +2882,12 @@ function isHostReachMethod(method: string): boolean {
     method === 'cp.toHost' ||
     method === 'cp.fromHost' ||
     method.startsWith('tool.') ||
-    method.startsWith('download.')
+    // Only the kind a cloud box supports: env/config/claude still fail at once
+    // as unsupported rather than waiting on a PC that would refuse them too.
+    method === 'download.workspace'
   );
 }
 
-/**
- * What a box is told when a host tool could not reach the machine that granted
- * it. Deliberately has no fallback to offer, unlike a cached copy: running a
- * same-named binary from somewhere else is not a degraded answer, it is a
- * different program.
- */
 /** What a box is told when the computer its download is for did not take it. */
 export function downloadUnreachableMessage(
   boxName: string,
@@ -2918,6 +2914,12 @@ export function downloadUnreachableMessage(
   ].join('\n');
 }
 
+/**
+ * What a box is told when a host tool could not reach the machine that granted
+ * it. Deliberately has no fallback to offer, unlike a cached copy: running a
+ * same-named binary from somewhere else is not a degraded answer, it is a
+ * different program.
+ */
 function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): string {
   const lead =
     reason === 'went-away'

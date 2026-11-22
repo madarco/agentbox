@@ -974,6 +974,21 @@ async function loadCloudCp(): Promise<CloudCpModule> {
   }
 }
 
+/**
+ * The host folder a cp/download resolves against, and the box record if this
+ * machine has one. No record is fine when the caller names the folder (a PC
+ * serving a box it has not adopted yet; it adopts only once approved);
+ * otherwise the record is the only base there is.
+ */
+async function hostReachBase(
+  deps: CloudActionExecutorDeps,
+): Promise<{ record: BoxLookup | null; base: string }> {
+  const record = deps.hostFolder
+    ? await lookupCloudBox(deps.boxId).catch(() => null)
+    : await lookupCloudBox(deps.boxId);
+  return { record, base: deps.hostFolder ?? record?.workspacePath ?? '' };
+}
+
 async function runCpRpc(
   action: HostAction,
   deps: CloudActionExecutorDeps,
@@ -1002,12 +1017,8 @@ async function runCpRpc(
   // Resolve host paths against THIS box's workspace so a relative path doesn't
   // land under the relay daemon's CWD (which belongs to whichever project
   // started the relay), and so the consent prompt shows the real destination.
-  // No record is fine when the caller names the folder (a PC serving a box it
-  // has not adopted yet); otherwise the record is the only base there is.
-  const record = deps.hostFolder
-    ? await lookupCloudBox(deps.boxId).catch(() => null)
-    : await lookupCloudBox(deps.boxId);
-  const lookup = { workspacePath: deps.hostFolder ?? record?.workspacePath ?? '' };
+  const { record, base } = await hostReachBase(deps);
+  const lookup = { workspacePath: base };
   const hostSide = method === 'cp.toHost' ? [norm.dest] : norm.sources;
   const needsFolder = hostSide.some((p) => !p.startsWith('/') && !p.startsWith('~'));
   const folderHere = lookup.workspacePath.length > 0 && existsSync(lookup.workspacePath);
@@ -1199,11 +1210,10 @@ async function runDownloadRpc(
   }
   // A host-reach download names THIS machine's checkout (`hostFolder`); a box
   // it has not adopted yet has no record, and is adopted only once approved.
-  const record = deps.hostFolder
-    ? await lookupCloudBox(deps.boxId).catch(() => null)
-    : await lookupCloudBox(deps.boxId);
-  const base = deps.hostFolder ?? record?.workspacePath ?? '';
-  if (!base || !existsSync(base)) {
+  // Only that path insists the folder exists: a plain download recreates a
+  // moved project folder, as it always has.
+  const { record, base } = await hostReachBase(deps);
+  if (deps.hostFolder !== undefined && !existsSync(base)) {
     return {
       exitCode: 69,
       stdout: '',
@@ -1258,8 +1268,20 @@ async function runDownloadRpc(
     const stop = await deps.prepareBox();
     if (stop) return { exitCode: 69, stdout: '', stderr: `${stop}\n` };
   }
+  let resolved = record;
+  if (!resolved) {
+    try {
+      resolved = await lookupCloudBox(deps.boxId);
+    } catch (err) {
+      return {
+        exitCode: 69,
+        stdout: '',
+        stderr: `download could not run on this machine: ${err instanceof Error ? err.message : String(err)}\n`,
+      };
+    }
+  }
   const backend = await resolveCloudBackend(deps.backendName);
-  const handle: CloudHandle = cloudHandleOf(record ?? (await lookupCloudBox(deps.boxId)));
+  const handle: CloudHandle = cloudHandleOf(resolved);
   const cp = await loadCloudCp();
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);

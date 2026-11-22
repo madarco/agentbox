@@ -567,11 +567,9 @@ describe('download.* routing (multi-PC follow-up)', () => {
       { deviceId: 'pc-a', role: 'origin', label: 'laptop', folder: '/Users/a/app' },
     ]);
   });
-  it('stays unrouted for a box with no origin machine (served as before)', () => {
-    expect(hostReachRouteFor({ boxId: 'b', repoKey: KEY }, 'download.workspace', {}, rows)).toEqual(
-      {
-        kind: 'unrouted',
-      },
-    );
+  it('is refused for a box with no origin machine: no PC is the right one to overwrite', () => {
+    const r = hostReachRouteFor({ boxId: 'b', repoKey: KEY }, 'download.workspace', {}, rows);
+    expect(r.kind).toBe('refused');
+    expect(r.kind === 'refused' && r.error).toMatch(/no recorded computer it was created from/);
   });
 });

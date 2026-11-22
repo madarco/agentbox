@@ -284,4 +284,19 @@ describe('host-reach routing on the control box', () => {
     });
     expect((await rpc).body.exitCode).toBe(0);
   });
+
+  it('does not broker the download kinds a cloud box cannot do (they fail at once, as before)', async () => {
+    await poll(handle, 'pa', PC_A, 50);
+    const rpc = req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'download.env', params: { kind: 'env' } },
+    });
+    expect((await poll(handle, 'pa', PC_A, 300)).body.actions).toEqual([]);
+    // Handled on the hub as before (it asks there); deny it so the call ends.
+    for (let i = 0; i < 50 && handle.prompts.size() === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    for (const p of handle.prompts.all()) handle.prompts.resolve(p.id, 'n');
+    await rpc;
+  });
 });

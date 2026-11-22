@@ -323,4 +323,14 @@ describe('executeHostReachAction', () => {
     expect(adopted).toEqual(['box-1']);
     expect(r).toMatchObject({ exitCode: 69, stderr: 'could not adopt box box-1 here: stubbed\n' });
   });
+
+  it('a plain download (not host-reach) does not refuse a moved project folder', async () => {
+    await writeState([record(join(dir, 'moved-away'))]);
+    const out = await executeCloudAction(
+      action({ method: 'download.workspace', params: { kind: 'workspace' } }),
+      { backendName: 'hetzner', boxId: 'box-1', log: () => {} },
+    ).catch((e: unknown) => ({ exitCode: -1, stdout: '', stderr: String(e) }));
+    // Whatever happens next (no provider here), it is not the host-reach guard.
+    expect(out.stderr).not.toMatch(/project folder .* does not exist here/);
+  });
 });
