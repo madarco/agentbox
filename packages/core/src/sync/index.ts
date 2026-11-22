@@ -86,6 +86,7 @@ export type {
   LlmAccountKind,
 } from './llm-accounts.js';
 export {
+  ACCOUNTS_CUSTODY_SEGMENT,
   DEFAULT_ACCOUNT_ID,
   LLM_ACCOUNT_KINDS,
   accountCloudSubpath,

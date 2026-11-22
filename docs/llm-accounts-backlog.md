@@ -21,6 +21,12 @@ Newest phase last.
   object.** `removeAccount` drops the row and the host secret only; Phase 2
   (`agentbox accounts rm`) must also drop `<volume>-acct-<id>` and refuse while
   a box records the account.
+- **Rows of an uninstalled plugin agent are dropped** by the next mutation
+  (reads refuse unknown agents), and their secret files stay behind under
+  `~/.agentbox/credentials/<agent>/`. `agent rm` should clean both, or warn.
+- **A secret written before its row** can still be deleted by a concurrent
+  `removeAccount` of the same id. Phase 2 login flows must upsert the row first,
+  then write the secret.
 - **Plan's open Phase 0 items** (second OAuth login, codex symlink-on-refresh,
   revocation timing) are unchanged and still gate the docker storage choice for
   codex.

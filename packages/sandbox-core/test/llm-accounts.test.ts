@@ -19,7 +19,6 @@ let dir: string;
 let opts: AccountStoreOptions;
 let claudeBackup: string;
 
-// Ids match the built-ins so `isRealAgentCredential` reads their `realShape`.
 const specsFor = (d: string): AgentSyncSpec[] => [
   {
     id: 'claude',
@@ -32,7 +31,8 @@ const specsFor = (d: string): AgentSyncSpec[] => [
       realShape: 'claude-oauth',
     },
     accountKinds: ['login', 'setup-token', 'api-key'],
-  } as AgentSyncSpec,
+    aliases: ['claude-code'],
+  } as unknown as AgentSyncSpec,
   {
     id: 'codex',
     credential: {
@@ -44,7 +44,7 @@ const specsFor = (d: string): AgentSyncSpec[] => [
       realShape: 'nonempty-json',
     },
     accountKinds: ['login', 'api-key'],
-  } as AgentSyncSpec,
+  } as unknown as AgentSyncSpec,
   { id: 'openclaw' } as AgentSyncSpec,
 ];
 
@@ -89,12 +89,45 @@ describe('default migration', () => {
     expect(statSync(opts.path!).mode & 0o777).toBe(0o600);
   });
 
-  it('a default row survives the legacy file disappearing', async () => {
+  it('a stored default is listed only while its legacy login is real', async () => {
     writeFileSync(claudeBackup, REAL_CLAUDE);
     await upsertAccount(acct({ id: 'default', kind: 'login', label: 'Personal' }), opts);
     rmSync(claudeBackup);
-    const file = await readAccounts(opts);
-    expect(file.accounts).toEqual([expect.objectContaining({ id: 'default', label: 'Personal' })]);
+    expect((await readAccounts(opts)).accounts).toEqual([]);
+    writeFileSync(claudeBackup, REAL_CLAUDE);
+    expect((await readAccounts(opts)).accounts).toEqual([
+      expect.objectContaining({ id: 'default', label: 'Personal' }),
+    ]);
+  });
+
+  it('uses the passed spec realShape, not the global registry', async () => {
+    const custom = [{ ...specsFor(dir)[0]!, id: 'myagent', aliases: [] } as AgentSyncSpec];
+    writeFileSync(claudeBackup, JSON.stringify({ claudeAiOauth: { accessToken: 'a' } }));
+    expect((await readAccounts({ ...opts, specs: custom })).accounts).toEqual([]);
+  });
+
+  it('drops hand-edited rows the write rules refuse', async () => {
+    writeFileSync(claudeBackup, REAL_CLAUDE);
+    writeFileSync(
+      opts.path!,
+      JSON.stringify({
+        version: 1,
+        accounts: [
+          { agent: 'claude', id: 'default', kind: 'api-key', createdAt: 't' },
+          { agent: 'codex', id: 'work', kind: 'setup-token', createdAt: 't' },
+          { agent: 'uninstalled', id: 'work', kind: 'login', createdAt: 't' },
+        ],
+      }),
+    );
+    expect((await readAccounts(opts)).accounts).toEqual([
+      expect.objectContaining({ agent: 'claude', id: 'default', kind: 'login' }),
+    ]);
+  });
+
+  it('an alias resolves to the canonical agent id', async () => {
+    await upsertAccount(acct({ agent: 'claude-code' }), opts);
+    expect((await readAccounts(opts)).accounts[0]!.agent).toBe('claude');
+    expect(await removeAccount('claude-code', 'work', opts)).toBe(true);
   });
 
   it('a corrupt index still shows the default login', async () => {
@@ -176,6 +209,14 @@ describe('upsert / remove / secrets', () => {
     expect((await readAccounts(opts)).accounts).toEqual([]);
     expect(await removeAccount('claude', 'work', opts)).toBe(false);
     await expect(removeAccount('claude', 'default', opts)).rejects.toThrow(/cannot be removed/);
+  });
+
+  it('remove never turns a bad id into a path', async () => {
+    writeFileSync(claudeBackup, REAL_CLAUDE);
+    await expect(removeAccount('claude', '../../claude-credentials', opts)).rejects.toThrow(
+      /lowercase/,
+    );
+    expect(existsSync(claudeBackup)).toBe(true);
   });
 });
 

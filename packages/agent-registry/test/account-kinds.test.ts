@@ -43,4 +43,9 @@ describe('accountKindsProblem', () => {
       /no `credential`/,
     );
   });
+
+  it('refuses a credential file named like the accounts custody segment', () => {
+    const credential = { ...exampleSpec.credential!, boxAbsPath: '/home/vscode/.x/accounts' };
+    expect(agentSpecProblem({ ...exampleSpec, credential })).toMatch(/reserved for named accounts/);
+  });
 });

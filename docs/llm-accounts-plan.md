@@ -90,8 +90,11 @@ is always a `login`; a pasted kind needs a named account.
 - Secrets: `~/.agentbox/credentials/<agent>/<account>.json`, 0600. `default`
   keeps reading/writing the legacy `~/.agentbox/<agent>-credentials.json` path
   until a later cleanup (AgentBox is unreleased — no alias layer beyond that).
-- Custody: `agents/<agent>/<account>/<file>`; `default` stays at
-  `agents/<agent>/<file>`.
+- Custody: `agents/<agent>/accounts/<account>/<file>`; `default` stays at
+  `agents/<agent>/<file>`. (The fixed `accounts/` segment, not the bare id:
+  a plugin credential file need not contain a `.`, and `agents/foo/token` must
+  not double as account `token`'s directory. `agent add` refuses a credential
+  file named `accounts`.)
 - **Docker: split credentials from config.** The shared config volume keeps
   transcripts, settings and skills (so `--resume` works across accounts). The
   credential moves to a per-account volume `agentbox-<agent>-creds-<account>`
@@ -103,9 +106,11 @@ is always a `login`; a pasted kind needs a named account.
   docker uses a per-account config volume plus a shared `projects/` volume
   instead (see [Phase 0 results](#phase-0-results)).
 - Cloud: staged from the account's file instead of the single backup. Daytona's
-  per-org volume gets a subpath per account (`claude/<account>/`).
-- Account ids: 1-32 lowercase letters, digits, inner dashes (no `.`, which keeps
-  `agents/<agent>/<file>` and `agents/<agent>/<account>/<file>` apart).
+  per-org volume gets a SIBLING subpath per account (`claude-acct-<account>/`),
+  never `claude/<account>/`: a default box mounts the whole `claude/` subtree and
+  would read every named account's secret.
+- Account ids: 1-32 lowercase letters, digits, inner dashes — always one path
+  segment, never a traversal.
 - Docker volume name for a named account: `<volume>-acct-<account>`, not
   `<volume>-<account>` — `box.isolate<Agent>Config` already mints
   `<volume>-<boxId>` and a box id is a valid slug.
@@ -567,14 +572,18 @@ confirm on the key's account that usage appeared for 10:27–10:30Z on
   duplicates, `login` needs a `credential`).
 - **`@agentbox/sandbox-core`** (`packages/sandbox-core/src/llm-accounts.ts`):
   `readAccounts` (never writes; a legacy backup counts as `default` only when it
-  passes `isRealAgentCredential`, and a corrupt index reads as empty so the
-  defaults still show), locked `mutateAccounts` (persists the migrated
-  `default` on first mutation), `upsertAccount` (refuses what `accountProblem`
-  refuses), `removeAccount` (row + secret file; `default` refused, that is a
-  logout), `writeAccountSecret`/`readAccountSecret` (0600 in a 0700 dir), and
-  the `{kind, token}` codec for pasted kinds. Nothing calls it yet; Phase 2 does.
+  passes the spec's `realShape`; `default` is listed iff that holds, a stored
+  `default` row only adds its label; stored rows the write rules refuse are
+  dropped; a corrupt index reads as empty so the defaults still show), locked
+  `mutateAccounts` (persists the migrated `default` on first mutation),
+  `upsertAccount` (refuses what `accountProblem` refuses; resolves aliases to
+  the canonical id), `removeAccount` (row + secret file under one lock; `default`
+  refused, that is a logout), `writeAccountSecret`/`readAccountSecret` (0600 in
+  a 0700 dir), and the `{kind, token}` codec for pasted kinds. Nothing calls it
+  yet; Phase 2 does.
 - **Where it differs from the plan above:** reads do not write (the plan said
-  "migrated in place on first read"), the `-acct-` volume infix, and `default`
+  "migrated in place on first read"), the `-acct-` docker volume infix, the
+  sibling Daytona subpath, the `accounts/` custody segment, and `default`
   pinned to `login`.
 
 ## Backlog (not in these phases)

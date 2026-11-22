@@ -24,7 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { AGENTS_FILE } from '@agentbox/config';
-import { LLM_ACCOUNT_KINDS, type AgentSyncSpec } from '@agentbox/core';
+import { ACCOUNTS_CUSTODY_SEGMENT, LLM_ACCOUNT_KINDS, type AgentSyncSpec } from '@agentbox/core';
 
 /**
  * Re-exported, not declared: the path also has to be reachable from
@@ -140,6 +140,11 @@ function credentialProblem(raw: unknown): string | null {
   // yields an empty dir, `mkdir -p ''`, and a copy that never lands.
   if (typeof cred.boxAbsPath !== 'string' || !cred.boxAbsPath.startsWith('/')) {
     return '`credential.boxAbsPath` must be an absolute in-box path';
+  }
+  // Named LLM accounts nest in custody under `agents/<id>/accounts/`; a default
+  // credential FILE of that name would have to be a file and a directory at once.
+  if (cred.boxAbsPath.split('/').pop() === ACCOUNTS_CUSTODY_SEGMENT) {
+    return `\`credential.boxAbsPath\` must not be named '${ACCOUNTS_CUSTODY_SEGMENT}' (reserved for named accounts)`;
   }
   // The credential fan-out WRITES here when a box logs in. An empty or relative
   // path drops a temp file in whatever directory the CLI was run from and loses

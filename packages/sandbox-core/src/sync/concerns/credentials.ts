@@ -28,7 +28,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { SyncTransport } from '@agentbox/core';
+import type { AgentCredential, SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
 import type { AgentId } from '@agentbox/core';
 
@@ -61,6 +61,19 @@ const CLAUDE_HOST_BACKUP = resolveAgentSpec('claude').credential?.hostBackup ?? 
  * (never throws — matches the pre-registry `if (agent === 'claude')` switch).
  */
 export function isRealAgentCredential(agent: CredentialAgentKind, text: string): boolean {
+  const spec = AGENT_SYNC_SPECS.find((s) => s.id === agent);
+  return isRealCredentialShape(spec?.credential?.realShape, text);
+}
+
+/**
+ * {@link isRealAgentCredential} for a caller that already holds the spec (and
+ * may hold one the global registry does not have). An absent shape falls back
+ * to the non-empty JSON object check.
+ */
+export function isRealCredentialShape(
+  realShape: AgentCredential['realShape'] | undefined,
+  text: string,
+): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -68,8 +81,7 @@ export function isRealAgentCredential(agent: CredentialAgentKind, text: string):
     return false;
   }
   if (typeof parsed !== 'object' || parsed === null) return false;
-  const spec = AGENT_SYNC_SPECS.find((s) => s.id === agent);
-  if (spec?.credential?.realShape === 'claude-oauth') {
+  if (realShape === 'claude-oauth') {
     const rt = (parsed as { claudeAiOauth?: { refreshToken?: unknown } }).claudeAiOauth
       ?.refreshToken;
     return typeof rt === 'string' && rt.length > 0;

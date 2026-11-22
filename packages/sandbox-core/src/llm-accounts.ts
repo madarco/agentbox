@@ -30,7 +30,7 @@ import {
 } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './sync/registry.js';
 import { STATE_DIR } from './state.js';
-import { isRealAgentCredential } from './sync/concerns/credentials.js';
+import { isRealCredentialShape } from './sync/concerns/credentials.js';
 
 export const ACCOUNTS_FILE = join(STATE_DIR, 'accounts.json');
 
@@ -52,10 +52,20 @@ function resolveOpts(opts: AccountStoreOptions): Required<AccountStoreOptions> {
   };
 }
 
+/** By canonical id or alias, like `findAgentSpec`; the store keys rows by `spec.id`. */
+function findSpec(specs: readonly AgentSyncSpec[], agent: string): AgentSyncSpec | undefined {
+  return specs.find((s) => s.id === agent || s.aliases?.includes(agent));
+}
+
 function specFor(specs: readonly AgentSyncSpec[], agent: string): AgentSyncSpec {
-  const spec = specs.find((s) => s.id === agent);
+  const spec = findSpec(specs, agent);
   if (!spec) throw new Error(`unknown agent '${agent}'`);
   return spec;
+}
+
+function requireAccountId(id: string): void {
+  const problem = accountIdProblem(id);
+  if (problem) throw new Error(problem);
 }
 
 /**
@@ -66,19 +76,23 @@ function specFor(specs: readonly AgentSyncSpec[], agent: string): AgentSyncSpec 
 export async function findLegacyAccountSlots(
   specs: readonly AgentSyncSpec[] = AGENT_SYNC_SPECS,
 ): Promise<LegacyAccountSlot[]> {
-  const out: LegacyAccountSlot[] = [];
-  for (const spec of specs) {
-    const path = spec.credential?.hostBackup;
-    if (!path) continue;
-    try {
-      const [text, st] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
-      if (!isRealAgentCredential(spec.id, text)) continue;
-      out.push({ agent: spec.id, createdAt: st.mtime.toISOString() });
-    } catch {
-      // absent or unreadable: no legacy login for this agent
-    }
-  }
-  return out;
+  const slots = await Promise.all(
+    specs.map(async (spec): Promise<LegacyAccountSlot | null> => {
+      const cred = spec.credential;
+      if (!cred?.hostBackup) return null;
+      try {
+        const [text, st] = await Promise.all([
+          readFile(cred.hostBackup, 'utf8'),
+          stat(cred.hostBackup),
+        ]);
+        if (!isRealCredentialShape(cred.realShape, text)) return null;
+        return { agent: spec.id, createdAt: st.mtime.toISOString() };
+      } catch {
+        return null; // absent or unreadable: no legacy login for this agent
+      }
+    }),
+  );
+  return slots.filter((s): s is LegacyAccountSlot => s !== null);
 }
 
 async function readRaw(path: string): Promise<unknown> {
@@ -93,11 +107,16 @@ async function readRaw(path: string): Promise<unknown> {
   }
 }
 
-/** Every account on this host, with the legacy logins folded in as `default`. */
+/**
+ * Every account on this host, with the legacy logins folded in as `default`.
+ * A stored row the write rules would refuse (unknown agent, unsupported kind, a
+ * non-login `default`) is dropped here too, so a hand edit cannot smuggle in
+ * what `upsertAccount` refuses.
+ */
 export async function readAccounts(opts: AccountStoreOptions = {}): Promise<AccountsFile> {
   const o = resolveOpts(opts);
   const [raw, legacy] = await Promise.all([readRaw(o.path), findLegacyAccountSlots(o.specs)]);
-  return migrateAccountsFile(raw, legacy);
+  return migrateAccountsFile(raw, legacy, (a) => accountProblem(a, o.specs) === null);
 }
 
 async function writeAtomic(path: string, content: string, mode: number): Promise<void> {
@@ -129,7 +148,7 @@ export function accountProblem(
   account: LlmAccount,
   specs: readonly AgentSyncSpec[] = AGENT_SYNC_SPECS,
 ): string | null {
-  const spec = specs.find((s) => s.id === account.agent);
+  const spec = findSpec(specs, account.agent);
   if (!spec) return `unknown agent '${account.agent}'`;
   const idProblem = accountIdProblem(account.id);
   if (idProblem) return idProblem;
@@ -156,13 +175,11 @@ export async function upsertAccount(
   const o = resolveOpts(opts);
   const problem = accountProblem(account, o.specs);
   if (problem) throw new Error(problem);
+  const row: LlmAccount = { ...account, agent: specFor(o.specs, account.agent).id };
   return mutateAccounts(
     (file) => ({
       version: 1,
-      accounts: [
-        ...file.accounts.filter((a) => !(a.agent === account.agent && a.id === account.id)),
-        account,
-      ],
+      accounts: [...file.accounts.filter((a) => !(a.agent === row.agent && a.id === row.id)), row],
     }),
     o,
   );
@@ -181,16 +198,19 @@ export async function removeAccount(
 ): Promise<boolean> {
   const o = resolveOpts(opts);
   if (isDefaultAccount(id)) throw new Error('the default account cannot be removed');
+  requireAccountId(id);
   const spec = specFor(o.specs, agent);
-  let found = false;
-  await mutateAccounts((file) => {
-    const accounts = file.accounts.filter((a) => !(a.agent === agent && a.id === id));
-    found = accounts.length !== file.accounts.length;
-    return { version: 1, accounts };
-  }, o);
   const secret = accountSecretPath(spec, id, o.stateDir);
-  if (secret) await rm(secret, { force: true });
-  return found;
+  // The secret goes under the same lock as the row, so a concurrent re-create
+  // of this account cannot have its fresh secret deleted after the fact.
+  return withFileLock(o.path, async () => {
+    const file = await readAccounts(o);
+    const accounts = file.accounts.filter((a) => !(a.agent === spec.id && a.id === id));
+    const found = accounts.length !== file.accounts.length;
+    await writeAtomic(o.path, JSON.stringify({ version: 1, accounts }, null, 2) + '\n', 0o600);
+    if (secret) await rm(secret, { force: true });
+    return found;
+  });
 }
 
 /**
@@ -204,8 +224,7 @@ export async function writeAccountSecret(
   opts: AccountStoreOptions = {},
 ): Promise<string> {
   const o = resolveOpts(opts);
-  const idProblem = accountIdProblem(id);
-  if (idProblem) throw new Error(idProblem);
+  requireAccountId(id);
   const path = accountSecretPath(specFor(o.specs, agent), id, o.stateDir);
   if (!path)
     throw new Error(`agent '${agent}' declares no credential, so it has no default account`);

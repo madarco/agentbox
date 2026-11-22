@@ -72,9 +72,22 @@ describe('per-account names', () => {
     expect(accountSecretPath(s, 'work', '/home/u/.agentbox')).toBe(
       '/home/u/.agentbox/credentials/claude/work.json',
     );
-    expect(accountCustodyPath('codex', 'work', 'auth.json')).toBe('agents/codex/work/auth.json');
-    expect(accountCloudSubpath('claude/', 'work')).toBe('claude/work/');
-    expect(accountCloudSubpath('claude', 'work')).toBe('claude/work/');
+    expect(accountCustodyPath('codex', 'work', 'auth.json')).toBe(
+      'agents/codex/accounts/work/auth.json',
+    );
+    expect(accountCloudSubpath('claude/', 'work')).toBe('claude-acct-work/');
+    expect(accountCloudSubpath('claude', 'work')).toBe('claude-acct-work/');
+  });
+
+  it('a named Daytona subpath is a sibling, never inside the mounted default subtree', () => {
+    expect(accountCloudSubpath('claude/', 'work').startsWith('claude/')).toBe(false);
+  });
+
+  it('a named custody path never nests under a dotless default file', () => {
+    // A plugin credential `token` with an account also named `token`.
+    const def = accountCustodyPath('foo', 'default', 'token');
+    const named = accountCustodyPath('foo', 'token', 'token');
+    expect(named.startsWith(`${def}/`)).toBe(false);
   });
 
   it('an account volume cannot collide with a per-box isolated volume', () => {
@@ -107,6 +120,26 @@ describe('migrateAccountsFile', () => {
 
   it('no file and no legacy login yields no accounts', () => {
     expect(migrateAccountsFile(undefined, [])).toEqual({ version: 1, accounts: [] });
+  });
+
+  it('a stored default row is hidden while its legacy login is gone', () => {
+    const raw = {
+      accounts: [{ agent: 'claude', id: 'default', kind: 'login', label: 'P', createdAt: 'x' }],
+    };
+    expect(migrateAccountsFile(raw, []).accounts).toEqual([]);
+  });
+
+  it('drops rows the accept rule refuses, and an invalid default does not hide the fold', () => {
+    const raw = {
+      accounts: [
+        { agent: 'claude', id: 'default', kind: 'api-key', createdAt: 'x' },
+        { agent: 'gone', id: 'work', kind: 'login', createdAt: 'x' },
+      ],
+    };
+    const out = migrateAccountsFile(raw, legacy, (a) => a.agent === 'claude' && a.kind === 'login');
+    expect(out.accounts).toEqual([
+      { agent: 'claude', id: 'default', kind: 'login', createdAt: '2026-01-01T00:00:00.000Z' },
+    ]);
   });
 
   it('an existing default row wins over the legacy slot', () => {

@@ -65,9 +65,8 @@ export interface AccountsFile {
  *
  * Narrow on purpose, because the id is spliced into names with their own
  * grammars: a docker volume name, a custody path segment, a file name, a
- * Daytona subpath. It contains no `.`, which is what keeps the custody layout
- * unambiguous: `agents/codex/auth.json` (the `default` file) can never be read
- * as an account directory named `auth.json`.
+ * Daytona subpath. With no `.` or `/` it is always exactly one path segment
+ * and can never traverse out of the directory it is joined under.
  */
 const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
@@ -122,14 +121,23 @@ export function accountSecretPath(
 }
 
 /**
+ * The custody segment every named account nests under. Fixed rather than the
+ * bare account id, because a plugin's credential file name need not contain a
+ * `.`: with `agents/<agent>/<account>/<file>`, an account named after the file
+ * would turn the `default` object into a directory. A plugin credential file
+ * named exactly this is refused at `agent add`.
+ */
+export const ACCOUNTS_CUSTODY_SEGMENT = 'accounts';
+
+/**
  * Custody-relative path of one account's credential file.
- * `default` stays at `agents/<agent>/<file>`; a named account is one level
- * deeper, `agents/<agent>/<account>/<file>`.
+ * `default` stays at `agents/<agent>/<file>`; a named account lives at
+ * `agents/<agent>/accounts/<account>/<file>`.
  */
 export function accountCustodyPath(agent: string, account: string, file: string): string {
   return isDefaultAccount(account)
     ? `agents/${agent}/${file}`
-    : `agents/${agent}/${account}/${file}`;
+    : `agents/${agent}/${ACCOUNTS_CUSTODY_SEGMENT}/${account}/${file}`;
 }
 
 /**
@@ -148,12 +156,13 @@ export function accountConfigVolume(baseVolume: string, account: string): string
 /**
  * Subpath of the shared cloud credentials volume (Daytona) for one account.
  * `default` keeps the agent's `credential.cloudSubpath` (`claude/`); a named
- * account nests under it (`claude/work/`).
+ * account gets a SIBLING, `claude-acct-work/`. Never a child: a default box
+ * mounts the whole `claude/` subtree, so `claude/work/` would hand it every
+ * named account's secret.
  */
 export function accountCloudSubpath(baseSubpath: string, account: string): string {
   if (isDefaultAccount(account)) return baseSubpath;
-  const base = baseSubpath.endsWith('/') ? baseSubpath : `${baseSubpath}/`;
-  return `${base}${account}/`;
+  return `${baseSubpath.replace(/\/+$/, '')}-acct-${account}/`;
 }
 
 /** A legacy single-slot login found on the host, offered to the migration. */
@@ -198,17 +207,20 @@ function parseAccount(raw: unknown): LlmAccount | null {
  * Normalize a parsed `accounts.json` (or its absence) and fold in the legacy
  * single-slot logins.
  *
- * - Malformed rows are dropped rather than failing the read: one bad row must
- *   not hide every other account. A duplicate `(agent, id)` keeps the first.
- * - Every legacy slot with no `default` row becomes `default`, kind `login` —
- *   the one-slot model only ever stored login files there. An existing
- *   `default` row wins, so a label the user gave it survives.
+ * - Malformed rows, and rows `accept` refuses (the store passes the same rule
+ *   writes go through), are dropped rather than failing the read: one bad row
+ *   must not hide every other account. A duplicate `(agent, id)` keeps the first.
+ * - `default` is listed iff its legacy login is real (`legacy` names it). A
+ *   stored `default` row only contributes its metadata (a label); a logout
+ *   hides it, and a `default` with no row yet is synthesized as a `login` —
+ *   the one-slot model only ever stored login files there.
  *
  * Pure and idempotent: feeding the output back in returns an equal value.
  */
 export function migrateAccountsFile(
   raw: unknown,
   legacy: readonly LegacyAccountSlot[],
+  accept: (account: LlmAccount) => boolean = () => true,
 ): AccountsFile {
   const rows =
     raw !== null && typeof raw === 'object' && Array.isArray((raw as AccountsFile).accounts)
@@ -217,9 +229,11 @@ export function migrateAccountsFile(
   const accounts: LlmAccount[] = [];
   const seen = new Set<string>();
   const key = (agent: string, id: string): string => `${agent}\u0000${id}`;
+  const hasLegacy = new Set(legacy.map((l) => l.agent));
   for (const row of rows as unknown[]) {
     const account = parseAccount(row);
-    if (!account || seen.has(key(account.agent, account.id))) continue;
+    if (!account || seen.has(key(account.agent, account.id)) || !accept(account)) continue;
+    if (isDefaultAccount(account.id) && !hasLegacy.has(account.agent)) continue;
     seen.add(key(account.agent, account.id));
     accounts.push(account);
   }
