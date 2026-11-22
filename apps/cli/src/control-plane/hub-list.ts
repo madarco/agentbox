@@ -24,6 +24,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 // One implementation, shared with the provider packages — see reachability.ts
 // for why a plain `fetch` can't be bounded here.
+import { isLoopbackUrl } from '@agentbox/core';
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
 import { HubApiClient, HubApiError, type HubApiBox } from './hub-api-client.js';
 
@@ -152,7 +153,16 @@ export async function fetchBoxListing(
         // the target.
         await writeBoxCache({ version: 1, fetchedAt, boxes }).catch(() => {});
         return remember(
-          { boxes, stale: false, fetchedAt, target: { ...target, mode: probe?.mode ?? 'local' } },
+          {
+            boxes,
+            stale: false,
+            fetchedAt,
+            target: {
+              ...target,
+              // A failed probe must not stamp a control box's listing local.
+              mode: probe?.mode ?? (isLoopbackUrl(target.url) ? 'local' : 'remote'),
+            },
+          },
           opts.live,
         );
       }

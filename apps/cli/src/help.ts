@@ -64,6 +64,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       'config',
       'relay',
       'hub',
+      'skills',
     ],
   },
 ];

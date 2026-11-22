@@ -24,7 +24,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { AGENTS_FILE } from '@agentbox/config';
-import type { AgentSyncSpec } from '@agentbox/core';
+import {
+  ACCOUNT_NAME_INFIX,
+  ACCOUNTS_CUSTODY_SEGMENT,
+  LLM_ACCOUNT_KINDS,
+  agentIdProblem,
+  type AgentSyncSpec,
+} from '@agentbox/core';
 
 /**
  * Re-exported, not declared: the path also has to be reachable from
@@ -141,6 +147,27 @@ function credentialProblem(raw: unknown): string | null {
   if (typeof cred.boxAbsPath !== 'string' || !cred.boxAbsPath.startsWith('/')) {
     return '`credential.boxAbsPath` must be an absolute in-box path';
   }
+  // Custody keys the credential by `agents/<id>/<boxRelPath>`, and named LLM
+  // accounts nest under `agents/<id>/accounts/`. So the relative path must stay
+  // inside the agent's dir and must not start in the accounts segment, or the
+  // default credential would collide with (or BE) a named account's.
+  const rel = cred.boxRelPath;
+  if (
+    typeof rel !== 'string' ||
+    rel.length === 0 ||
+    rel.startsWith('/') ||
+    rel.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')
+  ) {
+    return '`credential.boxRelPath` must be a relative path with no empty, `.` or `..` segments';
+  }
+  if (rel.split('/')[0] === ACCOUNTS_CUSTODY_SEGMENT) {
+    return `\`credential.boxRelPath\` must not start with '${ACCOUNTS_CUSTODY_SEGMENT}/' (reserved for named accounts)`;
+  }
+  // A named account's cloud subpath is `<base>-acct-<id>/`; a base already
+  // carrying the infix could be another agent's account subpath.
+  if (typeof cred.cloudSubpath === 'string' && cred.cloudSubpath.includes(ACCOUNT_NAME_INFIX)) {
+    return `\`credential.cloudSubpath\` must not contain '${ACCOUNT_NAME_INFIX}' (reserved for named accounts)`;
+  }
   // The credential fan-out WRITES here when a box logs in. An empty or relative
   // path drops a temp file in whatever directory the CLI was run from and loses
   // the login silently.
@@ -173,6 +200,27 @@ function credentialProblem(raw: unknown): string | null {
     ) {
       return '`credential.freshness.jsonPath` must be a non-empty array of property names';
     }
+  }
+  return null;
+}
+
+/**
+ * `accountKinds` is optional; when present it must name known kinds, once each.
+ * A `login` account's secret is the agent's credential file, so `login` without
+ * a `credential` would give every login a secret path nothing reads.
+ */
+export function accountKindsProblem(raw: unknown, hasCredential: boolean): string | null {
+  if (!Array.isArray(raw)) return '`accountKinds` must be an array';
+  const seen = new Set<string>();
+  for (const kind of raw as unknown[]) {
+    if (typeof kind !== 'string' || !(LLM_ACCOUNT_KINDS as readonly string[]).includes(kind)) {
+      return `\`accountKinds\` entries must be one of ${LLM_ACCOUNT_KINDS.join(', ')}`;
+    }
+    if (seen.has(kind)) return `\`accountKinds\` lists '${kind}' twice`;
+    seen.add(kind);
+  }
+  if (seen.has('login') && !hasCredential) {
+    return "`accountKinds` includes 'login' but the agent declares no `credential`";
   }
   return null;
 }
@@ -257,12 +305,23 @@ export function agentSpecProblem(raw: unknown): string | null {
   const missing = REQUIRED_SPEC_FIELDS.filter((f) => spec[f] === undefined);
   if (missing.length > 0) return `missing required field(s): ${missing.join(', ')}`;
   if (typeof spec.id !== 'string' || spec.id.length === 0) return '`id` must be a non-empty string';
+  // The id is spliced into host paths (`~/.agentbox/credentials/<id>/`), custody
+  // paths and volume names, so it has to be path-safe.
+  const idProblem = agentIdProblem(spec.id);
+  if (idProblem) return idProblem;
+  // Same reason as `cloudSubpath`: a named account's volume is `<base>-acct-<id>`.
+  if (typeof spec.dockerVolume === 'string' && spec.dockerVolume.includes(ACCOUNT_NAME_INFIX)) {
+    return `\`dockerVolume\` must not contain '${ACCOUNT_NAME_INFIX}' (reserved for named accounts)`;
+  }
   if (!Array.isArray(spec.aliases)) return '`aliases` must be an array';
   const shape =
     installProblem(spec.install) ??
     // Optional field: absent is a legitimate declaration, malformed is not.
     (spec.credential === undefined ? null : credentialProblem(spec.credential)) ??
     (spec.clone === undefined ? null : cloneProblem(spec.clone)) ??
+    (spec.accountKinds === undefined
+      ? null
+      : accountKindsProblem(spec.accountKinds, spec.credential !== undefined)) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

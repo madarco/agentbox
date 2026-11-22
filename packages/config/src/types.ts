@@ -364,6 +364,13 @@ export interface UserConfig {
       enabled?: boolean;
     };
   };
+  skills?: {
+    /**
+     * Largest skill (total bytes of its files) `agentbox skills` and the
+     * automatic first seed will upload to the hub's library.
+     */
+    maxSkillBytes?: number;
+  };
 }
 
 /**
@@ -535,6 +542,9 @@ export interface EffectiveConfig {
     request: {
       enabled: boolean;
     };
+  };
+  skills: {
+    maxSkillBytes: number;
   };
 }
 
@@ -730,6 +740,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   tools: {
     gh: { enabled: true },
     request: { enabled: true },
+  },
+  skills: {
+    // 50 MB: the largest real skill measured in Phase 0 is 23 MB.
+    maxSkillBytes: 50 * 1024 * 1024,
   },
 };
 
@@ -1448,6 +1462,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       'Whether a box may ask the host for access to a new host CLI (`agentbox-ctl tool request <bin>`). True (default) raises a host approval prompt naming the box, the binary and the reason; false refuses the request outright so boxes can only use tools already granted.',
+  },
+  {
+    key: 'skills.maxSkillBytes',
+    type: 'int',
+    description:
+      "Largest skill (total bytes of its files, default 52428800 = 50 MB) that `agentbox skills` and the automatic first seed upload to the hub's skills library. A bigger skill is listed and skipped. The hub's own bound is its custody blob cap (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB).",
   },
 ];
 

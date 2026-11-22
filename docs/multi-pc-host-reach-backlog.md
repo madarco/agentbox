@@ -92,3 +92,51 @@ for teams PCs must never hold it (device tokens only).
 - **The no-origin refusal names a placeholder** (`agentbox download <box>`), because
   `hostReachRouteFor` has no box name. Fix: pass `reg.name`, or build the message in
   `server.ts` where `reg.name` is in scope.
+## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
+
+- **Direct attach / shell / `cp` from a computer that did not deploy the control box
+  (owner decided, 2026-11-22).** They need SSH to the control box's engine, which today
+  is `ssh root@<control box>` with the deploy key, firewalled to the deploying computer:
+  root on the hub.
+  - **Now: D (shipped in #436).** Those commands stop with a message naming the reason;
+    hub-side actions (start/stop, git, web UI, tray) work from every computer.
+  - **Follow-up: A, terminals over WebSocket served by the hub.** Attach and shell for
+    every box, any provider, from any enrolled computer, through the hub: a
+    device-token-authenticated WebSocket PTY, with the hub opening the session on the
+    box itself (`docker exec` for its own engine). No new SSH access for any computer.
+    Not started.
+  - **Rejected: B**, a restricted per-device SSH key on the control box with a
+    forced-command `docker exec`. The docker group is root-equivalent, so any hole in
+    the forced command is root on the hub.
+  - **Not needed: C**, an sshd inside each box container. A covers the same need
+    without a published port and a firewall rule per box and per device.
+- **A pre-existing `hub` alias that is not the control box.** `ensureHubDockerTarget`
+  leaves a user's own `hub` alias alone (`hub -> me@nas`), so on the deploying computer
+  direct actions on a docker:hub box dial that host instead and fail with "no such
+  container". Pre-existing; fix: register the control box's engine under a reserved
+  name, or have setup refuse/rename when `hub` is taken.
+
+## From the review of #436 (docker:hub on other computers), noted, not fixed
+
+- **The unregistered-alias hint replaces the ssh advice for the user's own single-word
+  hosts.** A pre-registry box id that baked a `~/.ssh/config` Host (`nas`), or a PC's
+  own `Host hub`, gets "registered on another computer" (or the control-box text) when
+  that dial fails for its own reasons, and loses the "Check that `ssh <spec> true`
+  works" line (the raw ssh stderr is still appended). Fix: keep the original line and
+  append the hint as a conditional, or add it only for boxes from a remote hub listing.
+- **The hint can surface inside the hub.** The hub is itself a remote-docker client:
+  after `remote-docker unshare <alias>`, or when deploy only warned in
+  `ensureSelfDockerHost` (no `hub` on the control box), a hub-side action fails with
+  "use the hub web UI or the tray". Fix: wording that fits any caller, or a CLI-only
+  flag to enable the hint.
+- **A stale cache is assumed to come from the control box.** If `hub-boxes-cache.json`
+  was last written by the local hub (just before a control box was configured) and the
+  control box is unreachable, local remote-docker leftovers show live instead of
+  inactive. Cosmetic, stale path only. Fix: record the source mode in the cache (no
+  secrets, so the token-free rule holds).
+- **Plain docker in a remote listing is always tagged inactive, even when the control
+  box IS this machine** (`hub expose` with `relay.controlPlaneUrl` set): this Mac's real
+  docker boxes show "(inactive)", and so does a PC pointed at it. Pre-existing (nightly
+  never consulted `controlBoxIsThisMachine`); #436 only makes the always-mute explicit.
+  Fix: skip the mute when `controlBoxIsThisMachine()`, the same exception
+  `dockerProviderRefusal` makes.

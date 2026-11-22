@@ -1,8 +1,10 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done (2026-11-22)** — see [Phase 0 results](#phase-0-results).
+Status: **Phase 0 partly done, Phases 1-2 done (2026-11-22)** — see
+[Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
-(a)/(b) is blocked on account B. One phase per session.
+(a)/(b) is blocked on account B. One phase per session. Open items:
+[`llm-accounts-backlog.md`](./llm-accounts-backlog.md).
 
 ## Why
 
@@ -78,8 +80,9 @@ Which kinds an agent supports is **registry data** (`AgentSyncSpec.accountKinds`
 so plugin agents get accounts without shared code knowing their names
 (`apps/cli/test/no-agent-named-exports.test.ts` must not grow).
 
-`default` is today's slot, migrated in place on first read — no existing box,
-backup or custody object changes meaning.
+`default` is today's slot, folded in on every read (no write until the first
+mutation) — no existing box, backup or custody object changes meaning. `default`
+is always a `login`; a pasted kind needs a named account.
 
 ### Storage
 
@@ -87,8 +90,11 @@ backup or custody object changes meaning.
 - Secrets: `~/.agentbox/credentials/<agent>/<account>.json`, 0600. `default`
   keeps reading/writing the legacy `~/.agentbox/<agent>-credentials.json` path
   until a later cleanup (AgentBox is unreleased — no alias layer beyond that).
-- Custody: `agents/<agent>/<account>/<file>`; `default` stays at
-  `agents/<agent>/<file>`.
+- Custody: `agents/<agent>/accounts/<account>/<file>`; `default` stays at
+  `agents/<agent>/<file>`. (The fixed `accounts/` segment, not the bare id:
+  a plugin credential file need not contain a `.`, and `agents/foo/token` must
+  not double as account `token`'s directory. `agent add` refuses a credential
+  file named `accounts`.)
 - **Docker: split credentials from config.** The shared config volume keeps
   transcripts, settings and skills (so `--resume` works across accounts). The
   credential moves to a per-account volume `agentbox-<agent>-creds-<account>`
@@ -100,7 +106,14 @@ backup or custody object changes meaning.
   docker uses a per-account config volume plus a shared `projects/` volume
   instead (see [Phase 0 results](#phase-0-results)).
 - Cloud: staged from the account's file instead of the single backup. Daytona's
-  per-org volume gets a subpath per account (`claude/<account>/`).
+  per-org volume gets a SIBLING subpath per account (`claude-acct-<account>/`),
+  never `claude/<account>/`: a default box mounts the whole `claude/` subtree and
+  would read every named account's secret.
+- Account ids: 1-32 lowercase letters, digits, inner dashes — always one path
+  segment, never a traversal.
+- Docker volume name for a named account: `<volume>-acct-<account>`, not
+  `<volume>-<account>` — `box.isolate<Agent>Config` already mints
+  `<volume>-<boxId>` and a box id is a valid slug.
 
 ### Selection
 
@@ -543,6 +556,103 @@ codex symlink-on-refresh check, and the throwaway-account revocation timing test
 above. Delete `/home/vscode/poc-account-b` afterwards. Also for the owner:
 confirm on the key's account that usage appeared for 10:27–10:30Z on
 2026-11-22, and only for the B turns.
+
+## Phase 1 as built
+
+- **`@agentbox/core`** (`packages/core/src/sync/llm-accounts.ts`): `LlmAccount`,
+  `LlmAccountKind`, `AccountsFile`, `DEFAULT_ACCOUNT_ID`, `accountIdProblem`,
+  `accountKindProblem`, and the one derivation of each per-account name:
+  `accountSecretPath`, `accountCustodyPath`, `accountConfigVolume`,
+  `accountCloudSubpath`. `migrateAccountsFile` is the pure normalize + `default`
+  fold (drops malformed rows, keeps the first of a duplicate, an existing
+  `default` row wins over the legacy slot).
+- **`AgentSyncSpec.accountKinds`**: claude `login, setup-token, api-key`; codex
+  `login, api-key`; every other built-in absent (only `default`). Plugin specs
+  are validated at `agent add` (`accountKindsProblem`: known kinds, no
+  duplicates, `login` needs a `credential`).
+- **`@agentbox/sandbox-core`** (`packages/sandbox-core/src/llm-accounts.ts`):
+  - `readAccounts` never writes. A legacy backup counts as `default` only when
+    it passes the spec's `realShape`; `default` is listed iff that holds, and a
+    stored `default` row only adds its label. Rows the write rules refuse, and
+    an untrustworthy file, are left out of the view, so the defaults still show.
+  - Mutations (`upsertAccount`, `removeAccount`) never write the view back.
+    They edit the file's raw rows under the lock, replace or delete only their
+    own `(agent, id)` (alias spellings included), and pass every other row
+    through verbatim — a long-lived hub that has not loaded a plugin agent, or
+    an older CLI that does not know a kind, cannot delete them. The first
+    mutation adds the legacy `default`s to the file. A corrupt, wrong-shape or
+    future-version file makes mutations throw `AccountsFileError` instead of
+    rewriting it.
+  - Specs default to the live registry (`allAgentSpecs()`), not a module-load
+    snapshot.
+  - `writeAccountSecret` writes NAMED accounts only (the `default` file keeps
+    its existing guarded writer, `writeCredentialBackup`), needs the row first,
+    and runs under the accounts lock. A `login` secret must pass `realShape`
+    and the freshness rule (`written: false` for an older blob); a pasted secret
+    must be the `{kind, token}` encoding of the row's kind. Files are 0600, and
+    `credentials/` and `credentials/<agent>/` are tightened to 0700 even when
+    they already exist.
+  - `agent add` refuses a path-unsafe plugin id, a `credential.boxRelPath` that
+    is absolute, traverses, or starts with `accounts/`, and a `dockerVolume` /
+    `cloudSubpath` containing `-acct-`.
+  - Nothing calls the store yet; Phase 2 does.
+- **Where it differs from the plan above:** reads do not write (the plan said
+  "migrated in place on first read"), the `-acct-` docker volume infix, the
+  sibling Daytona subpath, the `accounts/` custody segment, and `default`
+  pinned to `login`.
+
+## Phase 2 as built (logins)
+
+Scope, decided against the Phase 0 results and the Phase 1 backlog:
+
+1. **`<agent> login --account <name> [--label <text>]`** for a `login`-kind
+   account (only on agents whose row declares `accountKinds`). Docker storage is
+   Phase 0's: a **per-account config volume** `accountConfigVolume(<shared>, id)`.
+   The login container signs in against it; then the volume's credential file
+   (`credential.boxRelPath`) is captured into `credentials/<agent>/<id>.json`
+   through `writeAccountSecret` (real-shape + newest-wins gated) and the row is
+   upserted. A named login **never** touches the shared volume, the legacy
+   backup or custody — claude's default finalize (`syncClaudeCredentials`,
+   volume→legacy backup) must not run for it, or account B's blob would land in
+   `default`.
+2. **Seeding a named account volume from the host** keeps the host's config
+   (settings, skills, plugins) but never the host's identity: the host's
+   credential file is excluded (it is the owner's real login; a copy is one more
+   holder for a refresh to revoke) and claude's `_claude.json` seed drops
+   `oauthAccount` and the account-derived caches Phase 0 listed, so the first
+   turn fetches the right profile.
+3. **`--api-key` / `--setup-token`** (pasted kinds): the secret is read from a
+   hidden prompt on a TTY, otherwise from stdin — never from argv. Requires
+   `--account` (`default` stays a login). Stored with `upsertAccount` +
+   `writeAccountSecret`. No docker volume yet: an API-key volume must be seeded
+   with `customApiKeyResponses.approved` at box create, which is Phase 3.
+4. **Identity read-off** (display only): claude from the credential's
+   `claudeAiOauth.subscriptionType` and the volume's `_claude.json`
+   `oauthAccount` after the warm-up turn; codex from the `id_token` claims in
+   `auth.json`. Pure parsers on each agent's runtime.
+5. **`agentbox accounts`** (`list`, `rm`, `label`): reads the host store; `rm`
+   drops the row, the secret and the account's docker volume (best effort).
+   `default` and `rename` are deferred: `default` writes `<agent>.account`,
+   which Phase 3 introduces, and an id cannot be renamed while volume and
+   custody names derive from it.
+6. **Local by design for now.** A login drives an interactive container on the
+   PC that owns the docker volume, so it stays a CLI command; the store is the
+   PC's `~/.agentbox`. Moving `accounts` behind `/api/v1/accounts` is Phase 5.
+
+Implementation notes:
+
+- The capture is `captureVolumeLogin` (`packages/sandbox-docker/src/sync/account-login.ts`):
+  it refuses to turn a pasted-kind account into a login, and an existing
+  account's identity only moves when the store accepts the new secret.
+- The CLI refuses a named `login` for a runtime that does not declare
+  `supportsAccountLogin` (claude and codex do): one that ignored the volume
+  hints would capture the owner's login under the new name.
+- A claude re-login resets the account state already in the volume's
+  `_claude.json` (`resetVolumeAccountState`), because the seed is write-once.
+- `stripAccountState` also drops `primaryApiKey` (a Console key Claude Code
+  stored for the host login).
+- The headless `--code` call reports an error when the store refuses the new
+  login, so an orchestrating agent is not told it was saved.
 
 ## Backlog (not in these phases)
 

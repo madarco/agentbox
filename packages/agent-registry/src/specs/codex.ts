@@ -107,6 +107,8 @@ export const codexSpec: AgentSyncSpec = {
     cloudSubpath: 'codex/',
     realShape: 'nonempty-json',
   },
+  // Named LLM accounts (docs/llm-accounts-plan.md). Codex has no setup-token.
+  accountKinds: ['login', 'api-key'],
   forwardedEnvKeys: ['OPENAI_API_KEY'],
   boxRunEnv: {},
   // Codex auto-discovers `~/.codex/hooks.json` and accumulates its hooks with

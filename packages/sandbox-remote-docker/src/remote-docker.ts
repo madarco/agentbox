@@ -32,7 +32,12 @@ import {
   type SshTargetArgs,
 } from '@agentbox/sandbox-core';
 import { parseRemoteTarget, sshTargetFor, type RemoteTarget } from './target.js';
-import { getHostConnection, hostKeyDir, resolveConnection } from './hosts-registry.js';
+import {
+  getHostAlias,
+  getHostConnection,
+  hostKeyDir,
+  resolveConnection,
+} from './hosts-registry.js';
 
 /**
  * A box's sandbox id bakes an ALIAS, not a raw connection string. Turn the
@@ -47,6 +52,37 @@ export interface DialPlan {
   identity?: string;
   /** known_hosts to TOFU into. Only meaningful alongside `identity`. */
   knownHosts?: string;
+}
+
+/** The host alias of the control box's own docker engine (`docker:hub`). */
+export const HUB_ENGINE_ALIAS = 'hub';
+
+/**
+ * Why a dial to an alias this computer never registered failed, in words. A box
+ * listed from the control box can name an engine registered somewhere else: the
+ * control box's own (`docker:hub`, reachable only over the deploying computer's
+ * root SSH key, firewalled to it), or a host another computer shared with the
+ * control box. ssh would only say the bare alias does not resolve. Undefined
+ * for a registered alias or anything that is not alias-shaped (a raw
+ * `user@host`, or a `~/.ssh/config` Host that just failed for its own reasons
+ * still gets the plain ssh error alongside).
+ */
+export function unregisteredAliasHint(spec: string): string | undefined {
+  if (getHostAlias(spec) || !/^[A-Za-z0-9_-]+$/.test(spec)) return undefined;
+  if (spec === HUB_ENGINE_ALIAS) {
+    return (
+      "This box runs on the control box's own docker engine (docker:hub). Only the computer " +
+      'that deployed the control box can reach that engine directly (its SSH access is that ' +
+      "computer's alone), and it is not registered here. From this computer use the hub web UI " +
+      'or the tray for this box, or run the command on that computer; for boxes you drive from ' +
+      'several computers, use a cloud provider.'
+    );
+  }
+  return (
+    `"${spec}" is not a docker host registered on this computer: this box's engine was ` +
+    'registered on another computer (and shared with the control box). Use the hub web UI or the ' +
+    `tray for it, run the command there, or register the same host here (\`agentbox remote-docker add ${spec} <user@host>\`).`
+  );
 }
 
 /**
@@ -130,6 +166,8 @@ export async function ensureTunnel(
       const how = plan.identity
         ? `(dialed with the key registered for this host, ${plan.identity})`
         : '(the provider uses your own ~/.ssh/config, agent and known_hosts)';
+      const hint = unregisteredAliasHint(target.spec);
+      if (hint) throw new Error(`remote-docker: ${hint}\n${msg}`);
       throw new Error(
         `remote-docker: cannot SSH to ${where}. Check that \`ssh ${dial.spec} true\` works from this machine ` +
           `${how}.\n${msg}`,

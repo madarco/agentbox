@@ -186,6 +186,11 @@ export function buildOpenApi(): Record<string, unknown> {
         description: 'What the control box holds in custody (metadata only — never values).',
       },
       {
+        name: 'Skills',
+        description:
+          'The skills library: skills seeded from a PC or uploaded with `agentbox skills`, stored in the custody `skills` scope, one tarball per version.',
+      },
+      {
         name: 'Checkouts',
         description:
           'Which machine has which repo checked out where, keyed by machine id and repo key.',
@@ -3860,7 +3865,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Custody'],
           summary: 'List the custody manifest (metadata only)',
           description:
-            'What the hub holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes`) or a `scope/subject`.',
+            'What the hub holds so a box created from either side is usable from both: agent credentials, project seeds, provider bake records, and per-box SSH keys. Returns paths, hashes, sizes and mtimes ONLY — value bytes never leave the box (same contract as `agentbox hub custody list`). Optional `?prefix=` scopes the listing to a custody scope (`agents` | `projects` | `prepared` | `boxes` | `skills`) or a `scope/subject`.',
           parameters: [
             {
               name: 'prefix',
@@ -3998,6 +4003,121 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/skills': {
+        get: {
+          tags: ['Skills'],
+          summary: 'List the skills library',
+          description:
+            'One row per stored skill (description, current version = tree hash, size, file count, source PC, updated, version count). `seeded` is true once any skill was ever imported and stays true after the last one is discarded, so the automatic first seed from a PC runs only once per hub. Backs `agentbox skills --list`.',
+          responses: {
+            '200': {
+              description: 'The library',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillsListing' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,63}$' },
+            description: 'Skill name (the Agent Skills `name`). `agentbox-*` is reserved.',
+          },
+        ],
+        put: {
+          tags: ['Skills'],
+          summary: 'Store a version of a skill',
+          description:
+            'Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). The version becomes current; the newest 5 are kept. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.',
+          parameters: [
+            {
+              name: 'X-AgentBox-Skill-Meta',
+              in: 'header',
+              required: true,
+              schema: { type: 'string' },
+              description: 'base64-encoded JSON metadata (see description)',
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Stored',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillImport' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Skills'],
+          summary: 'Discard a skill',
+          description:
+            'Deletes the skill and every stored version. The library stays marked seeded. Backs `agentbox skills --discard`.',
+          responses: {
+            '200': {
+              description: 'Discarded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { name: { type: 'string' }, removed: { type: 'integer' } },
+                    required: ['name', 'removed'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/tarball': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+          {
+            name: 'version',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Tree hash of a stored version (default: current)',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Download a version of a skill',
+          description:
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. Normal API gate (skills are not credentials). Backs `agentbox skills --download`.',
+          responses: {
+            '200': {
+              description: 'The tarball',
+              content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
       '/system': {
         get: {
           tags: ['System'],
@@ -4108,6 +4228,49 @@ export function buildOpenApi(): Record<string, unknown> {
               required: ['data'],
             },
           ],
+        },
+        SkillSummary: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            current: { type: 'string', description: 'Tree hash of the current version' },
+            size: { type: 'integer', description: 'Unpacked bytes' },
+            files: { type: 'integer' },
+            tarballBytes: { type: 'integer' },
+            updatedAt: { type: 'string' },
+            source: {
+              type: 'object',
+              properties: {
+                host: { type: 'string' },
+                machineId: { type: 'string' },
+                path: { type: 'string' },
+              },
+            },
+            versions: { type: 'integer', description: 'Stored versions (max 5)' },
+          },
+          required: ['name', 'description', 'current', 'size', 'files', 'updatedAt', 'versions'],
+        },
+        SkillsListing: {
+          type: 'object',
+          properties: {
+            seeded: { type: 'boolean' },
+            skills: { type: 'array', items: { $ref: '#/components/schemas/SkillSummary' } },
+          },
+          required: ['seeded', 'skills'],
+        },
+        SkillImport: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            version: { type: 'string' },
+            changed: {
+              type: 'boolean',
+              description: 'false when this version was already current',
+            },
+            skill: { $ref: '#/components/schemas/SkillSummary' },
+          },
+          required: ['name', 'version', 'changed', 'skill'],
         },
         Custody: {
           type: 'object',
