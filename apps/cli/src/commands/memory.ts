@@ -46,6 +46,12 @@ function origin(f: HubApiMemoryFile): string {
   return f.origin.boxName ?? f.origin.boxId ?? (f.origin.provider === 'host' ? 'host' : '-');
 }
 
+/** A refusal: the message, exit 1, and nothing changed. */
+function refuse(message: string): void {
+  log.error(message);
+  process.exitCode = 1;
+}
+
 function positiveInt(raw: string): number {
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 1)
@@ -165,7 +171,7 @@ withCommon(
     // The folder decides where files land; never guess it outside a checkout.
     const folder = await gitToplevel(opts.dir ?? process.cwd());
     if (!folder) {
-      throw new Error(
+      return refuse(
         `${opts.dir ?? process.cwd()} is not a git checkout: run inside the project, or pass --dir <folder>`,
       );
     }
@@ -173,14 +179,14 @@ withCommon(
     if (opts.repo && !opts.dir) {
       const asked = opts.repo.startsWith('local:') ? opts.repo : repoKey(opts.repo);
       if (asked !== folderRepo) {
-        throw new Error(
+        return refuse(
           `--repo ${opts.repo} is not this folder's repo (${folderRepo ?? 'none'}); ` +
             "pass --dir <folder> to choose which project's memory dir it writes",
         );
       }
     }
     const repo = opts.repo ?? folderRepo;
-    if (!repo) throw new Error('no repo: this checkout has no origin; pass --repo <url>');
+    if (!repo) return refuse('no repo: this checkout has no origin; pass --repo <url>');
     const q: HubApiMemoryQuery = { repo, agent: opts.agent ?? 'claude' };
     const agent = q.agent ?? 'claude';
     const dir = localMemoryDir(agent, folder);
@@ -236,7 +242,7 @@ withCommon(
       // context: a person reviews the plan, or says -y up front.
       if (!opts.yes) {
         if (!process.stdin.isTTY || !process.stdout.isTTY || opts.json) {
-          throw new Error('refusing to change local memory without confirmation: re-run with -y');
+          return refuse('refusing to change local memory without confirmation: re-run with -y');
         }
         const ok = await confirm({
           message: `Write ${String(writes.length)} and delete ${String(deletes.length)} file(s) in ${dir}?`,
