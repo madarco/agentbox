@@ -33,8 +33,10 @@ import {
   cleanupStaleSessions,
   findLiveSession,
   findPendingSession,
+  describeSessionAccount,
   readLoginRequest,
   readLoginState,
+  sessionAccountMismatch,
   selectLoginMode,
   writeLoginCode,
   writeLoginRequest,
@@ -45,11 +47,15 @@ import { imageProgress } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';
 import { signInToClaude } from './runtime.js';
 
-function printAwaitingCode(st: LoginState): void {
+function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): void {
   const url = st.url ?? '';
-  log.info('To finish signing in, open this URL in a browser and approve access:');
+  log.info(
+    `To finish signing in ${describeSessionAccount(account)}, open this URL in a browser and approve access:`,
+  );
   process.stdout.write(`\n  ${url}\n\n`);
-  log.info('Then run:  agentbox claude login --code <CODE>');
+  log.info(
+    `Then run:  agentbox claude login --code <CODE>${account ? ` --account ${account.id}` : ''}`,
+  );
   // Stable, greppable marker so an orchestrating agent can grab the URL
   // deterministically regardless of how the prose above is worded.
   process.stdout.write(`AGENTBOX_LOGIN_URL=${url}\n`);
@@ -75,9 +81,17 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
   // `--headless` can't slip through and spawn a duplicate worker.
   const existing = findLiveSession();
   if (existing) {
+    // Never hand out another account's session: its URL signs in whatever the
+    // browser approves, and its worker stores it as THAT session's account.
+    const pendingAccount = readLoginRequest(existing.id)?.account;
+    const mismatch = sessionAccountMismatch(pendingAccount, account);
+    if (mismatch) {
+      log.error(mismatch);
+      process.exit(1);
+    }
     if (existing.state.phase === 'awaiting-code' && existing.state.url) {
       log.info('A login is already pending; finish it (or wait for it to expire):');
-      printAwaitingCode(existing.state);
+      printAwaitingCode(existing.state, pendingAccount);
     } else {
       log.info(
         'A login is already in progress; wait for it to print its URL, then finish with `agentbox claude login --code <CODE>`.',
@@ -138,7 +152,7 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
   for (;;) {
     const st = readLoginState(id);
     if (st?.phase === 'awaiting-code' && st.url) {
-      printAwaitingCode(st);
+      printAwaitingCode(st, account);
       return;
     }
     if (st?.phase === 'error') {
@@ -156,7 +170,7 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
 }
 
 /** Deliver an OAuth code to the pending headless login session and report the outcome. */
-async function deliverLoginCode(code: string): Promise<void> {
+async function deliverLoginCode(code: string, account: LoginAccount | undefined): Promise<void> {
   cleanupStaleSessions();
   const pending = findPendingSession();
   if (!pending) {
@@ -166,6 +180,11 @@ async function deliverLoginCode(code: string): Promise<void> {
     process.exit(1);
   }
   const { id } = pending;
+  const mismatch = sessionAccountMismatch(readLoginRequest(id)?.account, account);
+  if (mismatch) {
+    log.error(mismatch);
+    process.exit(1);
+  }
   const submittedAt = Date.now();
   writeLoginCode(id, code);
 
@@ -260,7 +279,7 @@ export async function runClaudeLoginCommand(
   });
   try {
     if (mode === 'code') {
-      await deliverLoginCode(opts.code as string);
+      await deliverLoginCode(opts.code as string, account);
       return;
     }
     if (mode === 'headless') {

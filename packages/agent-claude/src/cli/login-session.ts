@@ -236,3 +236,30 @@ export function cleanupStaleSessions(now: number = Date.now()): void {
 // The URL extractor now lives with the other per-agent prompt detectors; keep
 // re-exporting it here, where the headless flow's callers already look for it.
 export { extractOAuthUrl } from './login.js';
+
+/** How a session's account reads to a person: `account 'work'` or `the default account`. */
+export function describeSessionAccount(account: { id: string } | undefined): string {
+  return account ? `account '${account.id}'` : 'the default account';
+}
+
+/**
+ * Why a headless call must not act on a live session, or null when it may.
+ *
+ * A pending session is bound to ONE account: its worker writes the shared
+ * volume (and then the legacy backup and custody) for `default`, or a named
+ * account's own volume. Handing a code meant for another account to that
+ * worker overwrites the wrong login — for `default`, the owner's login every
+ * box runs on. So a mismatch is refused, in both directions.
+ */
+export function sessionAccountMismatch(
+  pending: { id: string } | undefined,
+  requested: { id: string } | undefined,
+): string | null {
+  if ((pending?.id ?? null) === (requested?.id ?? null)) return null;
+  const flag = pending ? ` --account ${pending.id}` : '';
+  return (
+    `the pending headless login is for ${describeSessionAccount(pending)}, not ` +
+    `${describeSessionAccount(requested)}. Finish it with \`agentbox claude login --code <CODE>${flag}\`, ` +
+    'or wait for it to expire, then start again'
+  );
+}

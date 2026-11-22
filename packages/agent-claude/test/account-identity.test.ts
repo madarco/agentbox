@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { parseClaudeAccountIdentity } from '../src/cli/account-identity.js';
-import { ACCOUNT_STATE_KEYS, stripAccountState } from '../src/hooks-filter.js';
+import {
+  ACCOUNT_STATE_KEYS,
+  accountStateJqDelete,
+  stripAccountState,
+} from '../src/hooks-filter.js';
 
 describe('parseClaudeAccountIdentity', () => {
   it('reads plan from the credential and email/org from oauthAccount', () => {
@@ -51,8 +55,7 @@ describe('stripAccountState', () => {
 });
 
 describe('accountStateJqDelete', () => {
-  it('deletes every account-state key, primaryApiKey included', async () => {
-    const { accountStateJqDelete } = await import('../src/docker-sync.js');
+  it('deletes every account-state key, primaryApiKey included', () => {
     const prog = accountStateJqDelete();
     for (const k of ACCOUNT_STATE_KEYS) expect(prog).toContain(`.${k}`);
     expect(prog).toContain('.primaryApiKey');

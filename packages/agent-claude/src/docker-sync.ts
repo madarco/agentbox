@@ -22,7 +22,7 @@ import {
   addProjectAlias,
   claudeSettingsEndpointPaths,
   filterHostHooks,
-  ACCOUNT_STATE_KEYS,
+  accountStateJqDelete,
   setInstallMethodNative,
   stripAccountState,
   trustWorkspace,
@@ -1377,11 +1377,6 @@ export async function claudeSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
-}
-
-/** The jq program that drops {@link ACCOUNT_STATE_KEYS}. Keys are plain identifiers. */
-export function accountStateJqDelete(): string {
-  return `del(${ACCOUNT_STATE_KEYS.map((k) => `.${k}`).join(', ')})`;
 }
 
 /**

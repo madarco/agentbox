@@ -40,6 +40,8 @@ export {
   findPendingSession,
   findLiveSession,
   cleanupStaleSessions,
+  describeSessionAccount,
+  sessionAccountMismatch,
   type LoginPhase,
   type LoginState,
   type LoginRequest,

@@ -265,6 +265,11 @@ export const ACCOUNT_STATE_KEYS: readonly string[] = [
   'cachedExtraUsageDisabledReason',
 ];
 
+/** The jq program that drops {@link ACCOUNT_STATE_KEYS}. Keys are plain identifiers. */
+export function accountStateJqDelete(): string {
+  return `del(${ACCOUNT_STATE_KEYS.map((k) => `.${k}`).join(', ')})`;
+}
+
 /** Drop {@link ACCOUNT_STATE_KEYS}. Pure; `stripped` is false when none were present. */
 export function stripAccountState<T = unknown>(data: T): { data: T; stripped: boolean } {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
