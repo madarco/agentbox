@@ -151,8 +151,13 @@ export {
   createPerBoxFirewall,
   deletePerBoxFirewall,
   normalizeSourceCidr,
-  sshOnlyInboundRule,
-  syncFirewallSource,
+  boxFirewallRules,
+  boxFirewallSources,
+  decodeBoxFirewall,
+  deviceRuleDescription,
+  sshSourcesOf,
+  writeBoxFirewall,
+  type BoxFirewallSsh,
   type CreateFirewallOptions,
 } from './firewall.js';
 export { withHetznerRetry, isAttemptTimeout, isRetriable } from './retry.js';

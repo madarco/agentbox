@@ -165,11 +165,13 @@ The temporary Droplet that `agentbox prepare` bakes the base snapshot on is plac
 
 ## Firewall
 
-Each box gets its own DigitalOcean Cloud Firewall with a single inbound rule: TCP port 22 from your host's egress IP only (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your IP is genuinely all that's exposed inbound.
+Each box gets its own DigitalOcean Cloud Firewall: inbound TCP port 22 only from the machines you use the box from (plus the mandatory allow-all outbound rules DigitalOcean requires, or the Droplet would have no egress). All box traffic flows over SSH, so port 22 from your own machines is genuinely all that's exposed.
 
-AgentBox connects to the box over its public IPv4, so the rule admits your host's **IPv4** egress address, detected over IPv4 even on a dual-stack (IPv6-capable) network. If no IPv4 egress can be detected (an IPv6-only network, or every probe blocked), the command fails with a message listing what each probe returned. To supply the address yourself, set `AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE=<cidr>` (or use `--inbound open`) on `create`, and pass `--source <cidr>` to `agentbox digitalocean firewall sync`.
+The allowed set is **per machine**. The machine that creates the box is added first; when you attach from another computer (with your provider keys and the box's SSH key on it), that computer adds its own egress IP alongside, and neither locks the other out. Each machine only ever replaces its own entry, labelled with its hostname, so a new IP on one machine never removes another's. A box keeps up to 10 entries; past that the least recently written goes first. On a [deployed hub](/docs/deployed-hub), the control box's own entry is never removed.
 
-If you change networks (new Wi-Fi, VPN toggle), your egress IP changes and SSH times out. `agentbox digitalocean firewall sync <box>` re-detects your IP and updates that box's rule with no reboot:
+AgentBox connects to the box over its public IPv4, so the rule admits your host's **IPv4** egress address, detected over IPv4 even on a dual-stack (IPv6-capable) network. If no IPv4 egress can be detected (an IPv6-only network, or every probe blocked), the command fails with a message listing what each probe returned. To supply the address yourself, set `AGENTBOX_DIGITALOCEAN_FIREWALL_SOURCE=<cidr>` (or use `--inbound open`) on `create`, and pass `--source <cidr>` to `agentbox digitalocean firewall sync`. An address you set by hand is pinned: the automatic repairs leave it alone (useful behind a split-tunnel VPN), and `agentbox digitalocean firewall sync <box>` without `--source` switches back to detection. `--source` does not take `0.0.0.0/0`; to open SSH to the world use `agentbox inbound <box> open`, and `agentbox inbound <box> locked` closes it again.
+
+If you change networks (new Wi-Fi, VPN toggle), your egress IP changes. The relay notices: it re-checks your IP every 5 minutes (only while you have a running Hetzner or DigitalOcean box, so it makes no calls otherwise) and updates this machine's entry on every running box. The first attach after a change also repairs it. To do it by hand, `agentbox digitalocean firewall sync <box>` re-detects your IP and updates this machine's entry with no reboot:
 
 ```bash
 agentbox digitalocean firewall sync smoke
@@ -177,7 +179,7 @@ agentbox digitalocean firewall show smoke   # inspect the current rules
 ```
 
 <Callout title="TIP">
-Moved networks and `agentbox shell` suddenly times out? Run `agentbox digitalocean firewall sync <box>` — that's almost always it.
+Moved networks and `agentbox shell` times out before the relay caught up? Run `agentbox digitalocean firewall sync <box>`. `agentbox digitalocean firewall show <box>` lists which machine owns which address.
 </Callout>
 
 To reach a box from **another device** (a phone over Terminus/Blink, with your laptop off), open the firewall and hand the device a key: `agentbox inbound <box> open` then `agentbox connect <box> --add-key <device.pub>`. The baked sshd is key-only, so `open` exposes port 22 to the internet but only your keys get in. See [remote access](/docs/access-your-box#use-a-box-with-your-laptop-offline).

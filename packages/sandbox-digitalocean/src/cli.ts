@@ -5,8 +5,9 @@
  * Subcommands:
  *   - `login`               — interactive `DIGITALOCEAN_TOKEN` setup + persist.
  *   - `login --status`      — show the currently-configured token (masked).
- *   - `firewall sync <box>` — re-detect egress IP, update the box's firewall
- *                             inbound rule (no droplet restart).
+ *   - `firewall sync <box>` — re-detect this machine's egress and add/replace
+ *                             its own entry (other machines' entries are kept;
+ *                             no droplet restart).
  *   - `firewall show <box>` — diagnostic: print the box's firewall rules.
  *
  * Unlike Hetzner (which stores the firewall id in server labels), DigitalOcean
@@ -16,7 +17,16 @@
 
 import { log } from '@clack/prompts';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
-import { readState, resolveBoxRef } from '@agentbox/sandbox-core';
+import {
+  detectDeviceCidrs,
+  isOpenCidr,
+  localMachineKey,
+  readState,
+  resolveBoxRef,
+  selfDeviceEntry,
+  staticInboundSources,
+  upsertDeviceEntry,
+} from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { makeDigitalOceanClient, type DigitalOceanDroplet } from './client.js';
 import {
@@ -25,8 +35,14 @@ import {
   readDigitalOceanCredStatus,
   secretsPath,
 } from './credentials.js';
-import { SYNC_EGRESS_HINT, detectEgressCidr, detectEgressIp } from './egress-ip.js';
-import { findFirewallForDroplet, normalizeSourceCidr, syncFirewallSource } from './firewall.js';
+import { SYNC_EGRESS_HINT, detectEgressIp } from './egress-ip.js';
+import {
+  boxFirewallSources,
+  decodeBoxFirewall,
+  findFirewallForDroplet,
+  normalizeSourceCidr,
+  writeBoxFirewall,
+} from './firewall.js';
 import { readPreparedState } from './prepared-state.js';
 
 interface LoginOpts {
@@ -94,11 +110,13 @@ interface FirewallSyncOpts {
 }
 
 const firewallSyncSub = new Command('sync')
-  .description('Re-detect the host egress IP and update the box firewall (no reboot)')
+  .description(
+    "Re-detect this machine's egress IP and add it to the box firewall, keeping other machines' entries (no reboot)",
+  )
   .argument('<box>', 'box name or id')
   .option(
     '--source <cidr>',
-    'override the auto-detected egress IP (e.g. 1.2.3.4/32, or 0.0.0.0/0 for open opt-in)',
+    "pin this machine's entry to this CIDR instead of the detected egress (e.g. a split-tunnel VPN); automatic repairs then leave it alone until a sync without --source",
   )
   .action(async (boxRef: string, opts: FirewallSyncOpts) => {
     try {
@@ -111,15 +129,37 @@ const firewallSyncSub = new Command('sync')
             `This is unusual — the box may have been provisioned outside agentbox.`,
         );
       }
-      const source = opts.source
-        ? normalizeSourceCidr(opts.source)
-        : await detectEgressCidr({
+      if (opts.source && isOpenCidr(normalizeSourceCidr(opts.source))) {
+        throw new Error(
+          `--source ${opts.source} would open SSH to the world; that is a policy, not a machine — run \`agentbox inbound ${boxRef} open\``,
+        );
+      }
+      const cidrs = opts.source
+        ? [normalizeSourceCidr(opts.source)]
+        : await detectDeviceCidrs({
             onLog: (l) => process.stdout.write(`digitalocean: ${l}\n`),
             overrideHint: SYNC_EGRESS_HINT,
           });
-      process.stdout.write(`digitalocean: updating firewall ${firewall.id} for box '${box.name}' → source ${source}\n`);
-      await syncFirewallSource(client, firewall, source);
-      process.stdout.write(`digitalocean: firewall ${firewall.id} now allows SSH from ${source} only\n`);
+      const current = decodeBoxFirewall(
+        firewall,
+        droplet.tags,
+        staticInboundSources(box.cloud?.inbound),
+      );
+      const key = localMachineKey();
+      const next = {
+        staticSources: current.staticSources,
+        entries: upsertDeviceEntry(
+          current.entries,
+          selfDeviceEntry(cidrs, { key, pinned: Boolean(opts.source) }),
+        ),
+      };
+      process.stdout.write(
+        `digitalocean: updating firewall ${firewall.id} for box '${box.name}': ${key} -> ${cidrs.join(', ')}\n`,
+      );
+      await writeBoxFirewall(client, firewall, { id: droplet.id, tags: droplet.tags }, next);
+      process.stdout.write(
+        `digitalocean: firewall ${firewall.id} now allows SSH from ${boxFirewallSources(next).join(', ')}\n`,
+      );
     } catch (err) {
       reportError(err);
     }
@@ -135,7 +175,9 @@ const firewallShowSub = new Command('show')
       const firewall = await findFirewallForDroplet(client, droplet.id, droplet.tags);
       const vpsIp = droplet.networks.v4.find((n) => n.type === 'public')?.ip_address ?? '—';
       if (!firewall) {
-        process.stdout.write(`digitalocean: box '${box.name}' (${vpsIp}) has no firewall attached\n`);
+        process.stdout.write(
+          `digitalocean: box '${box.name}' (${vpsIp}) has no firewall attached\n`,
+        );
         return;
       }
       const lines: string[] = [
@@ -148,6 +190,20 @@ const firewallShowSub = new Command('show')
         const sources = rule.sources.addresses?.join(', ') ?? '—';
         lines.push(`  in ${rule.protocol}${rule.ports ? `:${rule.ports}` : ''} from=${sources}`);
       }
+      const decoded = decodeBoxFirewall(
+        firewall,
+        droplet.tags,
+        staticInboundSources(box.cloud?.inbound),
+      );
+      lines.push('devices:');
+      for (const e of decoded.entries) {
+        const seen = e.seen > 0 ? new Date(e.seen * 1000).toISOString() : 'unknown';
+        const label = e.label ? ` [${e.label}]` : '';
+        lines.push(
+          `  ${e.key}${label}${e.hub ? ' (hub)' : ''}: ${e.cidrs.join(', ')}  seen ${seen}`,
+        );
+      }
+      lines.push(`this machine: ${localMachineKey()}`);
       lines.push('outbound:');
       for (const rule of firewall.outbound_rules) {
         const dests = rule.destinations.addresses?.join(', ') ?? '—';
@@ -173,7 +229,9 @@ const firewallShowSub = new Command('show')
           );
         }
       } catch (egressErr) {
-        lines.push(`host egress IP: <detection failed: ${egressErr instanceof Error ? egressErr.message : String(egressErr)}>`);
+        lines.push(
+          `host egress IP: <detection failed: ${egressErr instanceof Error ? egressErr.message : String(egressErr)}>`,
+        );
       }
       process.stdout.write(lines.join('\n') + '\n');
     } catch (err) {
@@ -199,7 +257,9 @@ async function resolveDigitalOceanBox(boxRef: string): Promise<{
   }
   const box = res.box;
   if (box.provider !== 'digitalocean') {
-    throw new Error(`box '${box.name}' has provider '${box.provider ?? 'docker'}', not 'digitalocean'`);
+    throw new Error(
+      `box '${box.name}' has provider '${box.provider ?? 'docker'}', not 'digitalocean'`,
+    );
   }
   const sandboxId = box.cloud?.sandboxId;
   if (!sandboxId) {
@@ -211,7 +271,9 @@ async function resolveDigitalOceanBox(boxRef: string): Promise<{
   }
   const droplet = await makeDigitalOceanClient().getDroplet(id);
   if (!droplet) {
-    throw new Error(`digitalocean droplet ${String(id)} for box '${box.name}' is gone (already destroyed?)`);
+    throw new Error(
+      `digitalocean droplet ${String(id)} for box '${box.name}' is gone (already destroyed?)`,
+    );
   }
   return { box, droplet };
 }

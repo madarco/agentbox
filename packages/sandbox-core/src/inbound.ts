@@ -84,6 +84,18 @@ export function resolveInboundSources(
   return [...out];
 }
 
+/**
+ * The policy's own part of a firewall's SSH sources, independent of any
+ * machine: `open` → the world, `whitelist` → its CIDRs, `locked` → none. The
+ * per-machine egress entries (`device-allowlist.ts`) are added on top.
+ */
+export function staticInboundSources(policy: InboundPolicy | undefined): string[] {
+  if (!policy) return [];
+  if (policy.mode === 'open') return [...OPEN_INBOUND_SOURCES];
+  if (policy.mode === 'whitelist') return [...new Set(policy.sources.map(normalizeInboundCidr))];
+  return [];
+}
+
 /** One-line human description of a policy for logs / `--show`. */
 export function describeInbound(policy: InboundPolicy): string {
   switch (policy.mode) {

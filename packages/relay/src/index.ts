@@ -256,6 +256,15 @@ export {
   type ContainerState,
 } from './autopause.js';
 export {
+  EGRESS_CACHE_FILE,
+  FIREWALL_PROVIDERS,
+  selectFirewallBoxes,
+  startEgressWatchLoop,
+  type EgressCache,
+  type EgressWatchDeps,
+  type EgressWatchHandle,
+} from './egress-watch.js';
+export {
   selectBoxesToRenew,
   startCloudKeepaliveLoop,
   type CloudKeepaliveLoopDeps,

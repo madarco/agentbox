@@ -221,7 +221,8 @@ export async function prepareDigitalOcean(
     progress(`creating firewall ${firewallName} (source ${source})`);
     const firewall = await createPerBoxFirewall(client, {
       name: firewallName,
-      sources: [source],
+      // A throwaway bake VM: one static source, no device entries.
+      ssh: { staticSources: [source], entries: [] },
       tag: prepareTag,
     });
     firewallId = firewall.id;
