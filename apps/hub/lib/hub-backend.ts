@@ -39,6 +39,7 @@ import {
   type ExecResult,
   type PromptAnswer,
   type Provider,
+  primaryAgent,
   providerWarning,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
@@ -50,6 +51,7 @@ import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
+import { addBoxAgent } from './backend/box-agents';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -119,6 +121,7 @@ import {
   resolvePerBoxCarry,
   serviceSignInUrl,
   mutateState,
+  recordAgentAdded,
   readPreparedStateRaw,
   readState,
   recordBox,
@@ -392,6 +395,16 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
+/**
+ * A box whose record never learned its agents (a hub-built box from before
+ * the hub worker passed them) still reports the registration's agent, so `hub
+ * adopt` on another PC keeps it and a service agent's gateway survives.
+ */
+function withRegisteredAgent(box: Box, reg: { agent?: string } | undefined): Box {
+  if ((box.agents && box.agents.length > 0) || !reg?.agent || reg.agent === 'none') return box;
+  return { ...box, agents: [reg.agent] };
+}
+
 /** The origin-machine fields of the Box payload, from a registration. */
 function originOfRegistration(
   reg: { originMachineId?: string; originMachineLabel?: string } | undefined,
@@ -494,6 +507,7 @@ function mapBox(
     webPort: b.cloud?.webPort,
     previewUrls: b.cloud?.previewUrls,
     lastAgent: b.lastAgent,
+    ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
     topology: b.cloud?.topology,
@@ -623,6 +637,10 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     image: reg.image,
     webPort: reg.webPort,
     lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    // Every agent, service agents included (this normalised `lastAgent` keeps only TUI ones),
+    // so a PC adopting the box keeps it: without it an adopted openclaw box
+    // looked agentless and its gateway was never started.
+    ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
     ...(reg.accounts ? { accounts: { ...reg.accounts } } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
@@ -1656,10 +1674,11 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+        agent: primaryAgent(box),
         // A register REPLACES the registration: without this a branch switch
         // would widen a `--no-skills` / `--skip-skills` box to the whole library.
         ...(box.skills ? { skills: box.skills } : {}),
-        agent: box.agents?.[0] ?? box.lastAgent,
+        ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old
@@ -2381,10 +2400,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       };
       const listedBoxes = await Promise.all(
         listed.map(async (b) =>
-          withTasks({
-            ...mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
-            ...originOfRegistration(regByBoxId.get(b.id)),
-          }),
+          withTasks(
+            withRegisteredAgent(
+              {
+                ...mapBox(
+                  b,
+                  repoGrouped.get(b.id),
+                  regByBoxId.get(b.id)?.originUrl,
+                  await hasGitOf(b),
+                ),
+                ...originOfRegistration(regByBoxId.get(b.id)),
+              },
+              regByBoxId.get(b.id),
+            ),
+          ),
         ),
       );
       return {
@@ -3425,6 +3454,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       } catch (err) {
         return { kind: 'error', error: errMsg(err) };
       }
+    },
+
+    async addBoxAgent(id, agent) {
+      const res = await addBoxAgent(
+        {
+          findBox: (ref) => findOrHydrateBox(ref, hydrate).catch(() => null),
+          recordAgent: (boxId, a) => recordAgentAdded(boxId, a),
+          getRegistration: (boxId) => handle.store.getBox(boxId).catch(() => undefined),
+          register: (reg) => handle.store.registerBox(reg),
+          agentId: (name) => findAgentSpec(name)?.id,
+        },
+        id,
+        agent,
+      );
+      if (res.kind === 'ok') handle.hubNotifier.notify();
+      return res;
     },
 
     // ── agent state ──

@@ -260,6 +260,48 @@ export async function fetchWatchList(): Promise<
 }
 
 /**
+ * Backoff for the first `agents.list` of a daemon's life: about five minutes in
+ * all. A box can come up before its hub knows it (a hub-built cloud box launches
+ * ctl, THEN registers), and its one early answer is "unknown box". A box that
+ * gave up there would run without its service agent's units until a restart.
+ */
+export const AGENTS_LIST_RETRY_DELAYS_MS: readonly number[] = [
+  2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+];
+
+/**
+ * {@link fetchWatchList} until the host answers, sleeping `delaysMs` between
+ * attempts; the last non-host answer when every attempt failed. `onRetry` is for
+ * the log line, `stopped` lets a shutting-down daemon give up early.
+ */
+export async function fetchWatchListWithRetry(
+  opts: {
+    fetch?: typeof fetchWatchList;
+    delaysMs?: readonly number[];
+    sleep?: (ms: number) => Promise<void>;
+    onRetry?: (source: string, delayMs: number) => void;
+    stopped?: () => boolean;
+  } = {},
+): Promise<Awaited<ReturnType<typeof fetchWatchList>>> {
+  const fetchOnce = opts.fetch ?? fetchWatchList;
+  const delays = opts.delaysMs ?? AGENTS_LIST_RETRY_DELAYS_MS;
+  const sleep =
+    opts.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms).unref();
+      }));
+  let res = await fetchOnce();
+  for (const delay of delays) {
+    if (res.source === 'host' || opts.stopped?.()) return res;
+    opts.onRetry?.(res.source, delay);
+    await sleep(delay);
+    res = await fetchOnce();
+  }
+  return res;
+}
+
+/**
  * The same answer, but LOUD — for `agent render`, whose whole job depends on it.
  *
  * {@link fetchWatchList} is a best-effort upgrade of lists that are already

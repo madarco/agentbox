@@ -170,6 +170,34 @@ export async function recordLastAgent(
 }
 
 /**
+ * Add `agent` to a box's `agents` (the agents it runs, which its registration
+ * names via `primaryAgent`). For a box adopted into an agent it was not
+ * created for (`agentbox openclaw <existing-box>`): a service agent's units go
+ * only to a box whose registration names it. Returns the updated record, or
+ * undefined when the box is not in state.
+ */
+export async function recordAgentAdded(
+  boxId: string,
+  agent: string,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const agents = (b.agents ?? []).filter((a) => a !== 'none');
+        updated = agents.includes(agent) ? b : { ...b, agents: [...agents, agent] };
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
+/**
  * Set (or clear) a box's cosmetic `displayName`. A locked read-modify-write so
  * it can't clobber a concurrent state change. Trims the input; an empty/blank
  * value clears the label (falls back to `name`). No-op when the box isn't in

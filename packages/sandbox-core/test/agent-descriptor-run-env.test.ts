@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { buildAgentDescriptors, serviceWithRunEnv } from '../src/sync/agent-descriptor.js';
 import { AGENT_SYNC_SPECS } from '../src/sync/registry.js';
 
-const payload = buildAgentDescriptors();
+// As an openclaw box asks: a service agent's units go only to a box that runs it.
+const payload = buildAgentDescriptors({ boxAgents: ['openclaw'] });
 const openclaw = payload.agents.find((a) => a.id === 'openclaw')!;
 const spec = AGENT_SYNC_SPECS.find((s) => s.id === 'openclaw')!;
 

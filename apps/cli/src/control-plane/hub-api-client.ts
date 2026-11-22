@@ -83,6 +83,8 @@ export interface HubApiBox {
   webPort?: number;
   previewUrls?: Record<number, string>;
   lastAgent?: AgentId;
+  /** Every agent the box was created for, service agents (openclaw) included. */
+  agents?: string[];
   /** Other agents' logins this box borrows as model auth. */
   borrowedCredentials?: string[];
   topology?: string;
@@ -1019,6 +1021,18 @@ export class HubApiClient {
     const q = new URLSearchParams({ ref });
     if (project !== undefined) q.set('project', project);
     return (await this.request<{ boxes: HubApiBox[] }>('GET', `/boxes?${q.toString()}`)).boxes;
+  }
+
+  /**
+   * Add an agent to an existing box: the owning hub records it and re-registers
+   * the box with its own token (`agentbox openclaw <box>`).
+   */
+  async addBoxAgent(id: string, agent: string): Promise<{ boxId: string; agents: string[] }> {
+    return this.request<{ boxId: string; agents: string[] }>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/agent`,
+      { agent },
+    );
   }
 
   /** Lifecycle action on a box. Reverse-adoption lets the hub drive registered-only boxes. */

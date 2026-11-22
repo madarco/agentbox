@@ -37,8 +37,12 @@ export const startServiceCommand = new Command('start')
 export const reloadCommand = new Command('reload')
   .description('Re-read agentbox.yaml and apply the diff')
   .option('--socket <path>', 'unix socket path', DEFAULT_SOCKET_PATH)
-  .action(async (opts: ControlOptions) => {
-    const diff = await reload({ socketPath: opts.socket });
+  .option(
+    '--agents',
+    're-ask the host which agents this box runs first (an agent added to a running box)',
+  )
+  .action(async (opts: ControlOptions & { agents?: boolean }) => {
+    const diff = await reload({ socketPath: opts.socket }, { refreshAgents: opts.agents === true });
     process.stdout.write(
       `added: ${diff.added.join(', ') || '(none)'}\n` +
         `removed: ${diff.removed.join(', ') || '(none)'}\n` +

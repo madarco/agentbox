@@ -28,6 +28,13 @@ export interface ServerOptions {
    * being that editing an unrelated key stopped the box's daemon.
    */
   reloadConfig?: () => Promise<CtlConfig>;
+  /**
+   * Re-ask the host's `agents.list` before a `reload --agents`: an agent added
+   * to a running box (`agentbox openclaw <box>`) reaches the live daemon only
+   * this way. Throws when the host does not answer (the reload is refused, so
+   * the caller sees why instead of a diff with nothing in it).
+   */
+  refreshAgents?: () => Promise<void>;
 }
 
 export async function startServer(opts: ServerOptions): Promise<Server> {
@@ -151,6 +158,20 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
       return;
     }
     case 'reload': {
+      if (req.refreshAgents === true) {
+        if (!opts.refreshAgents) {
+          writeLine(sock, { ok: false, error: 'this daemon cannot refresh agents' });
+          sock.end();
+          return;
+        }
+        try {
+          await opts.refreshAgents();
+        } catch (err) {
+          writeLine(sock, { ok: false, error: err instanceof Error ? err.message : String(err) });
+          sock.end();
+          return;
+        }
+      }
       const cfg = await (opts.reloadConfig ?? (() => loadConfig(opts.configPath)))();
       const diff = await opts.supervisor.reload(cfg);
       writeLine(sock, { ok: true, data: diff });
