@@ -1,3 +1,4 @@
+import { parseSkillSelection } from '../skills-rpc.js';
 import { timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
@@ -208,6 +209,7 @@ export async function handleRelayRequest(
     if (!body || !body.boxId || !body.token || typeof body.name !== 'string') {
       return err(400, 'expected {boxId, token, name}');
     }
+    const skillSelection = parseSkillSelection(body.skills);
     const reg: BoxRegistration = {
       boxId: body.boxId,
       token: body.token,
@@ -228,6 +230,7 @@ export async function handleRelayRequest(
       bridgeToken: body.bridgeToken || undefined,
       autoApproveHostActions: body.autoApproveHostActions === true,
       autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
+      ...(skillSelection ? { skills: skillSelection } : {}),
       originUrl: body.originUrl || undefined,
       ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
     };

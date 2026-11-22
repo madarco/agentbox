@@ -68,6 +68,8 @@ export interface ControlPlaneCreateInput {
      * selection and never a secret.
      */
     borrowCredentials?: string[];
+    /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). */
+    skills?: { none?: boolean; include?: string[]; exclude?: string[] };
     /** Named LLM account per agent — a selection, never a secret. */
     accounts?: Record<string, string>;
   };

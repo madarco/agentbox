@@ -371,9 +371,16 @@ export const skillsCommand = new Command('skills')
   .option('--allow-findings', 'upload skills the secret scan flagged')
   .action(async (opts: SkillsOpts) => {
     const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+    // Downloads read skill BYTES, which the hub gates like a custody read: the
+    // operator's PC sends the admin token it holds; an enrolled device's own
+    // token (the client's Bearer) is accepted without it; a local hub allows
+    // loopback.
+    const { resolveCustodyTarget } = await import('./control-plane.js');
+    const custody = await resolveCustodyTarget(undefined, { quiet: true }).catch(() => null);
     const ctx: SkillsContext = {
       home: homedir(),
       maxBytes: cfg?.effective.skills.maxSkillBytes ?? 50 * 1024 * 1024,
+      ...(custody?.adminToken ? { adminToken: custody.adminToken } : {}),
     };
     const acting = Boolean(
       opts.upload || opts.uploadAll || opts.download || opts.downloadAll || opts.discard,

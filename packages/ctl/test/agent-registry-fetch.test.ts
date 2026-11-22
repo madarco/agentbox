@@ -43,6 +43,8 @@ describe('fetchWatchList', () => {
       // "none" rather than a stale guess.
       units: [],
       renders: [],
+      // Likewise no skill injection dirs: they come only from the host.
+      skillDirs: [],
       source: 'timeout',
     });
   });
@@ -70,6 +72,8 @@ describe('fetchWatchList', () => {
       // contributes neither a unit nor a render descriptor.
       units: [],
       renders: [],
+      // The fake descriptor declares no `skills`, so no agent gets a link dir.
+      skillDirs: [],
       source: 'host',
     });
   });

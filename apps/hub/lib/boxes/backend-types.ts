@@ -178,6 +178,8 @@ export interface CreateBoxOpts {
   vnc?: boolean;
   /** `--persistent` / `--no-persistent`: always-on box (config `box.persistent`). */
   persistent?: boolean;
+  /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). */
+  skills?: { none?: boolean; include?: string[]; exclude?: string[] };
   /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
   borrowCredentials?: string[];
   /**

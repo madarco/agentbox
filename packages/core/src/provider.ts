@@ -6,7 +6,7 @@
  * `provider` discriminator (or, for `create`, from config/flags) and calls it.
  */
 
-import type { BoxRecord, ProviderName, SshTargetRecord } from './box-record.js';
+import type { BoxRecord, ProviderName, SkillSelection, SshTargetRecord } from './box-record.js';
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
 import type { ReplaceRule } from './replace.js';
@@ -189,6 +189,11 @@ export interface CreateBoxRequest {
    * (the queue worker's config-override path) still gets the right answer.
    */
   persistent?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills`). Absent = all. Recorded on the box and its registration.
+   */
+  skills?: SkillSelection;
   withPlaywright?: boolean;
   withEnv?: boolean;
   /** Workspace-relative host file paths to seed into /workspace at create. */

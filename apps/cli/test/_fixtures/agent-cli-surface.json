@@ -147,6 +147,27 @@
         "negate": true
       },
       {
+        "flags": "--skills <names>",
+        "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-skills",
+        "description": "give the box none of the hub's library skills",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--skip-skills <names>",
+        "description": "give the box every library skill except these (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--no-resync",
         "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
         "defaultValue": null,
@@ -655,6 +676,27 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": true
+      },
+      {
+        "flags": "--skills <names>",
+        "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-skills",
+        "description": "give the box none of the hub's library skills",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--skip-skills <names>",
+        "description": "give the box every library skill except these (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       },
       {
         "flags": "--no-resync",
@@ -1388,6 +1430,27 @@
         "negate": true
       },
       {
+        "flags": "--skills <names>",
+        "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-skills",
+        "description": "give the box none of the hub's library skills",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--skip-skills <names>",
+        "description": "give the box every library skill except these (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--no-resync",
         "description": "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",
         "defaultValue": null,
@@ -1840,6 +1903,27 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": true
+      },
+      {
+        "flags": "--skills <names>",
+        "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--no-skills",
+        "description": "give the box none of the hub's library skills",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": true
+      },
+      {
+        "flags": "--skip-skills <names>",
+        "description": "give the box every library skill except these (comma-separated, repeatable)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       },
       {
         "flags": "--no-resync",

@@ -384,6 +384,7 @@ async function runDockerJob(
     // `create`) selects none; an agent can still be added on demand later.
     agents: plan.agents,
     ...(opts.borrowCredentials?.length ? { borrowCredentials: [...opts.borrowCredentials] } : {}),
+    ...(opts.skills ? { skills: opts.skills } : {}),
     ...(opts.accounts && Object.keys(opts.accounts).length > 0
       ? { accounts: { ...opts.accounts } }
       : {}),
@@ -661,6 +662,7 @@ async function runCloudJob(
     // names exactly one agent, so the box carries only that one's credentials.
     agents: plan.agents,
     ...(opts.borrowCredentials?.length ? { borrowCredentials: [...opts.borrowCredentials] } : {}),
+    ...(opts.skills ? { skills: opts.skills } : {}),
     ...(opts.accounts && Object.keys(opts.accounts).length > 0
       ? { accounts: { ...opts.accounts } }
       : {}),

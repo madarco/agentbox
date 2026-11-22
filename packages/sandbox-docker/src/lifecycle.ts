@@ -556,6 +556,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         worktrees: box.gitWorktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+        ...(box.skills ? { skills: box.skills } : {}),
         agent: box.agents?.[0] ?? box.lastAgent,
         ...(box.accounts ? { accounts: box.accounts } : {}),
       });

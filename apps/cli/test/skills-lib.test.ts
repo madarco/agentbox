@@ -20,6 +20,9 @@ vi.hoisted(() => {
 });
 
 import {
+  readTar,
+  SkillTarError,
+  writeTar,
   discoverLocalSkills,
   parseSkillFrontmatter,
   readSkillTree,
@@ -28,7 +31,6 @@ import {
   SkillTooLargeError,
   treeHash,
 } from '@agentbox/sandbox-core';
-import { readTar, SkillTarError, writeTar } from '../src/lib/skills/tar.js';
 import {
   compareSkills,
   downloadHubSkill,
@@ -134,18 +136,35 @@ function readTarFixture(name: string, type: string): Buffer {
 }
 
 describe('tree hash', () => {
-  it('is independent of mtimes and of where the tree lives, and follows symlinks', async () => {
+  it('is independent of mtimes and of where the tree lives, and follows in-skill links', async () => {
     const a = writeSkill(tmp('ska-'), 'one', { 'refs/a.md': 'A' });
-    const bRoot = tmp('skb-');
-    const target = tmp('skt-');
-    writeFileSync(join(target, 'a.md'), 'A');
-    const b = writeSkill(bRoot, 'one');
-    mkdirSync(join(b, 'refs'));
-    symlinkSync(join(target, 'a.md'), join(b, 'refs', 'a.md'));
+    // Same content, but refs/a.md is a link to a file elsewhere INSIDE the skill,
+    // and the skill root itself is reached through a link (the usual
+    // ~/.claude/skills/x -> ~/.agents/skills/x layout).
+    const real = writeSkill(tmp('skb-'), 'one', { 'store/a.md': 'A' });
+    mkdirSync(join(real, 'refs'));
+    symlinkSync(join(real, 'store', 'a.md'), join(real, 'refs', 'a.md'));
+    const linkedRoot = join(tmp('skl-'), 'one');
+    symlinkSync(real, linkedRoot);
     const ha = treeHash((await readSkillTree(a)).files);
-    const hb = treeHash((await readSkillTree(b)).files);
+    const hb = treeHash(
+      (await readSkillTree(linkedRoot)).files.filter((f) => !f.path.startsWith('store/')),
+    );
     expect(ha).toBe(hb);
     expect(ha).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('refuses links out of the skill, and the skill with them is not uploadable', async () => {
+    const outside = tmp('skout-');
+    writeFileSync(join(outside, '.env'), 'API_KEY=whatever');
+    const home = tmp('skhome-');
+    const d = writeSkill(join(home, '.agents/skills'), 'leaky-link');
+    symlinkSync(outside, join(d, 'refs'));
+    const tree = await readSkillTree(d);
+    expect(tree.outOfTreeLinks).toEqual(['refs']);
+    expect(tree.files.map((f) => f.path)).toEqual(['SKILL.md']);
+    const [skill] = await discoverLocalSkills({ home });
+    expect(uploadBlocker(skill!)).toMatch(/symlink points outside the skill: refs/);
   });
 
   it('keeps content reached through two links to one directory, and stops cycles', async () => {

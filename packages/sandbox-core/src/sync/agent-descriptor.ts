@@ -51,6 +51,11 @@ export interface AgentWatchDescriptor {
 /** What ctl needs to know about one agent. */
 export interface AgentDescriptor {
   id: string;
+  /**
+   * Where ctl links the box's library skills for this agent (`AgentSyncSpec.skills`).
+   * Absent = this agent gets none.
+   */
+  skills?: { inject: { kind: 'dir'; path: string } };
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
   /**
@@ -191,6 +196,7 @@ export function buildAgentDescriptors(
         ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) }
         : {}),
       ...(spec.configRender && runsHere(spec.id) ? { configRender: spec.configRender } : {}),
+      ...(spec.skills ? { skills: { inject: spec.skills.inject } } : {}),
       watch: [
         ...(spec.credential
           ? [

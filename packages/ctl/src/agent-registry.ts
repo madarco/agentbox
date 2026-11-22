@@ -54,6 +54,7 @@ interface WireAgent {
   surface?: unknown;
   service?: unknown;
   configRender?: unknown;
+  skills?: unknown;
 }
 
 /**
@@ -105,6 +106,11 @@ export interface AgentDescriptors {
    * stops calling a service agent's overlay block an unknown top-level key.
    */
   renders: readonly AgentRenderDescriptor[];
+  /**
+   * Absolute box-local dirs to link the hub's library skills into, one per agent
+   * that declares a `dir` injection (`AgentSyncSpec.skills`). Deduplicated.
+   */
+  skillDirs: readonly string[];
 }
 
 /**
@@ -132,6 +138,7 @@ export function parseAgentDescriptors(
   const sessions: WatchedAgentSession[] = [];
   const units: AgentUnits[] = [];
   const renders: AgentRenderDescriptor[] = [];
+  const skillDirs = new Set<string>();
   const warn = onWarn ?? ((m: string) => process.stderr.write(`agentbox-ctl: ${m}\n`));
   for (const raw of agents as WireAgent[]) {
     const id = typeof raw?.id === 'string' ? raw.id : null;
@@ -145,6 +152,18 @@ export function parseAgentDescriptors(
     }
     const render = parseRenderDescriptor(id, raw.configRender);
     if (render) renders.push(render);
+    const inject = (raw.skills as { inject?: { kind?: unknown; path?: unknown } } | undefined)
+      ?.inject;
+    // Absolute paths only: a relative or `..`-bearing one is malformed, and ctl
+    // must never be talked into linking skills somewhere unexpected.
+    if (
+      inject?.kind === 'dir' &&
+      typeof inject.path === 'string' &&
+      inject.path.startsWith('/') &&
+      !inject.path.split('/').includes('..')
+    ) {
+      skillDirs.add(inject.path);
+    }
 
     // An agent is probed for activity only if it says it reports any. A row with
     // no `activitySource` has no hooks, no plugin and no scraper, so probing its
@@ -175,7 +194,7 @@ export function parseAgentDescriptors(
   // empty on their own (a host whose agents all opt out of activity), but not
   // when the credentials were unusable too.
   if (files.length === 0) return null;
-  return { files, sessions, units, renders };
+  return { files, sessions, units, renders, skillDirs: [...skillDirs] };
 }
 
 /**
@@ -212,6 +231,7 @@ export async function fetchWatchList(): Promise<
     // never a stale guess.
     units: [],
     renders: [],
+    skillDirs: [],
   } satisfies AgentDescriptors;
   try {
     const timeout = new Promise<'timeout'>((resolve) => {
@@ -231,6 +251,7 @@ export async function fetchWatchList(): Promise<
       sessions: parsed.sessions.length > 0 ? parsed.sessions : baked.sessions,
       units: parsed.units,
       renders: parsed.renders,
+      skillDirs: parsed.skillDirs,
       source: 'host',
     };
   } catch {

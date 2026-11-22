@@ -1278,12 +1278,26 @@ export class HubApiClient {
     return this.parseRaw(res);
   }
 
-  /** Fetch a version's tarball (default: current) and the tree hash the hub says it is. */
-  async downloadSkill(name: string, version?: string): Promise<{ version: string; data: Buffer }> {
+  /**
+   * Fetch a version's tarball (default: current) and the tree hash the hub says
+   * it is. Byte reads are elevated on the hub: send the admin token when this PC
+   * holds it, else this client's own token, which the hub accepts there when it
+   * is an enrolled device's.
+   */
+  async downloadSkill(
+    name: string,
+    version?: string,
+    opts: { adminToken?: string } = {},
+  ): Promise<{ version: string; data: Buffer }> {
     const q = version ? `?version=${encodeURIComponent(version)}` : '';
     const res = await this.fetchImpl(
       `${this.base}/api/v1/skills/${encodeURIComponent(name)}/tarball${q}`,
-      { headers: { Authorization: `Bearer ${this.token}` } },
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'X-Agentbox-Admin-Token': opts.adminToken ?? this.token,
+        },
+      },
     );
     if (!res.ok) await this.parseRaw(res);
     return {
