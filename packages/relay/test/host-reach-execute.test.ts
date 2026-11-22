@@ -226,4 +226,74 @@ describe('executeHostReachAction', () => {
       else process.env.AGENTBOX_CLI_ENTRY = prevEntry;
     }
   });
+
+  it('serves its OWN box under the normal rules when it is the origin and has no record yet (sign-off re-check)', async () => {
+    const stub = join(dir, 'stub-cli.mjs');
+    await writeFile(stub, "process.stdout.write('copied');\n");
+    await writeFile(join(dir, 'data.csv'), 'x');
+    const prevEntry = process.env.AGENTBOX_CLI_ENTRY;
+    process.env.AGENTBOX_CLI_ENTRY = stub;
+    try {
+      const adopted: string[] = [];
+      const d = deps({
+        machineId: () => 'pc-a',
+        repoKeyOf: () => Promise.resolve('github.com/acme/app'),
+        adopt: (boxId) => {
+          adopted.push(boxId);
+          return Promise.resolve({ ok: true });
+        },
+      });
+      const r = await executeHostReachAction(
+        action({
+          route: {
+            repoKey: 'github.com/acme/app',
+            folder: dir,
+            role: 'origin',
+            box: { name: 'b1', backend: 'hetzner', originMachineId: 'pc-a' },
+          },
+        }),
+        d,
+      );
+      // A contained, non-secret copy auto-approves as it would with a record:
+      // no confirm (an unattended copy is not denied by a timeout), then adopt.
+      expect(d.prompts.size()).toBe(0);
+      expect(adopted).toEqual(['box-1']);
+      expect(r).toMatchObject({ exitCode: 0, stdout: 'copied' });
+    } finally {
+      if (prevEntry === undefined) delete process.env.AGENTBOX_CLI_ENTRY;
+      else process.env.AGENTBOX_CLI_ENTRY = prevEntry;
+    }
+  });
+
+  it('still always asks when the route says origin but this PC is not that machine', async () => {
+    const prevEntry = process.env.AGENTBOX_CLI_ENTRY;
+    process.env.AGENTBOX_CLI_ENTRY = join(dir, 'never-run.mjs');
+    try {
+      await writeFile(join(dir, 'data.csv'), 'x');
+      const d = deps({
+        machineId: () => 'pc-b',
+        repoKeyOf: () => Promise.resolve('github.com/acme/app'),
+        adopt: () => Promise.resolve({ ok: true }),
+      });
+      const p = executeHostReachAction(
+        action({
+          route: {
+            repoKey: 'github.com/acme/app',
+            folder: dir,
+            role: 'origin',
+            box: { name: 'b1', backend: 'hetzner', originMachineId: 'pc-a' },
+          },
+        }),
+        d,
+      );
+      for (let i = 0; i < 50 && d.prompts.size() === 0; i++)
+        await new Promise((r) => setTimeout(r, 10));
+      expect(d.prompts.size()).toBe(1);
+      d.prompts.resolve(d.prompts.all()[0]!.id, 'n');
+      expect(await p).toMatchObject({ exitCode: 10 });
+    } finally {
+      if (prevEntry === undefined) delete process.env.AGENTBOX_CLI_ENTRY;
+      else process.env.AGENTBOX_CLI_ENTRY = prevEntry;
+    }
+  });
 });

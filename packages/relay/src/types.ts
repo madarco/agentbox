@@ -284,7 +284,12 @@ export interface HostAction {
     repoKey?: string;
     folder?: string;
     role?: 'origin' | 'has-repo';
-    box?: { name: string; backend?: string };
+    box?: {
+      name: string;
+      backend?: string;
+      originMachineId?: string;
+      autoApproveSafeHostActions?: boolean;
+    };
   };
 }
 

@@ -79,7 +79,17 @@ export interface HostReachRoute {
    * The box as the hub knows it, so a PC that has no record of it can still
    * show a confirm and run the copy (it adopts the box only once approved).
    */
-  box?: { name: string; backend?: string };
+  box?: HostReachBox;
+}
+
+/** What a PC needs to serve a box it has no record of yet. */
+export interface HostReachBox {
+  name: string;
+  backend?: string;
+  /** The box's origin machine, so that machine knows the box is its own. */
+  originMachineId?: string;
+  /** `box.autoApproveSafeHostActions` from the registration (absent = enabled). */
+  autoApproveSafeHostActions?: boolean;
 }
 
 /**

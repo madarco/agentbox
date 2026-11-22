@@ -38,7 +38,9 @@ import {
 import { evaluateBaseFreshness, warnCheckpointAgentMismatch } from '../checkpoint-lookup.js';
 import { runPrepare } from './prepare.js';
 import { agentCommandEntry } from '../agents/commands.js';
-import { syncAgentCredentialsIfChanged } from './control-plane.js';
+import { resolveHubApiTarget, syncAgentCredentialsIfChanged } from './control-plane.js';
+import { adoptCreatedHubBox } from './_cloud-agent-via-hub.js';
+import { HubApiClient } from '../control-plane/hub-api-client.js';
 import {
   resolveCreateTarget,
   pushCreateSeed,
@@ -357,7 +359,30 @@ async function runCreateViaHubApi(
   // them. A decision the provider made on the control box is worth exactly as
   // much as one made locally.
   for (const w of cmdLog.warnings()) log.warn(w);
-  outro(`box ready: ${outcome.job?.boxId ?? '(id pending)'}`);
+  // Write the local record, as `agentbox <agent>` does: this machine created the
+  // box, so attach / cp / host-reach must treat it as its own, not a stranger
+  // whose first copy asks and then adopts it. Best-effort: the box exists.
+  const boxId = outcome.job?.boxId;
+  if (boxId) {
+    try {
+      const apiTarget = await resolveHubApiTarget(opts.url, { quiet: true });
+      if (apiTarget) {
+        await adoptCreatedHubBox({
+          client: new HubApiClient(apiTarget),
+          apiTarget,
+          custodyAdminToken: target.custody.adminToken,
+          boxId,
+          cwd: projectRoot,
+          log: (line) => cmdLog.write(line),
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `box ${boxId} is up, but its local record could not be written (${err instanceof Error ? err.message : String(err)}); run \`agentbox hub adopt ${boxId}\``,
+      );
+    }
+  }
+  outro(`box ready: ${boxId ?? '(id pending)'}`);
   cmdLog.close();
   process.exit(0);
 }

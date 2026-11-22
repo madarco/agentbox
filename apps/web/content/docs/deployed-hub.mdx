@@ -660,7 +660,10 @@ computer serves it, the box is told which computers were tried and why ("laptop:
 A computer that has the repo but never adopted the box can still serve it: it always asks for
 approval (nothing remembered about that box yet), and only once you approve does it adopt the box
 from the hub (the same as `agentbox hub adopt`). A denied copy leaves nothing behind on that
-computer. Output parked for the creating computer (`toHost` while it was offline) is landed by that
+computer. The computer the box was created from is the exception: it gets the box's usual approval
+rules (a contained copy needs no confirm), adopting the box if it has no record of it. `agentbox
+create` routed through the hub writes that record anyway, as `agentbox claude` and the other agent
+commands do. Output parked for the creating computer (`toHost` while it was offline) is landed by that
 computer only.
 
 The approval for a copy is raised where it runs, and **also in the hub**: it appears in the web UI's

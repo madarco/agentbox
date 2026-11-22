@@ -1441,12 +1441,27 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? {
                 route: {
                   ...routing.route,
-                  box: { name: reg.name, ...(reg.backend ? { backend: reg.backend } : {}) },
+                  box: {
+                    name: reg.name,
+                    ...(reg.backend ? { backend: reg.backend } : {}),
+                    ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+                    ...(reg.autoApproveSafeHostActions === false
+                      ? { autoApproveSafeHostActions: false }
+                      : {}),
+                  },
                 },
               }
             : {}),
         });
         const tried = outcome.kind === 'unreachable' ? describeTried(outcome.tried) : '';
+        // The lead names what happened: a machine that answered "no" was there,
+        // so "not connected, start AgentBox" would send the user the wrong way.
+        const reachReason: HostReachUnreachable =
+          outcome.kind === 'unreachable' && outcome.tried?.some((t) => t.reason === 'declined')
+            ? 'declined'
+            : outcome.kind === 'unreachable'
+              ? outcome.reason
+              : 'never-connected';
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
@@ -1459,7 +1474,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           send(res, 500, {
             exitCode: 69,
             stdout: '',
-            stderr: toolUnreachableMessage(reg.name, outcome.reason) + tried,
+            stderr: toolUnreachableMessage(reg.name, reachReason) + tried,
           });
           return;
         }
@@ -1500,7 +1515,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           exitCode: 69,
           stdout: '',
           stderr:
-            cpUnreachableMessage(body.method as CpMethod, reg.name, outcome.reason, {
+            cpUnreachableMessage(body.method as CpMethod, reg.name, reachReason, {
               cacheMiss: body.method === 'cp.fromHost',
             }) + tried,
         });
@@ -2909,7 +2924,7 @@ function cpUnreachableMessage(
     reason === 'went-away'
       ? 'the machine holding these files stopped responding part-way through the copy'
       : reason === 'declined'
-        ? 'every machine with a checkout of this project was asked and none could serve it (see below)'
+        ? 'no machine that was asked could serve it: at least one declined (see below for each)'
         : 'the machine holding these files is not connected to this hub';
   return [
     `cp ${direction} the host could not run: ${lead}.`,

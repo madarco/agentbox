@@ -154,6 +154,12 @@ export interface Box {
   // with no local `projectRoot`, and for ANY box seen through a REMOTE hub, whose
   // `projectRoot` is the control box's path and so can't match this laptop's.
   originUrl?: string | null;
+  // The machine the box was created from (multi-PC host-reach goes there first),
+  // from its registration: `getMachineId()` of that PC and its hostname.
+  // Absent for a box built on the hub with no requesting PC, or registered
+  // before origins were recorded.
+  originMachineId?: string;
+  originMachineLabel?: string;
   // Public IP/host of the box's VM (direct-SSH providers: hetzner/digitalocean).
   publicHost?: string;
   // Resolved base image / snapshot ref the sandbox booted from.

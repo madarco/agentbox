@@ -103,7 +103,7 @@ describe('host-reach routing on the control box', () => {
       repoKey: KEY,
       folder: '/Users/a/app',
       role: 'origin',
-      box: { name: 'cpbox', backend: 'hetzner' },
+      box: { name: 'cpbox', backend: 'hetzner', originMachineId: PC_A },
     });
     const id = a.body.actions![0]!.id;
     // PC B cannot settle (or decline) PC A's copy by quoting PC A's poller id.
@@ -146,6 +146,10 @@ describe('host-reach routing on the control box', () => {
     });
     const answer = await rpc;
     expect(answer.status).toBe(500);
+    // One machine declined, the other was offline: the lead says a machine
+    // declined, and does not send the user to start AgentBox.
+    expect(answer.body.stderr.split('\n')[0]).toMatch(/at least one declined/);
+    expect(answer.body.stderr).not.toMatch(/agentbox relay start/);
     expect(answer.body.stderr).toMatch(/Machines tried, in order:/);
     // fromHost copies host -> box: the hint says so (it used to be reversed).
     expect(answer.body.stderr).toContain('agentbox cp <src> cpbox:<dst>');

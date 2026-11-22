@@ -1,4 +1,5 @@
 import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
+import { tryGetMachineId } from '@agentbox/config';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -200,6 +201,8 @@ export async function executeHostReachAction(
     adopt?: (boxId: string, cwd: string) => Promise<{ ok: boolean; error?: string }>;
     /** The repo key of a folder's origin, as this machine sees it (tests stub it). */
     repoKeyOf?: (folder: string) => Promise<string | undefined>;
+    /** This machine's id (tests stub it). */
+    machineId?: () => string | undefined;
   },
 ): Promise<HostActionResult | HostReachDecline> {
   const route = action.route;
@@ -245,13 +248,20 @@ export async function executeHostReachAction(
   // serve it with what the hub said about it, and adopt it (state.json record +
   // SSH keys from custody) only once the copy is approved — a denied or failed
   // copy leaves nothing behind.
+  // This PC is the box's ORIGIN (it was created from here, e.g. through the
+  // hub, and the record was never written): the box's own approval rules apply,
+  // exactly as if the record existed. A fallback PC that merely has the repo
+  // has no such standing, so it always asks.
+  const isOrigin =
+    route?.role === 'origin' &&
+    route.box?.originMachineId !== undefined &&
+    route.box.originMachineId === (deps.machineId ?? tryGetMachineId)();
   const ephemeral =
     !owner && route && folder && route.box?.backend
       ? {
           name: route.box.name,
           backendName: route.box.backend,
-          // No record means no remembered consent: always ask.
-          autoApproveSafeHostActions: false,
+          autoApproveSafeHostActions: isOrigin ? route.box.autoApproveSafeHostActions : false,
         }
       : null;
   if (!owner && !ephemeral) {

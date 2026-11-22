@@ -267,13 +267,39 @@ export async function createCloudBoxViaHubAndAdopt(
   const boxId = res.job?.boxId;
   if (!boxId) throw new Error('the control box created the box but returned no id to adopt');
 
-  // Materialize the just-created box locally. Resolve it server-side via
-  // `GET /api/v1/boxes?ref=` (Step 4) rather than the admin store, then adopt.
-  // Require the EXACT id — never fall back to the first of an ambiguous/mismatched
-  // match set, or an adopt + SSH-config could target the wrong box.
-  const box = (await client.resolveBox(boxId)).find((b) => b.id === boxId);
+  return adoptCreatedHubBox({
+    client,
+    apiTarget,
+    custodyAdminToken: custody.adminToken,
+    boxId,
+    cwd: projectRoot,
+    log: onLog ?? ((): void => {}),
+  });
+}
+
+/**
+ * Materialize a box the control box just created as a local record on THIS
+ * machine, the one that asked for it — so attach, `cp` and the host-reach relay
+ * know it as theirs instead of meeting it as a stranger (which made its first
+ * copy ask and then adopt its own box). Shared by `agentbox <agent>` and
+ * `agentbox create` routed through the hub.
+ */
+export async function adoptCreatedHubBox(args: {
+  client: HubApiClient;
+  apiTarget: { url: string; apiKey: string };
+  custodyAdminToken: string;
+  boxId: string;
+  /** The project folder the box was created from, so the record links to it. */
+  cwd: string;
+  log: (line: string) => void;
+}): Promise<BoxRecord> {
+  // Resolve it server-side via `GET /api/v1/boxes?ref=` (Step 4) rather than the
+  // admin store, then adopt. Require the EXACT id — never fall back to the first
+  // of an ambiguous/mismatched match set, or an adopt + SSH-config could target
+  // the wrong box.
+  const box = (await args.client.resolveBox(args.boxId)).find((b) => b.id === args.boxId);
   if (!box) {
-    throw new Error(`the control box created box ${boxId} but it is not resolvable to adopt`);
+    throw new Error(`the control box created box ${args.boxId} but it is not resolvable to adopt`);
   }
   // SSH-key pull rides the hub's /api/v1 custody now (Step 10): the API key passes
   // the proxy gate and the admin token is the elevated credential a control box's
@@ -282,12 +308,13 @@ export async function createCloudBoxViaHubAndAdopt(
   const adopted = await adoptHubBox({
     box,
     custody: new CustodyClient({
-      url: apiTarget.url,
-      apiKey: apiTarget.apiKey,
-      adminToken: custody.adminToken,
+      url: args.apiTarget.url,
+      apiKey: args.apiTarget.apiKey,
+      adminToken: args.custodyAdminToken,
     }),
-    controlPlaneUrl: apiTarget.url,
-    log: onLog ?? ((): void => {}),
+    controlPlaneUrl: args.apiTarget.url,
+    cwd: args.cwd,
+    log: args.log,
   });
   return adopted.record;
 }

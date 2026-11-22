@@ -4380,6 +4380,15 @@ export function buildOpenApi(): Record<string, unknown> {
               description:
                 "Box repo's origin remote URL. Lets project-scoped `ls` match a box to the cwd repo by identity when its projectRoot is a remote hub's path. Populated for any registered box, docker included.",
             },
+            originMachineId: {
+              type: 'string',
+              description:
+                'The machine the box was created from (its `~/.agentbox/machine-id`, the device id), from the registration. Host-reach copies go there first. Absent for a box built on the hub with no requesting computer, or registered before origins were recorded.',
+            },
+            originMachineLabel: {
+              type: 'string',
+              description: "That machine's hostname, display only.",
+            },
             publicHost: {
               type: 'string',
               description:
