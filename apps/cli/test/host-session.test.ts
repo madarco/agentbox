@@ -10,6 +10,7 @@ import {
 // Every filesystem and process read goes through an injected seam: apps/cli tests
 // have no HOME isolation, so nothing here may touch the real ~/.claude.
 const HOME = '/home/u';
+const MACHINE = '11111111-2222-4333-8444-555555555555';
 const ID = '5edc0ee0-ce9a-4e30-962d-bc630388d8bc';
 const NOW = 1_800_000_000_000;
 
@@ -23,6 +24,7 @@ function deps(over: HostSessionDeps & { files?: Record<string, number> } = {}): 
     home: HOME,
     cwd: '/work/repo',
     hostname: () => 'laptop',
+    machineId: () => MACHINE,
     now: () => NOW,
     exists: (p) => p in files,
     listDir: (dir) =>
@@ -50,6 +52,7 @@ describe('detectHostSession: claude', () => {
       cwd: '/work/repo',
       pid: 4321,
       host: 'laptop',
+      machineId: MACHINE,
     });
   });
 

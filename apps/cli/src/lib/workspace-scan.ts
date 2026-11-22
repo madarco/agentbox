@@ -6,7 +6,7 @@
  * disk and sends what it found: the folder, the projects under it, and each
  * project's `origin`, which is what joins a box to its workspace anywhere.
  */
-import { hostname } from 'node:os';
+import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import { basename } from 'node:path';
 import { canonicalWorkspaceRoot, scanWorkspaceProjects } from '@agentbox/relay';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
@@ -19,6 +19,7 @@ export interface ScannedProject {
 
 export interface WorkspaceScan {
   host: string;
+  machineId?: string;
   root: string;
   projects: ScannedProject[];
 }
@@ -56,5 +57,11 @@ export async function scanWorkspace(root: string): Promise<WorkspaceScan> {
       return { path, name: basename(path), ...(repoUrl ? { repoUrl } : {}) };
     },
   );
-  return { host: hostname(), root: canonical, projects };
+  const machineId = tryGetMachineId();
+  return {
+    host: getMachineLabel(),
+    ...(machineId ? { machineId } : {}),
+    root: canonical,
+    projects,
+  };
 }

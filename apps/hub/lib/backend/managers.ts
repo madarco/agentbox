@@ -8,8 +8,11 @@
 // on the user's PC, while the workspace that owns the record is on the box. Two
 // rules follow, and everything here is one of them:
 //   - a process op (start/resume/attach/stop/sessions/type) is refused unless
-//     `rec.host` is this machine — `wrong_host`, with the host to retry against;
+//     the record names this machine (its `machineId`, or for a record from
+//     before machine ids its `host`), or its pty socket answers here —
+//     `wrong_host`, with the machine to retry against;
 //   - a record this hub does not host is shown from its last heartbeat.
+import { stat } from 'node:fs/promises';
 import { homedir, hostname as osHostname } from 'node:os';
 import {
   addWorkspace,
@@ -77,11 +80,18 @@ import {
   type TimelinePr,
   type TimelineStamp,
   type WorkTask,
+  ptySessionAnswersHere,
+  restampWorkspaceHost,
 } from '@agentbox/relay';
-import { loadEffectiveConfig } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  sameMachine,
+  sameMachineRef,
+  type MachineRef,
+} from '@agentbox/config';
 import { PTY_PROTOCOL_VERSION } from '@agentbox/core';
 import { readPtyMeta } from '@agentbox/sandbox-core';
-import { reconcileContext, type BackendDeps } from './deps';
+import { hubMachine, reconcileContext, type BackendDeps } from './deps';
 import { stampInWorkspace } from './timeline';
 import { MANAGER_CARRIER_MISSING, PTY_CARRIER_MISSING, TMUX_MISSING } from './errors';
 import type {
@@ -122,20 +132,64 @@ function invalid(message: string): { ok: false; error: string; invalid: true } {
  */
 function wrongHost(
   message: string,
-  host: string,
-  hosts?: string[],
+  host: MachineRef,
+  hosts?: MachineRef[],
 ): {
   ok: false;
   error: string;
   code: 'wrong_host';
-  details: { host: string; hosts?: string[] };
+  details: {
+    host: string;
+    machineId?: string;
+    hosts?: string[];
+    machineIds?: (string | null)[];
+  };
 } {
+  // `host`/`hosts` stay hostnames (what a client that predates machine ids
+  // compares, and what a human reads); `machineId`/`machineIds` are what a
+  // current client matches on. `machineIds` is index-aligned with `hosts`, null
+  // for an entry from before machine ids, which only its hostname identifies.
+  const many = hosts && hosts.length > 1 ? hosts : undefined;
+  const ids = many?.map((h) => h.id ?? null);
   return {
     ok: false,
     error: message,
     code: 'wrong_host',
-    details: { host, ...(hosts && hosts.length > 1 ? { hosts } : {}) },
+    details: {
+      host: host.label,
+      ...(host.id ? { machineId: host.id } : {}),
+      ...(many ? { hosts: many.map((h) => h.label) } : {}),
+      ...(ids?.some((id) => id !== null) ? { machineIds: ids } : {}),
+    },
   };
+}
+
+/** The machine a detect came from, as a record-shaped pair for `sameMachine`. */
+function detectMachineRecord(input: { host?: string; machineId?: string }): {
+  host?: string;
+  machineId?: string;
+} {
+  return {
+    ...(input.host !== undefined ? { host: input.host } : {}),
+    ...(input.machineId ? { machineId: input.machineId } : {}),
+  };
+}
+
+/** The machine a detect came from. */
+function detectMachineRef(input: { host?: string; machineId?: string }): MachineRef {
+  return { ...(input.machineId ? { id: input.machineId } : {}), label: input.host ?? '' };
+}
+
+/** A manager record's machine. */
+function machineOf(rec: Pick<ManagerRecord, 'host' | 'machineId'>): MachineRef {
+  return { ...(rec.machineId ? { id: rec.machineId } : {}), label: rec.host };
+}
+
+/** Every machine a workspace has folders on, labelled for a refusal. */
+function workspaceMachines(ws: { hosts: Record<string, { label?: string }> }): MachineRef[] {
+  return Object.entries(ws.hosts).map(([key, h]) =>
+    h.label ? { id: key, label: h.label } : { label: key },
+  );
 }
 
 function messageOf(e: unknown): string {
@@ -182,9 +236,11 @@ export function createManagerBackend(
   opts: ManagerBackendOptions,
 ): ManagerBackend {
   const hostname = deps.hostname ?? osHostname;
+  const me = (): MachineRef => hubMachine(deps);
   const store = opts.store ?? managerStore();
   const probe: ManagerProbe = {
     hostname,
+    ...(deps.machineId ? { machineId: deps.machineId } : {}),
     ...(deps.managerExec ? { exec: deps.managerExec } : {}),
     ...(deps.isPidAlive ? { isPidAlive: deps.isPidAlive } : {}),
     ...(deps.processStartTime ? { processStartTime: deps.processStartTime } : {}),
@@ -195,8 +251,55 @@ export function createManagerBackend(
    * the session — its process, its tmux server, its transcript, Claude's daemon
    * — is only true there, and everything that drives it is refused elsewhere.
    */
-  function storeIsLocal(rec: ManagerRecord): boolean {
-    return rec.host === hostname();
+  function storeIsLocal(rec: Pick<ManagerRecord, 'host' | 'machineId'>): boolean {
+    return sameMachine(rec, me());
+  }
+
+  /**
+   * {@link storeIsLocal}, or a pty manager whose socket answers in this user's
+   * own `~/.agentbox/pty` — proof that it runs here whatever the record's host
+   * says (a hostname flip, or a record from before machine ids).
+   *
+   * A record found local is re-stamped with this machine's id and current label
+   * so the next read matches it directly — but only with proof: its id, its
+   * socket, or (for a record matched by hostname alone) its folder on this
+   * disk. A hostname vouches for nothing on a hub a same-named PC reaches, and
+   * stamping this hub's id onto that PC's record would hand it to this machine
+   * for good.
+   */
+  async function isLocal(rec: ManagerRecord): Promise<boolean> {
+    const m = me();
+    if (rec.machineId && m.id) {
+      if (rec.machineId === m.id || (await ptySessionAnswersHere(rec, probe))) {
+        await restamp(rec);
+        return true;
+      }
+      return false;
+    }
+    if (await ptySessionAnswersHere(rec, probe)) {
+      await restamp(rec);
+      return true;
+    }
+    if (!storeIsLocal(rec)) return false;
+    if (await isDirectory(rec.cwd)) await restamp(rec);
+    return true;
+  }
+
+  /** Move a record matched by hostname (or by its socket) onto this machine's id. */
+  async function restamp(rec: ManagerRecord): Promise<void> {
+    const m = me();
+    if (rec.machineId === m.id && rec.host === m.label) return;
+    // Only the store that HOLDS the record can write it; a remote one is
+    // re-stamped by this machine's next detect or registration.
+    if (store.kind !== 'file') return;
+    await store
+      .patchManager(rec.workspaceId, rec.id, {
+        host: m.label,
+        ...(m.id ? { machineId: m.id } : {}),
+      })
+      .catch(() => null);
+    rec.host = m.label;
+    if (m.id) rec.machineId = m.id;
   }
 
   const lookupTitle = opts.sessionTitle ?? sessionTitle;
@@ -267,7 +370,7 @@ export function createManagerBackend(
   function elsewhere(rec: ManagerRecord, what: string): ReturnType<typeof wrongHost> {
     return wrongHost(
       `manager ${rec.id} runs on ${rec.host}, not on ${hostname()}; ${what} there`,
-      rec.host,
+      machineOf(rec),
     );
   }
 
@@ -433,6 +536,8 @@ export function createManagerBackend(
     return toManagerView(rec, {
       status: effective,
       hostname: hostname(),
+      ...(me().id ? { machineId: me().id } : {}),
+      local: true,
       workspaceName: ctx.workspaceName,
       tasks: ctx.tasks,
       ...(background ? { background, attachSession } : {}),
@@ -535,11 +640,12 @@ export function createManagerBackend(
    * holding hub owns (`workspaceName`, `taskCounts`) is kept from its view.
    */
   async function withLocalProbes(views: ManagerView[]): Promise<ManagerView[]> {
-    if (!views.some((v) => storeIsLocal(v))) return views;
+    const local = await Promise.all(views.map((v) => isLocal(v)));
+    if (!local.some(Boolean)) return views;
     const { snap, claimed } = await localSnapshot(views);
     return Promise.all(
-      views.map(async (view) => {
-        if (!storeIsLocal(view)) return view;
+      views.map(async (view, i) => {
+        if (!local[i]) return view;
         const probed = await probedView(await withTitle(view), {
           workspaceId: view.workspaceId,
           workspaceName: view.workspaceName,
@@ -559,8 +665,8 @@ export function createManagerBackend(
     const { snap, claimed } = await localSnapshot(records);
     return Promise.all(
       records.map(async (raw) => {
+        if (!(await isLocal(raw))) return reportedView(await withTitle(raw), ws, tasks);
         const rec = await withTitle(raw);
-        if (!storeIsLocal(rec)) return reportedView(rec, ws, tasks);
         return probedView(rec, {
           workspaceId: ws.id,
           workspaceName: ws.name,
@@ -596,6 +702,7 @@ export function createManagerBackend(
     return toManagerView(withReported, {
       status,
       hostname: hostname(),
+      ...(me().id ? { machineId: me().id } : {}),
       workspaceName: ws.name,
       tasks,
       ...(beat?.background
@@ -694,7 +801,9 @@ export function createManagerBackend(
     cwd: string,
   ): Promise<{ owner: ManagerRecord; session: string } | undefined> {
     const name = input.tmuxSession;
-    if (!name || !MANAGER_SESSION_RE.test(name) || input.host !== hostname()) return undefined;
+    // A detect that names no machine cannot vouch for a tmux session here.
+    if (!name || !MANAGER_SESSION_RE.test(name) || input.host === undefined) return undefined;
+    if (!sameMachine(detectMachineRecord(input), me())) return undefined;
     const found = (await listTmuxSessions(deps.managerExec)).find((t) => t.session === name);
     if (!found) return undefined;
     const path = await canonicalWorkspaceRoot(found.path).catch(() => found.path);
@@ -771,7 +880,7 @@ export function createManagerBackend(
 
   /** Report one manager this machine runs, best-effort. */
   async function beat(rec: ManagerRecord): Promise<void> {
-    if (store.kind !== 'remote' || !storeIsLocal(rec)) return;
+    if (store.kind !== 'remote' || !(await isLocal(rec))) return;
     const claimed = new Set<string>();
     for (const m of await store.listManagers()) {
       claimed.add(managerSessionName(m.id));
@@ -797,7 +906,17 @@ export function createManagerBackend(
           `this hub keeps its workspaces on the hub that owns its boxes; register the session there (\`agentbox hub target\` names it)`,
         );
       }
-      const host = input.host ?? hostname();
+      // An absent host is this hub's own machine; a client that sends a host but
+      // no id predates machine ids, and its hostname is all it can vouch for.
+      // That hostname is only this hub's machine when the session's folder is on
+      // this disk: on a hub other PCs reach, a PC may share the hub's name, and
+      // its records must stay keyed by hostname, never under this hub's id.
+      const machine: MachineRef =
+        input.host === undefined ||
+        (!input.machineId && input.host === me().label && (await isDirectory(input.cwd)))
+          ? me()
+          : detectMachineRef(input);
+      const host = machine.label;
       const cwd = await canonicalWorkspaceRoot(input.cwd);
       const home = await tmuxHome(input, cwd);
       const hinted = home?.owner ?? (await trustedHint(input.managerId, cwd, input.runId));
@@ -808,21 +927,34 @@ export function createManagerBackend(
       let ws = known ? await store.readWorkspace(known.workspaceId) : null;
       let workspaceCreated = false;
       if (!ws) {
-        ws = findWorkspaceContaining(await listWorkspaces(), cwd, host);
+        ws = findWorkspaceContaining(await listWorkspaces(), cwd, machine);
         if (!ws) {
           const refusal = await autoWorkspaceRefusal(cwd, input.home);
           if (refusal) return invalid(refusal);
           try {
-            ws = await addWorkspace({ host, root: cwd, projects: input.projects ?? [] });
+            ws = await addWorkspace({
+              host,
+              ...(machine.id ? { machineId: machine.id } : {}),
+              root: cwd,
+              projects: input.projects ?? [],
+            });
             workspaceCreated = true;
           } catch (e) {
             return err(`could not register a workspace at ${cwd}: ${messageOf(e)}`);
           }
         }
       }
+      // The caller's folder mapping may predate machine ids: adopt it under the id
+      // it just sent, so its next hostname flip cannot orphan the workspace.
+      // Only when the session runs inside that legacy folder: the detect then
+      // proves it is the machine the folder mapping names, not just its namesake.
+      const legacyRoot = machine.id ? ws.hosts[machine.label]?.root : undefined;
+      if (machine.id && legacyRoot && (cwd === legacyRoot || cwd.startsWith(`${legacyRoot}/`))) {
+        await restampWorkspaceHost(ws.id, machine).catch(() => {});
+      }
       // Only a pid from this machine can be stamped: elsewhere it names another process.
       const pidStartedAt =
-        input.pid !== undefined && host === hostname()
+        input.pid !== undefined && sameMachineRef(machine, me())
           ? await (deps.processStartTime ?? processStartTime)(input.pid).catch(() => undefined)
           : undefined;
       const { manager, created, sessionChanged } = await store.upsertDetectedManager(ws.id, {
@@ -830,6 +962,7 @@ export function createManagerBackend(
         sessionId: input.sessionId,
         cwd,
         host,
+        ...(machine.id ? { machineId: machine.id } : {}),
         ...(input.pid !== undefined ? { pid: input.pid } : {}),
         ...(pidStartedAt ? { pidStartedAt } : {}),
         ...(hinted ? { managerId: hinted.id } : {}),
@@ -897,7 +1030,7 @@ export function createManagerBackend(
         // boxes and tasks it collected stay with it instead of forking a duplicate.
         const existing = await store.findManagerBySession(input.agent, input.sessionId);
         if (existing) {
-          if (!storeIsLocal(existing)) return elsewhere(existing, 'resume it');
+          if (!(await isLocal(existing))) return elsewhere(existing, 'resume it');
           const gone = await carrierRefusal(existing.cwd);
           if (gone) return err(gone);
           const inDaemon = await daemonSession(existing, true);
@@ -928,9 +1061,9 @@ export function createManagerBackend(
       // Asked BEFORE tmux: a control box holds every workspace and has no
       // folder for any of them, so "start it where the folder is" is the whole
       // answer — a missing tmux there is about a job it must never take.
-      const root = workspaceRootOn(ws, hostname());
+      const root = workspaceRootOn(ws, me());
       if (!root) {
-        const elsewhereHosts = Object.keys(ws.hosts);
+        const elsewhereHosts = workspaceMachines(ws);
         const message = `workspace ${ws.name} has no folder on ${hostname()}; start its manager on the machine that has one`;
         return elsewhereHosts[0]
           ? wrongHost(message, elsewhereHosts[0], elsewhereHosts)
@@ -953,6 +1086,7 @@ export function createManagerBackend(
         kind: 'tmux',
         cwd: root,
         host: hostname(),
+        ...(me().id ? { machineId: me().id } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         boxIds: [],
         boxJobIds: [],
@@ -969,6 +1103,7 @@ export function createManagerBackend(
           manager,
           argv: buildManagerArgv(input.agent, input.sessionId),
           hostname,
+          ...(deps.machineId ? { machineId: deps.machineId } : {}),
           ...(deps.managerExec ? { exec: deps.managerExec } : {}),
           ...(deps.spawnPtyHost ? { spawnPtyHost: deps.spawnPtyHost } : {}),
           carrier: deps.managerCarrier ?? settings.carrier,
@@ -1031,7 +1166,7 @@ export function createManagerBackend(
         // check — would let a stale claim override what this hub can see.
         return wrongHost(
           `manager ${id} runs on this hub (${hostname()}); its state is probed here, not reported`,
-          rec.host,
+          machineOf(rec),
         );
       }
       const at = new Date(now()).toISOString();
@@ -1054,7 +1189,7 @@ export function createManagerBackend(
     async resumeManager(id: string, meta?: TimelineMeta): Promise<ManagerResult> {
       const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      if (!storeIsLocal(rec)) return elsewhere(rec, 'resume it');
+      if (!(await isLocal(rec))) return elsewhere(rec, 'resume it');
       const inDaemon = await daemonSession(rec, true);
       if (inDaemon) return err(backgroundResumeRefusal(rec, inDaemon));
       const carrierGone = await carrierRefusal(rec.cwd);
@@ -1076,7 +1211,7 @@ export function createManagerBackend(
     async attachManager(id: string): Promise<ManagerResult> {
       const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      if (!storeIsLocal(rec)) return elsewhere(rec, 'attach to it');
+      if (!(await isLocal(rec))) return elsewhere(rec, 'attach to it');
       const snap = rec.agent === 'claude' ? await lookupBackground({ fresh: true }) : undefined;
       const background = snap ? backgroundFor(rec, snap) : undefined;
       if (!background) {
@@ -1117,7 +1252,7 @@ export function createManagerBackend(
         return err(`manager ${id} runs in your terminal; the hub does not keep it alive`);
       }
       await store.patchManager(rec.workspaceId, id, { pinned });
-      if (storeIsLocal(rec) && rec.kind === 'pty') {
+      if (rec.kind === 'pty' && (await isLocal(rec))) {
         const meta = await readPtyMeta(id);
         if (meta) await ptyConfigure(meta, { pinned });
       }
@@ -1128,7 +1263,7 @@ export function createManagerBackend(
     async stopManager(id: string, meta?: TimelineMeta): Promise<ManagerResult> {
       const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      if (!storeIsLocal(rec)) return elsewhere(rec, 'stop it');
+      if (!(await isLocal(rec))) return elsewhere(rec, 'stop it');
       const inDaemon = await daemonSession(rec, true);
       if (inDaemon && rec.kind === 'external') {
         // Its session is Claude's daemon's, not the hub's: only the attach client goes.
@@ -1163,7 +1298,7 @@ export function createManagerBackend(
       // leave a tmux session (or a terminal session's boxes) nothing points at.
       // `force` is the way out when the status is wrong (a pid the probe cannot
       // tell apart, a last-seen window that has not lapsed yet).
-      const running = storeIsLocal(rec)
+      const running = (await isLocal(rec))
         ? (await effectiveStatus(rec)) === 'running'
         : (freshReport(rec)?.status ?? seenWindowStatus(rec)) === 'running';
       if (!opts.force && running) {
@@ -1188,9 +1323,9 @@ export function createManagerBackend(
       if (!ws) return null;
       // The agent's sessions are files in the folder's own store: nothing to
       // list for a workspace whose folder is on another machine.
-      const root = workspaceRootOn(ws, hostname());
+      const root = workspaceRootOn(ws, me());
       if (!root) {
-        const elsewhereHosts = Object.keys(ws.hosts);
+        const elsewhereHosts = workspaceMachines(ws);
         const message = `workspace ${ws.name} has no folder on ${hostname()}; its agent sessions are on the machine that has one`;
         return elsewhereHosts[0]
           ? wrongHost(message, elsewhereHosts[0], elsewhereHosts)
@@ -1229,15 +1364,15 @@ export function createManagerBackend(
     async sendManagerMessage(id, input, meta): Promise<ManagerMessageResult> {
       const rec = await store.findManager(id);
       if (!rec) return err(`unknown manager ${id}`);
-      if (!storeIsLocal(rec)) {
+      if (!(await isLocal(rec))) {
         // Typing needs the tmux server the session runs under. The client
         // retries against the hub on that machine, which is its own when the
-        // host is its hostname.
+        // machine id is its own.
         return {
           ok: false,
           code: 'manager_unreachable',
           error: `manager ${id} runs on ${rec.host}; this hub (${hostname()}) cannot type into it`,
-          details: { host: rec.host },
+          details: { host: rec.host, ...(rec.machineId ? { machineId: rec.machineId } : {}) },
         };
       }
       const status = await managerStatus(rec, probe);
@@ -1325,7 +1460,9 @@ export function createManagerBackend(
 
     async reportManagers(): Promise<number> {
       if (store.kind !== 'remote') return 0;
-      const records = (await store.listManagers()).filter(storeIsLocal);
+      const all = await store.listManagers();
+      const local = await Promise.all(all.map((r) => isLocal(r)));
+      const records = all.filter((_, i) => local[i]);
       if (records.length === 0) return 0;
       const claimed = new Set<string>();
       for (const m of records) {
@@ -1348,4 +1485,8 @@ export function createManagerBackend(
       return out;
     },
   };
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  return (await stat(path).catch(() => null))?.isDirectory() === true;
 }

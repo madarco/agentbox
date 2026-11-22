@@ -30,6 +30,7 @@ import {
 } from '../src/workspaces/index.js';
 
 const HOST = 'laptop';
+const MACHINE = '11111111-2222-4333-8444-555555555555';
 
 async function makeWorkspace(): Promise<{ id: string; root: string }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agentbox-mstore-')));
@@ -79,12 +80,14 @@ describe('the session functions write nothing', () => {
       argv: ['claude'],
       exec: fakeExec,
       hostname: () => HOST,
+      machineId: () => MACHINE,
     });
     expect(registration).toEqual({
       id: manager.id,
       agent: 'claude',
       kind: 'tmux',
       host: HOST,
+      machineId: MACHINE,
       cwd: root,
       tmuxSession: `agentbox-manager-${manager.id}`,
       argv: ['claude'],

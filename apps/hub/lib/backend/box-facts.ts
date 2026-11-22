@@ -1,13 +1,12 @@
 // The box seams the timeline reads (`BackendDeps.boxFacts` / `boxFact` /
 // `boxDiffStat`), built from the host's box records. Kept out of
 // `hub-backend.ts`, which only hands in the functions it owns.
-import { hostname as osHostname } from 'node:os';
-import { hashProjectPath } from '@agentbox/config';
+import { hashProjectPath, type MachineRef } from '@agentbox/config';
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { BOX_WORKSPACE } from '@agentbox/sandbox-core';
 import type { ListedBox } from '@agentbox/sandbox-docker';
-import { boxPushLineStat, type PushLineStat } from '@agentbox/relay';
-import type { DiffStat, TimelineBoxFact } from './deps';
+import { boxPushLineStat, type HostArg, type PushLineStat } from '@agentbox/relay';
+import { hubMachine, type DiffStat, type TimelineBoxFact } from './deps';
 import { parseShortstat } from './timeline';
 
 export interface BoxFactSources {
@@ -22,13 +21,14 @@ export interface BoxFactSources {
    */
   originUrlOf?(box: BoxRecord): Promise<string | undefined>;
   hostname?(): string;
+  machineId?(): string;
 }
 
 const STATE_PROBE_TIMEOUT_MS = 3000;
 
 export function boxFactOf(
   b: BoxRecord & { state?: string },
-  extra: { originUrl?: string; host?: string } = {},
+  extra: { originUrl?: string; host?: HostArg } = {},
 ): TimelineBoxFact {
   const root = b.projectRoot ?? b.workspacePath ?? b.id;
   const tree = b.gitWorktrees?.[0];
@@ -82,7 +82,11 @@ export function createBoxFactSeams(src: BoxFactSources): {
     recordOf.set(fact, rec);
     return fact;
   };
-  const host = src.hostname ?? osHostname;
+  const host = (): MachineRef =>
+    hubMachine({
+      ...(src.hostname ? { hostname: () => src.hostname!() } : {}),
+      ...(src.machineId ? { machineId: () => src.machineId!() } : {}),
+    });
   // Resolving an origin spawns git (or reads the Store), and `boxFacts()` runs on
   // the timeline poll path for the whole fleet: memoized per box, since a box's
   // repo does not change under it.

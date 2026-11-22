@@ -3,7 +3,7 @@
 // few seconds, so each workspace's index is rebuilt only when its log file or
 // the sync's states change.
 import { stat } from 'node:fs/promises';
-import { hostname } from 'node:os';
+import { thisMachine } from '@agentbox/config';
 import {
   listWorkspaces,
   readTimeline,
@@ -200,7 +200,7 @@ export function createBoxPrLookup(opts: BoxPrLookupOptions = {}): BoxPrLookup {
         const listed = new Set(records.map((r) => r.id));
         for (const id of cache.keys()) if (!listed.has(id)) cache.delete(id);
         if (indexes.size === 0) return NONE;
-        const here = hostname();
+        const here = thisMachine();
         return (box) => {
           // Folder first, then the box's origin — the same join the timeline
           // writes its rows with, so a box with no checkout here (a cloud box,

@@ -27,6 +27,11 @@ export interface WorkspaceProject {
 export interface WorkspaceHost {
   /** Absolute, realpath'd folder on that machine. */
   root: string;
+  /**
+   * The machine's hostname, for display. Set on an entry keyed by machine id; an
+   * entry keyed by hostname (written before machine ids) has none — its key is it.
+   */
+  label?: string;
   /** `WorkspaceProject.id` → the project's absolute path on that machine. */
   projectRoots: Record<string, string>;
   seenAt: string;
@@ -50,7 +55,11 @@ export interface WorkspaceRecord {
   id: string;
   name: string;
   projects: WorkspaceProject[];
-  /** Keyed by `os.hostname()` of the machine. */
+  /**
+   * Keyed by the machine's id (`getMachineId()`), or by its hostname for an entry
+   * written before machine ids — adopted under the id the next time that machine
+   * reads or rescans it.
+   */
   hosts: Record<string, WorkspaceHost>;
   /**
    * Monotonic counter behind `T-<n>` task ids. Never decremented, so a deleted
@@ -74,7 +83,7 @@ export type Workspace = Omit<WorkspaceRecord, 'taskCounter' | 'version'> & {
    * — that is the id the project registry and a box record use.
    */
   projectIds: string[];
-  /** `hosts[<the reading hub's hostname>].root`; absent when it has no checkout. */
+  /** The reading hub's own `hosts` entry's root (by machine id); absent when it has no checkout. */
   root?: string;
 };
 
@@ -176,12 +185,19 @@ export interface ManagerRecord {
   /** Cached first-turn title, scraped lazily from the agent's own store. */
   title?: string;
   /**
-   * `os.hostname()` of the machine the session runs on. Required: a manager is a
+   * Hostname of the machine the session runs on — its display label. Required: a manager is a
    * process in a folder, and every probe (pid, tmux, transcript) is only
    * meaningful there. A hub whose hostname differs holds the record, not the
    * session.
    */
   host: string;
+  /**
+   * `getMachineId()` of that machine: the identity `host` used to be, which a
+   * hostname flip cannot orphan. Absent on a record written before machine ids
+   * (or by a client that predates them) — `host` is then matched instead, and
+   * the record is re-stamped with the id once a machine claims it.
+   */
+  machineId?: string;
   /** External only. */
   pid?: number;
   /**
@@ -280,6 +296,8 @@ export interface ManagerRegistration {
   agent: ManagerAgent;
   kind: 'tmux' | 'pty';
   host: string;
+  /** `getMachineId()` of the machine that started it. */
+  machineId?: string;
   cwd: string;
   /** `tmux` only — required there, absent for a pty session. */
   tmuxSession?: string;

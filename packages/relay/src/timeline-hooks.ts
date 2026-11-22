@@ -2,7 +2,7 @@
 // box sends the relay (`git.push`, the `gh` shim) and create jobs a queue worker
 // finishes. Each runs after the real work has answered, so every one swallows
 // its own failures — a log miss must never change an RPC result or a job status.
-import { hostname } from 'node:os';
+import { thisMachine } from '@agentbox/config';
 import { readState } from '@agentbox/sandbox-core';
 import { ghRunContext, ghVerbArgv, resolveGhTarget, runHostGh } from './gh.js';
 import type { QueueJob } from './queue.js';
@@ -36,7 +36,7 @@ export interface BoxTimelineContext {
 function boxWorkspaceKey(ctx: BoxTimelineContext): BoxWorkspaceKey {
   return {
     ...(ctx.originUrl ? { originUrl: ctx.originUrl } : {}),
-    host: hostname(),
+    host: thisMachine(),
     ...(ctx.hostPath ? { projectRoot: ctx.hostPath } : {}),
   };
 }
@@ -280,7 +280,7 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
   if (job.status !== 'done' && job.status !== 'failed') return;
   try {
     const ws = await timelineSink().workspaceFor({
-      host: hostname(),
+      host: thisMachine(),
       projectRoot: job.createOpts.workspace,
       // A hub-routed create clones into a throwaway folder, so its job's
       // `workspace` names nothing a workspace maps; the repo is the only key

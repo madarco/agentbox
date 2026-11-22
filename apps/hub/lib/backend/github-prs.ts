@@ -9,11 +9,11 @@
 // no folder for any of it — its record of a project is a repo and nothing else —
 // and reading one from disk is what used to make the sync answer `unavailable`
 // there. One code path serves both hubs.
-import { hostname as osHostname } from 'node:os';
-import { hashProjectPath } from '@agentbox/config';
+import { hashProjectPath, type MachineRef } from '@agentbox/config';
 import { execa } from 'execa';
 import {
   appendTimelineEvent,
+  hostEntryOf,
   GH_PR_JSON_FIELDS,
   ghRepoArg,
   isPrReady,
@@ -29,7 +29,7 @@ import {
   type WorkspaceProject,
   type WorkspaceRecord,
 } from '@agentbox/relay';
-import type { BackendDeps, GhExec } from './deps';
+import { hubMachine, type BackendDeps, type GhExec } from './deps';
 
 /** `unavailable`: no `gh`, not logged in, or no GitHub repo behind the workspace. */
 export type GithubSyncStatus = 'ok' | 'syncing' | 'unavailable';
@@ -104,7 +104,8 @@ export function createGithubPrSync(
   opts: { now?: () => number; intervalMs?: number; hostname?: () => string } = {},
 ): GithubPrSync {
   const gh = deps.ghExec ?? defaultGhExec;
-  const host = opts.hostname ?? deps.hostname ?? osHostname;
+  const host = (): MachineRef =>
+    hubMachine({ ...deps, ...(opts.hostname ? { hostname: opts.hostname } : {}) });
   const now = opts.now ?? Date.now;
   const interval = opts.intervalMs ?? GITHUB_SYNC_INTERVAL_MS;
   const states = new Map<string, WorkspaceSyncState>();
@@ -162,7 +163,7 @@ export function createGithubPrSync(
     if (user === null) return 'unavailable';
     // The repos the workspace names, wherever they are checked out — including
     // nowhere. A project with no remote contributes none.
-    const folders = ws.hosts[host()]?.projectRoots ?? {};
+    const folders = hostEntryOf(ws.hosts, host())?.projectRoots ?? {};
     const repos = new Map<string, RepoRef>();
     for (const project of ws.projects) {
       const ref = await repoOf(project);

@@ -568,6 +568,9 @@ export async function runAgentCreate(
       // agent-surface default is not one of them.
       createOpts: {
         ...pickQueueCreateOpts(a, opts),
+        // `providerName` is the bare name (`remote-docker`), so the engine host
+        // from `docker:<host>` has to ride alongside it or the worker has none.
+        ...(remoteHost ? { remoteHost } : {}),
         persistent,
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
         carry: carryForQueue,

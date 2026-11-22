@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { thisMachine } from '@agentbox/config';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addTask,
@@ -156,7 +157,7 @@ describe('assignTasks', () => {
 
   it('inherits the manager that made the box, without overriding one already set', async () => {
     const ws = await makeWorkspace();
-    const root = workspaceRootOn((await readWorkspace(ws))!, hostname())!;
+    const root = workspaceRootOn((await readWorkspace(ws))!, thisMachine())!;
     const { manager } = await upsertDetectedManager(ws, {
       agent: 'claude',
       sessionId: 's1',
@@ -332,7 +333,7 @@ describe('readReconciledTasks', () => {
 describe('the task-id counter survives a rescan', () => {
   it('re-registering a workspace keeps the counter, so ids are never reused', async () => {
     const ws = await makeWorkspace();
-    const root = workspaceRootOn((await readWorkspace(ws))!, hostname())!;
+    const root = workspaceRootOn((await readWorkspace(ws))!, thisMachine())!;
     await addTask(ws, { title: 'first' });
     await addTask(ws, { title: 'second' });
     // `POST /workspaces` on a known root rescans it, rewriting the whole record.
