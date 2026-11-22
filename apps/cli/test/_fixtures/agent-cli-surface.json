@@ -468,6 +468,34 @@
             "defaultValue": null,
             "mandatory": false,
             "negate": false
+          },
+          {
+            "flags": "--account <name>",
+            "description": "sign in a named account (lowercase letters, digits, dashes) instead of the default one",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--label <text>",
+            "description": "display label for the named account",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--api-key",
+            "description": "store an API key as the named account (read from a hidden prompt, or stdin)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--setup-token",
+            "description": "store a long-lived setup token as the named account (read from a hidden prompt, or stdin); the right kind for an account many boxes share",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
           }
         ],
         "subcommands": []
@@ -919,6 +947,27 @@
           {
             "flags": "--interactive",
             "description": "attach your terminal to codex's own login TUI (legacy passthrough; needs an interactive terminal)",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--account <name>",
+            "description": "sign in a named account (lowercase letters, digits, dashes) instead of the default one",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--label <text>",
+            "description": "display label for the named account",
+            "defaultValue": null,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--api-key",
+            "description": "store an API key as the named account (read from a hidden prompt, or stdin)",
             "defaultValue": null,
             "mandatory": false,
             "negate": false
