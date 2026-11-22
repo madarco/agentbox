@@ -1017,7 +1017,7 @@ async function runCpRpc(
   // Resolve host paths against THIS box's workspace so a relative path doesn't
   // land under the relay daemon's CWD (which belongs to whichever project
   // started the relay), and so the consent prompt shows the real destination.
-  const { record, base } = await hostReachBase(deps);
+  const { base } = await hostReachBase(deps);
   const lookup = { workspacePath: base };
   const hostSide = method === 'cp.toHost' ? [norm.dest] : norm.sources;
   const needsFolder = hostSide.some((p) => !p.startsWith('/') && !p.startsWith('~'));
