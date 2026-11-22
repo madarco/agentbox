@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,
+  custodySlugCandidates,
   isHubWorkerClone,
+  legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
   projectSlugFromOriginUrl,
 } from '../src/project-slug.js';
@@ -52,18 +54,33 @@ describe('projectSlugFromOriginUrl', () => {
       'ssh://git@github.com/madarco/agentbox.git',
     ].map(projectSlugFromOriginUrl);
     expect(new Set(slugs).size).toBe(1);
-    expect(slugs[0]).toBe('madarco__agentbox');
+    expect(slugs[0]).toBe('github.com__madarco__agentbox');
+  });
+
+  it('ignores case, keeps the host and keeps subgroups (the legacy slug did none)', () => {
+    expect(projectSlugFromOriginUrl('git@github.com:Madarco/AgentBox.git')).toBe(
+      projectSlugFromOriginUrl('https://github.com/madarco/agentbox'),
+    );
+    expect(projectSlugFromOriginUrl('https://gitlab.com/madarco/agentbox')).not.toBe(
+      projectSlugFromOriginUrl('https://github.com/madarco/agentbox'),
+    );
+    expect(projectSlugFromOriginUrl('ssh://git@gitlab.example.com:2222/group/sub/repo.git')).toBe(
+      'gitlab.example.com__group__sub__repo',
+    );
   });
 
   it('sanitizes characters that are illegal in a custody path segment', () => {
     // A custody segment is [A-Za-z0-9._-]; anything else must be replaced, not
     // passed through to be rejected (or to escape the scope) at the store.
     expect(projectSlugFromOriginUrl('https://example.com/some~owner/re po.git')).toBe(
-      'some-owner__re-po',
+      'example.com__some-owner__re-po',
     );
   });
 
-  it('agrees across URL shapes even for a path needing percent-encoding', () => {
+  it('agrees across URL shapes even for a percent-encoded path', () => {
+    expect(projectSlugFromOriginUrl('https://example.com/o/re%20po.git')).toBe(
+      projectSlugFromOriginUrl('git@example.com:o/re po.git'),
+    );
     // `new URL` encodes the pathname but the scp-like parse doesn't, so without
     // decoding these two spellings of one repo produced different slugs
     // (`re-20po` vs `re-po`) — a seed pushed under one is invisible under the other.
@@ -78,8 +95,47 @@ describe('projectSlugFromOriginUrl', () => {
     );
   });
 
-  it('returns null when the origin carries no owner/repo', () => {
-    expect(projectSlugFromOriginUrl('https://github.com/onlyowner')).toBeNull();
+  it('returns null when the origin carries no repo path', () => {
+    expect(projectSlugFromOriginUrl('https://github.com')).toBeNull();
+    expect(projectSlugFromOriginUrl('/srv/repos/app.git')).toBeNull();
+  });
+});
+
+describe('legacyProjectSlugFromOriginUrl', () => {
+  it('is the pre-repo-key owner__repo slug, case kept', () => {
+    expect(legacyProjectSlugFromOriginUrl('git@github.com:Madarco/AgentBox.git')).toBe(
+      'Madarco__AgentBox',
+    );
+    expect(legacyProjectSlugFromOriginUrl('https://gitlab.com/group/sub/repo.git')).toBe(
+      'sub__repo',
+    );
+  });
+});
+
+describe('custodySlugCandidates', () => {
+  it('reads the new slug first and the legacy one last, deduplicated', () => {
+    expect(custodySlugCandidates({ originUrl: 'git@github.com:Madarco/AgentBox.git' })).toEqual([
+      'github.com__madarco__agentbox',
+      'Madarco__AgentBox',
+    ]);
+  });
+
+  it('puts the PC-computed (alias-expanded) key ahead of the hub-derived one', () => {
+    expect(
+      custodySlugCandidates({
+        repoKey: 'github.com/madarco/agentbox',
+        originUrl: 'git@github-work:madarco/agentbox.git',
+        projectSlug: 'madarco__agentbox',
+      }),
+    ).toEqual([
+      'github.com__madarco__agentbox',
+      'github-work__madarco__agentbox',
+      'madarco__agentbox',
+    ]);
+  });
+
+  it('is empty for a box with no remote', () => {
+    expect(custodySlugCandidates({})).toEqual([]);
   });
 });
 

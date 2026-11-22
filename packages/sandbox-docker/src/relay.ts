@@ -25,6 +25,7 @@ import {
   relayPort,
   resolveCliEntry,
   shouldReclaimForVersion,
+  registrationOrigin,
   type HealthzBody,
   type RelayReuseHealth,
 } from '@agentbox/sandbox-core';
@@ -684,6 +685,12 @@ export interface RegisterBoxArgs {
    */
   originUrl?: string;
   /**
+   * The host folder the box was seeded from, when it is not
+   * `worktrees[0].hostMainRepo` (a cloud box registers no worktrees). Decides
+   * whether this machine is recorded as the box's origin machine.
+   */
+  workspacePath?: string;
+  /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
    * registration without this gets every agent's (the pre-field answer).
@@ -698,7 +705,16 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     branch: w.branch,
     ...(w.sanctionedBranch ? { sanctionedBranch: w.sanctionedBranch } : {}),
   }));
+  // Only a registration that names the repo stamps where it came from; the
+  // relay keeps the first stamp across the many re-registrations that don't.
+  const origin = args.originUrl
+    ? await registrationOrigin({
+        originUrl: args.originUrl,
+        folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
+      })
+    : {};
   await adminPost('/admin/register-box', {
+    ...origin,
     boxId: args.boxId,
     token: args.token,
     name: args.name,

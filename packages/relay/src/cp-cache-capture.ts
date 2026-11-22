@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { getMachineLabel } from '@agentbox/config';
+import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import { cpCacheMetaPath, cpCacheTarPath, type CpCacheMeta } from './cp-cache.js';
 
 export interface CpCacheCaptureDeps {
@@ -73,12 +73,14 @@ export async function captureCpCacheEntry(
       );
       return false;
     }
+    const machineId = tryGetMachineId();
     const meta: CpCacheMeta = {
       sourcePath: absPath,
       isDir: info.isDirectory(),
       capturedAt: new Date().toISOString(),
       size: tarInfo.size,
       capturedOn: getMachineLabel(),
+      ...(machineId ? { capturedOnMachineId: machineId } : {}),
     };
     const base = deps.controlPlaneUrl.replace(/\/+$/, '');
     await putBlob(

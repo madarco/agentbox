@@ -2,14 +2,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getMachineId, hashProjectPath } from '@agentbox/config';
+import { getMachineId, hashProjectPath, repoKey } from '@agentbox/config';
 import { assertTempHome } from '../../../scripts/test-home.js';
 import {
   addWorkspace,
   canonicalWorkspaceRoot,
   findWorkspaceContaining,
   listWorkspaces,
-  normalizeRepoUrl,
   readWorkspace,
   removeWorkspace,
   repoProjectKey,
@@ -91,7 +90,7 @@ describe('scanWorkspaceProjects', () => {
   });
 });
 
-describe('normalizeRepoUrl', () => {
+describe('repoKey (through the workspace layer)', () => {
   it('collapses ssh, https and .git spellings of one repo to a single key', () => {
     const key = 'github.com/acme/app';
     for (const url of [
@@ -104,16 +103,21 @@ describe('normalizeRepoUrl', () => {
       'ssh://git@github.com:22/acme/app',
       'https://user:token@github.com/acme/APP.git',
     ]) {
-      expect(normalizeRepoUrl(url), url).toBe(key);
+      expect(repoKey(url), url).toBe(key);
     }
   });
 
   it('keeps different repos apart, and answers undefined for nothing usable', () => {
-    expect(normalizeRepoUrl('git@github.com:acme/other.git')).toBe('github.com/acme/other');
-    expect(normalizeRepoUrl('git@gitlab.com:acme/app.git')).toBe('gitlab.com/acme/app');
-    expect(normalizeRepoUrl('/srv/repos/app.git')).toBe('/srv/repos/app');
-    expect(normalizeRepoUrl('')).toBeUndefined();
-    expect(normalizeRepoUrl(undefined)).toBeUndefined();
+    expect(repoKey('git@github.com:acme/other.git')).toBe('github.com/acme/other');
+    expect(repoKey('git@gitlab.com:acme/app.git')).toBe('gitlab.com/acme/app');
+    expect(repoKey('')).toBeUndefined();
+    expect(repoKey(undefined)).toBeUndefined();
+  });
+
+  it('keeps a local-path project id as it was before repoKey', () => {
+    // Workspace records (and their tasks) already name such projects by the
+    // hash of the lowercased path; the id must not move.
+    expect(repoProjectKey('/srv/Repos/app.git')).toBe(hashProjectPath('/srv/repos/app'));
   });
 });
 

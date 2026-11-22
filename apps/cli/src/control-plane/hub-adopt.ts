@@ -22,7 +22,7 @@
  */
 import { execa } from 'execa';
 import type { BoxRecord } from '@agentbox/core';
-import { readState } from '@agentbox/sandbox-core';
+import { readState, repoKeyAtEdge } from '@agentbox/sandbox-core';
 import { generateRelayToken, recordBox } from '@agentbox/sandbox-docker';
 import { allocateProjectIndex } from '@agentbox/sandbox-core';
 import { registrationToBoxRecord } from '@agentbox/relay';
@@ -71,22 +71,6 @@ export class HubBoxNotFoundError extends Error {
   }
 }
 
-/**
- * Normalize a git remote URL for comparison: drop the scheme, any user@, a
- * trailing `.git`, and case — so `git@github.com:o/r.git`,
- * `https://github.com/o/r`, and `ssh://git@github.com/o/r.git` all match.
- */
-export function normalizeOriginUrl(url: string): string {
-  return url
-    .trim()
-    .replace(/^[a-z+]+:\/\//i, '')
-    .replace(/^[^@/]+@/, '')
-    .replace(/:(?=\D)/, '/')
-    .replace(/\.git\/?$/i, '')
-    .replace(/\/+$/, '')
-    .toLowerCase();
-}
-
 /** A repo's `origin` remote URL, or undefined when it isn't a repo / has none. */
 async function readOriginUrl(dir: string): Promise<string | undefined> {
   const r = await execa('git', ['-C', dir, 'remote', 'get-url', 'origin'], { reject: false });
@@ -113,9 +97,12 @@ async function matchLocalProject(
   state: { boxes: BoxRecord[] },
 ): Promise<string | undefined> {
   if (!originUrl) return undefined;
-  const want = normalizeOriginUrl(originUrl);
+  // Both sides through this machine's ssh config: the box's origin may be
+  // spelled with an alias, and so may the local clone's.
+  const want = await repoKeyAtEdge(originUrl);
+  if (!want) return undefined;
   const cwdOrigin = await readOriginUrl(cwd).catch(() => undefined);
-  if (cwdOrigin && normalizeOriginUrl(cwdOrigin) === want) {
+  if (cwdOrigin && (await repoKeyAtEdge(cwdOrigin)) === want) {
     const root = await readRepoRoot(cwd).catch(() => undefined);
     if (root) return root;
   }
@@ -127,7 +114,7 @@ async function matchLocalProject(
     if (!root || seen.has(root)) continue;
     seen.add(root);
     const origin = await readOriginUrl(root).catch(() => undefined);
-    if (origin && normalizeOriginUrl(origin) === want) return root;
+    if (origin && (await repoKeyAtEdge(origin)) === want) return root;
   }
   return undefined;
 }

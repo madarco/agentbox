@@ -27,7 +27,7 @@ import { pushedRef, readRefTip, type PushStatInput } from './workspaces/push-sta
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   isResolvedBranch,
@@ -1308,6 +1308,15 @@ interface GitPushTrace {
   stat?: PushStatInput;
 }
 
+/**
+ * A nested repo's path under `/workspace` (`web` for `/workspace/web`), or
+ * undefined for the root repo.
+ */
+export function nestedRepoRel(containerPath: string): string | undefined {
+  const rel = posix.relative('/workspace', posix.normalize(containerPath));
+  return rel.length > 0 && !rel.startsWith('..') ? rel : undefined;
+}
+
 async function runGitRpc(
   action: HostAction,
   deps: CloudActionExecutorDeps,
@@ -1323,13 +1332,34 @@ async function runGitRpc(
   // that path won't be a git repo and `git rev-parse` would fail. Fall back
   // to /workspace whenever the supplied path can't resolve a git dir — the
   // per-box branch only ever lives at /workspace anyway.
+  //
+  // Resolve to the repo's TOPLEVEL: a nested repo (`/workspace/web` with its
+  // own `.git`) must fetch into and push from its own host folder, not the root
+  // one, or its branch lands in the wrong repository (box-sources A10).
   let containerPath = params.path ?? '/workspace';
   if (containerPath !== '/workspace') {
     const probe = await backend.exec(
       handle,
-      `git -C ${shellQuote(containerPath)} rev-parse --git-dir`,
+      `git -C ${shellQuote(containerPath)} rev-parse --show-toplevel`,
     );
-    if (probe.exitCode !== 0) containerPath = '/workspace';
+    const top = (probe.stdout ?? '').trim();
+    containerPath = probe.exitCode === 0 && top.startsWith('/workspace') ? top : '/workspace';
+  }
+  const nested = nestedRepoRel(containerPath);
+  const hostRepoDir =
+    nested && lookup.workspacePath.length > 0
+      ? join(lookup.workspacePath, nested)
+      : lookup.workspacePath;
+  if (nested && !existsSync(join(hostRepoDir, '.git'))) {
+    // The checkout-less fallback pushes to the box's ONE registered origin,
+    // which is the root repo's: it would publish this repo's branch there.
+    return {
+      exitCode: 64,
+      stdout: '',
+      stderr:
+        `git for the nested repo ${containerPath} needs its host checkout (${hostRepoDir || '<unset>'}), ` +
+        `which this machine does not have. Run it from the machine that created the box.\n`,
+    };
   }
 
   // 1. Resolve the box's current branch (the per-box `agentbox/<name>`).
@@ -1354,13 +1384,13 @@ async function runGitRpc(
     // Unlike push/fetch, this one has nowhere to go without a real checkout —
     // its whole purpose is to leave the branch in the host's repo. A scratch
     // repo we delete would be a no-op dressed up as a success.
-    if (lookup.workspacePath.length === 0 || !existsSync(lookup.workspacePath)) {
+    if (hostRepoDir.length === 0 || !existsSync(hostRepoDir)) {
       return {
         exitCode: 64,
         stdout: '',
         stderr:
           `--host-only is unavailable for box ${deps.boxId}: this host has no working copy of the project ` +
-          `(${lookup.workspacePath || '<unset>'} does not exist). Boxes created by a control box have no host ` +
+          `(${hostRepoDir || '<unset>'} does not exist). Boxes created by a control box have no host ` +
           `checkout — push to the remote instead, or adopt the box on a machine that has one.\n`,
       };
     }
@@ -1384,7 +1414,7 @@ async function runGitRpc(
       const refspec = landRefspec(branch, dest, params.force);
       const landed = await execa(
         'git',
-        ['-C', lookup.workspacePath, 'fetch', hostBundleSave, refspec],
+        ['-C', hostRepoDir, 'fetch', hostBundleSave, refspec],
         { reject: false },
       );
       if ((landed.exitCode ?? 1) !== 0) {
@@ -1396,7 +1426,7 @@ async function runGitRpc(
       }
       return {
         exitCode: 0,
-        stdout: `branch ${dest} available in ${lookup.workspacePath}\n${landed.stdout ?? ''}`,
+        stdout: `branch ${dest} available in ${hostRepoDir}\n${landed.stdout ?? ''}`,
         stderr: landed.stderr ?? '',
       };
     } finally {
@@ -1532,7 +1562,7 @@ async function runGitRpc(
   const remoteName = resolveRemote(params.remote);
   let repo: HostGitRepo;
   try {
-    repo = await resolveHostGitRepo(lookup.workspacePath, deps, remoteName);
+    repo = await resolveHostGitRepo(hostRepoDir, deps, remoteName);
   } catch (err) {
     return {
       exitCode: 64,

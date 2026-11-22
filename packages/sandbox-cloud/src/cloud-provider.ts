@@ -50,7 +50,7 @@ import {
   findAgentSpec,
   makeSyncContext,
   parseInboundSpec,
-  projectSlugFromOriginUrl,
+  projectSlugAtEdge,
   readCliStamp,
   readState,
   recordBox,
@@ -636,6 +636,7 @@ export function createCloudProvider(
             token: box.relayToken,
             name: box.name,
             originUrl,
+            workspacePath: box.workspacePath,
             backend: backend.name,
             sandboxId: box.cloud.sandboxId,
             worktrees: [
@@ -660,7 +661,7 @@ export function createCloudProvider(
             image: box.cloud.image,
             webPort: box.cloud.webPort,
             agent: box.lastAgent,
-            projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
+            projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
           // best-effort
@@ -1287,6 +1288,7 @@ export function createCloudProvider(
                 token: relayToken,
                 name,
                 originUrl,
+                ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
                 backend: backend.name,
                 sandboxId: handle.sandboxId,
                 // hostMainRepo is the create-time seed checkout; on a hub
@@ -1315,7 +1317,7 @@ export function createCloudProvider(
                 image,
                 webPort: wp,
                 agent: req.agent,
-                projectSlug: projectSlugFromOriginUrl(originUrl) ?? undefined,
+                projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
               // control box pushes its per-box SSH key up too, so the hub /
@@ -1334,7 +1336,7 @@ export function createCloudProvider(
               // for an in-box clone (no host working tree to capture) and
               // hash-skipped, so an unchanged tree re-uploads nothing.
               if (!req.inBoxClone) {
-                const slug = projectSlugFromOriginUrl(originUrl);
+                const slug = await projectSlugAtEdge(originUrl);
                 if (slug) {
                   const seed = await pushProjectSeedToCustody({
                     // The create/registration flow keeps the internal /admin wire
@@ -1402,6 +1404,8 @@ export function createCloudProvider(
               originUrl: req.inBoxClone
                 ? req.inBoxClone.originUrl
                 : await readGitOriginUrl(req.workspacePath).catch(() => undefined),
+              // An in-box clone has no host folder: nothing here to ask for files.
+              ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
               agent: req.agents?.[0] ?? req.agent,
             });
           } catch (err) {

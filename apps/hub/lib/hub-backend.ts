@@ -631,7 +631,7 @@ async function hostBranchOf(repo: string): Promise<string | null> {
 
 /**
  * The repo's `origin` remote URL, or null. Lets a locally-registered project
- * resolve its custody slug (`seedSlugFor`) the same way a remote registration
+ * resolve its custody slug (`seedSlugsFor`) the same way a remote registration
  * does — so the seed/custody panel works uniformly regardless of source.
  */
 async function hostOriginOf(repo: string): Promise<string | null> {
@@ -2313,7 +2313,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
           // The registration carries the box's git identity — thread it onto the
           // synthetic project so the seed/custody panel can resolve its custody
-          // slug (`seedSlugFor`). Without this, the primary self-hosted control
+          // slug (`seedSlugsFor`). Without this, the primary self-hosted control
           // box (SQLite store, no Postgres source) shows an empty panel even when
           // custody genuinely holds the seed.
           ...custodyIdentityFromRegistration(reg),

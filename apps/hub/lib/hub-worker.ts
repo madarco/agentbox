@@ -39,7 +39,7 @@ import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
-  projectSlugFromOriginUrl,
+  custodySlugCandidates,
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
@@ -190,21 +190,25 @@ async function applySeedFromCustody(
   repoHeadSha?: string;
   carry?: MaterializedCarryEntry[];
 } | null> {
-  const slug = projectSlugFromOriginUrl(repoUrl);
-  if (!slug) return null;
-  // The hub IS the custody host, so it reads the store directly rather than
-  // over HTTP. The overlay itself is shared with the laptop worker.
-  return applyProjectSeed({
-    source: {
-      get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
-    },
-    dest,
-    // `carry:` payloads land BESIDE the checkout, not inside it: a carry entry's
-    // destination is an arbitrary in-box path, so the provider copies them from
-    // here rather than the workspace overlaying them. Removed with the clone.
-    carryStageDir: `${dest}.carry`,
-    log,
-  });
+  // New key-derived slug first, then the legacy `owner__repo` one a PC on an
+  // older CLI pushed under (docs/box-sources-plan.md §6).
+  for (const slug of custodySlugCandidates({ originUrl: repoUrl })) {
+    // The hub IS the custody host, so it reads the store directly rather than
+    // over HTTP. The overlay itself is shared with the laptop worker.
+    const applied = await applyProjectSeed({
+      source: {
+        get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
+      },
+      dest,
+      // `carry:` payloads land BESIDE the checkout, not inside it: a carry entry's
+      // destination is an arbitrary in-box path, so the provider copies them from
+      // here rather than the workspace overlaying them. Removed with the clone.
+      carryStageDir: `${dest}.carry`,
+      log,
+    });
+    if (applied) return applied;
+  }
+  return null;
 }
 
 // `hydratePreparedFromCustody` now lives in ./prepared-hydrate.js so the

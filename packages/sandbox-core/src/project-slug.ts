@@ -1,64 +1,111 @@
 /**
  * Custody project-slug derivation, shared by every producer/consumer of the
  * `projects/<slug>/…` custody scope (secrets push, seed push, plane
- * registration, hub worker). All of them MUST agree on the slug for the same
- * repo, so the parsing lives here rather than in each caller.
+ * registration, hub worker, cp cache). All of them MUST agree on the slug for
+ * the same repo, so the derivation lives here rather than in each caller.
  *
- * The slug is `owner__repo` (double underscore — `/` is not a valid custody
- * path segment character), derived from the repo's origin URL in any of the
- * usual git shapes:
- *   https://github.com/owner/repo(.git)
- *   git@github.com:owner/repo(.git)
- *   ssh://git@github.com/owner/repo(.git)
+ * The slug is a function of the repo key (`repoKey` in `@agentbox/config`):
+ * `github.com__owner__repo`. It used to be `owner__repo` parsed straight from
+ * the URL, which was case-sensitive, ignored the host and dropped GitLab
+ * subgroups. Readers still try that legacy slug after the new one
+ * ({@link custodySlugCandidates}) so custody written before the change keeps
+ * answering; writers write the new slug only.
  */
 import { basename } from 'node:path';
+import {
+  custodySlugForRepoKey,
+  getMachineLabel,
+  ownerRepoFromOriginUrl,
+  repoKey,
+  tryGetMachineId,
+} from '@agentbox/config';
+import { resolveSshConfigTarget } from './ssh-config-probe.js';
 
-/** Parse `owner`/`repo` out of any common git remote URL shape, or null. */
-export function ownerRepoFromOriginUrl(originUrl: string): { owner: string; repo: string } | null {
-  const url = originUrl.trim();
-  if (url.length === 0) return null;
-  let path: string | null = null;
-  // scp-like: git@host:owner/repo(.git)
-  const scp = /^[^@/\s]+@[^:/\s]+:(.+)$/.exec(url);
-  if (scp) {
-    path = scp[1]!;
-  } else {
-    try {
-      // Decode: `new URL` percent-encodes the path, while the scp-like branch
-      // above doesn't. Without this, the same repo spelled two ways yields two
-      // different slugs (`re%20po` -> `re-20po` vs `re po` -> `re-po`) — which
-      // is exactly the drift this shared helper exists to prevent.
-      path = safeDecode(new URL(url).pathname);
-    } catch {
+export {
+  custodySlugCandidates,
+  legacyProjectSlugFromOriginUrl,
+  ownerRepoFromOriginUrl,
+} from '@agentbox/config';
+
+/** Custody `projects/<slug>` key for an origin URL (key-derived), or null. */
+export function projectSlugFromOriginUrl(originUrl: string): string | null {
+  return custodySlugForRepoKey(repoKey(originUrl));
+}
+
+/**
+ * The custody slug a PC writes under: {@link projectSlugFromOriginUrl} of the
+ * alias-expanded key ({@link repoKeyAtEdge}). Writers on the PC use this;
+ * readers try {@link custodySlugCandidates}.
+ */
+export async function projectSlugAtEdge(originUrl: string | undefined | null): Promise<string | null> {
+  return custodySlugForRepoKey(await repoKeyAtEdge(originUrl));
+}
+
+/** What a box registration records about where its repo came from. */
+export interface RegistrationOrigin {
+  /** The repo key, alias-expanded on this machine. */
+  repoKey?: string;
+  /** `getMachineId()` of the machine the workspace was seeded from. */
+  originMachineId?: string;
+  /** That machine's hostname, display only. */
+  originMachineLabel?: string;
+}
+
+/**
+ * Stamp for a registration made on THIS machine: the repo key of `originUrl`,
+ * plus this machine as the origin when `folder` is a real checkout here. A
+ * control box's per-job clone is deleted the moment the create returns, so a
+ * hub-built box has no origin machine to ask for files later.
+ */
+export async function registrationOrigin(args: {
+  originUrl?: string | null;
+  folder?: string | null;
+}): Promise<RegistrationOrigin> {
+  const out: RegistrationOrigin = {};
+  const key = await repoKeyAtEdge(args.originUrl);
+  if (key) out.repoKey = key;
+  const id = tryGetMachineId();
+  if (id && args.folder && !isHubWorkerClone(args.folder)) {
+    out.originMachineId = id;
+    out.originMachineLabel = getMachineLabel();
+  }
+  return out;
+}
+
+const sshHostCache = new Map<string, string | null>();
+
+/**
+ * The repo key of `originUrl` as THIS machine sees it: `~/.ssh/config` host
+ * aliases expanded through `ssh -G` (non-http(s) remotes only), and a
+ * local-path remote keyed by this machine's id. Run on the PC, never on the
+ * hub, which has a different (or no) ssh config; the hub accepts the result as
+ * sent.
+ */
+export async function repoKeyAtEdge(originUrl: string | undefined | null): Promise<string | undefined> {
+  if (!originUrl) return undefined;
+  const machineId = tryGetMachineId();
+  let aliasHost: string | undefined;
+  // First pass only learns which host (if any) is aliasable.
+  repoKey(originUrl, {
+    expandHost: (h) => {
+      aliasHost = h;
       return null;
+    },
+  });
+  let expanded: string | null = null;
+  if (aliasHost !== undefined) {
+    if (sshHostCache.has(aliasHost)) {
+      expanded = sshHostCache.get(aliasHost) ?? null;
+    } else {
+      const target = await resolveSshConfigTarget(aliasHost).catch(() => null);
+      expanded = target?.host.trim() || null;
+      sshHostCache.set(aliasHost, expanded);
     }
   }
-  const segments = path
-    .replace(/\.git\/?$/, '')
-    .split('/')
-    .filter((s) => s.length > 0);
-  if (segments.length < 2) return null;
-  const owner = segments[segments.length - 2]!;
-  const repo = segments[segments.length - 1]!;
-  if (owner.length === 0 || repo.length === 0) return null;
-  return { owner, repo };
-}
-
-/** `decodeURIComponent`, falling back to the raw value on a malformed escape. */
-function safeDecode(s: string): string {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
-
-/** Custody `projects/<slug>` key for an origin URL: `owner__repo`, or null. */
-export function projectSlugFromOriginUrl(originUrl: string): string | null {
-  const parsed = ownerRepoFromOriginUrl(originUrl);
-  if (!parsed) return null;
-  const clean = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '-');
-  return `${clean(parsed.owner)}__${clean(parsed.repo)}`;
+  return repoKey(originUrl, {
+    expandHost: () => expanded,
+    ...(machineId ? { machineId } : {}),
+  });
 }
 
 /**

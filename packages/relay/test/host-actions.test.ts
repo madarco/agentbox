@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cloudHandleOf,
   executeCloudAction,
+  nestedRepoRel,
   resolveHostGitRepo,
   resolveHostPath,
 } from '../src/host-actions.js';
@@ -205,6 +206,16 @@ describe('executeCloudAction routing', () => {
  * throwaway repo and pushes to the box's REGISTERED origin — never one the box
  * supplied, which could redirect the host's credentials to an attacker.
  */
+describe('nestedRepoRel (box-sources A10)', () => {
+  it('names a nested repo by its path under /workspace, and the root by nothing', () => {
+    expect(nestedRepoRel('/workspace')).toBeUndefined();
+    expect(nestedRepoRel('/workspace/')).toBeUndefined();
+    expect(nestedRepoRel('/workspace/web')).toBe('web');
+    expect(nestedRepoRel('/workspace/apps/api/')).toBe('apps/api');
+    expect(nestedRepoRel('/home/vscode')).toBeUndefined();
+  });
+});
+
 describe('resolveHostGitRepo', () => {
   const made: string[] = [];
   afterEach(async () => {

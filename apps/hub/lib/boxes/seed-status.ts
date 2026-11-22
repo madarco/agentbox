@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { seedSlugFor } from './seed-slug';
+import { seedSlugsFor } from './seed-slug';
 // Type-only — importing the CustodyStore VALUE (FsCustodyStore) here would bundle
 // @agentbox/relay (→ execa) into the /api/v1/projects/{id}/seed route and
 // ERR_MODULE_NOT_FOUND in the standalone build. We reach the live store through
@@ -8,7 +8,7 @@ import { seedSlugFor } from './seed-slug';
 // bundle), exactly like the /api/v1/custody route.
 import type { CustodyEntry } from '@agentbox/relay/control-plane';
 
-export { seedSlugFor };
+export { seedSlugsFor };
 
 /*
  * Seed / custody status for one project, read from the control box's custody
@@ -86,18 +86,27 @@ function toEntry(e: CustodyEntry, prefix: string): SeedEntry {
 }
 
 /**
- * Read the seed/custody status for a project slug. Best-effort: a missing seed
- * or an unreadable manifest degrades to the listing (or `seed: null`), never an
- * error — the project page must still render its other details.
+ * Read the seed/custody status for a project, trying its slugs best first (the
+ * first one holding a seed answers). Best-effort: a missing seed or an
+ * unreadable manifest degrades to the listing (or `seed: null`), never an error
+ * — the project page must still render its other details.
  */
-export async function getProjectSeedStatus(slug: string | null): Promise<ProjectSeedResult> {
+export async function getProjectSeedStatus(slugs: readonly string[]): Promise<ProjectSeedResult> {
   const custody = custodyOrNull();
   if (!custody) return { custodyAvailable: false, seed: null };
-  if (!slug) return { custodyAvailable: true, seed: null };
 
-  const prefix = `projects/${slug}/seed`;
-  const entries = await custody.list(prefix).catch(() => []);
-  if (entries.length === 0) return { custodyAvailable: true, seed: null };
+  let slug: string | undefined;
+  let prefix = '';
+  let entries: Awaited<ReturnType<typeof custody.list>> = [];
+  for (const candidate of slugs) {
+    prefix = `projects/${candidate}/seed`;
+    entries = await custody.list(prefix).catch(() => []);
+    if (entries.length > 0) {
+      slug = candidate;
+      break;
+    }
+  }
+  if (!slug) return { custodyAvailable: true, seed: null };
 
   const seedEntries = entries.map((e) => toEntry(e, prefix));
   const names = new Set(seedEntries.map((e) => e.name));

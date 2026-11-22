@@ -18,7 +18,7 @@
  * a surfaced reason) rather than failing.
  */
 import type { EffectiveConfig } from '@agentbox/config';
-import { DEFAULT_ENV_PATTERNS, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { DEFAULT_ENV_PATTERNS, projectSlugAtEdge } from '@agentbox/sandbox-core';
 import {
   adminCustodySink,
   CarrySeedError,
@@ -122,7 +122,7 @@ export async function resolveCreateTarget(input: CreateTargetInput): Promise<Cre
  * — a failed untracked/env push must never fail the create (the box still comes
  * up, just without the overlay) — but NOT for approved `carry:` entries, which
  * throw: a box missing files the user was shown and said yes to is worse than no
- * box. The slug matches what the worker reads (`projectSlugFromOriginUrl`).
+ * box. The slug is the alias-expanded key's, the first one the worker tries.
  */
 export async function pushCreateSeed(args: {
   custody: { url: string; adminToken: string };
@@ -138,7 +138,7 @@ export async function pushCreateSeed(args: {
   carry?: CarrySeedSource[];
   onLog: (line: string) => void;
 }): Promise<void> {
-  const slug = projectSlugFromOriginUrl(args.repoUrl);
+  const slug = await projectSlugAtEdge(args.repoUrl);
   if (!slug) {
     args.onLog(
       'seed: could not derive a project slug from the origin URL — skipping the seed push',

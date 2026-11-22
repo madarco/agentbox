@@ -124,6 +124,21 @@ export interface BoxRegistration {
    * from `originUrl` on every consumer.
    */
   projectSlug?: string;
+  /**
+   * The repo key (`repoKey` in `@agentbox/config`) of `originUrl`, computed on
+   * the registering machine with its `~/.ssh/config` aliases expanded. The hub
+   * never re-derives it from an aliased URL.
+   */
+  repoKey?: string;
+  /**
+   * `getMachineId()` of the machine the box's workspace was seeded from. The
+   * FIRST registration's stamp is kept: a later re-register from another PC
+   * (start, resume) does not move it. Absent for hub-built boxes (their clone
+   * is deleted) and for boxes registered before the field existed.
+   */
+  originMachineId?: string;
+  /** Hostname of the origin machine, display only. */
+  originMachineLabel?: string;
 }
 
 export interface BoxWorktree {
@@ -218,6 +233,12 @@ export interface RegisterBoxBody {
   agent?: string;
   /** Custody `projects/<slug>` key of the box's project. */
   projectSlug?: string;
+  /** Alias-expanded repo key, computed by the registering machine. */
+  repoKey?: string;
+  /** Origin machine id (kept from the first registration). */
+  originMachineId?: string;
+  /** Origin machine hostname, display only. */
+  originMachineLabel?: string;
 }
 
 /**

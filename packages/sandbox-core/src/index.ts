@@ -291,8 +291,14 @@ export {
   deriveRepoLabel,
   HUB_WORKER_CLONE_PREFIX,
   isHubWorkerClone,
+  custodySlugCandidates,
+  legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
+  projectSlugAtEdge,
   projectSlugFromOriginUrl,
+  registrationOrigin,
+  repoKeyAtEdge,
+  type RegistrationOrigin,
 } from './project-slug.js';
 
 // ── Create-time host-boundary gates ──

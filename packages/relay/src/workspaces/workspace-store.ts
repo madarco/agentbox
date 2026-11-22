@@ -5,9 +5,11 @@ import {
   getMachineLabel,
   hashProjectPath,
   listProjectsConfigured,
+  localRepoPath,
   machineKeyFor,
   machineKeyIn,
   registerProject,
+  repoKey,
   sanitizeMnemonic,
   thisMachine,
   toMachineRef,
@@ -16,7 +18,6 @@ import {
   type MachineRef,
   type ProjectEntry,
 } from '@agentbox/config';
-import { normalizeRepoUrl } from './timeline-pr.js';
 import {
   WORKSPACES_DIR,
   type Workspace,
@@ -161,8 +162,13 @@ export async function scanWorkspaceProjects(root: string): Promise<string[]> {
  * workspace's `projectIds`, so every join through that id missed.
  */
 export function repoProjectKey(originUrl: string): string | undefined {
-  const repo = normalizeRepoUrl(originUrl);
-  return repo === undefined ? undefined : hashProjectPath(repo);
+  const key = repoKey(originUrl);
+  if (key !== undefined) return hashProjectPath(key);
+  // A local-path remote has no repo key, but workspace records already name
+  // such projects by the hash of the lowercased path. Kept so their ids (and the
+  // tasks filed under them) survive the move to `repoKey`.
+  const local = localRepoPath(originUrl);
+  return local === undefined ? undefined : hashProjectPath(local.toLowerCase());
 }
 
 /**
@@ -555,14 +561,14 @@ function matchWorkspace(
     if (adopted) return adopted;
   }
   const repos = new Set(
-    projects.map((p) => normalizeRepoUrl(p.repoUrl)).filter((r): r is string => Boolean(r)),
+    projects.map((p) => repoKey(p.repoUrl)).filter((r): r is string => Boolean(r)),
   );
   if (repos.size === 0) return undefined;
   return records.find(
     (r) =>
       hostEntryOf(r.hosts, input.machine) === undefined &&
       r.projects.some((p) => {
-        const repo = normalizeRepoUrl(p.repoUrl);
+        const repo = repoKey(p.repoUrl);
         return repo !== undefined && repos.has(repo);
       }),
   );
@@ -850,10 +856,10 @@ export function workspaceForBox<
     const here = findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
     if (here) return here;
   }
-  const repo = normalizeRepoUrl(key.originUrl);
+  const repo = repoKey(key.originUrl);
   if (repo) {
     return (
-      records.find((r) => r.projects.some((p) => normalizeRepoUrl(p.repoUrl) === repo)) ?? null
+      records.find((r) => r.projects.some((p) => repoKey(p.repoUrl) === repo)) ?? null
     );
   }
   return null;

@@ -16,7 +16,8 @@ import {
 } from '@agentbox/config';
 import {
   DEFAULT_ENV_PATTERNS,
-  projectSlugFromOriginUrl,
+  custodySlugCandidates,
+  projectSlugAtEdge,
   readPreparedStateRaw,
   relayPort,
 } from '@agentbox/sandbox-core';
@@ -1062,8 +1063,8 @@ const workerSub = new Command('worker')
             remoteOnly: true,
           });
           if (!target) return null;
-          const slug = projectSlugFromOriginUrl(repoUrl);
-          if (!slug) return null;
+          const slugs = custodySlugCandidates({ originUrl: repoUrl });
+          if (slugs.length === 0) return null;
           // Probe + bound like every other custody call: a down control box must
           // not park each blob `get` on undici's ~10s connect timeout and stall
           // a create the user is waiting on (see sandbox-cloud/reachability.ts).
@@ -1077,11 +1078,16 @@ const workerSub = new Command('worker')
             ...target,
             fetchImpl: deadlineFetch(AbortSignal.timeout(SEED_FETCH_MS)),
           });
-          return applyProjectSeed({
-            source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
-            dest,
-            log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
-          });
+          // New slug first, then the legacy one an older CLI pushed under.
+          for (const slug of slugs) {
+            const applied = await applyProjectSeed({
+              source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
+              dest,
+              log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
+            });
+            if (applied) return applied;
+          }
+          return null;
         },
         tmpDir: (jobId) => join(tmpdir(), `agentbox-cp-worker-${jobId}`),
         cleanup: (dir) => rm(dir, { recursive: true, force: true }),
@@ -1349,10 +1355,10 @@ export async function resolveHubApiClient(
 }
 
 /**
- * Slug a project into a custody `projects/<slug>` key: `owner__repo`, else the
- * dir name.
+ * Slug a project into a custody `projects/<slug>` key: the repo-key slug
+ * (`github.com__owner__repo`), else the dir name.
  *
- * Delegates to the shared `projectSlugFromOriginUrl` — every producer and
+ * Delegates to the shared `projectSlugAtEdge` — every producer and
  * consumer of the `projects/<slug>` scope MUST derive the same key from the same
  * origin, and a second local implementation is exactly how they drift apart. (It
  * did: this used to take the *first* two path segments unsanitized, while the
@@ -1363,7 +1369,7 @@ export async function resolveHubApiClient(
 async function projectSlug(explicit: string | undefined, projectRoot: string): Promise<string> {
   if (explicit) return explicit.replace(/[^A-Za-z0-9._-]/g, '-');
   const origin = await readGitOriginUrl(projectRoot).catch(() => undefined);
-  const slug = origin ? projectSlugFromOriginUrl(origin) : null;
+  const slug = await projectSlugAtEdge(origin);
   if (slug) return slug;
   return basename(projectRoot).replace(/[^A-Za-z0-9._-]/g, '-') || 'project';
 }
