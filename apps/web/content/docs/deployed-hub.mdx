@@ -590,7 +590,9 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
   shows both there and in the hub's approvals. A box's `agentbox-ctl download` is brokered to the
   computer the box was **created from** only, because it writes the box into that project: another
   computer with the same repo would have its working tree overwritten, and there is no cached copy.
-  With that computer off, the box is told so.
+  With that computer off, the box is told so. A download never copies the box's `.git`: the box's
+  commits reach your project through git (`agentbox git push`, or `--host-only`), and your
+  checkout's git config, HEAD and refs stay yours.
 </Callout>
 
 ## Copying between a box and your files
