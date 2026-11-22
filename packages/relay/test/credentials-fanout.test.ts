@@ -42,12 +42,34 @@ describe('CredentialsFanout', () => {
     });
     expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(true);
     expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(false); // unchanged
-    expect((await fanout.handle('box-b', payload('claude', claudeBlob(50, 'r2')))).accepted).toBe(false); // stale
-    expect((await fanout.handle('box-b', payload('claude', claudeBlob(200, 'r3')))).accepted).toBe(true);
+    expect((await fanout.handle('box-b', payload('claude', claudeBlob(50, 'r2')))).accepted).toBe(
+      false,
+    ); // stale
+    expect((await fanout.handle('box-b', payload('claude', claudeBlob(200, 'r3')))).accepted).toBe(
+      true,
+    );
     await vi.advanceTimersByTimeAsync(150);
     await fanout.flush();
     // The two accepts within one debounce window collapse into one run.
     expect(runs).toEqual(['claude:box-b']);
+  });
+
+  it('drops an update from a box on a named account: the default backup never sees it (llm-accounts Phase 3)', async () => {
+    const run = vi.fn();
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: run,
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      boxAccountFor: (boxId, agent) =>
+        Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
+    });
+    const r = await fanout.handle('box-work', payload('claude', claudeBlob(999)));
+    expect(r).toEqual({ accepted: false, reason: "named account 'work'" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(run).not.toHaveBeenCalled();
+    // A default box still fans out.
+    expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(true);
   });
 
   it('rejects malformed payloads without touching the backup', async () => {

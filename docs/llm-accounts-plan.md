@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-2 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-3 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -654,7 +654,7 @@ Implementation notes:
 - The headless `--code` call reports an error when the store refuses the new
   login, so an orchestrating agent is not told it was saved.
 
-## Phase 3 plan (selection + seeding)
+## Phase 3 as built (selection + seeding)
 
 1. **Selection.** `<agent>.account` (generated for every agent with
    `accountKinds`) resolves `--account` > project config > global config >
@@ -664,9 +664,13 @@ Implementation notes:
    --account <agent>=<name>` (repeatable), hub create `opts.accounts`. The
    resolved choice is validated against the store (a named account must exist)
    and recorded as `BoxRecord.accounts` (named accounts only; absent = all
-   `default`). Every later seam reads the record, never current config. An
-   existing box keeps its account; a different `--account` on it is refused
-   (switching is backlog).
+   `default`). Every later seam reads the record, never current config.
+   `--account` exists only on the create flows (`start`/`attach` take an
+   existing box, which keeps its account; switching is backlog). The parent
+   `agentbox <agent>` and its `login` subcommand both declare `--account`, and
+   commander hands a shared flag to the parent, so `login` reads it through
+   `optsWithGlobals` (positional options were not an option: `start`/`attach`
+   read parent-only flags after the subcommand).
 2. **Env per kind is registry data**: `AgentSyncSpec.accountEnv` (`api-key` →
    `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, `setup-token` →
    `CLAUDE_CODE_OAUTH_TOKEN`). A box on a named account gets exactly that
@@ -691,7 +695,12 @@ Implementation notes:
    record names an account for that agent, propagate skips such boxes, and the
    cloud resume reconcile / checkpoint extract skip those agents.
 6. **Model-auth lender account.** A borrowed login uses the lender's resolved
-   account (`codex.account`), from the account store.
+   account (`codex.account`), from the account store; it must be a `login`.
+7. **Every claude credential mirror is account-aware**
+   (`syncBoxClaudeCredentials`): the `start` hook and the dashboard's start
+   used the isolate branch for any non-shared volume, which would have seeded
+   the default login into a named volume whenever the default's token was
+   newer; `start`'s host re-sync passes `account` too.
 
 ## Backlog (not in these phases)
 

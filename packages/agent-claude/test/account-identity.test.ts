@@ -4,6 +4,7 @@ import {
   ACCOUNT_STATE_KEYS,
   accountStateJqDelete,
   stripAccountState,
+  stripAuthSettings,
 } from '../src/hooks-filter.js';
 
 describe('parseClaudeAccountIdentity', () => {
@@ -60,5 +61,25 @@ describe('accountStateJqDelete', () => {
     for (const k of ACCOUNT_STATE_KEYS) expect(prog).toContain(`.${k}`);
     expect(prog).toContain('.primaryApiKey');
     expect(prog).not.toMatch(/'/);
+  });
+});
+
+describe('stripAuthSettings (Phase 3 must-fix)', () => {
+  it("drops the owner's auth env and apiKeyHelper, keeps everything else", () => {
+    const r = stripAuthSettings({
+      apiKeyHelper: '/usr/local/bin/key',
+      model: 'opus',
+      env: {
+        ANTHROPIC_API_KEY: 'k',
+        CLAUDE_CODE_OAUTH_TOKEN: 't',
+        ANTHROPIC_AUTH_TOKEN: 'a',
+        FOO: 'bar',
+      },
+    });
+    expect(r).toEqual({ data: { model: 'opus', env: { FOO: 'bar' } }, stripped: true });
+  });
+  it('is a no-op without auth settings', () => {
+    const input = { model: 'opus', env: { FOO: 'bar' } };
+    expect(stripAuthSettings(input)).toEqual({ data: input, stripped: false });
   });
 });

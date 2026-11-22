@@ -20,6 +20,7 @@ import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { runToolsGate } from '../lib/tools-gate.js';
 import { boxModelAuthHelp, resolveBoxModelAuth } from '../lib/model-auth-gate.js';
 import { agentSourceIds, parseAccountFlags, resolveBoxAccounts } from '@agentbox/sandbox-core';
+import { collectRepeatable } from '../agents/command/options.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { buildHubCreateOpts } from '../lib/hub-create-opts.js';
@@ -519,8 +520,9 @@ export const createCommand = new Command('create')
   .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
   .option('--model-auth <source...>', boxModelAuthHelp())
   .option(
-    '--account <agent=name...>',
-    'named LLM account per agent, e.g. --account claude=work (repeatable; default: each agent\'s <agent>.account, else its default login). Fixed at create; see `agentbox accounts`.',
+    '--account <agent=name>',
+    "named LLM account per agent, e.g. --account claude=work (repeatable; default: each agent's <agent>.account, else its default login). Fixed at create; see `agentbox accounts`.",
+    collectRepeatable,
   )
   .option(
     '--restore <bot>',

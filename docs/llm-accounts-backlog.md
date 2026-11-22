@@ -98,3 +98,38 @@ Newest phase last.
 - **A re-login whose warm-up turn fails loses the email/org label**: the reset
   removed `oauthAccount`, so the identity is plan-only and replaces the stored
   one. Keep the stored email/org when the new identity lacks them. Display only.
+
+## From Phase 3 (selection + seeding)
+
+The two Phase 3 must-fix items above are done: `prune --all` keeps every
+`-acct-` volume, and the named claude seed strips `settings.json` auth env
+(`env.ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`,
+`apiKeyHelper`).
+
+- **No shared `projects/` volume yet.** A named account's volume keeps its own
+  `~/.claude/projects`, so `--resume` works within an account but not across
+  accounts (or between `default` and a named account). Mounting one shared
+  `agentbox-claude-projects` over every volume would hide the transcripts that
+  already live inside `agentbox-claude-config`; it needs a one-time migration.
+- **A named account's refresh does not travel until Phase 4.** Docker: the
+  account volume IS the live copy (every box on the account shares it), and the
+  create/start mirror carries it back into the account's secret. Cloud: the box
+  refreshes its own copy; the relay drops its update (it names an account), so
+  another cloud box on the same account still holds the pre-refresh token —
+  the Phase 0 outage window, per account. Use a setup token for an account
+  shared by several cloud boxes.
+- **The relay guard reads `~/.agentbox/state.json`.** Right for the laptop hub;
+  a remote control box whose boxes live only in its Store would not see the
+  record. Moot today (a remote hub has no account store, so it refuses a named
+  create), but Phase 5 must move the lookup to the hub's Store.
+- **A pasted account's token sits in the container env (docker) / sandbox env
+  (cloud)**, visible to `docker inspect` and the provider console — the same
+  exposure as today's host-key spray. A 0600 file read on demand would be
+  tighter (see the "box secrets" preference); not done here.
+- **Daytona: an account subpath is seeded once** (marker), like the default's.
+  A later re-login in the store reaches existing boxes only via Phase 4.
+- **Codex named volume → store** is not mirrored back at start (claude's is);
+  codex only refreshes after ~8 days, Phase 4 covers it.
+- **`agentbox create --account` on an agentless box** records the account; an
+  agent added to that box later with `agentbox <agent> start` keeps whatever
+  volume docker mounted at create (docker cannot add one).

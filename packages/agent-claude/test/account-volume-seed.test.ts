@@ -11,7 +11,10 @@ const home = mkdtempSync(join(tmpdir(), 'agentbox-seed-home-'));
 const realHome = process.env.HOME;
 process.env.HOME = home;
 mkdirSync(join(home, '.claude'), { recursive: true });
-writeFileSync(join(home, '.claude', 'settings.json'), '{}');
+writeFileSync(
+  join(home, '.claude', 'settings.json'),
+  JSON.stringify({ model: 'opus', env: { ANTHROPIC_API_KEY: 'owner-key', FOO: 'bar' } }),
+);
 writeFileSync(join(home, '.claude', '.credentials.json'), '{"claudeAiOauth":{"refreshToken":"r"}}');
 writeFileSync(
   join(home, '.claude.json'),
@@ -25,6 +28,7 @@ writeFileSync(
 const { ensureClaudeVolume } = await import('../src/docker-sync.js');
 
 let overlay: Record<string, unknown> | null;
+let settingsOverlay: Record<string, unknown> | null;
 let seedScript = '';
 
 afterAll(() => {
@@ -34,6 +38,7 @@ afterAll(() => {
 
 beforeEach(() => {
   overlay = null;
+  settingsOverlay = null;
   seedScript = '';
   execaMock.mockReset();
   execaMock.mockImplementation((_cmd: string, argv: string[]) => {
@@ -47,6 +52,13 @@ beforeEach(() => {
         ) as Record<string, unknown>;
       } catch {
         overlay = null;
+      }
+      try {
+        settingsOverlay = JSON.parse(
+          readFileSync(join(filter.split(':')[0]!, 'settings.json'), 'utf8'),
+        ) as Record<string, unknown>;
+      } catch {
+        settingsOverlay = null;
       }
     }
     const sh = argv.indexOf('-c');
@@ -66,6 +78,8 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
     expect(overlay).not.toHaveProperty('oauthAccount');
     expect(overlay).not.toHaveProperty('customApiKeyResponses');
     expect(overlay).toHaveProperty('installMethod', 'native');
+    // The owner's API key must not ride settings.json into the account's volume.
+    expect(settingsOverlay).toEqual({ model: 'opus', env: { FOO: 'bar' } });
   });
 
   it('the default volume keeps the login and the host state (unchanged behaviour)', async () => {
@@ -76,5 +90,7 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
     expect(seedScript).not.toContain('--exclude=/.credentials.json');
     // The raw host file is copied; an overlay, if any, keeps oauthAccount.
     if (overlay) expect(overlay).toHaveProperty('oauthAccount');
+    // Default volume: settings are unchanged (no overlay written for them).
+    expect(settingsOverlay).toBeNull();
   });
 });

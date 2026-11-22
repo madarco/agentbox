@@ -76,13 +76,35 @@ async function routeAccountLogin(
   return req;
 }
 
+/**
+ * `--account` exactly as typed after `login`. The parent `agentbox <agent>`
+ * command declares `--account` too (the create flag), and commander gives a
+ * flag both declare to the PARENT — so read the merged view and take its
+ * single value.
+ */
+export function loginOptions(cmd: Command, own: LoginOptions): LoginOptions {
+  const merged = cmd.optsWithGlobals() as LoginOptions & { account?: string | string[] };
+  const raw = own.account ?? merged.account;
+  const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+  if (values.length > 1) {
+    log.error('login takes one --account');
+    process.exit(1);
+  }
+  return { ...own, ...(values[0] !== undefined ? { account: values[0] } : {}) };
+}
+
 export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
   const custom = a.runtime.loginCommand?.run;
   if (custom) {
     // The app-level calls a custom login needs, injected rather than imported:
     // an agent package cannot reach `commands/control-plane.ts`,
     // `commands/_errors.ts` or the account-login helpers.
-    return cmd.action(async (args: string[], opts: LoginOptions & Record<string, unknown>) => {
+    return cmd.action(async function (
+      this: Command,
+      args: string[],
+      rawOpts: LoginOptions & Record<string, unknown>,
+    ) {
+      const opts = { ...rawOpts, ...loginOptions(this, rawOpts) };
       try {
         const routed = await routeAccountLogin(a, opts);
         if (routed === 'done') return;
@@ -103,7 +125,8 @@ export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
       }
     });
   }
-  return cmd.action(async (args: string[], opts: LoginOptions) => {
+  return cmd.action(async function (this: Command, args: string[], rawOpts: LoginOptions) {
+    const opts = loginOptions(this, rawOpts);
     let account: LoginAccountRequest | null;
     try {
       const routed = await routeAccountLogin(a, opts);
