@@ -123,6 +123,11 @@ describe('agent sync registry', () => {
       'plugins/.plugin-appserver',
       'computer-use',
       'archived_sessions',
+      '/app-server-daemon',
+      '/app-server-control',
+      '/ipc',
+      '/process_manager',
+      '/thread-writer-locks',
       'auth.json',
     ]);
 

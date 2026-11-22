@@ -10,6 +10,7 @@ import {
   tmuxSessionEnvArgs,
   CONTAINER_USER,
   ensureVolume,
+  hostRsyncStep,
   volumeExists,
   createDockerSyncTransport,
   stageLoopbackOverlay,
@@ -174,10 +175,10 @@ export async function ensureOpencodeVolume(
       // was missing `snapshot`). `'volume'`, not `'snapshot'`: the volume is
       // this box's credential store, so `auth.json` must land in it. The SQLite
       // session store is dropped by the shared live-database deny.
-      steps.push(`rsync -a ${dataVolumeExcludeFlags()} /src-data/ /dst/`);
+      steps.push(hostRsyncStep(`${dataVolumeExcludeFlags()} /src-data/ /dst/`));
     }
     if (hasConfig) {
-      steps.push('mkdir -p /dst/config && rsync -a /src-config/ /dst/config/');
+      steps.push(`mkdir -p /dst/config && ${hostRsyncStep('/src-config/ /dst/config/')}`);
       if (overlay.dir) steps.push('cp -R /src-endpoints/. /dst/');
     }
     if (hasState) {
@@ -186,8 +187,7 @@ export async function ensureOpencodeVolume(
       // model picked inside the box (which persists in this volume). `locks` is a
       // runtime lock dir — host-local, never synced.
       steps.push(
-        'mkdir -p /dst/.state/opencode &&' +
-          ' rsync -a --update --exclude=locks /src-state/ /dst/.state/opencode/',
+        `mkdir -p /dst/.state/opencode && ${hostRsyncStep('--update --exclude=locks /src-state/ /dst/.state/opencode/')}`,
       );
     }
     steps.push('chown -R 1000:1000 /dst');

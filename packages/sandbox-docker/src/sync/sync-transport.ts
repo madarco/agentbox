@@ -31,6 +31,7 @@ import type {
   TransportCaps,
   VolumeHostSource,
 } from '@agentbox/core';
+import { hostRsyncStep } from './agents/shared.js';
 
 export interface DockerSyncTransportInit {
   /** Target container name (running, overlay mounted). */
@@ -319,13 +320,13 @@ function makeTransport(runner: DockerRunner, image: string | undefined): SyncTra
         const mount = `/src-${String(i)}`;
         args.push('-v', `${src.hostDir}:${mount}:ro`);
         const dest = src.destSubpath ? `/dst/${src.destSubpath}` : '/dst';
-        const rsync = ['rsync', '-a'];
+        const rsync: string[] = [];
         if (src.copyUnsafeLinks) rsync.push('--copy-unsafe-links');
         if (src.update) rsync.push('--update');
         for (const inc of src.include ?? []) rsync.push(`--include=${inc}`);
         for (const ex of src.exclude ?? []) rsync.push(`--exclude=${ex}`);
         rsync.push(`${mount}/`, `${dest}/`);
-        steps.push(`mkdir -p ${dest} && ${rsync.join(' ')}`);
+        steps.push(`mkdir -p ${dest} && ${hostRsyncStep(rsync.join(' '))}`);
       });
       steps.push('chown -R 1000:1000 /dst');
       args.push(image, 'sh', '-c', steps.join(' && '));

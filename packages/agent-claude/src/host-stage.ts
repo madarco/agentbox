@@ -22,7 +22,6 @@ import {
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { execa } from 'execa';
 import {
   emptyResult,
   findBrokenSymlinks,
@@ -31,6 +30,7 @@ import {
   pathExists,
   resolveAgentSpec,
   STAGE_NO_SPECIALS,
+  stageRsync,
   STAGE_WRITABLE_CHMOD,
   stageSingleFileTarball,
   tarballFromDir,
@@ -199,7 +199,7 @@ export async function stageClaudeStaticForUpload(
       ...CLAUDE_STATIC_EXCLUDES.map((p) => `--exclude=${p}`),
       ...broken.map((r) => `--exclude=/${r}`),
     ];
-    await execa('rsync', [
+    await stageRsync([
       '-a',
       STAGE_WRITABLE_CHMOD,
       STAGE_NO_SPECIALS,

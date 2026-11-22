@@ -22,7 +22,7 @@ import {
 } from './hooks-filter.js';
 import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
 export type { PullClaudeResult } from '@agentbox/sandbox-core';
-import { detectEngine, orbstackVolumePath } from '@agentbox/sandbox-docker';
+import { detectEngine, hostRsyncStep, orbstackVolumePath } from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // The host-side unsyncable-symlink pre-scan moved to the shared sync layer
 // (also used by the ~/.agents skills seed); re-exported for existing importers
@@ -332,7 +332,7 @@ export async function ensureClaudeVolume(
       ...LIVE_DATABASE_EXCLUDES.map((p) => `--exclude=${p}`),
     ];
     for (const rel of brokenSymlinks) rsyncExcludes.push(`--exclude=/${rel}`);
-    const rsyncFlags = `-a --copy-unsafe-links ${rsyncExcludes.join(' ')}`;
+    const rsyncFlags = `--copy-unsafe-links ${rsyncExcludes.join(' ')}`;
     // Rekey the host project's memory/ -> /dst/projects/-workspace/memory.
     // The key is [A-Za-z0-9-] only (encodeClaudeProjectsKey), so it's shell-safe
     // to interpolate. Empty snippet when no workspace or the helper finds no
@@ -381,7 +381,7 @@ export async function ensureClaudeVolume(
       '{ [ ! -f /dst/.agentbox-cleaned-nm-v1 ] && ' +
         'find /dst -name node_modules -type d -prune -exec rm -rf {} + && ' +
         'touch /dst/.agentbox-cleaned-nm-v1; true; }' +
-        ` && rsync ${rsyncFlags} /src-claude/ /dst/` +
+        ` && ${hostRsyncStep(`${rsyncFlags} /src-claude/ /dst/`)}` +
         ' && { [ -f /src-claude-json ] && cp -a /src-claude-json /dst/_claude.json; true; }' +
         ' && { [ -f /src-filter/settings.json ] && cp -a /src-filter/settings.json /dst/settings.json; true; }' +
         ' && { [ -f /src-filter/_claude.json ] && cp -a /src-filter/_claude.json /dst/_claude.json; true; }' +

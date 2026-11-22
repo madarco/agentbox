@@ -7,6 +7,7 @@ import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
   CONTAINER_USER,
+  hostRsyncStep,
   ensureVolume,
   volumeExists,
   createDockerSyncTransport,
@@ -64,12 +65,67 @@ export function volumeExcludeFlags(): string {
 
 /**
  * Purge what an OLDER sync already copied in. Same list as the excludes, minus
- * the anchored/carve-in patterns that are not removable paths.
+ * the anchored/carve-in patterns. Anchored ones are skipped on purpose even
+ * when they name a plain root path (`/ipc`): those are runtime sockets and
+ * locks, and this volume is shared by every codex box, so a running box's
+ * in-box codex may own a live copy right now.
  */
 export function volumePurgeCommand(): string {
   const derived = CODEX_SPEC_PATH ? agentPushExcludes(CODEX_SPEC, CODEX_SPEC_PATH, 'volume') : [];
   const paths = derived.filter((p) => p !== '.tmp' && !p.startsWith('/')).map((p) => `/dst/${p}`);
   return `rm -rf ${paths.join(' ')}`;
+}
+
+/**
+ * The helper-container script that copies the host `~/.codex` (bind-mounted
+ * read-only at `/src`) into the codex-config volume at `/dst`.
+ *
+ * `hasAgents`: the host uses the shared `~/.agents` dir, so `skills` is
+ * excluded and purged (see {@link ensureCodexVolume}).
+ */
+export function buildCodexVolumeSyncScript(hasAgents: boolean): string {
+  const skillsExclude = hasAgents ? ' --exclude=skills' : '';
+  const skillsPurge = hasAgents
+    ? ' && { [ -d /dst/skills ] && find /dst/skills -mindepth 1 -maxdepth 1 ! -name .system -exec rm -rf {} + || true; }'
+    : '';
+  // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
+  // (placed from codex's `seeds` declaration); never let the host copy clobber it.
+  // --exclude=/config.toml (anchored — plugin repos legitimately contain
+  // files named config.toml): box config is owned by
+  // reconcileVolumeCodexConfig (sanitize + merge), never rsynced — copying
+  // the host file here would wipe box-side `codex plugin add`/`mcp add`
+  // state before the merge could read it.
+  // The `.tmp/marketplaces` includes come FIRST (rsync filter rules are
+  // first-match-wins): git-marketplace snapshots must reach the box or
+  // in-box `codex plugin` breaks; `/.tmp/*` then drops `.tmp`'s other
+  // children (the heavy desktop-app payloads) and the unanchored `.tmp`
+  // still blocks nested `.tmp` dirs elsewhere.
+  // The session-state DBs / indexes are excluded so a teleported session
+  // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
+  // index, which it backfills from the box's rollouts) and the host's
+  // cross-project Codex history doesn't leak into the box.
+  // The trailing `rm -rf` purges anything a PREVIOUS sync (before these
+  // excludes) already copied into the shared volume — rsync without
+  // --delete only adds/updates. The globs are no-ops with `-f` when absent,
+  // and never touch box-owned `sessions/` (the teleported rollouts) or
+  // `hooks.json`. `.tmp` gets a selective purge that keeps `marketplaces/`.
+  // Heavy host-only artifacts are also excluded (mirrors the codex spec in
+  // sandbox-core's registry): `packages` (macOS standalone release binaries —
+  // the in-box codex is npm-installed), `plugins/.plugin-appserver` (the
+  // platform-specific plugin app-server runtime), `computer-use` (the macOS
+  // `Codex Computer Use.app` bundle), `archived_sessions` (host history), and
+  // the regenerable caches (`tmp`, `cache`, `vendor_imports`, `sqlite`,
+  // `models_cache.json`). Without these the shared volume balloons to
+  // ~1.5 GB and every create's rsync crawls.
+  return (
+    hostRsyncStep(
+      `${volumeIncludeFlags(CODEX_SPEC_PATH)} ${volumeExcludeFlags()}${skillsExclude} /src/ /dst/`,
+    ) +
+    ` && ${volumePurgeCommand()}` +
+    ' && { [ -d /dst/.tmp ] && find /dst/.tmp -mindepth 1 -maxdepth 1 ! -name marketplaces -exec rm -rf {} + || true; }' +
+    skillsPurge +
+    ' && chown -R 1000:1000 /dst'
+  );
 }
 
 export const SHARED_CODEX_VOLUME = resolveAgentSpec('codex').dockerVolume;
@@ -260,10 +316,6 @@ export async function ensureCodexVolume(
     //   ~/.codex/skills — sync them as-is (no exclude, no purge) so they reach
     //   the box (the box has no ~/.agents volume to fall back on).
     const hasAgents = await pathExists(join(homedir(), '.agents'));
-    const skillsExclude = hasAgents ? ' --exclude=skills' : '';
-    const skillsPurge = hasAgents
-      ? ' && { [ -d /dst/skills ] && find /dst/skills -mindepth 1 -maxdepth 1 ! -name .system -exec rm -rf {} + || true; }'
-      : '';
     await execa('docker', [
       'run',
       '--rm',
@@ -276,42 +328,7 @@ export async function ensureCodexVolume(
       opts.image,
       'sh',
       '-c',
-      // --exclude=hooks.json: the AgentBox activity hooks file is box-owned
-      // (placed from codex's `seeds` declaration); never let the host copy clobber it.
-      // --exclude=/config.toml (anchored — plugin repos legitimately contain
-      // files named config.toml): box config is owned by
-      // reconcileVolumeCodexConfig (sanitize + merge), never rsynced — copying
-      // the host file here would wipe box-side `codex plugin add`/`mcp add`
-      // state before the merge could read it.
-      // The `.tmp/marketplaces` includes come FIRST (rsync filter rules are
-      // first-match-wins): git-marketplace snapshots must reach the box or
-      // in-box `codex plugin` breaks; `/.tmp/*` then drops `.tmp`'s other
-      // children (the heavy desktop-app payloads) and the unanchored `.tmp`
-      // still blocks nested `.tmp` dirs elsewhere.
-      // The session-state DBs / indexes are excluded so a teleported session
-      // resumes at /workspace (Codex reads the cwd from state_*.sqlite's threads
-      // index, which it backfills from the box's rollouts) and the host's
-      // cross-project Codex history doesn't leak into the box.
-      // The trailing `rm -rf` purges anything a PREVIOUS sync (before these
-      // excludes) already copied into the shared volume — rsync without
-      // --delete only adds/updates. The globs are no-ops with `-f` when absent,
-      // and never touch box-owned `sessions/` (the teleported rollouts) or
-      // `hooks.json`. `.tmp` gets a selective purge that keeps `marketplaces/`.
-      // Heavy host-only artifacts are also excluded (mirrors the codex spec in
-      // sandbox-core's registry): `packages` (macOS standalone release binaries —
-      // the in-box codex is npm-installed), `plugins/.plugin-appserver` (the
-      // platform-specific plugin app-server runtime), `computer-use` (the macOS
-      // `Codex Computer Use.app` bundle), `archived_sessions` (host history), and
-      // the regenerable caches (`tmp`, `cache`, `vendor_imports`, `sqlite`,
-      // `models_cache.json`). Without these the shared volume balloons to
-      // ~1.5 GB and every create's rsync crawls.
-      `rsync -a ${volumeIncludeFlags(CODEX_SPEC_PATH)} ${volumeExcludeFlags()}` +
-        skillsExclude +
-        ' /src/ /dst/' +
-        ` && ${volumePurgeCommand()}` +
-        ' && { [ -d /dst/.tmp ] && find /dst/.tmp -mindepth 1 -maxdepth 1 ! -name marketplaces -exec rm -rf {} + || true; }' +
-        skillsPurge +
-        ' && chown -R 1000:1000 /dst',
+      buildCodexVolumeSyncScript(hasAgents),
     ]);
     const { loopbackEndpoints } = await reconcileVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true, loopbackEndpoints };

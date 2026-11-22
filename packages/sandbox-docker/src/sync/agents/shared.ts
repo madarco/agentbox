@@ -11,6 +11,8 @@
  * depend on `@agentbox/agent-claude` for a tmux flag.
  */
 
+import { RSYNC_VANISHED_EXIT } from '@agentbox/sandbox-core';
+
 /** The unprivileged user a box's work runs as. */
 export const CONTAINER_USER = 'vscode';
 
@@ -153,4 +155,26 @@ function shellSingleQuoteIfNeeded(s: string): string {
 export function buildShellArgv(container: string): string[] {
   const term = process.env['TERM'] ?? 'xterm-256color';
   return ['exec', '-it', '-e', `TERM=${term}`, '--user', CONTAINER_USER, container, 'bash', '-l'];
+}
+
+/**
+ * One `sh -c` step that rsyncs from a LIVE host bind mount into a volume.
+ *
+ * The source belongs to an agent that may be running right now: the Codex
+ * desktop app recreates unix sockets under `~/.codex` constantly, so a file
+ * rsync listed can be gone by the time it reads it. That is exit 24, harmless
+ * for a config copy, but chained with `&&` it aborted the helper (and `codex
+ * login` / create with it) and skipped the purge + chown steps after it. 24
+ * counts as success here; any other failure still exits the script with
+ * rsync's own code.
+ *
+ * `--no-specials` must come after `-a`, which would otherwise turn it back on.
+ * It keeps sockets and FIFOs out of the volume: nothing in the box can connect
+ * to the host end of one.
+ */
+export function hostRsyncStep(args: string): string {
+  return (
+    `{ rsync -a --no-specials ${args} || ` +
+    `{ rc=$?; [ "$rc" -eq ${String(RSYNC_VANISHED_EXIT)} ] || exit "$rc"; }; }`
+  );
 }
