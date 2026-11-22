@@ -170,3 +170,16 @@ describe('dialTarget', () => {
     expect(dialTarget(parseRemoteTarget('v6')).target.spec).toBe('root@[fe80::1]:2222');
   });
 });
+
+describe('dialTarget on a docker:hub box from a computer that did not deploy the hub', () => {
+  it("says the engine is the control box's own, instead of handing ssh a bare `hub`", () => {
+    expect(() => dialTarget(parseRemoteTarget('hub'))).toThrow(
+      /control box's own docker engine \(docker:hub\)/,
+    );
+  });
+
+  it('dials it where the `hub` engine IS registered (the deploying computer)', () => {
+    upsertHostAlias('hub', 'agentbox-hub');
+    expect(dialTarget(parseRemoteTarget('hub')).target.host).toBe('agentbox-hub');
+  });
+});

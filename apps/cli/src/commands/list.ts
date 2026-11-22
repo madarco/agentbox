@@ -18,6 +18,7 @@ import {
   dockerHiddenReason,
   dockerHiddenListHint,
   isDockerProvider,
+  remoteHubConfigured,
 } from '../control-plane/remote-hub.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 import type { AgentId } from '@agentbox/core';
@@ -598,7 +599,7 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
   const { boxes, projectRoot, scoped, listing } = await scopedBoxes(all, live);
   // Docker off under a remote hub (Step 12): mark (don't drop) docker boxes as
   // inactive when docker is gated here, plus a footer note naming the key + reason.
-  const muted = await mutedDockerBoxes(boxes);
+  const muted = await mutedDockerBoxes(boxes, listing);
   lastListing = listing;
   // Refused, not empty: "no boxes — run agentbox create" would be a lie here.
   if (listing.reason === 'unauthorized') return staleNote(listing).trimStart();
@@ -624,16 +625,37 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
  */
 async function mutedDockerBoxes(
   boxes: HubApiBox[],
+  listing: Pick<BoxListing, 'target'>,
 ): Promise<{ ids: Set<string>; reason: string | null; hint: string }> {
   const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   if (!cfg || !dockerProvidersHidden(cfg.effective))
     return { ids: new Set(), reason: null, hint: '' };
+  if (!listingOwnsLocalDocker(listing, remoteHubConfigured(cfg.effective))) {
+    return { ids: new Set(), reason: null, hint: '' };
+  }
   const ids = new Set(boxes.filter((b) => isDockerProvider(b.provider)).map((b) => b.id));
   return {
     ids,
     reason: dockerHiddenReason(cfg.effective),
     hint: dockerHiddenListHint(cfg.effective),
   };
+}
+
+/**
+ * Whether the docker boxes in this listing are THIS machine's own (what the
+ * "inactive" tag is for: a local docker box left behind under a control box).
+ * A listing from a remote control box holds only boxes that control box drives
+ * (its own engine, `docker:hub`, or an engine shared with it), so tagging them
+ * "inactive, not supported alongside a control box" told another PC the exact
+ * opposite of the truth. A cache with no live target came from the control box
+ * whenever one is configured.
+ */
+export function listingOwnsLocalDocker(
+  listing: Pick<BoxListing, 'target'>,
+  controlBoxConfigured: boolean,
+): boolean {
+  if (listing.target) return listing.target.mode === 'local';
+  return !controlBoxConfigured;
 }
 
 /** Footer note when docker boxes are shown inactive, naming the reason + what to do. */

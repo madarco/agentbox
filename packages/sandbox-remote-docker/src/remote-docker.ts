@@ -32,7 +32,12 @@ import {
   type SshTargetArgs,
 } from '@agentbox/sandbox-core';
 import { parseRemoteTarget, sshTargetFor, type RemoteTarget } from './target.js';
-import { getHostConnection, hostKeyDir, resolveConnection } from './hosts-registry.js';
+import {
+  getHostAlias,
+  getHostConnection,
+  hostKeyDir,
+  resolveConnection,
+} from './hosts-registry.js';
 
 /**
  * A box's sandbox id bakes an ALIAS, not a raw connection string. Turn the
@@ -58,7 +63,24 @@ export interface DialPlan {
  * of all. Everything else keeps the original behavior: the ssh string, read
  * through the user's own config, agent and known_hosts.
  */
+/** The host alias of the control box's own docker engine (`docker:hub`). */
+export const HUB_ENGINE_ALIAS = 'hub';
+
+/** What an action on a `docker:hub` box says on a computer that cannot reach that engine. */
+export const HUB_ENGINE_UNREACHABLE =
+  "this box runs on the control box's own docker engine (docker:hub), which only the computer " +
+  "that deployed the control box can reach (its SSH access is that computer's alone). From this " +
+  'computer use the hub web UI or the tray for this box, run the command on that computer, or ' +
+  'create boxes you want to use from several computers on a cloud provider.';
+
 export function dialTarget(target: RemoteTarget): DialPlan {
+  // `hub` is the control box's OWN docker engine (`docker:hub`). Only the
+  // computer that deployed the control box registers it (over the deploy's
+  // root SSH key, firewalled to that computer), so anywhere else it is not an
+  // engine this computer can dial: say so instead of handing ssh a bare `hub`.
+  if (target.spec === HUB_ENGINE_ALIAS && !getHostAlias(target.spec)) {
+    throw new Error(HUB_ENGINE_UNREACHABLE);
+  }
   const conn = getHostConnection(target.spec);
   if (conn) {
     const dial: RemoteTarget = {
