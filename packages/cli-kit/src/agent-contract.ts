@@ -20,7 +20,11 @@
  */
 import type { AttachOpenIn, EffectiveConfig, UserConfig } from '@agentbox/config';
 import type { AgentId, ResolvedCarryEntry } from '@agentbox/core';
-import type { BoxRecord, CreateBoxOptions } from '@agentbox/sandbox-docker';
+import type {
+  AccountIdentityReader,
+  BoxRecord,
+  CreateBoxOptions,
+} from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginBinding } from './agent-login-bindings.js';
 import type { ResolvedTeleport } from './teleport-types.js';
@@ -95,6 +99,16 @@ export interface AgentLoginHost {
   syncCredentialsIfChanged(): Promise<void>;
   /** Map a lifecycle error to a message + exit code. Never returns. */
   fail(err: unknown): never;
+  /**
+   * After a NAMED account's login succeeded against `volume`: store it in the
+   * host account store and report the outcome. Throws when nothing usable was
+   * captured.
+   */
+  captureAccountLogin(o: {
+    account: { id: string; label?: string };
+    volume: string;
+    image: string;
+  }): Promise<void>;
 }
 
 export interface AgentRuntime {
@@ -119,7 +133,18 @@ export interface AgentRuntime {
    */
   ensureVolume(
     target: { volume: string },
-    o: { syncFromHost: boolean; image: string; hostWorkspace?: string },
+    o: {
+      syncFromHost: boolean;
+      image: string;
+      hostWorkspace?: string;
+      /**
+       * A NAMED LLM account's volume: seed the host's config but never the
+       * host's identity — not its credential file (the owner's real login; a
+       * copy is one more holder for a refresh to revoke) and not any cached
+       * account profile (claude's `oauthAccount`), which would mislabel it.
+       */
+      account?: string;
+    },
   ): Promise<unknown>;
   buildAttachArgv(container: string, sessionName: string | undefined): string[];
 
@@ -182,7 +207,25 @@ export interface AgentRuntime {
   hostConfigNotices?(): Promise<string[]>;
   /** The `<agent> login` subcommand's sign-in: guided under a pty, or the
    *  agent's own TUI when forced / unavailable. */
-  signIn(image: string, extraArgs: string[], o: { passthrough?: boolean }): Promise<SignInResult>;
+  signIn(
+    image: string,
+    extraArgs: string[],
+    o: {
+      passthrough?: boolean;
+      /**
+       * Sign in against this volume instead of `sharedVolume` — a named LLM
+       * account's. The login must then leave the shared volume, the legacy
+       * host backup and custody alone: the caller captures the result into
+       * the account store.
+       */
+      volume?: string;
+    },
+  ): Promise<SignInResult>;
+  /**
+   * How to read a display identity (email, org, plan) off a captured login.
+   * Absent = the account list shows none. Display only, never a decision.
+   */
+  accountIdentity?: AccountIdentityReader;
   /** Guided-login binding — used by `agentbox <agent> login` machinery. */
   loginBinding(o: {
     image: string;

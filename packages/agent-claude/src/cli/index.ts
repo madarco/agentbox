@@ -45,7 +45,13 @@ export {
   type LoginRequest,
   type LoginMode,
 } from './login-session.js';
-export { addClaudeLoginOptions, runClaudeLoginCommand } from './login-command.js';
+export {
+  addClaudeLoginOptions,
+  claudeAccountVolume,
+  runClaudeLoginCommand,
+  type LoginAccount,
+} from './login-command.js';
+export { claudeAccountIdentity, parseClaudeAccountIdentity } from './account-identity.js';
 export { resolveClaudeTeleport } from './teleport.js';
 export {
   encodeClaudeProjectsDir,

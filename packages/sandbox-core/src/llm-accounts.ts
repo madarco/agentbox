@@ -411,3 +411,59 @@ export function decodePastedSecret(text: string): PastedAccountSecret | null {
   }
   return null;
 }
+
+/** What `<agent> login` was asked to sign in, from its account flags. */
+export interface LoginAccountRequest {
+  /** A named account id; never `default` (that is the plain login). */
+  id: string;
+  kind: LlmAccountKind;
+  label?: string;
+}
+
+/**
+ * Resolve `<agent> login`'s account flags. `null` means the plain login into
+ * the `default` slot, exactly as before accounts existed. Throws a message for
+ * the user on a combination that cannot work.
+ *
+ * A pasted kind needs a NAMED account: `default` is the legacy login file
+ * (see {@link accountProblem}).
+ */
+export function resolveLoginAccount(
+  spec: AgentSyncSpec,
+  opts: { account?: string; label?: string; apiKey?: boolean; setupToken?: boolean },
+): LoginAccountRequest | null {
+  if (opts.apiKey && opts.setupToken) {
+    throw new Error('choose one of --api-key and --setup-token');
+  }
+  const kind: LlmAccountKind = opts.apiKey ? 'api-key' : opts.setupToken ? 'setup-token' : 'login';
+  const id = opts.account?.trim();
+  if (id === undefined || id === '' || isDefaultAccount(id)) {
+    if (kind !== 'login') {
+      throw new Error(
+        `a ${kind} needs a named account: add --account <name> (the default account is the agent's login)`,
+      );
+    }
+    if (opts.label !== undefined) {
+      throw new Error('--label names a named account: add --account <name>');
+    }
+    return null;
+  }
+  requireAccountId(id);
+  const kindProblem = accountKindProblem(spec, kind);
+  if (kindProblem) throw new Error(kindProblem);
+  const label = opts.label?.trim();
+  return label ? { id, kind, label } : { id, kind };
+}
+
+/**
+ * Light sanity check on a pasted secret, so a stray newline or a pasted
+ * sentence fails here rather than as an auth error inside a box. Deliberately
+ * NOT a prefix check: Anthropic issues more key shapes than one prefix covers
+ * (Phase 0 met an `sk-ant-usr` key).
+ */
+export function pastedSecretProblem(token: string): string | null {
+  if (token.length === 0) return 'the secret is empty';
+  if (/\s/.test(token)) return 'the secret contains whitespace; paste the token alone';
+  if (token.length < 16) return 'the secret is too short to be a token';
+  return null;
+}

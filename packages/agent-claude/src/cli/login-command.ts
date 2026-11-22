@@ -19,6 +19,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { accountConfigVolume } from '@agentbox/core';
+import { ensureClaudeVolume, SHARED_CLAUDE_VOLUME } from '../docker-sync.js';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginHost } from '@agentbox/cli-kit';
@@ -27,6 +29,7 @@ import {
   cleanupStaleSessions,
   findLiveSession,
   findPendingSession,
+  readLoginRequest,
   readLoginState,
   selectLoginMode,
   writeLoginCode,
@@ -54,7 +57,7 @@ function printAwaitingCode(st: LoginState): void {
  * the `--code` follow-up, and return while the worker keeps waiting. A second
  * `agentbox claude login --code <CODE>` ({@link deliverLoginCode}) finishes it.
  */
-async function startHeadlessLogin(args: string[]): Promise<void> {
+async function startHeadlessLogin(args: string[], account?: LoginAccount): Promise<void> {
   // node-pty drives the login; without the prebuild there is no headless path.
   if (!(await loadPtyBackend())) {
     log.error(
@@ -89,6 +92,10 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     agents: ['claude'],
     onProgress: imageProgress(s),
   });
+  if (account) {
+    s.message(`preparing the '${account.id}' account's config`);
+    await prepareAccountVolume(account, image);
+  }
   s.stop('image ready');
 
   const id = randomUUID().slice(0, 8);
@@ -97,6 +104,7 @@ async function startHeadlessLogin(args: string[]): Promise<void> {
     extraArgs: args,
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
+    ...(account ? { account } : {}),
   });
 
   // This foreground process IS the CLI entry, so argv[1] is the right script to
@@ -164,7 +172,12 @@ async function deliverLoginCode(code: string): Promise<void> {
     const st = readLoginState(id);
     if (st?.phase === 'done') {
       s.stop(st.warmed ? 'credentials ready' : 'signed in (credential check incomplete)');
-      outro('signed in — credentials saved for future boxes');
+      const account = readLoginRequest(id)?.account;
+      outro(
+        account
+          ? `signed in as account '${account.id}' — saved for boxes that select it`
+          : 'signed in — credentials saved for future boxes',
+      );
       return;
     }
     if (st?.phase === 'error') {
@@ -190,6 +203,28 @@ async function deliverLoginCode(code: string): Promise<void> {
   }
 }
 
+/** A named LLM account to sign in, resolved by the shared login wiring. */
+export interface LoginAccount {
+  id: string;
+  label?: string;
+}
+
+/** A named account's own config volume (llm-accounts Phase 0: one per account). */
+export function claudeAccountVolume(account: LoginAccount): string {
+  return accountConfigVolume(SHARED_CLAUDE_VOLUME, account.id);
+}
+
+/**
+ * Seed a named account's volume from the host's config, minus the host's
+ * identity (its login file and cached profile) — see `ensureClaudeVolume`.
+ */
+async function prepareAccountVolume(account: LoginAccount, image: string): Promise<void> {
+  await ensureClaudeVolume(
+    { volume: claudeAccountVolume(account) },
+    { syncFromHost: true, image, account: account.id },
+  );
+}
+
 /** Declared BEFORE the factory's `--interactive`, which is the order help prints. */
 export function addClaudeLoginOptions(cmd: Command): void {
   cmd
@@ -205,7 +240,13 @@ export async function runClaudeLoginCommand(
   rawOpts: Record<string, unknown>,
   host: AgentLoginHost,
 ): Promise<void> {
-  const opts = rawOpts as { headless?: boolean; code?: string; interactive?: boolean };
+  const opts = rawOpts as {
+    headless?: boolean;
+    code?: string;
+    interactive?: boolean;
+    loginAccount?: LoginAccount;
+  };
+  const account = opts.loginAccount;
   const mode = selectLoginMode({
     isTTY: !!process.stdin.isTTY,
     headless: !!opts.headless,
@@ -219,10 +260,10 @@ export async function runClaudeLoginCommand(
       return;
     }
     if (mode === 'headless') {
-      await startHeadlessLogin(args);
+      await startHeadlessLogin(args, account);
       return;
     }
-    intro('Signing in to Claude...');
+    intro(account ? `Signing in to Claude as account '${account.id}'...` : 'Signing in to Claude...');
     const cfg = await loadEffectiveConfig(process.cwd());
     const baseImage = cfg.effective.box.image;
 
@@ -233,12 +274,21 @@ export async function runClaudeLoginCommand(
       agents: ['claude'],
       onProgress: imageProgress(s),
     });
+    if (account) {
+      s.message(`preparing the '${account.id}' account's config`);
+      await prepareAccountVolume(account, image);
+    }
     s.stop('image ready');
 
     // Throwaway `docker run` against the shared volume — the written credentials
     // persist there and `syncClaudeCredentials` mirrors them to the host backup,
-    // so every later box (shared or isolate) is seeded.
-    const res = await signInToClaude(image, args, { passthrough: mode === 'interactive' });
+    // so every later box (shared or isolate) is seeded. A named account signs
+    // in against its own volume instead and is captured into the account store.
+    const volume = account ? claudeAccountVolume(account) : undefined;
+    const res = await signInToClaude(image, args, {
+      passthrough: mode === 'interactive',
+      ...(volume ? { volume } : {}),
+    });
     if (res.cancelled) {
       outro('sign-in cancelled');
       process.exit(1);
@@ -251,6 +301,10 @@ export async function runClaudeLoginCommand(
         log.info("Try `agentbox claude login --interactive` to use claude's own login TUI.");
       }
       process.exit(1);
+    }
+    if (account && volume) {
+      await host.captureAccountLogin({ account, volume, image });
+      return;
     }
     outro('signed in — credentials saved for future boxes');
     // A fresh login is exactly when the control box's copy goes stale — push the

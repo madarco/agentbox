@@ -11,7 +11,13 @@
  */
 import { Command } from 'commander';
 import { openCommandLog } from '@agentbox/cli-kit';
-import { runClaudeLogin } from '@agentbox/agent-claude/cli';
+import {
+  claudeAccountIdentity,
+  claudeAccountVolume,
+  runClaudeLogin,
+} from '@agentbox/agent-claude/cli';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { captureVolumeLogin, dockerVolumeFileReader } from '@agentbox/sandbox-docker';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   readLoginRequest,
@@ -56,14 +62,28 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
       });
     }
 
+    // A named account signs in against its own volume (prepared by the
+    // foreground call) and is captured into the account store, never the
+    // legacy backup.
+    const volume = req.account ? claudeAccountVolume(req.account) : undefined;
+    const held: { done?: Partial<Omit<LoginState, 'updatedAt' | 'pid' | 'createdAt'>> } = {};
     const result = await runClaudeLogin({
       image: req.image,
+      ...(volume ? { volume } : {}),
       // No method flags → the subscription paste-code flow (prints a URL, reads a
       // code). Respect an explicit method the user forwarded (e.g. --console).
       extraArgs: req.extraArgs,
       writeRaw: (chunk) => log.raw(chunk),
       writeLog: (line) => log.write(line),
-      onPhase: (phase, update) => setState({ phase, ...update }),
+      // A named account is not done until it is captured: hold `done` back so
+      // the waiting `--code` call cannot report success before the store has it.
+      onPhase: (phase, update) => {
+        if (phase === 'done' && req.account) {
+          held.done = update ?? {};
+          return;
+        }
+        setState({ phase, ...update });
+      },
       getCode: () => takeLoginCode(id),
       signal: abort.signal,
     });
@@ -71,7 +91,25 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
     // Headless counterpart of the foreground `claude login` re-push: a fresh
     // login makes the control box's copy stale, so refresh custody from the
     // just-synced host backup (best-effort, silent, no-op without a control box).
-    if (result.ok) await syncAgentCredentialsIfChanged();
+    if (result.ok && req.account && volume) {
+      try {
+        const res = await captureVolumeLogin({
+          spec: resolveAgentSpec('claude'),
+          account: req.account,
+          read: dockerVolumeFileReader(volume, req.image),
+          identity: claudeAccountIdentity,
+        });
+        log.write(`captured account '${req.account.id}' (written=${String(res.written)}: ${res.reason})`);
+        setState({ ...held.done, phase: 'done' });
+      } catch (err) {
+        log.write(`account capture failed: ${(err as Error).message}`);
+        setState({ phase: 'error', error: `could not store the account: ${(err as Error).message}` });
+        log.close();
+        process.exit(1);
+      }
+    } else if (result.ok) {
+      await syncAgentCredentialsIfChanged();
+    }
 
     log.close();
     process.exit(result.ok ? 0 : 1);

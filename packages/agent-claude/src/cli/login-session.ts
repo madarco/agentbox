@@ -50,6 +50,8 @@ export interface LoginRequest {
   extraArgs: string[];
   cwd: string;
   createdAt: string;
+  /** A named LLM account to sign in (its own volume); absent = the default login. */
+  account?: { id: string; label?: string };
 }
 
 export type LoginMode = 'code' | 'headless' | 'guided' | 'interactive';

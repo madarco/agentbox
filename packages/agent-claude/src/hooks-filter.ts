@@ -244,3 +244,33 @@ export function claudeSettingsEndpointPaths(data: unknown): string[][] {
     .filter((k) => k.endsWith('_BASE_URL'))
     .map((k) => ['env', k]);
 }
+
+/**
+ * Top-level `~/.claude.json` keys that describe WHICH account a config belongs
+ * to rather than how the user configured Claude Code (Phase 0, (a) and (a′)):
+ * the cached profile, the account-derived caches not keyed by account or org,
+ * and the stored answer to "use this API key?". A named account's volume is
+ * seeded from the host's file without them, so the first turn fetches the
+ * account's own profile instead of showing the owner's.
+ */
+export const ACCOUNT_STATE_KEYS: readonly string[] = [
+  'oauthAccount',
+  'customApiKeyResponses',
+  'modelAccessCache',
+  'orgModelDefaultCache',
+  'additionalModelOptionsCache',
+  'additionalModelCostsCache',
+  'cachedExtraUsageDisabledReason',
+];
+
+/** Drop {@link ACCOUNT_STATE_KEYS}. Pure; `stripped` is false when none were present. */
+export function stripAccountState<T = unknown>(data: T): { data: T; stripped: boolean } {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return { data, stripped: false };
+  }
+  const rec = data as Record<string, unknown>;
+  if (!ACCOUNT_STATE_KEYS.some((k) => k in rec)) return { data, stripped: false };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) if (!ACCOUNT_STATE_KEYS.includes(k)) out[k] = v;
+  return { data: out as T, stripped: true };
+}

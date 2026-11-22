@@ -376,6 +376,8 @@ export {
   decodePastedSecret,
   encodePastedSecret,
   findLegacyAccountSlots,
+  pastedSecretProblem,
+  resolveLoginAccount,
   readAccounts,
   readAccountSecret,
   removeAccount,
@@ -384,6 +386,7 @@ export {
 } from './llm-accounts.js';
 export type {
   AccountStoreOptions,
+  LoginAccountRequest,
   PastedAccountSecret,
   WriteAccountSecretResult,
 } from './llm-accounts.js';

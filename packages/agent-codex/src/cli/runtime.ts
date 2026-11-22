@@ -29,6 +29,7 @@ import {
   startCodexSession,
 } from '../docker-sync.js';
 import { confirm, log, spinner } from '@agentbox/cli-kit';
+import { codexAccountIdentity } from './account-identity.js';
 import { codexLoginBinding } from './login-binding.js';
 import { codexAuthAvailable } from './host-creds.js';
 import { runGuidedLogin } from '@agentbox/cli-kit';
@@ -45,9 +46,13 @@ import type { AgentRuntime, SignInResult } from '@agentbox/cli-kit';
  * This is the legacy passthrough: it hands the terminal to codex's own TUI. See
  * {@link signInToCodex} for why that is no longer the default.
  */
-async function runCodexLoginContainer(image: string, extraArgs: string[]): Promise<number> {
+async function runCodexLoginContainer(
+  image: string,
+  extraArgs: string[],
+  volume: string = SHARED_CODEX_VOLUME,
+): Promise<number> {
   const { exitCode } = runInteractiveCodexLogin(
-    buildCodexLoginRunArgv({ volume: SHARED_CODEX_VOLUME, image, extraArgs }),
+    buildCodexLoginRunArgv({ volume, image, extraArgs }),
   );
   return exitCode;
 }
@@ -66,10 +71,10 @@ async function runCodexLoginContainer(image: string, extraArgs: string[]): Promi
 async function signInToCodex(
   image: string,
   extraArgs: string[],
-  opts: { passthrough?: boolean } = {},
+  opts: { passthrough?: boolean; volume?: string } = {},
 ): Promise<SignInResult> {
   const passthrough = async (): Promise<SignInResult> => {
-    const exitCode = await runCodexLoginContainer(image, extraArgs);
+    const exitCode = await runCodexLoginContainer(image, extraArgs, opts.volume);
     return exitCode === 0
       ? { ok: true }
       : { ok: false, error: `\`codex login\` exited with code ${String(exitCode)}` };
@@ -81,7 +86,9 @@ async function signInToCodex(
   const deviceAuth = extraArgs.length === 0 || extraArgs.includes('--device-auth');
   if (opts.passthrough === true || !deviceAuth || !(await loadPtyBackend())) return passthrough();
 
-  const res = await runGuidedLogin('codex', () => codexLoginBinding({ image, extraArgs }));
+  const res = await runGuidedLogin('codex', () =>
+    codexLoginBinding({ image, extraArgs, ...(opts.volume ? { volume: opts.volume } : {}) }),
+  );
   if (res.unsupported) {
     log.info(
       `Guided sign-in can't drive this login method (${res.unsupported}); using codex's own prompts.`,
@@ -164,7 +171,12 @@ export const codexRuntime: AgentRuntime = {
   sessionInfo: (container, sessionName) => codexSessionInfo(container, sessionName),
   ensureInstalled: (container, o) => ensureCodexInstalled(container, o),
   ensureVolume: (target, o) =>
-    ensureCodexVolume(target, { syncFromHost: o.syncFromHost, image: o.image }),
+    ensureCodexVolume(target, {
+      syncFromHost: o.syncFromHost,
+      image: o.image,
+      ...(o.account === undefined ? {} : { account: o.account }),
+    }),
+  accountIdentity: codexAccountIdentity,
   buildAttachArgv: (container, sessionName) => buildCodexAttachArgv(container, sessionName),
 
   resolveConfigVolume: (box: BoxRecord) => box.codexConfigVolume,

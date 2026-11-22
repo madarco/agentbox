@@ -601,6 +601,44 @@ confirm on the key's account that usage appeared for 10:27–10:30Z on
   sibling Daytona subpath, the `accounts/` custody segment, and `default`
   pinned to `login`.
 
+## Phase 2 plan (logins)
+
+Scope, decided against the Phase 0 results and the Phase 1 backlog:
+
+1. **`<agent> login --account <name> [--label <text>]`** for a `login`-kind
+   account (only on agents whose row declares `accountKinds`). Docker storage is
+   Phase 0's: a **per-account config volume** `accountConfigVolume(<shared>, id)`.
+   The login container signs in against it; then the volume's credential file
+   (`credential.boxRelPath`) is captured into `credentials/<agent>/<id>.json`
+   through `writeAccountSecret` (real-shape + newest-wins gated) and the row is
+   upserted. A named login **never** touches the shared volume, the legacy
+   backup or custody — claude's default finalize (`syncClaudeCredentials`,
+   volume→legacy backup) must not run for it, or account B's blob would land in
+   `default`.
+2. **Seeding a named account volume from the host** keeps the host's config
+   (settings, skills, plugins) but never the host's identity: the host's
+   credential file is excluded (it is the owner's real login; a copy is one more
+   holder for a refresh to revoke) and claude's `_claude.json` seed drops
+   `oauthAccount` and the account-derived caches Phase 0 listed, so the first
+   turn fetches the right profile.
+3. **`--api-key` / `--setup-token`** (pasted kinds): the secret is read from a
+   hidden prompt on a TTY, otherwise from stdin — never from argv. Requires
+   `--account` (`default` stays a login). Stored with `upsertAccount` +
+   `writeAccountSecret`. No docker volume yet: an API-key volume must be seeded
+   with `customApiKeyResponses.approved` at box create, which is Phase 3.
+4. **Identity read-off** (display only): claude from the credential's
+   `claudeAiOauth.subscriptionType` and the volume's `_claude.json`
+   `oauthAccount` after the warm-up turn; codex from the `id_token` claims in
+   `auth.json`. Pure parsers on each agent's runtime.
+5. **`agentbox accounts`** (`list`, `rm`, `label`): reads the host store; `rm`
+   drops the row, the secret and the account's docker volume (best effort).
+   `default` and `rename` are deferred: `default` writes `<agent>.account`,
+   which Phase 3 introduces, and an id cannot be renamed while volume and
+   custody names derive from it.
+6. **Local by design for now.** A login drives an interactive container on the
+   PC that owns the docker volume, so it stays a CLI command; the store is the
+   PC's `~/.agentbox`. Moving `accounts` behind `/api/v1/accounts` is Phase 5.
+
 ## Backlog (not in these phases)
 
 - Switching a running box to another account (reseed + agent restart).
