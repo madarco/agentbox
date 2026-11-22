@@ -6,7 +6,14 @@ import { Icons } from '@/components/icons';
 import { PersistentMark } from '@/components/persistent-mark';
 import { StatusBadge } from '@/components/status-badge';
 import { Card } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import type { Box } from '@/lib/boxes/types';
 import { BoxActions } from './box-actions';
 
@@ -25,7 +32,11 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
         </TableHeader>
         <TableBody>
           {boxes.map((box) => (
-            <TableRow key={box.id} className="cursor-pointer" onClick={() => router.push('/boxes/' + box.id)}>
+            <TableRow
+              key={box.id}
+              className="cursor-pointer"
+              onClick={() => router.push('/boxes/' + box.id)}
+            >
               <TableCell>
                 <div className="flex min-w-0 items-center gap-1.5 text-[13.5px] font-medium">
                   <span className="truncate">{box.task}</span>
@@ -43,8 +54,10 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
                   {box.agent}
                   {/* The named LLM account the agent runs on, when not the default. */}
-                  {box.accounts?.[box.agent] ? `@${box.accounts[box.agent]}` : ''} ·{' '}
-                  <Ago ms={box.lastActivity} />
+                  {box.accounts?.[box.agent] && box.accounts[box.agent] !== 'default'
+                    ? `@${box.accounts[box.agent]}`
+                    : ''}{' '}
+                  · <Ago ms={box.lastActivity} />
                 </div>
               </TableCell>
               <TableCell className="max-md:hidden">

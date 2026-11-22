@@ -1481,7 +1481,10 @@ export interface AccountBackend {
   /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
   addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
   labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
-  removeAccount(agent: string, id: string): Promise<AccountResult<{ volumeRemoved: boolean }>>;
+  removeAccount(
+    agent: string,
+    id: string,
+  ): Promise<AccountResult<{ volumeRemoved: boolean; volumeError?: string }>>;
 }
 
 export type AccountKind = 'login' | 'setup-token' | 'api-key';

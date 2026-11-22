@@ -17,8 +17,13 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
   const { agent, id } = await ctx.params;
   const body = await readJson(req);
   if (!body.ok) return fail('invalid_request', body.message);
-  const label = (body.value as { label?: unknown } | null)?.label;
-  const res = await backend.labelAccount(agent, id, label === undefined ? null : label);
+  const value = body.value as Record<string, unknown> | null;
+  // `label` must be present (a string, or null to clear): a body without it is
+  // a mistake, never an instruction to wipe the label.
+  if (!value || !('label' in value)) {
+    return fail('invalid_request', 'body must be { label: string | null }');
+  }
+  const res = await backend.labelAccount(agent, id, value.label);
   if (!res.ok) return fail(res.code, res.error);
   return ok({ account: res.value });
 }
@@ -29,5 +34,5 @@ export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
   const { agent, id } = await ctx.params;
   const res = await backend.removeAccount(agent, id);
   if (!res.ok) return fail(res.code, res.error);
-  return ok({ ok: true, volumeRemoved: res.value.volumeRemoved });
+  return ok({ ok: true, ...res.value });
 }

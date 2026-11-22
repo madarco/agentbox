@@ -80,19 +80,26 @@ export function setDefaultCheckpointRefusal(box: {
 export interface AccountBackendDeps {
   /** The hub machine's box records. Default: `~/.agentbox/state.json`. */
   boxes?: () => Promise<readonly Pick<BoxRecord, 'name' | 'accounts'>[]>;
-  /** Remove a docker volume; resolves true when removed. Default: `docker volume rm`. */
-  removeVolume?: (name: string) => Promise<boolean>;
+  /**
+   * Remove a docker volume. Default: `docker volume rm`. `removed: false` with
+   * no `error` = there was no such volume.
+   */
+  removeVolume?: (name: string) => Promise<{ removed: boolean; error?: string }>;
   store?: AccountStoreOptions;
 }
 
 const execFileAsync = promisify(execFile);
 
-async function dockerVolumeRm(name: string): Promise<boolean> {
+async function dockerVolumeRm(name: string): Promise<{ removed: boolean; error?: string }> {
   try {
     await execFileAsync('docker', ['volume', 'rm', name]);
-    return true;
-  } catch {
-    return false;
+    return { removed: true };
+  } catch (err) {
+    const stderr = String((err as { stderr?: unknown }).stderr ?? (err as Error).message ?? '');
+    if (/no such volume/i.test(stderr)) return { removed: false };
+    // Still mounted by a container, or docker itself failed: say so — a stale
+    // login volume left behind would be mounted by a re-added account.
+    return { removed: false, error: stderr.trim() || 'docker volume rm failed' };
   }
 }
 
@@ -157,47 +164,50 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       }
       const token = typeof b.token === 'string' ? b.token.trim() : '';
       const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : undefined;
+      let req: ReturnType<typeof resolveLoginAccount>;
       try {
-        const req = resolveLoginAccount(spec, {
+        req = resolveLoginAccount(spec, {
           account: typeof b.id === 'string' ? b.id : '',
           ...(b.kind === 'api-key' ? { apiKey: true } : { setupToken: true }),
           ...(label ? { label } : {}),
         });
-        if (!req)
-          return { ok: false, code: 'invalid_request', error: 'a named account id is required' };
-        const problem = pastedSecretProblem(token);
-        if (problem) return { ok: false, code: 'invalid_request', error: problem };
-        const existing = findAccount(await readAccounts(store), spec.id, req.id);
-        if (existing) {
-          return {
-            ok: false,
-            code: 'conflict',
-            error: `${spec.id} account '${req.id}' already exists; remove it first`,
-          };
-        }
-        const row: LlmAccount = {
-          agent: spec.id,
-          id: req.id,
-          kind: req.kind,
-          createdAt: new Date().toISOString(),
-          ...(label ? { label } : {}),
-        };
-        await upsertAccount(row, store);
-        try {
-          await writeAccountSecret(
-            spec.id,
-            req.id,
-            encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
-            store,
-          );
-        } catch (err) {
-          await removeStoredAccount(spec.id, req.id, store).catch(() => {});
-          throw err;
-        }
-        return { ok: true, value: await view(row) };
       } catch (err) {
         return { ok: false, code: 'invalid_request', error: (err as Error).message };
       }
+      if (!req)
+        return { ok: false, code: 'invalid_request', error: 'a named account id is required' };
+      const problem = pastedSecretProblem(token);
+      if (problem) return { ok: false, code: 'invalid_request', error: problem };
+      const existing = findAccount(await readAccounts(store), spec.id, req.id);
+      if (existing) {
+        return {
+          ok: false,
+          code: 'conflict',
+          error: `${spec.id} account '${req.id}' already exists; remove it first`,
+        };
+      }
+      // From here a failure is the hub's (disk, permissions), not the input's:
+      // it propagates and the route answers 500.
+      const row: LlmAccount = {
+        agent: spec.id,
+        id: req.id,
+        kind: req.kind,
+        createdAt: new Date().toISOString(),
+        ...(label ? { label } : {}),
+      };
+      await upsertAccount(row, store);
+      try {
+        await writeAccountSecret(
+          spec.id,
+          req.id,
+          encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
+          store,
+        );
+      } catch (err) {
+        await removeStoredAccount(spec.id, req.id, store).catch(() => {});
+        throw err;
+      }
+      return { ok: true, value: await view(row) };
     },
 
     async labelAccount(agent, id, label) {
@@ -241,8 +251,15 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       await removeStoredAccount(spec.id, id, store);
-      const volumeRemoved = await removeVolume(accountConfigVolume(spec.dockerVolume, id));
-      return { ok: true, value: { volumeRemoved } };
+      const volume = accountConfigVolume(spec.dockerVolume, id);
+      const r = await removeVolume(volume);
+      return {
+        ok: true,
+        value: {
+          volumeRemoved: r.removed,
+          ...(r.error ? { volumeError: `could not remove ${volume}: ${r.error}` } : {}),
+        },
+      };
     },
   };
 }

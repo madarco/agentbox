@@ -2157,7 +2157,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const checkouts = createCheckoutBackend(backendDeps);
-  const accounts = createAccountBackend();
+  // A box records its account in state.json AND in its relay registration;
+  // a Store-only box has only the latter, and must still block `accounts rm`.
+  const accounts = createAccountBackend({
+    boxes: async () => [
+      ...(await readState()).boxes,
+      ...(await handle.store.listBoxes().catch(() => [])).map((r) => ({
+        name: r.name,
+        ...(r.accounts ? { accounts: r.accounts } : {}),
+      })),
+    ],
+  });
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });

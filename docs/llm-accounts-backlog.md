@@ -240,3 +240,9 @@ with no recorded volume instead of falling back to the shared default volume.
   `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
 - **No docs figure for the Accounts page** yet; capture one per
   `apps/web/images.md` with the next screenshot round.
+- **`agentbox status` reads the account store locally** for its ACCOUNTS
+  labels instead of the hub's `Box.accountsInfo`; same data, two lookups
+  (Phase 5 review). Switch it when `status` moves behind the hub.
+- **`GET /api/v1/accounts` reads each secret sequentially** to set
+  `hasSecret`, and the list and single-account views build the shape twice.
+  Small; `Promise.all` over one `view()` when it matters.

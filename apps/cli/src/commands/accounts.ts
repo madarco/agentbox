@@ -66,6 +66,20 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
     );
   }
   const spec = resolveAgentSpec(name);
+  // Fail before the prompt on a typo or an account in use. Decided OUTSIDE the
+  // hub callback, whose errors read as "can't reach the hub".
+  const found = await withHubClient({ preferLocal: true }, async (client) => ({
+    account: (await client.listAccounts()).accounts.find((a) => a.agent === spec.id && a.id === id),
+  }));
+  if (!found) return;
+  if (!found.account)
+    throw new Error(`no account '${id}' for ${spec.id} (see \`agentbox accounts\`)`);
+  if (found.account.boxes.length > 0) {
+    const boxes = found.account.boxes;
+    throw new Error(
+      `${spec.id} account '${id}' is still used by ${boxes.join(', ')}; destroy ${boxes.length === 1 ? 'that box' : 'those boxes'} first`,
+    );
+  }
   if (!opts.yes) {
     if (!process.stdin.isTTY) throw new Error('refusing to remove without a terminal; pass --yes');
     const ok = await confirm({
@@ -86,6 +100,7 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
         ? `removed ${spec.id} account '${id}' and its volume ${accountConfigVolume(spec.dockerVolume, id)}`
         : `removed ${spec.id} account '${id}'`,
     );
+    if (r.volumeError) log.warn(r.volumeError);
   });
 }
 
@@ -101,7 +116,9 @@ async function labelAccountCommand(
   await withHubClient({ preferLocal: true }, async (client) => {
     const next = await client.labelAccount(spec.id, id, opts.clear ? null : (text ?? null));
     log.success(
-      next.label ? `labelled ${spec.id}/${id} '${next.label}'` : `cleared the label of ${spec.id}/${id}`,
+      next.label
+        ? `labelled ${spec.id}/${id} '${next.label}'`
+        : `cleared the label of ${spec.id}/${id}`,
     );
   });
 }

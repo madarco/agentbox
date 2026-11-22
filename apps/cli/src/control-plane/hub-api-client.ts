@@ -1633,8 +1633,11 @@ export class HubApiClient {
     return res.account;
   }
 
-  async removeAccount(agent: string, id: string): Promise<{ volumeRemoved: boolean }> {
-    return this.request<{ ok: true; volumeRemoved: boolean }>(
+  async removeAccount(
+    agent: string,
+    id: string,
+  ): Promise<{ volumeRemoved: boolean; volumeError?: string }> {
+    return this.request<{ ok: true; volumeRemoved: boolean; volumeError?: string }>(
       'DELETE',
       `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
     );

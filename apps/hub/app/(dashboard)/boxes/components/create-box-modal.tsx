@@ -706,7 +706,10 @@ function CreateBoxModal({
           accounts?: Record<string, string>;
         } = {};
         // Only an explicit pick: silence lets the hub apply `<agent>.account`.
-        if (accountChoice && agent !== 'none') opts.accounts = { [agent]: accountChoice };
+        // Never with a restore, which hides the picker: the bundle decides.
+        if (accountChoice && agent !== 'none' && !restoring) {
+          opts.accounts = { [agent]: accountChoice };
+        }
         // The user's answers to the preflight questions. Each id is matched
         // against the question the create actually asks, so a stale one is
         // refused rather than applied to a different question.

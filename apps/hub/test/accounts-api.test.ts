@@ -7,6 +7,7 @@ import { accountsInfoOf, createAccountBackend } from '../lib/backend/accounts';
 
 let dir: string;
 let removed: string[];
+let volumeAnswer: { removed: boolean; error?: string } = { removed: true };
 let boxes: Array<{ name: string; accounts?: Record<string, string> }>;
 const LOGIN = JSON.stringify({ claudeAiOauth: { refreshToken: 'r', expiresAt: 1 } });
 const TOKEN = 'sk-ant-oat01-' + 'q'.repeat(24);
@@ -17,7 +18,7 @@ function backend() {
     boxes: () => Promise.resolve(boxes),
     removeVolume: (name) => {
       removed.push(name);
-      return Promise.resolve(true);
+      return Promise.resolve(volumeAnswer);
     },
   });
 }
@@ -25,6 +26,7 @@ function backend() {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-acct-api-'));
   removed = [];
+  volumeAnswer = { removed: true };
   boxes = [{ name: 'b-work', accounts: { claude: 'work' } }, { name: 'b-default' }];
   const store = { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS };
   await upsertAccount(
@@ -133,5 +135,21 @@ describe('accountsInfoOf (Box.accountsInfo)', () => {
     ]);
     expect(accountsInfoOf(undefined, file)).toBeUndefined();
     expect(accountsInfoOf({ claude: 'default' }, file)).toBeUndefined();
+  });
+});
+
+describe('removing an account whose volume docker cannot remove (review)', () => {
+  it('still removes the account, and reports why the volume stayed', async () => {
+    volumeAnswer = { removed: false, error: 'volume is in use - [abc]' };
+    const r = await backend().removeAccount('claude', 'idle');
+    expect(r.ok && r.value).toEqual({
+      volumeRemoved: false,
+      volumeError: 'could not remove agentbox-claude-config-acct-idle: volume is in use - [abc]',
+    });
+  });
+  it('no such volume is not an error', async () => {
+    volumeAnswer = { removed: false };
+    const r = await backend().removeAccount('claude', 'idle');
+    expect(r.ok && r.value).toEqual({ volumeRemoved: false });
   });
 });
