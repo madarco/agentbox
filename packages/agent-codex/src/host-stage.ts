@@ -21,7 +21,6 @@ import {
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { execa } from 'execa';
 import {
   emptyResult,
   findBrokenSymlinks,
@@ -30,6 +29,7 @@ import {
   pathExists,
   resolveAgentSpec,
   STAGE_NO_SPECIALS,
+  stageRsync,
   STAGE_WRITABLE_CHMOD,
   stageSingleFileTarball,
   tarballFromDir,
@@ -151,7 +151,7 @@ export async function stageCodexStaticForUpload(
     // (exact anchored paths — a broken symlink inside a marketplace checkout
     // would abort the `-L` rsync if the includes matched it first), then the
     // `.tmp/marketplaces` includes, then the static excludes.
-    await execa('rsync', [
+    await stageRsync([
       '-a',
       STAGE_WRITABLE_CHMOD,
       STAGE_NO_SPECIALS,

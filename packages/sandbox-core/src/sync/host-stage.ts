@@ -102,6 +102,22 @@ export const STAGE_WRITABLE_CHMOD = '--chmod=Du+rwx,Fu+rw';
 // end — so skip specials and devices outright.
 export const STAGE_NO_SPECIALS = '--no-D';
 
+/** rsync's "some files vanished before they could be transferred" exit code. */
+export const RSYNC_VANISHED_EXIT = 24;
+
+/**
+ * rsync a LIVE host agent dir into a stage dir. The agent may be running and
+ * churning its own runtime files (the Codex desktop app recreates unix sockets
+ * under `~/.codex` constantly), so a file rsync listed can be gone when it
+ * reads it: exit 24, which only means that file was not copied. Anything else
+ * still throws execa's own error.
+ */
+export async function stageRsync(args: readonly string[]): Promise<void> {
+  const r = await execa('rsync', args, { reject: false });
+  if (r.exitCode === 0 || r.exitCode === RSYNC_VANISHED_EXIT) return;
+  throw r;
+}
+
 export function emptyResult(warnings: string[] = []): StageResult {
   return { tarballPath: null, cleanup: async () => {}, warnings };
 }
@@ -213,7 +229,7 @@ export async function stageAgentStaticForUpload(
           `${spec.id}: skipped ${join(hostPath, r)} — it is a broken symlink on this host`,
         );
       }
-      await execa('rsync', [
+      await stageRsync([
         '-a',
         STAGE_WRITABLE_CHMOD,
         STAGE_NO_SPECIALS,
@@ -254,7 +270,7 @@ export async function stageAgentsStaticForUpload(
   let tarballPath: string | null = null;
   try {
     const broken = await findBrokenSymlinks(hostAgents);
-    await execa('rsync', [
+    await stageRsync([
       '-a',
       STAGE_WRITABLE_CHMOD,
       STAGE_NO_SPECIALS,

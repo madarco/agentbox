@@ -295,6 +295,8 @@ export {
   stageSingleFileTarball,
   STAGE_NO_SPECIALS,
   STAGE_WRITABLE_CHMOD,
+  RSYNC_VANISHED_EXIT,
+  stageRsync,
   type AgentStaticStage,
   type StageResult,
 } from './host-stage.js';
