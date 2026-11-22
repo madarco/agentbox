@@ -496,6 +496,21 @@
         }
       }
     },
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proxy": {
+          "enum": ["off", "forward"]
+        },
+        "proxyPort": {
+          "type": "integer"
+        },
+        "proxyUrl": {
+          "type": "string"
+        }
+      }
+    },
     "hub": {
       "type": "object",
       "additionalProperties": false,

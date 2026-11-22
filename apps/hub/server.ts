@@ -242,6 +242,13 @@ async function main(): Promise<void> {
   const hubGitAuthMode = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.hub.gitAuth)
     .catch(() => undefined);
+  // The LLM egress proxy's port (llm-accounts Phase 7). Always listening on a
+  // hub: a box may be created with `--llm-proxy forward` whatever the global
+  // default, and the listener is closed to anything but a registered box's
+  // token and the agents' model hosts.
+  const llmProxyPort = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.llm.proxyPort)
+    .catch(() => 8790);
 
   // Session history (docs/agent-history-plan.md). Built before the relay, which
   // ships docker boxes into it in-process and forwards in-box shippers' frames.
@@ -264,6 +271,7 @@ async function main(): Promise<void> {
     store,
     custody,
     adminToken,
+    llmProxyPort,
     ...(history ? { history } : {}),
     // A device token is accepted wherever a PC used the shared admin token.
     ...(devices ? { deviceAuth: relayDeviceAuth(devices) } : {}),

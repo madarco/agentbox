@@ -467,6 +467,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.accounts && Object.keys(createOpts.accounts).length > 0
           ? { accounts: createOpts.accounts }
           : {}),
+        // Resolved at enqueue against this hub's own address.
+        ...(createOpts?.llmProxy ? { llmProxy: createOpts.llmProxy } : {}),
         // Everything provider-shaped comes from the machine that HAS the project
         // config; this box has neither the checkout nor
         // `~/.agentbox/projects/<hash>`, so resolving any of it here would only

@@ -158,7 +158,9 @@ export interface HubApiJob {
  * local checkout can honour. A control box drops that second group — and says
  * so, rather than building something quietly different.
  */
-export interface HubApiCreateBoxOpts extends CreateJobRequestOpts {
+export interface HubApiCreateBoxOpts extends Omit<CreateJobRequestOpts, 'llmProxy'> {
+  /** `--llm-proxy`: a mode; the hub resolves the upstream from its own address. */
+  llmProxy?: 'off' | 'forward';
   memory?: string;
   cpus?: string;
   pidsLimit?: string;

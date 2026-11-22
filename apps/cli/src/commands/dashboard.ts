@@ -75,7 +75,7 @@ import {
   NEW_BOX_LABEL,
   type SidebarBox,
 } from '../dashboard/sidebar.js';
-import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
+import { boxLlmProxyPreamble, buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
 import { claudeRuntime, syncBoxClaudeCredentials } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
@@ -366,7 +366,16 @@ export const dashboardCommand = new Command('dashboard')
         // `bash -l` for shell — login shell so /etc/profile.d/agentbox.sh
         // exports AGENTBOX_BOX_* env. For agents, the base64 launcher
         // (extraArgs is always [] from the dashboard — no `--` passthrough).
-        const innerCommand = which === 'shell' ? 'bash -l' : buildCloudAttachInnerCommand(which);
+        // A `forward` box's agent starts behind the LLM split proxy here too.
+        const innerCommand =
+          which === 'shell'
+            ? 'bash -l'
+            : buildCloudAttachInnerCommand(
+                which,
+                [],
+                undefined,
+                boxLlmProxyPreamble(record, which),
+              );
         const spec = await provider.buildAttach(record, kind, {
           sessionName,
           command: innerCommand,

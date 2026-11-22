@@ -7,6 +7,9 @@
  * this through {@link AgentCliSpec} — its runtime bindings for the docker calls,
  * and at most five hooks for the code an agent runs itself.
  */
+import type { LlmProxyRecord } from '@agentbox/core';
+import { resolveLlmProxyRecord } from '@agentbox/sandbox-core';
+import { edgeLlmProxyMode, parseLlmProxyFlag } from '../../lib/llm-proxy-flag.js';
 import {
   findProjectRoot,
   agentSettings,
@@ -230,6 +233,12 @@ export async function runAgentCreate(
     cliOverrides: buildCliOverrides(a, opts),
   });
   const cfg = cfgLoaded.effective;
+  // `--llm-proxy` (llm-accounts Phase 7). A hub-bound create sends the MODE and
+  // the hub resolves its own upstream; a create that runs on this machine
+  // resolves the record here. Validated up front so a typo costs no box.
+  const llmProxyMode = edgeLlmProxyMode(opts.llmProxy, cfg);
+  const localLlmProxy = (): LlmProxyRecord | undefined =>
+    resolveLlmProxyRecord(providerName, cfg.llm, parseLlmProxyFlag(opts.llmProxy));
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
   // `--tasks`: validated against the hub BEFORE any box work, so a typo costs
   // nothing. `assignTasks` is called with whichever handle the chosen create
@@ -520,6 +529,7 @@ export async function runAgentCreate(
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
           ...(skillSelection ? { skills: skillSelection } : {}),
           ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+          ...(llmProxyMode ? { llmProxy: llmProxyMode } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -622,6 +632,8 @@ export async function runAgentCreate(
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
         ...(skillSelection ? { skills: skillSelection } : {}),
         ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+        ...(localLlmProxy() ? { llmProxy: localLlmProxy() } : {}),
+        ...(localLlmProxy() ? { llmProxy: localLlmProxy() } : {}),
         carry: carryForQueue,
         ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
       },
@@ -819,6 +831,7 @@ export async function runAgentCreate(
           ...(persistent !== undefined ? { persistent } : {}),
           ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
           ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+          ...(llmProxyMode ? { llmProxy: llmProxyMode } : {}),
           ...(sessionName ? { sessionName } : {}),
           ...(skillSelection ? { skills: skillSelection } : {}),
         },
@@ -982,6 +995,7 @@ export async function runAgentCreate(
       ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
       ...(skillSelection ? { skills: skillSelection } : {}),
       ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+      ...(localLlmProxy() ? { llmProxy: localLlmProxy() } : {}),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },

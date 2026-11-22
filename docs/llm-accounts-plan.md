@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-5 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-5 and 7 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -778,6 +778,61 @@ custody design below).
      control box needs that box to keep a per-machine account list (rows
      travel next to the secret, a create resolves accounts against the
      REQUESTER's machine); that is the next step after this phase, not in it.
+
+## Phase 7 as built (hub egress proxy, `forward`)
+
+Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
+`forward` shipped first; `reverse` stays Phase 8.
+
+1. **Registry data.** `AgentSyncSpec.llmHosts` (validated for plugin agents by
+   `llmHostsProblem`: exact lowercase hostnames, since the hub allowlist is
+   built from them). claude: `api.anthropic.com`, `platform.claude.com`,
+   `mcp-proxy.anthropic.com`, `claude.ai`. codex: `chatgpt.com`,
+   `ab.chatgpt.com`, `auth.openai.com`, `api.openai.com`. Telemetry and
+   `github.com` go direct. Agents without the field are never proxied.
+2. **Config.** `llm.proxy: off | forward` (default `off`), `llm.proxyPort`
+   (default 8790), `llm.proxyUrl`. `--llm-proxy off|forward` on `create` and
+   the agent commands; `opts.llmProxy` on `POST /api/v1/boxes`. One resolver,
+   `resolveLlmProxyRecord` (sandbox-core): docker →
+   `host.docker.internal:<proxyPort>`; every other provider (remote-docker
+   included) needs `llm.proxyUrl` and is refused without it. **A hub-bound
+   create sends the mode and the hub resolves the upstream from its own
+   config** (the upstream is the hub's address); a create run on this machine
+   resolves it locally. Recorded as `BoxRecord.llmProxy = { mode, upstream }`
+   and carried on the queue job (`QueueJobCreateOpts.llmProxy`) and the
+   control-box job (`CreateJobRequestOpts.llmProxy`, not a portable key).
+3. **Relay listener** (`packages/relay/src/llm-proxy.ts`), started by the hub
+   server and `agentbox-relay serve` on `llm.proxyPort` (a taken port is
+   logged, never fatal). **Auth is the box's existing relay token**
+   (`Proxy-Authorization: Basic agentbox:<token>`, checked with
+   `store.authenticateBox`); the box id in the plan was dropped, since the box
+   holds its token (`/run/agentbox/relay.env`, or the container env on docker)
+   but not its id. Destination must be an `llmHosts` entry on 443. 407 / 403 /
+   502 carry the reason in the body. Never decrypts.
+4. **Split proxy** (`LLM_SPLIT_PROXY_SCRIPT`, sandbox-core). A CommonJS script
+   shipped base64 on the launch command (about 7 KB of preamble, under tmux's
+   16 KB message cap), so any image on any provider gets it with no bake.
+   `--ensure` is idempotent (probes its own `/__agentbox` marker, which carries
+   its upstream and host list). It reads the token per connection (env, then
+   `relay.env`), so a re-registered box keeps working. A failed start stops
+   the launch with the reason instead of running the agent unproxied.
+5. **Launch seams.** `llmProxyLaunchPreamble` (no single quote, so it is safe
+   in a `sh -c` string and inside the cloud launcher's `bash -lc '…'`).
+   Docker: `withSessionLlmProxy` in `startClaudeSession` / `startCodexSession`.
+   Cloud: `boxLlmProxyPreamble` passed to `buildCloudAttachInnerCommand` by the
+   attach, the detached start and the dashboard. A box without `llmProxy` gets
+   a byte-identical command.
+6. **Vercel.** `withLlmProxyHost` appends the proxy host to an allowlist
+   `networkPolicy`; unset / `allow-all` / `deny-all` are left alone.
+7. **Payload.** `Box.llmProxy` (`{ mode, upstream }`) on `/api/v1/boxes`.
+8. **Verified live** against an isolated hub (relay 18799, proxy 18790) with a
+   registered fake box and the real split-proxy script: Anthropic answered 401
+   (no key) and chatgpt.com 200 through the hub; example.com went direct; the
+   hub refused a non-LLM host (403), port 80 (403), a wrong token and no
+   credential (407); the split proxy passed the hub's 407 through; with the hub
+   stopped, a model host got `502 … hub proxy 127.0.0.1:18790 unreachable`
+   while other hosts still worked. An egress-IP check from a real cloud box
+   needs a public `llm.proxyUrl` and is left to the coordinator (PR body).
 
 ## Backlog (not in these phases)
 

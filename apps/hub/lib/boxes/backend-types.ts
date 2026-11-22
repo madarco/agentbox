@@ -188,6 +188,12 @@ export interface CreateBoxOpts {
    * THIS machine's account store; agents left out fall back to `<agent>.account`.
    */
   accounts?: Record<string, string>;
+  /**
+   * `--llm-proxy`: route the box's LLM traffic through this hub's egress proxy
+   * (llm-accounts Phase 7). Absent → the project's `llm.proxy`. The upstream is
+   * resolved here, from this hub's own `llm.proxyPort` / `llm.proxyUrl`.
+   */
+  llmProxy?: 'off' | 'forward';
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;

@@ -1,5 +1,6 @@
 import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
 import { tryGetMachineId } from '@agentbox/config';
+import { createLlmProxyServer, llmProxyHosts } from './llm-proxy.js';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -46,6 +47,11 @@ export interface RelayDaemonOptions extends RelayServerOptions {
    * `AGENTBOX_RELAY_ADMIN_TOKEN`. Absent → no poller (logged, never silent).
    */
   hostReachAdminToken?: string;
+  /**
+   * Port of the LLM egress proxy (`llm.proxyPort`, llm-accounts Phase 7).
+   * Absent → no proxy listener; the callers that own a real hub pass it.
+   */
+  llmProxyPort?: number;
 }
 
 export interface RelayDaemonHandle {
@@ -68,6 +74,10 @@ export interface RelayDaemonHandle {
 export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayDaemonHandle> {
   const handle = await startRelayServer(opts);
   const log = opts.logger ?? (() => {});
+  const llmProxy =
+    opts.llmProxyPort !== undefined
+      ? await startLlmProxy(opts.llmProxyPort, opts.host ?? '0.0.0.0', handle, log)
+      : null;
   // With a control box configured, this relay is also the user's side of the
   // host-reach channel: it drains the `cp` actions the control box parked for
   // this machine and runs them against the real project files here.
@@ -157,6 +167,7 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
   return {
     handle,
     stop: async () => {
+      llmProxy?.close();
       await Promise.allSettled([
         autopause.stop(),
         cloudKeepalive.stop(),
@@ -389,4 +400,32 @@ async function adoptFromHub(boxId: string, cwd: string): Promise<{ ok: boolean; 
   if (r.exitCode === 0) return { ok: true };
   const why = (r.stderr || r.stdout || r.shortMessage || '').trim().split('\n').slice(-1)[0];
   return { ok: false, error: why || `exit ${String(r.exitCode)}` };
+}
+
+/**
+ * Start the LLM CONNECT proxy next to the relay. Non-fatal: a taken port costs
+ * the proxy (logged — a `forward` box's agent then fails with a 502 naming the
+ * hub), never the relay.
+ */
+async function startLlmProxy(
+  port: number,
+  host: string,
+  handle: RelayServerHandle,
+  log: (msg: string) => void,
+): Promise<{ close: () => void } | null> {
+  const server = createLlmProxyServer({
+    authorize: async (token) => (await handle.store.authenticateBox(token))?.boxId ?? null,
+    allowedHosts: llmProxyHosts,
+    log,
+  });
+  return new Promise((resolve) => {
+    server.once('error', (err) => {
+      log(`llm-proxy: not started on ${host}:${String(port)} (${err.message})`);
+      resolve(null);
+    });
+    server.listen(port, host, () => {
+      log(`llm-proxy: listening on ${host}:${String(port)}`);
+      resolve({ close: () => server.close() });
+    });
+  });
 }

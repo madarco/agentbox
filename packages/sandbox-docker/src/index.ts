@@ -435,4 +435,5 @@ export {
   boxAccountForContainer,
   sessionAccountPolicy,
   sessionForwardEnv,
+  withSessionLlmProxy,
 } from './sync/account-session-env.js';

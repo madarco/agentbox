@@ -516,6 +516,12 @@ export interface BoxRecord {
    * credential fan-out — reads this, never current config.
    */
   accounts?: Record<string, string>;
+  /**
+   * The hub egress proxy this box's agents use (llm-accounts Phase 7),
+   * resolved at create: `upstream` is the `host:port` of the hub's CONNECT
+   * proxy as the box dials it. Absent = LLM traffic goes direct.
+   */
+  llmProxy?: LlmProxyRecord;
   createdAt: string; // ISO-8601
 }
 
@@ -554,6 +560,13 @@ export function agentConfigVolume(box: BoxRecord, agent: string): string | undef
   if (agent === 'codex') return dockerField(box, 'codexConfigVolume');
   if (agent === 'opencode') return dockerField(box, 'opencodeConfigVolume');
   return undefined;
+}
+
+/** `BoxRecord.llmProxy`. */
+export interface LlmProxyRecord {
+  mode: 'forward';
+  /** `host:port` of the hub's CONNECT proxy, as the box reaches it. */
+  upstream: string;
 }
 
 export interface StateFile {

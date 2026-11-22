@@ -195,6 +195,39 @@ boxes on another account. Each renewal still signs the other copies out until
 they receive it, so give an account that several cloud boxes use at once a
 setup token: it never renews.
 
+## Route LLM traffic through the hub
+
+With `llm.proxy: forward`, a box's model traffic leaves from the **hub's** IP instead
+of the box's own. The rest of the box's traffic still goes direct: package installs,
+git, telemetry. This is useful when an account should always be seen from one address,
+or when the box's network shouldn't talk to model providers directly.
+
+```bash
+agentbox claude --llm-proxy forward               # this box
+agentbox config set llm.proxy forward             # every new box (global or per project)
+```
+
+Only the hosts each agent declares are proxied: Claude's `api.anthropic.com`,
+`platform.claude.com`, `mcp-proxy.anthropic.com` and `claude.ai`, and Codex's
+`chatgpt.com`, `ab.chatgpt.com`, `auth.openai.com` and `api.openai.com`. Inside the
+box, a small proxy on `127.0.0.1` sends those hosts to the hub and everything else
+direct. Only the agent process is pointed at it, through `HTTPS_PROXY`.
+
+The hub's side is an HTTP CONNECT proxy on `llm.proxyPort` (default `8790`). It never
+decrypts, accepts only a registered box's relay token, and only tunnels to those model
+hosts on port 443. The box's token never enters the agent's environment.
+
+- **Docker boxes** reach it at `host.docker.internal:<llm.proxyPort>`. No setup.
+- **Cloud and remote-docker boxes** need `llm.proxyUrl`, the `host:port` where the
+  hub's proxy port is reachable from the internet. A create with `forward` and no
+  `llm.proxyUrl` is refused. A Cloudflare tunnel carries no raw TCP, so it can't be
+  used for this. On Vercel, the proxy host is added to a `networkPolicy` allowlist
+  automatically.
+
+The setting is **fixed at create** and shown as `llmProxy` on the box in the API. It
+fails closed: if the hub can't be reached, the agent's call fails with an error naming
+the hub instead of going out directly.
+
 ## Share a login you already have
 
 Some agents can run on a model-provider login another agent holds, so you do not

@@ -37,6 +37,7 @@ import type {
   GitWorktreeRecord,
   InboundPolicy,
   InspectedBox,
+  LlmProxyRecord,
   Provider,
   ProviderCheckpoint,
   ProviderSync,
@@ -771,10 +772,12 @@ export function createCloudProvider(
       const timeoutMs =
         typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
-      const networkPolicy =
+      const networkPolicy = withLlmProxyHost(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
-          : undefined;
+          : undefined,
+        req.llmProxy,
+      );
       // Generic VM-size string, resolved per-provider by the call site
       // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
       // (hetzner: server type; daytona: cpu-mem-disk GB; vercel: vCPUs);
@@ -1488,6 +1491,7 @@ export function createCloudProvider(
                 ),
               }
             : {}),
+          ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
@@ -2245,4 +2249,20 @@ export function emptyCloudStats(provider: string): BoxResourceStats {
     limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
     warnings: [],
   };
+}
+
+/**
+ * A sandbox network allowlist (vercel's `networkPolicy`) must let the box reach
+ * the hub's LLM proxy, or a `forward` box could reach nothing that matters.
+ * Unset / `allow-all` already does; `deny-all` is left as asked (the box was
+ * meant to be offline). Exported for tests.
+ */
+export function withLlmProxyHost(
+  policy: string | undefined,
+  llmProxy: LlmProxyRecord | undefined,
+): string | undefined {
+  if (!policy || !llmProxy || policy === 'allow-all' || policy === 'deny-all') return policy;
+  const host = llmProxy.upstream.slice(0, llmProxy.upstream.lastIndexOf(':'));
+  const entries = policy.split(',').map((s) => s.trim());
+  return entries.includes(host) ? policy : [...entries, host].join(',');
 }

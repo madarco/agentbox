@@ -5197,6 +5197,16 @@ export function buildOpenApi(): Record<string, unknown> {
                 required: ['agent', 'account'],
               },
             },
+            llmProxy: {
+              type: 'object',
+              description:
+                "The hub egress proxy this box's agents use (`--llm-proxy forward` / `llm.proxy`, fixed at create): each agent's model hosts leave through the hub's CONNECT proxy at `upstream` (`host:port` as the box dials it). Absent = LLM traffic goes direct.",
+              properties: {
+                mode: { type: 'string', enum: ['forward'] },
+                upstream: { type: 'string' },
+              },
+              required: ['mode', 'upstream'],
+            },
             persistent: {
               type: 'boolean',
               description:
@@ -6145,6 +6155,12 @@ export function buildOpenApi(): Record<string, unknown> {
                   additionalProperties: { type: 'string' },
                   description:
                     'Named LLM account per agent (`{ "claude": "work" }`), the API twin of `--account`. Resolved against THIS hub machine\'s account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender\'s account must be a login.',
+                },
+                llmProxy: {
+                  type: 'string',
+                  enum: ['off', 'forward'],
+                  description:
+                    "The API twin of `--llm-proxy`: route the box's LLM traffic through this hub's egress proxy. Absent = the project's / hub's `llm.proxy`. The upstream is this hub's own (`host.docker.internal:<llm.proxyPort>` for docker, `llm.proxyUrl` otherwise); a cloud create without `llm.proxyUrl` is refused.",
                 },
               },
             },

@@ -278,3 +278,31 @@ naming the file, like `GET`, instead of a bare 500.
 - **(f) `custody-client.ts` (~311) reads the machine id before the account
   loop**, so a failure reading it also skips the DEFAULT-login push. Read it
   lazily inside the loop (or catch it), so the default push never depends on it.
+
+## From Phase 7 (hub egress proxy, `forward`)
+
+- **No live egress check from a real cloud box yet.** It needs the hub's
+  `llm.proxyPort` published on a public address (`llm.proxyUrl`); the local
+  chain was verified live (plan, Phase 7 item 8). Steps are in the #PR body.
+- **The split proxy is started at agent launch, not supervised.** If it dies
+  mid-session the agent gets a refused connection (claude retries those
+  silently). A relaunch restarts it. Move it under ctl's supervisor when the
+  image next changes.
+- **The hub allowlist is the union of every agent's `llmHosts`**, not the
+  box's own agents: a claude box's token can tunnel to `chatgpt.com`. Narrow it
+  by the registration's agents.
+- **`llmProxy` is not on the relay registration**, so a box rebuilt from its
+  registration (`hub adopt`, reverse adoption) or cloned (`clone-create`) comes
+  back without it and goes direct. Carry it on the registration and the clone.
+- **A control-box create resolves the mode from that hub's global
+  `llm.proxy`** when the client sends none: it has no project config. The CLI
+  sends `forward` when the project says so; a project's explicit `off` against
+  a hub whose global is `forward` still lands on `forward`.
+- **Service agents (openclaw) are never proxied**: no `llmHosts`, and their
+  units are not launched through the agent seams.
+- **No UI for it**: the web create dialog has no LLM-proxy toggle and the
+  tray shows nothing; `Box.llmProxy` is in the payload for both.
+- **The hub always listens on `llm.proxyPort`** (same bind address as the
+  relay), even when no box uses it. Gated by box token + allowlist; start it
+  only when a box records `llmProxy` if that ever matters.
+- **Successful tunnels are not logged or counted**; only refusals are.
