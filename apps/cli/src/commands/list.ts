@@ -11,6 +11,7 @@ import { hyperlink } from '../hyperlink.js';
 import { hubBoxAgentStatus } from '../control-plane/hub-api-client.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { cacheAge, fetchBoxListing, type BoxListing } from '../control-plane/hub-list.js';
+import { hubUnauthorizedHint } from '../control-plane/unauthorized-hint.js';
 import {
   dockerProvidersHidden,
   dockerHiddenReason,
@@ -578,6 +579,9 @@ async function readCwdOriginUrl(root: string): Promise<string | undefined> {
 /** The staleness footer for a listing served from the offline cache. */
 function staleNote(listing: BoxListing): string {
   if (listing.stale !== true) return '';
+  if (listing.reason === 'unauthorized') {
+    return `\n${hubUnauthorizedHint(listing.hubUrl, 'remote')}`;
+  }
   if (listing.reason === 'no-token') {
     return '\ncontrol box configured but no API key — hub boxes not shown. Run `agentbox hub login`, or set AGENTBOX_HUB_API_KEY.';
   }
@@ -586,11 +590,15 @@ function staleNote(listing: BoxListing): string {
     : '\nhub unreachable — no cached boxes to show';
 }
 
+/** The listing the last {@link buildListText} rendered, for the exit code. */
+let lastListing: BoxListing | undefined;
+
 async function buildListText(all: boolean, live: boolean): Promise<string> {
   const { boxes, projectRoot, scoped, listing } = await scopedBoxes(all, live);
   // Docker off under a remote hub (Step 12): mark (don't drop) docker boxes as
   // inactive when docker is gated here, plus a footer note naming the key + reason.
   const muted = await mutedDockerBoxes(boxes);
+  lastListing = listing;
   const note = staleNote(listing) + dockerHiddenNote(muted.ids.size, muted.reason, muted.hint);
   if (boxes.length === 0) {
     if (scoped) {
@@ -688,9 +696,16 @@ export const listCommand = withWatchOptions(
     return;
   }
   if (opts.json) {
-    const { boxes } = await scopedBoxes(all, live);
+    const { boxes, listing } = await scopedBoxes(all, live);
     process.stdout.write(JSON.stringify(boxes, null, 2) + '\n');
+    if (listing.reason === 'unauthorized') {
+      process.stderr.write(`${hubUnauthorizedHint(listing.hubUrl, 'remote')}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
   process.stdout.write((await buildListText(all, live)) + '\n');
+  // A hub that refused this computer is a failure, not an empty list: scripts
+  // (and the tray) must see a non-zero exit, not "no boxes".
+  if (lastListing?.reason === 'unauthorized') process.exitCode = 1;
 });

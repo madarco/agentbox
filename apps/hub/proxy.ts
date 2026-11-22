@@ -8,6 +8,7 @@ import {
   gateActor,
   gateOutcome,
   sessionProbeOrigin,
+  signinRedirectPath,
   type GateInput,
   type GateOutcome,
   type ProbeResult,
@@ -176,7 +177,7 @@ function render(
       return apiUnauthorized();
     case 'signin-redirect':
       return NextResponse.redirect(
-        new URL('/signin?returnUrl=' + request.nextUrl.pathname, request.url),
+        new URL(signinRedirectPath(request.nextUrl.pathname, request.nextUrl.search), request.url),
       );
     case 'token-locked':
       return new NextResponse('AgentBox hub is locked. Open it with `agentbox hub`.', {

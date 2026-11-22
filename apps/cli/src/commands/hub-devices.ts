@@ -24,6 +24,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { openInBrowser } from '../control-plane/ensure-repo-installed.js';
 import { handleLifecycleError } from './_errors.js';
+import { hubUnauthorizedHint } from '../control-plane/unauthorized-hint.js';
 
 interface ApiError {
   error?: { code?: string; message?: string };
@@ -213,14 +214,17 @@ const logoutSub = new Command('logout')
   });
 
 /** The hub `/api/v1` target + Bearer the rest of the CLI uses. */
-async function target(): Promise<{ url: string; token: string }> {
+async function target(): Promise<{ url: string; token: string; mode: 'local' | 'remote' }> {
   const { resolveHubTarget } = await import('./hub.js');
   const t = await resolveHubTarget();
-  return { url: t.url, token: t.token };
+  lastTarget = { url: t.url, mode: t.mode };
+  return { url: t.url, token: t.token, mode: t.mode };
 }
+let lastTarget: { url: string; mode: 'local' | 'remote' } | undefined;
 
 function fail(status: number, body: ApiError): void {
   log.error(`${body.error?.message ?? 'request failed'} (${String(status)})`);
+  if (status === 401) log.info(hubUnauthorizedHint(lastTarget?.url, lastTarget?.mode ?? 'remote'));
   process.exitCode = 1;
 }
 

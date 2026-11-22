@@ -18,6 +18,7 @@
  * catches it inside its own callback before it reaches the mapper here.
  */
 import { log } from '@clack/prompts';
+import { hubUnauthorizedHint } from './unauthorized-hint.js';
 import type { HubTarget } from '../commands/hub.js';
 import { HubApiClient, HubApiError, SUPPORTED_HUB_API_VERSIONS } from './hub-api-client.js';
 
@@ -84,7 +85,11 @@ function exitCodeForHubError(err: HubApiError): number {
 function hintForApiError(err: HubApiError): string | null {
   switch (err.code) {
     case 'unauthorized':
-      return 'The hub rejected the API token. Restart a local hub with `agentbox hub restart`, or check AGENTBOX_HUB_API_KEY for a remote control box.';
+      // A configured control box means the remote case: almost always a revoked
+      // (or never enrolled) computer.
+      return process.env.AGENTBOX_CONTROL_PLANE_URL
+        ? hubUnauthorizedHint(process.env.AGENTBOX_CONTROL_PLANE_URL, 'remote')
+        : hubUnauthorizedHint(undefined, 'local');
     case 'backend_unavailable':
       return "The hub reached its backend but it was unavailable — the provider or host it needs may not be configured on the hub's machine.";
     default:

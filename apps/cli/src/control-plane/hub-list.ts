@@ -25,7 +25,7 @@ import { dirname, join } from 'node:path';
 // One implementation, shared with the provider packages — see reachability.ts
 // for why a plain `fetch` can't be bounded here.
 import { deadlineFetch, hostReachable } from '@agentbox/sandbox-cloud';
-import { HubApiClient, type HubApiBox } from './hub-api-client.js';
+import { HubApiClient, HubApiError, type HubApiBox } from './hub-api-client.js';
 
 export { hostReachable };
 
@@ -76,7 +76,9 @@ export interface BoxListing {
    * a control box IS configured but we have no API key for it — the user needs to
    * know that, rather than watch their hub boxes quietly vanish.
    */
-  reason?: 'no-token';
+  reason?: 'no-token' | 'unauthorized';
+  /** The hub that answered 401, for the `unauthorized` hint. */
+  hubUrl?: string;
   /**
    * ISO time the listing was fetched (the cache's write time when `stale`).
    * Undefined when the hub didn't answer and there was no cache — we have no
@@ -154,8 +156,17 @@ export async function fetchBoxListing(
           opts.live,
         );
       }
-    } catch {
-      // fall through to the cache
+    } catch (err) {
+      // A 401 from a remote hub is an answer, not an outage: this computer was
+      // revoked (or never enrolled). Showing the cache as "hub unreachable" would
+      // hide that, so `ls` fails with the re-login hint instead.
+      if (err instanceof HubApiError && err.status === 401 && probe?.mode === 'remote') {
+        return remember(
+          { boxes: [], stale: true, reason: 'unauthorized', hubUrl: target.url },
+          opts.live,
+        );
+      }
+      // anything else: fall through to the cache
     }
   }
   const cached = await readBoxCache();
