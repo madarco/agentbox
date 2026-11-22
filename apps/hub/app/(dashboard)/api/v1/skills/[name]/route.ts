@@ -4,7 +4,12 @@
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
 // DELETE /api/v1/skills/{name} — discard the skill and every stored version.
 import { Readable } from 'node:stream';
-import { discardSkill, importSkill, parseImportMeta } from '@/lib/backend/skills';
+import {
+  discardSkill,
+  importSkill,
+  parseImportMeta,
+  refreshSkillsDigestEnv,
+} from '@/lib/backend/skills';
 import { fail, ok } from '../../lib/envelope';
 import { failFromSkills, skillsStoreOrFail } from '../_service';
 
@@ -41,6 +46,7 @@ export async function PUT(
         ? { maxBytes: globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES }
         : {}),
     });
+    await refreshSkillsDigestEnv(store, globalThis.__AGENTBOX_HUB_LOCAL_SKILLS).catch(() => {});
     return ok(result);
   } catch (err) {
     return failFromSkills(err, 'skill import failed');
@@ -55,7 +61,9 @@ export async function DELETE(
   if (store instanceof Response) return store;
   const { name } = await ctx.params;
   try {
-    return ok({ name, ...(await discardSkill(store, name)) });
+    const out = await discardSkill(store, name);
+    await refreshSkillsDigestEnv(store, globalThis.__AGENTBOX_HUB_LOCAL_SKILLS).catch(() => {});
+    return ok({ name, ...out });
   } catch (err) {
     return failFromSkills(err, 'skill discard failed');
   }

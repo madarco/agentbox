@@ -43,6 +43,42 @@ delivery to boxes, no web page (Phase 1b).
 9. **Docs**: public page + CLI reference + configuration key; this backlog;
    plan status.
 
+## Phase 1b — implementation plan (2026-11-22)
+
+Scope: the hub web Skills page (list + discard), the System page swap, and a
+skills digest folded into the cloud base fingerprint.
+
+1. **Skills digest.** sha256 over sorted `<name>:<treeSha>` lines of the skills
+   the first seed would upload (discoverable, valid, no scan findings), so a PC's
+   digest equals the library's when they hold the same skills. An empty set
+   folds nothing (`variantFingerprint` unchanged), so a user with no skills sees
+   no fingerprint change. The pure discovery/tree/scan/frontmatter modules move
+   from `apps/cli/src/lib/skills/` into `@agentbox/sandbox-core` so the providers
+   can compute it.
+2. **Where it folds.** `variantFingerprint` gains an optional `skills` input. The
+   five providers whose bakes stage host static config (daytona, hetzner,
+   vercel, e2b, digitalocean) pass `bakeSkillsDigest()` in `prepare` (so
+   skip-fast rebuilds on a skills change) and in their live base fingerprint (so
+   `prepare`/create/hub report the base stale). Docker and remote-docker don't
+   bake host config and are untouched.
+3. **Which skills count — the source rule.** `bakeSkillsDigest()` uses this
+   machine's own skills, unless `AGENTBOX_SKILLS_DIGEST` is set. The hub sets it
+   to the LIBRARY digest only when its own machine has no eligible skills and the
+   library is seeded, i.e. a deployed control box. Why not "always the library":
+   on a PC (local hub, or `hub expose` on the laptop) the CLI and the hub share
+   one prepared-state, and the bake stages from that home, so both must use the
+   home. Why not "always local": a VPS has no skills, so it would refuse every PC
+   bake that carries skills and re-bake without them. With the rule, a VPS
+   adopts a PC bake exactly when its skills match the library, and re-bakes
+   otherwise. The hub refreshes the variable at start and after every skills
+   import/discard; its bake workers inherit it.
+4. **Web.** `/skills` page in the hub (pure `/api/v1` client): name,
+   description, size, files, source PC, updated, versions; discard with a
+   confirm. Sidebar entry. The System page's "Skills · this control box" section
+   becomes a library summary linking to `/skills`.
+5. **Docs.** Public skills page (web UI + stale bases), deployed-hub web UI
+   list; plan status.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in

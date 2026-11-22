@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CUSTODY_SCOPES,
+  summarizeSkills,
   custodySubject,
   fmtBytes,
   groupCustody,
@@ -108,5 +109,22 @@ describe('fmtBytes', () => {
     expect(fmtBytes(512)).toBe('512 B');
     expect(fmtBytes(1536)).toBe('1.5 KB');
     expect(fmtBytes(1024 * 1024 * 3)).toBe('3.0 MB');
+  });
+});
+
+describe('summarizeSkills', () => {
+  it('counts skills by meta.json, sums tarballs, and reads the seeded marker', () => {
+    expect(
+      summarizeSkills([
+        entry('skills/.seeded', 40),
+        entry('skills/one/meta.json', 500),
+        entry(`skills/one/${'a'.repeat(64)}.tar.gz`, 1000),
+        entry(`skills/one/${'b'.repeat(64)}.tar.gz`, 2000),
+        entry('skills/two/meta.json', 300),
+        entry(`skills/two/${'c'.repeat(64)}.tar.gz`, 50),
+        entry('agents/claude/.credentials.json', 9),
+      ]),
+    ).toEqual({ count: 2, size: 3050, seeded: true });
+    expect(summarizeSkills([])).toEqual({ count: 0, size: 0, seeded: false });
   });
 });

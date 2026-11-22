@@ -38,6 +38,7 @@ import {
   computeContextManifest,
   readCliStamp,
   type AgentStaticStage,
+  bakeSkillsDigest,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -181,7 +182,12 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
   const templateName = templateNameFor(variantKey);
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, {
+    agentSettings,
+    agents,
+    // The bake stages this machine's skills; a change to them re-bakes.
+    skills: await bakeSkillsDigest(),
+  });
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The

@@ -29,6 +29,7 @@ import { providerWarning } from '@agentbox/core';
 import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
   type AgentStaticStage,
+  bakeSkillsDigest,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -237,6 +238,8 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         contextSha256: variantFingerprint(rawFingerprint.contextSha256, {
           agentSettings,
           agents,
+          // The bake stages this machine's skills; a change to them re-bakes.
+          skills: await bakeSkillsDigest(),
         }),
       }
     : rawFingerprint;

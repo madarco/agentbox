@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { SKILLS_DIGEST_ENV as CORE_ENV, skillsDigest } from '@agentbox/sandbox-core';
 import {
   MAX_SKILL_VERSIONS,
   SEEDED_MARKER,
@@ -9,7 +10,10 @@ import {
   importSkill,
   listSkills,
   openSkillTarball,
+  libraryDigest,
   parseImportMeta,
+  refreshSkillsDigestEnv,
+  SKILLS_DIGEST_ENV,
   skillNameProblem,
   type SkillsStore,
   type SkillsStoreEntry,
@@ -194,5 +198,41 @@ describe('skills library over custody', () => {
       importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('123456'), maxBytes: 3 }),
     ).rejects.toMatchObject({ name: 'CustodyTooLargeError' });
     expect(store.paths()).toEqual([]);
+  });
+});
+
+describe('skills digest for cloud base fingerprints', () => {
+  it('matches sandbox-core on the PC side exactly', () => {
+    const set = [
+      { name: 'zeta', sha: sha('1') },
+      { name: 'alpha', sha: sha('2') },
+    ];
+    expect(libraryDigest(set.map((e) => ({ name: e.name, current: e.sha })))).toBe(
+      skillsDigest(set.map((e) => ({ name: e.name, treeSha: e.sha }))),
+    );
+    expect(libraryDigest([])).toBe('');
+    expect(SKILLS_DIGEST_ENV).toBe(CORE_ENV);
+  });
+
+  it('sets the library digest only on a machine without skills and a seeded library', async () => {
+    const store = memStore();
+    const env: Record<string, string | undefined> = { [SKILLS_DIGEST_ENV]: 'stale' };
+    await refreshSkillsDigestEnv(store, false, env);
+    expect(env[SKILLS_DIGEST_ENV]).toBeUndefined(); // not seeded: the home decides
+
+    await importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('a') });
+    await refreshSkillsDigestEnv(store, false, env);
+    expect(env[SKILLS_DIGEST_ENV]).toBe(libraryDigest([{ name: 'one', current: sha('a') }]));
+
+    await refreshSkillsDigestEnv(store, true, env);
+    expect(env[SKILLS_DIGEST_ENV]).toBeUndefined(); // a PC: its own skills decide
+
+    await discardSkill(store, 'one');
+    await refreshSkillsDigestEnv(store, false, env);
+    expect(env[SKILLS_DIGEST_ENV]).toBe(''); // seeded but emptied: no skills to fold
+
+    env[SKILLS_DIGEST_ENV] = 'kept';
+    await refreshSkillsDigestEnv(store, undefined, env);
+    expect(env[SKILLS_DIGEST_ENV]).toBe('kept'); // not measured: untouched
   });
 });

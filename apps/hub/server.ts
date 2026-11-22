@@ -24,6 +24,7 @@ import {
 import { setCloudBackendLoader, startRelayDaemon } from '@agentbox/relay/daemon';
 import { registerAllAgentModules, registerInstalledAgentModules } from '@agentbox/agent-modules';
 import {
+  localSkillsDigest,
   controlPlaneDeployPath,
   readPreparedStateRaw,
   shortFingerprint,
@@ -348,6 +349,19 @@ async function main(): Promise<void> {
   globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES = positiveIntFromEnv(
     process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES,
   );
+  // Which skills a cloud base fingerprint counts here: this machine's own, or —
+  // on a machine with none (a deployed control box) — the library's. Measured
+  // once; the skills routes re-apply it after each import/discard. Best-effort:
+  // a failure leaves the home deciding, exactly as before skills existed.
+  void (async () => {
+    try {
+      globalThis.__AGENTBOX_HUB_LOCAL_SKILLS = (await localSkillsDigest()) !== '';
+      const { refreshSkillsDigestEnv } = await import('./lib/backend/skills');
+      await refreshSkillsDigestEnv(custody, globalThis.__AGENTBOX_HUB_LOCAL_SKILLS);
+    } catch {
+      /* the home decides */
+    }
+  })();
 
   // System / Build facts for the /api/v1/system route, read from @agentbox/sandbox-core
   // HERE (the custom server's scope, outside Next's bundle) and handed across as plain

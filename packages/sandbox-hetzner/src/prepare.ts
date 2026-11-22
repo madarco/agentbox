@@ -35,6 +35,7 @@ import { UserFacingError } from '@agentbox/core';
 import {
   computeContextManifest,
   readCliStamp,
+  bakeSkillsDigest,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -160,7 +161,12 @@ export async function prepareHetzner(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, {
+    agentSettings,
+    agents,
+    // The bake stages this machine's skills; a change to them re-bakes.
+    skills: await bakeSkillsDigest(),
+  });
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');

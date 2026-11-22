@@ -258,19 +258,29 @@ export function bakeSettingsFingerprintInput(settings?: AgentSettingsMap): strin
  * built from the same context but carrying different agents (or a different
  * value for a bake-affecting agent setting) are distinct cache identities.
  *
- * The empty variant — no agents, every setting at its default — is the identity
- * fold, so the plain base keeps the raw context hash and a provider that never
- * passes a variant is unaffected.
+ * The empty variant — no agents, every setting at its default, no skills — is
+ * the identity fold, so the plain base keeps the raw context hash and a provider
+ * that never passes a variant is unaffected.
  */
 export function variantFingerprint(
   baseSha: string,
-  variant: { agents?: readonly string[]; agentSettings?: AgentSettingsMap } = {},
+  variant: {
+    agents?: readonly string[];
+    agentSettings?: AgentSettingsMap;
+    /**
+     * The skills digest (`bakeSkillsDigest()`), for a provider whose bake stages
+     * the host's static config, skills included. '' or absent folds nothing.
+     */
+    skills?: string;
+  } = {},
 ): string {
   const agents = agentSetArg(variant.agents);
   const settings = bakeSettingsFingerprintInput(variant.agentSettings);
-  if (settings.length === 0 && agents === '') return baseSha;
+  const skills = variant.skills ?? '';
+  if (settings.length === 0 && agents === '' && skills === '') return baseSha;
   const parts: string[] = [...settings];
   if (agents !== '') parts.push(`agents=${agents}`);
+  if (skills !== '') parts.push(`skills=${skills}`);
   return createHash('sha256')
     .update(`${baseSha}\0${parts.join('\0')}`)
     .digest('hex');

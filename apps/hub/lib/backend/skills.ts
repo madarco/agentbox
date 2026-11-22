@@ -16,6 +16,8 @@
 // in-memory fake in tests and against `globalThis.__AGENTBOX_HUB_CUSTODY` in the
 // routes (which keeps @agentbox/relay out of Next's bundle).
 
+import { createHash } from 'node:crypto';
+
 export interface SkillsStoreEntry {
   path: string;
   size: number;
@@ -324,4 +326,53 @@ export async function discardSkill(store: SkillsStore, name: string): Promise<{ 
   let removed = 0;
   for (const e of entries) if (await store.delete(e.path)) removed++;
   return { removed };
+}
+
+/**
+ * The library's skills digest: the same hash `@agentbox/sandbox-core`'s
+ * `skillsDigest` computes on a PC (sorted `<name>:<treeSha>` lines, '' for none),
+ * so a PC whose skills match the library produces the same value. Re-implemented
+ * here because Next routes can't import sandbox-core (execa breaks the standalone
+ * build); `test/skills-backend.test.ts` pins the two to the same output.
+ */
+export function libraryDigest(skills: readonly { name: string; current: string }[]): string {
+  if (skills.length === 0) return '';
+  const lines = skills
+    .map((s) => `${s.name}:${s.current}\n`)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const h = createHash('sha256');
+  for (const l of lines) h.update(l);
+  return h.digest('hex');
+}
+
+/** Mirrors sandbox-core's `SKILLS_DIGEST_ENV`. */
+export const SKILLS_DIGEST_ENV = 'AGENTBOX_SKILLS_DIGEST';
+
+/**
+ * Decide which skills a cloud base fingerprint counts on this hub's machine
+ * (docs/hub-skills-backlog.md, Phase 1b plan item 3). When the machine has no
+ * eligible skills of its own and the library is seeded — a deployed control box —
+ * the library decides: the variable is set to its digest, and this process and
+ * every bake worker it spawns fold that instead of the (empty) home. Otherwise
+ * the variable is cleared and the home decides, as on any PC.
+ *
+ * `localHasSkills` is measured once by the custom server (it can import
+ * sandbox-core; routes can't). Undefined = not measured here: leave it alone.
+ */
+export async function refreshSkillsDigestEnv(
+  store: SkillsStore,
+  localHasSkills: boolean | undefined,
+  env: Record<string, string | undefined> = process.env,
+): Promise<void> {
+  if (localHasSkills === undefined) return;
+  if (localHasSkills) {
+    delete env[SKILLS_DIGEST_ENV];
+    return;
+  }
+  const listing = await listSkills(store);
+  if (!listing.seeded) {
+    delete env[SKILLS_DIGEST_ENV];
+    return;
+  }
+  env[SKILLS_DIGEST_ENV] = libraryDigest(listing.skills);
 }

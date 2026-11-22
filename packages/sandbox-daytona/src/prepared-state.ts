@@ -14,6 +14,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DaytonaSandboxClass } from '@agentbox/config';
 import {
+  bakeSkillsDigest,
+  variantFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   readCliStamp,
@@ -224,8 +226,9 @@ export async function currentDaytonaBaseFingerprintLive(): Promise<string | unde
     const fp = await computeDaytonaContextFingerprint();
     if (!fp?.contextSha256) return undefined;
     // The AGENTLESS base: no agent setting folds in, because it installs no
-    // agent. Per-agent artifacts get their own `variantFingerprint`.
-    return fp.contextSha256;
+    // agent. Per-agent artifacts get their own `variantFingerprint`. Its bake
+    // does stage this machine's skills, so their digest folds in, as at prepare.
+    return variantFingerprint(fp.contextSha256, { skills: await bakeSkillsDigest() });
   } catch {
     return undefined;
   }
