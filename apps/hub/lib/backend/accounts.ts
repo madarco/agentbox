@@ -16,7 +16,7 @@ import {
   type BoxRecord,
   type LlmAccount,
 } from '@agentbox/core';
-import type { AccountBackend, AccountResult, AccountView } from '../boxes/backend-types';
+import type { AccountBackend, AccountView } from '../boxes/backend-types';
 import {
   AGENT_SYNC_SPECS,
   boxesOnAccount,

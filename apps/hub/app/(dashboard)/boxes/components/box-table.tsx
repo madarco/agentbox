@@ -41,7 +41,10 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                   <span className="truncate">{box.branch}</span>
                 </span>
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
-                  {box.agent} · <Ago ms={box.lastActivity} />
+                  {box.agent}
+                  {/* The named LLM account the agent runs on, when not the default. */}
+                  {box.accounts?.[box.agent] ? `@${box.accounts[box.agent]}` : ''} ·{' '}
+                  <Ago ms={box.lastActivity} />
                 </div>
               </TableCell>
               <TableCell className="max-md:hidden">
