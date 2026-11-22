@@ -159,7 +159,7 @@ export interface CloudActionExecutorDeps {
   /**
    * The agents the box was created for (`BoxRegistration.agent` / the
    * BoxRecord's `agents`). Gates which `surface: 'service'` agents' units
-   * `agents.list` hands the box; undefined ships every agent's (legacy rows).
+   * `agents.list` hands the box; undefined means none (an agentless box).
    */
   boxAgents?: readonly string[];
   /**

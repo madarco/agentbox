@@ -1494,6 +1494,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     name: reg.name,
                     ...(reg.backend ? { backend: reg.backend } : {}),
                     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+                    ...(reg.agent ? { agent: reg.agent } : {}),
                     ...(reg.autoApproveSafeHostActions === false
                       ? { autoApproveSafeHostActions: false }
                       : {}),
@@ -1906,6 +1907,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? Math.trunc(body.projectIndex)
           : undefined;
       const kind = body.kind === 'cloud' ? 'cloud' : 'docker';
+      const existingReg = await store.getBox(body.boxId).catch(() => undefined);
       const skillSelection = parseSkillSelection(body.skills);
       const reg: BoxRegistration = {
         boxId: body.boxId,
@@ -1959,13 +1961,20 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
             ? Math.trunc(body.webPort)
             : undefined,
-        agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        // Kept from the stored registration when a re-register omits it (a
+        // start, resume or rehydrate from a record that never learned the
+        // agent): a registration REPLACES the entry, and an agentless one would
+        // strip a service agent's gateway (`agents.list`).
+        agent:
+          typeof body.agent === 'string' && body.agent.length > 0
+            ? body.agent
+            : (existingReg?.agent ?? undefined),
         accounts: sanitizeAccounts(body.accounts),
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
             : undefined,
-        ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
+        ...mergeRegistrationOrigin(body, existingReg),
       };
       await store.registerBox(reg);
       log(
@@ -2030,7 +2039,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       controlPlane: opts.controlPlane === true,
                       originUrl: reg.originUrl,
-                      boxAgents: registrationAgents(reg),
+                      // The CURRENT registration, not the one this poller was
+                      // started with: an agent added to a running box
+                      // (`agentbox openclaw <box>`) is a store write, and the
+                      // box's next `agents.list` must already see it.
+                      boxAgents: registrationAgents(
+                        (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
+                      ),
                       history: historyRpc(reg),
                       skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
                       log,

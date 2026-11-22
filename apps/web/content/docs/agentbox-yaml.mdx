@@ -273,6 +273,9 @@ removed: (none)
 changed: web
 ```
 
+`agentbox-ctl reload --agents` first re-asks the host which agents the box runs, for an agent
+added to a box that is already up (`agentbox openclaw <box>` does this for you).
+
 <Callout type="warn" title="HEADS UP">
   A `needs` cycle or a reference to a non-existent unit fails validation — the daemon will not
   start, and on the host `agentbox create` aborts before doing any docker work.

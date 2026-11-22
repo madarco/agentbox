@@ -21,7 +21,7 @@ export type {
   StateFile,
   SkillSelection,
 } from './box-record.js';
-export { dockerField, agentConfigVolume } from './box-record.js';
+export { dockerField, agentConfigVolume, primaryAgent } from './box-record.js';
 export {
   PERSISTENT_UNSUPPORTED,
   persistentRefusal,

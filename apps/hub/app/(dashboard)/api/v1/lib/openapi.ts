@@ -596,6 +596,45 @@ export function buildOpenApi(): Record<string, unknown> {
             '503': errorResponse,
           },
         },
+        post: {
+          tags: ['Boxes'],
+          summary: 'Add an agent to an existing box',
+          description:
+            "Records the agent on the hub's box record and re-registers the box with its own token, so the box's `agents.list` hands it that agent's units (a service agent such as `openclaw`). The box's ctl then picks them up with `agentbox-ctl reload --agents`. Backs `agentbox openclaw <box>`.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['agent'],
+                  properties: { agent: { type: 'string' } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The box id and its agents',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      boxId: { type: 'string' },
+                      agents: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
       },
       '/boxes/{id}/logs': {
         get: {
