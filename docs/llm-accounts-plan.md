@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phase 1 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-2 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -601,7 +601,7 @@ confirm on the key's account that usage appeared for 10:27–10:30Z on
   sibling Daytona subpath, the `accounts/` custody segment, and `default`
   pinned to `login`.
 
-## Phase 2 plan (logins)
+## Phase 2 as built (logins)
 
 Scope, decided against the Phase 0 results and the Phase 1 backlog:
 
@@ -638,6 +638,21 @@ Scope, decided against the Phase 0 results and the Phase 1 backlog:
 6. **Local by design for now.** A login drives an interactive container on the
    PC that owns the docker volume, so it stays a CLI command; the store is the
    PC's `~/.agentbox`. Moving `accounts` behind `/api/v1/accounts` is Phase 5.
+
+Implementation notes:
+
+- The capture is `captureVolumeLogin` (`packages/sandbox-docker/src/sync/account-login.ts`):
+  it refuses to turn a pasted-kind account into a login, and an existing
+  account's identity only moves when the store accepts the new secret.
+- The CLI refuses a named `login` for a runtime that does not declare
+  `supportsAccountLogin` (claude and codex do): one that ignored the volume
+  hints would capture the owner's login under the new name.
+- A claude re-login resets the account state already in the volume's
+  `_claude.json` (`resetVolumeAccountState`), because the seed is write-once.
+- `stripAccountState` also drops `primaryApiKey` (a Console key Claude Code
+  stored for the host login).
+- The headless `--code` call reports an error when the store refuses the new
+  login, so an orchestrating agent is not told it was saved.
 
 ## Backlog (not in these phases)
 

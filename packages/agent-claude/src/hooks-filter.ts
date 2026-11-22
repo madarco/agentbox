@@ -255,6 +255,8 @@ export function claudeSettingsEndpointPaths(data: unknown): string[][] {
  */
 export const ACCOUNT_STATE_KEYS: readonly string[] = [
   'oauthAccount',
+  // A Console API key Claude Code stored for the host login: the owner's secret.
+  'primaryApiKey',
   'customApiKeyResponses',
   'modelAccessCache',
   'orgModelDefaultCache',

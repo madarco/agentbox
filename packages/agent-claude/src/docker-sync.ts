@@ -22,6 +22,7 @@ import {
   addProjectAlias,
   claudeSettingsEndpointPaths,
   filterHostHooks,
+  ACCOUNT_STATE_KEYS,
   setInstallMethodNative,
   stripAccountState,
   trustWorkspace,
@@ -350,7 +351,9 @@ export async function ensureClaudeVolume(
     for (const rel of brokenSymlinks) rsyncExcludes.push(`--exclude=/${rel}`);
     // The host's login belongs to the owner's default account, never a named one.
     if (opts.account !== undefined) {
-      rsyncExcludes.push(`--exclude=/${requireAgentCredential(resolveAgentSpec('claude')).boxRelPath}`);
+      rsyncExcludes.push(
+        `--exclude=/${requireAgentCredential(resolveAgentSpec('claude')).boxRelPath}`,
+      );
     }
     const rsyncFlags = `--copy-unsafe-links ${rsyncExcludes.join(' ')}`;
     // Rekey the host project's memory/ -> /dst/projects/-workspace/memory.
@@ -1374,4 +1377,33 @@ export async function claudeSessionInfo(
     if (Number.isFinite(secs) && secs > 0) startedAt = new Date(secs * 1000).toISOString();
   }
   return { running: true, sessionName: name, startedAt };
+}
+
+/** The jq program that drops {@link ACCOUNT_STATE_KEYS}. Keys are plain identifiers. */
+export function accountStateJqDelete(): string {
+  return `del(${ACCOUNT_STATE_KEYS.map((k) => `.${k}`).join(', ')})`;
+}
+
+/**
+ * Drop the account state from a volume's EXISTING `_claude.json` before a
+ * named account signs in again. The seed in {@link ensureClaudeVolume} is
+ * write-once, so without this a re-login keeps the previous login's cached
+ * profile, and a fresh `profileFetchedAt` keeps it on display (Phase 0, (a)).
+ */
+export async function resetVolumeAccountState(volume: string, image: string): Promise<void> {
+  const script =
+    'f=/dst/_claude.json; [ -f "$f" ] || exit 0; ' +
+    `jq '${accountStateJqDelete()}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f"`;
+  await execa('docker', [
+    'run',
+    '--rm',
+    '--user',
+    '0',
+    '-v',
+    `${volume}:/dst`,
+    image,
+    'sh',
+    '-c',
+    script,
+  ]);
 }

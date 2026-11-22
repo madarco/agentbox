@@ -177,6 +177,7 @@ export const codexRuntime: AgentRuntime = {
       ...(o.account === undefined ? {} : { account: o.account }),
     }),
   accountIdentity: codexAccountIdentity,
+  supportsAccountLogin: true,
   buildAttachArgv: (container, sessionName) => buildCodexAttachArgv(container, sessionName),
 
   resolveConfigVolume: (box: BoxRecord) => box.codexConfigVolume,

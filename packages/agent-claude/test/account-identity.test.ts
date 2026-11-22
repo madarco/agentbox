@@ -32,6 +32,7 @@ describe('stripAccountState', () => {
       oauthAccount: { emailAddress: 'owner@example.com' },
       customApiKeyResponses: { approved: ['x'] },
       modelAccessCache: {},
+      primaryApiKey: 'sk-ant-api03-owner',
     };
     const r = stripAccountState(host);
     expect(r.stripped).toBe(true);
@@ -46,5 +47,15 @@ describe('stripAccountState', () => {
     const r = stripAccountState({ installMethod: 'native' });
     expect(r).toEqual({ data: { installMethod: 'native' }, stripped: false });
     expect(stripAccountState(null).stripped).toBe(false);
+  });
+});
+
+describe('accountStateJqDelete', () => {
+  it('deletes every account-state key, primaryApiKey included', async () => {
+    const { accountStateJqDelete } = await import('../src/docker-sync.js');
+    const prog = accountStateJqDelete();
+    for (const k of ACCOUNT_STATE_KEYS) expect(prog).toContain(`.${k}`);
+    expect(prog).toContain('.primaryApiKey');
+    expect(prog).not.toMatch(/'/);
   });
 });

@@ -6,7 +6,7 @@
  */
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 import { isCancel, log, outro, password } from '@agentbox/cli-kit';
-import type { LlmAccountIdentity, LlmAccountKind } from '@agentbox/core';
+import { findAccount, type LlmAccountIdentity, type LlmAccountKind } from '@agentbox/core';
 import {
   encodePastedSecret,
   pastedSecretProblem,
@@ -86,9 +86,7 @@ export async function runPastedAccountLogin(
     log.error(problem);
     process.exit(1);
   }
-  const existing = (await readAccounts()).accounts.find(
-    (x) => x.agent === a.id && x.id === req.id,
-  );
+  const existing = findAccount(await readAccounts(), a.id, req.id);
   if (existing && existing.kind !== req.kind) {
     log.error(
       `account '${req.id}' is a ${existing.kind} account; remove it first (\`agentbox accounts rm ${a.id}/${req.id}\`)`,

@@ -104,7 +104,9 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
     log.success(`removed ${spec.id} account '${id}'`);
   } else {
     log.success(`removed ${spec.id} account '${id}'`);
-    log.warn(`could not remove its volume ${volume}: ${(rm.stderr ?? '').trim() || 'docker failed'}`);
+    log.warn(
+      `could not remove its volume ${volume}: ${(rm.stderr ?? '').trim() || 'docker failed'}`,
+    );
   }
 }
 
@@ -127,7 +129,9 @@ async function labelAccountCommand(
   }
   await upsertAccount(next);
   log.success(
-    next.label ? `labelled ${spec.id}/${id} '${next.label}'` : `cleared the label of ${spec.id}/${id}`,
+    next.label
+      ? `labelled ${spec.id}/${id} '${next.label}'`
+      : `cleared the label of ${spec.id}/${id}`,
   );
 }
 

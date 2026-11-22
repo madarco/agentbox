@@ -99,11 +99,26 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
           read: dockerVolumeFileReader(volume, req.image),
           identity: claudeAccountIdentity,
         });
-        log.write(`captured account '${req.account.id}' (written=${String(res.written)}: ${res.reason})`);
+        log.write(
+          `captured account '${req.account.id}' (written=${String(res.written)}: ${res.reason})`,
+        );
+        // An identical login is a no-op success; a refused one is not success —
+        // the waiting `--code` call must not tell its caller the login was stored.
+        if (!res.written && res.reason !== 'unchanged') {
+          setState({
+            phase: 'error',
+            error: `account '${req.account.id}' already holds a newer login (${res.reason}); nothing was changed`,
+          });
+          log.close();
+          process.exit(1);
+        }
         setState({ ...held.done, phase: 'done' });
       } catch (err) {
         log.write(`account capture failed: ${(err as Error).message}`);
-        setState({ phase: 'error', error: `could not store the account: ${(err as Error).message}` });
+        setState({
+          phase: 'error',
+          error: `could not store the account: ${(err as Error).message}`,
+        });
         log.close();
         process.exit(1);
       }

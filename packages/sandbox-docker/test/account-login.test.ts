@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentSyncSpec } from '@agentbox/core';
-import { readAccounts, type AccountStoreOptions } from '@agentbox/sandbox-core';
+import { readAccounts, upsertAccount, type AccountStoreOptions } from '@agentbox/sandbox-core';
 import { captureVolumeLogin, type VolumeFileReader } from '../src/sync/account-login.js';
 
 let dir: string;
@@ -92,5 +92,46 @@ describe('captureVolumeLogin', () => {
       captureVolumeLogin({ spec, account: { id: 'work' }, read: reader({}), store }),
     ).rejects.toThrow(/did not leave a credential/);
     expect((await readAccounts(store)).accounts).toEqual([]);
+  });
+
+  it('a refused re-login keeps the stored identity (review)', async () => {
+    await captureVolumeLogin({
+      spec,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': login(200) }),
+      identity: { files: [], parse: () => ({ email: 'alice@x' }) },
+      store,
+    });
+    const res = await captureVolumeLogin({
+      spec,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': login(100) }),
+      identity: { files: [], parse: () => ({ email: 'bob@x' }) },
+      store,
+    });
+    expect(res).toMatchObject({ written: false, identity: { email: 'alice@x' } });
+    expect((await readAccounts(store)).accounts[0]!.identity).toEqual({ email: 'alice@x' });
+    // An accepted re-login moves the identity.
+    await captureVolumeLogin({
+      spec,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': login(300) }),
+      identity: { files: [], parse: () => ({ email: 'bob@x' }) },
+      store,
+    });
+    expect((await readAccounts(store)).accounts[0]!.identity).toEqual({ email: 'bob@x' });
+  });
+
+  it('never turns a pasted-kind account into a login (review)', async () => {
+    await upsertAccount({ agent: 'claude', id: 'ci', kind: 'setup-token', createdAt: 't' }, store);
+    await expect(
+      captureVolumeLogin({
+        spec,
+        account: { id: 'ci' },
+        read: reader({ '.credentials.json': login(1) }),
+        store,
+      }),
+    ).rejects.toThrow(/setup-token account/);
+    expect((await readAccounts(store)).accounts[0]!.kind).toBe('setup-token');
   });
 });

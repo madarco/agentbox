@@ -61,3 +61,9 @@ Newest phase last.
 - **Not live-run in Phase 2:** a named OAuth login end to end (it needs a second
   real account) and a named-volume seed against a real image (the seed is
   covered by a docker-mocked test). Steps for the coordinator are in the PR.
+- **A pasted secret read from a stdin pipe that never closes hangs** (a driver
+  that is not a TTY and never sends EOF). Feed the secret with `< file` or a
+  closed pipe; a read timeout is an option if it bites.
+- **`dockerVolumeFileReader` runs one container per file** and reports any
+  docker failure as an absent file ("the login did not leave a credential").
+  One `tar` read and a distinct docker-error message would fix both.

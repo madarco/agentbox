@@ -162,6 +162,7 @@ export const claudeRuntime: AgentRuntime = {
   },
   sharedVolume: SHARED_CLAUDE_VOLUME,
   accountIdentity: claudeAccountIdentity,
+  supportsAccountLogin: true,
   SessionError: ClaudeSessionError,
 
   startSession: (o) =>

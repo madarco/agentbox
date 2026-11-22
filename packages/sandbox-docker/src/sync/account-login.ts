@@ -9,7 +9,12 @@
  * newest-wins gated like every other credential write.
  */
 import { execa } from 'execa';
-import type { AgentSyncSpec, LlmAccount, LlmAccountIdentity } from '@agentbox/core';
+import {
+  findAccount,
+  type AgentSyncSpec,
+  type LlmAccount,
+  type LlmAccountIdentity,
+} from '@agentbox/core';
 import {
   readAccounts,
   removeAccount,
@@ -92,9 +97,12 @@ export async function captureVolumeLogin(
     }
     identity = o.identity.parse(files);
   }
-  const existing = (await readAccounts(o.store)).accounts.find(
-    (a) => a.agent === o.spec.id && a.id === o.account.id,
-  );
+  const existing = findAccount(await readAccounts(o.store), o.spec.id, o.account.id);
+  if (existing && existing.kind !== 'login') {
+    throw new Error(
+      `account '${o.account.id}' is a ${existing.kind} account; remove it first to sign in a login under that name`,
+    );
+  }
   const row: LlmAccount = {
     agent: o.spec.id,
     id: o.account.id,
@@ -103,14 +111,23 @@ export async function captureVolumeLogin(
   };
   const label = o.account.label ?? existing?.label;
   if (label) row.label = label;
-  const keptIdentity = identity ?? existing?.identity;
-  if (keptIdentity) row.identity = keptIdentity;
+  // The row must exist before its secret, but it must not describe a login the
+  // store then refuses: an existing account keeps its old identity until the
+  // new secret is actually written.
+  const newIdentity = identity ?? existing?.identity;
+  const before = existing ? existing.identity : newIdentity;
+  if (before) row.identity = before;
   await upsertAccount(row, o.store);
+  let res: { written: boolean; reason: string };
   try {
-    const res = await writeAccountSecret(o.spec.id, o.account.id, text, o.store);
-    return { written: res.written, reason: res.reason, identity: keptIdentity };
+    res = await writeAccountSecret(o.spec.id, o.account.id, text, o.store);
   } catch (err) {
     if (!existing) await removeAccount(o.spec.id, o.account.id, o.store).catch(() => {});
     throw err;
   }
+  if (!res.written) return { written: false, reason: res.reason, identity: before };
+  if (existing && newIdentity !== before) {
+    await upsertAccount({ ...row, ...(newIdentity ? { identity: newIdentity } : {}) }, o.store);
+  }
+  return { written: true, reason: res.reason, identity: newIdentity };
 }

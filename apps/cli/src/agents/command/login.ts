@@ -17,8 +17,9 @@ import { handleLifecycleError } from '../../commands/_errors.js';
 import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { imageProgress } from '@agentbox/cli-kit';
-import { accountConfigVolume } from '@agentbox/core';
+import { accountConfigVolume, findAccount } from '@agentbox/core';
 import {
+  readAccounts,
   resolveAgentSpec,
   resolveLoginAccount,
   type LoginAccountRequest,
@@ -55,6 +56,23 @@ async function routeAccountLogin(
     await runPastedAccountLogin(a, { ...req, kind: req.kind });
     return 'done';
   }
+  if (req) {
+    // Fail closed: a runtime that does not honour `ensureVolume({account})` and
+    // `signIn({volume})` would sign into the SHARED volume and seed the host's
+    // login into the named one — capturing the owner's login under a new name.
+    if (a.runtime.supportsAccountLogin !== true) {
+      log.error(`${a.shortName} cannot sign in a named login account yet`);
+      process.exit(1);
+    }
+    // Before the whole OAuth flow, not after it.
+    const existing = findAccount(await readAccounts(), a.id, req.id);
+    if (existing && existing.kind !== 'login') {
+      log.error(
+        `account '${req.id}' is a ${existing.kind} account; remove it first (\`agentbox accounts rm ${a.id}/${req.id}\`)`,
+      );
+      process.exit(1);
+    }
+  }
   return req;
 }
 
@@ -68,12 +86,18 @@ export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
       try {
         const routed = await routeAccountLogin(a, opts);
         if (routed === 'done') return;
-        const loginAccount = routed ? { id: routed.id, ...(routed.label ? { label: routed.label } : {}) } : undefined;
-        await custom(args, { ...opts, ...(loginAccount ? { loginAccount } : {}) }, {
-          syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
-          fail: handleLifecycleError,
-          captureAccountLogin: (o) => captureAccountLogin(a, o),
-        });
+        const loginAccount = routed
+          ? { id: routed.id, ...(routed.label ? { label: routed.label } : {}) }
+          : undefined;
+        await custom(
+          args,
+          { ...opts, ...(loginAccount ? { loginAccount } : {}) },
+          {
+            syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
+            fail: handleLifecycleError,
+            captureAccountLogin: (o) => captureAccountLogin(a, o),
+          },
+        );
       } catch (err) {
         handleLifecycleError(err);
       }

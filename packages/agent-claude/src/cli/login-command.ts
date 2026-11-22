@@ -20,7 +20,11 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { accountConfigVolume } from '@agentbox/core';
-import { ensureClaudeVolume, SHARED_CLAUDE_VOLUME } from '../docker-sync.js';
+import {
+  ensureClaudeVolume,
+  resetVolumeAccountState,
+  SHARED_CLAUDE_VOLUME,
+} from '../docker-sync.js';
 import { ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginHost } from '@agentbox/cli-kit';
@@ -219,10 +223,10 @@ export function claudeAccountVolume(account: LoginAccount): string {
  * identity (its login file and cached profile) — see `ensureClaudeVolume`.
  */
 async function prepareAccountVolume(account: LoginAccount, image: string): Promise<void> {
-  await ensureClaudeVolume(
-    { volume: claudeAccountVolume(account) },
-    { syncFromHost: true, image, account: account.id },
-  );
+  const volume = claudeAccountVolume(account);
+  await ensureClaudeVolume({ volume }, { syncFromHost: true, image, account: account.id });
+  // A re-login of this account must not inherit the previous login's profile.
+  await resetVolumeAccountState(volume, image);
 }
 
 /** Declared BEFORE the factory's `--interactive`, which is the order help prints. */
@@ -263,7 +267,9 @@ export async function runClaudeLoginCommand(
       await startHeadlessLogin(args, account);
       return;
     }
-    intro(account ? `Signing in to Claude as account '${account.id}'...` : 'Signing in to Claude...');
+    intro(
+      account ? `Signing in to Claude as account '${account.id}'...` : 'Signing in to Claude...',
+    );
     const cfg = await loadEffectiveConfig(process.cwd());
     const baseImage = cfg.effective.box.image;
 

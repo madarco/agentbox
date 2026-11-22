@@ -20,11 +20,7 @@
  */
 import type { AttachOpenIn, EffectiveConfig, UserConfig } from '@agentbox/config';
 import type { AgentId, ResolvedCarryEntry } from '@agentbox/core';
-import type {
-  AccountIdentityReader,
-  BoxRecord,
-  CreateBoxOptions,
-} from '@agentbox/sandbox-docker';
+import type { AccountIdentityReader, BoxRecord, CreateBoxOptions } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginBinding } from './agent-login-bindings.js';
 import type { ResolvedTeleport } from './teleport-types.js';
@@ -226,6 +222,12 @@ export interface AgentRuntime {
    * Absent = the account list shows none. Display only, never a decision.
    */
   accountIdentity?: AccountIdentityReader;
+  /**
+   * True when this runtime honours `ensureVolume({ account })` and
+   * `signIn({ volume })`, so a named login lands in the account's own volume.
+   * `<agent> login --account` refuses a `login` account without it.
+   */
+  supportsAccountLogin?: boolean;
   /** Guided-login binding — used by `agentbox <agent> login` machinery. */
   loginBinding(o: {
     image: string;
