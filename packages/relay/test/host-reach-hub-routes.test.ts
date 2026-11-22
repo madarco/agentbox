@@ -99,7 +99,12 @@ describe('host-reach routing on the control box', () => {
       body: { method: 'cp.fromHost', params: { sources: ['data.csv'], dest: '/workspace' } },
     });
     const a = await poll(handle, 'pa', PC_A);
-    expect(a.body.actions?.[0]?.route).toEqual({ repoKey: KEY, folder: '/Users/a/app' });
+    expect(a.body.actions?.[0]?.route).toEqual({
+      repoKey: KEY,
+      folder: '/Users/a/app',
+      role: 'origin',
+      box: { name: 'cpbox', backend: 'hetzner' },
+    });
     const id = a.body.actions![0]!.id;
     // PC B cannot settle (or decline) PC A's copy by quoting PC A's poller id.
     const forged = await req(handle, 'POST', '/admin/hostreach/result', {
@@ -220,9 +225,11 @@ describe('host-reach routing on the control box', () => {
     await req(handle, 'POST', '/admin/hostreach/prompt', {
       token: ADMIN,
       device: PC_A,
-      body: { id, poller: 'pa', prompt: { message: 'Allow?' } },
+      body: { id, poller: 'pa', prompt: { message: 'Allow?', defaultAnswer: 'y' } },
     });
     expect(handle.prompts.size()).toBe(1);
+    // Whatever the PC sent, Enter never approves a copy on the hub (review 426 item 8).
+    expect(handle.prompts.all()[0]!.ev.defaultAnswer).toBe('n');
     await req(handle, 'POST', '/admin/hostreach/result', {
       token: ADMIN,
       device: PC_A,

@@ -118,4 +118,23 @@ describe('mirrorHostReachPrompts', () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(hub.calls).toEqual([]);
   });
+
+  it("mirrors only the action's own confirm, not another prompt the box raises meanwhile (7)", async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const hub = fakeHub();
+    const stop = mirrorHostReachPrompts({
+      prompts,
+      subscribers: subs,
+      boxId: 'b1',
+      actionId: 'a1',
+      client: hub.client,
+      match: (ev) => ev.context?.command === 'cp.fromHost',
+    });
+    void askPrompt(prompts, subs, 'b1', { ...ask, context: { command: 'git push' } });
+    void askPrompt(prompts, subs, 'b1', { ...ask, context: { command: 'cp.fromHost' } });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(hub.calls).toEqual(['raise a1 Allow cp (host -> box) on b1?']);
+    stop();
+  });
 });

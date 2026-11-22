@@ -87,7 +87,9 @@ export function hostCandidatesFor(
 ): HostCandidatesResult {
   const raw = boxPath.trim();
   if (raw.length === 0) return { ok: false, error: 'empty path' };
-  const relative = !raw.startsWith('/');
+  // `~` and `~/…` name the host user's home: a host-absolute path, never a
+  // repo-relative one (every PC would expand it to its OWN home).
+  const relative = !raw.startsWith('/') && !raw.startsWith('~');
   const inBox = relative ? posix.join(BOX_WORKSPACE, raw) : posix.normalize(raw);
 
   // A relative path that climbs out of /workspace (`../x`) names something on
@@ -117,7 +119,10 @@ export function hostCandidatesFor(
     const theirs = repo?.repoKey
       ? checkouts.find((c) => c.machineId === origin && c.repoKey === repo.repoKey)
       : undefined;
-    const folder = theirs?.folder ?? repo?.originFolder;
+    // The folder the box was SEEDED from first: the origin may hold several
+    // checkouts of one repo (worktrees, a second clone), and the newest
+    // registry row is not necessarily the one this box came from.
+    const folder = repo?.originFolder ?? theirs?.folder;
     candidates.push({ machineId: origin, ...(folder ? { folder } : {}), reason: 'origin' });
   }
   if (repo?.repoKey) {

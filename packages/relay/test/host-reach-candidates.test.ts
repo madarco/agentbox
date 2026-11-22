@@ -250,14 +250,14 @@ describe('hostReachRouteFor', () => {
       route: {
         repoKey: KEY,
         candidates: [
-          { deviceId: 'pc-a', label: 'laptop', folder: '/Users/a/app' },
-          { deviceId: 'pc-b', label: 'desk', folder: '/home/b/app' },
+          { deviceId: 'pc-a', role: 'origin', label: 'laptop', folder: '/Users/a/app' },
+          { deviceId: 'pc-b', role: 'has-repo', label: 'desk', folder: '/home/b/app' },
         ],
       },
     });
   });
 
-  it('routes a host-absolute path, or a copy mixing one in, to the origin only', () => {
+  it('routes a host-absolute path to the origin only, and refuses a copy mixing one in', () => {
     const abs = hostReachRouteFor(
       reg,
       'cp.toHost',
@@ -271,15 +271,14 @@ describe('hostReachRouteFor', () => {
       { sources: ['data.csv', '/Users/a/.npmrc'], dest: '/workspace' },
       checkouts,
     );
-    expect(mixed.kind === 'routed' && mixed.route.candidates.map((c) => c.deviceId)).toEqual([
-      'pc-a',
-    ]);
+    // No single machine may serve both a repo file and an outside one.
+    expect(mixed.kind).toBe('refused');
   });
 
   it('sends host tools to the origin only', () => {
     const r = hostReachRouteFor(reg, 'tool.exec', { tool: 'gh' }, checkouts);
     expect(r.kind === 'routed' && r.route.candidates).toEqual([
-      { deviceId: 'pc-a', label: 'laptop' },
+      { deviceId: 'pc-a', role: 'origin', label: 'laptop' },
     ]);
   });
 
@@ -297,11 +296,10 @@ describe('hostReachRouteFor', () => {
     ]);
   });
 
-  it('sends a repo nobody reported straight to the cache, and refuses an unservable mix', () => {
+  it('leaves a hub-built box nobody reported unrouted, and refuses an unservable mix', () => {
     const hub = { boxId: 'hb', repoKey: KEY };
     expect(hostReachRouteFor(hub, 'cp.fromHost', { sources: ['x'], dest: '/w' }, [])).toEqual({
-      kind: 'routed',
-      route: { candidates: [], repoKey: KEY },
+      kind: 'unrouted',
     });
     const mixed = hostReachRouteFor(
       hub,
@@ -387,5 +385,109 @@ describe('HostReachQueue failover when the origin dies silently', () => {
     expect(got).toEqual(['/b']);
     void pending;
     q.stop();
+  });
+});
+
+describe('review 426: routing classification', () => {
+  const KEY = 'github.com/acme/app';
+  const rows = [
+    {
+      repoKey: KEY,
+      machineId: 'pc-a',
+      folder: '/Users/a/app',
+      label: 'laptop',
+      seenAt: '2026-11-22T00:00:00Z',
+    },
+    {
+      repoKey: KEY,
+      machineId: 'pc-a',
+      folder: '/Users/a/app-feature',
+      label: 'laptop',
+      seenAt: '2026-11-20T00:00:00Z',
+    },
+    {
+      repoKey: KEY,
+      machineId: 'pc-b',
+      folder: '/home/b/app',
+      label: 'desk',
+      seenAt: '2026-11-21T00:00:00Z',
+    },
+  ];
+  const reg = {
+    boxId: 'box1',
+    repoKey: KEY,
+    originMachineId: 'pc-a',
+    worktrees: [{ containerPath: '/workspace', hostMainRepo: '/Users/a/app-feature', branch: 'b' }],
+  };
+  const cp = (sources: string[]) => ({ sources, dest: '/workspace' });
+
+  it('gives the origin the checkout the box was seeded from, not its newest row (1)', () => {
+    const r = hostReachRouteFor(reg, 'cp.fromHost', cp(['data.csv']), rows);
+    expect(r.kind === 'routed' && r.route.candidates[0]).toMatchObject({
+      deviceId: 'pc-a',
+      role: 'origin',
+      folder: '/Users/a/app-feature',
+    });
+    expect(r.kind === 'routed' && r.route.candidates[1]).toMatchObject({
+      deviceId: 'pc-b',
+      role: 'has-repo',
+    });
+  });
+
+  it('routes ~ and ~/x to the origin only (2)', () => {
+    for (const p of ['~/.ssh/id_rsa', '~']) {
+      const r = hostReachRouteFor(reg, 'cp.fromHost', cp([p]), rows);
+      expect(r.kind === 'routed' && r.route.candidates.map((c) => c.deviceId), p).toEqual(['pc-a']);
+    }
+  });
+
+  it('routes a host path spelled /workspace/x to the origin only, like any absolute path (8)', () => {
+    const r = hostReachRouteFor(
+      reg,
+      'cp.toHost',
+      { sources: ['/workspace/out'], dest: '/workspace/x' },
+      rows,
+    );
+    expect(r.kind === 'routed' && r.route.candidates.map((c) => c.deviceId)).toEqual(['pc-a']);
+  });
+
+  it('keeps a pre-#424 registration WITH an originUrl unrouted when no PC reported its repo (3)', () => {
+    const old = { boxId: 'old', originUrl: 'git@github.com:acme/app.git' };
+    expect(hostReachRouteFor(old, 'cp.fromHost', cp(['data.csv']), [])).toEqual({
+      kind: 'unrouted',
+    });
+    expect(hostReachRouteFor(old, 'cp.fromHost', cp(['/abs/x']), [])).toEqual({ kind: 'unrouted' });
+    // ...and routes it to the PCs that did report the repo once one has.
+    const routed = hostReachRouteFor(old, 'cp.fromHost', cp(['data.csv']), rows);
+    expect(routed.kind === 'routed' && routed.route.candidates.map((c) => c.deviceId)).toEqual([
+      'pc-a',
+      'pc-b',
+    ]);
+  });
+});
+
+describe('review 426: a re-offer withdraws what the previous holder raised (7)', () => {
+  it('reports the poller an action was taken back from', async () => {
+    let now = 1_000;
+    const reoffers: Array<[string, string]> = [];
+    const q = new HostReachQueue({
+      graceMs: 10_000,
+      reachTimeoutMs: 100,
+      sweepIntervalMs: 10,
+      now: () => now,
+      onReoffer: (id, prev) => reoffers.push([id, prev]),
+    });
+    q.identify('pa', 'pc-a');
+    q.touch('pa');
+    q.identify('pb', 'pc-b');
+    q.touch('pb');
+    const pending = q.request('box1', 'cp.fromHost', {}, { route });
+    const [taken] = await q.poll(5, 'pa');
+    now += 150;
+    const [again] = await q.poll(5, 'pb');
+    expect(again?.id).toBe(taken!.id);
+    expect(reoffers).toEqual([[taken!.id, 'pa']]);
+    q.resolve(again!.id, { exitCode: 0, stdout: '', stderr: '' }, 'pb');
+    await pending;
   });
 });

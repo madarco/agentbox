@@ -642,22 +642,30 @@ the hub decides **which** computer serves a copy, in this order:
    Each computer reports its checkouts to the hub (on `create`, every agent command, `workspace
 add`/`rescan`), keyed by the repo, not the folder, so the same repo at a different path on each
    machine still counts. The hub hands that computer its **own** folder, and relative paths resolve
-   against it.
+   against it. Such a computer serves only paths **inside** that checkout; anything else it refuses,
+   and the next computer is tried. (The creating computer keeps using the folder the box was created
+   from, even if it has other checkouts of the repo.)
 3. **The hub's cache** (`fromHost` only), as above.
 
 A computer with a different checkout, or none, is never asked. A copy that names a path outside the
-repo (`/Users/you/Downloads/x`), and every host tool, goes to the creating computer only. If no
+repo (`/Users/you/Downloads/x`, `~/.npmrc`), and every host tool, goes to the creating computer only;
+a copy that mixes such a path with a repo path is refused with a message (copy them separately).
+A box created before this routing existed, with no creating computer recorded and no computer
+reporting its repo, is served as before, by any computer that knows the box. If no
 computer serves it, the box is told which computers were tried and why ("laptop: not connected",
 "desk: declined: its checkout /home/you/app is gone").
 
-A computer that has the repo but never adopted the box adopts it from the hub the first time it
-serves it (the same as `agentbox hub adopt`), so a box created on the hub, or on another computer, is
-served without a manual step.
+A computer that has the repo but never adopted the box can still serve it: it always asks for
+approval (nothing remembered about that box yet), and only once you approve does it adopt the box
+from the hub (the same as `agentbox hub adopt`). A denied copy leaves nothing behind on that
+computer. Output parked for the creating computer (`toHost` while it was offline) is landed by that
+computer only.
 
 The approval for a copy is raised where it runs, and **also in the hub**: it appears in the web UI's
 Approvals, the menu-bar app and `agentbox hub approvals`, and in the serving computer's attach footer.
 Answer it in any of them; the others clear. The copy itself still runs on the computer that has the
-files.
+files. Any enrolled computer can answer it, not only the one running the copy: a hub serves one
+person in this release.
 
 How long the hub waits for your machine before falling back is
 [`relay.hostReachTimeoutMs`](/docs/configuration#relay) (60s by default). Your machine long-polls the

@@ -272,7 +272,12 @@ export interface HostAction {
    * workspace path, which may be another machine's folder (or `/workspace`).
    * Absent on an unrouted action (a box from before origin machines existed).
    */
-  route?: { repoKey?: string; folder?: string };
+  route?: {
+    repoKey?: string;
+    folder?: string;
+    role?: 'origin' | 'has-repo';
+    box?: { name: string; backend?: string };
+  };
 }
 
 export interface HostActionResult {

@@ -489,6 +489,17 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             : {}),
           // An action that ended (answered, gone, timed out) takes its pending
           // confirm out of the approvals list.
+          // Taken back from a PC that went silent: its confirm (if it raised
+          // one) is withdrawn, so one copy never shows two approval cards.
+          onReoffer: (actionId, previousPoller) => {
+            for (const [id, p] of reachPrompts) {
+              if (p.actionId !== actionId || p.poller !== previousPoller) continue;
+              if (prompts.resolve(id, 'n', true)) {
+                subscribers.broadcast(p.boxId, 'prompt-resolved', { id });
+              }
+              reachPrompts.delete(id);
+            }
+          },
           onSettle: (actionId) => {
             for (const [id, p] of reachPrompts) {
               if (p.actionId !== actionId) continue;
@@ -1426,14 +1437,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         }
         const outcome = await hostReach.request(reg.boxId, body.method, body.params, {
           cachePrefix: cachePrefixes[0]!,
-          ...(routing.kind === 'routed' ? { route: routing.route } : {}),
+          ...(routing.kind === 'routed'
+            ? {
+                route: {
+                  ...routing.route,
+                  box: { name: reg.name, ...(reg.backend ? { backend: reg.backend } : {}) },
+                },
+              }
+            : {}),
         });
-        const tried =
-          outcome.kind !== 'unreachable'
-            ? ''
-            : routing.kind === 'routed' && routing.route.candidates.length === 0
-              ? noCheckoutHint(routing.route.repoKey)
-              : describeTried(outcome.tried);
+        const tried = outcome.kind === 'unreachable' ? describeTried(outcome.tried) : '';
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
@@ -2791,6 +2804,7 @@ async function parkOutboundCp(args: {
       projectSlug: custodySlugCandidates(reg)[0],
       boxId: reg.boxId,
     }),
+    ...(reg.originMachineId ? { forMachineId: reg.originMachineId } : {}),
     maxBytes,
     log,
   });
@@ -2869,14 +2883,6 @@ function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): 
  * box (and its user) sees "laptop declined: no checkout" rather than a bare
  * "offline". Empty for an unrouted request.
  */
-function noCheckoutHint(repoKey: string | undefined): string {
-  return [
-    `No computer has reported a checkout of ${repoKey ?? 'this repo'} to this hub.`,
-    'Run `agentbox workspace add <folder>` on a computer that has it, then retry.',
-    '',
-  ].join('\n');
-}
-
 export function describeTried(tried: HostReachTried[] | undefined): string {
   if (!tried || tried.length === 0) return '';
   const lines = tried.map((t) => {
@@ -3197,7 +3203,9 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
     kind: 'confirm',
     message: r.message.slice(0, 2000),
     ...(detail ? { detail } : {}),
-    defaultAnswer: r.defaultAnswer === 'y' ? 'y' : 'n',
+    // Always "no": a confirm about the user's own files defaults to the safe
+    // answer here whatever the PC sent (an Enter must never approve a copy).
+    defaultAnswer: 'n',
     ...(command || cwd || argv
       ? {
           context: {

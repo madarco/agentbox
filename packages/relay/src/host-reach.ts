@@ -58,6 +58,12 @@ export type HostReachOutcome =
 export interface HostReachCandidate {
   deviceId: string;
   label?: string;
+  /**
+   * `origin`: the PC the box was created from (serves any path it may);
+   * `has-repo`: another PC with a checkout, which serves only paths inside
+   * that checkout. Handed to the machine with the action.
+   */
+  role?: 'origin' | 'has-repo';
   /** That machine's checkout of the box's repo, handed to it with the action. */
   folder?: string;
 }
@@ -69,6 +75,11 @@ export interface HostReachCandidate {
 export interface HostReachRoute {
   candidates: HostReachCandidate[];
   repoKey?: string;
+  /**
+   * The box as the hub knows it, so a PC that has no record of it can still
+   * show a confirm and run the copy (it adopts the box only once approved).
+   */
+  box?: { name: string; backend?: string };
 }
 
 /**
@@ -93,6 +104,12 @@ export interface HostReachQueueOptions {
   sweepIntervalMs?: number;
   /** Called once an action is settled, however (result, unreachable, stop). */
   onSettle?: (id: string) => void;
+  /**
+   * Called when an action is taken back from the poller that held it (that
+   * machine went silent) to be offered again, so anything that poller raised
+   * for it (a mirrored confirm) can be withdrawn.
+   */
+  onReoffer?: (id: string, previousPollerId: string) => void;
 }
 
 interface Pending {
@@ -139,6 +156,7 @@ export class HostReachQueue {
   private readonly now: () => number;
   private readonly sweepIntervalMs: number;
   private readonly onSettle: ((id: string) => void) | undefined;
+  private readonly onReoffer: ((id: string, previousPollerId: string) => void) | undefined;
   private lastPollAtMs: number | null = null;
   /** pollerId → last poll time, so "did the owner of this copy go away?" is answerable. */
   private readonly pollerSeen = new Map<string, number>();
@@ -156,6 +174,7 @@ export class HostReachQueue {
     this.now = opts.now ?? ((): number => Date.now());
     this.sweepIntervalMs = opts.sweepIntervalMs ?? 5_000;
     this.onSettle = opts.onSettle;
+    this.onReoffer = opts.onReoffer;
   }
 
   /** Whether a machine has polled recently enough to be considered present. */
@@ -357,6 +376,8 @@ export class HostReachQueue {
       route: {
         ...(pending.route.repoKey ? { repoKey: pending.route.repoKey } : {}),
         ...(mine?.folder ? { folder: mine.folder } : {}),
+        ...(mine?.role ? { role: mine.role } : {}),
+        ...(pending.route.box ? { box: pending.route.box } : {}),
       },
     };
   }
@@ -603,7 +624,10 @@ export class HostReachQueue {
         (ownerSeenAt === undefined || now - ownerSeenAt > this.reachTimeoutMs);
       const orphaned = pending.delivered && pollerId !== undefined && ownerGone;
       if (pending.delivered && !orphaned) continue;
-      if (orphaned) this.noteOwnerGone(pending);
+      if (orphaned) {
+        this.noteOwnerGone(pending);
+        this.onReoffer?.(pending.action.id, owner);
+      }
       // A machine that already refused this action does not get asked twice,
       // and a routed one goes only to its current target device.
       if (!this.eligible(pending, pollerId)) continue;
@@ -704,6 +728,7 @@ export class HostReachQueue {
       // flight it can hand a waiter the other one and leave this one looking
       // unclaimed while an eligible machine is still listening.
       this.noteOwnerGone(pending);
+      if (owner !== undefined) this.onReoffer?.(id, owner);
       pending.delivered = false;
       pending.deliveredTo = undefined;
       if (!this.exhausted(pending) && this.offerToWaiter(pending)) continue;

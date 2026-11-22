@@ -26,7 +26,7 @@ import {
 import { pushedRef, readRefTip, type PushStatInput } from './workspaces/push-stat.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -116,6 +116,12 @@ export interface CloudActionExecutorDeps {
    * box (its record may say `/workspace`, or another machine's path).
    */
   hostFolder?: string;
+  /**
+   * Run once the copy is approved and before it executes: a PC serving a box it
+   * has no record of adopts it here (record + SSH keys), so a denied copy leaves
+   * nothing behind. Returns an error message to stop the copy, null to go on.
+   */
+  prepareBox?: () => Promise<string | null>;
   /** From BoxRegistration.boxId. Used to look up the BoxRecord in ~/.agentbox/state.json. */
   boxId: string;
   /** Friendly box name — used in confirm-prompt messages. Falls back to boxId. */
@@ -996,11 +1002,19 @@ async function runCpRpc(
   // Resolve host paths against THIS box's workspace so a relative path doesn't
   // land under the relay daemon's CWD (which belongs to whichever project
   // started the relay), and so the consent prompt shows the real destination.
-  const record = await lookupCloudBox(deps.boxId);
-  const lookup = { ...record, workspacePath: deps.hostFolder ?? record.workspacePath };
-  if (!lookup.workspacePath || !existsSync(lookup.workspacePath)) {
-    // Spawning with a cwd that does not exist fails as a bare ENOENT, which the
-    // box saw as an empty exit 1. Say what is missing instead.
+  // No record is fine when the caller names the folder (a PC serving a box it
+  // has not adopted yet); otherwise the record is the only base there is.
+  const record = deps.hostFolder
+    ? await lookupCloudBox(deps.boxId).catch(() => null)
+    : await lookupCloudBox(deps.boxId);
+  const lookup = { workspacePath: deps.hostFolder ?? record?.workspacePath ?? '' };
+  const hostSide = method === 'cp.toHost' ? [norm.dest] : norm.sources;
+  const needsFolder = hostSide.some((p) => !p.startsWith('/') && !p.startsWith('~'));
+  const folderHere = lookup.workspacePath.length > 0 && existsSync(lookup.workspacePath);
+  if (needsFolder && !folderHere) {
+    // A relative host path needs the project folder, and spawning with a cwd
+    // that does not exist fails as a bare ENOENT, which the box saw as an empty
+    // exit 1. Say what is missing instead. (Absolute paths need no folder.)
     return {
       exitCode: 69,
       stdout: '',
@@ -1066,10 +1080,14 @@ async function runCpRpc(
   // excludes, the size guard, and provider routing are honored identically to a
   // host-typed `agentbox cp` (the old direct-primitive path silently dropped
   // them). cwd = the box workspace makes project-config lookup box-correct.
+  if (deps.prepareBox) {
+    const stop = await deps.prepareBox();
+    if (stop) return { exitCode: 69, stdout: '', stderr: `${stop}\n` };
+  }
   const argv = [process.execPath, entry, ...cpArgs];
   const result = await execa(argv[0]!, argv.slice(1), {
     reject: false,
-    cwd: lookup.workspacePath,
+    cwd: folderHere ? lookup.workspacePath : homedir(),
   });
   const stderr = result.stderr ?? '';
   return {

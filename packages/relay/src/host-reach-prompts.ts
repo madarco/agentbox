@@ -41,10 +41,17 @@ export function mirrorHostReachPrompts(deps: {
   boxId: string;
   actionId: string;
   client: HostReachPromptClient;
+  /**
+   * Which of the box's prompts belong to this action. The mirror is per box,
+   * and the same box can raise an unrelated confirm on this machine meanwhile
+   * (a git push through its own poller); only the action's own goes to the hub.
+   */
+  match?: (ev: PromptAskEvent) => boolean;
   log?: (line: string) => void;
 }): () => void {
   const log = deps.log ?? ((): void => {});
   return deps.prompts.mirror(deps.boxId, (ev, answer, settled) => {
+    if (deps.match && !deps.match(ev)) return;
     let localDone = false;
     void settled.then(() => {
       localDone = true;

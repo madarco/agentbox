@@ -14,7 +14,7 @@ export type HostReachRouteResult =
   | { kind: 'routed'; route: HostReachRoute }
   /** Nothing to route by (a box from before origin machines and checkouts): any PC. */
   | { kind: 'unrouted' }
-  /** The request names nothing any PC could serve; the box gets this message. */
+  /** The request names nothing any one PC could serve; the box gets this message. */
   | { kind: 'refused'; error: string };
 
 /**
@@ -52,34 +52,60 @@ export function hostReachRouteFor(
       ? (reg.originMachineLabel ?? checkouts.find((c) => c.machineId === deviceId)?.label)
       : checkouts.find((c) => c.machineId === deviceId)?.label;
 
-  // Host tools: grants and binaries live with the machine that made them, so
-  // only the origin PC may run one (any other PC is a different program).
-  const paths = requestPaths(method, params);
-  if (paths === undefined) {
+  const key = box.repos[0]?.repoKey;
+  const originOnly = (): HostReachRouteResult => {
     if (!reg.originMachineId) return { kind: 'unrouted' };
     const label = labelOf(reg.originMachineId);
+    const originFolder = box.repos[0]?.originFolder;
     return {
       kind: 'routed',
       route: {
-        candidates: [{ deviceId: reg.originMachineId, ...(label ? { label } : {}) }],
-        ...(box.repos[0]?.repoKey ? { repoKey: box.repos[0].repoKey } : {}),
+        candidates: [
+          {
+            deviceId: reg.originMachineId,
+            role: 'origin',
+            ...(label ? { label } : {}),
+            ...(originFolder ? { folder: originFolder } : {}),
+          },
+        ],
+        ...(key ? { repoKey: key } : {}),
       },
+    };
+  };
+
+  // Host tools: grants and binaries live with the machine that made them, so
+  // only the origin PC may run one (any other PC is a different program).
+  const paths = requestPaths(method, params);
+  if (paths === undefined) return originOnly();
+
+  // A host-absolute path (`/Users/me/x`, `~/x`, also `/workspace/x`, which the
+  // host resolves literally) names a spot on ONE machine's disk: only the
+  // origin's. A repo-relative path can be served by any PC with the repo.
+  const hostAbsolute = (p: string): boolean => p.startsWith('/') || p.startsWith('~');
+  const absolute = paths.filter(hostAbsolute);
+  if (absolute.length === paths.length) return originOnly();
+  if (absolute.length > 0) {
+    return {
+      kind: 'refused',
+      error:
+        'no single machine can serve all of these paths (some are in the repo, some only on the ' +
+        'machine that created the box); copy them separately',
     };
   }
 
-  // Every path must be servable by a machine: keep the candidates common to
-  // all of them, in the first path's order (a copy that mixes a repo file with
-  // a file elsewhere on the origin's disk goes to the origin only).
+  // Every path is repo-relative: keep the candidates common to all of them, in
+  // the first path's order.
   let ordered: HostReachCandidate[] | undefined;
   let repoKey: string | undefined;
   for (const path of paths) {
     const r = hostCandidatesFor(box, path, checkouts, () => true);
     if (!r.ok) return { kind: 'refused', error: r.error };
     repoKey ??= r.repo?.repoKey;
-    const here = r.candidates.map((c) => {
+    const here = r.candidates.map((c): HostReachCandidate => {
       const label = labelOf(c.machineId);
       return {
         deviceId: c.machineId,
+        role: c.reason,
         ...(label ? { label } : {}),
         ...(c.folder ? { folder: c.folder } : {}),
       };
@@ -90,20 +116,11 @@ export function hostReachRouteFor(
         : ordered.filter((c) => here.some((h) => h.deviceId === c.deviceId));
   }
   if (!ordered || ordered.length === 0) {
-    // A box from before origin machines and repo keys: nothing to route by, so
-    // any PC that knows the box serves it, as it always did.
-    if (!reg.originMachineId && !box.repos[0]?.repoKey) return { kind: 'unrouted' };
-    if (paths.length > 1) {
-      return {
-        kind: 'refused',
-        error:
-          'no single machine can serve all of these paths (some are in the repo, some only on the ' +
-          'machine that created the box); copy them separately',
-      };
-    }
-    // Nobody may serve it: the request goes straight to the cache, then an
-    // error naming why (no machine has reported a checkout of this repo).
-    return { kind: 'routed', route: { candidates: [], ...(repoKey ? { repoKey } : {}) } };
+    // Nothing says which PC holds the files: no origin machine (a box
+    // registered before #424, or built on the hub) and no PC has reported a
+    // checkout of its repo. Any PC that knows the box serves it, as before
+    // routing existed, rather than nobody.
+    return { kind: 'unrouted' };
   }
   return { kind: 'routed', route: { candidates: ordered, ...(repoKey ? { repoKey } : {}) } };
 }
