@@ -10,6 +10,7 @@
  * `apps/cli/src/control-plane/ensure-repo-installed.ts`.
  */
 import { execa } from 'execa';
+import type { SkillSelection } from '@agentbox/core';
 import { registrationOrigin } from '@agentbox/sandbox-core';
 
 export interface RegisterBoxWithPlaneArgs {
@@ -46,6 +47,8 @@ export interface RegisterBoxWithPlaneArgs {
   projectIndex?: number;
   autoApproveHostActions?: boolean;
   autoApproveSafeHostActions?: boolean;
+  /** Library skill selection from the create flags (`BoxRecord.skills`). */
+  skills?: SkillSelection;
   /**
    * Public VM IP/host for direct-SSH backends. A PC adopting this box
    * (`agentbox hub adopt`) rebuilds its SSH target from this — the registration
@@ -114,6 +117,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       projectIndex: args.projectIndex,
       autoApproveHostActions: args.autoApproveHostActions,
       autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+      ...(args.skills ? { skills: args.skills } : {}),
       publicHost: args.publicHost,
       image: args.image,
       webPort: args.webPort,

@@ -80,6 +80,17 @@ export interface CustodyStore {
    * The caller MUST consume or destroy `data`.
    */
   getStream(path: string): Promise<{ entry: CustodyEntry; data: Readable } | null>;
+  /**
+   * Up to `length` bytes from `offset`, plus the entry's total size; null when
+   * absent. Optional: a backend without it is read whole and sliced. Lets a
+   * caller serve a large object in bounded pieces (a skill tarball to a cloud
+   * box, whose bridge caps each answer at 1 MiB) without re-reading it per piece.
+   */
+  readRange?(
+    path: string,
+    offset: number,
+    length: number,
+  ): Promise<{ data: Buffer; size: number } | null>;
 }
 
 /** Thrown by {@link CustodyStore.putStream} when the body exceeds `maxBytes`. */

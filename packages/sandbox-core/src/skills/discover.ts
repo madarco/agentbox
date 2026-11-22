@@ -106,6 +106,9 @@ export async function readLocalSkill(
     skill.newestMtimeMs = tree.newestMtimeMs;
     skill.treeSha = treeHash(tree.files);
     for (const l of tree.brokenLinks) skill.problems.push(`broken symlink: ${l}`);
+    for (const l of tree.outOfTreeLinks) {
+      skill.problems.push(`symlink points outside the skill: ${l}`);
+    }
     skill.findings = scanSkillFiles(tree.files);
   } catch (err) {
     if (err instanceof SkillTooLargeError) {

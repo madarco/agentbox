@@ -244,6 +244,7 @@ describe('the portable key list is the mapping', () => {
     build: true,
     credentialSync: false,
     borrowCredentials: ['codex'],
+    skills: { exclude: ['unslop'] },
     size: 'cx33',
     location: 'nbg1',
     inbound: 'locked',

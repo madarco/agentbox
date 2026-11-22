@@ -14,6 +14,7 @@ import {
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
   type BoxWorktree,
+  type SkillSelection,
 } from '@agentbox/relay';
 import {
   ensureHub,
@@ -678,6 +679,8 @@ export interface RegisterBoxArgs {
    * enabled; only an explicit `false` restores the always-prompt behavior.
    */
   autoApproveSafeHostActions?: boolean;
+  /** Library skill selection from the create flags (`BoxRecord.skills`). */
+  skills?: SkillSelection;
   /**
    * The box repo's origin remote URL. The hosted control plane resolves
    * owner/repo from this when leasing a GitHub-App push token. Absent for
@@ -735,6 +738,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     bridgeToken: args.bridgeToken,
     autoApproveHostActions: args.autoApproveHostActions,
     autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+    ...(args.skills ? { skills: args.skills } : {}),
     originUrl: args.originUrl,
     agent: args.agent,
   });
@@ -947,6 +951,8 @@ export interface BoxWithToken {
   autoApproveHostActions?: boolean;
   /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
   autoApproveSafeHostActions?: boolean;
+  /** Mirrors `BoxRecord.skills`; re-registered on rehydrate. */
+  skills?: SkillSelection;
 }
 
 /**
@@ -975,6 +981,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         bridgeToken: b.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
+        ...(b.skills ? { skills: b.skills } : {}),
       });
     } catch {
       // best-effort

@@ -2,13 +2,12 @@
 // gzip tarball (default: current). `X-AgentBox-Skill-Version` names the tree
 // hash; the CLI re-derives it from the extracted files before installing.
 //
-// Normal /api/v1 gate, unlike custody's elevated byte read: the skills scope
-// holds instructions the user chose to share across their PCs, not credentials,
-// and the PC-side secret scan keeps flagged files out unless the user overrode it.
+// Gated like custody's byte read (see `skillBytesReadAllowed`), not by the plain
+// API key alone.
 import { Readable } from 'node:stream';
 import { openSkillTarball } from '@/lib/backend/skills';
 import { fail } from '../../../lib/envelope';
-import { failFromSkills, skillsStoreOrFail } from '../../_service';
+import { failFromSkills, skillBytesReadAllowed, skillsStoreOrFail } from '../../_service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +18,12 @@ export async function GET(
 ): Promise<Response> {
   const store = skillsStoreOrFail();
   if (store instanceof Response) return store;
+  if (!skillBytesReadAllowed(req)) {
+    return fail(
+      'unauthorized',
+      'downloading a skill requires the admin token or an enrolled device token in X-Agentbox-Admin-Token (on a local hub: loopback); the hub API key can list skills but not read their bytes',
+    );
+  }
   const { name } = await ctx.params;
   const version = new URL(req.url).searchParams.get('version') ?? undefined;
   if (version !== undefined && !/^[0-9a-f]{64}$/.test(version)) {

@@ -102,9 +102,27 @@ The table compares each skill by content: `same`, `differs` (with which side cha
   value.
 </Callout>
 
-A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. Boxes don't read the library yet; until they do, they keep receiving skills the way described above.
+A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. A skill that holds a symlink pointing **outside its own folder** (for example `refs -> ~/Projects/app`) is skipped too, with the link named: following it would upload that whole folder, `.env` files included.
 
 **In the hub web UI**, the **Skills** page lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and discards a skill after a confirm. Uploading and downloading stay with `agentbox skills` on a PC, since they read and write that PC's folders.
+
+### Library skills in boxes
+
+A box created against a hub that holds a library pulls its skills when it starts: its in-box supervisor asks the hub for the box's set over the same channel it uses for everything else, downloads each skill, checks it against its version hash, and keeps it in the box (`~/.local/share/agentbox/skills`). This works the same on every provider, Docker and cloud, including a box created on a control box whose own machine has no skills. **Claude Code** sees them through its managed skills folder (`/etc/claude-code/.claude/skills`); Codex, OpenCode, Pi and OpenClaw follow.
+
+Pick a box's skills when you create it:
+
+```bash
+agentbox claude --skills unslop,frontend-design   # only these
+agentbox claude --skip-skills daytona             # all but these
+agentbox create --no-skills                       # none
+```
+
+Without a flag a box gets every library skill. The choice is recorded on the box and applies again when it restarts; a restart also picks up the library's newest versions and drops skills removed from it. To refresh a running box, run `agentbox-ctl skills sync` inside it.
+
+If the hub has no library, or can't be reached, nothing changes: boxes keep receiving your skills from your machine as described in [Keeping boxes in sync](#keeping-boxes-in-sync). Delivery needs a box image from this version or later; an older Docker image or cloud base keeps the old behaviour until it is rebuilt (`agentbox prepare`).
+
+Downloading a skill's files from the hub (`agentbox skills --download`) needs more than the API key the menu-bar app and web UI hold: the admin token, a device enrolled with `agentbox hub login`, or, on a local hub, a request from the same machine.
 
 ### Cloud bases go stale when your skills change
 

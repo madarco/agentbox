@@ -26,6 +26,7 @@ export type {
   AgentPullSpec,
   AgentPushTarget,
   AgentSeedSpec,
+  AgentSkillsSpec,
   AgentServiceExpose,
   AgentServiceReadyWhen,
   AgentServiceSpec,

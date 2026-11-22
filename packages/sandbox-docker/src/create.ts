@@ -73,7 +73,12 @@ import {
   type BoxRecord,
   type GitWorktreeRecord,
 } from './state.js';
-import { generateBoxId, type ResolvedCarryEntry, type ResyncResult } from '@agentbox/core';
+import {
+  generateBoxId,
+  type ResolvedCarryEntry,
+  type ResyncResult,
+  type SkillSelection,
+} from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
 import { computeDockerContextFingerprint, readPreparedDockerState } from './prepared-state.js';
@@ -106,6 +111,11 @@ export interface CreateBoxOptions {
    * Undefined → fall back to the local config load below.
    */
   credentialSync?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skill`, `--no-skill`,
+   * `--no-skills`). Absent = all. Recorded on the box and its relay registration.
+   */
+  skills?: SkillSelection;
   workspacePath: string;
   name?: string;
   /**
@@ -863,6 +873,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
         autoApproveSafeHostActions,
+        ...(opts.skills ? { skills: opts.skills } : {}),
         originUrl,
         workspacePath: originRepo,
         agent: opts.agents?.[0],
@@ -984,6 +995,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     // Default on: persist only when explicitly disabled (mirrors the relay's
     // `!== false` read); an absent field on an older record stays relaxed.
     autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+    ...(opts.skills ? { skills: opts.skills } : {}),
     persistent: persistent ? true : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,

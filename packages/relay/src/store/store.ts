@@ -1,3 +1,4 @@
+import type { SkillSelection } from '@agentbox/core';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, PromptAskEvent, RelayEvent } from '../types.js';
 
@@ -104,6 +105,7 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'build',
   'credentialSync',
   'borrowCredentials',
+  'skills',
   'size',
   'location',
   'inbound',
@@ -139,6 +141,8 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
+  /** Library skill selection (`--skill`, `--no-skill`, `--no-skills`). Portable. */
+  skills?: SkillSelection;
   /**
    * VM size and location for a cloud box (`--size`/`--location`, or the
    * project's `box.size<Provider>` / `box.<provider>Location`).

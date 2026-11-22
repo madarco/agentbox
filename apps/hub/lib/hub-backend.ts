@@ -2734,6 +2734,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             envFiles: o.envFiles,
             vnc: o.vnc,
             persistent,
+            ...(o.skills ? { skills: o.skills } : {}),
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,

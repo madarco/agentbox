@@ -11,7 +11,17 @@
  */
 
 import { createReadStream, createWriteStream } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
@@ -188,6 +198,31 @@ export class FsCustodyStore implements CustodyStore {
    * sidecar to drift), but they are hashed in a streaming pass and discarded,
    * so a 100 MiB entry costs a buffer's worth of memory rather than 100 MiB.
    */
+  async readRange(
+    path: string,
+    offset: number,
+    length: number,
+  ): Promise<{ data: Buffer; size: number } | null> {
+    const rel = normalizeCustodyPath(path);
+    let fh;
+    try {
+      fh = await open(join(this.root, rel), 'r');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+    try {
+      const size = (await fh.stat()).size;
+      const start = Math.max(0, Math.min(offset, size));
+      const want = Math.max(0, Math.min(length, size - start));
+      const buf = Buffer.alloc(want);
+      const { bytesRead } = await fh.read(buf, 0, want, start);
+      return { data: buf.subarray(0, bytesRead), size };
+    } finally {
+      await fh.close();
+    }
+  }
+
   private async readEntryMeta(rel: string): Promise<CustodyEntry | null> {
     const abs = join(this.root, rel);
     try {

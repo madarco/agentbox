@@ -68,6 +68,8 @@ export interface ControlPlaneCreateInput {
      * selection and never a secret.
      */
     borrowCredentials?: string[];
+    /** Library skill selection (`--skill`, `--no-skill`, `--no-skills`). */
+    skills?: { none?: boolean; include?: string[]; exclude?: string[] };
   };
 }
 

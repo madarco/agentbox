@@ -68,6 +68,7 @@ import {
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
+import { parseSkillSelection, runSkillsRpc } from './skills-rpc.js';
 import type { CustodyStore } from './custody/store.js';
 import {
   custodySlugCandidates,
@@ -1192,6 +1193,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 200, await historyRpc(reg)(body.method, body.params));
         return;
       }
+      // The box's share of the skills library: unprompted, box-scoped by its
+      // registration's selection, not worktree-scoped.
+      if (body.method.startsWith('skills.')) {
+        send(res, 200, await runSkillsRpc(custody, reg.skills, body.method, body.params));
+        return;
+      }
       if (body.method === 'agents.list') {
         send(res, 200, {
           exitCode: 0,
@@ -1247,6 +1254,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             originUrl: reg.originUrl,
             boxAgents: registrationAgents(reg),
             history: historyRpc(reg),
+            skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -1919,6 +1927,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // Default on: only an explicit `false` disables the safe subset, so an
         // older wire body without the field stays relaxed.
         autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
+        ...(parseSkillSelection(body.skills) ? { skills: parseSkillSelection(body.skills)! } : {}),
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
@@ -2004,6 +2013,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       originUrl: reg.originUrl,
                       boxAgents: registrationAgents(reg),
                       history: historyRpc(reg),
+                      skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
                       log,
                     });
                     await respond(result);

@@ -88,6 +88,7 @@ import { detectHostSession, registerHostManager } from '../../lib/host-session.j
 import { workspaceHub } from '../../lib/workspace-ref.js';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { reportCheckoutInBackground } from '../../lib/checkouts-report.js';
+import { skillSelectionFromFlags } from '../../lib/skills/selection.js';
 import { autoSeedSkills } from '../../lib/skills/auto-seed.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
@@ -240,6 +241,9 @@ export async function runAgentCreate(
   // Inside a claude/codex session, whatever this create produces groups under
   // that session. Detected once, up front: the env it reads does not change.
   const sessionHint = detectHostSession();
+  // `--skills` / `--skip-skills` / `--no-skills`: recorded on the box, resolved
+  // by the hub's relay each time the box asks for its skills.
+  const skillSelection = skillSelectionFromFlags(opts);
   /**
    * Record what the create produced: under the current session's manager, then
    * against `--tasks` (in that order, so the tasks inherit the manager). Never
@@ -482,6 +486,7 @@ export async function runAgentCreate(
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+          ...(skillSelection ? { skills: skillSelection } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -581,6 +586,7 @@ export async function runAgentCreate(
         ...(remoteHost ? { remoteHost } : {}),
         persistent,
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+        ...(skillSelection ? { skills: skillSelection } : {}),
         carry: carryForQueue,
         ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
       },
@@ -777,6 +783,7 @@ export async function runAgentCreate(
           ...(persistent !== undefined ? { persistent } : {}),
           ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
           ...(sessionName ? { sessionName } : {}),
+          ...(skillSelection ? { skills: skillSelection } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -848,6 +855,7 @@ export async function runAgentCreate(
         ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
         carry: carryEntries,
         ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+        ...(skillSelection ? { skills: skillSelection } : {}),
         vnc: { enabled: cfg.box.vnc },
         ...(persistent !== undefined ? { persistent } : {}),
         limits: resolveLimits(cfg.box, opts),
@@ -933,6 +941,7 @@ export async function runAgentCreate(
       ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
       carry: carryEntries,
       ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+      ...(skillSelection ? { skills: skillSelection } : {}),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },

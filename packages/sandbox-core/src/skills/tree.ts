@@ -2,16 +2,19 @@
  * Normalize a skill directory into a file list and its tree hash — the
  * library's version id.
  *
- * Symlinks are resolved on THIS machine, the same rule as the existing static
- * carry: a skill that links `SKILL.md` into a checkout uploads the file the
- * host agent actually reads. A link that does not resolve fails the skill with
- * its path named, instead of being dropped (a box would otherwise get a skill
- * missing a file the host sees). Modes collapse to 0644/0755, so the hash is the
- * same for the same content on every PC.
+ * Symlinks are resolved on THIS machine, but only within the skill: a link whose
+ * target lies outside the skill's own (real) root is reported in `outOfTreeLinks`
+ * and not followed, so a `refs -> ~/Projects/app` link can't upload a whole
+ * checkout (its `.env` included) to a hub every box reads. The skill root may
+ * itself be a link (`~/.claude/skills/x -> ~/.agents/skills/x`): its target is
+ * the root. A link that does not resolve is reported in `brokenLinks`. Either
+ * fails the skill with its path named, instead of being dropped (a box would
+ * otherwise get a skill missing a file the host sees). Modes collapse to
+ * 0644/0755, so the hash is the same for the same content on every PC.
  */
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 /** One normalized file of a skill: POSIX relative path, 0644/0755, bytes and their sha256. */
 export interface SkillFile {
@@ -29,6 +32,8 @@ export interface SkillTree {
   newestMtimeMs: number;
   /** Links that don't resolve, relative to the skill root. */
   brokenLinks: string[];
+  /** Links that resolve OUTSIDE the skill's real root, relative to it; not followed. */
+  outOfTreeLinks: string[];
 }
 
 /** Never part of a skill: VCS metadata and Finder droppings. */
@@ -52,6 +57,9 @@ export async function readSkillTree(
 ): Promise<SkillTree> {
   const files: SkillFile[] = [];
   const brokenLinks: string[] = [];
+  const outOfTreeLinks: string[] = [];
+  const rootReal = await realpath(root);
+  const inTree = (p: string): boolean => p === rootReal || p.startsWith(rootReal + sep);
   let size = 0;
   let newestMtimeMs = 0;
   // The real directories on the CURRENT path only: a link back to an ancestor is
@@ -73,6 +81,10 @@ export async function readSkillTree(
           st = await stat(childAbs);
         } catch {
           brokenLinks.push(childRel);
+          continue;
+        }
+        if (!inTree(await realpath(childAbs))) {
+          outOfTreeLinks.push(childRel);
           continue;
         }
       }
@@ -97,7 +109,7 @@ export async function readSkillTree(
   }
 
   await walk(root, '', new Set());
-  return { files, size, newestMtimeMs, brokenLinks };
+  return { files, size, newestMtimeMs, brokenLinks, outOfTreeLinks };
 }
 
 /**

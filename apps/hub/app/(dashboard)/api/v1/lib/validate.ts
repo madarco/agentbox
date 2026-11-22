@@ -276,6 +276,28 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
   const bc = optionalStringArray(v.borrowCredentials, 'opts.borrowCredentials');
   if (!bc.ok) return bc;
   if (bc.value !== undefined) out.borrowCredentials = bc.value;
+  // Library skill selection (`--skill`, `--no-skill`, `--no-skills`).
+  if (v.skills !== undefined) {
+    if (!isObject(v.skills)) return { ok: false, message: 'opts.skills must be a JSON object' };
+    const sk = v.skills;
+    const skills: NonNullable<CreateBoxOpts['skills']> = {};
+    if (sk.none !== undefined) {
+      if (typeof sk.none !== 'boolean')
+        return { ok: false, message: 'opts.skills.none must be a boolean' };
+      if (sk.none) skills.none = true;
+    }
+    for (const key of ['include', 'exclude'] as const) {
+      const list = optionalStringArray(sk[key], `opts.skills.${key}`);
+      if (!list.ok) return list;
+      if (list.value !== undefined) {
+        const bad = list.value.find((n) => !/^[a-z0-9][a-z0-9-]{0,63}$/.test(n));
+        if (bad !== undefined)
+          return { ok: false, message: `opts.skills.${key}: invalid skill name '${bad}'` };
+        skills[key] = list.value;
+      }
+    }
+    out.skills = skills;
+  }
   // promptAnswers: PromptAnswer[] — the client's answers to create-preflight.
   // Only the shape is checked here; the backend matches each id against the
   // question it actually asks, and refuses a stale one.
