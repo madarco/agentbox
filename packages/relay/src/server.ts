@@ -1445,6 +1445,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     name: reg.name,
                     ...(reg.backend ? { backend: reg.backend } : {}),
                     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+                    ...(reg.agent ? { agent: reg.agent } : {}),
                     ...(reg.autoApproveSafeHostActions === false
                       ? { autoApproveSafeHostActions: false }
                       : {}),

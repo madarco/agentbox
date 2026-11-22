@@ -39,6 +39,7 @@ import {
   type ExecResult,
   type PromptAnswer,
   type Provider,
+  primaryAgent,
   providerWarning,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
@@ -485,6 +486,7 @@ function mapBox(
     webPort: b.cloud?.webPort,
     previewUrls: b.cloud?.previewUrls,
     lastAgent: b.lastAgent,
+    ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     topology: b.cloud?.topology,
   };
@@ -613,6 +615,10 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     image: reg.image,
     webPort: reg.webPort,
     lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    // Every agent, service agents included (`lastAgent` holds only TUI ones),
+    // so a PC adopting the box keeps it: without it an adopted openclaw box
+    // looked agentless and its gateway was never started.
+    ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
     topology: 'control-plane',
@@ -1645,7 +1651,7 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-        agent: box.agents?.[0] ?? box.lastAgent,
+        agent: primaryAgent(box),
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old

@@ -78,6 +78,8 @@ export async function rehydrateFromState(): Promise<void> {
       bridgeToken: b.cloud?.bridgeToken,
       autoApproveHostActions: b.autoApproveHostActions,
       autoApproveSafeHostActions: b.autoApproveSafeHostActions,
+      agents: b.agents,
+      lastAgent: b.lastAgent,
     })),
   );
 }

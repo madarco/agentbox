@@ -170,6 +170,9 @@ export interface Box {
   previewUrls?: Record<number, string>;
   // The agent the box was created for → BoxRecord.lastAgent.
   lastAgent?: AgentId;
+  // The agents the box was created for, service agents included (openclaw is
+  // never a `lastAgent`). What `hub adopt` re-registers the box with.
+  agents?: string[];
   /** Other agents' logins this box borrows as model auth (`--model-auth`). Read-only. */
   borrowedCredentials?: string[];
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is

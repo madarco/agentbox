@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentDescriptors } from '@agentbox/sandbox-core';
+import { primaryAgent } from '@agentbox/core';
 import {
   recordAgents,
   registrationAgents,
@@ -123,17 +124,15 @@ describe('registrationToBoxRecord', () => {
  * the box's `agents.list` asks PC B's relay -> descriptors.
  */
 describe('agents.list for a box adopted on another PC', () => {
+  /** PC B adopts the registration, then its start re-registers with `primaryAgent`. */
   function servicesAfterAdoptAndStart(agent: string | undefined): string[] {
     const rec = registrationToBoxRecord(reg({ agent }), {
       controlPlaneUrl: 'https://hub.example',
       freshToken,
     });
-    // What `agentbox start` re-registers with (cloud-provider / lifecycle).
-    const reregisteredAgent = rec.agents?.[0] ?? rec.lastAgent;
-    const fromRegistration = registrationAgents({ agent: reregisteredAgent });
-    const fromRecord = recordAgents(rec);
-    expect(fromRegistration).toEqual(fromRecord);
-    return buildAgentDescriptors({ boxAgents: fromRegistration })
+    const boxAgents = registrationAgents({ agent: primaryAgent(rec) });
+    expect(boxAgents).toEqual(recordAgents(rec));
+    return buildAgentDescriptors({ boxAgents })
       .agents.filter((a) => a.service)
       .map((a) => a.id);
   }
@@ -149,5 +148,22 @@ describe('agents.list for a box adopted on another PC', () => {
 
   it('a claude box gets no service agent either', () => {
     expect(servicesAfterAdoptAndStart('claude')).toEqual([]);
+  });
+
+  it('a re-adopt keeps the agents a record already lists', () => {
+    const existing = registrationToBoxRecord(reg({ agent: 'claude' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const rec = registrationToBoxRecord(reg({ agent: 'codex' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+      existing: { ...existing, agents: ['claude', 'codex'] },
+    });
+    expect(rec.agents).toEqual(['claude', 'codex']);
+  });
+
+  it("treats 'none' as agentless in both helpers", () => {
+    expect(registrationAgents({ agent: 'none' })).toBeUndefined();
   });
 });

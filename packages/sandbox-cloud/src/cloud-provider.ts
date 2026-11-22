@@ -16,6 +16,7 @@ import { basename, resolve } from 'node:path';
 import {
   generateBoxId,
   persistentRefusal,
+  primaryAgent,
   resolveSyncTopology,
   UserFacingError,
 } from '@agentbox/core';
@@ -408,7 +409,7 @@ export function createCloudProvider(
       projectIndex: box.projectIndex,
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-      agent: box.agents?.[0] ?? box.lastAgent,
+      agent: primaryAgent(box),
     });
   }
 
@@ -660,7 +661,7 @@ export function createCloudProvider(
             publicHost: h.publicHost ?? box.cloud.publicHost,
             image: box.cloud.image,
             webPort: box.cloud.webPort,
-            agent: box.lastAgent,
+            agent: primaryAgent(box),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -685,7 +686,7 @@ export function createCloudProvider(
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
-          agent: box.agents?.[0] ?? box.lastAgent,
+          agent: primaryAgent(box),
         });
       } catch {
         // best-effort

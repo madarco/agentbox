@@ -51,15 +51,16 @@ export interface RegistrationToRecordOptions {
 }
 
 /**
- * The agents a registration says its box runs, or undefined when it never said.
- * Feeds `agents.list`: a `surface: 'service'` agent's units go only to a box
- * that runs it. Undefined (a row from an older host) keeps the ship-everything
- * answer rather than starving an openclaw box of its daemon.
+ * The agents a registration says its box runs, or undefined when it never said
+ * (an agentless box, or `'none'`). Feeds `agents.list`: a `surface: 'service'`
+ * agent's units go only to a box that names it, so undefined means NO service
+ * agent (see `buildAgentDescriptors`). Every registration of an existing box
+ * must therefore send `primaryAgent(record)`.
  */
 export function registrationAgents(
   reg: Pick<BoxRegistration, 'agent'>,
 ): readonly string[] | undefined {
-  return reg.agent ? [reg.agent] : undefined;
+  return reg.agent && reg.agent !== 'none' ? [reg.agent] : undefined;
 }
 
 /** Same answer from a BoxRecord: `agents` as created, else the last agent that ran. */
@@ -147,10 +148,12 @@ export function registrationToBoxRecord(
     // The agent the box was created for, ANY agent (a service agent such as
     // openclaw is not a `lastAgent`). Without it an adopted openclaw box looks
     // agentless to this PC, and `agents.list` hands it no gateway unit.
-    ...(reg.agent && reg.agent !== 'none'
-      ? { agents: [reg.agent] }
-      : existing?.agents
-        ? { agents: existing.agents }
+    // A record that already lists its agents keeps them (it may run several,
+    // and `reg.agent` is only the first); otherwise the registration's.
+    ...(existing?.agents && existing.agents.length > 0
+      ? { agents: existing.agents }
+      : reg.agent && reg.agent !== 'none'
+        ? { agents: [reg.agent] }
         : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),

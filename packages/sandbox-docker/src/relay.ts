@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { primaryAgent } from '@agentbox/core';
 import { randomBytes } from 'node:crypto';
 import { existsSync, openSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
@@ -697,7 +698,8 @@ export interface RegisterBoxArgs {
   /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
-   * registration without this gets every agent's (the pre-field answer).
+   * registration without this gets none. An existing box re-registers with
+   * `primaryAgent(record)`, or it loses its service agent.
    */
   agent?: string;
 }
@@ -947,6 +949,9 @@ export interface BoxWithToken {
   autoApproveHostActions?: boolean;
   /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
   autoApproveSafeHostActions?: boolean;
+  /** `BoxRecord.agents` / `lastAgent`: re-registered (via `primaryAgent`) on rehydrate. */
+  agents?: readonly string[];
+  lastAgent?: string;
 }
 
 /**
@@ -975,6 +980,10 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         bridgeToken: b.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
+        // Without it a rehydrate (relay restart, any docker create) replaced
+        // every registration with an agentless one, and an openclaw box lost
+        // its gateway on the next ctl start.
+        agent: primaryAgent(b),
       });
     } catch {
       // best-effort

@@ -147,7 +147,9 @@ export function hubBoxToRegistration(box: HubApiBox, freshToken: () => string): 
     publicHost: box.publicHost,
     image: box.image,
     webPort: box.webPort,
-    agent: box.lastAgent,
+    // `agents` first: a service agent (openclaw) is never a `lastAgent`, and a
+    // box adopted without it looks agentless here (no gateway on start).
+    agent: box.agents?.find((a) => a !== 'none') ?? box.lastAgent ?? undefined,
   };
 }
 
