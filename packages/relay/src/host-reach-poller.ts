@@ -166,7 +166,7 @@ export class HostReachPoller {
         }
         if (res.status === 401 || res.status === 403) {
           this.log(
-            'host-reach: control box rejected the admin token — poller stopping (re-run `agentbox hub setup`)',
+            'host-reach: control box rejected the credential of this machine — poller stopping (revoked? run `agentbox hub login`)',
           );
           return;
         }
@@ -263,7 +263,7 @@ export class HostReachPoller {
           if (status === 401 || status === 403) {
             res.resume();
             this.log(
-              'host-reach: control box rejected the admin token — stopping (re-run `agentbox hub setup`)',
+              'host-reach: control box rejected the credential of this machine — stopping (revoked? run `agentbox hub login`)',
             );
             finish('fatal');
             return;
