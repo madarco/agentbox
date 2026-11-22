@@ -369,3 +369,21 @@ export {
   writePtyMeta,
 } from './pty-session.js';
 export type { PtySessionMeta } from './pty-session.js';
+export {
+  ACCOUNTS_FILE,
+  AccountsFileError,
+  accountProblem,
+  decodePastedSecret,
+  encodePastedSecret,
+  findLegacyAccountSlots,
+  readAccounts,
+  readAccountSecret,
+  removeAccount,
+  upsertAccount,
+  writeAccountSecret,
+} from './llm-accounts.js';
+export type {
+  AccountStoreOptions,
+  PastedAccountSecret,
+  WriteAccountSecretResult,
+} from './llm-accounts.js';

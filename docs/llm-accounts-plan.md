@@ -1,8 +1,10 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done (2026-11-22)** — see [Phase 0 results](#phase-0-results).
+Status: **Phase 0 partly done, Phase 1 done (2026-11-22)** — see
+[Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
-(a)/(b) is blocked on account B. One phase per session.
+(a)/(b) is blocked on account B. One phase per session. Open items:
+[`llm-accounts-backlog.md`](./llm-accounts-backlog.md).
 
 ## Why
 
@@ -78,8 +80,9 @@ Which kinds an agent supports is **registry data** (`AgentSyncSpec.accountKinds`
 so plugin agents get accounts without shared code knowing their names
 (`apps/cli/test/no-agent-named-exports.test.ts` must not grow).
 
-`default` is today's slot, migrated in place on first read — no existing box,
-backup or custody object changes meaning.
+`default` is today's slot, folded in on every read (no write until the first
+mutation) — no existing box, backup or custody object changes meaning. `default`
+is always a `login`; a pasted kind needs a named account.
 
 ### Storage
 
@@ -87,8 +90,11 @@ backup or custody object changes meaning.
 - Secrets: `~/.agentbox/credentials/<agent>/<account>.json`, 0600. `default`
   keeps reading/writing the legacy `~/.agentbox/<agent>-credentials.json` path
   until a later cleanup (AgentBox is unreleased — no alias layer beyond that).
-- Custody: `agents/<agent>/<account>/<file>`; `default` stays at
-  `agents/<agent>/<file>`.
+- Custody: `agents/<agent>/accounts/<account>/<file>`; `default` stays at
+  `agents/<agent>/<file>`. (The fixed `accounts/` segment, not the bare id:
+  a plugin credential file need not contain a `.`, and `agents/foo/token` must
+  not double as account `token`'s directory. `agent add` refuses a credential
+  file named `accounts`.)
 - **Docker: split credentials from config.** The shared config volume keeps
   transcripts, settings and skills (so `--resume` works across accounts). The
   credential moves to a per-account volume `agentbox-<agent>-creds-<account>`
@@ -100,7 +106,14 @@ backup or custody object changes meaning.
   docker uses a per-account config volume plus a shared `projects/` volume
   instead (see [Phase 0 results](#phase-0-results)).
 - Cloud: staged from the account's file instead of the single backup. Daytona's
-  per-org volume gets a subpath per account (`claude/<account>/`).
+  per-org volume gets a SIBLING subpath per account (`claude-acct-<account>/`),
+  never `claude/<account>/`: a default box mounts the whole `claude/` subtree and
+  would read every named account's secret.
+- Account ids: 1-32 lowercase letters, digits, inner dashes — always one path
+  segment, never a traversal.
+- Docker volume name for a named account: `<volume>-acct-<account>`, not
+  `<volume>-<account>` — `box.isolate<Agent>Config` already mints
+  `<volume>-<boxId>` and a box id is a valid slug.
 
 ### Selection
 
@@ -543,6 +556,50 @@ codex symlink-on-refresh check, and the throwaway-account revocation timing test
 above. Delete `/home/vscode/poc-account-b` afterwards. Also for the owner:
 confirm on the key's account that usage appeared for 10:27–10:30Z on
 2026-11-22, and only for the B turns.
+
+## Phase 1 as built
+
+- **`@agentbox/core`** (`packages/core/src/sync/llm-accounts.ts`): `LlmAccount`,
+  `LlmAccountKind`, `AccountsFile`, `DEFAULT_ACCOUNT_ID`, `accountIdProblem`,
+  `accountKindProblem`, and the one derivation of each per-account name:
+  `accountSecretPath`, `accountCustodyPath`, `accountConfigVolume`,
+  `accountCloudSubpath`. `migrateAccountsFile` is the pure normalize + `default`
+  fold (drops malformed rows, keeps the first of a duplicate, an existing
+  `default` row wins over the legacy slot).
+- **`AgentSyncSpec.accountKinds`**: claude `login, setup-token, api-key`; codex
+  `login, api-key`; every other built-in absent (only `default`). Plugin specs
+  are validated at `agent add` (`accountKindsProblem`: known kinds, no
+  duplicates, `login` needs a `credential`).
+- **`@agentbox/sandbox-core`** (`packages/sandbox-core/src/llm-accounts.ts`):
+  - `readAccounts` never writes. A legacy backup counts as `default` only when
+    it passes the spec's `realShape`; `default` is listed iff that holds, and a
+    stored `default` row only adds its label. Rows the write rules refuse, and
+    an untrustworthy file, are left out of the view, so the defaults still show.
+  - Mutations (`upsertAccount`, `removeAccount`) never write the view back.
+    They edit the file's raw rows under the lock, replace or delete only their
+    own `(agent, id)` (alias spellings included), and pass every other row
+    through verbatim — a long-lived hub that has not loaded a plugin agent, or
+    an older CLI that does not know a kind, cannot delete them. The first
+    mutation adds the legacy `default`s to the file. A corrupt, wrong-shape or
+    future-version file makes mutations throw `AccountsFileError` instead of
+    rewriting it.
+  - Specs default to the live registry (`allAgentSpecs()`), not a module-load
+    snapshot.
+  - `writeAccountSecret` writes NAMED accounts only (the `default` file keeps
+    its existing guarded writer, `writeCredentialBackup`), needs the row first,
+    and runs under the accounts lock. A `login` secret must pass `realShape`
+    and the freshness rule (`written: false` for an older blob); a pasted secret
+    must be the `{kind, token}` encoding of the row's kind. Files are 0600, and
+    `credentials/` and `credentials/<agent>/` are tightened to 0700 even when
+    they already exist.
+  - `agent add` refuses a path-unsafe plugin id, a `credential.boxRelPath` that
+    is absolute, traverses, or starts with `accounts/`, and a `dockerVolume` /
+    `cloudSubpath` containing `-acct-`.
+  - Nothing calls the store yet; Phase 2 does.
+- **Where it differs from the plan above:** reads do not write (the plan said
+  "migrated in place on first read"), the `-acct-` docker volume infix, the
+  sibling Daytona subpath, the `accounts/` custody segment, and `default`
+  pinned to `login`.
 
 ## Backlog (not in these phases)
 
