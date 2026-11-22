@@ -8,6 +8,7 @@ import {
   accountEnvPolicy,
   applyAccountEnv,
   boxAccount,
+  boxesOnAccount,
   parseAccountFlags,
   resolveBoxAccounts,
 } from '../src/account-selection.js';
@@ -175,5 +176,25 @@ describe('boxAccount', () => {
     expect(boxAccount(undefined, 'claude')).toBe('default');
     expect(boxAccount({ accounts: { claude: 'work' } }, 'claude')).toBe('work');
     expect(boxAccount({ accounts: { claude: 'work' } }, 'codex')).toBe('default');
+  });
+});
+
+describe('boxesOnAccount (#442 review: accounts rm refuses while in use)', () => {
+  const boxes = [
+    { name: 'runs-work', accounts: { claude: 'work' } },
+    { name: 'borrows-work', agents: ['pi'], accounts: { claude: 'work' } },
+    { name: 'other', accounts: { claude: 'ci' } },
+    { name: 'default-box' },
+  ];
+  it('finds every box that records the account, running or borrowing it', () => {
+    expect(boxesOnAccount(boxes, 'claude', 'work').map((b) => b.name)).toEqual([
+      'runs-work',
+      'borrows-work',
+    ]);
+  });
+  it('none for an unused account, another agent, or the default', () => {
+    expect(boxesOnAccount(boxes, 'claude', 'nope')).toEqual([]);
+    expect(boxesOnAccount(boxes, 'codex', 'work')).toEqual([]);
+    expect(boxesOnAccount(boxes, 'claude', 'default')).toEqual([]);
   });
 });

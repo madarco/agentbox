@@ -111,13 +111,10 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
   accounts (or between `default` and a named account). Mounting one shared
   `agentbox-claude-projects` over every volume would hide the transcripts that
   already live inside `agentbox-claude-config`; it needs a one-time migration.
-- **A named account's refresh does not travel until Phase 4.** Docker: the
-  account volume IS the live copy (every box on the account shares it), and the
-  create/start mirror carries it back into the account's secret. Cloud: the box
-  refreshes its own copy; the relay drops its update (it names an account), so
-  another cloud box on the same account still holds the pre-refresh token —
-  the Phase 0 outage window, per account. Use a setup token for an account
-  shared by several cloud boxes.
+- ~~A named account's refresh does not travel until Phase 4~~ — done in Phase 4:
+  the relay routes a refresh to its account's copy, custody path and boxes. The
+  Phase 0 outage window (a refresh revokes the other holders until the fan-out
+  reaches them) now applies per account; a setup token still avoids it.
 - ~~The relay guard reads `~/.agentbox/state.json`~~ — it reads the box's
   REGISTRATION first now (#437-4), which also closes the cloud-create race
   (#437-5: the first credential post could beat `recordBox`), then state.json,
@@ -127,9 +124,11 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
   exposure as today's host-key spray. A 0600 file read on demand would be
   tighter (see the "box secrets" preference); not done here.
 - **Daytona: an account subpath is seeded once** (marker), like the default's.
-  A later re-login in the store reaches existing boxes only via Phase 4.
+  A later re-login in the store reaches RUNNING boxes through the Phase 4
+  fan-out; a new box on that org volume still trusts the marker.
 - **Codex named volume → store** is not mirrored back at start (claude's is);
-  codex only refreshes after ~8 days, Phase 4 covers it.
+  the Phase 4 relay route carries a codex refresh from the box's watcher to the
+  account's copy, so only a refresh while no relay was listening is missed.
 - ~~`agentbox create --account` on an agentless box~~ — now refused for any
   agent the box does not carry (only a borrowed lender can be named there);
   `agentbox <agent> --account` is the way.
@@ -154,9 +153,10 @@ rides the relay registration and the hub `Box` payload; `checkpoint
   `docker exec -e` carry a pasted account's token, visible to `ps` while docker
   runs — like today's host-key spray, but the login flow kept it off argv on
   purpose. Pass `-e KEY` and the value through execa's `env`.
-- **Settings propagate skips named boxes too** (#437-8): the Phase 3 guard sits
-  in `planPropagateTargets`, which also drives skills/plugins propagation. Gate
-  it on a flag only the credentials caller passes.
+- ~~Settings propagate skips named boxes too (#437-8)~~ — Phase 4 scopes it to
+  the source box's account instead (a pulled set can carry codex's `auth.json`).
+  Settings pulled from a default box still do not reach named boxes; a
+  login-free item set could go everywhere.
 - **`agentbox download codex <named-box>`** copies the box's `auth.json`
   (account B) into the host's `~/.codex` when the host has none, where it
   becomes the default login. Skip `auth.json` for a named box.
@@ -170,3 +170,54 @@ rides the relay registration and the hub `Box` payload; `checkpoint
 - **The named docker mirror writes the account secret from a root container**
   (`SYNC_SCRIPT` `cp -a`), outside `writeAccountSecret`'s lock. Newest-wins like
   the default path; cosmetic.
+
+## From Phase 4 (fan-out per account)
+
+- **Account rows do not travel to custody** — only the secrets. A remote control
+  box therefore still refuses a named create (it has no `accounts.json` row);
+  Phase 5 brings the account list to the hub.
+- **A pasted-kind account's secret is pushed to custody too** (so a hub can
+  seed it later); it is static, so nothing ever fans it out.
+- **`agentbox accounts rm` leaves the account's custody objects** on a control
+  box (`agents/<agent>/accounts/<id>/…`). Add the delete when Phase 5 wires the
+  hub's account list.
+- **The custody push is hash-only, not newest-wins** (Phase 4 review): a PC
+  holding an older copy of a named login re-uploads it over a newer one the
+  hub's relay recorded from a refreshing box. The default login's push has the
+  same shape today; fix both by gating the upload on the freshness field.
+- **`agentbox hub credentials pull` only pulls the default objects**: a named
+  account refreshed on the control box is not brought back to the PC. Mirror
+  `seedAccountSecretsFromCustody` on the pull side.
+- **A plugin credential whose `boxRelPath` contains `/`** is never seeded per
+  account (the custody seed expects exactly `agents/<a>/accounts/<id>/<file>`).
+  No built-in has one; compare `parts.slice(4).join('/')`.
+- **Three writers of `credentials/<agent>/<id>.json`** (the store's
+  `writeAccountSecret`, the relay, the custody seed); only the first takes the
+  accounts lock. The relay now checks the row and kind first, so the window is
+  an `accounts rm` landing between its check and its write.
+
+## From the #442 review
+
+Done in #442: `agentbox accounts rm` refuses while a box records the account
+(running or borrowing it), and the propagate planner skips a named docker box
+with no recorded volume instead of falling back to the shared default volume.
+
+- **PHASE 5 MUST DESIGN: named custody objects are keyed by account name only.**
+  Account ids are local to each PC: PC A's `claude/work` and PC B's
+  `claude/work` (a different subscription) both push to
+  `agents/claude/accounts/work/.credentials.json`, and the push is hash-only,
+  so the last pusher wins. The automatic credential sync also uploads every
+  pasted API key / setup token, which nothing on the hub reads yet. Before
+  Phase 5 consumes these objects: key them by owner/device (or carry the
+  account identity), decide whether pasted secrets travel at all, and delete
+  them on `accounts rm`.
+- **A registration-store error reads as the default account** (already on
+  nightly): `server.ts` maps a `store.getBox` rejection to undefined and falls
+  through to `state.json`. Map it to `UNVERIFIABLE_ACCOUNT`, so a box missing
+  from `state.json` too fails closed instead of routing a named login to the
+  default.
+- **The hub System page counts named-account custody objects as the agent's
+  login** (`custody-view.ts` `summarizeAgentCredentials` groups by
+  `agents/<agent>/`): a PC with only a named claude account shows Claude as
+  logged in, but a hub create gets no default login. Count only
+  `agents/<a>/<boxRelPath>`, and list accounts separately.
