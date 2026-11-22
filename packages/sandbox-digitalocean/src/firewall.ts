@@ -365,10 +365,18 @@ export async function createPerBoxFirewall(
     outbound_rules: allowAllOutboundRules(),
     tags: [opts.tag],
   };
-  const fw = await withDigitalOceanRetry(
-    { method: 'createFirewall', retryOnAmbiguous: false, attemptTimeoutMs: 60_000 },
-    () => client.createFirewall(body),
-  );
+  let fw: DigitalOceanFirewall;
+  try {
+    fw = await withDigitalOceanRetry(
+      { method: 'createFirewall', retryOnAmbiguous: false, attemptTimeoutMs: 60_000 },
+      () => client.createFirewall(body),
+    );
+  } catch (err) {
+    // The caller only cleans up once it holds a firewall id, so the tags just
+    // minted (unique to this box) would otherwise leak.
+    for (const t of [opts.tag, ...enc.tags]) await client.deleteTag(t).catch(() => undefined);
+    throw err;
+  }
   return { ...fw, deviceTags: enc.tags };
 }
 

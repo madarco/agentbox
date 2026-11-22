@@ -5,15 +5,17 @@ import {
   withInboundPolicy,
   type DeviceAllowEntry,
 } from '@agentbox/sandbox-core';
-import type {
-  DigitalOceanClient,
-  DigitalOceanFirewall,
-  DigitalOceanInboundRule,
+import {
+  DigitalOceanApiError,
+  type DigitalOceanClient,
+  type DigitalOceanFirewall,
+  type DigitalOceanInboundRule,
 } from '../src/client.js';
 import {
   allowAllOutboundRules,
   boxFirewallSources,
   controlPlaneInboundRules,
+  createPerBoxFirewall,
   decodeBoxFirewall,
   decodeDeviceTag,
   encodeBoxDevices,
@@ -282,5 +284,26 @@ describe('per-device entries in droplet tags', () => {
     expect(created).toEqual([encodeDeviceTag(disc, pcBNew)]);
     expect(tagged).toEqual([encodeDeviceTag(disc, pcBNew)]);
     expect(deleted).toEqual([encodeDeviceTag(disc, pcBOld)]);
+  });
+
+  it('deletes the tags it minted when the firewall create fails', async () => {
+    const created: string[] = [];
+    const deleted: string[] = [];
+    const client = {
+      createTag: async (t: string) => void created.push(t),
+      deleteTag: async (t: string) => void deleted.push(t),
+      createFirewall: async () => {
+        throw new DigitalOceanApiError(422, 'unprocessable_entity', 'nope');
+      },
+    } as unknown as DigitalOceanClient;
+    await expect(
+      createPerBoxFirewall(client, {
+        name: 'fw',
+        tag: BOX_TAG,
+        ssh: { staticSources: [], entries: [pcA] },
+      }),
+    ).rejects.toThrow('422');
+    expect(created.length).toBe(2);
+    expect(deleted).toEqual(created);
   });
 });
