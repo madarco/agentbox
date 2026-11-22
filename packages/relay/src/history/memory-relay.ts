@@ -50,9 +50,7 @@ export function memoryAgents(home: string = homedir()): MemoryAgent[] {
 const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
 /** Regular files under `dir` (no symlinks followed), capped like the store. */
-export async function readMemoryDir(
-  dir: string,
-): Promise<Array<{ path: string; bytes: Buffer }>> {
+export async function readMemoryDir(dir: string): Promise<Array<{ path: string; bytes: Buffer }>> {
   const out: Array<{ path: string; bytes: Buffer }> = [];
   const walk = async (abs: string, rel: string): Promise<void> => {
     let names: string[];
@@ -176,7 +174,11 @@ export class MemoryRelay {
       return { ok: false, code: 'invalid', message: 'malformed memory.put' };
     }
     const { key } = await this.keyOf(reg);
-    if (!this.deps.sink || !key || !(await (this.deps.captureEnabled ?? projectCaptureEnabled)(reg))) {
+    if (
+      !this.deps.sink ||
+      !key ||
+      !(await (this.deps.captureEnabled ?? projectCaptureEnabled)(reg))
+    ) {
       return { ok: false, code: 'disabled', message: 'memory write-back is off for this box' };
     }
     let bytes: Uint8Array | null = null;
@@ -198,7 +200,11 @@ export class MemoryRelay {
       });
       return { ok: true, ...r };
     } catch (e) {
-      return { ok: false, code: 'unavailable', message: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        code: 'unavailable',
+        message: e instanceof Error ? e.message : String(e),
+      };
     }
   }
 }

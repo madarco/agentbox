@@ -51,9 +51,7 @@ export interface MemoryRepo {
   /** Append a version (`max + 1`) atomically. */
   insert(row: NewMemoryVersion, content: Buffer | null): Promise<MemoryVersionRow>;
   /** One row per (repo, agent, scope) with its live file count and last write. */
-  sets(): Promise<
-    Array<MemoryKey & { files: number; versions: number; updatedAt: number }>
-  >;
+  sets(): Promise<Array<MemoryKey & { files: number; versions: number; updatedAt: number }>>;
 }
 
 export interface MemoryFileView {
@@ -63,7 +61,12 @@ export interface MemoryFileView {
   size: number;
   deleted: boolean;
   updatedAt: number;
-  origin: { boxId: string | null; boxName: string | null; provider: string | null; hostId: string | null };
+  origin: {
+    boxId: string | null;
+    boxName: string | null;
+    provider: string | null;
+    hostId: string | null;
+  };
 }
 
 export interface MemoryService extends HistoryMemorySink {
@@ -93,10 +96,7 @@ function view(r: MemoryVersionRow): MemoryFileView {
 
 const sha = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
-export function createMemoryService(deps: {
-  repo: MemoryRepo;
-  now?: () => number;
-}): MemoryService {
+export function createMemoryService(deps: { repo: MemoryRepo; now?: () => number }): MemoryService {
   const { repo } = deps;
   const now = deps.now ?? Date.now;
   // One writer: two puts of one path must get distinct, ordered versions.

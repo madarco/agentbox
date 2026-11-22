@@ -11,7 +11,17 @@
  *    baseline once the hub stored it.
  */
 import { createHash } from 'node:crypto';
-import { chown, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chown,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   MEMORY_FILE_MAX_BYTES,
@@ -50,7 +60,10 @@ export interface MemoryRpc {
   }): Promise<MemoryPutResult>;
 }
 
-async function call(method: string, params: unknown): Promise<{ exitCode: number; stdout: string }> {
+async function call(
+  method: string,
+  params: unknown,
+): Promise<{ exitCode: number; stdout: string }> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<{ exitCode: number; stdout: string }>((resolve) => {
     timer = setTimeout(() => resolve({ exitCode: 126, stdout: '' }), RPC_TIMEOUT_MS);
@@ -78,7 +91,11 @@ export const relayMemoryRpc: MemoryRpc = {
   async put(params) {
     const r = await call('history.memory.put', params);
     if (r.exitCode !== 0) {
-      return { ok: false, code: 'unavailable', message: `relay answered exit ${String(r.exitCode)}` };
+      return {
+        ok: false,
+        code: 'unavailable',
+        message: `relay answered exit ${String(r.exitCode)}`,
+      };
     }
     try {
       return JSON.parse(r.stdout) as MemoryPutResult;
@@ -270,7 +287,8 @@ export class MemorySync {
         const local = await scanMemoryDir(a.boxDir);
         const changes: Array<{ path: string; bytes: Buffer | null }> = [];
         for (const [p, b] of local) if (a.files[p] !== sha(b)) changes.push({ path: p, bytes: b });
-        for (const p of Object.keys(a.files)) if (!local.has(p)) changes.push({ path: p, bytes: null });
+        for (const p of Object.keys(a.files))
+          if (!local.has(p)) changes.push({ path: p, bytes: null });
         for (const c of changes) {
           const r = await this.rpc.put({
             agent,
@@ -310,7 +328,11 @@ export class MemoryLoop {
   readonly sync: MemorySync;
 
   constructor(
-    private readonly opts: { intervalMs?: number; log?: (line: string) => void; sync?: MemorySync } = {},
+    private readonly opts: {
+      intervalMs?: number;
+      log?: (line: string) => void;
+      sync?: MemorySync;
+    } = {},
   ) {
     this.sync = opts.sync ?? new MemorySync();
   }

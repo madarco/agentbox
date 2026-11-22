@@ -87,10 +87,7 @@ export async function seedDynamicConfig(
     await writeFile(manifestTmp, JSON.stringify(delta.nextManifest, null, 2));
 
     try {
-      const steps: string[] = [
-        'set -e',
-        `mkdir -p /home/vscode/.agentbox ${BOX_WORKFLOWS_DIR}`,
-      ];
+      const steps: string[] = ['set -e', `mkdir -p /home/vscode/.agentbox ${BOX_WORKFLOWS_DIR}`];
       if (staged.tarballPath) {
         await backend.uploadFile(handle, staged.tarballPath, REMOTE_TAR);
         steps.push(

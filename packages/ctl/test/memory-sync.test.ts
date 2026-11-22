@@ -42,7 +42,10 @@ describe('MemorySync', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  const reply = (files: MemorySeedReply['agents'][0]['files'], writeBack = true): MemorySeedReply => ({
+  const reply = (
+    files: MemorySeedReply['agents'][0]['files'],
+    writeBack = true,
+  ): MemorySeedReply => ({
     agents: [{ agent: 'claude', boxDir: memDir, scope: 'project', files }],
     writeBack,
   });
@@ -84,7 +87,10 @@ describe('MemorySync', () => {
     await rm(join(memDir, 'old.md'));
     expect((await s.pass()).shipped).toBe(3);
     expect(
-      f.puts.map((p) => [p.path, p.deleted ? 'deleted' : Buffer.from(p.content!, 'base64').toString()]),
+      f.puts.map((p) => [
+        p.path,
+        p.deleted ? 'deleted' : Buffer.from(p.content!, 'base64').toString(),
+      ]),
     ).toEqual([
       ['MEMORY.md', 'index v2'],
       ['new.md', 'new'],

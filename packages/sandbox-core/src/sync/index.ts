@@ -129,10 +129,7 @@ export {
   basenameUnix,
   type CarryPlan,
 } from './concerns/files.js';
-export {
-  encodeClaudeProjectsKey,
-  BOX_CLAUDE_PROJECT_DIR,
-} from './agents/claude/paths.js';
+export { encodeClaudeProjectsKey, BOX_CLAUDE_PROJECT_DIR } from './agents/claude/paths.js';
 export { findUnsyncableSymlinks } from './host-links.js';
 export {
   seedAgentsVolume,

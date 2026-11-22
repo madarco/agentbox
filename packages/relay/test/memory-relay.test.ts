@@ -72,12 +72,16 @@ describe('MemoryRelay', () => {
     const sink = fakeSink();
     const reply = await base({ sink }).seed(reg());
     expect(sink.calls[0]).toMatchObject({ op: 'seed', repoKey: 'github.com/owner/repo' });
-    expect(
-      (sink.calls[0]!.hostFiles as Array<{ path: string }>).map((f) => f.path).sort(),
-    ).toEqual(['MEMORY.md', 'sub/fact.md']);
+    expect((sink.calls[0]!.hostFiles as Array<{ path: string }>).map((f) => f.path).sort()).toEqual(
+      ['MEMORY.md', 'sub/fact.md'],
+    );
     expect(reply.writeBack).toBe(true);
     expect(reply.agents[0]!.boxDir).toBe(mem.boxDir);
-    expect(reply.agents[0]!.files!.map((f) => f.path)).toEqual(['MEMORY.md', 'sub/fact.md', 'hub.md']);
+    expect(reply.agents[0]!.files!.map((f) => f.path)).toEqual([
+      'MEMORY.md',
+      'sub/fact.md',
+      'hub.md',
+    ]);
   });
 
   it('with no hub: the host copy, no write-back', async () => {
@@ -85,9 +89,9 @@ describe('MemoryRelay', () => {
     const reply = await r.seed(reg());
     expect(reply.writeBack).toBe(false);
     expect(reply.reason).toMatch(/no hub/);
-    expect(reply.agents[0]!.files!.map((f) => Buffer.from(f.content!, 'base64').toString())).toEqual(
-      ['index', 'fact'],
-    );
+    expect(
+      reply.agents[0]!.files!.map((f) => Buffer.from(f.content!, 'base64').toString()),
+    ).toEqual(['index', 'fact']);
     expect(await r.put(reg(), { agent: 'claude', path: 'a.md', content: 'eA==' })).toMatchObject({
       ok: false,
       code: 'disabled',
@@ -132,7 +136,13 @@ describe('MemoryRelay', () => {
   });
 
   it('is reachable through runHistoryRpc', async () => {
-    const r = await runHistoryRpc(null, base({ sink: fakeSink() }), reg(), 'history.memory.seed', {});
+    const r = await runHistoryRpc(
+      null,
+      base({ sink: fakeSink() }),
+      reg(),
+      'history.memory.seed',
+      {},
+    );
     expect(r.exitCode).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ writeBack: true });
     const none = await runHistoryRpc(null, null, reg(), 'history.memory.put', {});
