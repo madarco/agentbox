@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1 and 1b implemented
-(see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what they left
-open); Phases 2+ not started.
+from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b and 2
+implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
+they left open); Phases 3+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -659,6 +659,19 @@ when the library is on.
 and a remote-docker box created from a remote hub whose VPS has no skills;
 removing it from the binding removes it from a new box; a docker box with
 `--no-skill x` doesn't see `x` while a sibling does.
+
+**Status: implemented 2026-11-22**, live-checked: a docker box (DinD, image
+built from this branch) installed the library's skills at boot, linked them into
+`/etc/claude-code/.claude/skills` and Claude Code listed them; a sibling created
+with `--skip-skills unslop` didn't get `unslop`; a skill discarded from the
+library was removed by `agentbox-ctl skills sync`; the selection survived a hub
+restart; and an e2b box (template baked from this branch) received its set over
+the cloud bridge. Not yet run: a remote-docker box from a remote hub, and
+hetzner. Deviations: flags are `--skills` / `--skip-skills` / `--no-skills`
+(commander can't give `--no-skill` a value); the canonical tree is
+`~/.local/share/agentbox/skills` (ctl runs as vscode); excluding carried copies
+is deferred; the selection resolves to current versions (no pinning yet). See
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 3 — every agent
 
