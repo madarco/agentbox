@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { setDefaultCheckpointRefusal } from '../lib/backend/accounts';
-import { parseCreateBox } from '../app/(dashboard)/api/v1/lib/validate';
+import { accountIdProblem } from '@agentbox/core';
+import { ACCOUNT_ID_RE, parseCreateBox } from '../app/(dashboard)/api/v1/lib/validate';
 
 describe('setDefaultCheckpointRefusal (#437-7)', () => {
   it('refuses a box on a named account, naming it', () => {
@@ -30,5 +31,23 @@ describe('opts.accounts on create (Phase 3)', () => {
       opts: { accounts: { claude: 'Work Laptop' } },
     });
     expect(bad.ok).toBe(false);
+  });
+});
+
+describe('the browser-safe account-id rule matches core', () => {
+  it.each([
+    'work',
+    'a',
+    'team-2',
+    'x'.repeat(32),
+    'x'.repeat(33),
+    'Work',
+    '-a',
+    'a-',
+    'a.b',
+    'a/b',
+    '',
+  ])('%j', (id) => {
+    expect(ACCOUNT_ID_RE.test(id)).toBe(accountIdProblem(id) === null);
   });
 });

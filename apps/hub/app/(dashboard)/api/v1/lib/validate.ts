@@ -1,7 +1,6 @@
 // Hand-rolled request validation for the public API boundary. The repo has no zod
 // convention (validation is typeof-guards throughout); these mirror that style and
 // return a discriminated result so routes stay a flat parse-then-act.
-import { accountIdProblem } from '@agentbox/core';
 import type {
   CloneBoxInput,
   CreateBoxInput,
@@ -285,7 +284,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     }
     const accounts: Record<string, string> = {};
     for (const [agent, id] of Object.entries(v.accounts as Record<string, unknown>)) {
-      if (typeof id !== 'string' || accountIdProblem(id) !== null) {
+      if (typeof id !== 'string' || !ACCOUNT_ID_RE.test(id)) {
         return { ok: false, message: `opts.accounts.${agent} must be an account name` };
       }
       accounts[agent] = id;
@@ -2275,3 +2274,11 @@ export function isForce(req: Request): boolean {
   const v = new URL(req.url).searchParams.get('force');
   return v === '1' || v === 'true';
 }
+
+/**
+ * The account-id rule (`accountIdProblem` in `@agentbox/core`), restated:
+ * this module is also bundled into the BROWSER (the create modal imports it),
+ * and `@agentbox/core`'s entry pulls in node builtins. `accounts-backend.test.ts`
+ * pins the two together.
+ */
+export const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
