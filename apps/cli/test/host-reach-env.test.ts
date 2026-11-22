@@ -12,7 +12,14 @@ import { applyHostReachEnvAtStartup } from '../src/host-reach-env.js';
  * disables the poller this function exists to enable. Seen on a live machine.
  */
 
-const KEEP = ['HOME', 'AGENTBOX_RELAY_ADMIN_TOKEN', 'AGENTBOX_CONTROL_PLANE_URL', 'AGENTBOX_HUB_PROFILE', 'AGENTBOX_HUB_AUTH'] as const;
+const KEEP = [
+  'HOME',
+  'AGENTBOX_RELAY_ADMIN_TOKEN',
+  'AGENTBOX_CONTROL_PLANE_URL',
+  'AGENTBOX_HUB_PROFILE',
+  'AGENTBOX_HUB_AUTH',
+  'AGENTBOX_HUB_API_KEY',
+] as const;
 const saved = new Map<string, string | undefined>();
 let home: string;
 
@@ -50,6 +57,40 @@ afterEach(async () => {
 });
 
 describe('applyHostReachEnvAtStartup', () => {
+  it('an enrolled PC presents its own device token, for the hub that issued it only', async () => {
+    await writeFile(
+      join(home, '.agentbox', 'control-plane', 'device.json'),
+      JSON.stringify({
+        hubUrl: 'https://cp.example',
+        deviceId: 'd'.repeat(32),
+        label: 'pc',
+        token: 'abdev_t',
+      }),
+      'utf8',
+    );
+    process.env.AGENTBOX_CONTROL_PLANE_URL = 'https://cp.example';
+    await applyHostReachEnvAtStartup();
+    // Beats the shared admin token on disk.
+    expect(process.env.AGENTBOX_RELAY_ADMIN_TOKEN).toBe('abdev_t');
+    expect(process.env.AGENTBOX_HUB_API_KEY).toBe('abdev_t');
+  });
+
+  it('never sends a device token to a different hub', async () => {
+    await writeFile(
+      join(home, '.agentbox', 'control-plane', 'device.json'),
+      JSON.stringify({
+        hubUrl: 'https://other.example',
+        deviceId: 'd'.repeat(32),
+        label: 'pc',
+        token: 'abdev_t',
+      }),
+      'utf8',
+    );
+    process.env.AGENTBOX_CONTROL_PLANE_URL = 'https://cp.example';
+    await applyHostReachEnvAtStartup();
+    expect(process.env.AGENTBOX_RELAY_ADMIN_TOKEN).toBe('admin-secret');
+  });
+
   it('exports the admin token from the control-plane file', async () => {
     // Only the token is asserted: `@agentbox/config` resolves HOME at import
     // time, so the URL half reads this developer's real config and is not

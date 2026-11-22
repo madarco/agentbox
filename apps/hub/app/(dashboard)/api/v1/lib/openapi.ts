@@ -147,7 +147,7 @@ export function buildOpenApi(): Record<string, unknown> {
       title: 'AgentBox Hub API',
       version: '1.0.0',
       description:
-        'Launch and manage AgentBox sandboxes ("boxes") programmatically. Every endpoint except /health, /openapi.json and /docs requires an Authorization: Bearer <hub token> header (the token the hub prints on boot, also at ~/.agentbox/hub/token). Errors always return { error: { code, message, details? } }.',
+        'Launch and manage AgentBox sandboxes ("boxes") programmatically. Every endpoint except /health, /openapi.json, /docs and the two device-enrollment calls (/devices/code, /devices/token) requires an Authorization: Bearer header: the local hub token (~/.agentbox/hub/token), the API key of a deployed hub, or a device token from `agentbox hub login`. Errors always return { error: { code, message, details? } }.',
     },
     servers: [{ url: '/api/v1' }],
     security: [{ bearerAuth: [] }],
@@ -166,6 +166,11 @@ export function buildOpenApi(): Record<string, unknown> {
         description: 'Coding agents this hub can start, and host setup for each.',
       },
       { name: 'Hosts', description: 'Remote-docker host aliases (name -> SSH connection).' },
+      {
+        name: 'Devices',
+        description:
+          'PCs enrolled on a deployed or exposed hub with `agentbox hub login`, each holding its own revocable token.',
+      },
       { name: 'Approvals', description: 'Pending host-action approvals.' },
       { name: 'Jobs', description: 'Async create/bake job status and log streams.' },
       {
@@ -2977,6 +2982,281 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/devices': {
+        get: {
+          tags: ['Devices'],
+          summary: 'List enrolled devices',
+          description:
+            "Revoked devices included. `current` is the caller's own device id when it called with a device token.",
+          responses: {
+            '200': {
+              description: 'Devices',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      devices: { type: 'array', items: { $ref: '#/components/schemas/Device' } },
+                      current: { type: ['string', 'null'] },
+                    },
+                    required: ['devices', 'current'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/code': {
+        post: {
+          tags: ['Devices'],
+          summary: 'Start enrolling a device',
+          description:
+            'Unauthenticated: the PC has no credential yet. Returns a `userCode` the owner approves at `verificationPath` in the web UI, and a secret `deviceCode` the PC polls `/devices/token` with every `interval` seconds until `expiresIn`. At most 20 codes can be open at once.',
+          security: [],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    deviceId: { type: 'string', description: "The PC's machine id" },
+                    label: { type: 'string', description: 'Display name, usually the hostname' },
+                  },
+                  required: ['deviceId'],
+                },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'Code opened',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      deviceCode: { type: 'string' },
+                      userCode: { type: 'string', description: 'XXXX-XXXX' },
+                      verificationPath: { type: 'string' },
+                      expiresIn: { type: 'number' },
+                      interval: { type: 'number' },
+                    },
+                    required: [
+                      'deviceCode',
+                      'userCode',
+                      'verificationPath',
+                      'expiresIn',
+                      'interval',
+                    ],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '429': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/token': {
+        post: {
+          tags: ['Devices'],
+          summary: 'Poll for the device token',
+          description:
+            'Unauthenticated: the `deviceCode` is the proof. 400 with code `authorization_pending` until the owner decides, then the token exactly once; `access_denied` or `expired_token` end the poll.',
+          security: [],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { deviceCode: { type: 'string' } },
+                  required: ['deviceCode'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Approved',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      token: { type: 'string' },
+                      device: { $ref: '#/components/schemas/Device' },
+                    },
+                    required: ['token', 'device'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/pending': {
+        get: {
+          tags: ['Devices'],
+          summary: 'List enrollment codes waiting for approval',
+          responses: {
+            '200': {
+              description: 'Pending codes',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      pending: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            userCode: { type: 'string' },
+                            deviceId: { type: 'string' },
+                            label: { type: 'string' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                            expiresAt: { type: 'string', format: 'date-time' },
+                            reenroll: {
+                              type: 'boolean',
+                              description: 'Approving replaces the token of an enrolled device',
+                            },
+                          },
+                          required: [
+                            'userCode',
+                            'deviceId',
+                            'label',
+                            'createdAt',
+                            'expiresAt',
+                            'reenroll',
+                          ],
+                        },
+                      },
+                    },
+                    required: ['pending'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/approve': {
+        post: {
+          tags: ['Devices'],
+          summary: 'Approve an enrollment code',
+          description:
+            'Owner only: a signed-in browser session or the API key. A device token gets 403.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { userCode: { type: 'string' } },
+                  required: ['userCode'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Approved',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { device: { $ref: '#/components/schemas/Device' } },
+                    required: ['device'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '403': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/deny': {
+        post: {
+          tags: ['Devices'],
+          summary: 'Deny an enrollment code',
+          description: 'Owner only, like approve. The polling PC gets `access_denied`.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { userCode: { type: 'string' } },
+                  required: ['userCode'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Denied' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '403': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/{id}': {
+        patch: {
+          tags: ['Devices'],
+          summary: 'Rename a device',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { label: { type: 'string' } },
+                  required: ['label'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Renamed' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/devices/{id}/revoke': {
+        post: {
+          tags: ['Devices'],
+          summary: 'Revoke a device',
+          description:
+            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. A device may revoke itself.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': { description: 'Revoked' },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/hosts': {
         get: {
           tags: ['Hosts'],
@@ -3574,7 +3854,8 @@ export function buildOpenApi(): Record<string, unknown> {
         bearerAuth: {
           type: 'http',
           scheme: 'bearer',
-          description: 'The hub token (Authorization: Bearer <token>).',
+          description:
+            'The hub token (local hub), the API key `AGENTBOX_HUB_API_KEY` (deployed hub), or the token of a device enrolled with `agentbox hub login`.',
         },
       },
       schemas: {
@@ -3586,6 +3867,19 @@ export function buildOpenApi(): Record<string, unknown> {
             profile: { type: 'string' },
           },
           required: ['ok', 'apiVersion'],
+        },
+        Device: {
+          type: 'object',
+          description: 'A PC enrolled with `agentbox hub login`; `id` is its machine id.',
+          properties: {
+            id: { type: 'string' },
+            label: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+            lastSeenAt: { type: ['string', 'null'], format: 'date-time' },
+            revokedAt: { type: ['string', 'null'], format: 'date-time' },
+            userId: { type: ['string', 'null'], description: 'Reserved for team hubs; null' },
+          },
+          required: ['id', 'label', 'createdAt', 'lastSeenAt', 'revokedAt', 'userId'],
         },
         CustodyEntry: {
           type: 'object',

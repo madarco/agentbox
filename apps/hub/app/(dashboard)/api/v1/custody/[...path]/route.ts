@@ -43,10 +43,13 @@ export const dynamic = 'force-dynamic';
  * the fail-closed invariant survives a refactor of this route.
  */
 function byteReadAllowed(req: Request): boolean {
+  const provided = req.headers.get('x-agentbox-admin-token') ?? '';
   return custodyByteReadAuthorized({
+    providedTokenIsDevice:
+      provided.length > 0 && Boolean(globalThis.__AGENTBOX_HUB_DEVICES?.verifyToken(provided)),
     mode: authMode(),
     adminToken: process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '',
-    providedToken: req.headers.get('x-agentbox-admin-token') ?? '',
+    providedToken: provided,
     // server.ts stamps this from the real socket peer after stripping any
     // client-supplied copy, so a remote caller can't forge a loopback verdict.
     isLoopback: req.headers.get(PEER_LOOPBACK_HEADER) === '1',

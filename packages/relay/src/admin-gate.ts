@@ -27,3 +27,14 @@ export function adminGateAllows(
   if (adminToken.length === 0) return false;
   return Boolean(bearer) && timingSafeEqualStr(bearer ?? '', adminToken);
 }
+
+/**
+ * Enrolled devices, as the relay sees them (multi-PC Phase 1b). Injected by the
+ * hub, which owns the devices table; the relay never opens it.
+ */
+export interface RelayDeviceAuth {
+  /** The device a token belongs to, or null (unknown, revoked, malformed). */
+  verify(token: string): { id: string; label: string } | null;
+  /** Called with the device id the moment it is revoked. Returns an unsubscribe. */
+  onRevoked(listener: (deviceId: string) => void): () => void;
+}

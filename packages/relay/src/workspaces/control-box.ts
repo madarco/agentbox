@@ -6,14 +6,15 @@
  * sink (which forwards this machine's events to the hub that owns the boxes),
  * and the CLI's queue worker. It reads the same two places `agentbox hub setup`
  * writes — `relay.controlPlaneUrl` in the layered config and
- * `AGENTBOX_HUB_API_KEY` in `~/.agentbox/control-plane/control-plane.env` — and
- * never throws.
+ * `AGENTBOX_HUB_API_KEY` in `~/.agentbox/control-plane/control-plane.env` (or,
+ * on a PC enrolled with `agentbox hub login`, its `device.json`) — and never
+ * throws.
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { loadEffectiveConfig } from '@agentbox/config';
-import { parseEnvFileBody } from '@agentbox/sandbox-core';
+import { deviceTokenFor, parseEnvFileBody } from '@agentbox/sandbox-core';
 
 /** Where `agentbox hub setup` records the control box's `/api/v1` key. */
 export function controlPlaneEnvPath(home: string = homedir()): string {
@@ -63,7 +64,10 @@ export async function resolveControlBox(
     const fileEnv = parseEnvFileBody(
       await readFile(controlPlaneEnvPath(home), 'utf8').catch(() => ''),
     );
-    const apiKey = env.AGENTBOX_HUB_API_KEY || (fileEnv.AGENTBOX_HUB_API_KEY ?? '');
+    // Explicit env, then this PC's own device token (`agentbox hub login`) for
+    // exactly this hub, then the shared key `hub setup` wrote.
+    const apiKey =
+      env.AGENTBOX_HUB_API_KEY || deviceTokenFor(url, home) || (fileEnv.AGENTBOX_HUB_API_KEY ?? '');
     return apiKey ? { url, apiKey } : null;
   } catch {
     return null;

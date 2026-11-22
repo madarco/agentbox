@@ -579,7 +579,7 @@ async function readCwdOriginUrl(root: string): Promise<string | undefined> {
 function staleNote(listing: BoxListing): string {
   if (listing.stale !== true) return '';
   if (listing.reason === 'no-token') {
-    return '\ncontrol box configured but no API key — hub boxes not shown. Run `agentbox hub setup`, or set AGENTBOX_HUB_API_KEY.';
+    return '\ncontrol box configured but no API key — hub boxes not shown. Run `agentbox hub login`, or set AGENTBOX_HUB_API_KEY.';
   }
   return listing.fetchedAt !== undefined
     ? `\nhub unreachable — showing boxes as of ${cacheAge(listing.fetchedAt)}`

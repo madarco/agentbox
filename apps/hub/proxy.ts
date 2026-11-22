@@ -1,8 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
 import { authMode, cookieSecure, hubProfile, HUB_TOKEN_COOKIE } from '@/lib/auth-config';
+import { DEVICE_ID_HEADER } from '@/lib/peer';
+import { ACTOR_HEADER } from '@/lib/request-actor';
 import { readCookieEvidence } from '@/lib/session-cookie';
 import {
+  gateActor,
   gateOutcome,
   sessionProbeOrigin,
   type GateInput,
@@ -28,8 +31,17 @@ const API_EVENTS = '/api/events';
 // The job log stream, likewise polled by headless clients — it belongs to the API
 // surface so a failure is a JSON 401 and not a redirect the client can't follow.
 const API_JOBS = '/api/jobs/';
-// Endpoints that never require auth: liveness + the spec + its docs page (no state).
-const API_PUBLIC = new Set(['/api/v1/health', '/api/v1/openapi.json', '/api/v1/docs']);
+// Endpoints that never require auth: liveness + the spec + its docs page (no state),
+// and the two halves of device enrollment a not-yet-enrolled PC must reach. Those
+// two hand out nothing without an owner's approval in the UI (see
+// lib/backend/devices.ts), and the set of open codes is bounded.
+const API_PUBLIC = new Set([
+  '/api/v1/health',
+  '/api/v1/openapi.json',
+  '/api/v1/docs',
+  '/api/v1/devices/code',
+  '/api/v1/devices/token',
+]);
 
 // Marks the middleware's own session probe so it can never recurse, however the
 // matcher below is edited later.
@@ -75,12 +87,17 @@ function readGateInput(request: NextRequest): GateInput {
   const queryTokenOk = Boolean(expectedToken) && tokenEq(providedQueryToken, expectedToken);
 
   const apiKey = process.env.AGENTBOX_HUB_API_KEY ?? '';
+  // Trusted only from the embedded server, which strips the client's copy and
+  // sets it after verifying the Bearer (lib/peer.ts). Vercel has no such server.
+  const deviceId =
+    hubProfile() === 'vercel' ? '' : (request.headers.get(DEVICE_ID_HEADER) ?? '').trim();
 
   return {
     mode,
     surface,
     publicPath: API_PUBLIC.has(pathname),
     bearerApiKeyOk: Boolean(apiKey) && tokenEq(bearer, apiKey),
+    ...(deviceId ? { deviceId } : {}),
     hubTokenOk:
       Boolean(expectedToken) &&
       (tokenEq(bearer, expectedToken) || tokenEq(cookieToken, expectedToken) || queryTokenOk),
@@ -137,10 +154,19 @@ async function probeSession(
   }
 }
 
-function render(request: NextRequest, outcome: GateOutcome, refreshed: string[]): NextResponse {
+function render(
+  request: NextRequest,
+  input: GateInput,
+  outcome: GateOutcome,
+  refreshed: string[],
+): NextResponse {
   switch (outcome.kind) {
     case 'allow': {
-      const res = NextResponse.next();
+      // Tell the route who is calling. Always set, so a client-sent copy of the
+      // header is overwritten rather than trusted.
+      const headers = new Headers(request.headers);
+      headers.set(ACTOR_HEADER, gateActor(input));
+      const res = NextResponse.next({ request: { headers } });
       // Carry the probe's refreshed session-data cookie back to the browser, so a
       // steady session costs one probe per cookie-cache window, not one per request.
       for (const c of refreshed) res.headers.append('set-cookie', c);
@@ -199,7 +225,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   if (
     input.mode === 'password' &&
     !input.publicPath &&
-    !(input.surface === 'api' && input.bearerApiKeyOk)
+    !(input.surface === 'api' && (input.bearerApiKeyOk || input.deviceId))
   ) {
     input.evidence = await readCookieEvidence(request.headers, {
       secret: process.env.BETTER_AUTH_SECRET,
@@ -214,7 +240,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     refreshed = probe.setCookie;
     outcome = gateOutcome({ ...input, probe: probe.result });
   }
-  return render(request, outcome, refreshed);
+  return render(request, input, outcome, refreshed);
 }
 
 // Proxy always runs on the Node.js runtime in Next 16, so `getSessionCookie`

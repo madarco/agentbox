@@ -11,12 +11,24 @@ export type ApiErrorCode =
   | 'conflict'
   | 'manager_unreachable'
   | 'wrong_host'
+  | 'forbidden'
+  | 'rate_limited'
+  // Device enrollment (RFC 8628 vocabulary): the CLI's poll keeps going on the
+  // first, and stops on the other two.
+  | 'authorization_pending'
+  | 'access_denied'
+  | 'expired_token'
   | 'internal';
 
 const STATUS_HINT: Record<ApiErrorCode, number> = {
   invalid_request: 400,
   unauthorized: 401,
+  forbidden: 403,
   not_found: 404,
+  rate_limited: 429,
+  authorization_pending: 400,
+  access_denied: 400,
+  expired_token: 400,
   conflict: 409,
   manager_unreachable: 409,
   // The op is fine, this hub is the wrong machine for it: `details.host` names

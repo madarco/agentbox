@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { applyDeviceCredentialEnv } from '@agentbox/sandbox-core';
 import { readControlPlaneEnvMap } from './control-plane/env-file.js';
 
 /**
@@ -28,6 +29,16 @@ import { readControlPlaneEnvMap } from './control-plane/env-file.js';
  */
 export async function applyHostReachEnvAtStartup(): Promise<void> {
   try {
+    if (!process.env.AGENTBOX_CONTROL_PLANE_URL) {
+      const loaded = await loadEffectiveConfig(process.cwd()).catch(() => null);
+      const url = (loaded?.effective.relay.controlPlaneUrl ?? '').trim().replace(/\/+$/, '');
+      if (url.length > 0) process.env.AGENTBOX_CONTROL_PLANE_URL = url;
+    }
+    // A PC enrolled with `agentbox hub login` polls with its own device token —
+    // only for the hub that issued it — and needs no shared admin token at all.
+    if (process.env.AGENTBOX_CONTROL_PLANE_URL) {
+      applyDeviceCredentialEnv(process.env, process.env.AGENTBOX_CONTROL_PLANE_URL, homedir());
+    }
     if (!process.env.AGENTBOX_RELAY_ADMIN_TOKEN) {
       // Path resolved HERE, not at module load: `homedir()` is read once at
       // import time by the module-level default, which pins the file for the
@@ -36,10 +47,6 @@ export async function applyHostReachEnvAtStartup(): Promise<void> {
       const token = readControlPlaneEnvMap(envPath).AGENTBOX_RELAY_ADMIN_TOKEN;
       if (token) process.env.AGENTBOX_RELAY_ADMIN_TOKEN = token;
     }
-    if (process.env.AGENTBOX_CONTROL_PLANE_URL) return;
-    const loaded = await loadEffectiveConfig(process.cwd());
-    const url = (loaded.effective.relay.controlPlaneUrl ?? '').trim().replace(/\/+$/, '');
-    if (url.length > 0) process.env.AGENTBOX_CONTROL_PLANE_URL = url;
   } catch {
     /* no control box configured, or an unreadable config — no poller, no crash */
   }

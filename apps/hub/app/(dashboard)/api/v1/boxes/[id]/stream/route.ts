@@ -16,6 +16,7 @@
 // Reaches the relay's in-process prompt fan-out via the __AGENTBOX_HUB_PROMPTS
 // seam (set by server.ts). Absent on the Postgres/plane topology (no in-process
 // relay) — there it degrades to open + heartbeat, same as /api/events.
+import { closeOnDeviceRevoke } from '@/lib/request-actor';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -57,15 +58,20 @@ export async function GET(
         if (backlog.status !== undefined) send('box-status', backlog.status);
       }
       const ping = setInterval(() => send('ping', { ts: new Date().toISOString() }), HEARTBEAT_MS);
-      req.signal.addEventListener('abort', () => {
+      let unwatchRevoke = (): void => {};
+      const end = (): void => {
         clearInterval(ping);
         unsub();
+        unwatchRevoke();
         try {
           controller.close();
         } catch {
           /* already closed */
         }
-      });
+      };
+      // A revoked device's stream ends now, not at its next reconnect.
+      unwatchRevoke = closeOnDeviceRevoke(req, end);
+      req.signal.addEventListener('abort', end);
     },
   });
 

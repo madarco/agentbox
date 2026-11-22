@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  gateActor,
   gateOutcome,
   sessionProbeOrigin,
   type CookieEvidence,
@@ -227,5 +228,35 @@ describe('sessionProbeOrigin', () => {
         hubPort: '8787',
       }),
     ).toBe('https://hub.vercel.app');
+  });
+});
+
+describe('gateOutcome + gateActor — device tokens', () => {
+  it('a verified device id opens the API surface on a password hub', () => {
+    expect(gateOutcome(input({ deviceId: 'abc12345' }))).toEqual({ kind: 'allow' });
+    expect(gateActor(input({ deviceId: 'abc12345' }))).toBe('device:abc12345');
+  });
+
+  it('but never the UI', () => {
+    expect(gateOutcome(input({ surface: 'page', deviceId: 'abc12345' }))).toEqual({
+      kind: 'signin-redirect',
+    });
+  });
+
+  it('means nothing on a token or locked hub', () => {
+    expect(gateOutcome(input({ mode: 'token', deviceId: 'abc12345' }))).toEqual({
+      kind: 'api-401',
+    });
+    expect(gateOutcome(input({ mode: 'locked', deviceId: 'abc12345' }))).toEqual({
+      kind: 'misconfigured',
+    });
+  });
+
+  it('names the credential that decided', () => {
+    expect(gateActor(input({ bearerApiKeyOk: true }))).toBe('api-key');
+    expect(gateActor(input({ surface: 'page', evidence: cached(NOW + 1) }))).toBe('session');
+    expect(gateActor(input({ mode: 'token', hubTokenOk: true }))).toBe('hub-token');
+    expect(gateActor(input({ mode: 'off' }))).toBe('open');
+    expect(gateActor(input({ publicPath: true }))).toBe('anonymous');
   });
 });

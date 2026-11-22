@@ -73,6 +73,12 @@ export const AUTH_DB_PATH = join(STATE_DIR, 'hub', 'auth.db');
  */
 export const STORE_DB_PATH = join(STATE_DIR, 'hub', 'store.db');
 
+/**
+ * SQLite devices table (multi-PC enrollment). Its own file so it never shares a
+ * handle with {@link STORE_DB_PATH}. Created only on a password profile.
+ */
+export const DEVICES_DB_PATH = join(STATE_DIR, 'hub', 'devices.db');
+
 /** Shared-secret file for the localhost token gate (auto-managed by server.ts). */
 export const AUTH_TOKEN_PATH = join(STATE_DIR, 'hub', 'token');
 

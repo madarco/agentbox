@@ -39,6 +39,12 @@ export interface GateInput {
   publicPath: boolean;
   /** password profile: `Authorization: Bearer` matched `AGENTBOX_HUB_API_KEY`. */
   bearerApiKeyOk: boolean;
+  /**
+   * password profile: the Bearer is an enrolled, unrevoked device's token — the id
+   * server.ts verified and stamped. Undefined when it is not (or on vercel, which
+   * has no server.ts to stamp it).
+   */
+  deviceId?: string;
   /** token profile: the bearer, the `?token=` query or the token cookie matched `AGENTBOX_HUB_TOKEN`. */
   hubTokenOk: boolean;
   /** token profile: the match came from the URL, so the cookie still has to be set. */
@@ -99,6 +105,9 @@ export function gateOutcome(i: GateInput): GateOutcome {
   // only — a leaked key still cannot reach the UI, since the page surface falls
   // through to the session check below.
   if (i.surface === 'api' && i.bearerApiKeyOk) return { kind: 'allow' };
+  // A device token is the same kind of credential, per PC and revocable — and,
+  // like the key, it never opens the UI.
+  if (i.surface === 'api' && i.deviceId) return { kind: 'allow' };
 
   // No cookie at all: deny without probing, so unauthenticated traffic can never
   // amplify into session-store lookups.
@@ -133,4 +142,29 @@ export function sessionProbeOrigin(a: {
   if (a.profile === 'vercel') return a.requestOrigin;
   const port = Number.parseInt(a.hubPort ?? '', 10);
   return `http://127.0.0.1:${String(Number.isInteger(port) && port > 0 ? port : 8787)}`;
+}
+
+/**
+ * Who an allowed request is, for the routes: stamped by the gate as
+ * `x-agentbox-actor` (overwriting any client copy). `device:<id>` is a PC holding
+ * its own token; `api-key` the operator's shared key; `session` a browser signed
+ * in with the password; `hub-token` the local single-PC hub; `open` auth is off;
+ * `anonymous` a public path. Stage 2 adds a user next to the device.
+ */
+export type GateActor =
+  | `device:${string}`
+  | 'api-key'
+  | 'session'
+  | 'hub-token'
+  | 'open'
+  | 'anonymous';
+
+/** The actor for a request {@link gateOutcome} allowed. Same precedence as the gate. */
+export function gateActor(i: GateInput): GateActor {
+  if (i.mode === 'off') return 'open';
+  if (i.mode === 'token') return i.hubTokenOk ? 'hub-token' : 'anonymous';
+  if (i.surface === 'api' && i.bearerApiKeyOk) return 'api-key';
+  if (i.surface === 'api' && i.deviceId) return `device:${i.deviceId}`;
+  if (i.evidence.kind !== 'absent') return 'session';
+  return 'anonymous';
 }

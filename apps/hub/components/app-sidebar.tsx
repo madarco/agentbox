@@ -110,6 +110,12 @@ export function AppSidebar() {
           label="Custody"
         />
         <SideItem
+          active={pathname.startsWith('/devices')}
+          to="/devices"
+          icon={Icons.host}
+          label="Devices"
+        />
+        <SideItem
           active={pathname.startsWith('/settings')}
           to="/settings"
           icon={Icons.settings}

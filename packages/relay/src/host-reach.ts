@@ -101,6 +101,12 @@ export class HostReachQueue {
   private lastPollAtMs: number | null = null;
   /** pollerId → last poll time, so "did the owner of this copy go away?" is answerable. */
   private readonly pollerSeen = new Map<string, number>();
+  /**
+   * pollerId → the device (machine id) that poller runs on. The seam for routing
+   * an action to the PC a box came from (multi-PC Phase 4): today every eligible
+   * poller is offered every action, and this is only recorded and reported.
+   */
+  private readonly pollerDevice = new Map<string, string>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: HostReachQueueOptions = {}) {
@@ -220,6 +226,22 @@ export class HostReachQueue {
    * means. Presence is what decides whether a copy waits for that machine or
    * falls back, so a live-but-quiet stream must keep it fresh.
    */
+  /** Record which device a poller runs on (see {@link pollerDevice}). */
+  identify(pollerId: string, deviceId: string): void {
+    if (deviceId) this.pollerDevice.set(pollerId, deviceId);
+  }
+
+  /** The devices with a poller present within the reachability window. */
+  devicesPresent(): string[] {
+    const now = this.now();
+    const out = new Set<string>();
+    for (const [pollerId, deviceId] of this.pollerDevice) {
+      const seen = this.pollerSeen.get(pollerId);
+      if (seen !== undefined && now - seen <= this.reachTimeoutMs) out.add(deviceId);
+    }
+    return [...out];
+  }
+
   touch(pollerId: string): void {
     const now = this.now();
     this.lastPollAtMs = now;
