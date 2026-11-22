@@ -151,17 +151,24 @@ export async function pullCloudDirContents(
   try {
     // `tar -C <dir> -czf <tarball> .` packs the contents (no leading
     // basename component) so extraction lands them in dstAbs directly.
+    //
+    // NEVER a `.git` (any depth): this is the workspace download, and the box's
+    // repo metadata unpacked over the PC's project would replace its config,
+    // HEAD, index and refs (a hub box's clone is even shallow), and could plant
+    // hooks. The box's commits reach the PC through git (push / `--host-only`),
+    // not through a file copy. Excluded on both ends: the box never packs it,
+    // and the host never unpacks one.
     const packScript = [
       `set -euo pipefail`,
       `cd ${quoteShellArg(boxSrcDir)}`,
-      `tar -czf ${quoteShellArg(REMOTE_DOWN_TAR)} .`,
+      `tar -czf ${quoteShellArg(REMOTE_DOWN_TAR)} --exclude=.git .`,
     ].join('\n');
     const r = await backend.exec(handle, bashScript(packScript));
     if (r.exitCode !== 0) {
       throw new Error(`cloud workspace pack failed: ${r.stderr || r.stdout}`);
     }
     await backend.downloadFile(handle, REMOTE_DOWN_TAR, localTar);
-    await execa('tar', ['-xzf', localTar, '-C', dstAbs]);
+    await execa('tar', ['-xzf', localTar, '-C', dstAbs, '--exclude=.git']);
     await backend.exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`).catch(() => {
       /* best-effort */
     });

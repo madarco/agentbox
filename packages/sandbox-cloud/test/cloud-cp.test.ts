@@ -4,7 +4,7 @@ import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { downloadFromCloudBox, uploadToCloudBox } from '../src/cloud-cp.js';
+import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from '../src/cloud-cp.js';
 import { makeMockCloudBackend } from '../src/mock-backend.js';
 
 let workspace: string;
@@ -141,5 +141,29 @@ describe('cloud cp multi-source', () => {
     await expect(
       downloadFromCloudBox(backend, handle, ['/workspace/a', '/workspace/b'], dst),
     ).rejects.toThrow(/destination is not a directory/);
+  });
+});
+
+describe('the workspace download never unpacks a .git (#432, owner decision)', () => {
+  it("leaves the destination's .git untouched, and still lands the files", async () => {
+    const box = join(workspace, 'box-ws');
+    await mkdir(join(box, '.git'), { recursive: true });
+    await mkdir(join(box, 'nested', '.git'), { recursive: true });
+    await writeFile(join(box, '.git', 'HEAD'), 'ref: refs/heads/agentbox/box\n');
+    await writeFile(join(box, '.git', 'config'), '[core]\n\tshallow = true\n');
+    await writeFile(join(box, 'nested', '.git', 'HEAD'), 'box nested\n');
+    await writeFile(join(box, 'app.ts'), 'from the box');
+    const host = join(workspace, 'host-project');
+    await mkdir(join(host, '.git'), { recursive: true });
+    await writeFile(join(host, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await writeFile(join(host, '.git', 'config'), '[remote "origin"]\n');
+    await writeFile(join(host, 'app.ts'), 'old');
+
+    await pullCloudDirContents(localBackend(), {} as CloudHandle, box, host);
+
+    expect(await readFile(join(host, 'app.ts'), 'utf8')).toBe('from the box');
+    expect(await readFile(join(host, '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n');
+    expect(await readFile(join(host, '.git', 'config'), 'utf8')).toBe('[remote "origin"]\n');
+    await expect(readFile(join(host, 'nested', '.git', 'HEAD'), 'utf8')).rejects.toThrow();
   });
 });
