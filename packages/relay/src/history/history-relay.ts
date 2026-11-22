@@ -84,7 +84,7 @@ const captureCache = new Map<string, { at: number; value: boolean }>();
  * the box record's `projectRoot` (a cloud box re-registered after a restart
  * carries no worktrees).
  */
-async function projectRootOf(reg: BoxRegistration): Promise<string | null> {
+export async function projectRootOf(reg: BoxRegistration): Promise<string | null> {
   const fromReg = reg.worktrees?.[0]?.hostMainRepo;
   if (fromReg) return fromReg;
   try {
@@ -141,6 +141,11 @@ export class HistoryRelay {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /** Exact host-secret redaction, for memory files on their way to the store. */
+  async redact(bytes: Uint8Array): Promise<Uint8Array> {
+    return (await this.hostRedactor()).redact(bytes).bytes;
   }
 
   private async hostRedactor(): Promise<Redactor> {

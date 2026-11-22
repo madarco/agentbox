@@ -183,13 +183,11 @@ export { dockerCredentialRefresh } from './credential-refresh.js';
 // existing `@agentbox/sandbox-docker` importers.
 export {
   encodeClaudeProjectsKey,
-  resolveClaudeMemoryDir,
   BOX_CLAUDE_PROJECT_DIR,
   type StageResult,
 } from '@agentbox/sandbox-core';
 export {
   BOX_WORKFLOWS_DIR,
-  BOX_MEMORY_DIR,
   BOX_DYNAMIC_SYNC_MANIFEST,
   buildHostSyncManifest,
   computeSyncDelta,

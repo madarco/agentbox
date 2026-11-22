@@ -1,7 +1,7 @@
 // A destroy's final history flush (docs/agent-history-plan.md, Phase 1): ship
 // whatever the box's bound sessions still hold before the disk goes away.
-// Docker boxes are read host-side by the relay; every other provider runs the
-// in-box shipper once. Time-boxed and best-effort: losing history must never
+// Docker transcripts are read host-side by the relay; everything else (other
+// providers' transcripts, every provider's memory) by the in-box shipper, once. Time-boxed and best-effort: losing history must never
 // block a destroy.
 import type { BoxRecord, ExecOptions, ExecResult } from '@agentbox/core';
 
@@ -27,18 +27,21 @@ export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): P
   // A paused or stopped cloud box is not woken for its history: resuming bills
   // and boots it, and its last turn was shipped before it went idle unless it
   // was cut off mid-pass. A docker box is read host-side in any state.
+  // The in-box flush ships memory on every provider (memory is on the box's own
+  // disk) and transcripts on the non-docker ones. It needs a running box.
+  const inBox = deps.probeState(box).then(async (state) => {
+    if (state !== 'running') {
+      if (!isDocker) deps.log(`history: ${box.name} is ${state}; skipping the final flush`);
+      return;
+    }
+    const r = await deps.exec(box, ['agentbox-ctl', 'history', 'flush']);
+    if (r.exitCode !== 0) {
+      deps.log(`history: final flush of ${box.name} exited ${String(r.exitCode)}`);
+    }
+  });
   const work = isDocker
-    ? deps.relayHistory.flushBox(box.id)
-    : deps.probeState(box).then(async (state) => {
-        if (state !== 'running') {
-          deps.log(`history: ${box.name} is ${state}; skipping the final flush`);
-          return;
-        }
-        const r = await deps.exec(box, ['agentbox-ctl', 'history', 'flush']);
-        if (r.exitCode !== 0) {
-          deps.log(`history: final flush of ${box.name} exited ${String(r.exitCode)}`);
-        }
-      });
+    ? Promise.all([deps.relayHistory.flushBox(box.id), inBox.catch(() => undefined)])
+    : inBox;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), deps.timeoutMs ?? HISTORY_FLUSH_TIMEOUT_MS);

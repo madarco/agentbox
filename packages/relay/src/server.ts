@@ -105,9 +105,10 @@ import {
   CredentialsFanout,
   stateBoxAccount,
 } from './credentials-fanout.js';
-import type { HistoryIngestSink } from '@agentbox/core';
+import type { HistoryIngestSink, HistoryMemorySink } from '@agentbox/core';
 import { HistoryRelay } from './history/history-relay.js';
 import { runHistoryRpc } from './history/rpc.js';
+import { MemoryRelay } from './history/memory-relay.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import { WriteThroughStore } from './store/write-through-store.js';
@@ -243,6 +244,12 @@ export interface RelayServerOptions {
    * `history.*` RPCs; absent (a relay with no hub) ⇒ both answer `disabled`.
    */
   history?: HistoryIngestSink;
+  /**
+   * The hub's agent-memory store (docs/agent-history-plan.md, Phase 4). Absent
+   * ⇒ `history.memory.seed` still answers with this machine's host copy, and
+   * `history.memory.put` answers `disabled`.
+   */
+  memory?: HistoryMemorySink;
 }
 
 export interface RelayServerHandle {
@@ -441,8 +448,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       ? new HistoryRelay({ sink: opts.history, listBoxes: () => store.listBoxes(), log })
       : null;
   historyRelay?.start();
+  const memoryRelay =
+    (opts.mode ?? 'host') !== 'box'
+      ? new MemoryRelay({
+          ...(opts.memory ? { sink: opts.memory } : {}),
+          ...(historyRelay ? { redact: (b: Uint8Array) => historyRelay.redact(b) } : {}),
+          log,
+        })
+      : null;
   const historyRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
-    runHistoryRpc(historyRelay, reg, method, params);
+    runHistoryRpc(historyRelay, memoryRelay, reg, method, params);
   const events = new EventBuffer();
   const statusStore = new BoxStatusStore();
   const prompts = new PendingPrompts();

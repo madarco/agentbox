@@ -12,7 +12,6 @@
 export {
   BOX_WORKFLOWS_DIR,
   BOX_DYNAMIC_SYNC_MANIFEST,
-  BOX_MEMORY_DIR,
   buildHostSyncManifest,
   computeSyncDelta,
   stageDynamicSyncTarball,

@@ -1,6 +1,8 @@
 /**
- * Concern: dynamic Claude config — the global `~/.claude/workflows/` scripts and
- * the current project's `memory/` tree. Unlike the static config
+ * Concern: dynamic Claude config — the global `~/.claude/workflows/` scripts.
+ * (Project memory used to ride here too; it now comes from the hub, which seeds
+ * each box and keeps every version — docs/agent-history-plan.md, Phase 4.)
+ * Unlike the static config
  * (plugins/skills/settings) that the cloud path bakes into the prepare-time
  * snapshot, these change between runs and must be refreshed per-box at create —
  * like credentials.
@@ -30,7 +32,6 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/p
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execa } from 'execa';
-import { BOX_CLAUDE_PROJECT_DIR, resolveClaudeMemoryDir } from '../agents/claude/paths.js';
 
 /** In-box destination for the global workflow scripts. */
 export const BOX_WORKFLOWS_DIR = '/home/vscode/.claude/workflows';
@@ -38,10 +39,7 @@ export const BOX_WORKFLOWS_DIR = '/home/vscode/.claude/workflows';
 /** In-box path of the per-box dynamic-sync manifest (rides along in checkpoints). */
 export const BOX_DYNAMIC_SYNC_MANIFEST = '/home/vscode/.agentbox/dynamic-sync.json';
 
-/** In-box destination for the current project's rekeyed memory. */
-export const BOX_MEMORY_DIR = `${BOX_CLAUDE_PROJECT_DIR}/memory`;
-
-export type DynamicSyncSetName = 'workflows' | 'memory';
+export type DynamicSyncSetName = 'workflows';
 
 /** A set's box destination dir + per-file content hashes (relpath -> sha256 hex). */
 export interface DynamicSyncSet {
@@ -149,26 +147,21 @@ async function buildHostSet(
 }
 
 /**
- * Hash the host's workflow + memory sets. `workspacePath` is the host-absolute
- * project path (used to locate the project's memory dir); `hostHome` is
- * overridable for tests. Sets with nothing on the host get an empty `files` map
- * and `hostDir: null` so the diff can still emit deletions for them.
+ * Hash the host's workflow set. `hostHome` is overridable for tests. A set with
+ * nothing on the host gets an empty `files` map and `hostDir: null` so the diff
+ * can still emit deletions for it.
  */
 export async function buildHostSyncManifest(
-  workspacePath: string,
   hostHome: string = homedir(),
 ): Promise<HostSyncManifest> {
   const workflowsDir = join(hostHome, '.claude', 'workflows');
   const workflowsHost = (await pathExists(workflowsDir)) ? workflowsDir : null;
-  const memoryHost = await resolveClaudeMemoryDir(workspacePath, hostHome);
-  const [workflows, memory] = await Promise.all([
-    buildHostSet('workflows', workflowsHost, BOX_WORKFLOWS_DIR),
-    buildHostSet('memory', memoryHost, BOX_MEMORY_DIR),
-  ]);
-  return { sets: { workflows, memory } };
+  return { sets: { workflows: await buildHostSet('workflows', workflowsHost, BOX_WORKFLOWS_DIR) } };
 }
 
-const SET_NAMES: DynamicSyncSetName[] = ['workflows', 'memory'];
+// A box manifest written before memory moved to the hub still carries a
+// `memory` set; only these names are read, so it is ignored.
+const SET_NAMES: DynamicSyncSetName[] = ['workflows'];
 
 /**
  * Diff the host manifest against the manifest the box already carries. A file
@@ -216,7 +209,7 @@ export interface StagedTarball {
 
 /**
  * Pack the upload files into one gzip tarball laid out by set name
- * (`workflows/<rel>`, `memory/<rel>`). The box extracts into a staging dir and
+ * (`workflows/<rel>`). The box extracts into a staging dir and
  * `cp -a`s each set into its destination, so tar never touches the perms of
  * shared parent dirs (`/`, `/home`). Returns `{ tarballPath: null }` when
  * `uploads` is empty.
