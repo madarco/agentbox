@@ -65,6 +65,7 @@ describe('MemoryRelay', () => {
       agents,
       captureEnabled: async () => true,
       projectRoot: async () => root,
+      gitOrigin: async () => undefined,
       ...over,
     });
 
@@ -147,5 +148,13 @@ describe('MemoryRelay', () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ writeBack: true });
     const none = await runHistoryRpc(null, null, reg(), 'history.memory.put', {});
     expect(JSON.parse(none.stdout)).toMatchObject({ ok: false, code: 'disabled' });
+  });
+
+  it('a registration without originUrl (re-pushed after a restart) keys by the folder origin', async () => {
+    const sink = fakeSink();
+    await base({ sink, gitOrigin: async () => 'https://github.com/owner/repo.git' }).seed(
+      reg({ originUrl: undefined }),
+    );
+    expect(sink.calls[0]).toMatchObject({ repoKey: 'github.com/owner/repo' });
   });
 });

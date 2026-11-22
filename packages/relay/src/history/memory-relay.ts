@@ -15,6 +15,7 @@ import {
 } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import type { BoxRegistration } from '../types.js';
 import { isDockerBox, projectCaptureEnabled, projectRootOf } from './history-relay.js';
 
@@ -85,6 +86,16 @@ export interface MemoryRelayDeps {
   agents?: () => MemoryAgent[];
   captureEnabled?: (reg: BoxRegistration) => Promise<boolean>;
   projectRoot?: (reg: BoxRegistration) => Promise<string | null>;
+  gitOrigin?: (folder: string) => Promise<string | undefined>;
+}
+
+/** `origin` of a folder on this machine, or undefined. */
+export function gitOrigin(folder: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', folder, 'remote', 'get-url', 'origin'], { timeout: 5_000 }, (err, out) =>
+      resolve(err ? undefined : out.trim() || undefined),
+    );
+  });
 }
 
 export class MemoryRelay {
@@ -94,13 +105,19 @@ export class MemoryRelay {
     return (this.deps.agents ?? memoryAgents)();
   }
 
-  /** `(repo key, project root)` of a box; the key is null when nothing names its repo. */
+  /**
+   * `(repo key, project root)` of a box; the key is null when nothing names its
+   * repo. A registration re-pushed from state after a relay restart carries no
+   * `originUrl`, so the project folder's `origin` is read before falling back
+   * to the local key: the key must not change with how the box registered.
+   */
   private async keyOf(reg: BoxRegistration): Promise<{ key: string | null; root: string | null }> {
     const root = await (this.deps.projectRoot ?? projectRootOf)(reg);
     const machineId = tryGetMachineId() ?? undefined;
+    const origin =
+      reg.originUrl ?? (root ? await (this.deps.gitOrigin ?? gitOrigin)(root) : undefined);
     const key =
-      repoKey(reg.originUrl, { machineId }) ??
-      (root && machineId ? `local:${machineId}:${root}` : null);
+      repoKey(origin, { machineId }) ?? (root && machineId ? `local:${machineId}:${root}` : null);
     return { key, root };
   }
 

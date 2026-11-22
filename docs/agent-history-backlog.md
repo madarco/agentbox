@@ -198,3 +198,19 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   - *Two copies of claude's project-key rule.* `hostProjectKey('dashed-path')`
     in core duplicates `encodeClaudeProjectsKey` in sandbox-core. Make
     sandbox-core use the core helper.
+- **From the Phase 4 live check (docker, isolated hub):**
+  - *claude honouring `autoMemoryDirectory` is not yet observed live.* The
+    box's claude login had expired, so the memory file was written as the box
+    user in claude's place. Seed, write-back, the destroy, box B and `pull`
+    were all real. claude 2.1.323's own code reads the key from policy
+    settings. Re-check with a logged-in turn.
+  - *Seeded by a hubless relay.* Box A's first boot reached a standalone
+    `agentbox-relay` (no hub) that the hub replaced a minute later. It got
+    the host copy, and write-back stayed off for the 10-minute backoff,
+    then shipped normally. A box seeded that way misses the hub's newer
+    versions. Re-asking for the seed when write-back first succeeds would
+    fix it.
+  - *Transcripts have the same `originUrl` gap.* A registration re-pushed
+    after a relay restart has no `originUrl`, so `HistoryRelay` stamps no
+    `projectRepoUrl` on that box's sessions. Memory now reads the folder's
+    `origin` (fixed in this phase); transcripts should do the same.
