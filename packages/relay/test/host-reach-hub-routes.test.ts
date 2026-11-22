@@ -148,7 +148,7 @@ describe('host-reach routing on the control box', () => {
     expect(answer.status).toBe(500);
     // One machine declined, the other was offline: the lead says a machine
     // declined, and does not send the user to start AgentBox.
-    expect(answer.body.stderr.split('\n')[0]).toMatch(/at least one declined/);
+    expect((answer.body.stderr ?? '').split('\n')[0]).toMatch(/at least one declined/);
     expect(answer.body.stderr).not.toMatch(/agentbox relay start/);
     expect(answer.body.stderr).toMatch(/Machines tried, in order:/);
     // fromHost copies host -> box: the hint says so (it used to be reversed).
