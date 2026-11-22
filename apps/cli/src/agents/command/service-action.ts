@@ -623,10 +623,33 @@ export async function runServiceAgent(
           cmdLog.write(line);
         },
       });
-      if (r.installed) {
-        log.info(`${spec.id} installed into this box; restarting the supervisor units`);
+      if (r.installed) log.info(`${spec.id} installed into this box`);
+      // Every run against an existing box, not only when something changed: a
+      // box whose agent is recorded but whose ctl never got the units (it came
+      // up before the agent was registered) recovers by running this again.
+      if (r.installed || existing) {
+        const outcome = await reloadAgentUnits(provider, box);
+        if (outcome === 'needs-restart') {
+          // A ctl baked before `reload --agents` re-folds only the units it
+          // already has. A restart makes it ask `agents.list` on boot.
+          log.info(
+            `this box's supervisor predates live agent reloads; restarting ${box.name} through its hub so it picks up ${spec.id}`,
+          );
+          const target = box;
+          for (const action of ['stop', 'start'] as const) {
+            const res = await withOwningHub(target, (client) =>
+              client.lifecycle(target.id, action),
+            );
+            if (res !== 'ok') {
+              throw new Error(
+                `could not ${action} ${box.name} through its hub; run \`agentbox stop ${box.name}\` then \`agentbox start ${box.name}\``,
+              );
+            }
+          }
+          const fresh = (await readState()).boxes.find((b) => b.id === box.id);
+          if (fresh) box = fresh;
+        }
       }
-      if (r.installed || learnedAgent) await reloadAgentUnits(provider, box);
     }
 
     const s = makeProgressReporter(opts.verbose === true);
@@ -712,22 +735,22 @@ export async function runServiceAgent(
 
 /**
  * Have the box's running ctl re-ask `agents.list` and apply the units (an agent
- * added to a box that was already up never re-asks on its own). A ctl baked
- * before `reload --agents` existed rejects the flag: it gets a plain reload,
- * which still restarts the units it already had.
+ * added to a box that was already up never re-asks on its own).
+ *
+ * `'needs-restart'` when the box's baked ctl predates `reload --agents`: a plain
+ * reload there would only re-fold the units it already has (none, on a box that
+ * was agentless), so the caller restarts the box instead.
  */
 export async function reloadAgentUnits(
   provider: { exec: Provider['exec'] },
   box: BoxRecord,
-): Promise<void> {
+): Promise<'reloaded' | 'needs-restart' | 'failed'> {
   const r = await provider
     .exec(box, ['agentbox-ctl', 'reload', '--agents'], { user: 'vscode' })
     .catch(() => null);
-  if (r && r.exitCode === 0) return;
-  if (r && /unknown option/.test(r.stderr)) {
-    await provider.exec(box, ['agentbox-ctl', 'reload'], { user: 'vscode' }).catch(() => {});
-    return;
-  }
+  if (r && r.exitCode === 0) return 'reloaded';
+  if (r && /unknown option/.test(r.stderr)) return 'needs-restart';
   const why = r ? r.stderr.trim() || `exit ${String(r.exitCode)}` : 'the box did not answer';
   log.warn(`the box's supervisor did not pick up its agents (${why})`);
+  return 'failed';
 }

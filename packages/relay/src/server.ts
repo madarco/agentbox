@@ -1975,7 +1975,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       controlPlane: opts.controlPlane === true,
                       originUrl: reg.originUrl,
-                      boxAgents: registrationAgents(reg),
+                      // The CURRENT registration, not the one this poller was
+                      // started with: an agent added to a running box
+                      // (`agentbox openclaw <box>`) is a store write, and the
+                      // box's next `agents.list` must already see it.
+                      boxAgents: registrationAgents(
+                        (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
+                      ),
                       log,
                     });
                     await respond(result);

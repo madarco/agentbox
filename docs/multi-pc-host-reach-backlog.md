@@ -74,10 +74,16 @@ for teams PCs must never hold it (device tokens only).
   `@madarco/agentbox-provider-sdk`: plugin providers get the control-plane resume
   fix (`primaryAgent`) only after the SDK is rebuilt and republished (no
   `SDK_API_VERSION` bump: not an API break). The owner publishes.
-- **A box running a TUI agent AND a service agent** (`['claude', 'openclaw']`):
-  a registration carries one agent, `primaryAgent` returns the first, so the
-  service agent gets no units. Not a regression (a claude box registered `claude`
-  before #429 too). Fix: carry the full list on the registration (`agents: string[]`).
+- **A box running a TUI agent AND a service agent loses the service agent's units on
+  its next start.** `agentbox openclaw <a claude box>` makes the hub set
+  `reg.agent = 'openclaw'` (the gateway comes up), and the record becomes
+  `agents: ['claude', 'openclaw']`. But every later re-registration (start, resume,
+  rehydrate) sends `primaryAgent(record)`, which is `'claude'`, so after the first
+  restart `agents.list` ships no openclaw units and the gateway is gone. A registration
+  carries one agent. Fix: carry the full list on the registration (`agents: string[]`),
+  or have `primaryAgent` prefer a service agent. Not a regression: a claude box
+  registered `claude` before #429 too.
+
 ## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
 
 - **Direct attach / shell / `cp` from a computer that did not deploy the control box
@@ -149,3 +155,10 @@ for teams PCs must never hold it (device tokens only).
   call 401s and a hub stop + start does not heal it. Recreate such a box. Root cause
   (PC records can carry a different `relayToken` than the hub's) predates #429: any
   remaining PC-local `registerBoxWithPlane` path can do the same.
+
+- **Host off: a classic cloud box's `agents.list` retries pile up.** With the PC asleep
+  (or an independent box), each retry parks another `agents.list` on the in-box queue
+  (13 in all, about 11 minutes with the 30 s timeouts) and holds an in-box socket. On
+  reconnect the poller drains and answers all of them (read-only, unprompted). An
+  unregistered hub-built box logs 13 "relay returned 401" lines over about 5 minutes.
+  Minor; fix: drop a parked `agents.list` when a newer one from the same box is queued.
