@@ -33,7 +33,7 @@ function setup(devices: Record<string, string>, opts: { graceMs?: number } = {})
 }
 
 describe('HostReachQueue routing', () => {
-  it('offers a routed action to the origin PC, with that PC\'s own checkout', async () => {
+  it("offers a routed action to the origin PC, with that PC's own checkout", async () => {
     const { q } = setup({ pa: 'pc-a', pb: 'pc-b', pz: 'pc-z' });
     const pending = q.request('box1', 'cp.fromHost', { sources: ['x'], dest: '/w' }, { route });
     // pc-z has no checkout of the repo: it is never offered the action.
@@ -66,7 +66,7 @@ describe('HostReachQueue routing', () => {
     // Every candidate tried: settles at once instead of waiting out the grace.
     await expect(pending).resolves.toEqual({
       kind: 'unreachable',
-      reason: 'never-connected',
+      reason: 'declined',
       tried: [
         {
           deviceId: 'pc-a',
@@ -126,6 +126,46 @@ describe('HostReachQueue routing', () => {
     await expect(pending).resolves.toMatchObject({ result: { stdout: 'a again' } });
   });
 
+  it('does not let any caller settle a routed action without naming its poller', async () => {
+    const { q } = setup({ pa: 'pc-a' });
+    const pending = q.request('box1', 'cp.fromHost', {}, { route });
+    const [action] = await q.poll(5, 'pa');
+    expect(q.resolve(action!.id, { exitCode: 0, stdout: 'forged', stderr: '' })).toBe(false);
+    expect(q.decline(action!.id)).toBe(false);
+    expect(q.resolve(action!.id, { exitCode: 0, stdout: 'real', stderr: '' }, 'pb')).toBe(false);
+    q.resolve(action!.id, { exitCode: 0, stdout: 'real', stderr: '' }, 'pa');
+    await expect(pending).resolves.toMatchObject({ result: { stdout: 'real' } });
+  });
+
+  it('goes straight to the fallback when no machine may serve it', async () => {
+    const { q } = setup({ pz: 'pc-z' });
+    await expect(
+      q.request('box1', 'cp.fromHost', {}, { route: { candidates: [] } }),
+    ).resolves.toEqual({
+      kind: 'unreachable',
+      reason: 'never-connected',
+      tried: [],
+    });
+  });
+
+  it('waits for a present candidate between polls when the owner goes away', async () => {
+    const { q, advance } = setup({ pa: 'pc-a', pb: 'pc-b' });
+    const pending = q.request('box1', 'cp.fromHost', {}, { route });
+    const [taken] = await q.poll(5, 'pa');
+    // pc-a goes silent; pc-b is present but has no poll open when the sweep runs.
+    advance(150);
+    q.touch('pb');
+    await new Promise((r) => setTimeout(r, 40));
+    let settled = false;
+    void pending.then(() => (settled = true));
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+    const [again] = await q.poll(5, 'pb');
+    expect(again?.id).toBe(taken!.id);
+    q.resolve(again!.id, { exitCode: 0, stdout: 'b', stderr: '' }, 'pb');
+    await expect(pending).resolves.toMatchObject({ result: { stdout: 'b' } });
+  });
+
   it('never hands a routed action to a poller with no verified device', async () => {
     const { q } = setup({}, { graceMs: 20 });
     const pending = q.request('box1', 'cp.fromHost', {}, { route });
@@ -153,7 +193,7 @@ describe('HostReachQueue poller binding', () => {
     expect(q.deviceOf('p1')).toBe('pc-a');
   });
 
-  it('a device cannot take another device\'s routed work by reusing its poller id', async () => {
+  it("a device cannot take another device's routed work by reusing its poller id", async () => {
     const { q } = setup({ pa: 'pc-a' });
     const pending = q.request('box1', 'cp.fromHost', {}, { route });
     expect(q.identify('pa', 'pc-z')).toBe(false);
@@ -175,13 +215,36 @@ describe('hostReachRouteFor', () => {
     originMachineLabel: 'laptop',
   };
   const checkouts = [
-    { repoKey: KEY, machineId: 'pc-a', folder: '/Users/a/app', label: 'laptop', seenAt: '2026-11-20T00:00:00Z' },
-    { repoKey: KEY, machineId: 'pc-b', folder: '/home/b/app', label: 'desk', seenAt: '2026-11-21T00:00:00Z' },
-    { repoKey: 'github.com/acme/other', machineId: 'pc-c', folder: '/srv/other', label: 'srv', seenAt: '2026-11-22T00:00:00Z' },
+    {
+      repoKey: KEY,
+      machineId: 'pc-a',
+      folder: '/Users/a/app',
+      label: 'laptop',
+      seenAt: '2026-11-20T00:00:00Z',
+    },
+    {
+      repoKey: KEY,
+      machineId: 'pc-b',
+      folder: '/home/b/app',
+      label: 'desk',
+      seenAt: '2026-11-21T00:00:00Z',
+    },
+    {
+      repoKey: 'github.com/acme/other',
+      machineId: 'pc-c',
+      folder: '/srv/other',
+      label: 'srv',
+      seenAt: '2026-11-22T00:00:00Z',
+    },
   ];
 
   it('routes a repo-relative copy to the origin, then PCs with the repo', () => {
-    const r = hostReachRouteFor(reg, 'cp.fromHost', { sources: ['data.csv'], dest: '/workspace' }, checkouts);
+    const r = hostReachRouteFor(
+      reg,
+      'cp.fromHost',
+      { sources: ['data.csv'], dest: '/workspace' },
+      checkouts,
+    );
     expect(r).toEqual({
       kind: 'routed',
       route: {
@@ -195,27 +258,68 @@ describe('hostReachRouteFor', () => {
   });
 
   it('routes a host-absolute path, or a copy mixing one in, to the origin only', () => {
-    const abs = hostReachRouteFor(reg, 'cp.toHost', { sources: ['/workspace/out'], dest: '/Users/a/Downloads' }, checkouts);
+    const abs = hostReachRouteFor(
+      reg,
+      'cp.toHost',
+      { sources: ['/workspace/out'], dest: '/Users/a/Downloads' },
+      checkouts,
+    );
     expect(abs.kind === 'routed' && abs.route.candidates.map((c) => c.deviceId)).toEqual(['pc-a']);
-    const mixed = hostReachRouteFor(reg, 'cp.fromHost', { sources: ['data.csv', '/Users/a/.npmrc'], dest: '/workspace' }, checkouts);
-    expect(mixed.kind === 'routed' && mixed.route.candidates.map((c) => c.deviceId)).toEqual(['pc-a']);
+    const mixed = hostReachRouteFor(
+      reg,
+      'cp.fromHost',
+      { sources: ['data.csv', '/Users/a/.npmrc'], dest: '/workspace' },
+      checkouts,
+    );
+    expect(mixed.kind === 'routed' && mixed.route.candidates.map((c) => c.deviceId)).toEqual([
+      'pc-a',
+    ]);
   });
 
   it('sends host tools to the origin only', () => {
     const r = hostReachRouteFor(reg, 'tool.exec', { tool: 'gh' }, checkouts);
-    expect(r.kind === 'routed' && r.route.candidates).toEqual([{ deviceId: 'pc-a', label: 'laptop' }]);
+    expect(r.kind === 'routed' && r.route.candidates).toEqual([
+      { deviceId: 'pc-a', label: 'laptop' },
+    ]);
   });
 
   it('serves a hub-built box (no origin) from any PC with the repo', () => {
     const hub = { boxId: 'hb', repoKey: KEY };
-    const r = hostReachRouteFor(hub, 'cp.fromHost', { sources: ['x'], dest: '/workspace' }, checkouts);
-    expect(r.kind === 'routed' && r.route.candidates.map((c) => c.deviceId)).toEqual(['pc-b', 'pc-a']);
+    const r = hostReachRouteFor(
+      hub,
+      'cp.fromHost',
+      { sources: ['x'], dest: '/workspace' },
+      checkouts,
+    );
+    expect(r.kind === 'routed' && r.route.candidates.map((c) => c.deviceId)).toEqual([
+      'pc-b',
+      'pc-a',
+    ]);
+  });
+
+  it('sends a repo nobody reported straight to the cache, and refuses an unservable mix', () => {
+    const hub = { boxId: 'hb', repoKey: KEY };
+    expect(hostReachRouteFor(hub, 'cp.fromHost', { sources: ['x'], dest: '/w' }, [])).toEqual({
+      kind: 'routed',
+      route: { candidates: [], repoKey: KEY },
+    });
+    const mixed = hostReachRouteFor(
+      hub,
+      'cp.fromHost',
+      { sources: ['x', '/abs/y'], dest: '/w' },
+      checkouts,
+    );
+    expect(mixed.kind).toBe('refused');
   });
 
   it('leaves a box with neither an origin nor a checkout unrouted', () => {
-    expect(hostReachRouteFor({ boxId: 'old' }, 'cp.fromHost', { sources: ['x'], dest: '/w' }, [])).toEqual({
+    expect(
+      hostReachRouteFor({ boxId: 'old' }, 'cp.fromHost', { sources: ['x'], dest: '/w' }, []),
+    ).toEqual({
       kind: 'unrouted',
     });
-    expect(hostReachRouteFor({ boxId: 'old' }, 'tool.exec', {}, checkouts)).toEqual({ kind: 'unrouted' });
+    expect(hostReachRouteFor({ boxId: 'old' }, 'tool.exec', {}, checkouts)).toEqual({
+      kind: 'unrouted',
+    });
   });
 });

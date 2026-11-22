@@ -379,7 +379,7 @@ export class HostReachPoller {
     this.log(`host-reach: executing ${action.method} for box ${action.boxId}`);
     let result: HostActionResult | HostReachDecline;
     try {
-      result = await this.deps.execute(action, this.promptClient(base, action.id));
+      result = await this.deps.execute(action, this.promptClient(base));
     } catch (err) {
       result = {
         exitCode: 1,
@@ -413,9 +413,8 @@ export class HostReachPoller {
     }
   }
 
-  /** This poller's client for the hub's prompt routes, scoped to one action. */
-  private promptClient(base: string, actionId: string): HostReachPromptClient {
-    void actionId;
+  /** This poller's client for the hub's prompt routes. */
+  private promptClient(base: string): HostReachPromptClient {
     return {
       raise: async (id, prompt) => {
         const res = await this.post(`${base}/admin/hostreach/prompt`, {
@@ -440,7 +439,8 @@ export class HostReachPoller {
         );
         // Gone from the hub (it restarted): stop mirroring; the local confirm stands.
         if (res.status === 404) return { status: 'gone' };
-        if (res.status < 200 || res.status >= 300) throw new Error(`prompt status → ${String(res.status)}`);
+        if (res.status < 200 || res.status >= 300)
+          throw new Error(`prompt status → ${String(res.status)}`);
         return JSON.parse(res.text) as Awaited<ReturnType<HostReachPromptClient['status']>>;
       },
       cancel: async (hubId) => {

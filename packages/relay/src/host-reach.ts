@@ -30,7 +30,7 @@ import { randomUUID } from 'node:crypto';
 import type { HostAction, HostActionResult } from './types.js';
 
 /** Why a request could not be handed to a machine. Both are recoverable. */
-export type HostReachUnreachable = 'never-connected' | 'went-away';
+export type HostReachUnreachable = 'never-connected' | 'went-away' | 'declined';
 
 /** One machine a routed action was meant for, and why it did not answer. */
 export interface HostReachTried {
@@ -196,9 +196,15 @@ export class HostReachQueue {
         this.onSettle?.(id);
       };
       const pending: Pending = { action, settle: resolve, delivered: false };
-      if (opts.route && opts.route.candidates.length > 0) {
+      if (opts.route) {
         pending.route = opts.route;
         pending.tried = new Map();
+        // No machine may serve it: nothing to wait for, go straight to the
+        // caller's fallback (the cache) and its error.
+        if (opts.route.candidates.length === 0) {
+          resolve(this.unreachable(pending, 'never-connected'));
+          return;
+        }
       }
       pending.timer = setTimeout(() => {
         // Still undelivered after the grace window: nobody is listening.
@@ -421,6 +427,9 @@ export class HostReachQueue {
   resolve(id: string, result: HostActionResult, pollerId?: string): boolean {
     const pending = this.map.get(id);
     if (!pending) return false;
+    // A routed action is answered only by the poller it was handed to: without
+    // a poller id any machine could settle another machine's copy.
+    if (pending.route && (pollerId === undefined || pending.deliveredTo !== pollerId)) return false;
     if (
       pollerId !== undefined &&
       pending.deliveredTo !== undefined &&
@@ -447,6 +456,7 @@ export class HostReachQueue {
   decline(id: string, pollerId?: string, detail?: string): boolean {
     const pending = this.map.get(id);
     if (!pending) return false;
+    if (pending.route && (pollerId === undefined || pending.deliveredTo !== pollerId)) return false;
     if (
       pollerId !== undefined &&
       pending.deliveredTo !== undefined &&
@@ -469,7 +479,7 @@ export class HostReachQueue {
       if (this.exhausted(pending)) {
         this.map.delete(id);
         if (pending.timer) clearTimeout(pending.timer);
-        pending.settle(this.unreachable(pending, 'never-connected'));
+        pending.settle(this.unreachable(pending, 'declined'));
         return true;
       }
     }
@@ -674,6 +684,20 @@ export class HostReachQueue {
       pending.delivered = false;
       pending.deliveredTo = undefined;
       if (!this.exhausted(pending) && this.offerToWaiter(pending)) continue;
+      // A routed action with another candidate present (between polls, so no
+      // waiter right now) waits for that machine's next poll, under a fresh
+      // grace window, instead of failing over to the cache.
+      if (pending.route && this.currentTarget(pending) !== undefined) {
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.timer = setTimeout(() => {
+          if (this.map.get(id) === pending && !pending.delivered) {
+            this.map.delete(id);
+            pending.settle(this.unreachable(pending, 'went-away'));
+          }
+        }, this.graceMs);
+        pending.timer.unref?.();
+        continue;
+      }
       this.map.delete(id);
       pending.settle(this.unreachable(pending, 'went-away'));
     }

@@ -1,4 +1,4 @@
-import { deviceTokenFor } from '@agentbox/sandbox-core';
+import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -189,6 +189,8 @@ export async function executeHostReachAction(
     hub?: HostReachPromptClient;
     /** Adopt a hub box into this machine's state (tests stub it). */
     adopt?: (boxId: string, cwd: string) => Promise<{ ok: boolean; error?: string }>;
+    /** The repo key of a folder's origin, as this machine sees it (tests stub it). */
+    repoKeyOf?: (folder: string) => Promise<string | undefined>;
   },
 ): Promise<HostActionResult | HostReachDecline> {
   const folder = action.route?.folder;
@@ -196,6 +198,17 @@ export async function executeHostReachAction(
     return {
       decline: `its checkout ${folder} is gone (run \`agentbox workspace rescan\` there to update the hub)`,
     };
+  }
+  // The folder decides what counts as "contained in the project" (and so what
+  // auto-approves), so it is checked here rather than taken on the hub's word:
+  // it must be a checkout of the very repo the action is routed for.
+  if (folder !== undefined && action.route?.repoKey) {
+    const key = await (deps.repoKeyOf ?? defaultRepoKeyOf)(folder);
+    if (key !== action.route.repoKey) {
+      return {
+        decline: `${folder} is not a checkout of ${action.route.repoKey} on this machine${key ? ` (its origin is ${key})` : ''}`,
+      };
+    }
   }
   let owner = await lookupCloudBoxOwner(action.boxId);
   if (!owner && action.route) {
@@ -205,7 +218,9 @@ export async function executeHostReachAction(
     deps.log(`host-reach: adopting box ${action.boxId} from the hub to serve ${action.method}`);
     const adopted = await (deps.adopt ?? adoptFromHub)(action.boxId, folder);
     if (!adopted.ok) {
-      return { decline: `could not adopt box ${action.boxId} here: ${adopted.error ?? 'unknown error'}` };
+      return {
+        decline: `could not adopt box ${action.boxId} here: ${adopted.error ?? 'unknown error'}`,
+      };
     }
     owner = await lookupCloudBoxOwner(action.boxId);
   }
@@ -258,6 +273,10 @@ export async function executeHostReachAction(
     );
   }
   return result;
+}
+
+async function defaultRepoKeyOf(folder: string): Promise<string | undefined> {
+  return (await checkoutEntriesFor([folder]))[0]?.repoKey;
 }
 
 /**

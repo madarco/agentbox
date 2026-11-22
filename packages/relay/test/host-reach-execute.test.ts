@@ -36,7 +36,10 @@ describe('executeHostReachAction', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'reach-exec-'));
     await mkdir(join(homedir(), '.agentbox'), { recursive: true });
-    await writeFile(join(homedir(), '.agentbox', 'state.json'), JSON.stringify({ version: 1, boxes: [] }));
+    await writeFile(
+      join(homedir(), '.agentbox', 'state.json'),
+      JSON.stringify({ version: 1, boxes: [] }),
+    );
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -55,6 +58,7 @@ describe('executeHostReachAction', () => {
     const r = await executeHostReachAction(
       action({ route: { repoKey: 'github.com/acme/app', folder: dir } }),
       deps({
+        repoKeyOf: () => Promise.resolve('github.com/acme/app'),
         adopt: (boxId, cwd) => {
           adopted.push([boxId, cwd]);
           // A failed adoption: the action is handed on with the reason.
@@ -66,8 +70,23 @@ describe('executeHostReachAction', () => {
     expect(r).toEqual({ decline: 'could not adopt box box-1 here: no such box on the hub' });
   });
 
+  it('refuses a folder the hub named that is not a checkout of the routed repo', async () => {
+    // e.g. a registry row pointing at the home directory: it would make every
+    // file under it "contained" and auto-approvable.
+    const r = await executeHostReachAction(
+      action({ route: { repoKey: 'github.com/acme/app', folder: dir } }),
+      deps({ repoKeyOf: () => Promise.resolve(undefined) }),
+    );
+    expect(r).toEqual({
+      decline: expect.stringMatching(/is not a checkout of github.com\/acme\/app/),
+    });
+  });
+
   it('declines a routed action for an unknown box with no checkout here', async () => {
-    const r = await executeHostReachAction(action({ route: { repoKey: 'github.com/acme/app' } }), deps());
+    const r = await executeHostReachAction(
+      action({ route: { repoKey: 'github.com/acme/app' } }),
+      deps(),
+    );
     expect(r).toEqual({ decline: expect.stringMatching(/no record of box box-1/) });
   });
 

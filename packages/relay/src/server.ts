@@ -871,12 +871,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           for (const w of entry.waiters) w();
           entry.waiters.clear();
         };
-        if (prompts.consumeAutoApprove(owner.boxId, prompt)) {
-          settle({ answer: 'y' });
-        } else {
-          void prompts.add(owner.boxId, ev).then(settle);
-          subscribers.broadcast(owner.boxId, 'prompt-ask', ev);
-        }
+        // No auto-approve here: the PC already applied its own policy and chose
+        // to ask; letting this hub's policy answer would skip that decision.
+        void prompts.add(owner.boxId, ev).then(settle);
+        subscribers.broadcast(owner.boxId, 'prompt-ask', ev);
         send(res, 200, { id: ev.id });
         return;
       }
@@ -918,7 +916,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             send(res, 200, { status: 'pending' });
             return;
           }
-          reachPrompts.delete(promptId);
+          // Kept until its action ends (onSettle) or the PC cancels it: if this
+          // response is lost, the PC's retry must still read the answer.
           send(res, 200, {
             status: 'answered',
             answer: entry.resolution.answer,
@@ -1414,11 +1413,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // Which PCs may serve it (multi-PC Phase 4): the box's origin PC, then
         // another PC with a checkout of the repo. A PC with a different
         // checkout, or none, is never offered the action.
+        // Host tools never consult the registry (origin only), so skip the read.
         const routing = hostReachRouteFor(
           reg,
           body.method,
           body.params,
-          await listCheckouts().catch(() => []),
+          body.method.startsWith('cp.') ? await listCheckouts().catch(() => []) : [],
         );
         if (routing.kind === 'refused') {
           send(res, 500, { exitCode: 64, stdout: '', stderr: `${routing.error}\n` });
@@ -1428,7 +1428,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           cachePrefix: cachePrefixes[0]!,
           ...(routing.kind === 'routed' ? { route: routing.route } : {}),
         });
-        const tried = outcome.kind === 'unreachable' ? describeTried(outcome.tried) : '';
+        const tried =
+          outcome.kind !== 'unreachable'
+            ? ''
+            : routing.kind === 'routed' && routing.route.candidates.length === 0
+              ? noCheckoutHint(routing.route.repoKey)
+              : describeTried(outcome.tried);
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
           return;
@@ -2845,7 +2850,9 @@ function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): 
   const lead =
     reason === 'went-away'
       ? 'the machine that granted these tools stopped responding'
-      : 'the machine that granted these tools is not connected to this hub';
+      : reason === 'declined'
+        ? 'the machine that granted these tools refused to run them (see below)'
+        : 'the machine that granted these tools is not connected to this hub';
   return [
     `host tools are unavailable: ${lead}.`,
     '',
@@ -2862,6 +2869,14 @@ function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): 
  * box (and its user) sees "laptop declined: no checkout" rather than a bare
  * "offline". Empty for an unrouted request.
  */
+function noCheckoutHint(repoKey: string | undefined): string {
+  return [
+    `No computer has reported a checkout of ${repoKey ?? 'this repo'} to this hub.`,
+    'Run `agentbox workspace add <folder>` on a computer that has it, then retry.',
+    '',
+  ].join('\n');
+}
+
 export function describeTried(tried: HostReachTried[] | undefined): string {
   if (!tried || tried.length === 0) return '';
   const lines = tried.map((t) => {
@@ -2887,7 +2902,9 @@ function cpUnreachableMessage(
   const lead =
     reason === 'went-away'
       ? 'the machine holding these files stopped responding part-way through the copy'
-      : 'the machine holding these files is not connected to this hub';
+      : reason === 'declined'
+        ? 'every machine with a checkout of this project was asked and none could serve it (see below)'
+        : 'the machine holding these files is not connected to this hub';
   return [
     `cp ${direction} the host could not run: ${lead}.`,
     // Naming BOTH facts matters: "offline" alone reads as "wait and retry",
@@ -2895,7 +2912,9 @@ function cpUnreachableMessage(
     ...(opts.cacheMiss ? ['This hub has no cached copy of those paths either.'] : []),
     '',
     'This hub brokers the copy; it does not hold your project files.',
-    `Start AgentBox on that machine (\`agentbox relay start\`) and retry, or run it there directly:`,
+    reason === 'declined'
+      ? 'Fix what the machines reported below and retry, or run it on one directly:'
+      : `Start AgentBox on that machine (\`agentbox relay start\`) and retry, or run it there directly:`,
     `  agentbox cp ${boxName}:<src> <dst>`,
     ...(opts.cacheMiss
       ? [
@@ -3163,11 +3182,15 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
   if (typeof r.message !== 'string' || r.message.length === 0) return null;
   const str = (v: unknown, max: number): string | undefined =>
     typeof v === 'string' && v.length > 0 ? v.slice(0, max) : undefined;
-  const ctx = r.context && typeof r.context === 'object' ? (r.context as Record<string, unknown>) : undefined;
+  const ctx =
+    r.context && typeof r.context === 'object' ? (r.context as Record<string, unknown>) : undefined;
   const command = str(ctx?.command, 200);
   const cwd = str(ctx?.cwd, 4096);
   const argv = Array.isArray(ctx?.argv)
-    ? (ctx.argv as unknown[]).filter((a): a is string => typeof a === 'string').slice(0, 64).map((a) => a.slice(0, 4096))
+    ? (ctx.argv as unknown[])
+        .filter((a): a is string => typeof a === 'string')
+        .slice(0, 64)
+        .map((a) => a.slice(0, 4096))
     : undefined;
   const detail = str(r.detail, 8000);
   return {

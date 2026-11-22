@@ -33,14 +33,24 @@ function fakeHub(answer?: 'y' | 'n') {
   return { client, calls, release: () => release?.() };
 }
 
-const ask = { kind: 'confirm' as const, message: 'Allow cp (host -> box) on b1?', defaultAnswer: 'n' as const };
+const ask = {
+  kind: 'confirm' as const,
+  message: 'Allow cp (host -> box) on b1?',
+  defaultAnswer: 'n' as const,
+};
 
 describe('mirrorHostReachPrompts', () => {
-  it('an answer in the hub approvals settles the PC\'s prompt', async () => {
+  it("an answer in the hub approvals settles the PC's prompt", async () => {
     const prompts = new PendingPrompts();
     const subs = new PromptSubscribers();
     const hub = fakeHub('y');
-    const stop = mirrorHostReachPrompts({ prompts, subscribers: subs, boxId: 'b1', actionId: 'a1', client: hub.client });
+    const stop = mirrorHostReachPrompts({
+      prompts,
+      subscribers: subs,
+      boxId: 'b1',
+      actionId: 'a1',
+      client: hub.client,
+    });
     const verdict = askPrompt(prompts, subs, 'b1', ask);
     await new Promise((r) => setTimeout(r, 5));
     expect(hub.calls).toEqual(['raise a1 Allow cp (host -> box) on b1?']);
@@ -54,7 +64,13 @@ describe('mirrorHostReachPrompts', () => {
     const prompts = new PendingPrompts();
     const subs = new PromptSubscribers();
     const hub = fakeHub();
-    const stop = mirrorHostReachPrompts({ prompts, subscribers: subs, boxId: 'b1', actionId: 'a1', client: hub.client });
+    const stop = mirrorHostReachPrompts({
+      prompts,
+      subscribers: subs,
+      boxId: 'b1',
+      actionId: 'a1',
+      client: hub.client,
+    });
     const verdict = askPrompt(prompts, subs, 'b1', ask);
     await new Promise((r) => setTimeout(r, 5));
     const [pending] = prompts.all();
@@ -73,7 +89,13 @@ describe('mirrorHostReachPrompts', () => {
       status: () => Promise.reject(new Error('not called')),
       cancel: () => Promise.reject(new Error('not called')),
     };
-    const stop = mirrorHostReachPrompts({ prompts, subscribers: subs, boxId: 'b1', actionId: 'a1', client });
+    const stop = mirrorHostReachPrompts({
+      prompts,
+      subscribers: subs,
+      boxId: 'b1',
+      actionId: 'a1',
+      client,
+    });
     const verdict = askPrompt(prompts, subs, 'b1', ask);
     await new Promise((r) => setTimeout(r, 5));
     prompts.resolve(prompts.all()[0]!.id, 'y');
@@ -85,7 +107,13 @@ describe('mirrorHostReachPrompts', () => {
     const prompts = new PendingPrompts();
     const subs = new PromptSubscribers();
     const hub = fakeHub();
-    mirrorHostReachPrompts({ prompts, subscribers: subs, boxId: 'b1', actionId: 'a1', client: hub.client })();
+    mirrorHostReachPrompts({
+      prompts,
+      subscribers: subs,
+      boxId: 'b1',
+      actionId: 'a1',
+      client: hub.client,
+    })();
     void askPrompt(prompts, subs, 'b1', ask);
     await new Promise((r) => setTimeout(r, 5));
     expect(hub.calls).toEqual([]);

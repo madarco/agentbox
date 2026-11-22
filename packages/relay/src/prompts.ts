@@ -117,7 +117,11 @@ export class PendingPrompts {
       });
       this.onChange?.();
     });
-    this.mirrors.get(boxId)?.(ev, (answer, cancelled) => this.resolve(ev.id, answer, cancelled), settled);
+    this.mirrors.get(boxId)?.(
+      ev,
+      (answer, cancelled) => this.resolve(ev.id, answer, cancelled),
+      settled,
+    );
     return settled;
   }
 

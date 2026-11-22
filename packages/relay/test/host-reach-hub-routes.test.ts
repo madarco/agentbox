@@ -73,8 +73,16 @@ describe('host-reach routing on the control box', () => {
         originMachineLabel: 'laptop',
       },
     });
-    await applyCheckoutReport({ machineId: PC_A, label: 'laptop', entries: [{ repoKey: KEY, folder: '/Users/a/app' }] });
-    await applyCheckoutReport({ machineId: PC_B, label: 'desk', entries: [{ repoKey: KEY, folder: '/home/b/app' }] });
+    await applyCheckoutReport({
+      machineId: PC_A,
+      label: 'laptop',
+      entries: [{ repoKey: KEY, folder: '/Users/a/app' }],
+    });
+    await applyCheckoutReport({
+      machineId: PC_B,
+      label: 'desk',
+      entries: [{ repoKey: KEY, folder: '/home/b/app' }],
+    });
   });
 
   afterEach(async () => {
@@ -125,12 +133,18 @@ describe('host-reach routing on the control box', () => {
     await req(handle, 'POST', '/admin/hostreach/decline', {
       token: ADMIN,
       device: PC_A,
-      body: { id: a.body.actions![0]!.id, poller: 'pa', reason: 'its checkout /Users/a/app is gone' },
+      body: {
+        id: a.body.actions![0]!.id,
+        poller: 'pa',
+        reason: 'its checkout /Users/a/app is gone',
+      },
     });
     const answer = await rpc;
     expect(answer.status).toBe(500);
     expect(answer.body.stderr).toMatch(/Machines tried, in order:/);
-    expect(answer.body.stderr).toMatch(/laptop \(0b9d6c3e\): declined: its checkout \/Users\/a\/app is gone/);
+    expect(answer.body.stderr).toMatch(
+      /laptop \(0b9d6c3e\): declined: its checkout \/Users\/a\/app is gone/,
+    );
     expect(answer.body.stderr).toMatch(/desk \(1c8e7d4f\): not connected/);
   });
 
@@ -151,7 +165,7 @@ describe('host-reach routing on the control box', () => {
     expect(stolen.status).toBe(403);
   });
 
-  it('shows the serving PC\'s confirm in the hub approvals and returns the answer', async () => {
+  it("shows the serving PC's confirm in the hub approvals and returns the answer", async () => {
     await poll(handle, 'pa', PC_A, 50);
     const rpc = req(handle, 'POST', '/rpc', {
       token: 't1',
@@ -162,17 +176,29 @@ describe('host-reach routing on the control box', () => {
     const raised = await req(handle, 'POST', '/admin/hostreach/prompt', {
       token: ADMIN,
       device: PC_A,
-      body: { id, poller: 'pa', prompt: { message: 'Allow cp (host -> box) on cpbox?', detail: 'data.csv' } },
+      body: {
+        id,
+        poller: 'pa',
+        prompt: { message: 'Allow cp (host -> box) on cpbox?', detail: 'data.csv' },
+      },
     });
     expect(raised.status).toBe(200);
     const promptId = raised.body.id!;
     // It is a pending approval on the HUB now, answerable by any client.
-    expect(handle.prompts.all().map((p) => p.ev.message)).toEqual(['Allow cp (host -> box) on cpbox?']);
+    expect(handle.prompts.all().map((p) => p.ev.message)).toEqual([
+      'Allow cp (host -> box) on cpbox?',
+    ]);
     expect(handle.prompts.boxFor(promptId)).toBe('b1');
     // PC B cannot read or cancel PC A's prompt.
-    const peek = await req(handle, 'GET', `/admin/hostreach/prompt/${promptId}?wait=10`, { token: ADMIN, device: PC_B });
+    const peek = await req(handle, 'GET', `/admin/hostreach/prompt/${promptId}?wait=10`, {
+      token: ADMIN,
+      device: PC_B,
+    });
     expect(peek.status).toBe(404);
-    const waiting = req(handle, 'GET', `/admin/hostreach/prompt/${promptId}?wait=2000`, { token: ADMIN, device: PC_A });
+    const waiting = req(handle, 'GET', `/admin/hostreach/prompt/${promptId}?wait=2000`, {
+      token: ADMIN,
+      device: PC_A,
+    });
     handle.prompts.resolve(promptId, 'y');
     expect((await waiting).body).toEqual({ status: 'answered', answer: 'y' });
     await req(handle, 'POST', '/admin/hostreach/result', {

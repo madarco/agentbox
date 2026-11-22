@@ -78,7 +78,11 @@ export function hostReachRouteFor(
     repoKey ??= r.repo?.repoKey;
     const here = r.candidates.map((c) => {
       const label = labelOf(c.machineId);
-      return { deviceId: c.machineId, ...(label ? { label } : {}), ...(c.folder ? { folder: c.folder } : {}) };
+      return {
+        deviceId: c.machineId,
+        ...(label ? { label } : {}),
+        ...(c.folder ? { folder: c.folder } : {}),
+      };
     });
     ordered =
       ordered === undefined
@@ -86,8 +90,20 @@ export function hostReachRouteFor(
         : ordered.filter((c) => here.some((h) => h.deviceId === c.deviceId));
   }
   if (!ordered || ordered.length === 0) {
-    // No origin and no reported checkout: nothing says which PC holds the files.
-    return { kind: 'unrouted' };
+    // A box from before origin machines and repo keys: nothing to route by, so
+    // any PC that knows the box serves it, as it always did.
+    if (!reg.originMachineId && !box.repos[0]?.repoKey) return { kind: 'unrouted' };
+    if (paths.length > 1) {
+      return {
+        kind: 'refused',
+        error:
+          'no single machine can serve all of these paths (some are in the repo, some only on the ' +
+          'machine that created the box); copy them separately',
+      };
+    }
+    // Nobody may serve it: the request goes straight to the cache, then an
+    // error naming why (no machine has reported a checkout of this repo).
+    return { kind: 'routed', route: { candidates: [], ...(repoKey ? { repoKey } : {}) } };
   }
   return { kind: 'routed', route: { candidates: ordered, ...(repoKey ? { repoKey } : {}) } };
 }

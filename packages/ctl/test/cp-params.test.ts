@@ -15,7 +15,9 @@ describe('buildCpParams', () => {
   });
 
   it('resolves the box sources of toHost and leaves the host destination as typed', () => {
-    expect(buildCpParams('toHost', ['dist/app.js', './out/'], opts, '/workspace/web')).toMatchObject({
+    expect(
+      buildCpParams('toHost', ['dist/app.js', './out/'], opts, '/workspace/web'),
+    ).toMatchObject({
       sources: ['/workspace/web/dist/app.js'],
       dest: './out/',
     });
