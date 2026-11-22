@@ -937,6 +937,18 @@ export class HubApiClient {
     return (await this.request<{ boxes: HubApiBox[] }>('GET', `/boxes?${q.toString()}`)).boxes;
   }
 
+  /**
+   * Add an agent to an existing box: the owning hub records it and re-registers
+   * the box with its own token (`agentbox openclaw <box>`).
+   */
+  async addBoxAgent(id: string, agent: string): Promise<{ boxId: string; agents: string[] }> {
+    return this.request<{ boxId: string; agents: string[] }>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/agent`,
+      { agent },
+    );
+  }
+
   /** Lifecycle action on a box. Reverse-adoption lets the hub drive registered-only boxes. */
   async lifecycle(id: string, action: HubLifecycleAction): Promise<void> {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/${action}`);

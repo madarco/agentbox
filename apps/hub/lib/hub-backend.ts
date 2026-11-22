@@ -50,6 +50,7 @@ import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { createCheckoutBackend } from './backend/checkouts';
+import { addBoxAgent } from './backend/box-agents';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -119,6 +120,7 @@ import {
   resolvePerBoxCarry,
   serviceSignInUrl,
   mutateState,
+  recordAgentAdded,
   readPreparedStateRaw,
   readState,
   recordBox,
@@ -3397,6 +3399,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       } catch (err) {
         return { kind: 'error', error: errMsg(err) };
       }
+    },
+
+    async addBoxAgent(id, agent) {
+      const res = await addBoxAgent(
+        {
+          findBox: (ref) => findOrHydrateBox(ref, hydrate).catch(() => null),
+          recordAgent: (boxId, a) => recordAgentAdded(boxId, a),
+          getRegistration: (boxId) => handle.store.getBox(boxId).catch(() => undefined),
+          register: (reg) => handle.store.registerBox(reg),
+          agentId: (name) => findAgentSpec(name)?.id,
+        },
+        id,
+        agent,
+      );
+      if (res.kind === 'ok') handle.hubNotifier.notify();
+      return res;
     },
 
     // ── agent state ──

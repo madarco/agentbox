@@ -7,7 +7,11 @@ import { selectInBoxTransport } from './in-box-transport.js';
 import { startCodexScraper, type CodexScraperHandle } from '../codex-scraper.js';
 import { startClaudeScraper, type ClaudeScraperHandle } from '../claude-scraper.js';
 import { Supervisor } from '../supervisor.js';
-import { fetchWatchList, type AgentRenderDescriptor } from '../agent-registry.js';
+import {
+  fetchWatchList,
+  fetchWatchListWithRetry,
+  type AgentRenderDescriptor,
+} from '../agent-registry.js';
 import { startServer } from '../socket.js';
 import { StatusReporter } from '../status-reporter.js';
 import { CredentialsWatcher } from '../credentials-watcher.js';
@@ -52,11 +56,16 @@ export const daemonCommand = new Command('daemon')
     /**
      * What `agents.list` contributed, and the two things that read it back.
      *
-     * Mutable module-local state rather than a re-fetch, because the fetch is
-     * deliberately once-per-daemon (see `agent-registry.ts`): a `reload` must
-     * re-fold the SAME units it already applied, not go back to the host.
+     * Mutable module-local state rather than a re-fetch: a plain `reload`
+     * re-folds the SAME units it already applied, without going back to the
+     * host. `reload --agents` (an agent added to a running box) re-asks first.
      */
     let agentUnits: readonly AgentUnits[] = [];
+    /** Set once the credential watcher exists; `reload --agents` folds through it. */
+    let applyWatch: (watch: Awaited<ReturnType<typeof fetchWatchList>>) => void = (watch) => {
+      agentUnits = watch.units;
+      agentRenders = watch.renders;
+    };
     let agentRenders: readonly AgentRenderDescriptor[] = [];
     const warn = (m: string): void => void process.stderr.write(`agentbox-ctl: warning: ${m}\n`);
     /** Read the workspace yaml, then fold in whatever the agents contributed. */
@@ -144,6 +153,15 @@ export const daemonCommand = new Command('daemon')
       configPath: opts.config,
       reporter,
       reloadConfig: buildConfig,
+      refreshAgents: async () => {
+        const watch = await fetchWatchList();
+        if (watch.source !== 'host') {
+          throw new Error(
+            `agents.list ${watch.source === 'timeout' ? 'timed out' : 'unavailable'}; agent units unchanged`,
+          );
+        }
+        applyWatch(watch);
+      },
     });
 
     process.stdout.write(`agentbox-ctl: listening on ${opts.socket}\n`);
@@ -277,7 +295,23 @@ export const daemonCommand = new Command('daemon')
     // `agents.list` is an RPC through :8788, and earlier it is a guaranteed
     // ECONNREFUSED on a fresh box.
     const watcher = credentialsWatcher;
-    void fetchWatchList().then(async (watch) => {
+    applyWatch = (watch) => {
+      watcher?.setFiles(watch.files);
+      reporter.setSessions(watch.sessions);
+      agentUnits = watch.units;
+      agentRenders = watch.renders;
+    };
+    let shuttingDown = false;
+    // Retried with backoff: a hub-built cloud box launches ctl BEFORE the hub
+    // registers it, so the first answer can be "unknown box" (the gateway of a
+    // hub-built openclaw box never came up on first boot).
+    void fetchWatchListWithRetry({
+      stopped: () => shuttingDown,
+      onRetry: (source, delay) =>
+        process.stderr.write(
+          `agentbox-ctl: agents.list ${source === 'timeout' ? 'timed out' : 'unavailable'}; retrying in ${String(Math.round(delay / 1000))}s\n`,
+        ),
+    }).then(async (watch) => {
       if (watch.source === 'host') {
         watcher?.setFiles(watch.files);
         // Same answer, second consumer: which agents to probe for activity. The
@@ -311,6 +345,7 @@ export const daemonCommand = new Command('daemon')
     });
 
     const shutdown = async (signal: string): Promise<void> => {
+      shuttingDown = true;
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();

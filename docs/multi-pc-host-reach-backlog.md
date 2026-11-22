@@ -126,3 +126,26 @@ for teams PCs must never hold it (device tokens only).
   never consulted `controlBoxIsThisMachine`); #436 only makes the always-mute explicit.
   Fix: skip the mute when `controlBoxIsThisMachine()`, the same exception
   `dockerProviderRefusal` makes.
+
+## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
+
+- **The operator PC loses `hub devices approve` once it enrolls.** Its device token
+  shadows the API key in `resolveHubTarget` (`apps/cli/src/commands/hub-devices.ts`),
+  so approve answers 403 ("only the hub owner"). Workaround: POST
+  `/api/v1/devices/approve` with the API key. From #422.
+- **`hub login` blip.** A PC's first `hub login` ended in `fetch failed`; it did not
+  reproduce on retry.
+- **Poller noise for hub-built boxes.** The hub logs `[cloud-poller <id>] poll error:
+  bridge/poll -> 404` every 30 s for every control-plane-topology box.
+- **A download whose origin is offline waits the full 60 s** before failing, even when
+  the origin has never connected; it could answer at once.
+- **The no-origin download message prints a literal `<box>`** (also noted under the
+  #432 review).
+- **`agentbox-ctl status | head -4` crashes with an EPIPE stack trace.**
+- **`tool.list` for a box with no origin runs on any PC.** Known from #426.
+- **A box cut off by the old PC-local re-register stays cut off.** Before #429's fix, a
+  re-register from the operator PC wrote its record's token into the hub's
+  registration; the box's relay.env keeps the hub's original token, so every box->hub
+  call 401s and a hub stop + start does not heal it. Recreate such a box. Root cause
+  (PC records can carry a different `relayToken` than the hub's) predates #429: any
+  remaining PC-local `registerBoxWithPlane` path can do the same.

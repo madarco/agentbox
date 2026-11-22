@@ -1,3 +1,4 @@
+import type { AddBoxAgentResult } from '../backend/box-agents';
 import type {
   HubState,
   ManagerView,
@@ -730,6 +731,10 @@ export interface HubBackend
   // store). null when the hub doesn't know the box; `{ claude: null }` when it
   // knows the box but no snapshot has been reported yet.
   getAgentState(id: string): Promise<AgentStateResult | null>;
+  // Add an agent to an existing box: this hub records it and re-registers the
+  // box with its own token, so `agents.list` hands the box that agent's units
+  // (`agentbox openclaw <box>`; the box's ctl then runs `reload --agents`).
+  addBoxAgent(id: string, agent: string): Promise<AddBoxAgentResult>;
 
   // ── box service logs ──
   // Non-follow tail of a service log (or the ctl-daemon log with `daemon`).

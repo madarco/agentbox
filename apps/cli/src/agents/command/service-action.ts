@@ -28,6 +28,7 @@ import type {
   AgentServiceUrlField,
   AgentSyncSpec,
   BoxRecord,
+  Provider,
   ResolvedCarryEntry,
 } from '@agentbox/core';
 import { persistentRefusal, resolveCreatePersistent, UserFacingError } from '@agentbox/core';
@@ -378,6 +379,7 @@ export async function runServiceAgent(
       if (refusal) throw new Error(refusal);
     }
     let box: BoxRecord;
+    let learnedAgent = false;
 
     if (existing) {
       box = existing;
@@ -385,18 +387,36 @@ export async function runServiceAgent(
       // then `agentbox openclaw <it>`). Record it BEFORE the box is (re)started,
       // so every re-registration names it: a service agent's units go only to a
       // box whose registration names that agent, and an agentless one gets none.
-      const learned = !(box.agents ?? []).includes(spec.id);
-      if (learned) box = (await recordAgentAdded(box.id, spec.id).catch(() => undefined)) ?? box;
+      //
+      // Through the OWNING hub, never a PC-local re-register: the registration
+      // `agents.list` answers from lives on that hub, under the token in the
+      // box's relay.env, and a PC's record can hold a different one (a
+      // re-register from the operator PC left a hub-built box 401ing for good).
+      learnedAgent = !(box.agents ?? []).includes(spec.id);
+      if (learnedAgent) {
+        const added = await withOwningHub(box, (client) =>
+          client.addBoxAgent(box.id, spec.id).then(() => undefined),
+        );
+        if (added !== 'ok') {
+          throw new Error(
+            `could not add ${spec.id} to ${box.name}: no hub that owns it answered (is the hub running?)`,
+          );
+        }
+        box = (await recordAgentAdded(box.id, spec.id).catch(() => undefined)) ?? box;
+      }
       const provider = await providerForBox(box);
       const state = await provider.probeState(box);
-      if (state === 'paused') await provider.resume(box);
-      else if (state === 'stopped') box = await provider.start(box);
-      else if (state === 'missing') {
+      if (state === 'missing') {
         throw new Error(`box ${box.name} has no sandbox left; destroy it and run this again`);
-      } else if (learned) {
-        // Already running: re-register with the new agent and relaunch the
-        // in-box daemons (no power cycle), so ctl asks `agents.list` again.
-        box = await provider.reconnect(box);
+      }
+      if (state === 'paused' || state === 'stopped') {
+        // The hub's lifecycle, like `agentbox start`: a stopped box's ctl boots
+        // and asks `agents.list`, which now names the agent.
+        const action = state === 'paused' ? 'resume' : 'start';
+        const r = await withOwningHub(box, (client) => client.lifecycle(box.id, action));
+        if (r !== 'ok') throw new Error(`could not ${action} ${box.name} through its hub`);
+        const fresh = (await readState()).boxes.find((b) => b.id === box.id);
+        if (fresh) box = fresh;
       }
       log.info(`using box ${box.name}`);
       // The box predates this agent, so the create-time skip never ran and it
@@ -605,8 +625,8 @@ export async function runServiceAgent(
       });
       if (r.installed) {
         log.info(`${spec.id} installed into this box; restarting the supervisor units`);
-        await provider.exec(box, ['agentbox-ctl', 'reload'], { user: 'vscode' }).catch(() => {});
       }
+      if (r.installed || learnedAgent) await reloadAgentUnits(provider, box);
     }
 
     const s = makeProgressReporter(opts.verbose === true);
@@ -688,4 +708,26 @@ export async function runServiceAgent(
   } finally {
     cmdLog.close();
   }
+}
+
+/**
+ * Have the box's running ctl re-ask `agents.list` and apply the units (an agent
+ * added to a box that was already up never re-asks on its own). A ctl baked
+ * before `reload --agents` existed rejects the flag: it gets a plain reload,
+ * which still restarts the units it already had.
+ */
+export async function reloadAgentUnits(
+  provider: { exec: Provider['exec'] },
+  box: BoxRecord,
+): Promise<void> {
+  const r = await provider
+    .exec(box, ['agentbox-ctl', 'reload', '--agents'], { user: 'vscode' })
+    .catch(() => null);
+  if (r && r.exitCode === 0) return;
+  if (r && /unknown option/.test(r.stderr)) {
+    await provider.exec(box, ['agentbox-ctl', 'reload'], { user: 'vscode' }).catch(() => {});
+    return;
+  }
+  const why = r ? r.stderr.trim() || `exit ${String(r.exitCode)}` : 'the box did not answer';
+  log.warn(`the box's supervisor did not pick up its agents (${why})`);
 }
